@@ -284,7 +284,11 @@ function resolvedHandoverTemplate(read: ReadModel, context: DecideContext, proje
 // Claude plugin skill, by plugin:name. Unknown skills get the provider's plain form, so a
 // workflow still runs on a machine where the skill lives somewhere wow does not scan.
 function invocationFor(read: ReadModel, step: WorkflowStep): string {
-  const kind = read.providerInstance(step.providerInstanceId)?.kind ?? 'claude';
+  const instance = read.providerInstance(step.providerInstanceId);
+  if (!instance) {
+    throw new CommandRejected('not_found', `No provider instance ${step.providerInstanceId}`);
+  }
+  const kind = instance.kind;
   const skill = read
     .skills()
     .find(

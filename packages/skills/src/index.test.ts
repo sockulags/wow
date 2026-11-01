@@ -110,16 +110,6 @@ describe('scanning the fixture tree', () => {
         invocations: { claude: '/lint', codex: '$lint' },
       },
       {
-        // disable-model-invocation: true is still offered, marked manual only.
-        id: inFixture('home', '.claude', 'skills', 'release'),
-        name: 'release',
-        description: 'Publish a release. Only when asked.',
-        dir: inFixture('home', '.claude', 'skills', 'release'),
-        source: 'user-claude',
-        manualOnly: true,
-        invocations: { claude: '/release', codex: '$release' },
-      },
-      {
         // agents/openai.yaml with allow_implicit_invocation: false.
         id: inFixture('home', '.codex', 'skills', 'review'),
         name: 'review',
@@ -137,6 +127,16 @@ describe('scanning the fixture tree', () => {
         source: 'project-agents',
         manualOnly: false,
         invocations: { claude: '/shape-work', codex: '$shape-work' },
+      },
+      {
+        // disable-model-invocation: true is still offered, marked manual only.
+        id: inFixture('home', '.claude', 'skills', 'ship'),
+        name: 'ship',
+        description: 'Publish a release. Only when asked.',
+        dir: inFixture('home', '.claude', 'skills', 'ship'),
+        source: 'user-claude',
+        manualOnly: true,
+        invocations: { claude: '/ship', codex: '$ship' },
       },
     ]);
     expect(problems).toEqual([
