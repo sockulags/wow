@@ -9,6 +9,7 @@ import { render, type RenderResult } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { App } from '@/app/app';
 import { createAppRouter, type AppRouter } from '@/app/router';
+import { createDraftStore } from '@/chat/draft';
 import { createLayoutStore, RuntimeProvider, type Runtime } from '@/app/runtime';
 
 export function createTestRuntime(
@@ -18,6 +19,7 @@ export function createTestRuntime(
   return {
     connection: undefined,
     layout: createLayoutStore(),
+    draft: createDraftStore(),
     settings: createSettingsStore(createMemorySettingsSource(definitions, initial), definitions),
   };
 }

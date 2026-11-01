@@ -1,23 +1,28 @@
 import type { SettingKey } from '@wow/contracts';
-import { settingValue, type SettingsStore } from '@wow/client-runtime';
+import { settingValue, type Connection, type SettingsStore } from '@wow/client-runtime';
 import type { useNavigate } from '@tanstack/react-router';
+import type { DraftStore } from '@/chat/draft';
 import type { LayoutStore } from './runtime';
 import { sections, settingGroupTitles, settingsByGroup } from './sections';
 
 // Everything the user can do from the keyboard. Feature units add their own commands here (threads,
 // cards, backlog items, workflows) so the palette searches them together.
 
-export type CommandGroup = 'Navigation' | 'Settings' | 'Actions';
+export type CommandGroup = 'Threads' | 'Chat' | 'Navigation' | 'Settings' | 'Actions';
 
 export interface CommandContext {
   readonly navigate: ReturnType<typeof useNavigate>;
   readonly settings: SettingsStore;
   readonly layout: LayoutStore;
+  readonly draft: DraftStore;
+  readonly connection: Connection | undefined;
 }
 
 export interface AppCommand {
   readonly id: string;
   readonly title: string;
+  // What the palette matches and tells items apart by, when titles can repeat (thread titles).
+  readonly value?: string;
   readonly group: CommandGroup;
   readonly keywords?: readonly string[];
   readonly keybinding?: SettingKey;

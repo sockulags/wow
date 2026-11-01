@@ -1,4 +1,4 @@
-import { RpcRequest, ServerMessage, type RpcError } from '@wow/contracts';
+import { RpcRequest, ServerMessage, type RpcError, type SubscriptionTopic } from '@wow/contracts';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import { webSocketFactory, type SocketFactory, type SocketHandle } from './socket.js';
 
@@ -20,8 +20,6 @@ export interface ConnectionOptions {
   readonly socket?: SocketFactory;
   // An option rather than a setting: settings themselves arrive over this connection.
   readonly reconnect?: ReconnectOptions;
-  readonly subscribeMethod?: string;
-  readonly unsubscribeMethod?: string;
 }
 
 export class RpcClientError extends Error {
@@ -36,11 +34,22 @@ export class RpcClientError extends Error {
   }
 }
 
+// Thread-scoped topics (turns, threadItems, approvals, questions) need a threadId.
+export interface TopicParams {
+  readonly threadId?: string;
+}
+
 export interface Connection {
   readonly state: StoreApi<ConnectionState>;
   request(method: string, params?: unknown): Promise<unknown>;
-  // Subscribes now and again after every reconnect. Returns a function that stops listening.
-  subscribe(name: string, params: unknown, onData: (data: unknown) => void): () => void;
+  // Subscribes now and again after every reconnect, and calls onData with the topic's current rows
+  // whenever the server sends them. A second listener of the same topic shares the server
+  // subscription and gets the last rows at once. Returns a function that stops listening.
+  subscribe(
+    topic: SubscriptionTopic,
+    params: TopicParams | null,
+    onData: (data: unknown) => void,
+  ): () => void;
   close(): void;
 }
 
@@ -50,9 +59,24 @@ interface Pending {
 }
 
 interface Subscription {
-  readonly params: unknown;
+  readonly topic: SubscriptionTopic;
+  readonly threadId: string | undefined;
   readonly listeners: Set<(data: unknown) => void>;
+  // The server's id for the current socket; undefined until the subscribe answer arrives.
+  serverId: string | undefined;
+  last: unknown;
+  hasLast: boolean;
 }
+
+const subscriptionKey = (topic: string, threadId: string | undefined) =>
+  threadId === undefined ? topic : `${topic}:${threadId}`;
+
+const isSubscribeResult = (value: unknown): value is { subscriptionId: string; data: unknown } =>
+  typeof value === 'object' &&
+  value !== null &&
+  'subscriptionId' in value &&
+  typeof value.subscriptionId === 'string' &&
+  'data' in value;
 
 const defaultReconnect: ReconnectOptions = { initialDelayMs: 500, maxDelayMs: 10_000 };
 
@@ -65,13 +89,13 @@ export function reconnectDelay(attempt: number, options: ReconnectOptions): numb
 export function createConnection(options: ConnectionOptions): Connection {
   const factory = options.socket ?? webSocketFactory;
   const reconnect = options.reconnect ?? defaultReconnect;
-  const subscribeMethod = options.subscribeMethod ?? 'subscribe';
-  const unsubscribeMethod = options.unsubscribeMethod ?? 'unsubscribe';
 
   const state = createStore<ConnectionState>(() => ({ status: 'connecting', attempts: 0 }));
   const inFlight = new Map<string, Pending>();
   const queued: { request: RpcRequest; pending: Pending }[] = [];
   const subscriptions = new Map<string, Subscription>();
+  // Server subscription id -> key in `subscriptions`, for the current socket only.
+  const byServerId = new Map<string, string>();
   let socket: SocketHandle | undefined;
   let open = false;
   let closedByUser = false;
@@ -100,9 +124,9 @@ export function createConnection(options: ConnectionOptions): Connection {
     if (!parsed.success) return;
     const message = parsed.data;
     if ('subscription' in message) {
-      for (const listener of subscriptions.get(message.subscription)?.listeners ?? []) {
-        listener(message.data);
-      }
+      const key = byServerId.get(message.subscription);
+      const subscription = key === undefined ? undefined : subscriptions.get(key);
+      if (subscription) deliver(subscription, message.data);
       return;
     }
     const pending = inFlight.get(message.id);
@@ -112,6 +136,33 @@ export function createConnection(options: ConnectionOptions): Connection {
     else pending.resolve(message.result);
   };
 
+  const deliver = (subscription: Subscription, data: unknown) => {
+    subscription.last = data;
+    subscription.hasLast = true;
+    for (const listener of subscription.listeners) listener(data);
+  };
+
+  const sendSubscribe = (key: string, subscription: Subscription) => {
+    const params =
+      subscription.threadId === undefined
+        ? { topic: subscription.topic }
+        : { topic: subscription.topic, threadId: subscription.threadId };
+    transmit(makeRequest('subscribe', params), {
+      resolve: (result) => {
+        if (!isSubscribeResult(result)) return;
+        // Stopped while the answer was on its way, or replaced by a newer subscription.
+        if (subscriptions.get(key) !== subscription) {
+          transmit(makeRequest('unsubscribe', { subscriptionId: result.subscriptionId }), ignore);
+          return;
+        }
+        subscription.serverId = result.subscriptionId;
+        byServerId.set(result.subscriptionId, key);
+        deliver(subscription, result.data);
+      },
+      reject: () => undefined,
+    });
+  };
+
   const connect = () => {
     retryTimer = undefined;
     state.setState({ status: state.getState().attempts === 0 ? 'connecting' : 'reconnecting' });
@@ -119,15 +170,16 @@ export function createConnection(options: ConnectionOptions): Connection {
       onOpen: () => {
         open = true;
         state.setState({ status: 'open', attempts: 0 });
-        for (const [name, subscription] of subscriptions) {
-          transmit(makeRequest(subscribeMethod, { name, params: subscription.params }), ignore);
-        }
+        for (const [key, subscription] of subscriptions) sendSubscribe(key, subscription);
         for (const item of queued.splice(0)) transmit(item.request, item.pending);
       },
       onMessage: handleMessage,
       onClose: () => {
         open = false;
         socket = undefined;
+        // Server subscriptions end with their connection; the next open subscribes again.
+        byServerId.clear();
+        for (const subscription of subscriptions.values()) subscription.serverId = undefined;
         for (const pending of inFlight.values()) pending.reject(new Error('Connection lost'));
         inFlight.clear();
         if (closedByUser) {
@@ -157,20 +209,34 @@ export function createConnection(options: ConnectionOptions): Connection {
         else queued.push({ request, pending });
       });
     },
-    subscribe(name, params, onData) {
-      let subscription = subscriptions.get(name);
+    subscribe(topic, params, onData) {
+      const threadId = params?.threadId;
+      const key = subscriptionKey(topic, threadId);
+      let subscription = subscriptions.get(key);
       if (!subscription) {
-        subscription = { params, listeners: new Set() };
-        subscriptions.set(name, subscription);
-        if (open) transmit(makeRequest(subscribeMethod, { name, params }), ignore);
+        subscription = {
+          topic,
+          threadId,
+          listeners: new Set(),
+          serverId: undefined,
+          last: undefined,
+          hasLast: false,
+        };
+        subscriptions.set(key, subscription);
+        if (open) sendSubscribe(key, subscription);
+      } else if (subscription.hasLast) {
+        onData(subscription.last);
       }
       subscription.listeners.add(onData);
       const current = subscription;
       return () => {
         current.listeners.delete(onData);
-        if (current.listeners.size > 0 || subscriptions.get(name) !== current) return;
-        subscriptions.delete(name);
-        if (open) transmit(makeRequest(unsubscribeMethod, { name }), ignore);
+        if (current.listeners.size > 0 || subscriptions.get(key) !== current) return;
+        subscriptions.delete(key);
+        const { serverId } = current;
+        if (serverId === undefined) return;
+        byServerId.delete(serverId);
+        if (open) transmit(makeRequest('unsubscribe', { subscriptionId: serverId }), ignore);
       };
     },
     close() {

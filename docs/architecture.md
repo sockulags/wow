@@ -47,10 +47,10 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   with their connection.
 - **Client runtime.** `packages/client-runtime` queues requests until the socket opens, fails
   in-flight requests when it drops, reconnects with capped exponential backoff and subscribes again
-  after every reconnect. It reads the port and token from `server.json` (`ServerInfo`). Its
-  subscribe message is still `subscribe {name, params}` / `unsubscribe {name}`, which does not
-  match the server's `subscribe {topic, threadId?}` / `unsubscribe {subscriptionId}` yet; the unit
-  that first connects the web app to the server aligns them.
+  after every reconnect. It reads the port and token from `server.json` (`ServerInfo`). It
+  subscribes with `subscribe {topic, threadId?}`, keeps the returned `subscriptionId` per socket to
+  route pushes and to `unsubscribe {subscriptionId}`, and shares one server subscription between
+  listeners of the same topic and thread (a late listener gets the last rows at once).
 - **Commands → events → projections.** A request becomes a command. The orchestrator (pure
   function, no I/O) turns the command plus current projection into events. One SQLite transaction
   appends the events, updates projections and records the command receipt (idempotent retries).
@@ -159,7 +159,7 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   with every `turn/start`. Details in `packages/provider-codex/README.md`.
 - **Provider service** (`apps/server/src/providers/service.ts`). Thread commands
   (`thread.create`, `thread.sendMessage`, `thread.interrupt`, `thread.configure`,
-  `approval.answer`, `question.answer`) become events; after commit the service sends the
+  `thread.setPinned`, `approval.answer`, `question.answer`) become events; after commit the service sends the
   matching `ProviderCommand` to the instance's adapter (one adapter per instance, created on first
   use). `thread.sendMessage` starts turn `<threadId>:turn:<n>` with the thread's model, effort,
   permission mode and stored provider session id as `resumeId`. Adapter events are queued and
@@ -167,7 +167,8 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   (`core/threads.ts`) turns into rows: text and reasoning deltas append to one
   `assistant_text`/`reasoning` item per provider item id (`{text}`), tool calls are `tool_call`
   items (`{name, input, output, status}`), `approval` and `question` items point at their
-  `approvals`/`questions` rows, the task list is one `task_list` item per turn (`{tasks}`), and
+  `approvals`/`questions` rows (the payload of each item kind is a schema in
+  `packages/contracts`, `*ItemPayload`), the task list is one `task_list` item per turn (`{tasks}`), and
   usage plus context usage merge into one `usage` item per turn and the turn's `usage`. Provider
   ids are only unique per session, so row ids are prefixed with the turn or thread id. Thread
   state: `working` while a turn runs, `needs_you` while an approval or question is open, `idle`
@@ -187,6 +188,11 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   the temp directory and reports `claude_code_version` from the init message and the account from
   `accountInfo()`; the server stores them on the instance. `listModels` uses `supportedModels()` of
   a live session or a short-lived query.
+- **Chat options.** What the thread header offers per provider kind (permission modes, the
+  effort that leaves the choice to the provider, the compact message) is `providerChatOptions`
+  in `packages/contracts`, because the web app cannot import the adapters. The keys are the ones
+  the adapters accept. Models and their efforts come from `provider.listModels`. Compact is
+  Claude's `/compact` sent as a message; codex has none in the adapter yet.
 - **Instances.** A provider instance is one binary + one config directory + env. Several instances
   of the same kind are allowed (work and personal accounts). A thread remembers its instance and
   can only resume on an instance with the same config directory.
@@ -294,7 +300,8 @@ commands, so they are events like everything else; the server reads SQLite on ev
 change applies at once, and services holding derived state listen with `onChange`. The page picks the editor from the zod schema type; schemas that need a special editor
 carry `.meta({ widget: 'keybinding' | 'keyValue' })` (see `Keybinding` and `KeyValueList`). Objects
 render their fields; anything else falls back to a JSON editor. Until the settings RPC exists the
-web app uses the in-memory `SettingsSource` from `packages/client-runtime`. Initial groups: providers (testTimeoutMs), calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
+web app uses the in-memory `SettingsSource` from `packages/client-runtime`. Initial groups: providers (testTimeoutMs), chat
+(contextMeter, resumePrompt), calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
 outlook (pollSeconds, folders, requestTimeoutMs, mailRail), scheduler (tickSeconds, missedPolicy,
 notifications, paused), workflows (templates, handoverTemplate), skills (directories, includeClaudePlugins),
 trackers (jira: baseUrl, authMode `cloud-basic`|`pat`, projectKey, issueType, email; github:
@@ -342,6 +349,19 @@ toolchain the install deliberately avoids, and electron-builder's rebuild is off
 stop), and CI runs it before building the NSIS installer on `windows-latest`. No code signing, no
 auto-update.
 
+## Chat view
+
+`apps/web/src/chat`. `/chat` shows the thread list (grouped Needs you, Working, Idle, Done; failed
+threads sit under Idle with a marker; pinned first, then by `updatedAt`) next to `/chat/new` (the
+draft: provider instance, project or folder, model, effort, permission mode; the thread is created
+with the first message, titled by its first line) or `/chat/$threadId`. A thread subscribes to
+`threads`, `turns`, `threadItems`, `approvals` and `questions`; whether a turn runs comes from
+`turns`, never from a local timer. Rows skip layout off screen (`content-visibility: auto`) and
+tool input and output only render while a row is open, which keeps long conversations cheap
+without a virtual list. Palette commands: every thread, New thread, Switch provider (a thread
+keeps its instance, so this opens a draft on the other instance in the same project or folder) and
+Stop turn while a turn runs.
+
 ## Look
 
 T3 Code is the reference: dark neutral surface, one left sidebar, main area, optional right panel,
@@ -359,4 +379,7 @@ copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
 - Outlook: bridge script tested on `windows-latest` with Outlook absent (expects the "unavailable"
   path) and the mock everywhere.
 - Web: Playwright against the server with `WOW_OUTLOOK=mock` and `WOW_PROVIDERS=mock` (a mock
-  adapter that replays fixtures and asks for an approval and a question).
+  adapter that replays fixtures and asks for an approval and a question). The chat tests start
+  `apps/web/e2e/server.ts`: the server with a scripted `MockProviderAdapter` registered as the
+  claude and codex factories (the prompt picks the scenario), one seeded instance and project,
+  and skill rows written straight into the projection until skills discovery dispatches them.

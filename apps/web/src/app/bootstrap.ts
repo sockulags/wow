@@ -6,6 +6,7 @@ import {
   endpointFromUrl,
   type Connection,
 } from '@wow/client-runtime';
+import { createDraftStore } from '@/chat/draft';
 import { createLayoutStore, type Runtime } from './runtime';
 
 declare global {
@@ -33,6 +34,7 @@ export function createRuntime(): Runtime {
   return {
     connection,
     layout: createLayoutStore(),
+    draft: createDraftStore(),
     // The settings RPC lands with the server core (U2); until then settings live in memory.
     settings: createSettingsStore(createMemorySettingsSource()),
   };

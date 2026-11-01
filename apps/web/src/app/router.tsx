@@ -7,14 +7,11 @@ import {
   redirect,
   type RouterHistory,
 } from '@tanstack/react-router';
+import { ChatHome, ChatLayout } from '@/chat/chat-view';
+import { NewThreadView } from '@/chat/new-thread';
+import { ThreadView } from '@/chat/thread-view';
 import { SettingsPage } from '@/settings/settings-page';
-import {
-  BacklogView,
-  CalendarView,
-  ChatView,
-  NotFoundView,
-  WorkflowsView,
-} from '@/views/empty-views';
+import { BacklogView, CalendarView, NotFoundView, WorkflowsView } from '@/views/empty-views';
 import { isSettingGroup, settingsByGroup } from './sections';
 import { Shell } from './shell';
 
@@ -40,7 +37,35 @@ const calendarRoute = createRoute({
 const chatRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/chat',
-  component: ChatView,
+  component: ChatLayout,
+});
+
+const chatIndexRoute = createRoute({
+  getParentRoute: () => chatRoute,
+  path: '/',
+  // The desktop tray opens `/chat?new=1`.
+  validateSearch: (search: Record<string, unknown>): { new?: string } =>
+    search['new'] === undefined ? {} : { new: String(search['new']) },
+  beforeLoad: ({ search }) => {
+    if (search.new !== undefined) throw redirect({ to: '/chat/new' });
+  },
+  component: ChatHome,
+});
+
+const newThreadRoute = createRoute({
+  getParentRoute: () => chatRoute,
+  path: '/new',
+  component: NewThreadView,
+});
+
+const threadRoute = createRoute({
+  getParentRoute: () => chatRoute,
+  path: '/$threadId',
+  component: function ThreadRoute() {
+    const { threadId } = threadRoute.useParams();
+    // Keyed so switching threads starts from fresh scroll and composer state.
+    return <ThreadView key={threadId} threadId={threadId} />;
+  },
 });
 
 const workflowsRoute = createRoute({
@@ -76,7 +101,7 @@ export const settingsGroupRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   calendarRoute,
-  chatRoute,
+  chatRoute.addChildren([chatIndexRoute, newThreadRoute, threadRoute]),
   workflowsRoute,
   backlogRoute,
   settingsIndexRoute,

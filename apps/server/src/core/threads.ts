@@ -24,6 +24,7 @@ type ThreadCommand = Extract<
       | 'thread.sendMessage'
       | 'thread.interrupt'
       | 'thread.configure'
+      | 'thread.setPinned'
       | 'approval.answer'
       | 'question.answer'
       | 'provider.events';
@@ -225,6 +226,17 @@ export function decideThread(
             changes,
             updatedAt: now,
           },
+        },
+      ];
+    }
+    case 'thread.setPinned': {
+      const thread = requireThread(read, command.threadId);
+      if (thread.pinned === command.pinned) return [];
+      return [
+        {
+          kind: 'thread.pinned',
+          aggregate: thread.id,
+          payload: { threadId: thread.id, pinned: command.pinned },
         },
       ];
     }
