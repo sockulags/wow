@@ -80,9 +80,11 @@ describe('workflow contracts', () => {
 describe('settings registry', () => {
   const entries: [string, SettingDefinition][] = Object.entries(settingsRegistry);
 
-  it('fills in the calendar, scheduler, appearance and keybindings groups', () => {
+  it('fills in the calendar, outlook, scheduler, appearance and keybindings groups', () => {
     const groups = new Set(entries.map(([, definition]) => definition.group));
-    expect(groups).toEqual(new Set(['calendar', 'scheduler', 'appearance', 'keybindings']));
+    expect(groups).toEqual(
+      new Set(['calendar', 'outlook', 'scheduler', 'appearance', 'keybindings']),
+    );
   });
 
   it('accepts shortcuts with modifiers or empty, and marks the schema as a keybinding', () => {

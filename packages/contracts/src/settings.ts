@@ -156,6 +156,48 @@ export const settingsRegistry = {
     default: 14,
     scope: 'global',
   }),
+  'outlook.pollSeconds': defineSetting({
+    schema: z.number().int().min(15).max(3600),
+    group: 'outlook',
+    label: 'Poll interval (seconds)',
+    description: 'How often calendar items and unread mail are read from Outlook.',
+    default: 60,
+    scope: 'global',
+  }),
+  'outlook.folders': defineSetting({
+    schema: z.array(z.string().min(1)).min(1),
+    group: 'outlook',
+    label: 'Mail folders',
+    description:
+      'Folders whose unread mail is shown in the mail rail. "Inbox" is the default inbox; other names are looked up under it, then at the top of the mailbox.',
+    default: ['Inbox'],
+    scope: 'global',
+  }),
+  'outlook.requestTimeoutMs': defineSetting({
+    schema: z.number().int().min(1000).max(300000),
+    group: 'outlook',
+    label: 'Request timeout (ms)',
+    description:
+      'How long one request to Outlook may take. A request that takes longer (for example while Outlook shows a dialog) marks Outlook unavailable and restarts the bridge on the next poll.',
+    default: 20000,
+    scope: 'global',
+  }),
+  'outlook.mailRail': defineSetting({
+    schema: z.boolean(),
+    group: 'outlook',
+    label: 'Mail rail',
+    description: 'Read unread mail from Outlook and show it next to the calendar.',
+    default: true,
+    scope: 'global',
+  }),
+  'outlook.mailLimit': defineSetting({
+    schema: z.number().int().min(1).max(500),
+    group: 'outlook',
+    label: 'Mail rail size',
+    description: 'Most unread messages read per poll, newest first. The count covers all of them.',
+    default: 50,
+    scope: 'global',
+  }),
   'scheduler.tickSeconds': defineSetting({
     schema: z.number().int().min(5).max(3600),
     group: 'scheduler',
