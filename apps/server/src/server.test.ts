@@ -1,5 +1,5 @@
 import { ServerMessage, type RpcResponse, type SubscriptionPush } from '@wow/contracts';
-import { SecretStore, plainProtector } from '@wow/secrets';
+import { SecretStore, defaultProtector, plainProtector } from '@wow/secrets';
 import { access, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -272,7 +272,12 @@ describe('secret store in the wow home', () => {
   it.runIf(process.platform === 'win32')(
     'protects secrets with DPAPI on Windows',
     async () => {
-      const store = new SecretStore({ dir: server.home });
+      const store = new SecretStore({
+        dir: server.home,
+        protector: defaultProtector(process.platform, {
+          timeoutMs: () => server.settings.get('advanced.secretsTimeoutMs'),
+        }),
+      });
       expect(store.protection).toBe('dpapi');
       await store.set('jira', 'plain-token-value');
       const raw = await readFile(path.join(server.home, 'secrets.json'), 'utf8');

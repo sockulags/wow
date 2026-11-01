@@ -1,5 +1,5 @@
 import type { ServerMessage } from '@wow/contracts';
-import { SecretStore, type Protector } from '@wow/secrets';
+import { SecretStore, defaultProtector, type Protector } from '@wow/secrets';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -99,9 +99,14 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const settings = new SettingsService(database.db, engine);
   logger = createLogger(() => settings.get('advanced.logLevel'), options.logSink);
   const subscriptions = new Subscriptions(database.db, engine);
-  const secrets = new SecretStore(
-    options.protector ? { dir: home, protector: options.protector } : { dir: home },
-  );
+  const secrets = new SecretStore({
+    dir: home,
+    protector:
+      options.protector ??
+      defaultProtector(options.platform ?? process.platform, {
+        timeoutMs: () => settings.get('advanced.secretsTimeoutMs'),
+      }),
+  });
   const providers = new ProviderAdapters(options.hooks?.providers ?? {}, env);
   const handlers = createHandlers({
     engine,

@@ -169,6 +169,15 @@ export const settingsRegistry = {
     default: 'info',
     scope: 'global',
   }),
+  'advanced.secretsTimeoutMs': defineSetting({
+    schema: z.number().int().min(1000).max(600_000),
+    group: 'advanced',
+    label: 'Secret store timeout (ms)',
+    description:
+      'How long one DPAPI protect or unprotect call may take on Windows before it is stopped and reported as failed.',
+    default: 30_000,
+    scope: 'global',
+  }),
 } as const satisfies Record<string, SettingDefinition>;
 
 export type SettingsRegistry = typeof settingsRegistry;

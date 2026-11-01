@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -55,7 +55,10 @@ describe('SecretStore', () => {
   it.runIf(process.platform === 'win32')(
     'protects values with DPAPI on Windows',
     async () => {
-      const store = new SecretStore({ dir, protector: dpapiProtector() });
+      const store = new SecretStore({
+        dir,
+        protector: dpapiProtector({ timeoutMs: () => 20_000 }),
+      });
       await store.set('token', 'plain-value-ä');
       const raw = await readFile(path.join(dir, secretsFileName), 'utf8');
       expect(raw).toContain('"protection": "dpapi"');
@@ -63,5 +66,22 @@ describe('SecretStore', () => {
       expect(await store.get('token')).toBe('plain-value-ä');
     },
     30_000,
+  );
+
+  // A stand-in for a PowerShell that never answers. Off Windows only: spawn cannot start a script
+  // there without a shell.
+  it.runIf(process.platform !== 'win32')(
+    'stops a DPAPI call that hangs and lets later writes run',
+    async () => {
+      const hang = path.join(dir, 'hang.sh');
+      await writeFile(hang, '#!/bin/sh\nexec sleep 30\n');
+      await chmod(hang, 0o755);
+      const store = new SecretStore({
+        dir,
+        protector: dpapiProtector({ executable: hang, timeoutMs: () => 100 }),
+      });
+      await expect(store.set('a', 'x')).rejects.toThrow('timed out after 100 ms');
+      await expect(store.set('b', 'y')).rejects.toThrow('timed out after 100 ms');
+    },
   );
 });

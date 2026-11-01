@@ -28,9 +28,21 @@ const dpapiScript = (operation: 'Protect' | 'Unprotect'): string =>
     '[Console]::Out.Write([Convert]::ToBase64String($result))',
   ].join('; ');
 
+export interface DpapiOptions {
+  // Read on every call so a settings change applies without a restart (advanced.secretsTimeoutMs).
+  readonly timeoutMs: () => number;
+  readonly executable?: string;
+}
+
 // The script travels as -EncodedCommand and the value through stdin, so neither quoting nor the
-// process command line ever carries the secret.
-function runPowerShell(executable: string, script: string, input: string): Promise<string> {
+// process command line ever carries the secret. A hung PowerShell is killed after the timeout,
+// otherwise it would also stall every queued secrets write behind it.
+function runPowerShell(
+  executable: string,
+  timeoutMs: number,
+  script: string,
+  input: string,
+): Promise<string> {
   const encoded = Buffer.from(script, 'utf16le').toString('base64');
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -40,32 +52,46 @@ function runPowerShell(executable: string, script: string, input: string): Promi
     );
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
-    child.on('error', reject);
+    child.stdin.on('error', () => undefined);
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
     child.on('close', (code) => {
-      if (code === 0) resolve(stdout.trim());
+      clearTimeout(timer);
+      if (timedOut) reject(new Error(`DPAPI call timed out after ${String(timeoutMs)} ms`));
+      else if (code === 0) resolve(stdout.trim());
       else reject(new Error(`DPAPI call failed (exit ${String(code)}): ${stderr.trim()}`));
     });
     child.stdin.end(input);
   });
 }
 
-export function dpapiProtector(executable = 'powershell.exe'): Protector {
+export function dpapiProtector(options: DpapiOptions): Protector {
+  const run = (operation: 'Protect' | 'Unprotect', input: string) =>
+    runPowerShell(
+      options.executable ?? 'powershell.exe',
+      options.timeoutMs(),
+      dpapiScript(operation),
+      input,
+    );
   return {
     kind: 'dpapi',
-    protect: (plain) =>
-      runPowerShell(executable, dpapiScript('Protect'), Buffer.from(plain).toString('base64')),
+    protect: (plain) => run('Protect', Buffer.from(plain).toString('base64')),
     unprotect: async (stored) =>
-      Buffer.from(
-        await runPowerShell(executable, dpapiScript('Unprotect'), stored),
-        'base64',
-      ).toString('utf8'),
+      Buffer.from(await run('Unprotect', stored), 'base64').toString('utf8'),
   };
 }
 
-export function defaultProtector(platform: NodeJS.Platform = process.platform): Protector {
-  return platform === 'win32' ? dpapiProtector() : plainProtector;
+export function defaultProtector(platform: NodeJS.Platform, options: DpapiOptions): Protector {
+  return platform === 'win32' ? dpapiProtector(options) : plainProtector;
 }
 
 interface SecretsFile {
@@ -88,7 +114,7 @@ const isSecretsFile = (value: unknown): value is SecretsFile => {
 export interface SecretStoreOptions {
   // The wow home directory; the store lives in `<dir>/secrets.json`.
   readonly dir: string;
-  readonly protector?: Protector;
+  readonly protector: Protector;
 }
 
 export class SecretStore {
@@ -99,7 +125,7 @@ export class SecretStore {
 
   constructor(options: SecretStoreOptions) {
     this.file = path.join(options.dir, secretsFileName);
-    this.protector = options.protector ?? defaultProtector();
+    this.protector = options.protector;
   }
 
   get protection(): SecretProtection {
