@@ -21,6 +21,20 @@ export const SettingGroup = z.enum([
 ]);
 export type SettingGroup = z.infer<typeof SettingGroup>;
 
+// Where a stored value applies: 'global', 'project:<id>' or 'provider:<id>'. Reads resolve
+// provider over project over global over the registry default.
+export const SettingScopeRef = z
+  .string()
+  .regex(/^(global|project:.+|provider:.+)$/, 'Use global, project:<id> or provider:<id>');
+export type SettingScopeRef = z.infer<typeof SettingScopeRef>;
+
+// Settings marked `secret` store this reference; the value lives in the secret store.
+export const SecretRef = z.object({ secretRef: z.string().min(1) }).strict();
+export type SecretRef = z.infer<typeof SecretRef>;
+
+export const LogLevel = z.enum(['error', 'warn', 'info', 'debug']);
+export type LogLevel = z.infer<typeof LogLevel>;
+
 export interface SettingDefinition<S extends z.ZodType = z.ZodType> {
   readonly schema: S;
   readonly group: SettingGroup;
@@ -252,6 +266,33 @@ export const settingsRegistry = {
   'keybindings.goWorkflows': keybinding('Go to Workflows', 'Open the workflows.', 'Mod+3'),
   'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+4'),
   'keybindings.goSettings': keybinding('Go to Settings', 'Open the settings.', 'Mod+,'),
+  'advanced.port': defineSetting({
+    schema: z.number().int().min(0).max(65535),
+    group: 'advanced',
+    label: 'Server port',
+    description:
+      'Local port the server listens on (127.0.0.1 only). 0 picks a free port at every start.',
+    default: 0,
+    scope: 'global',
+    restartRequired: true,
+  }),
+  'advanced.logLevel': defineSetting({
+    schema: LogLevel,
+    group: 'advanced',
+    label: 'Log level',
+    description: 'How much the server writes to its log.',
+    default: 'info',
+    scope: 'global',
+  }),
+  'advanced.secretsTimeoutMs': defineSetting({
+    schema: z.number().int().min(1000).max(600_000),
+    group: 'advanced',
+    label: 'Secret store timeout (ms)',
+    description:
+      'How long one DPAPI protect or unprotect call may take on Windows before it is stopped and reported as failed.',
+    default: 30_000,
+    scope: 'global',
+  }),
 } as const satisfies Record<string, SettingDefinition>;
 
 export type SettingsRegistry = typeof settingsRegistry;

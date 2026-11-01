@@ -1,0 +1,117 @@
+import { subscriptionTopics, type SubscribeParams, type SubscriptionTopic } from '@wow/contracts';
+import { asc, eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import type { Db } from '../db/database.js';
+import * as t from '../db/schema.js';
+import type { Engine } from './engine.js';
+
+// Reads the current rows of a topic. Thread-scoped topics only read one thread.
+export function snapshot(db: Db, params: SubscribeParams): unknown[] {
+  const threadId = params.threadId ?? '';
+  const rows = ((): unknown[] => {
+    switch (params.topic) {
+      case 'projects':
+        return db.select().from(t.projects).orderBy(asc(t.projects.name)).all();
+      case 'providerInstances':
+        return db.select().from(t.providerInstances).orderBy(asc(t.providerInstances.name)).all();
+      case 'threads':
+        return db.select().from(t.threads).orderBy(asc(t.threads.createdAt)).all();
+      case 'turns':
+        return db
+          .select()
+          .from(t.turns)
+          .where(eq(t.turns.threadId, threadId))
+          .orderBy(asc(t.turns.index))
+          .all();
+      case 'threadItems':
+        return db
+          .select()
+          .from(t.threadItems)
+          .where(eq(t.threadItems.threadId, threadId))
+          .orderBy(asc(t.threadItems.index))
+          .all();
+      case 'approvals':
+        return db.select().from(t.approvals).where(eq(t.approvals.threadId, threadId)).all();
+      case 'questions':
+        return db.select().from(t.questions).where(eq(t.questions.threadId, threadId)).all();
+      case 'calendarItems':
+        return db.select().from(t.calendarItems).orderBy(asc(t.calendarItems.start)).all();
+      case 'mailItems':
+        return db.select().from(t.mailItems).orderBy(asc(t.mailItems.receivedAt)).all();
+      case 'outlookStatus':
+        return db
+          .select({
+            lastSyncAt: t.outlookStatus.lastSyncAt,
+            lastError: t.outlookStatus.lastError,
+            bridgeVersion: t.outlookStatus.bridgeVersion,
+          })
+          .from(t.outlookStatus)
+          .all();
+      case 'backlogItems':
+        return db.select().from(t.backlogItems).orderBy(asc(t.backlogItems.createdAt)).all();
+      case 'workflows':
+        return db.select().from(t.workflows).orderBy(asc(t.workflows.name)).all();
+      case 'workflowRuns':
+        return db.select().from(t.workflowRuns).orderBy(asc(t.workflowRuns.startedAt)).all();
+      case 'triggers':
+        return db.select().from(t.triggers).orderBy(asc(t.triggers.runAt)).all();
+      case 'skills':
+        return db.select().from(t.skills).orderBy(asc(t.skills.name)).all();
+      case 'settings':
+        return db
+          .select()
+          .from(t.settings)
+          .orderBy(asc(t.settings.key), asc(t.settings.scope))
+          .all();
+    }
+  })();
+  // Rows leave the server only in their contract shape.
+  const row = subscriptionTopics[params.topic].row;
+  return rows.map((value) => row.parse(value));
+}
+
+export type Push = (subscriptionId: string, data: unknown[]) => void;
+
+interface Subscription {
+  readonly params: SubscribeParams;
+  readonly push: Push;
+}
+
+// Keeps the open subscriptions and pushes a fresh snapshot of each affected topic after a commit.
+export class Subscriptions {
+  readonly #db: Db;
+  readonly #open = new Map<string, Subscription>();
+
+  constructor(db: Db, engine: Engine) {
+    this.#db = db;
+    engine.onCommit((commit) => this.#changed(commit.topics));
+  }
+
+  subscribe(params: SubscribeParams, push: Push): { subscriptionId: string; data: unknown[] } {
+    const subscriptionId = randomUUID();
+    this.#open.set(subscriptionId, { params, push });
+    return { subscriptionId, data: snapshot(this.#db, params) };
+  }
+
+  unsubscribe(subscriptionId: string): boolean {
+    return this.#open.delete(subscriptionId);
+  }
+
+  get size(): number {
+    return this.#open.size;
+  }
+
+  #changed(topics: ReadonlySet<SubscriptionTopic>): void {
+    const cache = new Map<string, unknown[]>();
+    for (const [subscriptionId, subscription] of this.#open) {
+      if (!topics.has(subscription.params.topic)) continue;
+      const cacheKey = `${subscription.params.topic}:${subscription.params.threadId ?? ''}`;
+      let data = cache.get(cacheKey);
+      if (!data) {
+        data = snapshot(this.#db, subscription.params);
+        cache.set(cacheKey, data);
+      }
+      subscription.push(subscriptionId, data);
+    }
+  }
+}

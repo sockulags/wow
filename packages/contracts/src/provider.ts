@@ -138,3 +138,12 @@ export const ProviderEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('turnInterrupted'), ...ThreadScoped }),
 ]);
 export type ProviderEvent = z.infer<typeof ProviderEvent>;
+
+// What every provider adapter implements. The server owns adapters, feeds them commands and
+// turns the events they emit into thread commands; nothing outside an adapter sees its wire format.
+export interface ProviderAdapter {
+  readonly kind: ProviderKind;
+  send(command: ProviderCommand): Promise<unknown>;
+  onEvent(listener: (event: ProviderEvent) => void): () => void;
+  dispose(): Promise<void>;
+}

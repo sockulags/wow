@@ -1,3 +1,12 @@
 packages:
   - apps/*
   - packages/*
+
+onlyBuiltDependencies:
+  - esbuild
+
+# better-sqlite3 13 ships N-API prebuilds for win32, linux and darwin inside the package and loads
+# them at runtime. Its binding.gyp still makes pnpm run node-gyp, which needs a C++ toolchain that
+# CI runners and user machines may not have, so the build step is skipped on purpose.
+ignoredBuiltDependencies:
+  - better-sqlite3

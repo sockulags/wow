@@ -9,6 +9,12 @@
   "references": [
     {
       "path": "../../packages/contracts"
+    },
+    {
+      "path": "../../packages/secrets"
+    },
+    {
+      "path": "../../packages/outlook-bridge"
     }
   ]
 }
