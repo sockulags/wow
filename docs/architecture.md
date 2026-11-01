@@ -100,7 +100,7 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   input mode (an `AsyncIterable<SDKUserMessage>` prompt) so `interrupt()`, `setModel()` and
   `setPermissionMode()` work mid-session. `pathToClaudeCodeExecutable` from the instance's binary
   path, `env: {...process.env, CLAUDE_CONFIG_DIR, ...instance.env}`, `settingSources:
-  ['user','project','local']` so skills and plugins load, `includePartialMessages: true` for
+['user','project','local']` so skills and plugins load, `includePartialMessages: true` for
   deltas, `resume` with the stored session id, `canUseTool` turns a prompt into `approvalRequested`
   and an `AskUserQuestion` call into `questionAsked`. `effort` passes through. Usage comes from
   the result message and `getContextUsage()`.
