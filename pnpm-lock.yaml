@@ -34,6 +34,9 @@ importers:
       '@wow/outlook-bridge':
         specifier: workspace:*
         version: link:../../packages/outlook-bridge
+      '@wow/provider-claude':
+        specifier: workspace:*
+        version: link:../../packages/provider-claude
       '@wow/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets

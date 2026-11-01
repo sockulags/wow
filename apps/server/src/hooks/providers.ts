@@ -1,12 +1,16 @@
 import type {
   ProviderAdapter,
+  ProviderAdapterContext,
   ProviderCommand,
   ProviderEvent,
   ProviderInstance,
   ProviderKind,
 } from '@wow/contracts';
 
-export type ProviderAdapterFactory = (instance: ProviderInstance) => ProviderAdapter;
+export type ProviderAdapterFactory = (
+  instance: ProviderInstance,
+  context: ProviderAdapterContext,
+) => ProviderAdapter;
 
 // Maps a provider command to the events the mock answers with. The default echoes the prompt.
 export type MockScript = (command: ProviderCommand) => ProviderEvent[];
@@ -41,7 +45,15 @@ export class MockProviderAdapter implements ProviderAdapter {
     setImmediate(() => {
       for (const event of events) for (const listener of this.#listeners) listener(event);
     });
-    return Promise.resolve(command.type === 'listModels' ? ['mock-model'] : { ok: true });
+    if (command.type === 'listModels') {
+      return Promise.resolve([
+        { id: 'mock-model', label: 'Mock model', description: '', efforts: ['low', 'high'] },
+      ]);
+    }
+    if (command.type === 'test') {
+      return Promise.resolve({ ok: true, account: 'mock', version: 'mock', message: null });
+    }
+    return Promise.resolve({ ok: true });
   }
 
   onEvent(listener: (event: ProviderEvent) => void): () => void {
@@ -76,10 +88,10 @@ export class ProviderAdapters {
     return this.#mock;
   }
 
-  create(instance: ProviderInstance): ProviderAdapter {
+  create(instance: ProviderInstance, context: ProviderAdapterContext): ProviderAdapter {
     if (this.#mock) return new MockProviderAdapter(instance.kind);
     const factory = this.#factories[instance.kind];
     if (!factory) throw new Error(`No adapter is installed for ${instance.kind} providers`);
-    return factory(instance);
+    return factory(instance, context);
   }
 }

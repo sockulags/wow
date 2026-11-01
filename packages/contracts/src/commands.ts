@@ -1,6 +1,24 @@
 import { z } from 'zod';
-import { Project } from './projections.js';
-import { SettingScopeRef } from './settings.js';
+import {
+  Approval,
+  Project,
+  ProviderInstance,
+  ProviderInstanceStatus,
+  Question,
+  Thread,
+  ThreadItem,
+  Turn,
+  TurnState,
+  Usage,
+} from './projections.js';
+import {
+  ApprovalDecision,
+  ProviderEvent,
+  ProviderKind,
+  ProviderTestResult,
+  ThreadState,
+} from './provider.js';
+import { SecretRef, SettingScopeRef } from './settings.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
 // add their own members to both unions.
@@ -35,9 +53,65 @@ export const Command = z.discriminatedUnion('type', [
     value: z.unknown(),
   }),
   z.object({ type: z.literal('setting.reset'), key: z.string().min(1), scope: SettingScopeRef }),
+  z.object({
+    type: z.literal('providerInstance.create'),
+    providerInstanceId: Id,
+    kind: ProviderKind,
+    name: z.string().min(1),
+    binaryPath: z.string(),
+    configDir: z.string(),
+    env: z.record(z.string(), z.union([z.string(), SecretRef])),
+    launchArgs: z.array(z.string()),
+    defaultModel: z.string().min(1).nullable().optional(),
+    defaultEffort: z.string().min(1).nullable().optional(),
+    defaultPermissionMode: z.string().min(1).nullable().optional(),
+  }),
+  z.object({
+    type: z.literal('thread.create'),
+    threadId: Id,
+    providerInstanceId: Id,
+    projectId: Id.optional(),
+    cwd: z.string().min(1),
+    branch: z.string().min(1).optional(),
+    title: z.string().optional(),
+    model: z.string().min(1),
+    effort: z.string().min(1),
+    permissionMode: z.string().min(1),
+  }),
+  // Starts a turn with the thread's current model, effort and permission mode (spec 14, 17).
+  z.object({ type: z.literal('thread.sendMessage'), threadId: Id, text: z.string().min(1) }),
+  // Stops the running turn; what it produced so far stays (spec 23).
+  z.object({ type: z.literal('thread.interrupt'), threadId: Id }),
+  z.object({
+    type: z.literal('thread.configure'),
+    threadId: Id,
+    model: z.string().min(1).optional(),
+    effort: z.string().min(1).optional(),
+    permissionMode: z.string().min(1).optional(),
+  }),
+  z.object({ type: z.literal('approval.answer'), approvalId: Id, decision: ApprovalDecision }),
+  z.object({ type: z.literal('question.answer'), questionId: Id, answer: z.string() }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command['type'];
+
+// Commands only the server issues: what provider adapters report, and test results. They go
+// through the same pipeline as client commands but are not accepted over RPC.
+export const InternalCommand = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('provider.events'),
+    threadId: Id,
+    events: z.array(ProviderEvent).min(1),
+  }),
+  z.object({
+    type: z.literal('providerInstance.recordTest'),
+    providerInstanceId: Id,
+    result: ProviderTestResult,
+  }),
+]);
+export type InternalCommand = z.infer<typeof InternalCommand>;
+
+export type ServerCommand = Command | InternalCommand;
 
 export const ProjectChanges = Project.pick({
   name: true,
@@ -46,6 +120,15 @@ export const ProjectChanges = Project.pick({
   defaultModel: true,
 }).partial();
 export type ProjectChanges = z.infer<typeof ProjectChanges>;
+
+export const ThreadChanges = Thread.pick({
+  model: true,
+  effort: true,
+  permissionMode: true,
+}).partial();
+export type ThreadChanges = z.infer<typeof ThreadChanges>;
+
+const Timestamp = z.iso.datetime({ offset: true });
 
 export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('project.created'), aggregate: Id, payload: Project }),
@@ -68,6 +151,133 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('setting.reset'),
     aggregate: Id,
     payload: z.object({ key: z.string().min(1), scope: SettingScopeRef }),
+  }),
+  z.object({
+    kind: z.literal('providerInstance.created'),
+    aggregate: Id,
+    payload: ProviderInstance,
+  }),
+  z.object({
+    kind: z.literal('providerInstance.tested'),
+    aggregate: Id,
+    payload: z.object({
+      providerInstanceId: Id,
+      status: ProviderInstanceStatus,
+      account: z.string().nullable(),
+      version: z.string().nullable(),
+      statusMessage: z.string().nullable(),
+    }),
+  }),
+  z.object({ kind: z.literal('thread.created'), aggregate: Id, payload: Thread }),
+  z.object({
+    kind: z.literal('thread.configured'),
+    aggregate: Id,
+    payload: z.object({
+      threadId: Id,
+      providerInstanceId: Id,
+      changes: ThreadChanges,
+      updatedAt: Timestamp,
+    }),
+  }),
+  z.object({
+    kind: z.literal('thread.sessionStarted'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, providerSessionId: z.string().min(1), updatedAt: Timestamp }),
+  }),
+  z.object({
+    kind: z.literal('thread.stateChanged'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, state: ThreadState, updatedAt: Timestamp }),
+  }),
+  z.object({
+    kind: z.literal('turn.started'),
+    aggregate: Id,
+    payload: z.object({
+      turn: Turn,
+      item: ThreadItem,
+      providerInstanceId: Id,
+      // What the provider gets, so the effect does not read the projection again.
+      start: z.object({
+        cwd: z.string().min(1),
+        prompt: z.string(),
+        model: z.string().min(1),
+        effort: z.string().min(1),
+        permissionMode: z.string().min(1),
+        resumeId: z.string().min(1).nullable(),
+      }),
+    }),
+  }),
+  z.object({
+    kind: z.literal('turn.interruptRequested'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, turnId: Id, providerInstanceId: Id }),
+  }),
+  z.object({
+    kind: z.literal('turn.usageRecorded'),
+    aggregate: Id,
+    payload: z.object({ turnId: Id, usage: Usage }),
+  }),
+  z.object({
+    kind: z.literal('turn.ended'),
+    aggregate: Id,
+    payload: z.object({
+      threadId: Id,
+      turnId: Id,
+      state: TurnState.exclude(['running']),
+      threadState: ThreadState,
+      endedAt: Timestamp,
+    }),
+  }),
+  z.object({ kind: z.literal('threadItem.added'), aggregate: Id, payload: ThreadItem }),
+  // Streaming text grows by appending, so the history does not store every intermediate text.
+  z.object({
+    kind: z.literal('threadItem.appended'),
+    aggregate: Id,
+    payload: z.object({ itemId: Id, field: z.enum(['text', 'output']), delta: z.string() }),
+  }),
+  // Shallow-merges into the item's payload.
+  z.object({
+    kind: z.literal('threadItem.patched'),
+    aggregate: Id,
+    payload: z.object({
+      itemId: Id,
+      patch: z.record(z.string(), z.unknown()),
+      streaming: z.boolean().optional(),
+    }),
+  }),
+  z.object({
+    kind: z.literal('approval.requested'),
+    aggregate: Id,
+    payload: z.object({ approval: Approval, item: ThreadItem }),
+  }),
+  z.object({
+    kind: z.literal('approval.answered'),
+    aggregate: Id,
+    payload: z.object({
+      approvalId: Id,
+      threadId: Id,
+      providerInstanceId: Id,
+      providerApprovalId: Id,
+      decision: ApprovalDecision,
+      decidedAt: Timestamp,
+    }),
+  }),
+  z.object({
+    kind: z.literal('question.asked'),
+    aggregate: Id,
+    payload: z.object({ question: Question, item: ThreadItem }),
+  }),
+  z.object({
+    kind: z.literal('question.answered'),
+    aggregate: Id,
+    payload: z.object({
+      questionId: Id,
+      threadId: Id,
+      providerInstanceId: Id,
+      providerQuestionId: Id,
+      answer: z.string(),
+      answeredAt: Timestamp,
+    }),
   }),
 ]);
 export type DomainEvent = z.infer<typeof DomainEvent>;

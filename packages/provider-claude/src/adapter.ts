@@ -646,7 +646,7 @@ export class ClaudeAdapter implements ProviderAdapter {
 
   #cancelPending(threadId: string): void {
     for (const pending of [this.#approvals, this.#questions] as const) {
-      for (const waiting of [...pending.values()]) {
+      for (const waiting of pending.values()) {
         if (waiting.threadId === threadId) waiting.resolve(undefined);
       }
     }

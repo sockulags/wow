@@ -1,8 +1,8 @@
 import {
   settingsRegistry,
-  type Command,
   type DispatchResult,
   type DomainEvent,
+  type ServerCommand,
   type SettingDefinition,
   type SubscriptionTopic,
 } from '@wow/contracts';
@@ -68,7 +68,7 @@ export class Engine {
     return () => this.#listeners.delete(listener);
   }
 
-  dispatch(commandId: string, command: Command): DispatchResult {
+  dispatch(commandId: string, command: ServerCommand): DispatchResult {
     const print = fingerprint(command);
     const outcome = this.#db.transaction((tx) => {
       const receipt = tx

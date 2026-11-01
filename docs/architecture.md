@@ -39,7 +39,8 @@ electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, Git
   `packages/contracts` schemas: `rpcMethods` maps each method to its params and result schema.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
-  `secrets.set`, `secrets.delete`, `secrets.status`. Error codes are `RpcErrorCode`.
+  `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test` and `provider.listModels`
+  (`{providerInstanceId}`). Error codes are `RpcErrorCode`.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
@@ -58,9 +59,13 @@ electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, Git
   A command carries a client-chosen `commandId`; `command_receipts` records it with a fingerprint
   of the command and the event sequence numbers, so a retry returns the first receipt
   (`duplicate: true`) without new events, and reusing an id for a different command is a
-  `conflict`. A rejected command stores nothing, so its id can be retried.
+  `conflict`. A rejected command stores nothing, so its id can be retried. Commands only the
+  server issues (`provider.events`, `providerInstance.recordTest`) are `InternalCommand`s: they go
+  through the same engine but `dispatch` over RPC does not accept them.
 - **Hooks.** `startServer({hooks})` takes provider adapter factories per kind (`ProviderAdapter`
-  in contracts), an Outlook service factory that receives `mock` or `bridge` (mock off Windows or
+  in contracts, created with the instance and a `ProviderAdapterContext` that resolves the
+  instance env with its secrets and reads `providers.testTimeoutMs`; `main.ts` registers the
+  Claude adapter), an Outlook service factory that receives `mock` or `bridge` (mock off Windows or
   with `WOW_OUTLOOK=mock`), and further background services. Services read settings and change
   state only through `dispatch`. `WOW_PROVIDERS=mock` gives every provider instance the mock
   adapter.
@@ -84,7 +89,8 @@ electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, Git
 ```text
 projects         id, name, cwd, defaultProviderInstanceId, defaultModel, createdAt
 provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env(json, secret keys by ref),
-                 launchArgs, defaultModel, defaultEffort, defaultPermissionMode, status, account
+                 launchArgs, defaultModel, defaultEffort, defaultPermissionMode, status, account,
+                 version?, statusMessage?   -- from the last "Test"
 threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessionId?, title, model,
                  effort, permissionMode, state ('idle'|'working'|'needs_you'|'done'|'failed'),
                  pinned, runId?, stepId?, createdAt, updatedAt
@@ -145,6 +151,36 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   installed `codex` version (the `codex-rs/app-server-protocol` crate in the openai/codex
   repository, which can generate TypeScript types). Pin the protocol version seen in `initialize`
   and fail the "Test" action with a clear message when it is unknown.
+- **Provider service** (`apps/server/src/providers/service.ts`). Thread commands
+  (`thread.create`, `thread.sendMessage`, `thread.interrupt`, `thread.configure`,
+  `approval.answer`, `question.answer`) become events; after commit the service sends the
+  matching `ProviderCommand` to the instance's adapter (one adapter per instance, created on first
+  use). `thread.sendMessage` starts turn `<threadId>:turn:<n>` with the thread's model, effort,
+  permission mode and stored provider session id as `resumeId`. Adapter events are queued and
+  stored one batch per thread per tick as a `provider.events` command, which the orchestrator
+  (`core/threads.ts`) turns into rows: text and reasoning deltas append to one
+  `assistant_text`/`reasoning` item per provider item id (`{text}`), tool calls are `tool_call`
+  items (`{name, input, output, status}`), `approval` and `question` items point at their
+  `approvals`/`questions` rows, the task list is one `task_list` item per turn (`{tasks}`), and
+  usage plus context usage merge into one `usage` item per turn and the turn's `usage`. Provider
+  ids are only unique per session, so row ids are prefixed with the turn or thread id. Thread
+  state: `working` while a turn runs, `needs_you` while an approval or question is open, `idle`
+  after a completed or interrupted turn, `failed` after a failed one. An effect that cannot start
+  or interrupt a turn fails the turn with the reason; a turn still `running` at startup failed
+  with the previous server process and is marked so. Events after a turn ended are dropped.
+- **Claude details.** The SDK version is pinned exactly in `packages/provider-claude/package.json`.
+  `launchArgs` (`--flag value`, `--flag=value`, `--flag`) become the SDK's `extraArgs`. Effort
+  `default` leaves the effort to Claude Code; other values must be an SDK `EffortLevel`. A thread
+  keeps one `query()` while the server runs; model, permission mode and effort changes are applied
+  to it before the next prompt. `canUseTool` waits for the answer: allow once, allow for this
+  session (the SDK's suggested rules with destination `session`) or deny; an interrupt denies with
+  `interrupt: true`. `AskUserQuestion` may hold several questions; each is asked separately and the
+  tool runs with `answers` once all are answered. The task list comes from `TodoWrite` (whole list)
+  or `TaskCreate`/`TaskUpdate` (one task at a time). `total_cost_usd` is cumulative per query, so a
+  turn's cost is the difference to the previous result. `test` runs a tool-less one-turn query in
+  the temp directory and reports `claude_code_version` from the init message and the account from
+  `accountInfo()`; the server stores them on the instance. `listModels` uses `supportedModels()` of
+  a live session or a short-lived query.
 - **Instances.** A provider instance is one binary + one config directory + env. Several instances
   of the same kind are allowed (work and personal accounts). A thread remembers its instance and
   can only resume on an instance with the same config directory.
@@ -252,7 +288,7 @@ commands, so they are events like everything else; the server reads SQLite on ev
 change applies at once, and services holding derived state listen with `onChange`. The page picks the editor from the zod schema type; schemas that need a special editor
 carry `.meta({ widget: 'keybinding' | 'keyValue' })` (see `Keybinding` and `KeyValueList`). Objects
 render their fields; anything else falls back to a JSON editor. Until the settings RPC exists the
-web app uses the in-memory `SettingsSource` from `packages/client-runtime`. Initial groups: providers, calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
+web app uses the in-memory `SettingsSource` from `packages/client-runtime`. Initial groups: providers (testTimeoutMs), calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
 outlook (pollSeconds, folders, requestTimeoutMs, mailRail), scheduler (tickSeconds, missedPolicy,
 notifications), workflows (templates, handoverTemplate), skills (directories, includeClaudePlugins),
 trackers (jira: baseUrl, authMode `cloud-basic`|`pat`, projectKey, issueType, email; github:

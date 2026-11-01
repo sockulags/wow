@@ -39,13 +39,13 @@ const instance = (): ProviderInstance => ({
   statusMessage: null,
 });
 
-describe.runIf(real)('Claude adapter against the installed claude', () => {
-  const adapter = () =>
-    new ClaudeAdapter(instance(), {
-      resolveEnv: () => Promise.resolve({}),
-      testTimeoutMs: () => 120_000,
-    });
+const adapter = () =>
+  new ClaudeAdapter(instance(), {
+    resolveEnv: () => Promise.resolve({}),
+    testTimeoutMs: () => 120_000,
+  });
 
+describe.runIf(real)('Claude adapter against the installed claude', () => {
   it('passes the test action with a version', { timeout: 180_000 }, async () => {
     const claude = adapter();
     const result = ProviderTestResult.parse(await claude.send({ type: 'test' }));

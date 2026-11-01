@@ -122,11 +122,9 @@ function harness(turns: FakeStep[][], onEvent?: (event: ProviderEvent) => void):
     // Every event the adapter emits must pass the contract schema.
     events.push(ProviderEventSchema.parse(event));
     onEvent?.(event);
-    for (const entry of [...waiting]) {
-      if (entry.type === event.type) {
-        waiting.splice(waiting.indexOf(entry), 1);
-        entry.resolve(event);
-      }
+    for (const entry of waiting.filter((candidate) => candidate.type === event.type)) {
+      waiting.splice(waiting.indexOf(entry), 1);
+      entry.resolve(event);
     }
   });
   return {
