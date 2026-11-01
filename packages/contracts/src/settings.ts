@@ -21,6 +21,20 @@ export const SettingGroup = z.enum([
 ]);
 export type SettingGroup = z.infer<typeof SettingGroup>;
 
+// Where a stored value applies: 'global', 'project:<id>' or 'provider:<id>'. Reads resolve
+// provider over project over global over the registry default.
+export const SettingScopeRef = z
+  .string()
+  .regex(/^(global|project:.+|provider:.+)$/, 'Use global, project:<id> or provider:<id>');
+export type SettingScopeRef = z.infer<typeof SettingScopeRef>;
+
+// Settings marked `secret` store this reference; the value lives in the secret store.
+export const SecretRef = z.object({ secretRef: z.string().min(1) }).strict();
+export type SecretRef = z.infer<typeof SecretRef>;
+
+export const LogLevel = z.enum(['error', 'warn', 'info', 'debug']);
+export type LogLevel = z.infer<typeof LogLevel>;
+
 export interface SettingDefinition<S extends z.ZodType = z.ZodType> {
   readonly schema: S;
   readonly group: SettingGroup;
@@ -135,6 +149,24 @@ export const settingsRegistry = {
     label: 'Desktop notifications',
     description: 'Notify when a workflow run starts, waits for you, or fails.',
     default: true,
+    scope: 'global',
+  }),
+  'advanced.port': defineSetting({
+    schema: z.number().int().min(0).max(65535),
+    group: 'advanced',
+    label: 'Server port',
+    description:
+      'Local port the server listens on (127.0.0.1 only). 0 picks a free port at every start.',
+    default: 0,
+    scope: 'global',
+    restartRequired: true,
+  }),
+  'advanced.logLevel': defineSetting({
+    schema: LogLevel,
+    group: 'advanced',
+    label: 'Log level',
+    description: 'How much the server writes to its log.',
+    default: 'info',
     scope: 'global',
   }),
 } as const satisfies Record<string, SettingDefinition>;

@@ -1,3 +1,3 @@
 # @wow/secrets
 
-Secret store: DPAPI on Windows, a 0600 file elsewhere. Built in U2.
+Secret store in `<WOW_HOME>/secrets.json`: values protected with DPAPI (current user) on Windows, a plain file with mode 0600 elsewhere. Settings keep a `{secretRef}` and the server resolves it here.

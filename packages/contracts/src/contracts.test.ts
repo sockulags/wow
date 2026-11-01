@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  Command,
   ProviderCommand,
+  SettingScopeRef,
+  SubscribeParams,
+  rpcMethods,
   ProviderEvent,
   RpcResponse,
   ServerMessage,
@@ -78,9 +82,9 @@ describe('workflow contracts', () => {
 describe('settings registry', () => {
   const entries: [string, SettingDefinition][] = Object.entries(settingsRegistry);
 
-  it('fills in the calendar and scheduler groups', () => {
+  it('fills in the calendar, scheduler and advanced groups', () => {
     const groups = new Set(entries.map(([, definition]) => definition.group));
-    expect(groups).toEqual(new Set(['calendar', 'scheduler']));
+    expect(groups).toEqual(new Set(['calendar', 'scheduler', 'advanced']));
   });
 
   it.each(entries)('%s has a default that passes its own schema', (_key, definition) => {
@@ -105,5 +109,32 @@ describe('settings registry', () => {
         days: ['monday'],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('server contracts', () => {
+  it('accepts only the three setting scopes', () => {
+    expect(SettingScopeRef.safeParse('global').success).toBe(true);
+    expect(SettingScopeRef.safeParse('project:p1').success).toBe(true);
+    expect(SettingScopeRef.safeParse('provider:claude-work').success).toBe(true);
+    expect(SettingScopeRef.safeParse('project:').success).toBe(false);
+    expect(SettingScopeRef.safeParse('team:x').success).toBe(false);
+  });
+
+  it('needs a threadId for thread-scoped topics', () => {
+    expect(SubscribeParams.safeParse({ topic: 'projects' }).success).toBe(true);
+    expect(SubscribeParams.safeParse({ topic: 'threadItems' }).success).toBe(false);
+    expect(SubscribeParams.safeParse({ topic: 'threadItems', threadId: 't1' }).success).toBe(true);
+  });
+
+  it('dispatches only known commands', () => {
+    const params = rpcMethods.dispatch.params;
+    expect(
+      params.safeParse({
+        commandId: 'c1',
+        command: { type: 'setting.set', key: 'k', scope: 'global', value: 1 },
+      }).success,
+    ).toBe(true);
+    expect(Command.safeParse({ type: 'project.explode', projectId: 'p1' }).success).toBe(false);
   });
 });
