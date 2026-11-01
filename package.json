@@ -10,7 +10,8 @@
     "typecheck": "tsc -b",
     "lint": "oxlint --deny-warnings && prettier --check .",
     "format": "prettier --write .",
-    "test": "pnpm -r --sort test"
+    "test": "pnpm -r --sort test",
+    "e2e": "pnpm --filter @wow/web e2e"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

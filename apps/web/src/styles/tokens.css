@@ -1,0 +1,71 @@
+/*
+ * The only place colors are defined. Dark is the default (the <html> element starts with the
+ * `dark` class); the light theme drops it. Neutral surfaces, muted borders, accent only on state.
+ */
+
+:root {
+  --radius: 0.5rem;
+
+  --background: oklch(0.99 0 0);
+  --foreground: oklch(0.2 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0 0);
+  --primary: oklch(0.25 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.96 0 0);
+  --secondary-foreground: oklch(0.25 0 0);
+  --muted: oklch(0.96 0 0);
+  --muted-foreground: oklch(0.52 0 0);
+  --accent: oklch(0.95 0 0);
+  --accent-foreground: oklch(0.25 0 0);
+  --destructive: oklch(0.58 0.22 27);
+  --border: oklch(0.91 0 0);
+  --input: oklch(0.91 0 0);
+  --ring: oklch(0.7 0 0);
+
+  --sidebar: oklch(0.975 0 0);
+  --sidebar-foreground: oklch(0.3 0 0);
+  --sidebar-accent: oklch(0.93 0 0);
+  --sidebar-accent-foreground: oklch(0.2 0 0);
+  --sidebar-border: oklch(0.91 0 0);
+
+  /* State colors: the only accents in the shell. */
+  --state-needs-you: oklch(0.75 0.16 85);
+  --state-working: oklch(0.6 0.15 250);
+  --state-done: oklch(0.6 0.14 150);
+  --state-failed: oklch(0.58 0.22 27);
+}
+
+.dark {
+  --background: oklch(0.16 0 0);
+  --foreground: oklch(0.93 0 0);
+  --card: oklch(0.19 0 0);
+  --card-foreground: oklch(0.93 0 0);
+  --popover: oklch(0.2 0 0);
+  --popover-foreground: oklch(0.93 0 0);
+  --primary: oklch(0.9 0 0);
+  --primary-foreground: oklch(0.2 0 0);
+  --secondary: oklch(0.24 0 0);
+  --secondary-foreground: oklch(0.93 0 0);
+  --muted: oklch(0.24 0 0);
+  --muted-foreground: oklch(0.65 0 0);
+  --accent: oklch(0.26 0 0);
+  --accent-foreground: oklch(0.93 0 0);
+  --destructive: oklch(0.65 0.19 22);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.55 0 0);
+
+  --sidebar: oklch(0.14 0 0);
+  --sidebar-foreground: oklch(0.82 0 0);
+  --sidebar-accent: oklch(0.22 0 0);
+  --sidebar-accent-foreground: oklch(0.95 0 0);
+  --sidebar-border: oklch(1 0 0 / 8%);
+
+  --state-needs-you: oklch(0.82 0.15 85);
+  --state-working: oklch(0.7 0.13 250);
+  --state-done: oklch(0.72 0.13 150);
+  --state-failed: oklch(0.68 0.19 22);
+}

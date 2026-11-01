@@ -4,3 +4,5 @@ out/
 release/
 coverage/
 .claude/
+test-results/
+playwright-report/

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  Keybinding,
+  KeyValueList,
   ProviderCommand,
   ProviderEvent,
   RpcResponse,
@@ -78,9 +80,24 @@ describe('workflow contracts', () => {
 describe('settings registry', () => {
   const entries: [string, SettingDefinition][] = Object.entries(settingsRegistry);
 
-  it('fills in the calendar and scheduler groups', () => {
+  it('fills in the calendar, scheduler, appearance and keybindings groups', () => {
     const groups = new Set(entries.map(([, definition]) => definition.group));
-    expect(groups).toEqual(new Set(['calendar', 'scheduler']));
+    expect(groups).toEqual(new Set(['calendar', 'scheduler', 'appearance', 'keybindings']));
+  });
+
+  it('accepts shortcuts with modifiers or empty, and marks the schema as a keybinding', () => {
+    expect(Keybinding.safeParse('Mod+K').success).toBe(true);
+    expect(Keybinding.safeParse('Mod+Shift+,').success).toBe(true);
+    expect(Keybinding.safeParse('').success).toBe(true);
+    expect(Keybinding.safeParse('Mod+').success).toBe(false);
+    expect(Keybinding.safeParse('Hyper+K').success).toBe(false);
+    expect(Keybinding.meta()?.['widget']).toBe('keybinding');
+  });
+
+  it('rejects duplicate keys in a key-value list', () => {
+    const entry = { key: 'TOKEN', value: 'x', secret: true };
+    expect(KeyValueList.safeParse([entry]).success).toBe(true);
+    expect(KeyValueList.safeParse([entry, entry]).success).toBe(false);
   });
 
   it.each(entries)('%s has a default that passes its own schema', (_key, definition) => {
