@@ -8,5 +8,9 @@
   },
   "scripts": {
     "test": "vitest run --dir src"
+  },
+  "dependencies": {
+    "@wow/contracts": "workspace:*",
+    "zod": "^4.6.7"
   }
 }

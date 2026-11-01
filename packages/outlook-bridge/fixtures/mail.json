@@ -1,0 +1,36 @@
+{
+  "messages": [
+    {
+      "entryId": "mock-mail-build",
+      "folder": "Inbox",
+      "from": "Build Robot",
+      "subject": "Nightly build for lantern-web passed",
+      "minutesAgo": 12,
+      "snippet": "All 412 checks passed on the nightly run."
+    },
+    {
+      "entryId": "mock-mail-review",
+      "folder": "Inbox",
+      "from": "Cleo Marsh",
+      "subject": "Notes before tomorrow's design review",
+      "minutesAgo": 47,
+      "snippet": "I put the open questions about the search panel at the top of the doc."
+    },
+    {
+      "entryId": "mock-mail-offsite",
+      "folder": "Inbox",
+      "from": "Ada Lindqvist",
+      "subject": "Offsite agenda draft",
+      "minutesAgo": 180,
+      "snippet": "Here is a first cut of the agenda. Add anything you want covered."
+    },
+    {
+      "entryId": "mock-mail-newsletter",
+      "folder": "Newsletters",
+      "from": "The Invented Weekly",
+      "subject": "Issue 42: tiny tools",
+      "minutesAgo": 300,
+      "snippet": "This week: a calendar that fits in a tray icon."
+    }
+  ]
+}

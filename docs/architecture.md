@@ -44,6 +44,12 @@ electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, Git
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
   with their connection.
+- **Client runtime.** `packages/client-runtime` queues requests until the socket opens, fails
+  in-flight requests when it drops, reconnects with capped exponential backoff and subscribes again
+  after every reconnect. It reads the port and token from `server.json` (`ServerInfo`). Its
+  subscribe message is still `subscribe {name, params}` / `unsubscribe {name}`, which does not
+  match the server's `subscribe {topic, threadId?}` / `unsubscribe {subscriptionId}` yet; the unit
+  that first connects the web app to the server aligns them.
 - **Commands → events → projections.** A request becomes a command. The orchestrator (pure
   function, no I/O) turns the command plus current projection into events. One SQLite transaction
   appends the events, updates projections and records the command receipt (idempotent retries).
@@ -146,27 +152,66 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
 ## Outlook bridge
 
 `packages/outlook-bridge/bridge.ps1` is started once with `powershell.exe -NoProfile
--ExecutionPolicy Bypass -File bridge.ps1` and speaks JSON lines:
+-NonInteractive -ExecutionPolicy Bypass -File bridge.ps1` and speaks JSON lines. Every answer
+carries the request `id` and either a `result` or an `error` with code `unavailable` (Outlook is
+not running or stopped answering), `bad_request` or `failed`:
 
 ```text
-→ {"id":1,"op":"calendar","from":"2026-11-02T00:00:00+01:00","to":"2026-11-16T00:00:00+01:00"}
-← {"id":1,"items":[{"entryId":"...","subject":"...","start":"...","end":"...","location":"...",
-     "isAllDay":false,"isRecurring":true,"organizer":"...","joinUrl":"https://teams...","busyStatus":2}]}
-→ {"id":2,"op":"unreadMail","folders":["Inbox"],"limit":50}
-← {"id":2,"items":[{"entryId":"...","from":"...","subject":"...","receivedAt":"...","snippet":"..."}],"unreadCount":7}
-→ {"id":3,"op":"open","entryId":"..."}     (Outlook shows the item)
-→ {"id":4,"op":"ping"}
+→ {"id":1,"op":"ping"}
+← {"id":1,"result":{"version":"1","outlook":"available","message":null}}
+→ {"id":2,"op":"calendar","from":"2026-11-02T00:00:00+01:00","to":"2026-11-16T00:00:00+01:00"}
+← {"id":2,"result":{"items":[{"entryId":"...","subject":"...","start":"...","end":"...",
+     "location":"...","isAllDay":false,"isRecurring":true,"isCancelled":false,"organizer":"...",
+     "joinUrl":"https://teams...","busyStatus":2}]}}
+→ {"id":3,"op":"unreadMail","folders":["Inbox"],"limit":50}
+← {"id":3,"result":{"items":[{"entryId":"...","folder":"Inbox","from":"...","subject":"...",
+     "receivedAt":"...","snippet":"..."}],"unreadCount":7}}
+→ {"id":4,"op":"open","entryId":"..."}     (Outlook shows the item)
+← {"id":4,"result":{"opened":true}}
+← {"id":5,"error":{"code":"unavailable","message":"Outlook is not running"}}
 ```
 
-Implementation notes: `New-Object -ComObject Outlook.Application`, `GetNamespace("MAPI")`,
-`GetDefaultFolder(9)` for the calendar with `Items.IncludeRecurrences = $true`, `Sort("[Start]")`
-and a `Restrict` on `[Start]`/`[End]`; `GetDefaultFolder(6)` and `Restrict("[UnRead] = True")` for
-mail. The Teams join link is read from the item body or the `Location` when it looks like a
-`teams.microsoft.com` URL. Every request has a timeout (`outlook.requestTimeoutMs`); a timeout or a
-dead process sets `outlook_status.lastError` and the server restarts the bridge on the next poll.
-`OutlookSource` is the interface; `MockOutlookSource` reads fixtures from
-`packages/outlook-bridge/fixtures` and is selected automatically off Windows and with
-`WOW_OUTLOOK=mock`.
+The schemas for these lines live in `packages/outlook-bridge/src/protocol.ts`, not in
+`packages/contracts`, because they never leave the server.
+
+Implementation notes: the bridge attaches to a running Outlook with
+`[Marshal]::GetActiveObject('Outlook.Application')` instead of `New-Object -ComObject`, so it never
+starts Outlook itself (behavior 3: Outlook not running means "unavailable"). `GetNamespace("MAPI")`,
+`GetDefaultFolder(9)` for the calendar with `Sort("[Start]")`, then `Items.IncludeRecurrences =
+$true`, and a `Restrict` on `[Start]`/`[End]`; iteration stops at the window end because a series
+without an end date never runs out of occurrences. `GetDefaultFolder(6)` and
+`Restrict("[UnRead] = True")` for mail; folder names other than `Inbox` are looked up under the
+inbox, then at the top of the mailbox. Times go out as `DateTimeOffset` strings with the local
+offset. A cancelled meeting that is still in the calendar has `isCancelled` (MeetingStatus 5 or 7).
+The Teams join link is read from the item body or the `Location` when it looks like a
+`teams.microsoft.com/l/meetup-join` URL.
+
+`OutlookSource` is the interface (`ping`, `calendar`, `unreadMail`, `open`, `close`).
+`PowershellOutlookSource` starts the bridge on first use, numbers requests, and times each one out
+after `outlook.requestTimeoutMs`; a timeout (Outlook blocked by a modal dialog) or an exit rejects
+every pending request, kills the process, and the next request starts a fresh one.
+`MockOutlookSource` answers from `packages/outlook-bridge/fixtures` (invented items placed relative
+to today: a weekday standup with a Teams link, a weekly 1:1, an all-day offsite, a cancelled
+meeting, unread mail in two folders) and is selected off Windows and with `WOW_OUTLOOK=mock`
+(`prefersMock`, `createOutlookSource`).
+
+`OutlookSync` polls every `outlook.pollSeconds` (re-read before each poll; one poll at a time). The
+window runs from the start of the current week (`calendar.firstDayOfWeek` in `calendar.zone`) to
+the end of the day `calendar.lookaheadDays` after today. Unread mail is read only while
+`outlook.mailRail` is on, at most `outlook.mailLimit` messages from `outlook.folders`. A poll
+hands the server's `OutlookSink` either a snapshot or a failure:
+
+- **Snapshot.** Calendar rows with id `outlook:<externalId>`, where `externalId` is the EntryID, or
+  `EntryID@<occurrence start>` for a recurring series because occurrences share the EntryID, state
+  `scheduled` or `cancelled`, plus mail rows with id `outlook-mail:<EntryID>`, the unread count and
+  the bridge version. `diffCalendar` and `diffMail` turn a snapshot and the stored rows into
+  upserts and removals: Outlook rows overlapping the window that Outlook no longer returns are
+  removed (deleted or moved meetings), rows outside the window stay; mail rows not returned are
+  removed. The server applies them and sets `outlook_status.lastSyncAt`, clears `lastError` and
+  stores `bridgeVersion`.
+- **Failure.** Code, message and `unavailableSince` (the first failed poll since the last good
+  one, for the "Outlook unavailable since <time>" banner). The server sets
+  `outlook_status.lastError` and keeps the cached rows.
 
 ## Skills discovery
 
@@ -204,7 +249,10 @@ globally, `project` settings also per project, `provider` settings also per proj
 provider instance. Reads resolve provider over project over global over the default, skipping a
 stored value that no longer passes the schema. Writes are `setting.set` / `setting.reset`
 commands, so they are events like everything else; the server reads SQLite on every `get`, so a
-change applies at once, and services holding derived state listen with `onChange`. Initial groups: providers, calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
+change applies at once, and services holding derived state listen with `onChange`. The page picks the editor from the zod schema type; schemas that need a special editor
+carry `.meta({ widget: 'keybinding' | 'keyValue' })` (see `Keybinding` and `KeyValueList`). Objects
+render their fields; anything else falls back to a JSON editor. Until the settings RPC exists the
+web app uses the in-memory `SettingsSource` from `packages/client-runtime`. Initial groups: providers, calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
 outlook (pollSeconds, folders, requestTimeoutMs, mailRail), scheduler (tickSeconds, missedPolicy,
 notifications), workflows (templates, handoverTemplate), skills (directories, includeClaudePlugins),
 trackers (jira: baseUrl, authMode `cloud-basic`|`pat`, projectKey, issueType, email; github:
