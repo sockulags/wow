@@ -33,7 +33,11 @@ electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, Git
 
 - **Transport.** `ws` WebSocket on `127.0.0.1:<port>` with a per-launch token in `~/.wow/server.json`.
   Messages are `{id, method, params}` requests, `{id, result|error}` responses and
-  `{subscription, data}` pushes, all validated with `packages/contracts` schemas.
+  `{subscription, data}` pushes, all validated with `packages/contracts` schemas. The client
+  passes the token as the `token` query parameter, subscribes with `subscribe {name, params}`,
+  stops with `unsubscribe {name}`, and receives pushes whose `subscription` is that name.
+  `packages/client-runtime` queues requests until the socket opens, fails in-flight requests when
+  it drops, reconnects with capped exponential backoff and subscribes again after every reconnect.
 - **Commands → events → projections.** A request becomes a command. The orchestrator (pure
   function, no I/O) turns the command plus current projection into events. One SQLite transaction
   appends the events, updates projections and records the command receipt (idempotent retries).
@@ -174,7 +178,10 @@ with prompt, notify, finish). The server performs them. The step prompt is:
 group, label, description, default, scope: 'global'|'project'|'provider', restartRequired?,
 secret?}`. The server validates writes against it; the settings UI renders groups and fields from
 it (text, number, boolean, enum, list, key-value with secret flag, keybinding). Adding a setting is
-one entry. Initial groups: providers, calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
+one entry. The page picks the editor from the zod schema type; schemas that need a special editor
+carry `.meta({ widget: 'keybinding' | 'keyValue' })` (see `Keybinding` and `KeyValueList`). Objects
+render their fields; anything else falls back to a JSON editor. Until the settings RPC exists the
+web app uses the in-memory `SettingsSource` from `packages/client-runtime`. Initial groups: providers, calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
 outlook (pollSeconds, folders, requestTimeoutMs, mailRail), scheduler (tickSeconds, missedPolicy,
 notifications), workflows (templates, handoverTemplate), skills (directories, includeClaudePlugins),
 trackers (jira: baseUrl, authMode `cloud-basic`|`pat`, projectKey, issueType, email; github:

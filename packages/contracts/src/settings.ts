@@ -71,6 +71,50 @@ export const WorkHours = z
   });
 export type WorkHours = z.infer<typeof WorkHours>;
 
+// A shortcut such as "Mod+K" or "Mod+Shift+P". "Mod" is Ctrl on Windows and Linux and Cmd on
+// macOS. An empty string leaves the command unbound. The `widget` meta tells the settings page to
+// render a key recorder instead of a text box.
+const KEY_PATTERN =
+  /^(?:(?:Mod|Ctrl|Alt|Shift|Meta)\+)*(?:[A-Z0-9]|F(?:[1-9]|1[0-2])|Escape|Enter|Space|Tab|Backspace|Delete|Home|End|PageUp|PageDown|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|[,./;'[\]\\`=-])$/;
+
+export const Keybinding = z
+  .string()
+  .refine((value) => value === '' || KEY_PATTERN.test(value), {
+    message: 'Use modifiers and one key, such as Mod+K or Mod+Shift+P, or leave empty',
+  })
+  .meta({ widget: 'keybinding' });
+export type Keybinding = z.infer<typeof Keybinding>;
+
+// Key-value pairs where each value can be marked secret (provider environment variables). Secret
+// values are stored by the server as references; the field only marks them.
+export const KeyValueEntry = z.object({
+  key: z.string().min(1),
+  value: z.string(),
+  secret: z.boolean(),
+});
+export type KeyValueEntry = z.infer<typeof KeyValueEntry>;
+
+export const KeyValueList = z
+  .array(KeyValueEntry)
+  .refine((entries) => new Set(entries.map((entry) => entry.key)).size === entries.length, {
+    message: 'Keys must be unique',
+  })
+  .meta({ widget: 'keyValue' });
+export type KeyValueList = z.infer<typeof KeyValueList>;
+
+export const Theme = z.enum(['dark', 'light']);
+export type Theme = z.infer<typeof Theme>;
+
+const keybinding = (label: string, description: string, binding: string) =>
+  defineSetting({
+    schema: Keybinding,
+    group: 'keybindings',
+    label,
+    description,
+    default: binding,
+    scope: 'global',
+  });
+
 export const MissedTriggerPolicy = z.enum(['run', 'mark', 'skip']);
 export type MissedTriggerPolicy = z.infer<typeof MissedTriggerPolicy>;
 
@@ -137,6 +181,35 @@ export const settingsRegistry = {
     default: true,
     scope: 'global',
   }),
+  'appearance.theme': defineSetting({
+    schema: Theme,
+    group: 'appearance',
+    label: 'Theme',
+    description: 'Dark or light colors.',
+    default: 'dark',
+    scope: 'global',
+  }),
+  'keybindings.palette': keybinding('Command palette', 'Open the command palette.', 'Mod+K'),
+  'keybindings.toggleSidebar': keybinding(
+    'Toggle sidebar',
+    'Show or hide the left sidebar.',
+    'Mod+B',
+  ),
+  'keybindings.toggleRightPanel': keybinding(
+    'Toggle right panel',
+    'Show or hide the right panel.',
+    'Mod+J',
+  ),
+  'keybindings.toggleTheme': keybinding(
+    'Toggle theme',
+    'Switch between the dark and light theme.',
+    'Mod+Shift+L',
+  ),
+  'keybindings.goCalendar': keybinding('Go to Calendar', 'Open the calendar.', 'Mod+1'),
+  'keybindings.goChat': keybinding('Go to Chat', 'Open the chat.', 'Mod+2'),
+  'keybindings.goWorkflows': keybinding('Go to Workflows', 'Open the workflows.', 'Mod+3'),
+  'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+4'),
+  'keybindings.goSettings': keybinding('Go to Settings', 'Open the settings.', 'Mod+,'),
 } as const satisfies Record<string, SettingDefinition>;
 
 export type SettingsRegistry = typeof settingsRegistry;
