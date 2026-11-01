@@ -1,14 +1,19 @@
 import {
   SecretRef,
-  type Command,
+  type Approval,
   type DomainEvent,
   type Project,
   type ProjectChanges,
+  type Question,
   type RpcErrorCode,
+  type ServerCommand,
   type SettingDefinition,
   type SettingScopeRef,
+  type Thread,
+  type Turn,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
+import { decideThread, isThreadCommand } from './threads.js';
 
 // The orchestrator decides which events a command produces. It is a pure function of the command,
 // a read-only view of the projections and the context; it never writes or performs effects.
@@ -18,6 +23,16 @@ export interface ReadModel {
   providerInstanceExists(id: string): boolean;
   // Stored value at exactly this scope, or undefined when none is stored.
   setting(key: string, scope: SettingScopeRef): { value: unknown } | undefined;
+  thread(id: string): Thread | undefined;
+  runningTurn(threadId: string): Turn | undefined;
+  turnCount(threadId: string): number;
+  // Index the next item of the thread gets.
+  nextItemIndex(threadId: string): number;
+  itemExists(id: string): boolean;
+  approval(id: string): Approval | undefined;
+  question(id: string): Question | undefined;
+  // Approvals and questions of the thread that are still waiting for an answer.
+  openRequests(threadId: string): number;
 }
 
 export interface DecideContext {
@@ -36,7 +51,12 @@ export class CommandRejected extends Error {
   }
 }
 
-export function decide(command: Command, read: ReadModel, context: DecideContext): DomainEvent[] {
+export function decide(
+  command: ServerCommand,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  if (isThreadCommand(command)) return decideThread(command, read, context);
   switch (command.type) {
     case 'project.create': {
       if (read.project(command.projectId)) {

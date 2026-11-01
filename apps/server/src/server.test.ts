@@ -123,20 +123,25 @@ describe('startup', () => {
 
   it('hands out the mock provider adapter with WOW_PROVIDERS=mock', async () => {
     expect(server.providers.mock).toBe(true);
-    const adapter = server.providers.create({
-      id: 'i1',
-      kind: 'codex',
-      name: 'Codex',
-      binaryPath: 'codex',
-      configDir: '/c',
-      env: {},
-      launchArgs: [],
-      defaultModel: null,
-      defaultEffort: null,
-      defaultPermissionMode: null,
-      status: 'unknown',
-      account: null,
-    });
+    const adapter = server.providers.create(
+      {
+        id: 'i1',
+        kind: 'codex',
+        name: 'Codex',
+        binaryPath: 'codex',
+        configDir: '/c',
+        env: {},
+        launchArgs: [],
+        defaultModel: null,
+        defaultEffort: null,
+        defaultPermissionMode: null,
+        status: 'unknown',
+        account: null,
+        version: null,
+        statusMessage: null,
+      },
+      { resolveEnv: () => Promise.resolve({}), testTimeoutMs: () => 1000 },
+    );
     const done = new Promise<string>((resolve) =>
       adapter.onEvent((event) => {
         if (event.type === 'turnCompleted') resolve(event.threadId);
@@ -218,6 +223,66 @@ describe('rpc', () => {
     const retried = await client.request('dispatch', { commandId: 'c1', command });
     expect(retried).toMatchObject({ result: { seqs: [1], duplicate: true } });
     expect(client.messages.filter((message) => 'subscription' in message)).toHaveLength(1);
+  });
+
+  it('runs a thread turn through the provider service and tests instances', async () => {
+    const dispatch = (commandId: string, command: Record<string, unknown>) =>
+      client.request('dispatch', { commandId, command });
+    await dispatch('c1', {
+      type: 'providerInstance.create',
+      providerInstanceId: 'claude-work',
+      kind: 'claude',
+      name: 'Work',
+      binaryPath: 'claude',
+      configDir: '',
+      env: {},
+      launchArgs: [],
+    });
+    expect(
+      await client.request('provider.test', { providerInstanceId: 'claude-work' }),
+    ).toMatchObject({ result: { ok: true, version: 'mock' } });
+    expect(
+      await client.request('provider.listModels', { providerInstanceId: 'claude-work' }),
+    ).toMatchObject({ result: [{ id: 'mock-model' }] });
+
+    await dispatch('c2', {
+      type: 'thread.create',
+      threadId: 't1',
+      providerInstanceId: 'claude-work',
+      cwd: '/w',
+      model: 'mock-model',
+      effort: 'high',
+      permissionMode: 'default',
+    });
+    const turnEnded = new Promise<void>((resolve) => {
+      const off = server.engine.onCommit((commit) => {
+        if (commit.events.some(({ event }) => event.kind === 'turn.ended')) {
+          off();
+          resolve();
+        }
+      });
+    });
+    await dispatch('c3', { type: 'thread.sendMessage', threadId: 't1', text: 'hello' });
+    await turnEnded;
+    const items = await client.request('subscribe', { topic: 'threadItems', threadId: 't1' });
+    expect(items).toMatchObject({
+      result: {
+        data: [
+          { kind: 'user', payload: { text: 'hello' } },
+          { kind: 'assistant_text', payload: { text: 'hello' }, streaming: false },
+          { kind: 'usage' },
+        ],
+      },
+    });
+
+    // Provider events only come from the server's own adapters.
+    expect(
+      await dispatch('c4', {
+        type: 'provider.events',
+        threadId: 't1',
+        events: [{ type: 'turnCompleted', threadId: 't1' }],
+      }),
+    ).toMatchObject({ error: { code: 'invalid_params' } });
   });
 
   it('ends the subscriptions of a closed connection', () => {

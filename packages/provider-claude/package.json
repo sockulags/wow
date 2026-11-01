@@ -10,6 +10,8 @@
     "test": "vitest run --dir src"
   },
   "dependencies": {
-    "@wow/contracts": "workspace:*"
+    "@anthropic-ai/claude-agent-sdk": "0.3.316",
+    "@wow/contracts": "workspace:*",
+    "zod": "^4.6.7"
   }
 }

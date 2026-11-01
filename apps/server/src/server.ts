@@ -17,6 +17,7 @@ import {
   type ServiceContext,
 } from './hooks/index.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
+import { ProviderService } from './providers/service.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
 import { route } from './rpc/router.js';
 import { SettingsService } from './settings/service.js';
@@ -62,6 +63,7 @@ export interface RunningServer {
   readonly subscriptions: Subscriptions;
   readonly secrets: SecretStore;
   readonly providers: ProviderAdapters;
+  readonly providerService: ProviderService;
   readonly logger: Logger;
   stop(): Promise<void>;
 }
@@ -108,11 +110,21 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       }),
   });
   const providers = new ProviderAdapters(options.hooks?.providers ?? {}, env);
+  const providerService = new ProviderService({
+    db: database.db,
+    engine,
+    adapters: providers,
+    settings,
+    secrets,
+    logger,
+  });
+  providerService.recover();
   const handlers = createHandlers({
     engine,
     subscriptions,
     settings,
     secrets,
+    providers: providerService,
     info: { version, home },
   });
 
@@ -133,6 +145,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       wss.once('error', reject);
     });
   } catch (error) {
+    await providerService.stop();
     database.close();
     throw error;
   }
@@ -195,6 +208,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     for (const start of options.hooks?.services ?? []) services.push(await start(context));
   } catch (error) {
     await stopServices();
+    await providerService.stop();
     wss.close();
     await rm(infoFile, { force: true });
     database.close();
@@ -207,6 +221,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const stop = () =>
     (stopped ??= (async () => {
       await stopServices();
+      await providerService.stop();
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       // Leave the file alone if another server instance has replaced it meanwhile.
@@ -226,6 +241,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     subscriptions,
     secrets,
     providers,
+    providerService,
     logger,
     stop,
   };

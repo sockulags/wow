@@ -1,0 +1,301 @@
+{
+  "description": "Invented Agent SDK stream for one turn: streamed text, a Bash call that needs approval, an AskUserQuestion call, a TodoWrite task list, more text and a success result.",
+  "steps": [
+    {
+      "message": {
+        "type": "system",
+        "subtype": "init",
+        "apiKeySource": "none",
+        "claude_code_version": "2.1.316",
+        "cwd": "/work/demo",
+        "tools": ["Bash", "AskUserQuestion", "TodoWrite"],
+        "mcp_servers": [],
+        "model": "claude-sonnet-4-5",
+        "permissionMode": "default",
+        "slash_commands": [],
+        "output_style": "default",
+        "skills": [],
+        "plugins": [],
+        "uuid": "00000000-0000-4000-8000-000000000001",
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "message": {
+        "type": "stream_event",
+        "event": {
+          "type": "message_start",
+          "message": {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5",
+            "content": [],
+            "stop_reason": null,
+            "stop_sequence": null,
+            "usage": { "input_tokens": 10, "output_tokens": 1 }
+          }
+        },
+        "parent_tool_use_id": null,
+        "uuid": "00000000-0000-4000-8000-000000000002",
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "message": {
+        "type": "stream_event",
+        "event": {
+          "type": "content_block_delta",
+          "index": 0,
+          "delta": { "type": "thinking_delta", "thinking": "List the files first." }
+        },
+        "parent_tool_use_id": null,
+        "uuid": "00000000-0000-4000-8000-000000000003",
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "message": {
+        "type": "stream_event",
+        "event": {
+          "type": "content_block_delta",
+          "index": 1,
+          "delta": { "type": "text_delta", "text": "Let me " }
+        },
+        "parent_tool_use_id": null,
+        "uuid": "00000000-0000-4000-8000-000000000004",
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "message": {
+        "type": "stream_event",
+        "event": {
+          "type": "content_block_delta",
+          "index": 1,
+          "delta": { "type": "text_delta", "text": "look." }
+        },
+        "parent_tool_use_id": null,
+        "uuid": "00000000-0000-4000-8000-000000000005",
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "message": {
+        "type": "assistant",
+        "message": {
+          "id": "msg_1",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude-sonnet-4-5",
+          "content": [
+            { "type": "thinking", "thinking": "List the files first.", "signature": "sig" },
+            { "type": "text", "text": "Let me look." },
+            { "type": "tool_use", "id": "toolu_bash", "name": "Bash", "input": { "command": "ls" } }
+          ],
+          "stop_reason": null,
+          "stop_sequence": null,
+          "usage": { "input_tokens": 10, "output_tokens": 20 }
+        },
+        "parent_tool_use_id": null,
+        "uuid": "00000000-0000-4000-8000-000000000006",
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "permission": {
+        "toolName": "Bash",
+        "input": { "command": "ls" },
+        "toolUseID": "toolu_bash",
+        "title": "Claude wants to run ls",
+        "suggestions": [
+          {
+            "type": "addRules",
+            "rules": [{ "toolName": "Bash", "ruleContent": "ls" }],
+            "behavior": "allow",
+            "destination": "localSettings"
+          }
+        ]
+      }
+    },
+    {
+      "message": {
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "toolu_bash",
+              "content": "README.md\nsrc",
+              "is_error": false
+            }
+          ]
+        },
+        "parent_tool_use_id": null,
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "message": {
+        "type": "assistant",
+        "message": {
+          "id": "msg_2",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude-sonnet-4-5",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_ask",
+              "name": "AskUserQuestion",
+              "input": {
+                "questions": [
+                  {
+                    "question": "Which file should I open?",
+                    "header": "File",
+                    "options": [
+                      { "label": "README.md", "description": "The readme" },
+                      { "label": "src", "description": "The sources" }
+                    ],
+                    "multiSelect": false
+                  }
+                ]
+              }
+            }
+          ],
+          "stop_reason": null,
+          "stop_sequence": null,
+          "usage": { "input_tokens": 5, "output_tokens": 5 }
+        },
+        "parent_tool_use_id": null,
+        "uuid": "00000000-0000-4000-8000-000000000007",
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "permission": {
+        "toolName": "AskUserQuestion",
+        "input": {
+          "questions": [
+            {
+              "question": "Which file should I open?",
+              "header": "File",
+              "options": [
+                { "label": "README.md", "description": "The readme" },
+                { "label": "src", "description": "The sources" }
+              ],
+              "multiSelect": false
+            }
+          ]
+        },
+        "toolUseID": "toolu_ask"
+      }
+    },
+    {
+      "message": {
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "toolu_ask",
+              "content": [{ "type": "text", "text": "User answered: README.md" }]
+            }
+          ]
+        },
+        "parent_tool_use_id": null,
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "message": {
+        "type": "assistant",
+        "message": {
+          "id": "msg_3",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude-sonnet-4-5",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_todo",
+              "name": "TodoWrite",
+              "input": {
+                "todos": [
+                  { "content": "Read README.md", "status": "in_progress", "activeForm": "Reading" },
+                  { "content": "Summarize it", "status": "pending", "activeForm": "Summarizing" }
+                ]
+              }
+            }
+          ],
+          "stop_reason": null,
+          "stop_sequence": null,
+          "usage": { "input_tokens": 5, "output_tokens": 5 }
+        },
+        "parent_tool_use_id": null,
+        "uuid": "00000000-0000-4000-8000-000000000008",
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "message": {
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "toolu_todo",
+              "content": "Todos have been modified successfully"
+            }
+          ]
+        },
+        "parent_tool_use_id": null,
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "message": {
+        "type": "assistant",
+        "message": {
+          "id": "msg_4",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude-sonnet-4-5",
+          "content": [{ "type": "text", "text": "The readme says hello." }],
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": { "input_tokens": 5, "output_tokens": 5 }
+        },
+        "parent_tool_use_id": null,
+        "uuid": "00000000-0000-4000-8000-000000000009",
+        "session_id": "sess-1"
+      }
+    },
+    {
+      "message": {
+        "type": "result",
+        "subtype": "success",
+        "duration_ms": 1200,
+        "duration_api_ms": 1000,
+        "is_error": false,
+        "num_turns": 4,
+        "result": "The readme says hello.",
+        "stop_reason": "end_turn",
+        "total_cost_usd": 0.0123,
+        "usage": {
+          "input_tokens": 25,
+          "output_tokens": 35,
+          "cache_creation_input_tokens": 100,
+          "cache_read_input_tokens": 400
+        },
+        "modelUsage": {},
+        "permission_denials": [],
+        "uuid": "00000000-0000-4000-8000-000000000010",
+        "session_id": "sess-1"
+      }
+    }
+  ]
+}

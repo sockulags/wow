@@ -133,6 +133,15 @@ export const MissedTriggerPolicy = z.enum(['run', 'mark', 'skip']);
 export type MissedTriggerPolicy = z.infer<typeof MissedTriggerPolicy>;
 
 export const settingsRegistry = {
+  'providers.testTimeoutMs': defineSetting({
+    schema: z.number().int().min(5000).max(600_000),
+    group: 'providers',
+    label: 'Test timeout (ms)',
+    description:
+      'How long the "Test" action of a provider instance may take, including its trivial turn, before it is reported as failed.',
+    default: 120_000,
+    scope: 'provider',
+  }),
   'calendar.zone': defineSetting({
     schema: TimeZoneSetting,
     group: 'calendar',

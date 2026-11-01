@@ -84,10 +84,18 @@ describe('workflow contracts', () => {
 describe('settings registry', () => {
   const entries: [string, SettingDefinition][] = Object.entries(settingsRegistry);
 
-  it('fills in the calendar, outlook, scheduler, appearance, keybindings and advanced groups', () => {
+  it('fills in the providers, calendar, outlook, scheduler, appearance, keybindings and advanced groups', () => {
     const groups = new Set(entries.map(([, definition]) => definition.group));
     expect(groups).toEqual(
-      new Set(['calendar', 'outlook', 'scheduler', 'appearance', 'keybindings', 'advanced']),
+      new Set([
+        'providers',
+        'calendar',
+        'outlook',
+        'scheduler',
+        'appearance',
+        'keybindings',
+        'advanced',
+      ]),
     );
   });
 

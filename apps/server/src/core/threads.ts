@@ -1,0 +1,564 @@
+import type {
+  DomainEvent,
+  ProviderEvent,
+  ServerCommand,
+  ThreadChanges,
+  ThreadItem,
+  ThreadItemKind,
+  ThreadState,
+  Turn,
+} from '@wow/contracts';
+import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
+
+// Decisions for provider instances, threads, turns, approvals and questions. Provider events
+// arrive as `provider.events` commands from the provider service and become thread items here, so
+// the history and the projections only ever hold the normalized shapes.
+
+type ThreadCommand = Extract<
+  ServerCommand,
+  {
+    type:
+      | 'providerInstance.create'
+      | 'providerInstance.recordTest'
+      | 'thread.create'
+      | 'thread.sendMessage'
+      | 'thread.interrupt'
+      | 'thread.configure'
+      | 'approval.answer'
+      | 'question.answer'
+      | 'provider.events';
+  }
+>;
+
+export const isThreadCommand = (command: ServerCommand): command is ThreadCommand =>
+  command.type.startsWith('providerInstance.') ||
+  command.type.startsWith('thread.') ||
+  command.type.startsWith('approval.') ||
+  command.type.startsWith('question.') ||
+  command.type === 'provider.events';
+
+// Provider ids are only unique per provider session, so stored ids carry the thread or turn.
+export const turnId = (threadId: string, index: number) => `${threadId}:turn:${index}`;
+export const approvalRowId = (threadId: string, providerId: string) => `${threadId}:${providerId}`;
+export const questionRowId = approvalRowId;
+const providerIdOf = (threadId: string, rowId: string) => rowId.slice(threadId.length + 1);
+
+function requireThread(read: ReadModel, threadId: string) {
+  const thread = read.thread(threadId);
+  if (!thread) throw new CommandRejected('not_found', `No thread ${threadId}`);
+  return thread;
+}
+
+export function decideThread(
+  command: ThreadCommand,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const now = context.now;
+  switch (command.type) {
+    case 'providerInstance.create': {
+      if (read.providerInstanceExists(command.providerInstanceId)) {
+        throw new CommandRejected(
+          'conflict',
+          `Provider instance ${command.providerInstanceId} already exists`,
+        );
+      }
+      return [
+        {
+          kind: 'providerInstance.created',
+          aggregate: command.providerInstanceId,
+          payload: {
+            id: command.providerInstanceId,
+            kind: command.kind,
+            name: command.name,
+            binaryPath: command.binaryPath,
+            configDir: command.configDir,
+            env: command.env,
+            launchArgs: command.launchArgs,
+            defaultModel: command.defaultModel ?? null,
+            defaultEffort: command.defaultEffort ?? null,
+            defaultPermissionMode: command.defaultPermissionMode ?? null,
+            status: 'unknown',
+            account: null,
+            version: null,
+            statusMessage: null,
+          },
+        },
+      ];
+    }
+    case 'providerInstance.recordTest': {
+      if (!read.providerInstanceExists(command.providerInstanceId)) {
+        throw new CommandRejected(
+          'not_found',
+          `No provider instance ${command.providerInstanceId}`,
+        );
+      }
+      const { result } = command;
+      return [
+        {
+          kind: 'providerInstance.tested',
+          aggregate: command.providerInstanceId,
+          payload: {
+            providerInstanceId: command.providerInstanceId,
+            status: result.ok ? 'ready' : 'error',
+            account: result.account,
+            version: result.version,
+            statusMessage: result.message,
+          },
+        },
+      ];
+    }
+    case 'thread.create': {
+      if (read.thread(command.threadId)) {
+        throw new CommandRejected('conflict', `Thread ${command.threadId} already exists`);
+      }
+      if (!read.providerInstanceExists(command.providerInstanceId)) {
+        throw new CommandRejected(
+          'not_found',
+          `No provider instance ${command.providerInstanceId}`,
+        );
+      }
+      if (command.projectId !== undefined && !read.project(command.projectId)) {
+        throw new CommandRejected('not_found', `No project ${command.projectId}`);
+      }
+      return [
+        {
+          kind: 'thread.created',
+          aggregate: command.threadId,
+          payload: {
+            id: command.threadId,
+            projectId: command.projectId ?? null,
+            cwd: command.cwd,
+            branch: command.branch ?? null,
+            providerInstanceId: command.providerInstanceId,
+            providerSessionId: null,
+            title: command.title ?? '',
+            model: command.model,
+            effort: command.effort,
+            permissionMode: command.permissionMode,
+            state: 'idle',
+            pinned: false,
+            runId: null,
+            stepId: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      ];
+    }
+    case 'thread.sendMessage': {
+      const thread = requireThread(read, command.threadId);
+      if (read.runningTurn(thread.id)) {
+        throw new CommandRejected('rejected', `Thread ${thread.id} already has a running turn`);
+      }
+      const index = read.turnCount(thread.id);
+      const id = turnId(thread.id, index);
+      return [
+        {
+          kind: 'turn.started',
+          aggregate: thread.id,
+          payload: {
+            turn: {
+              id,
+              threadId: thread.id,
+              index,
+              state: 'running',
+              startedAt: now,
+              endedAt: null,
+              usage: null,
+            },
+            item: {
+              id: `${id}:user`,
+              threadId: thread.id,
+              turnId: id,
+              index: read.nextItemIndex(thread.id),
+              kind: 'user',
+              payload: { text: command.text },
+              streaming: false,
+            },
+            providerInstanceId: thread.providerInstanceId,
+            start: {
+              cwd: thread.cwd,
+              prompt: command.text,
+              model: thread.model,
+              effort: thread.effort,
+              permissionMode: thread.permissionMode,
+              resumeId: thread.providerSessionId,
+            },
+          },
+        },
+      ];
+    }
+    case 'thread.interrupt': {
+      const thread = requireThread(read, command.threadId);
+      const turn = read.runningTurn(thread.id);
+      if (!turn) throw new CommandRejected('rejected', `Thread ${thread.id} has no running turn`);
+      return [
+        {
+          kind: 'turn.interruptRequested',
+          aggregate: thread.id,
+          payload: {
+            threadId: thread.id,
+            turnId: turn.id,
+            providerInstanceId: thread.providerInstanceId,
+          },
+        },
+      ];
+    }
+    case 'thread.configure': {
+      const thread = requireThread(read, command.threadId);
+      const changes: ThreadChanges = {};
+      if (command.model !== undefined && command.model !== thread.model)
+        changes.model = command.model;
+      if (command.effort !== undefined && command.effort !== thread.effort)
+        changes.effort = command.effort;
+      if (command.permissionMode !== undefined && command.permissionMode !== thread.permissionMode)
+        changes.permissionMode = command.permissionMode;
+      if (Object.keys(changes).length === 0) return [];
+      return [
+        {
+          kind: 'thread.configured',
+          aggregate: thread.id,
+          payload: {
+            threadId: thread.id,
+            providerInstanceId: thread.providerInstanceId,
+            changes,
+            updatedAt: now,
+          },
+        },
+      ];
+    }
+    case 'approval.answer': {
+      const approval = read.approval(command.approvalId);
+      if (!approval) throw new CommandRejected('not_found', `No approval ${command.approvalId}`);
+      if (approval.decision !== null) {
+        throw new CommandRejected('conflict', `Approval ${approval.id} was already answered`);
+      }
+      const thread = requireThread(read, approval.threadId);
+      return [
+        {
+          kind: 'approval.answered',
+          aggregate: thread.id,
+          payload: {
+            approvalId: approval.id,
+            threadId: thread.id,
+            providerInstanceId: thread.providerInstanceId,
+            providerApprovalId: providerIdOf(thread.id, approval.id),
+            decision: command.decision,
+            decidedAt: now,
+          },
+        },
+        ...resumeWork(read, thread.id, thread.state, now),
+      ];
+    }
+    case 'question.answer': {
+      const question = read.question(command.questionId);
+      if (!question) throw new CommandRejected('not_found', `No question ${command.questionId}`);
+      if (question.answer !== null) {
+        throw new CommandRejected('conflict', `Question ${question.id} was already answered`);
+      }
+      const thread = requireThread(read, question.threadId);
+      return [
+        {
+          kind: 'question.answered',
+          aggregate: thread.id,
+          payload: {
+            questionId: question.id,
+            threadId: thread.id,
+            providerInstanceId: thread.providerInstanceId,
+            providerQuestionId: providerIdOf(thread.id, question.id),
+            answer: command.answer,
+            answeredAt: now,
+          },
+        },
+        ...resumeWork(read, thread.id, thread.state, now),
+      ];
+    }
+    case 'provider.events':
+      return decideProviderEvents(command.threadId, command.events, read, now);
+  }
+}
+
+// After the last open request of a thread is answered, the agent works again.
+function resumeWork(
+  read: ReadModel,
+  threadId: string,
+  state: ThreadState,
+  now: string,
+): DomainEvent[] {
+  if (state !== 'needs_you' || read.openRequests(threadId) > 1) return [];
+  return [
+    {
+      kind: 'thread.stateChanged',
+      aggregate: threadId,
+      payload: { threadId, state: 'working', updatedAt: now },
+    },
+  ];
+}
+
+const endedThreadState = {
+  completed: 'idle',
+  interrupted: 'idle',
+  failed: 'failed',
+} as const satisfies Record<string, ThreadState>;
+
+// Turns a batch of provider events for one thread into domain events. The read model shows the
+// state before the batch, so items created earlier in the same batch are tracked here.
+function decideProviderEvents(
+  threadId: string,
+  events: readonly ProviderEvent[],
+  read: ReadModel,
+  now: string,
+): DomainEvent[] {
+  const thread = read.thread(threadId);
+  // A thread deleted while its provider was still talking; nothing to record.
+  if (!thread) return [];
+  let turn: Turn | undefined = read.runningTurn(threadId);
+  let state = thread.state;
+  let nextIndex = read.nextItemIndex(threadId);
+  const created = new Set<string>();
+  const out: DomainEvent[] = [];
+  const exists = (id: string) => created.has(id) || read.itemExists(id);
+
+  const item = (
+    current: Turn,
+    id: string,
+    kind: ThreadItemKind,
+    payload: unknown,
+    streaming: boolean,
+  ): ThreadItem => {
+    created.add(id);
+    return { id, threadId, turnId: current.id, index: nextIndex++, kind, payload, streaming };
+  };
+  const add = (
+    current: Turn,
+    id: string,
+    kind: ThreadItemKind,
+    payload: unknown,
+    streaming: boolean,
+  ) =>
+    out.push({
+      kind: 'threadItem.added',
+      aggregate: threadId,
+      payload: item(current, id, kind, payload, streaming),
+    });
+  const patch = (
+    current: Turn,
+    id: string,
+    kind: ThreadItemKind,
+    values: Record<string, unknown>,
+    streaming?: boolean,
+  ) => {
+    if (exists(id)) {
+      out.push({
+        kind: 'threadItem.patched',
+        aggregate: threadId,
+        payload:
+          streaming === undefined
+            ? { itemId: id, patch: values }
+            : { itemId: id, patch: values, streaming },
+      });
+    } else {
+      add(current, id, kind, values, streaming ?? false);
+    }
+  };
+  const setState = (next: ThreadState) => {
+    if (next === state) return;
+    state = next;
+    out.push({
+      kind: 'thread.stateChanged',
+      aggregate: threadId,
+      payload: { threadId, state: next, updatedAt: now },
+    });
+  };
+
+  for (const event of events) {
+    if (event.type === 'session') {
+      if (event.providerSessionId !== thread.providerSessionId) {
+        out.push({
+          kind: 'thread.sessionStarted',
+          aggregate: threadId,
+          payload: { threadId, providerSessionId: event.providerSessionId, updatedAt: now },
+        });
+      }
+      continue;
+    }
+    // Events after the turn ended (late output of an interrupted turn) are dropped.
+    if (!turn) continue;
+    const current = turn;
+    const itemId = (providerItemId: string) => `${current.id}:${providerItemId}`;
+    switch (event.type) {
+      case 'textDelta':
+      case 'reasoningDelta': {
+        const id = itemId(event.itemId);
+        if (exists(id)) {
+          out.push({
+            kind: 'threadItem.appended',
+            aggregate: threadId,
+            payload: { itemId: id, field: 'text', delta: event.delta },
+          });
+        } else {
+          add(
+            current,
+            id,
+            event.type === 'textDelta' ? 'assistant_text' : 'reasoning',
+            { text: event.delta },
+            true,
+          );
+        }
+        break;
+      }
+      case 'toolCallStarted': {
+        const id = itemId(event.itemId);
+        if (!exists(id)) {
+          add(
+            current,
+            id,
+            'tool_call',
+            { name: event.name, input: event.input ?? null, output: '', status: 'running' },
+            true,
+          );
+        }
+        break;
+      }
+      case 'toolCallOutput': {
+        const id = itemId(event.itemId);
+        if (exists(id)) {
+          out.push({
+            kind: 'threadItem.appended',
+            aggregate: threadId,
+            payload: { itemId: id, field: 'output', delta: event.output },
+          });
+        }
+        break;
+      }
+      case 'toolCallCompleted': {
+        const id = itemId(event.itemId);
+        if (exists(id)) patch(current, id, 'tool_call', { status: event.status }, false);
+        break;
+      }
+      case 'approvalRequested': {
+        const id = approvalRowId(threadId, event.approvalId);
+        if (read.approval(id)) break;
+        out.push({
+          kind: 'approval.requested',
+          aggregate: threadId,
+          payload: {
+            approval: {
+              id,
+              threadId,
+              itemId: itemId(`approval:${event.approvalId}`),
+              kind: event.kind,
+              request: { summary: event.summary, details: event.request ?? null },
+              decision: null,
+              decidedAt: null,
+            },
+            item: item(
+              current,
+              itemId(`approval:${event.approvalId}`),
+              'approval',
+              {
+                approvalId: id,
+                kind: event.kind,
+                summary: event.summary,
+              },
+              false,
+            ),
+          },
+        });
+        setState('needs_you');
+        break;
+      }
+      case 'questionAsked': {
+        const id = questionRowId(threadId, event.questionId);
+        if (read.question(id)) break;
+        const request = {
+          question: event.question,
+          options: event.options,
+          multiSelect: event.multiSelect,
+        };
+        out.push({
+          kind: 'question.asked',
+          aggregate: threadId,
+          payload: {
+            question: {
+              id,
+              threadId,
+              itemId: itemId(`question:${event.questionId}`),
+              request,
+              answer: null,
+              answeredAt: null,
+            },
+            item: item(
+              current,
+              itemId(`question:${event.questionId}`),
+              'question',
+              { questionId: id, ...request },
+              false,
+            ),
+          },
+        });
+        setState('needs_you');
+        break;
+      }
+      case 'taskListUpdated':
+        patch(current, itemId('tasks'), 'task_list', { tasks: event.tasks });
+        break;
+      case 'usage': {
+        const usage =
+          event.costUsd === undefined
+            ? {
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                cachedInputTokens: event.cachedInputTokens,
+              }
+            : {
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                cachedInputTokens: event.cachedInputTokens,
+                costUsd: event.costUsd,
+              };
+        out.push({
+          kind: 'turn.usageRecorded',
+          aggregate: threadId,
+          payload: { turnId: current.id, usage },
+        });
+        patch(current, itemId('usage'), 'usage', usage);
+        break;
+      }
+      case 'contextUsage':
+        patch(current, itemId('usage'), 'usage', {
+          context: { usedTokens: event.usedTokens, maxTokens: event.maxTokens },
+        });
+        break;
+      case 'turnCompleted':
+      case 'turnFailed':
+      case 'turnInterrupted': {
+        const ended =
+          event.type === 'turnCompleted'
+            ? 'completed'
+            : event.type === 'turnFailed'
+              ? 'failed'
+              : 'interrupted';
+        if (event.type === 'turnFailed') {
+          add(current, itemId('error'), 'error', { message: event.error }, false);
+        }
+        out.push({
+          kind: 'turn.ended',
+          aggregate: threadId,
+          payload: {
+            threadId,
+            turnId: current.id,
+            state: ended,
+            threadState: endedThreadState[ended],
+            endedAt: now,
+          },
+        });
+        state = endedThreadState[ended];
+        turn = undefined;
+        break;
+      }
+    }
+  }
+  return out;
+}

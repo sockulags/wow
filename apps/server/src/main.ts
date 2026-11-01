@@ -1,7 +1,8 @@
+import { createClaudeAdapter } from '@wow/provider-claude';
 import { startServer } from './server.js';
 
 // Command-line entry: `pnpm --filter @wow/server start`. The desktop app calls startServer itself.
-const server = await startServer();
+const server = await startServer({ hooks: { providers: { claude: createClaudeAdapter } } });
 
 let stopping = false;
 const shutdown = (signal: NodeJS.Signals) => {

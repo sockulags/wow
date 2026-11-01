@@ -36,6 +36,9 @@ export const ProviderInstance = z.object({
   defaultPermissionMode: z.string().nullable(),
   status: ProviderInstanceStatus,
   account: z.string().nullable(),
+  // Provider version and error text from the last "Test", shown with the status badge.
+  version: z.string().nullable(),
+  statusMessage: z.string().nullable(),
 });
 export type ProviderInstance = z.infer<typeof ProviderInstance>;
 

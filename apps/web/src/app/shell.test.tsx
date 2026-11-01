@@ -107,8 +107,16 @@ describe('shell', () => {
       within(groups)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['Calendar', 'Outlook', 'Scheduler', 'Appearance', 'Keybindings', 'Advanced']);
-    expect(await screen.findByLabelText('Time zone')).toBeTruthy();
+    ).toEqual([
+      'Providers',
+      'Calendar',
+      'Outlook',
+      'Scheduler',
+      'Appearance',
+      'Keybindings',
+      'Advanced',
+    ]);
+    expect(await screen.findByLabelText('Test timeout (ms)')).toBeTruthy();
   });
 
   it('shows not found for an unknown settings group', async () => {

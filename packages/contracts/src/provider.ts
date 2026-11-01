@@ -139,6 +139,33 @@ export const ProviderEvent = z.discriminatedUnion('type', [
 ]);
 export type ProviderEvent = z.infer<typeof ProviderEvent>;
 
+// What `listModels` answers: one row per model the installed provider offers.
+export const ProviderModel = z.object({
+  id: z.string().min(1),
+  label: z.string(),
+  description: z.string(),
+  efforts: z.array(z.string().min(1)),
+});
+export type ProviderModel = z.infer<typeof ProviderModel>;
+
+// What `test` answers. A failed test is a result with ok false and a message, not an exception,
+// so the settings page can show why.
+export const ProviderTestResult = z.object({
+  ok: z.boolean(),
+  account: z.string().nullable(),
+  version: z.string().nullable(),
+  message: z.string().nullable(),
+});
+export type ProviderTestResult = z.infer<typeof ProviderTestResult>;
+
+// What the server hands an adapter when it creates one for an instance.
+export interface ProviderAdapterContext {
+  // The instance environment with secret references replaced by their values.
+  resolveEnv(): Promise<Record<string, string>>;
+  // providers.testTimeoutMs, read when a test starts.
+  testTimeoutMs(): number;
+}
+
 // What every provider adapter implements. The server owns adapters, feeds them commands and
 // turns the events they emit into thread commands; nothing outside an adapter sees its wire format.
 export interface ProviderAdapter {
