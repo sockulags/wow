@@ -135,16 +135,22 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   deltas, `resume` with the stored session id, `canUseTool` turns a prompt into `approvalRequested`
   and an `AskUserQuestion` call into `questionAsked`. `effort` passes through. Usage comes from
   the result message and `getContextUsage()`.
-- **Codex** (`packages/provider-codex`): spawn `<binaryPath> app-server` with `CODEX_HOME` and the
-  instance env, newline-delimited JSON-RPC on stdio. `initialize` → `thread/start` or
-  `thread/resume` → `turn/start`; `turn/interrupt`; notifications for items (agent message deltas,
-  command execution, file changes, reasoning) and `turn/completed`; server-initiated requests
-  `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` and the user-input
-  request map to `approvalRequested` and `questionAsked`; `model/list` feeds the picker. The exact
-  method and notification names must be taken from the protocol definitions shipped with the
-  installed `codex` version (the `codex-rs/app-server-protocol` crate in the openai/codex
-  repository, which can generate TypeScript types). Pin the protocol version seen in `initialize`
-  and fail the "Test" action with a clear message when it is unknown.
+- **Codex** (`packages/provider-codex`): spawn `<binaryPath> app-server <launchArgs>` with
+  `CODEX_HOME` and the instance env, newline-delimited JSON-RPC on stdio (codex leaves out the
+  `jsonrpc` member). `initialize` + `initialized` → `thread/start` or `thread/resume` →
+  `turn/start`; `turn/interrupt`; notifications for items (`item/started`, `item/completed`, agent
+  message, reasoning, command and file change output deltas), `turn/plan/updated`,
+  `thread/tokenUsage/updated` and `turn/completed`; server-initiated requests
+  `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` and
+  `item/permissions/requestApproval` map to `approvalRequested`, `item/tool/requestUserInput` to
+  one `questionAsked` per question; `model/list` feeds the picker and `account/read` the "Test"
+  action. Method names and types are generated, not written from memory:
+  `scripts/generate-protocol.mjs` runs `codex app-server generate-ts` for the installed codex and
+  keeps the methods the adapter uses (currently codex 0.166.0). `initialize` reports the codex
+  version only inside `userAgent`; the adapter reads it there and "Test" fails with a clear message
+  when it is not the generated version. Permission modes (`read-only`, `auto`, `untrusted`,
+  `full-access`) are an approval policy plus a sandbox; model, effort and permission mode travel
+  with every `turn/start`. Details in `packages/provider-codex/README.md`.
 - **Instances.** A provider instance is one binary + one config directory + env. Several instances
   of the same kind are allowed (work and personal accounts). A thread remembers its instance and
   can only resume on an instance with the same config directory.
