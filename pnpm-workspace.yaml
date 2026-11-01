@@ -10,3 +10,5 @@ onlyBuiltDependencies:
 # CI runners and user machines may not have, so the build step is skipped on purpose.
 ignoredBuiltDependencies:
   - better-sqlite3
+  # Prepares Squirrel.Windows tooling for electron-builder; the installer is NSIS, so unused.
+  - electron-winstaller

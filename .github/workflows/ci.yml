@@ -35,3 +35,30 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
       - run: git diff --check
+
+  # Builds the Windows installer and keeps it as a workflow artifact. Unsigned, no auto-update.
+  desktop-installer:
+    name: desktop installer (windows-latest)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @wow/desktop build
+      # The electron package downloads its binary on demand; the smoke run needs it.
+      - run: pnpm --filter @wow/desktop exec install-electron
+      # The bundled server under Electron's Node: better-sqlite3 loads, RPC answers, clean stop.
+      - run: pnpm --filter @wow/desktop smoke
+      - run: pnpm --filter @wow/desktop dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wow-installer-windows
+          path: apps/desktop/release/*.exe
+          if-no-files-found: error
