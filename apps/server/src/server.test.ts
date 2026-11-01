@@ -136,6 +136,8 @@ describe('startup', () => {
       defaultPermissionMode: null,
       status: 'unknown',
       account: null,
+      version: null,
+      statusMessage: null,
     });
     const done = new Promise<string>((resolve) =>
       adapter.onEvent((event) => {
