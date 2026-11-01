@@ -1,0 +1,60 @@
+{
+  "appointments": [
+    {
+      "entryId": "mock-standup",
+      "subject": "Team standup",
+      "location": "Microsoft Teams Meeting",
+      "body": "Daily sync for the invented Lantern team.\nJoin: https://teams.microsoft.com/l/meetup-join/19%3ameeting_bW9jay1zdGFuZHVw%40thread.v2/0?context=%7b%7d\n",
+      "organizer": "Ada Lindqvist",
+      "weekdays": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+      "time": "09:15",
+      "minutes": 15
+    },
+    {
+      "entryId": "mock-one-on-one",
+      "subject": "1:1 with Bo",
+      "location": "Room Ferrite",
+      "organizer": "Bo Strand",
+      "weekdays": ["thursday"],
+      "time": "14:00",
+      "minutes": 30
+    },
+    {
+      "entryId": "mock-design-review",
+      "subject": "Design review: search panel",
+      "location": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_ZGVzaWduLXJldmlldw%40thread.v2/0",
+      "organizer": "Cleo Marsh",
+      "dayOffset": 1,
+      "time": "10:00",
+      "minutes": 60
+    },
+    {
+      "entryId": "mock-architecture-sync",
+      "subject": "Canceled: Architecture sync",
+      "location": "Room Basalt",
+      "organizer": "Dag Holm",
+      "cancelled": true,
+      "busyStatus": 0,
+      "dayOffset": 2,
+      "time": "13:00",
+      "minutes": 45
+    },
+    {
+      "entryId": "mock-offsite",
+      "subject": "Planning offsite",
+      "location": "Harbour hall",
+      "organizer": "Ada Lindqvist",
+      "busyStatus": 3,
+      "dayOffset": 3,
+      "allDayDays": 2
+    },
+    {
+      "entryId": "mock-lunch",
+      "subject": "Lunch with Eli",
+      "location": "Corner bistro",
+      "dayOffset": 0,
+      "time": "12:00",
+      "minutes": 60
+    }
+  ]
+}

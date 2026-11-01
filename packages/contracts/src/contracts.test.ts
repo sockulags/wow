@@ -78,9 +78,9 @@ describe('workflow contracts', () => {
 describe('settings registry', () => {
   const entries: [string, SettingDefinition][] = Object.entries(settingsRegistry);
 
-  it('fills in the calendar and scheduler groups', () => {
+  it('fills in the calendar, outlook and scheduler groups', () => {
     const groups = new Set(entries.map(([, definition]) => definition.group));
-    expect(groups).toEqual(new Set(['calendar', 'scheduler']));
+    expect(groups).toEqual(new Set(['calendar', 'outlook', 'scheduler']));
   });
 
   it.each(entries)('%s has a default that passes its own schema', (_key, definition) => {
