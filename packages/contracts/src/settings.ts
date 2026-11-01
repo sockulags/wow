@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { WorkflowTemplate, type WorkflowTemplateStep } from './workflow.js';
 
 // Every tunable value in wow is one entry here. The server validates writes against `schema`, and
 // the settings UI renders fields from it, so adding a setting needs no other code.
@@ -132,6 +133,67 @@ const keybinding = (label: string, description: string, binding: string) =>
 export const MissedTriggerPolicy = z.enum(['run', 'mark', 'skip']);
 export type MissedTriggerPolicy = z.infer<typeof MissedTriggerPolicy>;
 
+const templateStep = (
+  skillName: string,
+  gateAfter: boolean,
+  expectedArtifacts: string[] = [],
+): WorkflowTemplateStep => ({ skillName, gateBefore: false, gateAfter, expectedArtifacts });
+
+// Behavior 25. The agent-os skill names appear only here, as editable defaults.
+export const defaultWorkflowTemplates: WorkflowTemplate[] = [
+  {
+    kind: 'bug',
+    name: 'Bug',
+    steps: [templateStep('deliver-work', false), templateStep('check-work', false)],
+  },
+  {
+    kind: 'feature',
+    name: 'Feature',
+    steps: [
+      templateStep('capture-intent', true, ['intents/*/intent.md', 'intents/*/spec.md']),
+      templateStep('plan-work', true, ['intents/*/plan.md']),
+      templateStep('deliver-work', false),
+      templateStep('check-work', false),
+    ],
+  },
+  {
+    kind: 'initiative',
+    name: 'Initiative',
+    steps: [
+      templateStep('capture-intent', true, ['intents/*/intent.md', 'intents/*/spec.md']),
+      templateStep('plan-work', true, ['intents/*/plan.md']),
+      templateStep('shape-work', true),
+      templateStep('deliver-work', false),
+      templateStep('check-work', false),
+    ],
+  },
+];
+
+// Behavior 11: by default the previous step's final message and the expected artifact paths.
+export const defaultHandoverTemplate = [
+  '{{#previousMessage}}The previous step ({{previousStep}}) ended with:',
+  '',
+  '{{previousMessage}}',
+  '{{/previousMessage}}',
+  '{{#backlogBody}}Backlog item:',
+  '',
+  '{{backlogBody}}',
+  '{{/backlogBody}}',
+  '{{#previousArtifacts}}Artifacts from earlier steps:',
+  '{{previousArtifacts}}',
+  '{{/previousArtifacts}}',
+  '{{#expectedArtifacts}}This step is expected to produce:',
+  '{{expectedArtifacts}}',
+  '{{/expectedArtifacts}}',
+].join('\n');
+
+export const defaultSkillDirectories = [
+  '~/.claude/skills',
+  '~/.codex/skills',
+  '<project>/.claude/skills',
+  '<project>/.agents/skills',
+] as const;
+
 export const settingsRegistry = {
   'calendar.zone': defineSetting({
     schema: TimeZoneSetting,
@@ -234,6 +296,45 @@ export const settingsRegistry = {
     group: 'scheduler',
     label: 'Desktop notifications',
     description: 'Notify when a workflow run starts, waits for you, or fails.',
+    default: true,
+    scope: 'global',
+  }),
+  'workflows.templates': defineSetting({
+    schema: z
+      .array(WorkflowTemplate)
+      .refine((templates) => new Set(templates.map((t) => t.kind)).size === templates.length, {
+        message: 'Template kinds must be unique',
+      }),
+    group: 'workflows',
+    label: 'Templates',
+    description:
+      'Starting points offered by the workflow builder: an ordered list of skills with gates. A workflow built from one keeps no link to it.',
+    default: defaultWorkflowTemplates,
+    scope: 'global',
+  }),
+  'workflows.handoverTemplate': defineSetting({
+    schema: z.string(),
+    group: 'workflows',
+    label: 'Handover text',
+    description:
+      'Text added to every step prompt after the skill invocation. {{previousStep}}, {{previousMessage}}, {{backlogBody}}, {{previousArtifacts}} and {{expectedArtifacts}} are replaced; {{#name}}…{{/name}} is left out when that value is empty.',
+    default: defaultHandoverTemplate,
+    scope: 'project',
+  }),
+  'skills.directories': defineSetting({
+    schema: z.array(z.string().min(1)),
+    group: 'skills',
+    label: 'Skill directories',
+    description:
+      'Folders whose */SKILL.md files are offered as skills. "~" is your home folder and "<project>" is repeated for every project folder.',
+    default: [...defaultSkillDirectories],
+    scope: 'global',
+  }),
+  'skills.includeClaudePlugins': defineSetting({
+    schema: z.boolean(),
+    group: 'skills',
+    label: 'Claude plugin skills',
+    description: 'Also offer skills from installed Claude Code plugins, invoked as /plugin:skill.',
     default: true,
     scope: 'global',
   }),

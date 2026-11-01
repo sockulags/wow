@@ -1,6 +1,17 @@
-import type { StepRun, WorkflowStep } from '@wow/contracts';
-
-// Placeholder until U7 adds the engine.
-export function initialStepRuns(steps: readonly WorkflowStep[]): StepRun[] {
-  return steps.map((step) => ({ stepId: step.id, state: 'not_started', artifactsFound: [] }));
-}
+export {
+  advance,
+  initialStepRuns,
+  missedTriggerOutcome,
+  pendingGate,
+  renderStepPrompt,
+  RunRejected,
+  startRun,
+  stepThreadId,
+  type EngineContext,
+  type MissedOutcome,
+  type NewRun,
+  type PendingGate,
+  type RunInput,
+  type Transition,
+} from './engine.js';
+export { bulletList, renderHandover, stepPrompt, type HandoverValues } from './handover.js';

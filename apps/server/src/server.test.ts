@@ -1,6 +1,6 @@
 import { ServerMessage, type RpcResponse, type SubscriptionPush } from '@wow/contracts';
 import { SecretStore, defaultProtector, plainProtector } from '@wow/secrets';
-import { access, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -82,6 +82,8 @@ beforeEach(async () => {
     port: 0,
     protector: plainProtector,
     logSink: () => undefined,
+    userHome: home,
+    watchSkills: () => ({ close: () => Promise.resolve() }),
     hooks: {
       outlook: (mode) => {
         outlookModes.push(mode);
@@ -218,6 +220,24 @@ describe('rpc', () => {
     const retried = await client.request('dispatch', { commandId: 'c1', command });
     expect(retried).toMatchObject({ result: { seqs: [1], duplicate: true } });
     expect(client.messages.filter((message) => 'subscription' in message)).toHaveLength(1);
+  });
+
+  it('rescans skills on request', async () => {
+    const skillDir = path.join(home, '.claude', 'skills', 'tidy');
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: tidy\ndescription: Tidy up\n---\n',
+    );
+    expect(await client.request('skills.refresh')).toMatchObject({
+      result: { skills: [{ name: 'tidy', invocations: { claude: '/tidy', codex: '$tidy' } }] },
+    });
+  });
+
+  it('reports an unknown run when asked to detect its artifacts', async () => {
+    expect(await client.request('workflowRuns.detectArtifacts', { runId: 'nope' })).toMatchObject({
+      error: { code: 'not_found' },
+    });
   });
 
   it('ends the subscriptions of a closed connection', () => {

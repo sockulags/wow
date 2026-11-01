@@ -107,6 +107,17 @@ export const rpcMethods = {
     params: NoParams,
     result: z.object({ protection: SecretProtection, names: z.array(z.string()) }),
   },
+  // Scans the skill directories now (behavior 27: refresh) and answers with the skills found.
+  'skills.refresh': {
+    params: NoParams,
+    result: z.object({ skills: z.array(Skill) }),
+  },
+  // Looks for each started step's expected artifacts in the project folder (behavior 26, run
+  // view open) and stores what it finds.
+  'workflowRuns.detectArtifacts': {
+    params: z.object({ runId: z.string().min(1) }),
+    result: WorkflowRun,
+  },
 } as const satisfies Record<string, { params: z.ZodType; result: z.ZodType }>;
 
 export type RpcMethod = keyof typeof rpcMethods;

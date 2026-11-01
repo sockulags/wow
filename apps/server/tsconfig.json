@@ -15,6 +15,12 @@
     },
     {
       "path": "../../packages/outlook-bridge"
+    },
+    {
+      "path": "../../packages/skills"
+    },
+    {
+      "path": "../../packages/workflow-engine"
     }
   ]
 }

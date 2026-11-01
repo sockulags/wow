@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ApprovalDecision, ApprovalKind, ProviderKind, ThreadState } from './provider.js';
 import { SecretRef } from './settings.js';
-import { StepRun, WorkflowStep } from './workflow.js';
+import { StepRun, WorkflowRunState, WorkflowStep } from './workflow.js';
 
 // Row shapes of the projection tables in docs/architecture.md, as clients receive them through
 // subscriptions. Absent optional columns arrive as null, because that is what SQLite stores.
@@ -208,8 +208,7 @@ export const WorkflowRun = z.object({
   projectId: Id,
   calendarItemId: Id.nullable(),
   backlogItemId: Id.nullable(),
-  // Run states belong to the workflow engine unit.
-  state: z.string().min(1),
+  state: WorkflowRunState,
   currentStep: z.number().int().nonnegative(),
   steps: z.array(StepRun),
   startedAt: Timestamp,

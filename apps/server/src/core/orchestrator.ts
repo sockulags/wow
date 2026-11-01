@@ -1,14 +1,20 @@
 import {
   SecretRef,
+  type BacklogItem,
   type Command,
   type DomainEvent,
   type Project,
   type ProjectChanges,
+  type ProviderInstance,
   type RpcErrorCode,
   type SettingDefinition,
   type SettingScopeRef,
+  type Skill,
+  type Workflow,
+  type WorkflowRun,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
+import { decideWorkflow } from './workflows.js';
 
 // The orchestrator decides which events a command produces. It is a pure function of the command,
 // a read-only view of the projections and the context; it never writes or performs effects.
@@ -18,6 +24,14 @@ export interface ReadModel {
   providerInstanceExists(id: string): boolean;
   // Stored value at exactly this scope, or undefined when none is stored.
   setting(key: string, scope: SettingScopeRef): { value: unknown } | undefined;
+  providerInstance(id: string): ProviderInstance | undefined;
+  skills(): Skill[];
+  workflow(id: string): Workflow | undefined;
+  run(id: string): WorkflowRun | undefined;
+  // True while a run of this workflow is running or waiting at a gate.
+  hasLiveRun(workflowId: string): boolean;
+  threadExists(id: string): boolean;
+  backlogItem(id: string): BacklogItem | undefined;
 }
 
 export interface DecideContext {
@@ -131,6 +145,29 @@ export function decide(command: Command, read: ReadModel, context: DecideContext
         },
       ];
     }
+    case 'skills.sync': {
+      const current = new Map(read.skills().map((skill) => [skill.id, skill]));
+      const next = new Set(command.skills.map((skill) => skill.id));
+      if (next.size !== command.skills.length) {
+        throw new CommandRejected('rejected', 'Skill ids must be unique');
+      }
+      const upserted = command.skills.filter(
+        (skill) => !isDeepStrictEqual(current.get(skill.id), skill),
+      );
+      const removed = [...current.keys()].filter((id) => !next.has(id));
+      if (upserted.length === 0 && removed.length === 0) return [];
+      return [{ kind: 'skills.synced', aggregate: 'skills', payload: { upserted, removed } }];
+    }
+    case 'workflow.create':
+    case 'workflow.update':
+    case 'workflow.delete':
+    case 'workflowRun.start':
+    case 'workflowRun.continue':
+    case 'workflowRun.stop':
+    case 'workflowRun.stepCompleted':
+    case 'workflowRun.stepFailed':
+    case 'workflowRun.artifactsFound':
+      return decideWorkflow(command, read, context);
   }
 }
 

@@ -39,7 +39,8 @@ electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, Git
   `packages/contracts` schemas: `rpcMethods` maps each method to its params and result schema.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
-  `secrets.set`, `secrets.delete`, `secrets.status`. Error codes are `RpcErrorCode`.
+  `secrets.set`, `secrets.delete`, `secrets.status`, `skills.refresh`,
+  `workflowRuns.detectArtifacts` (`{runId}`). Error codes are `RpcErrorCode`.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
@@ -99,8 +100,9 @@ mail_items       id, externalId, folder, from, subject, receivedAt, unread, snip
 outlook_status   singleton: lastSyncAt, lastError?, bridgeVersion
 backlog_items    id, title, body, tags(json), state, runId?, remote(json: service,key,url)?, createdAt
 workflows        id, name, templateKind?, steps(json: WorkflowStep[]), createdAt, updatedAt
-workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, state, currentStep,
-                 steps(json: StepRun[]), startedAt, endedAt
+workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, state ('running'|
+                 'waiting'|'done'|'failed'|'stopped'), currentStep, steps(json: StepRun[]),
+                 startedAt, endedAt
 triggers         id, calendarItemId, workflowId, runAt, zone, state ('scheduled'|'fired'|'missed'|
                  'cancelled'), runId?
 skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
@@ -112,7 +114,7 @@ command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempo
 
 `WorkflowStep = {id, skillName, providerInstanceId, model?, effort?, permissionMode?, gateBefore,
 gateAfter, extraPrompt?, expectedArtifacts: string[]}`. `StepRun = {stepId, state, threadId?,
-startedAt?, endedAt?, artifactsFound: string[]}`.
+startedAt?, endedAt?, artifactsFound: string[], finalMessage?, error?}`.
 
 ## Providers
 
@@ -222,6 +224,18 @@ frontmatter (`name`, `description`, `disable-model-invocation`) and `agents/open
 Plugin-installed Claude skills are found under the Claude plugin cache when `skills.includeClaudePlugins`
 is on and get `/plugin:name`. A `chokidar` watcher refreshes the projection.
 
+`skills.directories` entries use `~` for the home folder and `<project>` for every project folder;
+the four defaults keep their source and anything else is `custom`. A skill's id is its folder.
+`manualOnly` is set by `disable-model-invocation: true` or `allow_implicit_invocation: false`; such
+skills are still offered because the app invokes them explicitly. Plugin skills are read from
+`~/.claude/plugins/installed_plugins.json` (the last install of each plugin), or, without that file,
+from the newest version folder in `~/.claude/plugins/cache/<marketplace>/<plugin>/`; the plugin
+name comes from `.claude-plugin/plugin.json`. A `SKILL.md` that does not parse is logged and
+skipped. The server's `SkillsService` scans at startup, when a watched folder changes, when the
+skills settings or the project list change, and on `skills.refresh`; scans run one at a time and a
+burst of changes shares one queued scan. It sends the result as a `skills.sync` command, which
+stores only the differences.
+
 ## Workflow engine
 
 `packages/workflow-engine` is pure: given a workflow, a run and an event (step completed, gate
@@ -231,12 +245,40 @@ with prompt, notify, finish). The server performs them. The step prompt is:
 ```text
 <skill invocation for the step's provider>  <extraPrompt>
 
-<handover: workflow.handoverTemplate rendered with previous step's final assistant message,
+<handover: workflows.handoverTemplate rendered with previous step's final assistant message,
  the backlog item body if any, and the expected artifact paths>
 ```
 
-`workflow.handoverTemplate` is a setting. Artifact detection runs `fast-glob` with the step's
-`expectedArtifacts` in the project `cwd` when the step completes and on run view open.
+`workflows.handoverTemplate` is a setting (project scope). `{{name}}` is replaced and
+`{{#name}}…{{/name}}` is dropped when the value is empty; the values are `previousStep`,
+`previousMessage`, `backlogBody`, `previousArtifacts` (found by earlier steps) and
+`expectedArtifacts` (this step's globs). Artifact detection runs `fast-glob` with the step's
+`expectedArtifacts` in the project `cwd` when the step completes and on run view open
+(`workflowRuns.detectArtifacts`).
+
+Gates. A gate sits between two steps. After a step with `gateAfter` its turn is over and the step
+itself shows `waiting` (its thread shows "needs you"). Before a step with `gateBefore` that step
+shows `waiting` without a thread, and the previous step's thread shows "needs you". The run is
+`waiting` in both cases and `pendingGate(run)` tells them apart. One Continue passes the gate
+between two steps even when both flags are set. Stop ends the run as `stopped`, interrupts a
+running turn and keeps every thread.
+
+Commands: `workflow.create|update|delete`, `workflowRun.start|continue|stop` from clients, and
+`workflowRun.stepCompleted|stepFailed|artifactsFound` from the server. The orchestrator calls
+`startRun`/`advance` and stores one `workflowRun.changed` event (the run plus the effects to
+perform), `thread.created` for each started step (model, effort and permission mode from the step,
+then the provider instance defaults) and `thread.stateChanged` for gates. Step changes and deletes
+are refused while a run of the workflow is live, because a run follows its steps by position.
+Thread ids are `<runId>.<stepId>`.
+
+`WorkflowRunner` performs the effects after commit: it keeps one provider adapter per instance
+(from `ProviderAdapters`), sends `startTurn` with the rendered prompt, collects the last assistant
+text item as the step's final message, and reports `turnCompleted` (with the artifacts found),
+`turnFailed` and `turnInterrupted` back as commands with ids derived from run and step, so a
+repeated report is a duplicate. A step with no model, effort or permission mode fails instead of
+starting. `notify` effects go to `onNotify` listeners; the scheduler unit turns them into desktop
+notifications. `missedTriggerOutcome(policy)` is the engine's table for the scheduler's missed
+policy.
 
 ## Settings registry
 
