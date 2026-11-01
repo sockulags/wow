@@ -1,0 +1,216 @@
+# Architecture
+
+Technical decisions for wow. Behavior lives in `intents/2026-11-wow-app/spec.md`; this file says how
+it is built and why. Agents delivering a unit read this before touching the layout.
+
+## Shape
+
+```text
+apps/
+  server/        Node 22, TypeScript. WebSocket RPC, SQLite, scheduler, providers, Outlook, skills.
+  web/           React 19 + Vite. Renders server state. No Node APIs.
+  desktop/       Electron. Spawns the server, wraps the web app, tray, autostart, notifications.
+packages/
+  contracts/     zod schemas for everything on the wire: RPC methods, events, projections, settings.
+  shared/        small runtime helpers used by more than one package (ids, time, result type).
+  client-runtime/ connection, subscriptions and stores shared by web (and a later mobile client).
+  provider-claude/   Claude Agent SDK adapter → ProviderEvent / ProviderCommand.
+  provider-codex/    codex app-server JSON-RPC adapter → the same types.
+  outlook-bridge/    PowerShell COM bridge + mock adapter + fixtures.
+  skills/        SKILL.md discovery.
+  workflow-engine/   workflow definitions, runs, gates, step handover. Pure; the server wires it.
+  secrets/       DPAPI (Windows) or 0600 file (elsewhere) secret store.
+docs/            architecture (this file), user guide, windows-smoke checklist.
+intents/         agent-os intent, spec and plan.
+.claude/workflows/build-wow.js   delivers the plan with at most three agents at a time.
+```
+
+Tooling: pnpm workspaces, TypeScript project references, Vitest, Playwright, oxlint + Prettier,
+electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, GitHub Actions on
+`ubuntu-latest` and `windows-latest`.
+
+## Server
+
+- **Transport.** `ws` WebSocket on `127.0.0.1:<port>` with a per-launch token in `~/.wow/server.json`.
+  Messages are `{id, method, params}` requests, `{id, result|error}` responses and
+  `{subscription, data}` pushes, all validated with `packages/contracts` schemas.
+- **Commands → events → projections.** A request becomes a command. The orchestrator (pure
+  function, no I/O) turns the command plus current projection into events. One SQLite transaction
+  appends the events, updates projections and records the command receipt (idempotent retries).
+  Effects (start a provider turn, poll Outlook, fire a trigger) run after commit in the effect
+  worker and feed results back as commands. Subscribers get projection changes after commit.
+- **SQLite** via `better-sqlite3` + `drizzle-orm`, file `~/.wow/wow.sqlite`, migrations in
+  `apps/server/migrations`. `WOW_HOME` overrides `~/.wow`.
+- **Scheduler.** A tick every `scheduler.tickSeconds` (default 30) selects due triggers, fires
+  them as commands, and applies `scheduler.missedPolicy` (`run` | `mark` | `skip`) once at startup
+  for triggers whose time passed while the server was down. Times are stored as UTC ISO strings
+  plus the IANA zone they were entered in; `Temporal` polyfill (`@js-temporal/polyfill`) does zone
+  math. Default zone is the system zone.
+- **Services, thin transports.** Each feature is a service with an `Effect`-free plain TypeScript
+  API; RPC handlers only validate and call services.
+
+## Data model (projections)
+
+```text
+projects         id, name, cwd, defaultProviderInstanceId, defaultModel, createdAt
+provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env(json, secret keys by ref),
+                 launchArgs, defaultModel, defaultEffort, defaultPermissionMode, status, account
+threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessionId?, title, model,
+                 effort, permissionMode, state ('idle'|'working'|'needs_you'|'done'|'failed'),
+                 pinned, runId?, stepId?, createdAt, updatedAt
+turns            id, threadId, index, state, startedAt, endedAt, usage(json)
+thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
+                 'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
+approvals        id, threadId, itemId, kind, request(json), decision?, decidedAt?
+questions        id, threadId, itemId, request(json), answer?, answeredAt?
+calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end, zone, location?,
+                 joinUrl?, body?, projectId?, backlogItemId?, workflowId?, runId?, state, updatedAt
+mail_items       id, externalId, folder, from, subject, receivedAt, unread, snippet
+outlook_status   singleton: lastSyncAt, lastError?, bridgeVersion
+backlog_items    id, title, body, tags(json), state, runId?, remote(json: service,key,url)?, createdAt
+workflows        id, name, templateKind?, steps(json: WorkflowStep[]), createdAt, updatedAt
+workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, state, currentStep,
+                 steps(json: StepRun[]), startedAt, endedAt
+triggers         id, calendarItemId, workflowId, runAt, zone, state ('scheduled'|'fired'|'missed'|
+                 'cancelled'), runId?
+skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
+                 'project-agents'|'custom'), manualOnly, invocations(json: {claude, codex})
+settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
+events           seq, at, kind, aggregate, payload(json)   -- the history
+```
+
+`WorkflowStep = {id, skillName, providerInstanceId, model?, effort?, permissionMode?, gateBefore,
+gateAfter, extraPrompt?, expectedArtifacts: string[]}`. `StepRun = {stepId, state, threadId?,
+startedAt?, endedAt?, artifactsFound: string[]}`.
+
+## Providers
+
+Both adapters implement one interface from `packages/contracts`:
+
+```text
+ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode, resumeId?}
+                 interrupt {threadId} | answerApproval {approvalId, decision} |
+                 answerQuestion {questionId, answer} | setModel | setPermissionMode | listModels | test
+ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | toolCallStarted |
+                 toolCallOutput | toolCallCompleted | approvalRequested | questionAsked |
+                 taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
+```
+
+- **Claude** (`packages/provider-claude`): `@anthropic-ai/claude-agent-sdk` `query()` in streaming
+  input mode (an `AsyncIterable<SDKUserMessage>` prompt) so `interrupt()`, `setModel()` and
+  `setPermissionMode()` work mid-session. `pathToClaudeCodeExecutable` from the instance's binary
+  path, `env: {...process.env, CLAUDE_CONFIG_DIR, ...instance.env}`, `settingSources:
+  ['user','project','local']` so skills and plugins load, `includePartialMessages: true` for
+  deltas, `resume` with the stored session id, `canUseTool` turns a prompt into `approvalRequested`
+  and an `AskUserQuestion` call into `questionAsked`. `effort` passes through. Usage comes from
+  the result message and `getContextUsage()`.
+- **Codex** (`packages/provider-codex`): spawn `<binaryPath> app-server` with `CODEX_HOME` and the
+  instance env, newline-delimited JSON-RPC on stdio. `initialize` → `thread/start` or
+  `thread/resume` → `turn/start`; `turn/interrupt`; notifications for items (agent message deltas,
+  command execution, file changes, reasoning) and `turn/completed`; server-initiated requests
+  `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` and the user-input
+  request map to `approvalRequested` and `questionAsked`; `model/list` feeds the picker. The exact
+  method and notification names must be taken from the protocol definitions shipped with the
+  installed `codex` version (the `codex-rs/app-server-protocol` crate in the openai/codex
+  repository, which can generate TypeScript types). Pin the protocol version seen in `initialize`
+  and fail the "Test" action with a clear message when it is unknown.
+- **Instances.** A provider instance is one binary + one config directory + env. Several instances
+  of the same kind are allowed (work and personal accounts). A thread remembers its instance and
+  can only resume on an instance with the same config directory.
+
+## Outlook bridge
+
+`packages/outlook-bridge/bridge.ps1` is started once with `powershell.exe -NoProfile
+-ExecutionPolicy Bypass -File bridge.ps1` and speaks JSON lines:
+
+```text
+→ {"id":1,"op":"calendar","from":"2026-11-02T00:00:00+01:00","to":"2026-11-16T00:00:00+01:00"}
+← {"id":1,"items":[{"entryId":"...","subject":"...","start":"...","end":"...","location":"...",
+     "isAllDay":false,"isRecurring":true,"organizer":"...","joinUrl":"https://teams...","busyStatus":2}]}
+→ {"id":2,"op":"unreadMail","folders":["Inbox"],"limit":50}
+← {"id":2,"items":[{"entryId":"...","from":"...","subject":"...","receivedAt":"...","snippet":"..."}],"unreadCount":7}
+→ {"id":3,"op":"open","entryId":"..."}     (Outlook shows the item)
+→ {"id":4,"op":"ping"}
+```
+
+Implementation notes: `New-Object -ComObject Outlook.Application`, `GetNamespace("MAPI")`,
+`GetDefaultFolder(9)` for the calendar with `Items.IncludeRecurrences = $true`, `Sort("[Start]")`
+and a `Restrict` on `[Start]`/`[End]`; `GetDefaultFolder(6)` and `Restrict("[UnRead] = True")` for
+mail. The Teams join link is read from the item body or the `Location` when it looks like a
+`teams.microsoft.com` URL. Every request has a timeout (`outlook.requestTimeoutMs`); a timeout or a
+dead process sets `outlook_status.lastError` and the server restarts the bridge on the next poll.
+`OutlookSource` is the interface; `MockOutlookSource` reads fixtures from
+`packages/outlook-bridge/fixtures` and is selected automatically off Windows and with
+`WOW_OUTLOOK=mock`.
+
+## Skills discovery
+
+`packages/skills` scans the directories in `skills.directories` (defaults: `~/.claude/skills`,
+`~/.codex/skills`, `<project>/.claude/skills`, `<project>/.agents/skills`) for `*/SKILL.md`, parses
+frontmatter (`name`, `description`, `disable-model-invocation`) and `agents/openai.yaml`
+(`policy.allow_implicit_invocation`) and produces `invocations: {claude: "/name", codex: "$name"}`.
+Plugin-installed Claude skills are found under the Claude plugin cache when `skills.includeClaudePlugins`
+is on and get `/plugin:name`. A `chokidar` watcher refreshes the projection.
+
+## Workflow engine
+
+`packages/workflow-engine` is pure: given a workflow, a run and an event (step completed, gate
+answered, trigger fired) it returns the next run state and the effects to perform (start thread
+with prompt, notify, finish). The server performs them. The step prompt is:
+
+```text
+<skill invocation for the step's provider>  <extraPrompt>
+
+<handover: workflow.handoverTemplate rendered with previous step's final assistant message,
+ the backlog item body if any, and the expected artifact paths>
+```
+
+`workflow.handoverTemplate` is a setting. Artifact detection runs `fast-glob` with the step's
+`expectedArtifacts` in the project `cwd` when the step completes and on run view open.
+
+## Settings registry
+
+`packages/contracts/src/settings.ts` exports `settingsRegistry`: a map of key → `{schema: zod,
+group, label, description, default, scope: 'global'|'project'|'provider', restartRequired?,
+secret?}`. The server validates writes against it; the settings UI renders groups and fields from
+it (text, number, boolean, enum, list, key-value with secret flag, keybinding). Adding a setting is
+one entry. Initial groups: providers, calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
+outlook (pollSeconds, folders, requestTimeoutMs, mailRail), scheduler (tickSeconds, missedPolicy,
+notifications), workflows (templates, handoverTemplate), skills (directories, includeClaudePlugins),
+trackers (jira: baseUrl, authMode `cloud-basic`|`pat`, projectKey, issueType, email; github:
+baseUrl, owner, repo, labels), appearance (theme, fonts, density), keybindings, desktop (autostart,
+closeToTray, startMinimized), advanced (WOW_HOME, port, log level).
+
+## Secrets
+
+`packages/secrets` stores `~/.wow/secrets.json`. On Windows values are protected with DPAPI
+(`[System.Security.Cryptography.ProtectedData]::Protect`, current user scope) through a short
+PowerShell call; elsewhere the file is plain with mode `0600` and the UI shows a warning. Settings
+marked `secret` store a reference, never the value.
+
+## Desktop
+
+Electron main spawns `apps/server` with `ELECTRON_RUN_AS_NODE=1` and the bundled server entry,
+waits for `~/.wow/server.json`, and loads the web app with the token. Tray icon with Open, New
+thread, Pause scheduler, Quit; close-to-tray and autostart (`app.setLoginItemSettings`) are
+settings. Notifications use Electron's `Notification`. Native modules are rebuilt for Electron
+with `@electron/rebuild` in `postinstall`.
+
+## Look
+
+T3 Code is the reference: dark neutral surface, one left sidebar, main area, optional right panel,
+dense lists, small type, muted borders, accent only on state. Fonts Inter and JetBrains Mono.
+Tokens live in `apps/web/src/styles/tokens.css` and are the only place colors are defined. Code
+copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
+
+## Testing strategy
+
+- Contracts and engine: Vitest unit tests, including engine state tables for gates and missed
+  policies.
+- Providers: Vitest with recorded protocol fixtures (JSON lines) replayed through a fake
+  subprocess; a scheduled CI job runs a real `codex app-server` and `claude` smoke when secrets
+  exist.
+- Outlook: bridge script tested on `windows-latest` with Outlook absent (expects the "unavailable"
+  path) and the mock everywhere.
+- Web: Playwright against the server with `WOW_OUTLOOK=mock` and `WOW_PROVIDERS=mock` (a mock
+  adapter that replays fixtures and asks for an approval and a question).
