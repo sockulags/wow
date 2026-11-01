@@ -26,8 +26,8 @@ intents/         agent-os intent, spec and plan.
 ```
 
 Tooling: pnpm workspaces, TypeScript project references, Vitest, Playwright, oxlint + Prettier,
-electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, GitHub Actions on
-`ubuntu-latest` and `windows-latest`.
+esbuild for `apps/desktop` (main, preload and the server bundle), electron-builder (NSIS) for the
+installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
 
 ## Server
 
@@ -254,7 +254,7 @@ carry `.meta({ widget: 'keybinding' | 'keyValue' })` (see `Keybinding` and `KeyV
 render their fields; anything else falls back to a JSON editor. Until the settings RPC exists the
 web app uses the in-memory `SettingsSource` from `packages/client-runtime`. Initial groups: providers, calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
 outlook (pollSeconds, folders, requestTimeoutMs, mailRail), scheduler (tickSeconds, missedPolicy,
-notifications), workflows (templates, handoverTemplate), skills (directories, includeClaudePlugins),
+notifications, paused), workflows (templates, handoverTemplate), skills (directories, includeClaudePlugins),
 trackers (jira: baseUrl, authMode `cloud-basic`|`pat`, projectKey, issueType, email; github:
 baseUrl, owner, repo, labels), appearance (theme, fonts, density), keybindings, desktop (autostart,
 closeToTray, startMinimized), advanced (WOW_HOME, port, log level, secret store timeout).
@@ -271,11 +271,34 @@ orchestrator rejects anything else.
 
 ## Desktop
 
-Electron main spawns `apps/server` with `ELECTRON_RUN_AS_NODE=1` and the bundled server entry,
-waits for `~/.wow/server.json`, and loads the web app with the token. Tray icon with Open, New
-thread, Pause scheduler, Quit; close-to-tray and autostart (`app.setLoginItemSettings`) are
-settings. Notifications use Electron's `Notification`. Native modules are rebuilt for Electron
-with `@electron/rebuild` in `postinstall`.
+Electron main spawns the bundled server (`out/server/server.mjs`, `resources/server` when
+packaged) with the Electron binary and `ELECTRON_RUN_AS_NODE=1`, waits for `~/.wow/server.json`
+naming the child's pid (a file left by another process is ignored), connects its own WebSocket
+client, and serves the built web app from the privileged `wow://app/` scheme so the router sees
+normal paths. The sandboxed preload exposes `server.json` as `window.wowServerInfo`, which the web
+bootstrap reads. On quit the desktop sends `{type: 'wow:shutdown'}` over the child's IPC channel
+(Windows has no signals between processes); a shim in the server bundle turns it, or a closed
+channel when the desktop dies, into the SIGTERM the server entry handles. A server that does not
+stop in time is killed; one that dies unexpectedly leads to a Restart / Quit dialog.
+
+Tray icon with Open, New thread (`/chat?new=1`), Pause/Resume scheduler and Quit; clicking it
+opens the window. Pause toggles the `scheduler.paused` setting, which the scheduler honours.
+`desktop.closeToTray`, `desktop.autostart` (`app.setLoginItemSettings` with `--hidden`, so a login
+start stays in the tray) and `desktop.startMinimized` are settings the desktop follows through the
+`settings` topic. Notifications use Electron's `Notification`, gated by `scheduler.notifications`,
+and are derived from changes on the `workflowRuns` topic: a new run, a run entering `waiting`, a
+run entering `failed`. A single-instance lock makes a second launch show the running window.
+
+The server bundle is one esbuild ESM file. Server modules find files next to their sources with
+`new URL('<relative>', import.meta.url)`; the build rewrites each module's `import.meta.url` to
+its repository path under `out/server/` and copies every file so named there (server
+`package.json`, migrations, Outlook fixtures, `bridge.ps1`). better-sqlite3 stays outside the
+bundle in `out/server/native/better-sqlite3` with its N-API prebuilds. N-API binaries load in
+Electron's Node unchanged, so nothing is rebuilt: `@electron/rebuild` would need the C++
+toolchain the install deliberately avoids, and electron-builder's rebuild is off. `pnpm --filter
+@wow/desktop smoke` proves the bundle under Electron's Node (SQLite opens, RPC answers, clean
+stop), and CI runs it before building the NSIS installer on `windows-latest`. No code signing, no
+auto-update.
 
 ## Look
 

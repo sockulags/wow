@@ -237,6 +237,41 @@ export const settingsRegistry = {
     default: true,
     scope: 'global',
   }),
+  'scheduler.paused': defineSetting({
+    schema: z.boolean(),
+    group: 'scheduler',
+    label: 'Paused',
+    description:
+      'Stop firing triggers until resumed. Triggers that come due while paused are handled like missed ones when the scheduler resumes. The tray menu toggles this.',
+    default: false,
+    scope: 'global',
+  }),
+  'desktop.autostart': defineSetting({
+    schema: z.boolean(),
+    group: 'desktop',
+    label: 'Start at sign-in',
+    description:
+      'Start wow in the tray when you sign in to Windows, so triggers run without opening it.',
+    default: false,
+    scope: 'global',
+  }),
+  'desktop.closeToTray': defineSetting({
+    schema: z.boolean(),
+    group: 'desktop',
+    label: 'Close to tray',
+    description:
+      'Closing the window keeps wow running in the tray, so triggers still fire. Quit from the tray menu. Off: closing the window quits.',
+    default: true,
+    scope: 'global',
+  }),
+  'desktop.startMinimized': defineSetting({
+    schema: z.boolean(),
+    group: 'desktop',
+    label: 'Start in the tray',
+    description: 'Start without showing the window. Click the tray icon to open it.',
+    default: false,
+    scope: 'global',
+  }),
   'appearance.theme': defineSetting({
     schema: Theme,
     group: 'appearance',

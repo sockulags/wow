@@ -107,7 +107,15 @@ describe('shell', () => {
       within(groups)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['Calendar', 'Outlook', 'Scheduler', 'Appearance', 'Keybindings', 'Advanced']);
+    ).toEqual([
+      'Calendar',
+      'Outlook',
+      'Scheduler',
+      'Appearance',
+      'Keybindings',
+      'Desktop',
+      'Advanced',
+    ]);
     expect(await screen.findByLabelText('Time zone')).toBeTruthy();
   });
 
