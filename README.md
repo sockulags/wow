@@ -21,6 +21,17 @@ Planning. The delivery plan is `intents/2026-11-wow-app/plan.md`, the behavior i
 plan is executed by the workflow in `.claude/workflows/build-wow.js` with at most three agents at
 a time.
 
+## Develop
+
+```sh
+pnpm install --frozen-lockfile
+pnpm typecheck   # tsc -b over the project references in tsconfig.json
+pnpm lint        # oxlint, then prettier --check
+pnpm test        # vitest in every package
+```
+
+The package layout is described in `docs/architecture.md`.
+
 ## Target machine
 
 Windows 11 with the Outlook desktop client, Node 22+, pnpm, the `claude` and `codex` CLIs

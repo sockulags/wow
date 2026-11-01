@@ -1,0 +1,15 @@
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF so Windows PowerShell 5.1 and cmd read them as written.
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.sqlite binary
