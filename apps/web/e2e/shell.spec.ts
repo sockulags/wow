@@ -12,7 +12,7 @@ test.describe('shell', () => {
       ['Chat', /\/chat$/, 'No threads yet'],
       ['Workflows', /\/workflows$/, 'No workflows yet'],
       ['Backlog', /\/backlog$/, 'Backlog is empty'],
-      ['Settings', /\/settings\/calendar$/, 'Time zone'],
+      ['Settings', /\/settings\/providers$/, 'Test timeout (ms)'],
     ] as const;
     for (const [name, url, text] of routes) {
       await nav.getByRole('link', { name }).click();

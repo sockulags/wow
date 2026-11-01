@@ -24,6 +24,8 @@ const instance: ProviderInstance = {
   defaultPermissionMode: 'auto',
   status: 'unknown',
   account: null,
+  version: null,
+  statusMessage: null,
 };
 
 const userAgent = 'wow/0.166.0 (Demo OS; x86_64) linux (wow; 0.0.0)';

@@ -25,6 +25,8 @@ const instance: ProviderInstance = {
   defaultPermissionMode: null,
   status: 'unknown',
   account: null,
+  version: null,
+  statusMessage: null,
 };
 
 describe.skipIf(!enabled)('codex app-server (real)', () => {
