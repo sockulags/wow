@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { e2eHome } from './env';
+import { choose } from './controls';
 
 // U10 ground truth against the scripted mock provider (e2e/server.ts): build a workflow from the
 // Feature template, run it in a project, the mock completes step 1, the gate shows, and Continue
@@ -29,30 +30,30 @@ test.describe('workflows', () => {
       .getByRole('button', { name: 'Feature' })
       .click();
     await expect(builder.getByLabel('Workflow name')).toHaveValue('Feature');
-    await expect(builder.getByLabel('Template kind')).toHaveValue('feature');
+    await expect(builder.getByLabel('Template kind')).toHaveText('Feature');
     await builder.getByLabel('Workflow name').fill('Feature e2e');
 
     const steps = builder.getByRole('list', { name: 'Steps' }).getByTestId('workflow-step');
     await expect(steps).toHaveCount(4);
     const first = steps.nth(0);
-    await expect(first.getByLabel('Step 1 skill')).toHaveValue('capture-intent');
+    await expect(first.getByLabel('Step 1 skill')).toHaveText('capture-intent');
     await expect(first.getByText('Turn a rough idea into an intent and a spec.')).toBeVisible();
     await expect(first.getByLabel('Step 1 gate after')).toBeChecked();
     await expect(first.getByLabel('Step 1 expected artifacts')).toHaveValue(
       'intents/*/intent.md\nintents/*/spec.md',
     );
-    await expect(steps.nth(1).getByLabel('Step 2 skill')).toHaveValue('plan-work');
+    await expect(steps.nth(1).getByLabel('Step 2 skill')).toHaveText('plan-work');
     await expect(steps.nth(1).getByLabel('Step 2 gate after')).toBeChecked();
     await expect(steps.nth(2).getByLabel('Step 3 gate after')).not.toBeChecked();
     for (const index of [0, 1, 2, 3]) {
-      await expect(steps.nth(index).getByLabel('Model')).toHaveValue('mock-model');
+      await expect(steps.nth(index).getByLabel('Model')).toHaveText('Mock model');
     }
 
     // Reordering with the keyboard-reachable buttons, then back.
     await steps.nth(3).getByRole('button', { name: 'Move step 4 up' }).click();
-    await expect(steps.nth(2).getByLabel('Step 3 skill')).toHaveValue('check-work');
+    await expect(steps.nth(2).getByLabel('Step 3 skill')).toHaveText('check-work');
     await steps.nth(2).getByRole('button', { name: 'Move step 3 down' }).click();
-    await expect(steps.nth(3).getByLabel('Step 4 skill')).toHaveValue('check-work');
+    await expect(steps.nth(3).getByLabel('Step 4 skill')).toHaveText('check-work');
 
     await builder.getByRole('button', { name: 'Create workflow' }).click();
     await expect(page).toHaveURL(/\/workflows\/[0-9a-f-]{36}$/);
@@ -63,7 +64,7 @@ test.describe('workflows', () => {
     ).toBeVisible();
 
     const runPanel = page.getByRole('region', { name: 'Run' });
-    await runPanel.getByLabel('Run in project').selectOption({ label: 'Demo' });
+    await choose(runPanel.getByLabel('Run in project'), 'Demo');
     await runPanel.getByRole('button', { name: 'Run now' }).click();
     await expect(page).toHaveURL(/\/workflows\/runs\/[0-9a-f-]{36}$/);
 

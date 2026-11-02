@@ -3,6 +3,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { e2eBinary, e2eClaudeConfigDir, e2eCodexHome, e2eSettingsHome as home } from './env';
+import { choose } from './controls';
 
 // U13 ground truth against the e2e server (mock providers, stand-in CLIs on its PATH): provider
 // instances are added, tested, edited and removed (spec 31, 32), the first-run wizard creates the
@@ -42,7 +43,7 @@ test.describe('settings', () => {
     await editor.getByLabel('Launch arguments').fill('--verbose');
     await editor.getByLabel('Default model').fill('mock-model');
     await editor.getByLabel('Default effort').fill('high');
-    await editor.getByLabel('Default permission mode').selectOption('acceptEdits');
+    await choose(editor.getByLabel('Default permission mode'), 'Accept edits');
     await editor.getByRole('button', { name: 'Add instance' }).click();
     await expect(editor).toBeHidden();
 
@@ -91,7 +92,7 @@ test.describe('settings', () => {
     await expect(editor.getByLabel('Config directory (CODEX_HOME)')).toHaveValue(
       e2eCodexHome(home),
     );
-    await editor.getByLabel('Default permission mode').selectOption('read-only');
+    await choose(editor.getByLabel('Default permission mode'), 'Read only');
     await editor.getByRole('button', { name: 'Add instance' }).click();
 
     const row = instances(page).getByRole('listitem', { name: 'Codex e2e' });
@@ -143,12 +144,12 @@ test.describe('settings', () => {
     await page.goto('/settings/appearance');
     const html = page.locator('html');
     await expect(html).toHaveAttribute('data-density', 'comfortable');
-    await page.getByLabel('Density').selectOption('compact');
+    await choose(page.getByLabel('Density'), 'compact');
     await expect(html).toHaveAttribute('data-density', 'compact');
 
     await page.reload();
     await expect(html).toHaveAttribute('data-density', 'compact');
-    await expect(page.getByLabel('Density')).toHaveValue('compact');
+    await expect(page.getByLabel('Density')).toHaveText('compact');
 
     await page.getByTestId('setting-appearance.density').getByText('Reset to default').click();
     await expect(html).toHaveAttribute('data-density', 'comfortable');

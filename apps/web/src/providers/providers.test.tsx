@@ -192,7 +192,8 @@ describe('Settings → Providers', () => {
     await user.type(form.getByLabelText('Variable 2 value'), 'http://proxy:8080');
     await user.click(form.getByRole('checkbox', { name: 'Variable 2 secret' }));
     await user.type(form.getByLabelText('Launch arguments'), '--verbose');
-    await user.selectOptions(form.getByLabelText('Default permission mode'), 'acceptEdits');
+    await user.click(form.getByRole('combobox', { name: 'Default permission mode' }));
+    await user.click(await screen.findByRole('option', { name: 'Accept edits' }));
     await user.click(form.getByRole('button', { name: 'Save' }));
 
     expect(server.requests).toContainEqual({

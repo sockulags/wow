@@ -8,6 +8,8 @@ import {
 import { dispatch } from '@wow/client-runtime';
 import { PlusIcon, SearchIcon, XIcon } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
+import { ChoiceSelect } from '@/components/choice-select';
+import { SuggestInput } from '@/components/combobox';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -29,9 +31,6 @@ import {
   type EnvRow,
   type InstanceDraft,
 } from './model';
-
-const selectClass =
-  'h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30';
 
 function FormRow({
   label,
@@ -262,50 +261,43 @@ export function InstanceEditor({ instance, initial, onClose }: InstanceEditorPro
               htmlFor={`${id}-model`}
               hint={instance ? undefined : 'Models are listed after the first test.'}
             >
-              <Input
+              <SuggestInput
                 id={`${id}-model`}
-                list={`${id}-models`}
+                label="Default model"
                 value={draft.defaultModel}
-                onChange={(event) => set({ defaultModel: event.target.value })}
+                emptyText="No models listed yet."
+                suggestions={models.map((model) => ({
+                  value: model.id,
+                  label: model.label || model.id,
+                }))}
+                onValueChange={(defaultModel) => set({ defaultModel })}
               />
-              <datalist id={`${id}-models`}>
-                {models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.label}
-                  </option>
-                ))}
-              </datalist>
             </FormRow>
             <FormRow label="Default effort" htmlFor={`${id}-effort`}>
-              <Input
+              <SuggestInput
                 id={`${id}-effort`}
-                list={`${id}-efforts`}
+                label="Default effort"
                 value={draft.defaultEffort}
-                onChange={(event) => set({ defaultEffort: event.target.value })}
+                suggestions={[
+                  ...new Set([
+                    ...(options.defaultEffort ? [options.defaultEffort] : []),
+                    ...efforts,
+                  ]),
+                ].map((effort) => ({ value: effort, label: effort }))}
+                onValueChange={(defaultEffort) => set({ defaultEffort })}
               />
-              <datalist id={`${id}-efforts`}>
-                {[...(options.defaultEffort ? [options.defaultEffort] : []), ...efforts].map(
-                  (effort) => (
-                    <option key={effort} value={effort} />
-                  ),
-                )}
-              </datalist>
             </FormRow>
             <FormRow label="Default permission mode" htmlFor={`${id}-permission`}>
-              <select
+              <ChoiceSelect
                 id={`${id}-permission`}
-                aria-label="Default permission mode"
-                className={selectClass}
+                label="Default permission mode"
                 value={draft.defaultPermissionMode}
-                onChange={(event) => set({ defaultPermissionMode: event.target.value })}
-              >
-                <option value="">Provider default</option>
-                {options.permissionModes.map((mode) => (
-                  <option key={mode.id} value={mode.id}>
-                    {mode.label}
-                  </option>
-                ))}
-              </select>
+                choices={[
+                  { value: '', label: 'Provider default' },
+                  ...options.permissionModes.map((mode) => ({ value: mode.id, label: mode.label })),
+                ]}
+                onValueChange={(defaultPermissionMode) => set({ defaultPermissionMode })}
+              />
             </FormRow>
           </div>
           {issues.length > 0 && (

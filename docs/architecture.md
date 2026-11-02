@@ -723,7 +723,13 @@ GitHub.
 T3 Code is the reference: dark neutral surface, one left sidebar, main area, optional right panel,
 dense lists, small type, muted borders, accent only on state. Fonts Inter and JetBrains Mono.
 Tokens live in `apps/web/src/styles/tokens.css` and are the only place colors are defined. Code
-copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
+copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`. Each theme sets
+`color-scheme`, so what stays native (scrollbars, autofill) follows it. Views never use native
+pickers, whose popups ignore the theme: they compose `ChoiceSelect` (shadcn Select), `Combobox` and
+`SuggestInput` (Popover and Command) and `DateField` and `TimeField` (Popover with Calendar or a time
+list, stepped by `calendar.snapMinutes`) from `apps/web/src/components`. A Vitest guard
+(`src/test/native-controls.test.ts`) fails on `<select>`, `<option>`, `<datalist>`, `list=` and
+date or time inputs outside `components/ui`.
 
 ## Testing strategy
 

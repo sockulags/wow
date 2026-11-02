@@ -8,6 +8,9 @@ import {
   type CardDialog as CardDialogState,
 } from '@/app/runtime';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
+import { ChoiceSelect } from '@/components/choice-select';
+import { Combobox } from '@/components/combobox';
+import { DateField, TimeField } from '@/components/date-time-fields';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -30,9 +33,6 @@ import {
   parseIsoDate,
   resolveZone,
 } from './time';
-
-const selectClass =
-  'h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30';
 
 interface Form {
   readonly title: string;
@@ -142,6 +142,8 @@ function CardForm({
   const projects = useTopic('projects') ?? [];
   const workflows = useTopic('workflows') ?? [];
   const backlog = useTopic('backlogItems') ?? [];
+  const firstDayOfWeek = useSetting('calendar.firstDayOfWeek');
+  const snapMinutes = useSetting('calendar.snapMinutes');
   const runs = useTopic('workflowRuns');
   const run = card?.runId ? runs?.find((entry) => entry.id === card.runId) : undefined;
   const liveRun = run && isLiveRunState(run.state) ? run : undefined;
@@ -215,80 +217,75 @@ function CardForm({
       <div className="grid grid-cols-3 gap-2">
         <div className="grid gap-1.5">
           <Label htmlFor="card-date">Date</Label>
-          <Input
+          <DateField
             id="card-date"
-            type="date"
+            label="Date"
             value={form.date}
-            onChange={(event) => set({ date: event.target.value })}
+            firstDayOfWeek={firstDayOfWeek}
+            onValueChange={(date) => set({ date })}
           />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="card-start">Start</Label>
-          <Input
+          <TimeField
             id="card-start"
-            type="time"
+            label="Start"
             value={form.start}
-            onChange={(event) => set({ start: event.target.value })}
+            stepMinutes={snapMinutes}
+            onValueChange={(start) => set({ start })}
           />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="card-end">End</Label>
-          <Input
+          <TimeField
             id="card-end"
-            type="time"
+            label="End"
             value={form.end}
-            onChange={(event) => set({ end: event.target.value })}
+            stepMinutes={snapMinutes}
+            onValueChange={(end) => set({ end })}
           />
         </div>
       </div>
       <div className="grid gap-1.5">
         <Label htmlFor="card-project">Project</Label>
-        <select
+        <ChoiceSelect
           id="card-project"
-          className={selectClass}
           value={form.projectId}
-          onChange={(event) => set({ projectId: event.target.value })}
-        >
-          <option value="">No project</option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
+          choices={[
+            { value: '', label: 'No project' },
+            ...projects.map((project) => ({ value: project.id, label: project.name })),
+          ]}
+          onValueChange={(projectId) => set({ projectId })}
+        />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div className="grid gap-1.5">
           <Label htmlFor="card-workflow">Workflow</Label>
-          <select
+          <ChoiceSelect
             id="card-workflow"
-            className={selectClass}
             value={form.workflowId}
-            onChange={(event) => set({ workflowId: event.target.value })}
-          >
-            <option value="">No workflow</option>
-            {workflows.map((workflow) => (
-              <option key={workflow.id} value={workflow.id}>
-                {workflow.name}
-              </option>
-            ))}
-          </select>
+            choices={[
+              { value: '', label: 'No workflow' },
+              ...workflows.map((workflow) => ({ value: workflow.id, label: workflow.name })),
+            ]}
+            onValueChange={(workflowId) => set({ workflowId })}
+          />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="card-backlog">Backlog item</Label>
-          <select
+          <Combobox
             id="card-backlog"
-            className={selectClass}
+            className="w-full"
             value={form.backlogItemId}
-            onChange={(event) => set({ backlogItemId: event.target.value })}
-          >
-            <option value="">No backlog item</option>
-            {backlog.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.title}
-              </option>
-            ))}
-          </select>
+            placeholder="No backlog item"
+            searchPlaceholder="Search backlog…"
+            emptyText="No matching item."
+            choices={[
+              { value: '', label: 'No backlog item' },
+              ...backlog.map((entry) => ({ value: entry.id, label: entry.title })),
+            ]}
+            onValueChange={(backlogItemId) => set({ backlogItemId })}
+          />
         </div>
       </div>
       <p className="text-xs text-muted-foreground">Times are in {zone}.</p>

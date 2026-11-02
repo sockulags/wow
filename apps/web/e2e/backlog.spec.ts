@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { e2eHome, e2eTrackerPort } from './env';
+import { choose } from './controls';
 
 // U12 ground truth against the mock trackers and the scripted mock provider (e2e/server.ts):
 // items stay local (behavior 28), "Plan on calendar" plans an item and the item follows its run
@@ -51,8 +52,8 @@ async function addItem(page: Page, title: string, body: string, tags = ''): Prom
 async function plan(page: Page, date: string): Promise<void> {
   await page.getByRole('toolbar', { name: 'Item actions' }).getByText('Plan on calendar').click();
   const dialog = page.getByRole('dialog', { name: 'Plan on calendar' });
-  await dialog.getByLabel('Workflow').selectOption({ label: 'Backlog e2e' });
-  await dialog.getByLabel('Project').selectOption({ label: 'Demo' });
+  await choose(dialog.getByLabel('Workflow'), 'Backlog e2e');
+  await choose(dialog.getByLabel('Project'), 'Demo');
   await dialog.getByLabel('Date').fill(date);
   await dialog.getByLabel('Start').fill('09:00');
   await dialog.getByRole('button', { name: 'Plan' }).click();
@@ -79,10 +80,10 @@ test.describe('backlog', () => {
     await expect(entry).toContainText('auth · bug');
     await page.getByLabel('Search backlog').fill('mondays');
     await expect(entry).toBeVisible();
-    await page.getByLabel('Filter by state').selectOption('done');
+    await choose(page.getByLabel('Filter by state'), 'Done');
     await expect(entry).toBeHidden();
-    await page.getByLabel('Filter by state').selectOption('');
-    await page.getByLabel('Filter by tag').selectOption('bug');
+    await choose(page.getByLabel('Filter by state'), 'All states');
+    await choose(page.getByLabel('Filter by tag'), 'bug');
     await expect(entry).toBeVisible();
     await page.getByLabel('Search backlog').fill('');
 
