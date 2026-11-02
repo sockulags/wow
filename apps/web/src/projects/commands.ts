@@ -10,7 +10,7 @@ const open =
   };
 
 // Palette commands for Settings → Projects: the page, a new project, the import, and rename or
-// remove for each project.
+// remove for each project, and each project's trackers.
 export function projectCommands(projects: readonly Project[]): AppCommand[] {
   const commands: AppCommand[] = [
     {
@@ -44,6 +44,15 @@ export function projectCommands(projects: readonly Project[]): AppCommand[] {
         group: 'Settings',
         keywords: ['project', project.cwd],
         run: open({ type: 'rename', projectId: project.id }),
+      },
+      {
+        id: `projects.trackers.${project.id}`,
+        title: `Trackers for project ${project.name}`,
+        value: `Trackers for project ${project.name} ${project.id}`,
+        group: 'Settings',
+        keywords: ['project', 'jira', 'github', 'git', 'remote', 'repository', project.cwd],
+        run: ({ navigate }) =>
+          void navigate({ to: '/settings/projects', hash: `trackers-${project.id}` }),
       },
       {
         id: `projects.remove.${project.id}`,

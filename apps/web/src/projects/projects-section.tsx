@@ -1,11 +1,27 @@
-import type { Project } from '@wow/contracts';
-import { DownloadIcon, FolderIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import type { Project, ProjectGit } from '@wow/contracts';
+import { useLocation } from '@tanstack/react-router';
+import {
+  AlertTriangleIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  DownloadIcon,
+  FolderIcon,
+  GitBranchIcon,
+  InfoIcon,
+  PencilIcon,
+  PlusIcon,
+  Trash2Icon,
+} from 'lucide-react';
+import { useState } from 'react';
 import { PathText } from '@/components/path-text';
 import { EmptyState, Stale, TopicPlaceholder } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { useRuntime } from '@/app/runtime';
 import { useTopicState } from '@/app/topic-state';
 import { useTopic } from '@/chat/data';
+import { cn } from '@/lib/utils';
+import { gitProblems, primaryOf, remoteLabel, useProjectsGit } from './project-git';
+import { ProjectTrackersPanel } from './project-trackers';
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
@@ -23,41 +39,125 @@ export function projectUsage(
   return `${plural(threadCount, 'thread', 'threads')} · ${plural(cardCount, 'card', 'cards')}`;
 }
 
-function ProjectRow({ project, usage }: { project: Project; usage: string | undefined }) {
+// The row's git line: the remote issues go to, or why there is none (audit E-12).
+function GitLine({ projectId, git }: { projectId: string; git: ProjectGit | undefined }) {
+  if (!git) return null;
+  if (git.status !== 'ok') {
+    const problem = gitProblems[git.status];
+    const Icon = problem.tone === 'warning' ? AlertTriangleIcon : InfoIcon;
+    return (
+      <p
+        data-testid={`project-git-${projectId}`}
+        data-status={git.status}
+        className={cn(
+          'flex min-w-0 items-center gap-1.5 text-xs',
+          problem.tone === 'warning' ? 'text-warning' : 'text-muted-foreground',
+        )}
+      >
+        <Icon aria-hidden className="size-3.5 shrink-0" />
+        <span className="shrink-0 font-medium whitespace-nowrap">{problem.title}.</span>
+        <span className="min-w-0 truncate text-muted-foreground">
+          {git.message ?? problem.detail}
+        </span>
+      </p>
+    );
+  }
+  const remote = primaryOf(git);
+  const others = git.remotes.length - 1;
+  return (
+    <p
+      data-testid={`project-git-${projectId}`}
+      data-status={git.status}
+      className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+    >
+      <GitBranchIcon aria-hidden className="size-3.5 shrink-0" />
+      {remote && (
+        <span className="max-w-[70%] min-w-0 shrink-0 truncate">
+          <span className="text-foreground">{remote.name}</span> ·{' '}
+          <span className="font-mono">{remoteLabel(remote)}</span>
+        </span>
+      )}
+      {git.branch && <span className="min-w-0 truncate">· {git.branch}</span>}
+      {others > 0 && (
+        <span className="shrink-0">
+          · {others} more {others === 1 ? 'remote' : 'remotes'}
+        </span>
+      )}
+    </p>
+  );
+}
+
+function ProjectRow({
+  project,
+  usage,
+  git,
+  initiallyOpen,
+}: {
+  project: Project;
+  usage: string | undefined;
+  git: ProjectGit | undefined;
+  initiallyOpen: boolean;
+}) {
   const { layout } = useRuntime();
+  const [open, setOpen] = useState(initiallyOpen);
+  const panelId = `project-${project.id}-trackers`;
   return (
     <li
       aria-label={project.name}
-      className="flex min-w-0 items-center gap-3 border-b border-border py-3 last:border-b-0"
+      id={`trackers-${project.id}`}
+      className="flex min-w-0 flex-col gap-3 border-b border-border py-3 last:border-b-0"
     >
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-sm font-medium">{project.name}</span>
-        <PathText path={project.cwd} copy className="text-muted-foreground" />
-        {usage && <span className="text-xs text-muted-foreground">{usage}</span>}
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="text-sm font-medium">{project.name}</span>
+          <PathText path={project.cwd} copy className="text-muted-foreground" />
+          <GitLine projectId={project.id} git={git} />
+          {usage && <span className="text-xs text-muted-foreground">{usage}</span>}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={open}
+            aria-controls={panelId}
+            onClick={() => setOpen(!open)}
+          >
+            {open ? <ChevronDownIcon /> : <ChevronRightIcon />}
+            Trackers
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              layout.setState({ projectDialog: { type: 'rename', projectId: project.id } })
+            }
+          >
+            <PencilIcon />
+            Rename
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={() =>
+              layout.setState({ projectDialog: { type: 'remove', projectId: project.id } })
+            }
+          >
+            <Trash2Icon />
+            Remove
+          </Button>
+        </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() =>
-            layout.setState({ projectDialog: { type: 'rename', projectId: project.id } })
-          }
+      {open && (
+        <div
+          id={panelId}
+          role="region"
+          aria-label={`Trackers for ${project.name}`}
+          className="ml-0 rounded-md border border-border p-4"
         >
-          <PencilIcon />
-          Rename
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-destructive hover:text-destructive"
-          onClick={() =>
-            layout.setState({ projectDialog: { type: 'remove', projectId: project.id } })
-          }
-        >
-          <Trash2Icon />
-          Remove
-        </Button>
-      </div>
+          <ProjectTrackersPanel project={project} />
+        </div>
+      )}
     </li>
   );
 }
@@ -70,6 +170,9 @@ export function ProjectsSection() {
   const threads = useTopic('threads');
   const offline = !connection || status === 'disconnected';
   const items = useTopic('calendarItems');
+  const git = useProjectsGit(projects);
+  // "#trackers-<id>" (the palette's "Trackers for project …") opens that project's trackers.
+  const hash = useLocation({ select: (location) => location.hash });
   const open = (type: 'create' | 'import') => layout.setState({ projectDialog: { type } });
 
   return (
@@ -115,9 +218,11 @@ export function ProjectsSection() {
           <ul className="flex flex-col">
             {projects.map((project) => (
               <ProjectRow
-                key={project.id}
+                key={`${project.id}${hash === `trackers-${project.id}` ? '-open' : ''}`}
                 project={project}
                 usage={projectUsage(project.id, threads, items)}
+                git={git?.get(project.id)}
+                initiallyOpen={hash === `trackers-${project.id}`}
               />
             ))}
           </ul>

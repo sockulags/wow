@@ -309,6 +309,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     (stopped ??= (async () => {
       await stopServices();
       await providerService.stop();
+      await trackers.idle();
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       // Leave the file alone if another server instance has replaced it meanwhile.

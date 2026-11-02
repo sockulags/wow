@@ -1,4 +1,5 @@
 import { SecretRef } from '@wow/contracts';
+import { dispatch } from '@wow/client-runtime';
 import { useState } from 'react';
 import { useRuntime } from '@/app/runtime';
 import { errorMessage } from '@/chat/data';
@@ -6,8 +7,10 @@ import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
-// The secret store entry a secret setting's value goes to.
-export const settingSecretName = (key: string) => `setting:${key}`;
+// The secret store entry a secret setting's value goes to: `setting:<key>` for the shared value,
+// `setting:project:<id>:<key>` for a project's own (the server deletes those with the project).
+export const settingSecretName = (key: string, projectId?: string) =>
+  projectId ? `setting:project:${projectId}:${key}` : `setting:${key}`;
 
 // A setting marked `secret` stores only a reference (architecture "Secrets"): the value goes to
 // the secret store with `secrets.set` and is never sent back, so the field only says whether one
@@ -18,12 +21,15 @@ export function SecretField({
   settingKey,
   value,
   describedBy,
+  projectId,
 }: {
   id: string;
   label: string;
   settingKey: string;
   value: unknown;
   describedBy?: string | undefined;
+  // Stores the project's own value (scope `project:<id>`) instead of the shared one.
+  projectId?: string | undefined;
 }) {
   const { connection, settings } = useRuntime();
   const [text, setText] = useState('');
@@ -49,19 +55,38 @@ export function SecretField({
       if (!connection) return;
       const ref = SecretRef.parse(
         await connection.request('secrets.set', {
-          name: settingSecretName(settingKey),
+          name: settingSecretName(settingKey, projectId),
           value: text,
         }),
       );
-      const result = await settings.write(settingKey, ref);
-      if (!result.ok) throw new Error(result.issues.join('; '));
+      if (projectId) {
+        await dispatch(connection, {
+          type: 'setting.set',
+          key: settingKey,
+          scope: `project:${projectId}`,
+          value: ref,
+        });
+      } else {
+        const result = await settings.write(settingKey, ref);
+        if (!result.ok) throw new Error(result.issues.join('; '));
+      }
       setText('');
     });
 
   const clear = () =>
     run(async () => {
-      await settings.reset(settingKey);
-      await connection?.request('secrets.delete', { name: settingSecretName(settingKey) });
+      if (projectId && connection) {
+        await dispatch(connection, {
+          type: 'setting.reset',
+          key: settingKey,
+          scope: `project:${projectId}`,
+        });
+      } else {
+        await settings.reset(settingKey);
+      }
+      await connection?.request('secrets.delete', {
+        name: settingSecretName(settingKey, projectId),
+      });
     });
 
   return (

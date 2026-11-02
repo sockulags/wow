@@ -413,22 +413,46 @@ its time and workflow but loses the link).
   warns when the time overlaps something. It creates a card for the item and makes the item
   "planned". The item follows the run: "running" while it runs, "done" when it finishes, back to
   "planned" with the failure shown if it fails or is stopped.
-- **Publish to Jira** and **Publish to GitHub** show the issue first: the target, an editable
+- **Publish to Jira** and **Publish to GitHub** use the trackers of the item's project: the
+  project of its card (from Plan on calendar) or of its run. An item without one asks which
+  project the issue is for; **No project** uses the defaults in Settings → Trackers. The dialog
+  then shows the issue first: where it goes ("Publishes to acme/widgets on github.com for
+  Widgets", with where the repository came from, such as "From git remote"), an editable
   title, the item's tags to add as labels, and the description rendered. **Publish issue** creates
   it and stores its key and link on the item. Jira gets the description converted from markdown to
   its wiki markup, so headings, lists, emphasis, code and links show as in the preview; GitHub gets
   the markdown as written. Pressing publish again offers to open the existing issue instead. If the
   tracker is not set up, the dialog asks for the missing settings right there and then shows the
-  preview. wow does not read the issue back afterwards.
+  preview: sign-in (site, email, token) is saved as the default every project shares, the rest
+  (repository, project key) for the chosen project. wow does not read the issue back afterwards.
 
-Tracker settings (Settings → Trackers):
+Tracker settings come in two places:
 
-- Jira: base URL, auth mode (`cloud-basic` with email and API token, or `pat` for a personal
-  access token on Server or Data Center), project key, issue type.
-- GitHub: base URL (`https://api.github.com`, or `https://<host>/api/v3` for Enterprise Server),
-  token, owner, repository, labels.
+- **Settings → Trackers** holds the defaults for every project. Jira: site URL, sign-in (Jira
+  Cloud with email and API token, or a personal access token on Server or Data Center), project
+  key, issue type. GitHub: API URL (`https://api.github.com`, or `https://<host>/api/v3` for
+  Enterprise Server), token, owner, repository, labels. Tokens saved here are shared: one GitHub
+  token and one Jira token serve all projects. While the Jira email is empty, wow signs in with
+  the address Outlook uses.
+- **Settings → Projects → Trackers** on each project (also "Trackers for project …" in the
+  palette) shows what applies to that project and where each value came from: **From git
+  remote**, **Set for this project**, **Default** or **Not set**. Type a value to set it for the
+  project only; **Use git remote** or **Use default** goes back. **Use a different token** saves a
+  token for this project only, which then replaces the shared one there. Each tracker has **Test
+  connection**, which signs in with the project's values.
 
-Tokens are stored encrypted; clearing the field deletes the stored token.
+wow fills in what it can find, and never changes anything in the repository:
+
+- GitHub owner, repository and API URL come from the project folder's git remote (`origin`, or
+  the first GitHub remote when there is no `origin`). HTTPS and SSH remotes both work; a host
+  other than github.com is taken to be GitHub Enterprise Server, so its API URL is
+  `https://<host>/api/v3`. GitLab, Bitbucket and Azure DevOps remotes are not used.
+- The Jira project key is only suggested: wow looks for references such as `ABC-123` in the
+  branch names and the latest commits (how many is **Commits searched for Jira keys**) and offers
+  **Use ABC**. Likewise a project without a Jira site is offered the one another project uses.
+
+Tokens are stored encrypted; clearing the field deletes the stored token. Removing a project
+deletes the tokens saved for it alone.
 
 ## Projects
 
@@ -438,6 +462,11 @@ project after it; type another name if you like. In the desktop app **Choose fol
 system folder dialog; only the browser build of the app (development) takes a typed path, and the
 server refuses a folder it cannot find. A name another project already has is refused too. Every
 project picker (new thread, card dialog, Run now, Plan on calendar) offers the new project at once.
+
+Each row also says what wow found in the folder: the git remote and branch (`origin ·
+github.com/acme/widgets · main`), **No git repository**, **No git remote**, or **Folder
+missing** when the folder is gone (threads and runs cannot work there until it is back).
+**Trackers** opens the project's Jira and GitHub settings (see Backlog).
 
 **Import from Claude and Codex** (also in the palette) looks through the session history of every
 provider instance in Settings → Providers: Claude Code's `projects` folder in the instance's config
@@ -468,7 +497,8 @@ see each setting's key and raw default, for config files and bug reports.
 Work hours are two times and a row of day buttons. The handover text has buttons that insert
 each `{{placeholder}}` at the cursor. Settings → Trackers has a Jira and a GitHub section, each
 with **Test connection**, which signs in with what you entered and says as whom; the Jira email is
-only asked for Jira Cloud. Settings → Keybindings groups the keys by where they work and marks a
+only asked for Jira Cloud. These are the defaults; each project can have its own under Settings →
+Projects. Settings → Keybindings groups the keys by where they work and marks a
 key that two commands share; click a key and press the new combination.
 
 Useful ones to know:
@@ -543,7 +573,8 @@ Check `skills.directories`, then press "Refresh skills" in the builder or the pa
 
 The error shows what the tracker answered. Common causes: a wrong base URL, an expired token, a
 project key or repository the token cannot reach, or an issue type that does not exist in the Jira
-project.
+project. Check the project in the dialog first: the preview says which repository or Jira project
+it publishes to, and Settings → Projects → Trackers says where each value came from.
 
 **The window does not open**
 

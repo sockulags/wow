@@ -625,7 +625,7 @@ export const settingsRegistry = {
     description:
       'Address of your Jira site, such as https://acme.atlassian.net for Jira Cloud or https://jira.example.com for Jira Server or Data Center.',
     default: '',
-    scope: 'global',
+    scope: 'project',
   }),
   'trackers.jira.authMode': defineSetting({
     schema: JiraAuthMode,
@@ -633,7 +633,7 @@ export const settingsRegistry = {
     label: 'Jira sign-in',
     description: 'How wow signs in to Jira.',
     default: 'cloud-basic',
-    scope: 'global',
+    scope: 'project',
     radio: true,
     options: {
       'cloud-basic': {
@@ -652,7 +652,7 @@ export const settingsRegistry = {
     label: 'Jira email',
     description: 'Your Atlassian account email. Only used for Jira Cloud.',
     default: '',
-    scope: 'global',
+    scope: 'project',
   }),
   'trackers.jira.token': defineSetting({
     schema: SecretSetting,
@@ -661,7 +661,7 @@ export const settingsRegistry = {
     description:
       'An API token for Jira Cloud, or a personal access token for Jira Server or Data Center. Stored in the wow secret store and never shown again.',
     default: null,
-    scope: 'global',
+    scope: 'project',
     secret: true,
   }),
   'trackers.jira.projectKey': defineSetting({
@@ -670,7 +670,7 @@ export const settingsRegistry = {
     label: 'Jira project key',
     description: 'Project new issues are created in, such as PROJ.',
     default: '',
-    scope: 'global',
+    scope: 'project',
   }),
   'trackers.jira.issueType': defineSetting({
     schema: z.string().trim().min(1),
@@ -678,16 +678,16 @@ export const settingsRegistry = {
     label: 'Jira issue type',
     description: 'Issue type name new issues get, such as Task or Story.',
     default: 'Task',
-    scope: 'global',
+    scope: 'project',
   }),
   'trackers.github.baseUrl': defineSetting({
     schema: TrackerUrl,
     group: 'trackers',
     label: 'GitHub API URL',
     description:
-      'https://api.github.com for github.com, or https://<host>/api/v3 for GitHub Enterprise Server.',
+      "https://api.github.com for github.com, or https://<host>/api/v3 for GitHub Enterprise Server. A project whose git remote is on a GitHub host uses that host's instead.",
     default: 'https://api.github.com',
-    scope: 'global',
+    scope: 'project',
   }),
   'trackers.github.token': defineSetting({
     schema: SecretSetting,
@@ -696,24 +696,26 @@ export const settingsRegistry = {
     description:
       'Token allowed to create issues in the repository. Stored in the wow secret store and never shown again.',
     default: null,
-    scope: 'global',
+    scope: 'project',
     secret: true,
   }),
   'trackers.github.owner': defineSetting({
     schema: z.string().trim(),
     group: 'trackers',
     label: 'GitHub owner',
-    description: 'User or organization that owns the repository issues are created in.',
+    description:
+      "User or organization that owns the repository issues are created in. A project whose git remote is a GitHub repository uses the remote's owner instead.",
     default: '',
-    scope: 'global',
+    scope: 'project',
   }),
   'trackers.github.repo': defineSetting({
     schema: z.string().trim(),
     group: 'trackers',
     label: 'GitHub repository',
-    description: 'Repository name issues are created in, without the owner.',
+    description:
+      "Repository name issues are created in, without the owner. A project whose git remote is a GitHub repository uses the remote's name instead.",
     default: '',
-    scope: 'global',
+    scope: 'project',
   }),
   'trackers.github.labels': defineSetting({
     schema: z.array(z.string().trim().min(1)),
@@ -721,7 +723,7 @@ export const settingsRegistry = {
     label: 'GitHub labels',
     description: 'Labels every issue published to GitHub gets. Leave empty for none.',
     default: [],
-    scope: 'global',
+    scope: 'project',
   }),
   'trackers.requestTimeoutMs': defineSetting({
     schema: z.number().int().min(1000).max(300_000),
@@ -732,6 +734,25 @@ export const settingsRegistry = {
     default: 30_000,
     scope: 'global',
     unit: 'ms',
+  }),
+  'trackers.gitTimeoutMs': defineSetting({
+    schema: z.number().int().min(500).max(60_000),
+    group: 'trackers',
+    label: 'Git timeout',
+    description:
+      "How long reading a project's git remotes, branches and recent commits may take before wow shows the project without them.",
+    default: 5_000,
+    scope: 'global',
+    unit: 'ms',
+  }),
+  'trackers.jira.keyScanCommits': defineSetting({
+    schema: z.number().int().min(0).max(5_000),
+    group: 'trackers',
+    label: 'Commits searched for Jira keys',
+    description:
+      'How many recent commits of a project wow reads to suggest its Jira project key from references such as ABC-123. 0 turns the suggestion off.',
+    default: 200,
+    scope: 'global',
   }),
   'appearance.theme': defineSetting({
     schema: Theme,

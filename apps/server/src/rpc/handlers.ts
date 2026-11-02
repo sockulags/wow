@@ -104,12 +104,14 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       names: await deps.secrets.names(),
     }),
     'skills.refresh': async () => ({ skills: await deps.skills.refresh() }),
-    'trackers.preview': ({ backlogItemId, service }) =>
-      deps.trackers.preview(backlogItemId, service),
-    'trackers.test': ({ service }) => deps.trackers.test(service),
-    'trackers.publish': async ({ backlogItemId, service, title, labels }) => {
+    'projects.git': async () => ({ projects: await deps.trackers.projectsGit() }),
+    'trackers.project': ({ projectId }) => deps.trackers.projectTrackers(projectId),
+    'trackers.preview': ({ backlogItemId, service, projectId }) =>
+      deps.trackers.preview(backlogItemId, service, projectId),
+    'trackers.test': ({ service, projectId }) => deps.trackers.test(service, projectId),
+    'trackers.publish': async ({ backlogItemId, service, title, labels, projectId }) => {
       try {
-        return await deps.trackers.publish(backlogItemId, service, { title, labels });
+        return await deps.trackers.publish(backlogItemId, service, { title, labels, projectId });
       } catch (error) {
         // A tracker that refuses the issue or cannot be reached is the user's to fix.
         if (error instanceof TrackerError) throw new RpcFault('rejected', error.message);
