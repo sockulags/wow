@@ -53,6 +53,12 @@
   --color-state-working: var(--state-working);
   --color-state-done: var(--state-done);
   --color-state-failed: var(--state-failed);
+  --color-event-outlook: var(--event-outlook);
+  --color-event-outlook-border: var(--event-outlook-border);
+  --color-event-card: var(--event-card);
+  --color-event-card-border: var(--event-card-border);
+  --color-event-work-hours: var(--event-work-hours);
+  --color-event-now: var(--event-now);
 }
 
 @layer base {

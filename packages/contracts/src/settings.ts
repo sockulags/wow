@@ -67,6 +67,9 @@ export interface SettingDefinition<S extends z.ZodType = z.ZodType> {
 
 const defineSetting = <S extends z.ZodType>(definition: SettingDefinition<S>) => definition;
 
+// The context panel's width range; the web app's resize handle stops at the same bounds.
+export const contextPanelWidthBounds = { min: 280, max: 720 } as const;
+
 export const Weekday = z.enum([
   'monday',
   'tuesday',
@@ -800,6 +803,24 @@ export const settingsRegistry = {
     default: 5,
     scope: 'global',
   }),
+  'appearance.contextPanel': defineSetting({
+    schema: z.boolean(),
+    group: 'appearance',
+    label: 'Context panel',
+    description:
+      'Show the panel on the right with the details and thread of what you select. In a narrow window it folds away on its own and opens over the view.',
+    default: false,
+    scope: 'global',
+  }),
+  'appearance.contextPanelWidth': defineSetting({
+    schema: z.number().int().min(contextPanelWidthBounds.min).max(contextPanelWidthBounds.max),
+    group: 'appearance',
+    label: 'Context panel width',
+    description: 'Width of the context panel. Dragging its left edge changes it.',
+    default: 380,
+    scope: 'global',
+    unit: 'pixels',
+  }),
   'keybindings.palette': keybinding('Command palette', 'Open the command palette.', 'Mod+K'),
   'keybindings.toggleSidebar': keybinding(
     'Toggle sidebar',
@@ -807,9 +828,14 @@ export const settingsRegistry = {
     'Mod+B',
   ),
   'keybindings.toggleRightPanel': keybinding(
-    'Toggle right panel',
-    'Show or hide the right panel.',
+    'Toggle context panel',
+    'Show or hide the context panel on the right.',
     'Mod+J',
+  ),
+  'keybindings.focusContextPanel': keybinding(
+    'Focus context panel',
+    'Move the focus into the context panel, and back to the view when it is already there. Opens the panel when it is closed.',
+    'F6',
   ),
   'keybindings.toggleTheme': keybinding(
     'Toggle theme',

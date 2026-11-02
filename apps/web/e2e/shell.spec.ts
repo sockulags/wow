@@ -42,13 +42,13 @@ test.describe('shell', () => {
   test('changes a setting and its keybinding takes effect', async ({ page }) => {
     await page.goto('/settings/keybindings');
     const row = page.getByTestId('setting-keybindings.toggleRightPanel');
-    await row.getByRole('button', { name: /^Toggle right panel:/ }).click();
+    await row.getByRole('button', { name: /^Toggle context panel:/ }).click();
     await page.keyboard.press('Control+Shift+Y');
-    await expect(row.getByRole('button', { name: /^Toggle right panel:/ })).toHaveText(
+    await expect(row.getByRole('button', { name: /^Toggle context panel:/ })).toHaveText(
       'Ctrl+Shift+Y',
     );
 
-    const details = page.getByRole('complementary', { name: 'Details' });
+    const details = page.getByRole('complementary', { name: 'Context panel' });
     await page.keyboard.press('Control+j');
     await expect(details).toBeHidden();
     await page.keyboard.press('Control+Shift+Y');

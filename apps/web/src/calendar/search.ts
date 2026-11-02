@@ -6,13 +6,17 @@ export interface CalendarSearch {
   readonly view?: CalendarViewKind;
   // YYYY-MM-DD; absent means today.
   readonly date?: string;
+  // The card or meeting selected for the context panel (owner decision F-1).
+  readonly item?: string;
 }
 
 export function validateCalendarSearch(search: Record<string, unknown>): CalendarSearch {
   const view = search['view'] === 'day' || search['view'] === 'week' ? search['view'] : undefined;
   const date =
     typeof search['date'] === 'string' && parseIsoDate(search['date']) ? search['date'] : undefined;
-  return { ...(view ? { view } : {}), ...(date ? { date } : {}) };
+  const item =
+    typeof search['item'] === 'string' && search['item'] !== '' ? search['item'] : undefined;
+  return { ...(view ? { view } : {}), ...(date ? { date } : {}), ...(item ? { item } : {}) };
 }
 
 // Which day "today" is follows the configured zone, not the machine's.

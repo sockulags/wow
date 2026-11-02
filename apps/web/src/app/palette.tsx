@@ -16,6 +16,7 @@ import type { AppCommand, CommandContext, CommandGroup as Group } from './comman
 import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
 import { paletteScore, startList, displayTitle } from './palette-model';
 import { useLayout, useRuntime, useSetting } from './runtime';
+import { takePanelFocusRequest } from '@/panel/panel-state';
 import { sections } from './sections';
 
 const groupOrder: readonly Group[] = [
@@ -109,6 +110,10 @@ export function CommandPalette({
       title="Command palette"
       description="Search threads, views, settings and actions"
       showCloseButton={false}
+      // A command that moved the focus on purpose ("Show in panel") keeps it there.
+      onCloseAutoFocus={(event) => {
+        if (takePanelFocusRequest(layout, true)) event.preventDefault();
+      }}
     >
       <CommandFilter byId={byId} onKeyDown={onKeyDown}>
         <CommandInput

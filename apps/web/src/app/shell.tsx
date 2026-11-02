@@ -3,6 +3,13 @@ import { PanelLeftIcon, PanelRightIcon, SearchIcon } from 'lucide-react';
 import { useLayoutEffect, useState } from 'react';
 import { IconButton, ShortcutHint } from '@/components/hint';
 import { Button } from '@/components/ui/button';
+import { ContextPanel } from '@/panel/context-panel';
+import {
+  CONTEXT_PANEL_ID,
+  MAIN_VIEW_ID,
+  toggleContextPanel,
+  useContextPanelShown,
+} from '@/panel/panel-state';
 import { ProjectDialogs } from '@/projects/project-dialogs';
 import { ProviderDialogs } from '@/providers/provider-dialogs';
 import { ConnectionBanner } from './connection-banner';
@@ -36,26 +43,10 @@ function useApplyAppearance() {
   }, [uiFont, codeFont, density]);
 }
 
-function RightPanel() {
-  return (
-    <aside
-      aria-label="Details"
-      className="flex w-80 shrink-0 flex-col border-l border-border bg-background"
-    >
-      <div className="flex h-11 items-center border-b border-border px-3 text-xs font-medium text-muted-foreground">
-        Details
-      </div>
-      <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-muted-foreground">
-        Select a thread, card or run to see its details here.
-      </div>
-    </aside>
-  );
-}
-
 export function Shell() {
-  const { layout } = useRuntime();
+  const { layout, settings } = useRuntime();
   const sidebarOpen = useLayout((state) => state.sidebarOpen);
-  const rightPanelOpen = useLayout((state) => state.rightPanelOpen);
+  const panelShown = useContextPanelShown();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const title = sections.find((section) => pathname.startsWith(section.path))?.title ?? 'wow';
   const { commands, context } = useCommands();
@@ -65,7 +56,7 @@ export function Shell() {
   useApplyAppearance();
 
   return (
-    <div className="flex h-full overflow-hidden bg-background text-foreground">
+    <div className="relative flex h-full overflow-hidden bg-background text-foreground">
       {sidebarOpen && <Sidebar />}
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-2">
@@ -92,10 +83,11 @@ export function Shell() {
               <ShortcutHint shortcut="keybindings.palette" className="max-lg:hidden" />
             </Button>
             <IconButton
-              label="Toggle right panel"
+              label="Toggle context panel"
               shortcut="keybindings.toggleRightPanel"
-              aria-pressed={rightPanelOpen}
-              onClick={() => layout.setState({ rightPanelOpen: !rightPanelOpen })}
+              aria-pressed={panelShown}
+              aria-controls={panelShown ? CONTEXT_PANEL_ID : undefined}
+              onClick={() => toggleContextPanel({ settings, layout })}
             >
               <PanelRightIcon />
             </IconButton>
@@ -104,12 +96,16 @@ export function Shell() {
         <ConnectionBanner />
         <UpdateBanner />
         <ShellToolbarSlot value={toolbarSlot}>
-          <div className="min-h-0 flex-1 overflow-auto">
+          <div
+            id={MAIN_VIEW_ID}
+            tabIndex={-1}
+            className="min-h-0 flex-1 overflow-auto outline-none"
+          >
             <Outlet />
           </div>
         </ShellToolbarSlot>
       </main>
-      {rightPanelOpen && <RightPanel />}
+      {panelShown && <ContextPanel />}
       <CommandPalette commands={commands} context={context} />
       <ProviderDialogs />
       <ProjectDialogs />

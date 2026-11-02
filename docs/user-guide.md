@@ -71,7 +71,8 @@ Default keys (all changeable in Settings → Keybindings):
 | Ctrl+1 … 4   | Calendar, Chat, Workflows, Backlog       |
 | Ctrl+,       | Settings                                 |
 | Ctrl+B       | Show or hide the sidebar                 |
-| Ctrl+J       | Show or hide the right panel             |
+| Ctrl+J       | Show or hide the context panel           |
+| F6           | Move the focus into the panel and back   |
 | Ctrl+Shift+L | Dark or light theme                      |
 | Ctrl+Alt+N   | New thread                               |
 | Ctrl+.       | Stop the running turn                    |
@@ -86,6 +87,37 @@ The single-letter calendar keys only work while the calendar is open and no text
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
 the whole window. The installed app has no window menu: Ctrl+R, Ctrl+Shift+I and the browser's
 page zoom are off, so these keys always reach wow.
+
+### The context panel
+
+The panel on the right shows the thing you selected next to the view you are in. **Ctrl+J**, the
+panel button at the right of the header or "Toggle context panel" in the palette show and hide it,
+and it stays that way after a restart (`appearance.contextPanel`). What it shows depends on the
+view:
+
+- **Calendar**: click a card for its time, project, workflow, trigger, backlog item and notes,
+  with **Edit card**. When the card has a run, the thread of the step the run is on follows live
+  below it: the conversation, **Continue** and **Stop** when the run waits for you, and the
+  composer to answer the step. Click a meeting for its time, place, organizer, **Join** and **Open
+  in Outlook**. While the panel is open a click selects instead of opening the card form or the
+  meeting's popover, and the arrow keys in the grid move the selection with the focus; Enter on
+  a selected card, or **Edit card**, opens the form. The selection is in the address
+  (`?item=…`), so a reload shows the same card. While the panel is open the mail rail folds to its
+  count; its button unfolds it.
+- **Workflows**: a run shows its active step's thread; a workflow shows its steps, where it waits
+  for you and its runs.
+- **Backlog**: an item shows its state, tags, where it is planned on the calendar, its runs and
+  the issue it was published to.
+- **Chat**: the thread's provider, model, effort, permissions, project and folder, its token use
+  and cost, and the run, card and backlog item it belongs to.
+
+With nothing selected the panel says what would appear there. Drag its left edge to make it wider
+or narrower, or focus the edge and use the arrow keys (Shift for bigger steps, Home and End for
+the narrowest and widest); the width is kept (`appearance.contextPanelWidth`). **F6** ("Focus
+context panel") moves the focus into the panel, opening it if needed, and back to where you were;
+"Show in panel" in the palette does the same for the view's selection. In a window narrower than
+1200 pixels the panel does not take room from the view: it folds away, and opening it lays it over
+the view until you close it, without changing the setting.
 
 ### Tray and autostart
 
@@ -191,7 +223,9 @@ straight to it.
 - **Up** and **Down** move between the items of a day, **Left** and **Right** to the nearest item
   on the day before or after, **Home** and **End** to the first and last item of the day, and
   **Ctrl+Home** and **Ctrl+End** to the first and last of the range.
-- **Enter** opens the item: a card's form, a meeting's details, or a "+N" list.
+- **Enter** opens the item: a card's form, a meeting's details, or a "+N" list. With the context
+  panel open, the arrow keys and Enter show the item in the panel, and Enter on the card the panel
+  already shows opens its form.
 - **Alt+Up** and **Alt+Down** move a card by `calendar.snapMinutes`, **Alt+Left** and
   **Alt+Right** by a day. **Alt+Shift+Up** and **Alt+Shift+Down** move its end.
 
@@ -205,7 +239,9 @@ calendar is struck through. All-day items sit in a row above the grid.
 
 Click a meeting or press Enter on it for its details: time, place, organizer and the start of its
 description, with **Join**, **Open in Outlook** and **Card before** or **Card after**, which open
-the card form for the time right before or after the meeting.
+the card form for the time right before or after the meeting. With the context panel open the
+details show there instead (see "The context panel"). Outlook does not give wow the attendee list,
+so it is not shown.
 
 wow reads Outlook every `outlook.pollSeconds` (60 by default), so a moved or cancelled meeting
 shows up within one interval. The refresh button in the toolbar and "Refresh Outlook" in the
@@ -222,7 +258,8 @@ The mail rail lists unread mail from `outlook.folders` (Inbox by default), newes
 count, the sender, the time, the subject and one line of the message. Click a message, or move to
 it with the arrow keys and press Enter, to open it in Outlook. The fold button, `M` or "Collapse
 mail rail" in the palette fold the rail to a strip with the count (`outlook.mailRailCollapsed`);
-in a narrow window it folds on its own. Turn the rail off with `outlook.mailRail`.
+in a narrow window or while the context panel is open it folds on its own. Turn the rail off with
+`outlook.mailRail`.
 
 ### Cards
 
@@ -236,6 +273,7 @@ Cards are your own blocks of time. They never leave the app.
   to `calendar.snapMinutes`. The keyboard does the same (see above).
 - **Edit**: click the card, or press Enter on it, or use "Edit card: <title>" in the palette. The
   dialog edits title, date, times, the workflow and project to run, the backlog item and notes.
+  With the context panel open, a click shows the card there and **Edit card** opens the dialog.
 - **Delete**: "Delete card" in the form deletes it at once; **Undo** in the message that follows
   puts it back. A card whose workflow run is still going asks first whether to stop the run.
 

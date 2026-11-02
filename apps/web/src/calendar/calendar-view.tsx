@@ -41,7 +41,8 @@ import {
   systemZone,
 } from './time';
 import { TimeGrid } from './time-grid';
-import { useNarrowWindow } from './use-narrow';
+import { useBelow } from '@/lib/use-breakpoint';
+import { useContextPanelShown } from '@/panel/panel-state';
 import { calendarZoom, presetHeight, zoomBounds, zoomPercent, zoomPresets } from './zoom';
 
 // While Outlook cannot be read (spec 4): what happened, since when, and what to try.
@@ -187,10 +188,13 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const maxColumns = useSetting('calendar.weekMaxColumns');
   const mailRail = useSetting('outlook.mailRail');
   const mailRailCollapsed = useSetting('outlook.mailRailCollapsed');
-  // A narrow window folds the rail on its own; opening it there only lasts until it is folded.
-  const narrow = useNarrowWindow();
+  // A narrow window, or the context panel next to the calendar, folds the rail on its own;
+  // opening it then only lasts until it is folded again.
+  const narrow = useBelow('narrow');
+  const panelShown = useContextPanelShown();
+  const crowded = narrow || panelShown;
   const [railPeek, setRailPeek] = useState(false);
-  const railCollapsed = mailRailCollapsed || (narrow && !railPeek);
+  const railCollapsed = mailRailCollapsed || (crowded && !railPeek);
   const zoom = calendarZoom(settings);
   const pendingHeight = useStore(zoom.store, (state) => state.pending);
   const floor = useStore(zoom.store, (state) => state.floor);
@@ -221,6 +225,12 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const foreignZone = zone === systemZone() ? undefined : zone;
 
   const go = (next: CalendarSearch) => void navigate({ to: '/calendar', search: next });
+  // The selection lives in the URL, replaced rather than pushed so Back leaves the calendar.
+  const select = (itemId: string) => {
+    if (search.item !== itemId) {
+      void navigate({ to: '/calendar', search: { ...search, item: itemId }, replace: true });
+    }
+  };
   const shift = (direction: 1 | -1) =>
     go({ ...search, date: isoDate(addDays(anchor, direction * stepDays(view))) });
   const newCard = () =>
@@ -374,6 +384,9 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
             onFloor={(height) => zoom.setFloor(height)}
             onCreate={(range) => layout.setState({ cardDialog: { type: 'create', ...range } })}
             onEdit={(cardId) => layout.setState({ cardDialog: { type: 'edit', cardId } })}
+            selectedId={search.item}
+            panelShown={panelShown}
+            onSelect={select}
             runNowIds={runNowIds}
             onRunNow={runNow}
             onChange={(cardId, range) => dispatch({ type: 'card.update', cardId, ...range })}
@@ -386,7 +399,7 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           zone={zone}
           collapsed={railCollapsed}
           onCollapsedChange={(next) => {
-            if (narrow) {
+            if (crowded) {
               setRailPeek(!next);
               if (!next && mailRailCollapsed)
                 void settings.write('outlook.mailRailCollapsed', false);

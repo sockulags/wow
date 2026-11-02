@@ -10,6 +10,8 @@ import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
 import { providerCommands } from '@/providers/commands';
 import { formatWhen } from '@/lib/format';
+import { panelCommands } from '@/panel/commands';
+import { panelSelection } from '@/panel/model';
 import { useCalendarPrefs } from '@/calendar/prefs';
 import { pendingApproval } from '@/chat/view-model';
 import { workflowCommands } from '@/workflows/commands';
@@ -98,6 +100,7 @@ export function useCommands(): {
         items: backlogItems ?? [],
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
       }),
+      ...panelCommands(panelSelection(pathname, locationSearch)),
       ...providerCommands(instances ?? []),
       ...projectCommands(projects ?? []),
       ...updateCommands(updateState),
@@ -110,6 +113,7 @@ export function useCommands(): {
     mailRailCollapsed,
     approvals,
     pathname,
+    locationSearch,
     updateState,
     staticCommands,
     threads,

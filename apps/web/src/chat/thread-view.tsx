@@ -35,7 +35,7 @@ import {
   providerLabel,
 } from './view-model';
 
-const stateLabels: Readonly<Record<Thread['state'], string>> = {
+export const threadStateLabels: Readonly<Record<Thread['state'], string>> = {
   idle: 'Idle',
   working: 'Working',
   needs_you: 'Needs you',
@@ -82,7 +82,7 @@ function ThreadHeader({
         <h2 className="min-w-0 truncate text-sm font-medium">{threadTitle(thread)}</h2>
         <span className="sr-only">State:</span>
         <span data-testid="thread-state" className="shrink-0 text-xs text-muted-foreground">
-          {stateLabels[thread.state]}
+          {threadStateLabels[thread.state]}
         </span>
         {run && thread.runId && (
           <Badge asChild variant="outline" className="min-w-0 text-muted-foreground">
@@ -207,9 +207,47 @@ function useStickToBottom(dependency: unknown) {
 }
 
 export function ThreadView({ threadId }: { threadId: string }) {
-  const send = useDispatch();
   const threads = useTopic('threads');
   const instances = useTopic('providerInstances') ?? [];
+  const thread = threads?.find((candidate) => candidate.id === threadId);
+
+  if (threads && !thread) {
+    return (
+      <EmptyState
+        icon={SearchXIcon}
+        title="Thread not found"
+        description="It may have been removed, or the link is from another wow home."
+      />
+    );
+  }
+  if (!thread) return null;
+  const instance = instances.find((candidate) => candidate.id === thread.providerInstanceId);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <ThreadHeader thread={thread} instance={instance} instances={instances} />
+      {/* Opening a thread puts the focus where the next message goes (audit A-11). */}
+      <ThreadConversation thread={thread} instance={instance} autoFocus />
+    </div>
+  );
+}
+
+// A thread's conversation, its gate bar and its composer: the chat view's thread and, narrower,
+// the context panel's step thread (owner decision F-1), so both answer the same way.
+export function ThreadConversation({
+  thread,
+  instance,
+  autoFocus = false,
+  compact = false,
+}: {
+  thread: Thread;
+  instance: ProviderInstance | undefined;
+  autoFocus?: boolean;
+  // The context panel: no centered column, tighter padding.
+  compact?: boolean;
+}) {
+  const threadId = thread.id;
+  const send = useDispatch();
   const turns = useTopic('turns', threadId) ?? [];
   const items = useTopic('threadItems', threadId);
   const approvals = useTopic('approvals', threadId) ?? [];
@@ -223,25 +261,10 @@ export function ThreadView({ threadId }: { threadId: string }) {
   const { container, onScroll } = useStickToBottom(items);
   const composer = useRef<ComposerHandle>(null);
 
-  const thread = threads?.find((candidate) => candidate.id === threadId);
-  const found = thread !== undefined;
-  // Opening a thread puts the focus where the next message goes (audit A-11).
   useEffect(() => {
-    if (found) composer.current?.focus();
-  }, [found, threadId]);
+    if (autoFocus) composer.current?.focus();
+  }, [autoFocus, threadId]);
 
-  if (threads && !thread) {
-    return (
-      <EmptyState
-        icon={SearchXIcon}
-        title="Thread not found"
-        description="It may have been removed, or the link is from another wow home."
-      />
-    );
-  }
-  if (!thread) return null;
-
-  const instance = instances.find((candidate) => candidate.id === thread.providerInstanceId);
   const running = runningTurn(turns);
   const last = lastTurn(turns);
   const canResume = !running && (last?.state === 'failed' || last?.state === 'interrupted');
@@ -293,16 +316,16 @@ export function ThreadView({ threadId }: { threadId: string }) {
         ? 'Write the next message; it is sent when the turn ends'
         : 'Message the agent. Type $ to pick a skill.';
 
+  const column = compact ? 'w-full px-3' : 'mx-auto w-full max-w-3xl px-4';
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <ThreadHeader thread={thread} instance={instance} instances={instances} />
+    <>
       <div
         ref={container}
         onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-y-auto py-4"
+        className={cn('min-h-0 flex-1 overflow-y-auto', compact ? 'py-3' : 'py-4')}
         data-testid="conversation"
       >
-        <div className="mx-auto w-full max-w-3xl px-4">
+        <div className={column}>
           <ol aria-label="Conversation" className="flex flex-col gap-3">
             {(items ?? []).map((item) => (
               <ConversationItem
@@ -321,7 +344,7 @@ export function ThreadView({ threadId }: { threadId: string }) {
           )}
         </div>
       </div>
-      <div className="mx-auto flex w-full max-w-3xl shrink-0 flex-col gap-2 px-4 pb-4">
+      <div className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}>
         {gateRun && (
           <GateBar
             run={gateRun}
@@ -369,6 +392,6 @@ export function ThreadView({ threadId }: { threadId: string }) {
           }
         />
       </div>
-    </div>
+    </>
   );
 }

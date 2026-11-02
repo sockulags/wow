@@ -501,7 +501,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs`, `trackers.jira.keyScanCommits` (the
   `trackers.jira.*` and `trackers.github.*` ones are project-scoped, see "Backlog and trackers")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
-  `appearance.paletteRecent`
+  `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
 - desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
 - updates: `updates.enabled`, `updates.checkIntervalMinutes`
@@ -784,9 +784,9 @@ spends a block's height: the title wraps on whole words into the lines left afte
 button row, keeps its row sticky while a tall block scrolls past, and a block too short for a
 button row gets Join as an icon on the title line. Every block has a tooltip with its full title,
 time and place on hover and on focus, and widens over the day while focused by keyboard. Event
-colors are the `--event-*` custom properties set on the grid (`event-tokens.ts`): Outlook items a
-blue tint, cards the card surface, both with borders of at least 3:1, on a work-hours band lighter
-than both.
+colors are the `--event-*` tokens in `styles/tokens.css` (`bg-event-outlook`,
+`border-event-card-border` and so on), set for both themes: Outlook items a blue tint, cards the
+card surface, both with borders of at least 3:1, on a work-hours band lighter than both.
 
 Cards. `cardKind` (`items.ts`) tells a trigger (a workflow and a project) from a card with a
 workflow but no project (dashed, a warning icon and "No project, will not run") and a plain card.
@@ -860,9 +860,9 @@ between messages. A click calls `outlook.open` and confirms with a toast. While 
 unavailable the header says "Last read <time>" and the list is dimmed. The rail folds to a 40 px
 strip with the count: its button, the `keybindings.toggleMailRail` key and the palette ("Collapse
 mail rail" / "Show mail rail") write `outlook.mailRailCollapsed` (owner decision F-3); below a
-1200 px window it folds on its own and opening it there lasts until it is folded again
-(`use-narrow.ts`). Before the first snapshot it shows the shared loading state, then the compact
-empty state.
+1200 px window (`useBelow('narrow')`, see "Context panel"), and while the context panel is open,
+it folds on its own, and opening it then lasts until it is folded again. Before the first snapshot
+it shows the shared loading state, then the compact empty state.
 
 Settings. `calendar.zone` uses the `timeZone` widget, a searchable `Combobox` of
 `Intl.supportedValuesOf('timeZone')` labelled with their offsets, with "From Outlook (<zone>)" and
@@ -872,9 +872,60 @@ fallback while Outlook has not been read, with an Override switch that reveals t
 and end time fields and a Mon–Sun toggle group, or a weekday select) and switches back to
 `outlook`.
 
+Selection. `/calendar?item=<id>` names the card or meeting the context panel shows; the URL is
+replaced, not pushed, when it changes. `TimeGrid` takes `selectedId`, `panelShown` and `onSelect`:
+while the panel is shown a click or Enter selects instead of opening the card dialog or the
+meeting popover, the arrow keys move the selection with the focus, Enter on the selected card
+opens its dialog, and the selected block carries a ring and `aria-current`. With the panel closed
+a click still records the selection and opens the dialog or popover as before.
+
 Palette commands: today, next, previous, day view, week view, zoom in, zoom out, reset zoom and
 collapse or show the mail rail (on the calendar only, with their keys), hide or show weekends,
 New card, Refresh Outlook, and one "Edit card" entry per card.
+
+## Context panel
+
+`apps/web/src/panel` (owner decisions F-1, F-2). The right-hand panel shows the selected thing's
+details and, for a card or run, its live step thread next to the main view. What is selected comes
+from the route only (`panelSelection(pathname, search)` in `model.ts`): `/calendar?item=`,
+`/chat/$threadId`, `/workflows/runs/$runId`, `/workflows/$workflowId` and `/backlog/$itemId`;
+nothing is derived from the clock or kept in the browser. Every row it shows comes from the same
+topics the views read.
+
+- Calendar (`calendar-panel.tsx`): a card's time, state, project, workflow, trigger (`triggers`),
+  run and backlog item, with Edit card (the card dialog) and Run now when the trigger offers it.
+  The card's run is `cardRun` (the card row's `runId`, else its trigger's). A meeting reuses
+  `OutlookDetails`; the bridge reads no attendees, so none are shown.
+- Step thread (`step-thread.tsx`): `activeStep(run)` is the step to review at a gate (the one that
+  just ended, or the one before a step that has not started), else the current step, else the last
+  step with a thread. It renders `ThreadConversation` (`chat/thread-view.tsx`, the chat view's
+  conversation, `GateBar` and composer, `compact` and without taking the focus), so Continue, Stop,
+  approvals, questions and messages work exactly as in the thread. A step without a thread yet
+  shows the gate bar alone when the run waits before it.
+- Workflows (`workflow-panel.tsx`): a run shows its step thread; a workflow its steps, gates and
+  runs (`sortRuns`).
+- Backlog (`backlog-panel.tsx`): state, tags, the published issue (`remote`, a plain link; the
+  publish flow stays in the item view), the cards that plan it (links to `/calendar?item=`) and
+  its runs.
+- Chat (`thread-panel.tsx`): provider instance, model (the instance's label from
+  `provider.listModels`), effort, permission mode, project, folder (`PathText`), branch, usage
+  summed over `turns` (`threadUsage`) with the last context report, and the run, card and backlog
+  item it belongs to.
+- No selection: a compact `EmptyState` that says what the view would show.
+
+State (`panel-state.ts`). `appearance.contextPanel` stores whether it is open and
+`appearance.contextPanelWidth` its width (pixels, bounds `contextPanelWidthBounds` in
+`@wow/contracts`). The left edge is a `separator`: dragging previews the width and writes the
+setting once on release; the arrow keys (Shift for four steps), Home and End write it at once.
+`lib/use-breakpoint.ts` holds the layout breakpoints (`breakpoints.narrow`, 1200 px) with
+`useBelow` and `isBelow`; below `narrow` the panel never takes room: opening it sets the layout
+store's `contextPanelPeek`, which lays it over the view (`data-overlay`, Escape closes it) and
+leaves the setting alone. Commands: "Toggle context panel" (`keybindings.toggleRightPanel`), "Focus
+context panel" (`keybindings.focusContextPanel`, F6), which moves the focus into the panel
+(opening it first) and back to the element it came from or the main view, and per view "Show in
+panel" while the view has a selection. A focus request made from the palette waits in the layout
+store (`contextPanelFocus`) and is taken in the palette's `onCloseAutoFocus`, because the dialog
+would otherwise put the focus back where it was.
 
 ## Backlog and trackers
 
@@ -979,7 +1030,7 @@ GitHub.
 
 ## Look
 
-T3 Code is the reference: dark neutral surface, one left sidebar, main area, optional right panel,
+T3 Code is the reference: dark neutral surface, one left sidebar, main area, optional context panel,
 dense lists, small type, muted borders, accent only on state. Fonts Inter and JetBrains Mono.
 Tokens live in `apps/web/src/styles/tokens.css` and are the only place colors are defined. Code
 copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`. Each theme sets
@@ -1020,7 +1071,8 @@ Shared pieces in `apps/web/src/components` (views compose them; none restyles `c
 - `app/shell-toolbar.tsx`: `ShellToolbar` renders a view's toolbar into the shell header row.
 
 Tokens add `--warning`, `--info`, `--destructive-foreground`, `--overlay` and `--border-strong`,
-and an 11px `text-2xs` step; type uses only `text-2xs`, `text-xs`, `text-sm` and `text-base`. The
+the calendar's `--event-outlook`, `--event-outlook-border`, `--event-card`, `--event-card-border`,
+`--event-work-hours` and `--event-now`, and an 11px `text-2xs` step; type uses only `text-2xs`, `text-xs`, `text-sm` and `text-base`. The
 sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" counts read from the
 `threads` and `workflowRuns` topics.
 
@@ -1050,7 +1102,11 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   they add and remove instances and change global settings. Both run with `WOW_OUTLOOK=mock` and
   the fixture-backed `MockOutlookSource`; the first answers on a small HTTP control port
   (`e2eOutlookControlPort`) so the calendar tests can make the mock fail, bring it back and read
-  which items Outlook was asked to open. The trigger tests start a third copy themselves
+  which items Outlook was asked to open. The context panel tests use a fifth copy
+  (`e2ePanelHome`, `e2ePanelPort`), because the panel's open state and width are global settings
+  that change what a click in the calendar does; its home seeds a one-step workflow with a gate
+  after the step and a card tomorrow that runs it, started with `POST /fire?cardId=…` on its
+  tracker port. The trigger tests start a third copy themselves
   (`e2eTriggersHome`, `e2eTriggersPort`) because they restart it: `WOW_E2E_KEEP_HOME=1` keeps the
   home across a restart and `WOW_E2E_CLOCK_OFFSET_SECONDS` runs the server's clock ahead, so a
   trigger's time passes while the server is down without the test waiting. The server prints
