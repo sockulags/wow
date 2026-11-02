@@ -1,4 +1,4 @@
-import type { SettingKey, SettingValue } from '@wow/contracts';
+import type { ProviderKind, SettingKey, SettingValue } from '@wow/contracts';
 import {
   settingValue,
   type Connection,
@@ -8,13 +8,22 @@ import {
 } from '@wow/client-runtime';
 import { createContext, useContext, type ReactNode } from 'react';
 import { createStore, useStore, type StoreApi } from 'zustand';
+import type { DraftStore } from '@/chat/draft';
 
-// UI-only state: which panels are open. Everything else comes from the server (or, until the
-// settings RPC exists, from the in-memory settings source).
+// The provider dialog that is open: the editor for a new or existing instance, or the first-run
+// wizard. Palette commands open them from anywhere.
+export type ProviderDialog =
+  | { readonly type: 'create'; readonly kind: ProviderKind }
+  | { readonly type: 'edit'; readonly providerInstanceId: string }
+  | { readonly type: 'wizard' };
+
+// UI-only state: which panels and dialogs are open. Everything else comes from the server (or,
+// without one, from the in-memory settings source).
 export interface LayoutState {
   readonly sidebarOpen: boolean;
   readonly rightPanelOpen: boolean;
   readonly paletteOpen: boolean;
+  readonly providerDialog: ProviderDialog | undefined;
 }
 
 export type LayoutStore = StoreApi<LayoutState>;
@@ -24,11 +33,13 @@ export const createLayoutStore = (): LayoutStore =>
     sidebarOpen: true,
     rightPanelOpen: false,
     paletteOpen: false,
+    providerDialog: undefined,
   }));
 
 export interface Runtime {
   readonly settings: SettingsStore;
   readonly layout: LayoutStore;
+  readonly draft: DraftStore;
   // Absent when the web app runs without a server (development, tests).
   readonly connection: Connection | undefined;
 }

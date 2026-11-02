@@ -1,0 +1,22 @@
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+// The wow server the chat tests talk to: its own home (wiped at every start) and a fixed port, so
+// Playwright can wait for it before the tests run.
+export const e2eHome = path.join(tmpdir(), 'wow-e2e-home');
+export const e2ePort = 4517;
+export const e2eProviderInstanceId = 'mock-claude';
+export const e2eProjectId = 'demo';
+
+// A second server for the settings tests. They add and remove provider instances and change
+// global settings, which must not leak into the chat tests running next to them.
+export const e2eSettingsHome = path.join(tmpdir(), 'wow-e2e-settings-home');
+export const e2eSettingsPort = 4518;
+
+// What provider detection finds: stand-in CLIs on the server's PATH and their config directories,
+// all inside the server's home.
+export const e2eBinDir = (home: string) => path.join(home, 'bin');
+export const e2eClaudeConfigDir = (home: string) => path.join(home, 'claude-config');
+export const e2eCodexHome = (home: string) => path.join(home, 'codex-home');
+export const e2eBinary = (home: string, name: string) =>
+  path.join(e2eBinDir(home), process.platform === 'win32' ? `${name}.cmd` : name);

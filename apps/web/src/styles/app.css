@@ -4,8 +4,9 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+  /* The appearance.uiFont and appearance.codeFont settings set the first family. */
+  --font-sans: var(--app-font-ui, 'Inter Variable'), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--app-font-code, 'JetBrains Mono Variable'), ui-monospace, monospace;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -50,6 +51,11 @@
   body,
   #root {
     height: 100%;
+  }
+
+  /* Sizes are in rem, so the appearance.density setting scales the whole UI from here. */
+  html[data-density='compact'] {
+    font-size: 14px;
   }
 
   body {

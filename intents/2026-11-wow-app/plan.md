@@ -22,7 +22,7 @@ agents at a time (worker, reviewer and integrator share the three slots). Every 
 - [U6] Codex provider adapter — depends on U2
 - [U7] Skills discovery and workflow engine — depends on U2
 - [U8] Chat view — depends on U3, U5, U6
-- [U9] Calendar views and Outlook sync — depends on U3, U4
+- [U9] Calendar views and Outlook sync — depends on U2, U3, U4
 - [U10] Workflow builder and run view — depends on U3, U7
 - [U11] Scheduler and triggers — depends on U7, U9
 - [U12] Backlog and tracker publishing — depends on U9, U10

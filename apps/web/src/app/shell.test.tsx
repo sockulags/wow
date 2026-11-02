@@ -108,6 +108,8 @@ describe('shell', () => {
         .getAllByRole('link')
         .map((link) => link.textContent),
     ).toEqual([
+      'Providers',
+      'Chat',
       'Calendar',
       'Outlook',
       'Scheduler',
@@ -115,9 +117,19 @@ describe('shell', () => {
       'Skills',
       'Appearance',
       'Keybindings',
+      'Desktop',
       'Advanced',
     ]);
-    expect(await screen.findByLabelText('Time zone')).toBeTruthy();
+    expect(await screen.findByLabelText('Test timeout (ms)')).toBeTruthy();
+  });
+
+  it('opens a new thread from the tray link and the keybinding', async () => {
+    const user = userEvent.setup();
+    const { router } = await renderApp('/chat?new=1');
+    expect(router.state.location.pathname).toBe('/chat/new');
+    await act(() => router.navigate({ to: '/calendar' }));
+    await user.keyboard('{Control>}{Alt>}n{/Alt}{/Control}');
+    expect(router.state.location.pathname).toBe('/chat/new');
   });
 
   it('shows not found for an unknown settings group', async () => {

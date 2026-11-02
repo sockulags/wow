@@ -1,7 +1,7 @@
 import {
-  type Command,
   type DomainEvent,
   type RunEffect,
+  type ServerCommand,
   type Thread,
   type Workflow,
   type WorkflowChanges,
@@ -16,7 +16,9 @@ import {
   type RunInput,
   type Transition,
 } from '@wow/workflow-engine';
+import { invocationsFor } from '@wow/skills';
 import { isDeepStrictEqual } from 'node:util';
+import { resolveStored } from '../settings/service.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 
 // Decisions for workflow definitions and runs. Run transitions come from the pure workflow
@@ -24,9 +26,12 @@ import { CommandRejected, type DecideContext, type ReadModel } from './orchestra
 // into rejected commands.
 
 type WorkflowCommand = Extract<
-  Command,
+  ServerCommand,
   { type: `workflow.${string}` } | { type: `workflowRun.${string}` }
 >;
+
+export const isWorkflowCommand = (command: ServerCommand): command is WorkflowCommand =>
+  command.type.startsWith('workflow.') || command.type.startsWith('workflowRun.');
 
 export function decideWorkflow(
   command: WorkflowCommand,
@@ -193,7 +198,7 @@ function transitionEvents(
   const later: RunEffect[] = [];
   for (const effect of effects) {
     if (effect.type === 'setThreadState') {
-      if (!read.threadExists(effect.threadId)) continue;
+      if (!read.thread(effect.threadId)) continue;
       events.push({
         kind: 'thread.stateChanged',
         aggregate: effect.threadId,
@@ -219,8 +224,9 @@ function transitionEvents(
   return events;
 }
 
-// The thread a step runs in. Model, effort and permission mode come from the step, then the
-// provider instance defaults; the server refuses to start a turn while one is still empty.
+// The thread a step runs in, created idle; the runner sends the step's prompt as its first
+// message. Model, effort and permission mode come from the step, then the provider instance
+// defaults; the runner fails the step instead of starting a turn while one is still empty.
 function stepThread(
   workflow: Workflow,
   run: WorkflowRun,
@@ -242,7 +248,7 @@ function stepThread(
     model: step.model ?? instance?.defaultModel ?? project?.defaultModel ?? '',
     effort: step.effort ?? instance?.defaultEffort ?? '',
     permissionMode: step.permissionMode ?? instance?.defaultPermissionMode ?? '',
-    state: 'working',
+    state: 'idle',
     pinned: false,
     runId: run.id,
     stepId: step.id,
@@ -267,35 +273,33 @@ function runContext(
 
 const HANDOVER_KEY = 'workflows.handoverTemplate';
 
-// Project over global over the registry default, skipping stored values that fail the schema.
 function resolvedHandoverTemplate(read: ReadModel, context: DecideContext, projectId: string) {
   const definition = context.registry[HANDOVER_KEY];
   if (!definition) throw new Error(`${HANDOVER_KEY} is missing from the settings registry`);
-  for (const scope of [`project:${projectId}`, 'global']) {
-    const stored = read.setting(HANDOVER_KEY, scope);
-    if (!stored) continue;
-    const parsed = definition.schema.safeParse(stored.value);
-    if (parsed.success && typeof parsed.data === 'string') return parsed.data;
-  }
-  return definition.default as string;
+  const { value } = resolveStored(HANDOVER_KEY, definition, { projectId }, (scope) =>
+    read.setting(HANDOVER_KEY, scope),
+  );
+  return typeof value === 'string' ? value : String(definition.default);
 }
 
-// The step's skill as its provider invokes it. A skill can be named by its name or, for a
-// Claude plugin skill, by plugin:name. Unknown skills get the provider's plain form, so a
-// workflow still runs on a machine where the skill lives somewhere wow does not scan.
+// The step's skill as its provider invokes it. A step names a skill by its name, or a Claude
+// plugin skill by plugin:name. Skills are matched by name; with several of that name the
+// plugin's own wins. Unknown skills get the plain forms, so a workflow still runs on a machine
+// where the skill lives somewhere wow does not scan.
 function invocationFor(read: ReadModel, step: WorkflowStep): string {
   const instance = read.providerInstance(step.providerInstanceId);
   if (!instance) {
     throw new CommandRejected('not_found', `No provider instance ${step.providerInstanceId}`);
   }
-  const kind = instance.kind;
-  const skill = read
-    .skills()
-    .find(
-      (entry) => entry.name === step.skillName || entry.invocations.claude === `/${step.skillName}`,
-    );
-  if (skill) return skill.invocations[kind];
-  return kind === 'codex' ? `$${step.skillName}` : `/${step.skillName}`;
+  const separator = step.skillName.indexOf(':');
+  const plugin = separator > 0 ? step.skillName.slice(0, separator) : undefined;
+  const name = plugin === undefined ? step.skillName : step.skillName.slice(separator + 1);
+  const expected = invocationsFor(name, plugin);
+  const named = read.skills().filter((skill) => skill.name === name);
+  const skill =
+    named.find((entry) => isDeepStrictEqual(entry.invocations, expected)) ??
+    (plugin === undefined ? named[0] : undefined);
+  return (skill?.invocations ?? expected)[instance.kind];
 }
 
 function backlogBodyOf(read: ReadModel, backlogItemId: string | null): string | null {

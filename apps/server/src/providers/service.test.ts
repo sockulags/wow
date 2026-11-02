@@ -1,0 +1,483 @@
+import type {
+  Command,
+  DomainEventKind,
+  ProviderAdapter,
+  ProviderAdapterContext,
+  ProviderCommand,
+  ProviderEvent,
+} from '@wow/contracts';
+import { SecretStore, plainProtector } from '@wow/secrets';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Engine } from '../core/engine.js';
+import { CommandRejected } from '../core/orchestrator.js';
+import { snapshot } from '../core/subscriptions.js';
+import { openDatabase, type Database } from '../db/database.js';
+import { ProviderAdapters } from '../hooks/providers.js';
+import { createLogger } from '../logger.js';
+import { SettingsService } from '../settings/service.js';
+import { ProviderService } from './service.js';
+
+// An adapter the test drives by hand: it records what the service sends and emits what the test
+// tells it to, the way a provider streams after accepting a command.
+class ControlledAdapter implements ProviderAdapter {
+  readonly kind = 'claude' as const;
+  readonly sent: ProviderCommand[] = [];
+  readonly #listeners = new Set<(event: ProviderEvent) => void>();
+  failNext: string | undefined;
+
+  send(command: ProviderCommand): Promise<unknown> {
+    this.sent.push(command);
+    if (this.failNext !== undefined) {
+      const message = this.failNext;
+      this.failNext = undefined;
+      return Promise.reject(new Error(message));
+    }
+    if (command.type === 'test') {
+      return Promise.resolve({
+        ok: true,
+        account: 'me@example.com',
+        version: '2.1.316',
+        message: null,
+      });
+    }
+    if (command.type === 'listModels') {
+      return Promise.resolve([
+        { id: 'sonnet', label: 'Sonnet', description: '', efforts: ['high'] },
+      ]);
+    }
+    return Promise.resolve({ ok: true });
+  }
+
+  emit(...events: ProviderEvent[]): void {
+    for (const event of events) for (const listener of this.#listeners) listener(event);
+  }
+
+  onEvent(listener: (event: ProviderEvent) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  dispose(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+let dir: string;
+let database: Database;
+let engine: Engine;
+let adapter: ControlledAdapter;
+let context: ProviderAdapterContext | undefined;
+let service: ProviderService;
+let next = 0;
+let tick = 0;
+
+const clock = () => new Date(Date.UTC(2026, 10, 2, 8, 0, (tick += 1)));
+const dispatch = (command: Command) => engine.dispatch(`c${(next += 1)}`, command);
+
+// Resolves once a commit with an event of this kind has been applied.
+const committed = (kind: DomainEventKind) =>
+  new Promise<void>((resolve) => {
+    const off = engine.onCommit((commit) => {
+      if (commit.events.some(({ event }) => event.kind === kind)) {
+        off();
+        resolve();
+      }
+    });
+  });
+
+const rows = (topic: 'threads' | 'turns' | 'threadItems' | 'approvals' | 'questions') =>
+  snapshot(database.db, { topic, threadId: 't1' }) as Array<Record<string, unknown>>;
+const thread = () =>
+  (snapshot(database.db, { topic: 'threads' }) as Array<Record<string, unknown>>)[0];
+
+beforeEach(async () => {
+  dir = await mkdtemp(path.join(tmpdir(), 'wow-providers-'));
+  database = openDatabase(path.join(dir, 'wow.sqlite'));
+  engine = new Engine(database.db, { clock });
+  const settings = new SettingsService(database.db, engine);
+  const secrets = new SecretStore({ dir, protector: plainProtector });
+  adapter = new ControlledAdapter();
+  context = undefined;
+  const adapters = new ProviderAdapters(
+    {
+      claude: (_instance, given) => {
+        context = given;
+        return adapter;
+      },
+    },
+    {},
+  );
+  service = new ProviderService({
+    db: database.db,
+    engine,
+    adapters,
+    settings,
+    secrets,
+    logger: createLogger(
+      () => 'error',
+      () => undefined,
+    ),
+  });
+  const ref = await secrets.set('claude-key', 'sk-test');
+  dispatch({
+    type: 'providerInstance.create',
+    providerInstanceId: 'claude-work',
+    kind: 'claude',
+    name: 'Work',
+    binaryPath: 'claude',
+    configDir: '/home/me/.claude',
+    env: { ANTHROPIC_API_KEY: ref, PLAIN: 'yes' },
+    launchArgs: [],
+  });
+  dispatch({
+    type: 'thread.create',
+    threadId: 't1',
+    providerInstanceId: 'claude-work',
+    cwd: '/work/demo',
+    model: 'sonnet',
+    effort: 'high',
+    permissionMode: 'default',
+  });
+});
+
+afterEach(async () => {
+  await service.stop();
+  database.close();
+  await rm(dir, { recursive: true, force: true });
+});
+
+describe('provider service', () => {
+  it('runs a turn and persists text, tools, approval, question, tasks and usage', async () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'What is in the readme?' });
+    expect(adapter.sent).toEqual([
+      {
+        type: 'startTurn',
+        threadId: 't1',
+        cwd: '/work/demo',
+        prompt: 'What is in the readme?',
+        model: 'sonnet',
+        effort: 'high',
+        permissionMode: 'default',
+      },
+    ]);
+    expect(thread()).toMatchObject({ state: 'working' });
+    expect(await context?.resolveEnv()).toEqual({ ANTHROPIC_API_KEY: 'sk-test', PLAIN: 'yes' });
+    expect(context?.testTimeoutMs()).toBe(120_000);
+
+    let stored = committed('approval.requested');
+    adapter.emit(
+      { type: 'session', threadId: 't1', providerSessionId: 'sess-1' },
+      { type: 'reasoningDelta', threadId: 't1', itemId: 'm1:0', delta: 'Think.' },
+      { type: 'textDelta', threadId: 't1', itemId: 'm1:1', delta: 'Let me ' },
+      { type: 'textDelta', threadId: 't1', itemId: 'm1:1', delta: 'look.' },
+      {
+        type: 'toolCallStarted',
+        threadId: 't1',
+        itemId: 'tool1',
+        name: 'Bash',
+        input: { command: 'ls' },
+      },
+      {
+        type: 'approvalRequested',
+        threadId: 't1',
+        approvalId: 'tool1',
+        kind: 'command',
+        summary: 'Run ls',
+        request: { toolName: 'Bash' },
+      },
+    );
+    await stored;
+    expect(thread()).toMatchObject({ state: 'needs_you', providerSessionId: 'sess-1' });
+    expect(rows('approvals')).toEqual([
+      {
+        id: 't1:tool1',
+        threadId: 't1',
+        itemId: 't1:turn:0:approval:tool1',
+        kind: 'command',
+        request: { summary: 'Run ls', details: { toolName: 'Bash' } },
+        decision: null,
+        decidedAt: null,
+      },
+    ]);
+
+    dispatch({ type: 'approval.answer', approvalId: 't1:tool1', decision: 'allowSession' });
+    expect(adapter.sent.at(-1)).toEqual({
+      type: 'answerApproval',
+      approvalId: 'tool1',
+      decision: 'allowSession',
+    });
+    expect(thread()).toMatchObject({ state: 'working' });
+    expect(rows('approvals')[0]).toMatchObject({ decision: 'allowSession' });
+    expect(() =>
+      dispatch({ type: 'approval.answer', approvalId: 't1:tool1', decision: 'deny' }),
+    ).toThrow(/already answered/);
+
+    stored = committed('question.asked');
+    adapter.emit(
+      { type: 'toolCallOutput', threadId: 't1', itemId: 'tool1', output: 'README.md' },
+      { type: 'toolCallCompleted', threadId: 't1', itemId: 'tool1', status: 'ok' },
+      {
+        type: 'questionAsked',
+        threadId: 't1',
+        questionId: 'ask1:0',
+        question: 'Which file?',
+        options: [{ label: 'README.md' }, { label: 'src' }],
+        multiSelect: false,
+      },
+    );
+    await stored;
+    expect(thread()).toMatchObject({ state: 'needs_you' });
+    dispatch({ type: 'question.answer', questionId: 't1:ask1:0', answer: 'README.md' });
+    expect(adapter.sent.at(-1)).toEqual({
+      type: 'answerQuestion',
+      questionId: 'ask1:0',
+      answer: 'README.md',
+    });
+    expect(rows('questions')[0]).toMatchObject({ answer: 'README.md' });
+
+    stored = committed('turn.ended');
+    adapter.emit(
+      {
+        type: 'taskListUpdated',
+        threadId: 't1',
+        tasks: [{ id: '1', content: 'Read it', status: 'in_progress' }],
+      },
+      {
+        type: 'taskListUpdated',
+        threadId: 't1',
+        tasks: [{ id: '1', content: 'Read it', status: 'completed' }],
+      },
+      { type: 'textDelta', threadId: 't1', itemId: 'm2:0', delta: 'It says hello.' },
+      {
+        type: 'usage',
+        threadId: 't1',
+        inputTokens: 125,
+        outputTokens: 35,
+        cachedInputTokens: 400,
+        costUsd: 0.0123,
+      },
+      { type: 'contextUsage', threadId: 't1', usedTokens: 1500, maxTokens: 200_000 },
+      { type: 'turnCompleted', threadId: 't1' },
+    );
+    await stored;
+
+    expect(thread()).toMatchObject({ state: 'idle' });
+    const usage = { inputTokens: 125, outputTokens: 35, cachedInputTokens: 400, costUsd: 0.0123 };
+    expect(rows('turns')).toEqual([
+      expect.objectContaining({ id: 't1:turn:0', index: 0, state: 'completed', usage }),
+    ]);
+    expect(
+      rows('threadItems').map(({ id, kind, payload, streaming }) => ({
+        id,
+        kind,
+        payload,
+        streaming,
+      })),
+    ).toEqual([
+      {
+        id: 't1:turn:0:user',
+        kind: 'user',
+        payload: { text: 'What is in the readme?' },
+        streaming: false,
+      },
+      { id: 't1:turn:0:m1:0', kind: 'reasoning', payload: { text: 'Think.' }, streaming: false },
+      {
+        id: 't1:turn:0:m1:1',
+        kind: 'assistant_text',
+        payload: { text: 'Let me look.' },
+        streaming: false,
+      },
+      {
+        id: 't1:turn:0:tool1',
+        kind: 'tool_call',
+        payload: { name: 'Bash', input: { command: 'ls' }, output: 'README.md', status: 'ok' },
+        streaming: false,
+      },
+      {
+        id: 't1:turn:0:approval:tool1',
+        kind: 'approval',
+        payload: { approvalId: 't1:tool1', kind: 'command', summary: 'Run ls' },
+        streaming: false,
+      },
+      {
+        id: 't1:turn:0:question:ask1:0',
+        kind: 'question',
+        payload: {
+          questionId: 't1:ask1:0',
+          question: 'Which file?',
+          options: [{ label: 'README.md' }, { label: 'src' }],
+          multiSelect: false,
+        },
+        streaming: false,
+      },
+      {
+        id: 't1:turn:0:tasks',
+        kind: 'task_list',
+        payload: { tasks: [{ id: '1', content: 'Read it', status: 'completed' }] },
+        streaming: false,
+      },
+      {
+        id: 't1:turn:0:m2:0',
+        kind: 'assistant_text',
+        payload: { text: 'It says hello.' },
+        streaming: false,
+      },
+      {
+        id: 't1:turn:0:usage',
+        kind: 'usage',
+        payload: { ...usage, context: { usedTokens: 1500, maxTokens: 200_000 } },
+        streaming: false,
+      },
+    ]);
+  });
+
+  it('resumes the provider session and applies thread changes on the next turn', async () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'First' });
+    const ended = committed('turn.ended');
+    adapter.emit(
+      { type: 'session', threadId: 't1', providerSessionId: 'sess-1' },
+      { type: 'turnCompleted', threadId: 't1' },
+    );
+    await ended;
+
+    dispatch({ type: 'thread.configure', threadId: 't1', model: 'opus', permissionMode: 'plan' });
+    expect(adapter.sent.slice(-2)).toEqual([
+      { type: 'setModel', threadId: 't1', model: 'opus' },
+      { type: 'setPermissionMode', threadId: 't1', permissionMode: 'plan' },
+    ]);
+    dispatch({ type: 'thread.configure', threadId: 't1', effort: 'low' });
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Second' });
+    expect(adapter.sent.at(-1)).toEqual({
+      type: 'startTurn',
+      threadId: 't1',
+      cwd: '/work/demo',
+      prompt: 'Second',
+      model: 'opus',
+      effort: 'low',
+      permissionMode: 'plan',
+      resumeId: 'sess-1',
+    });
+    expect(rows('turns').map((turn) => turn['id'])).toEqual(['t1:turn:0', 't1:turn:1']);
+  });
+
+  it('pins and unpins a thread without touching its activity time', () => {
+    const before = rows('threads')[0];
+    expect(dispatch({ type: 'thread.setPinned', threadId: 't1', pinned: true }).seqs).toHaveLength(
+      1,
+    );
+    expect(dispatch({ type: 'thread.setPinned', threadId: 't1', pinned: true }).seqs).toEqual([]);
+    expect(rows('threads')[0]).toEqual({ ...before, pinned: true });
+    dispatch({ type: 'thread.setPinned', threadId: 't1', pinned: false });
+    expect(rows('threads')[0]).toEqual(before);
+  });
+
+  it('stops a running turn and keeps its partial output', async () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Long task' });
+    expect(() => dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Again' })).toThrow(
+      CommandRejected,
+    );
+    const partial = committed('threadItem.added');
+    adapter.emit({ type: 'textDelta', threadId: 't1', itemId: 'm1:0', delta: 'Half' });
+    await partial;
+
+    dispatch({ type: 'thread.interrupt', threadId: 't1' });
+    expect(adapter.sent.at(-1)).toEqual({ type: 'interrupt', threadId: 't1' });
+    const ended = committed('turn.ended');
+    adapter.emit({ type: 'turnInterrupted', threadId: 't1' });
+    await ended;
+    // Output that arrives after the turn ended is not attached to it.
+    expect(
+      engine.dispatch('late', {
+        type: 'provider.events',
+        threadId: 't1',
+        events: [{ type: 'textDelta', threadId: 't1', itemId: 'm1:0', delta: ' more' }],
+      }).seqs,
+    ).toEqual([]);
+    expect(rows('turns')[0]).toMatchObject({ state: 'interrupted' });
+    expect(rows('threadItems')[1]).toMatchObject({
+      kind: 'assistant_text',
+      payload: { text: 'Half' },
+      streaming: false,
+    });
+    expect(() => dispatch({ type: 'thread.interrupt', threadId: 'missing' })).toThrow(/No thread/);
+  });
+
+  it('fails the turn when the provider refuses to start it', async () => {
+    adapter.failNext = 'Unknown Claude effort "extreme"';
+    const ended = committed('turn.ended');
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Hi' });
+    await ended;
+    expect(thread()).toMatchObject({ state: 'failed' });
+    expect(rows('turns')[0]).toMatchObject({ state: 'failed' });
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      kind: 'error',
+      payload: { message: 'Unknown Claude effort "extreme"' },
+    });
+  });
+
+  it('fails turns left running by a previous server process', async () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Hi' });
+    const recovered = committed('turn.ended');
+    service.recover();
+    await recovered;
+    expect(rows('turns')[0]).toMatchObject({ state: 'failed' });
+    expect(thread()).toMatchObject({ state: 'failed' });
+  });
+
+  it('tests an instance and records status, account and version', async () => {
+    expect(await service.test('claude-work')).toEqual({
+      ok: true,
+      account: 'me@example.com',
+      version: '2.1.316',
+      message: null,
+    });
+    expect(snapshot(database.db, { topic: 'providerInstances' })[0]).toMatchObject({
+      status: 'ready',
+      account: 'me@example.com',
+      version: '2.1.316',
+      statusMessage: null,
+    });
+    adapter.failNext = 'claude: command not found';
+    expect(await service.test('claude-work')).toMatchObject({
+      ok: false,
+      message: 'claude: command not found',
+    });
+    expect(snapshot(database.db, { topic: 'providerInstances' })[0]).toMatchObject({
+      status: 'error',
+      statusMessage: 'claude: command not found',
+    });
+    expect(await service.listModels('claude-work')).toEqual([
+      { id: 'sonnet', label: 'Sonnet', description: '', efforts: ['high'] },
+    ]);
+    await expect(service.test('nope')).rejects.toThrow(/No provider instance nope/);
+  });
+
+  it('refuses threads on unknown provider instances or projects', () => {
+    expect(() =>
+      dispatch({
+        type: 'thread.create',
+        threadId: 't2',
+        providerInstanceId: 'missing',
+        cwd: '/w',
+        model: 'm',
+        effort: 'high',
+        permissionMode: 'default',
+      }),
+    ).toThrow(/No provider instance missing/);
+    expect(() =>
+      dispatch({
+        type: 'thread.create',
+        threadId: 't2',
+        providerInstanceId: 'claude-work',
+        projectId: 'nope',
+        cwd: '/w',
+        model: 'm',
+        effort: 'high',
+        permissionMode: 'default',
+      }),
+    ).toThrow(/No project nope/);
+  });
+});

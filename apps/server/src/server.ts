@@ -18,6 +18,8 @@ import {
   type ServiceContext,
 } from './hooks/index.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
+import { detectProviders } from './providers/detect.js';
+import { ProviderService } from './providers/service.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
 import { route } from './rpc/router.js';
 import { SettingsService } from './settings/service.js';
@@ -73,6 +75,7 @@ export interface RunningServer {
   readonly providers: ProviderAdapters;
   readonly skills: SkillsService;
   readonly workflows: WorkflowRunner;
+  readonly providerService: ProviderService;
   readonly logger: Logger;
   stop(): Promise<void>;
 }
@@ -119,13 +122,23 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       }),
   });
   const providers = new ProviderAdapters(options.hooks?.providers ?? {}, env);
+  const providerService = new ProviderService({
+    db: database.db,
+    engine,
+    adapters: providers,
+    settings,
+    secrets,
+    logger,
+  });
   const workflows = new WorkflowRunner({
     db: database.db,
     engine,
-    providers,
     detectArtifacts: options.detectArtifacts ?? detectArtifacts,
     logger,
   });
+  // The runner listens first, so a step whose turn recovery fails also fails its run.
+  providerService.recover();
+  workflows.recover();
   const skills = new SkillsService({
     db: database.db,
     engine,
@@ -142,6 +155,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     db: database.db,
     skills,
     workflows,
+    providers: providerService,
+    detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     info: { version, home },
   });
 
@@ -163,6 +178,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     });
   } catch (error) {
     await workflows.stop();
+    await providerService.stop();
     database.close();
     throw error;
   }
@@ -228,6 +244,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     for (const start of options.hooks?.services ?? []) services.push(await start(context));
   } catch (error) {
     await stopServices();
+    await providerService.stop();
     wss.close();
     await rm(infoFile, { force: true });
     database.close();
@@ -240,6 +257,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const stop = () =>
     (stopped ??= (async () => {
       await stopServices();
+      await providerService.stop();
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       // Leave the file alone if another server instance has replaced it meanwhile.
@@ -261,6 +279,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     providers,
     skills,
     workflows,
+    providerService,
     logger,
     stop,
   };

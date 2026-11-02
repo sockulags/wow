@@ -18,6 +18,7 @@ import {
   Workflow,
   WorkflowRun,
 } from './projections.js';
+import { DetectedProvider, ProviderModel, ProviderTestResult } from './provider.js';
 import { SecretRef } from './settings.js';
 
 // Subscription topics: one per projection. Thread-scoped topics need a threadId so a client
@@ -102,6 +103,20 @@ export const rpcMethods = {
   'secrets.delete': {
     params: z.object({ name: z.string().min(1) }),
     result: z.object({ removed: z.boolean() }),
+  },
+  // Runs the instance's trivial test turn and records status, account and version (spec 31, 32).
+  'provider.test': {
+    params: z.object({ providerInstanceId: z.string().min(1) }),
+    result: ProviderTestResult,
+  },
+  'provider.listModels': {
+    params: z.object({ providerInstanceId: z.string().min(1) }),
+    result: z.array(ProviderModel),
+  },
+  // Looks for each provider's CLI on the server's PATH and its config directory (first run).
+  'provider.detect': {
+    params: NoParams,
+    result: z.array(DetectedProvider),
   },
   'secrets.status': {
     params: NoParams,

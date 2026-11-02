@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   claudePluginRoots,
+  invocationsFor,
   parseCodexPolicy,
   parseSkillFile,
   scanSkills,
@@ -49,6 +50,16 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await rm(root, { recursive: true, force: true });
+});
+
+describe('invocations', () => {
+  it('formats a skill for each provider, with the plugin for Claude plugin skills', () => {
+    expect(invocationsFor('ship')).toEqual({ claude: '/ship', codex: '$ship' });
+    expect(invocationsFor('ship', 'agent-os-dev')).toEqual({
+      claude: '/agent-os-dev:ship',
+      codex: '$ship',
+    });
+  });
 });
 
 describe('skill roots', () => {

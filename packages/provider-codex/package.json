@@ -7,7 +7,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "vitest run --dir src"
+    "test": "vitest run --dir src",
+    "generate:protocol": "node scripts/generate-protocol.mjs"
   },
   "dependencies": {
     "@wow/contracts": "workspace:*"

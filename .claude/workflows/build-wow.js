@@ -19,7 +19,7 @@ const UNITS = [
   { key: 'U6', title: 'Codex provider adapter', deps: ['U2'] },
   { key: 'U7', title: 'Skills discovery and workflow engine', deps: ['U2'] },
   { key: 'U8', title: 'Chat view', deps: ['U3', 'U5', 'U6'] },
-  { key: 'U9', title: 'Calendar views and Outlook sync', deps: ['U3', 'U4'] },
+  { key: 'U9', title: 'Calendar views and Outlook sync', deps: ['U2', 'U3', 'U4'] },
   { key: 'U10', title: 'Workflow builder and run view', deps: ['U3', 'U7'] },
   { key: 'U11', title: 'Scheduler and triggers', deps: ['U7', 'U9'] },
   { key: 'U12', title: 'Backlog and tracker publishing', deps: ['U9', 'U10'] },
@@ -37,6 +37,8 @@ const BASE = (args && args.base) || 'main'
 const RETRIES = args && typeof args.retries === 'number' ? args.retries : 1
 const ONLY = args && Array.isArray(args.units) ? new Set(args.units) : null
 const done = new Set((args && args.done) || [])
+// Per-unit context for a rerun, e.g. an earlier reviewer's findings: {U7: "..."}
+const NOTES = (args && args.notes) || {}
 const PLAN = 'intents/2026-11-wow-app/plan.md'
 const INTENT_ID = '2026-11-wow-app'
 
@@ -105,6 +107,7 @@ function workerPrompt(u, attempt, previous, review) {
   const retryBlock = previous
     ? `\n\nThis is attempt ${attempt}. The branch ${previous.branch} already exists on origin at ${previous.headSha}; check it out and continue from it. The reviewer found:\n${JSON.stringify(review && review.findings, null, 2)}\nResolve every blocking and should-fix finding, rerun the ground truth, push, and report again.`
     : ''
+  const notesBlock = NOTES[u.key] ? `\n\nContext from an earlier run of this unit:\n${NOTES[u.key]}` : ''
   return `You are delivering unit ${u.key} "${u.title}" of ${PLAN} in the wow repository.
 
 Read, in this order: CLAUDE.md, docs/architecture.md, intents/${INTENT_ID}/spec.md, and the "### ${u.key}" section of ${PLAN}. The unit's section is your contract: Outcome, Boundaries, Acceptance, Ground truth, Delivery target.
@@ -117,7 +120,7 @@ Rules:
 - Never force-push, never touch ${BASE} directly, never edit another unit's packages beyond what compiling against them requires.
 - If the unit cannot be delivered (missing dependency, undecidable product question), stop early, push what is safe, and return blocked=true with the reason.${retryBlock}
 
-Return the structured result only.`
+Return the structured result only.${notesBlock}`
 }
 
 function reviewPrompt(u, work) {

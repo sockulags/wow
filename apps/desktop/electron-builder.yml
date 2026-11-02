@@ -1,0 +1,45 @@
+# Windows installer for wow. Run `pnpm --filter @wow/desktop build` first; `dist` packages out/.
+# No code signing and no auto-update in this version.
+appId: dev.wow.desktop
+productName: wow
+copyright: Copyright © 2026 wow
+directories:
+  output: release
+  buildResources: build
+# Everything the app runs is bundled into out/, so no node_modules are packaged or rebuilt.
+files:
+  - package.json
+  - out/main/**
+  - out/preload/**
+  - out/renderer/**
+  - out/assets/**
+  - '!**/*.map'
+# No auto-update in this version, so nothing to publish to.
+publish: null
+npmRebuild: false
+nodeGypRebuild: false
+# The server runs from real files: PowerShell must read the Outlook bridge script and the native
+# SQLite module must load, neither of which works from inside app.asar.
+extraResources:
+  - from: out/server
+    to: server
+    filter:
+      - '**/*'
+      - '!**/*.map'
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.png
+  executableName: wow
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: wow
+  artifactName: wow-setup-${version}.${ext}
+  # Start wow when the installer finishes.
+  runAfterFinish: true

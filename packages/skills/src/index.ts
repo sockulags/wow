@@ -5,6 +5,7 @@ export {
   skillFileName,
   type SkillFrontmatter,
 } from './parse.js';
+export { invocationsFor, type SkillInvocations } from './invocations.js';
 export { claudePluginRoots } from './plugins.js';
 export {
   scanSkills,

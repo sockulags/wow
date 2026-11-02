@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useRuntime } from '@/app/runtime';
+import { ProvidersSection } from '@/providers/providers-section';
 import { isSettingGroup, settingGroupTitles, settingsByGroup } from '@/app/sections';
 import { fieldKind } from './field-kind';
 import { Field } from './fields';
@@ -136,6 +137,7 @@ export function SettingsPage() {
         <h2 id="settings-title" className="text-base font-semibold">
           {current ? settingGroupTitles[current] : 'Settings'}
         </h2>
+        {current === 'providers' && <ProvidersSection />}
         {/* Remount per group so drafts never leak between pages. */}
         <SettingsForm key={group} entries={entries} />
       </section>

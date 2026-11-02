@@ -62,12 +62,9 @@ export class SettingsService {
         .all()
         .map((row) => [row.scope, row.value]),
     );
-    for (const scope of scopesFor(definition, context)) {
-      if (!stored.has(scope)) continue;
-      const parsed = definition.schema.safeParse(stored.get(scope));
-      if (parsed.success) return { key, value: parsed.data, source: scope };
-    }
-    return { key, value: definition.default, source: 'default' };
+    return resolveStored(key, definition, context, (scope) =>
+      stored.has(scope) ? { value: stored.get(scope) } : undefined,
+    );
   }
 
   resolveAll(context: SettingContext = {}): ResolvedSetting[] {
@@ -75,6 +72,23 @@ export class SettingsService {
       .toSorted()
       .map((key) => this.resolve(key, context));
   }
+}
+
+// The resolution order on its own, for callers that read stored values another way: the
+// orchestrator reads them inside the command's transaction.
+export function resolveStored(
+  key: string,
+  definition: SettingDefinition,
+  context: SettingContext,
+  storedAt: (scope: SettingScopeRef) => { value: unknown } | undefined,
+): ResolvedSetting {
+  for (const scope of scopesFor(definition, context)) {
+    const stored = storedAt(scope);
+    if (!stored) continue;
+    const parsed = definition.schema.safeParse(stored.value);
+    if (parsed.success) return { key, value: parsed.data, source: scope };
+  }
+  return { key, value: definition.default, source: 'default' };
 }
 
 function scopesFor(definition: SettingDefinition, context: SettingContext): SettingScopeRef[] {

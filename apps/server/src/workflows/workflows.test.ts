@@ -1,5 +1,5 @@
 import type {
-  Command,
+  ServerCommand,
   ProviderCommand,
   ProviderInstance,
   Thread,
@@ -7,12 +7,20 @@ import type {
   WorkflowStep,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
+import { invocationsFor } from '@wow/skills';
 import { eq } from 'drizzle-orm';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { providerInstances, skills, threads, workflowRuns } from '../db/schema.js';
+import {
+  providerInstances,
+  skills,
+  threadItems,
+  threads,
+  turns,
+  workflowRuns,
+} from '../db/schema.js';
 import { MockProviderAdapter, type MockScript } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
 import type { RunNotification } from './runner.js';
@@ -60,10 +68,12 @@ const instance = (
   defaultPermissionMode: 'default',
   status: 'ready',
   account: null,
+  version: null,
+  statusMessage: null,
 });
 
 let commandCount = 0;
-const dispatch = (command: Command) =>
+const dispatch = (command: ServerCommand) =>
   server.engine.dispatch(`test-${(commandCount += 1)}`, command);
 
 const run = (runId = 'r1'): WorkflowRun =>
@@ -124,7 +134,18 @@ beforeEach(async () => {
   notifications = [];
   script = echo;
   triggerSkillWatch = () => undefined;
-  server = await startServer({
+  server = await launch();
+  server.database.db
+    .insert(providerInstances)
+    .values([instance('claude-work', 'claude', 'opus'), instance('codex-work', 'codex', 'gpt-5')])
+    .run();
+  dispatch({ type: 'project.create', projectId: 'p1', name: 'wow', cwd: projectDir });
+  await server.skills.refresh();
+});
+
+// A server on the test's home folder; a second launch after stop() is a restart.
+async function launch(): Promise<RunningServer> {
+  const started = await startServer({
     home: path.join(root, '.wow'),
     env: {},
     platform: 'linux',
@@ -151,14 +172,9 @@ beforeEach(async () => {
       },
     },
   });
-  server.workflows.onNotify((notification) => notifications.push(notification));
-  server.database.db
-    .insert(providerInstances)
-    .values([instance('claude-work', 'claude', 'opus'), instance('codex-work', 'codex', 'gpt-5')])
-    .run();
-  dispatch({ type: 'project.create', projectId: 'p1', name: 'wow', cwd: projectDir });
-  await server.skills.refresh();
-});
+  started.workflows.onNotify((notification) => notifications.push(notification));
+  return started;
+}
 
 afterEach(async () => {
   await server.stop();
@@ -384,6 +400,100 @@ describe('workflow runs', () => {
     );
     dispatch({ type: 'workflow.update', workflowId: 'wf1', name: 'Renamed' });
     await server.workflows.settled();
+  });
+
+  it('sends the step prompt as the first turn of the step thread', async () => {
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf1', projectId: 'p1' });
+    await runBecomes((current) => current.state === 'waiting');
+    const rows = server.database.db.select().from(turns).where(eq(turns.threadId, 'r1.s1')).all();
+    expect(rows.map((row) => row.state)).toEqual(['completed']);
+    const first = server.database.db
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, 'r1.s1'))
+      .orderBy(threadItems.index)
+      .get();
+    expect(first).toMatchObject({ kind: 'user', payload: { text: startTurns()[0]?.prompt } });
+
+    // A message the user sends at the gate is not the step's outcome.
+    const ended = new Promise<void>((resolve) => {
+      const off = server.engine.onCommit((commit) => {
+        if (commit.events.some(({ event }) => event.kind === 'turn.ended')) {
+          off();
+          resolve();
+        }
+      });
+    });
+    dispatch({ type: 'thread.sendMessage', threadId: 'r1.s1', text: 'one more thing' });
+    await ended;
+    await server.workflows.settled();
+    expect(run()).toMatchObject({ state: 'waiting', currentStep: 0 });
+  });
+
+  it('invokes a Claude plugin skill named plugin:name and matches skills by name', async () => {
+    dispatch({
+      type: 'skills.sync',
+      skills: [
+        {
+          id: '/plugins/agent-os-dev/skills/deliver-work',
+          name: 'deliver-work',
+          description: '',
+          dir: '/plugins/agent-os-dev/skills/deliver-work',
+          source: 'user-claude',
+          manualOnly: false,
+          invocations: invocationsFor('deliver-work', 'agent-os-dev'),
+        },
+      ],
+    });
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'wf4',
+      name: 'Plugin',
+      steps: [
+        step('a', { skillName: 'agent-os-dev:deliver-work' }),
+        step('b', { skillName: 'deliver-work' }),
+        step('c', { skillName: 'deliver-work', providerInstanceId: 'codex-work' }),
+      ],
+    });
+    dispatch({ type: 'workflowRun.start', runId: 'r4', workflowId: 'wf4', projectId: 'p1' });
+    await runBecomes((current) => current.state === 'done', 'r4');
+    expect(startTurns().map((command) => command.prompt.split('\n')[0])).toEqual([
+      '/agent-os-dev:deliver-work',
+      '/agent-os-dev:deliver-work',
+      '$deliver-work',
+    ]);
+  });
+
+  it('fails a step whose turn was running when the server stopped', async () => {
+    script = () => [];
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf1', projectId: 'p1' });
+    await server.workflows.settled();
+    expect(run().steps[0]?.state).toBe('running');
+    await server.stop();
+
+    server = await launch();
+    await server.workflows.settled();
+    expect(run()).toMatchObject({ state: 'failed' });
+    expect(run().steps[0]).toMatchObject({
+      state: 'failed',
+      error: 'The server stopped while this turn was running',
+    });
+  });
+
+  it('fails a step whose turn never started when the server stopped', async () => {
+    script = () => [];
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf1', projectId: 'p1' });
+    await server.workflows.settled();
+    // As if the server stopped between storing the run and sending the step's prompt.
+    server.database.db.delete(turns).where(eq(turns.threadId, 'r1.s1')).run();
+    await server.stop();
+
+    server = await launch();
+    await server.workflows.settled();
+    expect(run().steps[0]).toMatchObject({
+      state: 'failed',
+      error: 'The server stopped before this step started',
+    });
   });
 
   it('finds artifacts again when asked (run view open)', async () => {

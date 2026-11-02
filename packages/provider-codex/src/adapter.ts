@@ -1,0 +1,800 @@
+import { randomUUID } from 'node:crypto';
+import type {
+  ApprovalDecision,
+  ProviderAdapter,
+  ProviderCommand,
+  ProviderEvent,
+  ProviderInstance,
+} from '@wow/contracts';
+import {
+  CodexConnection,
+  CodexError,
+  systemTimers,
+  type ServerNotification,
+  type ServerRequest,
+  type Timers,
+} from './connection.js';
+import { permissionMode, sandboxPolicy } from './permissions.js';
+import { spawnCodexAppServer, type SpawnCodex } from './process.js';
+import {
+  codexProtocolVersion,
+  type GetAccountResponse,
+  type ModelListResponse,
+  type RequestId,
+  type ServerRequests,
+  type ThreadStartParams,
+  type TurnStartParams,
+} from './protocol/generated/index.js';
+
+type ThreadItem = Extract<ServerNotification, { method: 'item/started' }>['params']['item'];
+type TokenUsage = Extract<
+  ServerNotification,
+  { method: 'thread/tokenUsage/updated' }
+>['params']['tokenUsage']['total'];
+type SandboxMode = NonNullable<ThreadStartParams['sandbox']>;
+type StartTurn = Extract<ProviderCommand, { type: 'startTurn' }>;
+
+export interface CodexModel {
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+  readonly efforts: readonly string[];
+  readonly defaultEffort: string;
+  readonly isDefault: boolean;
+}
+
+export interface CodexTestResult {
+  readonly codexVersion: string;
+  readonly account: string;
+  readonly models: readonly CodexModel[];
+}
+
+export interface CodexAdapterOptions {
+  readonly instance: ProviderInstance;
+  // Read before every request so a settings change applies without a restart.
+  readonly requestTimeoutMs: () => number;
+  // Turns the instance env (where secret-marked values are references) into plain values.
+  // Without it, an instance with secret references cannot start.
+  readonly resolveEnv?: (env: ProviderInstance['env']) => Promise<Record<string, string>>;
+  readonly baseEnv?: Record<string, string | undefined>;
+  readonly spawn?: SpawnCodex;
+  readonly timers?: Timers;
+  readonly newId?: () => string;
+  readonly clientVersion?: string;
+}
+
+interface ThreadState {
+  readonly wowId: string;
+  readonly codexId: string;
+  // False after the app-server restarted: the thread has to be resumed before the next turn.
+  loaded: boolean;
+  sandbox: SandboxMode;
+  turnId: string | null;
+  lastFinishedTurnId: string | null;
+  lastError: string | null;
+  usageTotal: TokenUsage | null;
+  usageBaseline: TokenUsage | null;
+  // Items whose text or output arrived as deltas, so item/completed does not repeat it.
+  readonly streamed: Set<string>;
+  readonly fileChanges: Map<string, unknown>;
+}
+
+interface OpenApproval {
+  readonly requestId: RequestId;
+  readonly method:
+    | 'item/commandExecution/requestApproval'
+    | 'item/fileChange/requestApproval'
+    | 'item/permissions/requestApproval';
+  readonly codexThreadId: string;
+  readonly params: ServerRequests[OpenApproval['method']]['params'];
+}
+
+interface OpenInput {
+  readonly requestId: RequestId;
+  readonly codexThreadId: string;
+  // wow question id → codex question id
+  readonly questions: Map<string, string>;
+  readonly answers: Map<string, string>;
+}
+
+const okStatuses = new Set(['completed']);
+
+const accountLabel = (account: NonNullable<GetAccountResponse['account']>): string => {
+  switch (account.type) {
+    case 'apiKey':
+      return 'API key';
+    case 'chatgpt':
+      return account.email ?? `ChatGPT (${account.planType})`;
+    case 'amazonBedrock':
+      return 'Amazon Bedrock';
+    case 'gcp':
+      return 'Google Cloud';
+  }
+};
+
+// "<originator>/<version> (<os>) ..." is the only place initialize reports the codex version.
+export const codexVersionFromUserAgent = (userAgent: string): string | null =>
+  /^[^/\s]+\/(\d+\.\d+\.\d+[^\s]*)/.exec(userAgent)?.[1] ?? null;
+
+const subtract = (total: TokenUsage, baseline: TokenUsage | null): TokenUsage =>
+  baseline
+    ? {
+        totalTokens: total.totalTokens - baseline.totalTokens,
+        inputTokens: total.inputTokens - baseline.inputTokens,
+        cachedInputTokens: total.cachedInputTokens - baseline.cachedInputTokens,
+        cacheWriteInputTokens: total.cacheWriteInputTokens - baseline.cacheWriteInputTokens,
+        outputTokens: total.outputTokens - baseline.outputTokens,
+        reasoningOutputTokens: total.reasoningOutputTokens - baseline.reasoningOutputTokens,
+      }
+    : total;
+
+const textOf = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    const texts = value.flatMap((entry: unknown) =>
+      typeof entry === 'object' &&
+      entry !== null &&
+      'text' in entry &&
+      typeof entry.text === 'string'
+        ? [entry.text]
+        : [],
+    );
+    if (texts.length === value.length) return texts.join('\n');
+  }
+  return JSON.stringify(value) ?? '';
+};
+
+interface ToolView {
+  readonly name: string;
+  readonly input: unknown;
+}
+
+function toolView(item: ThreadItem): ToolView | null {
+  switch (item.type) {
+    case 'commandExecution':
+      return { name: 'command', input: { command: item.command, cwd: item.cwd } };
+    case 'fileChange':
+      return {
+        name: 'fileChange',
+        input: {
+          changes: item.changes.map((change) => ({ path: change.path, kind: change.kind.type })),
+        },
+      };
+    case 'mcpToolCall':
+      return { name: `${item.server}/${item.tool}`, input: item.arguments };
+    case 'dynamicToolCall':
+      return {
+        name: item.namespace ? `${item.namespace}/${item.tool}` : item.tool,
+        input: item.arguments,
+      };
+    case 'webSearch':
+      return { name: 'webSearch', input: { query: item.query } };
+    case 'imageView':
+      return { name: 'imageView', input: { path: item.path } };
+    default:
+      return null;
+  }
+}
+
+// Output and status of a finished tool item; output is null when nothing beyond the deltas exists.
+function toolResult(item: ThreadItem): { output: string | null; ok: boolean } {
+  switch (item.type) {
+    case 'commandExecution':
+      return {
+        output: item.aggregatedOutput,
+        ok: okStatuses.has(item.status) && (item.exitCode ?? 0) === 0,
+      };
+    case 'fileChange':
+      return {
+        output: item.changes.map((change) => change.diff).join('\n') || null,
+        ok: okStatuses.has(item.status),
+      };
+    case 'mcpToolCall':
+      return {
+        output: item.error ? item.error.message : item.result ? textOf(item.result.content) : null,
+        ok: okStatuses.has(item.status) && !item.error,
+      };
+    case 'dynamicToolCall':
+      return {
+        output: item.contentItems ? textOf(item.contentItems) : null,
+        ok: okStatuses.has(item.status) && item.success !== false,
+      };
+    default:
+      return { output: null, ok: true };
+  }
+}
+
+// One codex app-server process per provider instance, started on first use and again after it
+// exits. Maps wow threads to codex threads and codex's JSON-RPC to ProviderEvent.
+export class CodexAdapter implements ProviderAdapter {
+  readonly kind = 'codex';
+  readonly #options: CodexAdapterOptions;
+  readonly #spawn: SpawnCodex;
+  readonly #newId: () => string;
+  readonly #listeners = new Set<(event: ProviderEvent) => void>();
+  readonly #threads = new Map<string, ThreadState>();
+  readonly #byCodexId = new Map<string, ThreadState>();
+  readonly #approvals = new Map<string, OpenApproval>();
+  readonly #inputs = new Map<string, OpenInput>();
+  #connection: CodexConnection | null = null;
+  #ready: Promise<CodexConnection> | null = null;
+  #serverVersion: string | null = null;
+  #starts = 0;
+  #disposed = false;
+
+  constructor(options: CodexAdapterOptions) {
+    this.#options = options;
+    this.#spawn = options.spawn ?? spawnCodexAppServer;
+    this.#newId = options.newId ?? randomUUID;
+  }
+
+  // How many app-server processes were started; a restart shows up as a second start.
+  get starts(): number {
+    return this.#starts;
+  }
+
+  // The codex version reported by the running app-server, once it answered initialize.
+  get serverVersion(): string | null {
+    return this.#serverVersion;
+  }
+
+  onEvent(listener: (event: ProviderEvent) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  async dispose(): Promise<void> {
+    this.#disposed = true;
+    this.#connection?.close();
+    this.#listeners.clear();
+  }
+
+  async send(command: ProviderCommand): Promise<unknown> {
+    switch (command.type) {
+      case 'startTurn':
+        return this.#startTurn(command);
+      case 'interrupt':
+        return this.#interrupt(command.threadId);
+      case 'answerApproval':
+        return this.#answerApproval(command.approvalId, command.decision);
+      case 'answerQuestion':
+        return this.#answerQuestion(command.questionId, command.answer);
+      case 'setModel':
+        // codex takes the model with every turn/start; the next startTurn carries the new one.
+        return { appliesTo: 'nextTurn' };
+      case 'setPermissionMode':
+        permissionMode(command.permissionMode);
+        return { appliesTo: 'nextTurn' };
+      case 'listModels':
+        return this.#listModels(await this.#connect());
+      case 'test':
+        return this.#test();
+    }
+  }
+
+  #emit(event: ProviderEvent): void {
+    for (const listener of this.#listeners) listener(event);
+  }
+
+  async #environment(): Promise<Record<string, string>> {
+    const { instance, resolveEnv, baseEnv = process.env } = this.#options;
+    let env: Record<string, string>;
+    if (resolveEnv) env = await resolveEnv(instance.env);
+    else {
+      env = {};
+      for (const [key, value] of Object.entries(instance.env)) {
+        if (typeof value !== 'string')
+          throw new CodexError(
+            'state',
+            `Environment variable ${key} is a secret and cannot be read here`,
+          );
+        env[key] = value;
+      }
+    }
+    const base: Record<string, string> = {};
+    for (const [key, value] of Object.entries(baseEnv)) if (value !== undefined) base[key] = value;
+    if (instance.configDir) base['CODEX_HOME'] = instance.configDir;
+    return { ...base, ...env };
+  }
+
+  #connect(): Promise<CodexConnection> {
+    if (this.#disposed)
+      return Promise.reject(new CodexError('state', 'The codex adapter was disposed'));
+    this.#ready ??= this.#start();
+    return this.#ready;
+  }
+
+  async #start(): Promise<CodexConnection> {
+    try {
+      const {
+        instance,
+        requestTimeoutMs,
+        timers = systemTimers,
+        clientVersion = '0.0.0',
+      } = this.#options;
+      const child = this.#spawn({
+        binaryPath: instance.binaryPath || 'codex',
+        launchArgs: instance.launchArgs,
+        env: await this.#environment(),
+      });
+      this.#starts += 1;
+      const connection: CodexConnection = new CodexConnection(
+        child,
+        {
+          notification: (message) => this.#notification(message),
+          request: (message) => this.#request(connection, message),
+          exit: (error) => this.#exited(connection, error),
+        },
+        requestTimeoutMs,
+        timers,
+      );
+      this.#connection = connection;
+      const initialized = await connection.request('initialize', {
+        clientInfo: { name: 'wow', title: 'wow', version: clientVersion },
+        capabilities: null,
+      });
+      connection.notify('initialized');
+      this.#serverVersion = codexVersionFromUserAgent(initialized.userAgent);
+      return connection;
+    } catch (error) {
+      this.#connection?.close();
+      this.#ready = null;
+      throw error;
+    }
+  }
+
+  #exited(connection: CodexConnection, error: CodexError): void {
+    if (this.#connection !== connection) return;
+    this.#connection = null;
+    this.#ready = null;
+    this.#approvals.clear();
+    this.#inputs.clear();
+    for (const thread of this.#threads.values()) {
+      thread.loaded = false;
+      if (thread.turnId && !this.#disposed)
+        this.#emit({ type: 'turnFailed', threadId: thread.wowId, error: error.message });
+      thread.turnId = null;
+    }
+  }
+
+  async #startTurn(command: StartTurn): Promise<unknown> {
+    try {
+      const mode = permissionMode(command.permissionMode);
+      const connection = await this.#connect();
+      let thread = this.#threads.get(command.threadId);
+      if (thread?.turnId) throw new CodexError('state', 'A turn is already running in this thread');
+      if (!thread || !thread.loaded) {
+        const settings = {
+          cwd: command.cwd,
+          model: command.model,
+          approvalPolicy: mode.approvalPolicy,
+          sandbox: mode.sandbox,
+        };
+        const resumeId = thread?.codexId ?? command.resumeId;
+        const response = resumeId
+          ? await connection.request('thread/resume', {
+              threadId: resumeId,
+              ...settings,
+              excludeTurns: true,
+            })
+          : await connection.request('thread/start', settings);
+        thread = this.#register(command.threadId, response.thread.id, mode.sandbox);
+        this.#emit({
+          type: 'session',
+          threadId: command.threadId,
+          providerSessionId: thread.codexId,
+        });
+      }
+      const params: TurnStartParams = {
+        threadId: thread.codexId,
+        input: [{ type: 'text', text: command.prompt, text_elements: [] }],
+        cwd: command.cwd,
+        model: command.model,
+        effort: command.effort,
+        approvalPolicy: mode.approvalPolicy,
+      };
+      if (mode.sandbox !== thread.sandbox) {
+        params.sandboxPolicy = sandboxPolicy(mode.sandbox);
+        thread.sandbox = mode.sandbox;
+      }
+      const { turn } = await connection.request('turn/start', params);
+      if (turn.id !== thread.lastFinishedTurnId) thread.turnId = turn.id;
+      return { providerSessionId: thread.codexId, turnId: turn.id };
+    } catch (error) {
+      // Reported as an event too, so the thread never stays "working" on a turn that never began.
+      const message = error instanceof Error ? error.message : String(error);
+      this.#emit({ type: 'turnFailed', threadId: command.threadId, error: message });
+      throw error;
+    }
+  }
+
+  #register(wowId: string, codexId: string, sandbox: SandboxMode): ThreadState {
+    const previous = this.#threads.get(wowId);
+    if (previous) this.#byCodexId.delete(previous.codexId);
+    const thread: ThreadState = {
+      wowId,
+      codexId,
+      loaded: true,
+      sandbox,
+      turnId: null,
+      lastFinishedTurnId: null,
+      lastError: null,
+      usageTotal: previous?.usageTotal ?? null,
+      usageBaseline: null,
+      streamed: new Set(),
+      fileChanges: new Map(),
+    };
+    this.#threads.set(wowId, thread);
+    this.#byCodexId.set(codexId, thread);
+    return thread;
+  }
+
+  async #interrupt(threadId: string): Promise<unknown> {
+    const thread = this.#threads.get(threadId);
+    const connection = this.#connection;
+    if (!thread?.turnId || !connection) return { interrupted: false };
+    await connection.request('turn/interrupt', { threadId: thread.codexId, turnId: thread.turnId });
+    return { interrupted: true };
+  }
+
+  #answerApproval(approvalId: string, decision: ApprovalDecision): unknown {
+    const approval = this.#approvals.get(approvalId);
+    const connection = this.#connection;
+    if (!approval || !connection)
+      throw new CodexError('state', `No open codex approval ${approvalId}`);
+    this.#approvals.delete(approvalId);
+    const accept =
+      decision === 'allowOnce'
+        ? 'accept'
+        : decision === 'allowSession'
+          ? 'acceptForSession'
+          : 'decline';
+    switch (approval.method) {
+      case 'item/commandExecution/requestApproval':
+        connection.respond(approval.requestId, approval.method, { decision: accept });
+        break;
+      case 'item/fileChange/requestApproval':
+        connection.respond(approval.requestId, approval.method, { decision: accept });
+        break;
+      case 'item/permissions/requestApproval': {
+        const params = approval.params as ServerRequests[typeof approval.method]['params'];
+        const granted: ServerRequests[typeof approval.method]['result']['permissions'] = {};
+        if (decision !== 'deny') {
+          if (params.permissions.network) granted.network = params.permissions.network;
+          if (params.permissions.fileSystem) granted.fileSystem = params.permissions.fileSystem;
+        }
+        connection.respond(approval.requestId, approval.method, {
+          permissions: granted,
+          scope: decision === 'allowSession' ? 'session' : 'turn',
+        });
+        break;
+      }
+    }
+    return { ok: true };
+  }
+
+  #answerQuestion(questionId: string, answer: string): unknown {
+    const entry = [...this.#inputs.entries()].find(([, input]) => input.questions.has(questionId));
+    const connection = this.#connection;
+    if (!entry || !connection)
+      throw new CodexError('state', `No open codex question ${questionId}`);
+    const [key, input] = entry;
+    input.answers.set(questionId, answer);
+    // codex asks several questions in one request and takes the answers together.
+    if (input.answers.size < input.questions.size)
+      return { ok: true, waitingFor: input.questions.size - input.answers.size };
+    this.#inputs.delete(key);
+    const answers: Record<string, { answers: string[] }> = {};
+    for (const [wowId, codexId] of input.questions)
+      answers[codexId] = { answers: [input.answers.get(wowId) ?? ''] };
+    connection.respond(input.requestId, 'item/tool/requestUserInput', { answers });
+    return { ok: true, waitingFor: 0 };
+  }
+
+  async #listModels(connection: CodexConnection): Promise<CodexModel[]> {
+    const models: CodexModel[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: ModelListResponse = await connection.request('model/list', {
+        cursor,
+        includeHidden: false,
+      });
+      for (const model of page.data)
+        if (!model.hidden)
+          models.push({
+            id: model.model,
+            label: model.displayName,
+            description: model.description,
+            efforts: model.supportedReasoningEfforts.map((option) => option.reasoningEffort),
+            defaultEffort: model.defaultReasoningEffort,
+            isDefault: model.isDefault,
+          });
+      cursor = page.nextCursor;
+    } while (cursor);
+    return models;
+  }
+
+  async #test(): Promise<CodexTestResult> {
+    const connection = await this.#connect();
+    const version = this.#serverVersion;
+    if (version !== codexProtocolVersion)
+      throw new CodexError(
+        'unsupported',
+        `${version ? `codex ${version}` : 'This codex'} is not supported: wow speaks the app-server protocol of codex ${codexProtocolVersion}. Install codex ${codexProtocolVersion}, or regenerate packages/provider-codex for the installed version.`,
+      );
+    const { account, requiresOpenaiAuth } = await connection.request('account/read', {
+      refreshToken: false,
+    });
+    if (!account && requiresOpenaiAuth) {
+      const home = this.#options.instance.configDir || '~/.codex';
+      throw new CodexError(
+        'auth',
+        `codex is not logged in. Run "codex login" with CODEX_HOME=${home}, then test again.`,
+      );
+    }
+    return {
+      codexVersion: version,
+      account: account ? accountLabel(account) : 'No login required',
+      models: await this.#listModels(connection),
+    };
+  }
+
+  #request(connection: CodexConnection, message: ServerRequest): void {
+    const thread = this.#byCodexId.get(message.params.threadId);
+    if (!thread) {
+      connection.respondError(message.id, -32602, 'wow does not know this thread');
+      return;
+    }
+    const threadId = thread.wowId;
+    switch (message.method) {
+      case 'item/commandExecution/requestApproval': {
+        const approvalId = this.#newId();
+        this.#approvals.set(approvalId, {
+          requestId: message.id,
+          method: message.method,
+          codexThreadId: thread.codexId,
+          params: message.params,
+        });
+        const { command, reason } = message.params;
+        this.#emit({
+          type: 'approvalRequested',
+          threadId,
+          approvalId,
+          kind: 'command',
+          summary: command ?? reason ?? 'Run a command',
+          request: message.params,
+        });
+        return;
+      }
+      case 'item/fileChange/requestApproval': {
+        const approvalId = this.#newId();
+        this.#approvals.set(approvalId, {
+          requestId: message.id,
+          method: message.method,
+          codexThreadId: thread.codexId,
+          params: message.params,
+        });
+        const changes = thread.fileChanges.get(message.params.itemId);
+        this.#emit({
+          type: 'approvalRequested',
+          threadId,
+          approvalId,
+          kind: 'fileChange',
+          summary: message.params.reason ?? 'Apply file changes',
+          request: { ...message.params, changes },
+        });
+        return;
+      }
+      case 'item/permissions/requestApproval': {
+        const approvalId = this.#newId();
+        this.#approvals.set(approvalId, {
+          requestId: message.id,
+          method: message.method,
+          codexThreadId: thread.codexId,
+          params: message.params,
+        });
+        this.#emit({
+          type: 'approvalRequested',
+          threadId,
+          approvalId,
+          kind: 'tool',
+          summary: message.params.reason ?? 'Grant additional permissions',
+          request: message.params,
+        });
+        return;
+      }
+      case 'item/tool/requestUserInput': {
+        const input: OpenInput = {
+          requestId: message.id,
+          codexThreadId: thread.codexId,
+          questions: new Map(),
+          answers: new Map(),
+        };
+        const asked: ProviderEvent[] = [];
+        for (const question of message.params.questions) {
+          const questionId = this.#newId();
+          input.questions.set(questionId, question.id);
+          asked.push({
+            type: 'questionAsked',
+            threadId,
+            questionId,
+            question: question.header
+              ? `${question.header}: ${question.question}`
+              : question.question,
+            options: (question.options ?? []).map((option) => ({
+              label: option.label,
+              description: option.description,
+            })),
+            multiSelect: false,
+          });
+        }
+        if (input.questions.size === 0) {
+          connection.respond(message.id, message.method, { answers: {} });
+          return;
+        }
+        this.#inputs.set(this.#newId(), input);
+        for (const event of asked) this.#emit(event);
+        return;
+      }
+    }
+  }
+
+  #notification(message: ServerNotification): void {
+    if (message.method === 'serverRequest/resolved') {
+      this.#forgetRequest(message.params.requestId);
+      return;
+    }
+    const params: { threadId?: unknown } = message.params;
+    if (typeof params.threadId !== 'string') return;
+    const thread = this.#byCodexId.get(params.threadId);
+    if (!thread) return;
+    const threadId = thread.wowId;
+    switch (message.method) {
+      case 'turn/started':
+        thread.turnId = message.params.turn.id;
+        thread.usageBaseline = thread.usageTotal;
+        return;
+      case 'turn/completed':
+        this.#turnCompleted(thread, message.params.turn);
+        return;
+      case 'error':
+        if (!message.params.willRetry) {
+          const { message: text, additionalDetails } = message.params.error;
+          thread.lastError = additionalDetails ? `${text} (${additionalDetails})` : text;
+        }
+        return;
+      case 'thread/tokenUsage/updated': {
+        const { total, last, modelContextWindow } = message.params.tokenUsage;
+        thread.usageTotal = total;
+        if (modelContextWindow && modelContextWindow > 0)
+          this.#emit({
+            type: 'contextUsage',
+            threadId,
+            usedTokens: last.totalTokens,
+            maxTokens: modelContextWindow,
+          });
+        return;
+      }
+      case 'turn/plan/updated':
+        this.#emit({
+          type: 'taskListUpdated',
+          threadId,
+          tasks: message.params.plan.map((step, index) => ({
+            id: `${message.params.turnId}-${index}`,
+            content: step.step,
+            status: step.status === 'inProgress' ? 'in_progress' : step.status,
+          })),
+        });
+        return;
+      case 'item/agentMessage/delta':
+        thread.streamed.add(message.params.itemId);
+        this.#emit({
+          type: 'textDelta',
+          threadId,
+          itemId: message.params.itemId,
+          delta: message.params.delta,
+        });
+        return;
+      case 'item/reasoning/summaryTextDelta':
+      case 'item/reasoning/textDelta':
+        thread.streamed.add(message.params.itemId);
+        this.#emit({
+          type: 'reasoningDelta',
+          threadId,
+          itemId: message.params.itemId,
+          delta: message.params.delta,
+        });
+        return;
+      case 'item/commandExecution/outputDelta':
+      case 'item/fileChange/outputDelta':
+        thread.streamed.add(message.params.itemId);
+        this.#emit({
+          type: 'toolCallOutput',
+          threadId,
+          itemId: message.params.itemId,
+          output: message.params.delta,
+        });
+        return;
+      case 'item/started': {
+        const { item } = message.params;
+        if (item.type === 'fileChange') thread.fileChanges.set(item.id, item.changes);
+        const view = toolView(item);
+        if (view) this.#emit({ type: 'toolCallStarted', threadId, itemId: item.id, ...view });
+        return;
+      }
+      case 'item/completed':
+        this.#itemCompleted(thread, message.params.item);
+        return;
+    }
+  }
+
+  #itemCompleted(thread: ThreadState, item: ThreadItem): void {
+    const threadId = thread.wowId;
+    const streamed = thread.streamed.delete(item.id);
+    if (item.type === 'agentMessage') {
+      if (!streamed && item.text)
+        this.#emit({ type: 'textDelta', threadId, itemId: item.id, delta: item.text });
+      return;
+    }
+    if (item.type === 'reasoning') {
+      const text = item.summary.join('\n');
+      if (!streamed && text)
+        this.#emit({ type: 'reasoningDelta', threadId, itemId: item.id, delta: text });
+      return;
+    }
+    if (!toolView(item)) return;
+    thread.fileChanges.delete(item.id);
+    const { output, ok } = toolResult(item);
+    if (!streamed && output)
+      this.#emit({ type: 'toolCallOutput', threadId, itemId: item.id, output });
+    this.#emit({
+      type: 'toolCallCompleted',
+      threadId,
+      itemId: item.id,
+      status: ok ? 'ok' : 'error',
+    });
+  }
+
+  #turnCompleted(
+    thread: ThreadState,
+    turn: Extract<ServerNotification, { method: 'turn/completed' }>['params']['turn'],
+  ): void {
+    const threadId = thread.wowId;
+    if (turn.status === 'inProgress') return;
+    if (thread.usageTotal) {
+      const usage = subtract(thread.usageTotal, thread.usageBaseline);
+      this.#emit({
+        type: 'usage',
+        threadId,
+        inputTokens: Math.max(0, usage.inputTokens),
+        outputTokens: Math.max(0, usage.outputTokens),
+        cachedInputTokens: Math.max(0, usage.cachedInputTokens),
+      });
+    }
+    const error = turn.error?.message ?? thread.lastError ?? 'The codex turn failed';
+    thread.turnId = null;
+    thread.lastFinishedTurnId = turn.id;
+    thread.lastError = null;
+    thread.usageBaseline = null;
+    thread.streamed.clear();
+    thread.fileChanges.clear();
+    // Requests of a finished turn can no longer be answered.
+    for (const [id, approval] of this.#approvals)
+      if (approval.codexThreadId === thread.codexId) this.#approvals.delete(id);
+    for (const [id, input] of this.#inputs)
+      if (input.codexThreadId === thread.codexId) this.#inputs.delete(id);
+    if (turn.status === 'completed') this.#emit({ type: 'turnCompleted', threadId });
+    else if (turn.status === 'interrupted') this.#emit({ type: 'turnInterrupted', threadId });
+    else this.#emit({ type: 'turnFailed', threadId, error });
+  }
+
+  #forgetRequest(requestId: RequestId): void {
+    for (const [id, approval] of this.#approvals)
+      if (approval.requestId === requestId) this.#approvals.delete(id);
+    for (const [id, input] of this.#inputs)
+      if (input.requestId === requestId) this.#inputs.delete(id);
+  }
+}
+
+export const createCodexAdapter = (options: CodexAdapterOptions): CodexAdapter =>
+  new CodexAdapter(options);

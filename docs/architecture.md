@@ -26,8 +26,8 @@ intents/         agent-os intent, spec and plan.
 ```
 
 Tooling: pnpm workspaces, TypeScript project references, Vitest, Playwright, oxlint + Prettier,
-electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, GitHub Actions on
-`ubuntu-latest` and `windows-latest`.
+esbuild for `apps/desktop` (main, preload and the server bundle), electron-builder (NSIS) for the
+installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
 
 ## Server
 
@@ -39,18 +39,19 @@ electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, Git
   `packages/contracts` schemas: `rpcMethods` maps each method to its params and result schema.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
-  `secrets.set`, `secrets.delete`, `secrets.status`, `skills.refresh`,
-  `workflowRuns.detectArtifacts` (`{runId}`). Error codes are `RpcErrorCode`.
+  `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test` and `provider.listModels`
+  (`{providerInstanceId}`), `provider.detect`, `skills.refresh`, `workflowRuns.detectArtifacts`
+  (`{runId}`). Error codes are `RpcErrorCode`.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
   with their connection.
 - **Client runtime.** `packages/client-runtime` queues requests until the socket opens, fails
   in-flight requests when it drops, reconnects with capped exponential backoff and subscribes again
-  after every reconnect. It reads the port and token from `server.json` (`ServerInfo`). Its
-  subscribe message is still `subscribe {name, params}` / `unsubscribe {name}`, which does not
-  match the server's `subscribe {topic, threadId?}` / `unsubscribe {subscriptionId}` yet; the unit
-  that first connects the web app to the server aligns them.
+  after every reconnect. It reads the port and token from `server.json` (`ServerInfo`). It
+  subscribes with `subscribe {topic, threadId?}`, keeps the returned `subscriptionId` per socket to
+  route pushes and to `unsubscribe {subscriptionId}`, and shares one server subscription between
+  listeners of the same topic and thread (a late listener gets the last rows at once).
 - **Commands → events → projections.** A request becomes a command. The orchestrator (pure
   function, no I/O) turns the command plus current projection into events. One SQLite transaction
   appends the events, updates projections and records the command receipt (idempotent retries).
@@ -59,9 +60,14 @@ electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, Git
   A command carries a client-chosen `commandId`; `command_receipts` records it with a fingerprint
   of the command and the event sequence numbers, so a retry returns the first receipt
   (`duplicate: true`) without new events, and reusing an id for a different command is a
-  `conflict`. A rejected command stores nothing, so its id can be retried.
+  `conflict`. A rejected command stores nothing, so its id can be retried. Commands only the
+  server issues (`provider.events`, `providerInstance.recordTest`, `skills.sync`, the workflow
+  runner's step outcomes) are `InternalCommand`s: they go
+  through the same engine but `dispatch` over RPC does not accept them.
 - **Hooks.** `startServer({hooks})` takes provider adapter factories per kind (`ProviderAdapter`
-  in contracts), an Outlook service factory that receives `mock` or `bridge` (mock off Windows or
+  in contracts, created with the instance and a `ProviderAdapterContext` that resolves the
+  instance env with its secrets and reads `providers.testTimeoutMs`; `main.ts` registers the
+  Claude adapter), an Outlook service factory that receives `mock` or `bridge` (mock off Windows or
   with `WOW_OUTLOOK=mock`), and further background services. Services read settings and change
   state only through `dispatch`. `WOW_PROVIDERS=mock` gives every provider instance the mock
   adapter.
@@ -85,7 +91,8 @@ electron-vite for `apps/desktop`, electron-builder (NSIS) for the installer, Git
 ```text
 projects         id, name, cwd, defaultProviderInstanceId, defaultModel, createdAt
 provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env(json, secret keys by ref),
-                 launchArgs, defaultModel, defaultEffort, defaultPermissionMode, status, account
+                 launchArgs, defaultModel, defaultEffort, defaultPermissionMode, status, account,
+                 version?, statusMessage?   -- from the last "Test"
 threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessionId?, title, model,
                  effort, permissionMode, state ('idle'|'working'|'needs_you'|'done'|'failed'),
                  pinned, runId?, stepId?, createdAt, updatedAt
@@ -137,19 +144,75 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   deltas, `resume` with the stored session id, `canUseTool` turns a prompt into `approvalRequested`
   and an `AskUserQuestion` call into `questionAsked`. `effort` passes through. Usage comes from
   the result message and `getContextUsage()`.
-- **Codex** (`packages/provider-codex`): spawn `<binaryPath> app-server` with `CODEX_HOME` and the
-  instance env, newline-delimited JSON-RPC on stdio. `initialize` → `thread/start` or
-  `thread/resume` → `turn/start`; `turn/interrupt`; notifications for items (agent message deltas,
-  command execution, file changes, reasoning) and `turn/completed`; server-initiated requests
-  `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` and the user-input
-  request map to `approvalRequested` and `questionAsked`; `model/list` feeds the picker. The exact
-  method and notification names must be taken from the protocol definitions shipped with the
-  installed `codex` version (the `codex-rs/app-server-protocol` crate in the openai/codex
-  repository, which can generate TypeScript types). Pin the protocol version seen in `initialize`
-  and fail the "Test" action with a clear message when it is unknown.
+- **Codex** (`packages/provider-codex`): spawn `<binaryPath> app-server <launchArgs>` with
+  `CODEX_HOME` and the instance env, newline-delimited JSON-RPC on stdio (codex leaves out the
+  `jsonrpc` member). `initialize` + `initialized` → `thread/start` or `thread/resume` →
+  `turn/start`; `turn/interrupt`; notifications for items (`item/started`, `item/completed`, agent
+  message, reasoning, command and file change output deltas), `turn/plan/updated`,
+  `thread/tokenUsage/updated` and `turn/completed`; server-initiated requests
+  `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` and
+  `item/permissions/requestApproval` map to `approvalRequested`, `item/tool/requestUserInput` to
+  one `questionAsked` per question; `model/list` feeds the picker and `account/read` the "Test"
+  action. Method names and types are generated, not written from memory:
+  `scripts/generate-protocol.mjs` runs `codex app-server generate-ts` for the installed codex and
+  keeps the methods the adapter uses (currently codex 0.166.0). `initialize` reports the codex
+  version only inside `userAgent`; the adapter reads it there and "Test" fails with a clear message
+  when it is not the generated version. Permission modes (`read-only`, `auto`, `untrusted`,
+  `full-access`) are an approval policy plus a sandbox; model, effort and permission mode travel
+  with every `turn/start`. Details in `packages/provider-codex/README.md`.
+- **Provider service** (`apps/server/src/providers/service.ts`). Thread commands
+  (`thread.create`, `thread.sendMessage`, `thread.interrupt`, `thread.configure`,
+  `thread.setPinned`, `approval.answer`, `question.answer`) become events; after commit the service sends the
+  matching `ProviderCommand` to the instance's adapter (one adapter per instance, created on first
+  use). `thread.sendMessage` starts turn `<threadId>:turn:<n>` with the thread's model, effort,
+  permission mode and stored provider session id as `resumeId`. Adapter events are queued and
+  stored one batch per thread per tick as a `provider.events` command, which the orchestrator
+  (`core/threads.ts`) turns into rows: text and reasoning deltas append to one
+  `assistant_text`/`reasoning` item per provider item id (`{text}`), tool calls are `tool_call`
+  items (`{name, input, output, status}`), `approval` and `question` items point at their
+  `approvals`/`questions` rows (the payload of each item kind is a schema in
+  `packages/contracts`, `*ItemPayload`), the task list is one `task_list` item per turn (`{tasks}`), and
+  usage plus context usage merge into one `usage` item per turn and the turn's `usage`. Provider
+  ids are only unique per session, so row ids are prefixed with the turn or thread id. Thread
+  state: `working` while a turn runs, `needs_you` while an approval or question is open, `idle`
+  after a completed or interrupted turn, `failed` after a failed one. An effect that cannot start
+  or interrupt a turn fails the turn with the reason; a turn still `running` at startup failed
+  with the previous server process and is marked so. Events after a turn ended are dropped.
+- **Claude details.** The SDK version is pinned exactly in `packages/provider-claude/package.json`.
+  `launchArgs` (`--flag value`, `--flag=value`, `--flag`) become the SDK's `extraArgs`. Effort
+  `default` leaves the effort to Claude Code; other values must be an SDK `EffortLevel`. A thread
+  keeps one `query()` while the server runs; model, permission mode and effort changes are applied
+  to it before the next prompt. `canUseTool` waits for the answer: allow once, allow for this
+  session (the SDK's suggested rules with destination `session`) or deny; an interrupt denies with
+  `interrupt: true`. `AskUserQuestion` may hold several questions; each is asked separately and the
+  tool runs with `answers` once all are answered. The task list comes from `TodoWrite` (whole list)
+  or `TaskCreate`/`TaskUpdate` (one task at a time). `total_cost_usd` is cumulative per query, so a
+  turn's cost is the difference to the previous result. `test` runs a tool-less one-turn query in
+  the temp directory and reports `claude_code_version` from the init message and the account from
+  `accountInfo()`; the server stores them on the instance. `listModels` uses `supportedModels()` of
+  a live session or a short-lived query.
+- **Chat options.** What the thread header offers per provider kind (permission modes, the
+  effort that leaves the choice to the provider, the compact message) is `providerChatOptions`
+  in `packages/contracts`, because the web app cannot import the adapters. The keys are the ones
+  the adapters accept. Models and their efforts come from `provider.listModels`. Compact is
+  Claude's `/compact` sent as a message; codex has none in the adapter yet.
 - **Instances.** A provider instance is one binary + one config directory + env. Several instances
   of the same kind are allowed (work and personal accounts). A thread remembers its instance and
   can only resume on an instance with the same config directory.
+- **Onboarding** (`apps/web/src/providers`). Settings → Providers lists the instances with the
+  status, account and version of their last "Test" and adds, edits, tests and removes them; palette
+  commands do the same from anywhere. `provider.detect` looks for `claude` and `codex` on the
+  server's PATH (PATHEXT on Windows) and reports the config directory each would use
+  (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `~/.claude` / `~/.codex`); what the onboarding needs
+  per kind is `providerSetup` in contracts. With no instance at all the web app opens a first-run
+  wizard that creates and tests one instance per detected CLI. Secret environment values go to
+  `secrets.set` as `provider:<instanceId>:env:<NAME>` and the instance stores the reference.
+  `providerInstance.update` clears the last test when the binary, config directory, environment or
+  launch arguments change, and both it and `providerInstance.delete` are refused while a turn runs
+  on the instance; delete is also refused while threads use it. After commit the provider service
+  drops the instance's adapter (the next use builds one from the new row) and deletes secrets the
+  instance no longer references. Delete also removes provider-scoped settings and clears project
+  defaults that pointed at it.
 
 ## Outlook bridge
 
@@ -264,21 +327,28 @@ between two steps even when both flags are set. Stop ends the run as `stopped`, 
 running turn and keeps every thread.
 
 Commands: `workflow.create|update|delete`, `workflowRun.start|continue|stop` from clients, and
-`workflowRun.stepCompleted|stepFailed|artifactsFound` from the server. The orchestrator calls
-`startRun`/`advance` and stores one `workflowRun.changed` event (the run plus the effects to
-perform), `thread.created` for each started step (model, effort and permission mode from the step,
-then the provider instance defaults) and `thread.stateChanged` for gates. Step changes and deletes
-are refused while a run of the workflow is live, because a run follows its steps by position.
-Thread ids are `<runId>.<stepId>`.
+`skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound` as `InternalCommand`s from
+the server. The orchestrator calls `startRun`/`advance` and stores one `workflowRun.changed` event
+(the run plus the effects to perform), an idle `thread.created` with `runId` and `stepId` for each
+started step (model, effort and permission mode from the step, then the provider instance
+defaults) and `thread.stateChanged` for gates. Step changes and deletes are refused while a run of
+the workflow is live, because a run follows its steps by position. Thread ids are
+`<runId>.<stepId>`. The step's invocation comes from the skills projection, matched by name
+(`plugin:name` picks a Claude plugin's skill); `invocationsFor` in `packages/skills` formats both
+the scanned skills and unknown ones.
 
-`WorkflowRunner` performs the effects after commit: it keeps one provider adapter per instance
-(from `ProviderAdapters`), sends `startTurn` with the rendered prompt, collects the last assistant
-text item as the step's final message, and reports `turnCompleted` (with the artifacts found),
-`turnFailed` and `turnInterrupted` back as commands with ids derived from run and step, so a
+`WorkflowRunner` performs the effects after commit through the thread commands: `startStep`
+dispatches `thread.sendMessage` with the rendered prompt, so the provider service starts the turn
+like any other, and `interrupt` dispatches `thread.interrupt`. A step ends when the persisted
+`turn.ended` of its thread does: completed becomes `workflowRun.stepCompleted` with the turn's
+last assistant text as the final message and the artifacts found, failed (with the turn's error
+item) or interrupted becomes `workflowRun.stepFailed`. Command ids derive from the turn, so a
 repeated report is a duplicate. A step with no model, effort or permission mode fails instead of
-starting. `notify` effects go to `onNotify` listeners; the scheduler unit turns them into desktop
-notifications. `missedTriggerOutcome(policy)` is the engine's table for the scheduler's missed
-policy.
+starting. At startup the runner subscribes before `ProviderService.recover()`, so a step whose turn
+was running fails with the recovered turn; `recover()` on the runner then settles steps whose turn
+ended unseen or never started. `notify` effects go to `onNotify` listeners; the scheduler unit
+turns them into desktop notifications. `missedTriggerOutcome(policy)` is the engine's table for
+the scheduler's missed policy.
 
 ## Settings registry
 
@@ -293,13 +363,41 @@ stored value that no longer passes the schema. Writes are `setting.set` / `setti
 commands, so they are events like everything else; the server reads SQLite on every `get`, so a
 change applies at once, and services holding derived state listen with `onChange`. The page picks the editor from the zod schema type; schemas that need a special editor
 carry `.meta({ widget: 'keybinding' | 'keyValue' })` (see `Keybinding` and `KeyValueList`). Objects
-render their fields; anything else falls back to a JSON editor. Until the settings RPC exists the
-web app uses the in-memory `SettingsSource` from `packages/client-runtime`. Initial groups: providers, calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
-outlook (pollSeconds, folders, requestTimeoutMs, mailRail), scheduler (tickSeconds, missedPolicy,
-notifications), workflows (templates, handoverTemplate), skills (directories, includeClaudePlugins),
-trackers (jira: baseUrl, authMode `cloud-basic`|`pat`, projectKey, issueType, email; github:
-baseUrl, owner, repo, labels), appearance (theme, fonts, density), keybindings, desktop (autostart,
-closeToTray, startMinimized), advanced (WOW_HOME, port, log level, secret store timeout).
+render their fields; anything else falls back to a JSON editor. Connected to a server, the web app
+reads the `settings` topic and writes global values with `setting.set` / `setting.reset`
+(`apps/web/src/settings/server-source.ts`); without one it uses the in-memory `SettingsSource`
+from `packages/client-runtime`.
+
+The settings below are the registry. `apps/server/src/settings/coverage.test.ts` reads this list:
+a key named here and missing from the registry, or registered and missing here, fails the tests.
+A group marked with a unit (`(U12)`) belongs to a unit not delivered yet; its keys must not exist
+until that unit removes the mark. `group.*` covers every key of the group.
+
+- providers: `providers.testTimeoutMs`
+- chat: `chat.contextMeter`, `chat.resumePrompt`
+- calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`,
+  `calendar.lookaheadDays`
+- outlook: `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`,
+  `outlook.mailRail`, `outlook.mailLimit`
+- scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
+  `scheduler.paused`
+- workflows: `workflows.templates`, `workflows.handoverTemplate`
+- skills: `skills.directories`, `skills.includeClaudePlugins`
+- trackers (U12): `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
+  `trackers.jira.projectKey`, `trackers.jira.issueType`, `trackers.jira.email`,
+  `trackers.github.baseUrl`, `trackers.github.owner`, `trackers.github.repo`,
+  `trackers.github.labels`
+- appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`
+- keybindings: `keybindings.*`, one per command that has a shortcut
+- desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
+- advanced: `advanced.port`, `advanced.logLevel`, `advanced.secretsTimeoutMs` (`WOW_HOME` is an
+  environment variable, see "Server")
+
+The same test fails when `apps/server/src` or `apps/web/src` declares a tunable-looking constant
+(a `const`, `readonly` field or object property named like `*Ms`, `*Seconds`, `*Timeout`,
+`*Interval`, `*Limit`, `*Port` with a literal number other than 0 or 1, or a literal delay passed
+to `setTimeout` / `setInterval`) that has no registry entry. A value that is truly not a setting
+goes into the test's exemptions with the reason.
 
 ## Secrets
 
@@ -313,11 +411,47 @@ orchestrator rejects anything else.
 
 ## Desktop
 
-Electron main spawns `apps/server` with `ELECTRON_RUN_AS_NODE=1` and the bundled server entry,
-waits for `~/.wow/server.json`, and loads the web app with the token. Tray icon with Open, New
-thread, Pause scheduler, Quit; close-to-tray and autostart (`app.setLoginItemSettings`) are
-settings. Notifications use Electron's `Notification`. Native modules are rebuilt for Electron
-with `@electron/rebuild` in `postinstall`.
+Electron main spawns the bundled server (`out/server/server.mjs`, `resources/server` when
+packaged) with the Electron binary and `ELECTRON_RUN_AS_NODE=1`, waits for `~/.wow/server.json`
+naming the child's pid (a file left by another process is ignored), connects its own WebSocket
+client, and serves the built web app from the privileged `wow://app/` scheme so the router sees
+normal paths. The sandboxed preload exposes `server.json` as `window.wowServerInfo`, which the web
+bootstrap reads. On quit the desktop sends `{type: 'wow:shutdown'}` over the child's IPC channel
+(Windows has no signals between processes); a shim in the server bundle turns it, or a closed
+channel when the desktop dies, into the SIGTERM the server entry handles. A server that does not
+stop in time is killed; one that dies unexpectedly leads to a Restart / Quit dialog.
+
+Tray icon with Open, New thread (`/chat?new=1`), Pause/Resume scheduler and Quit; clicking it
+opens the window. Pause toggles the `scheduler.paused` setting, which the scheduler honours.
+`desktop.closeToTray`, `desktop.autostart` (`app.setLoginItemSettings` with `--hidden`, so a login
+start stays in the tray) and `desktop.startMinimized` are settings the desktop follows through the
+`settings` topic. Notifications use Electron's `Notification`, gated by `scheduler.notifications`,
+and are derived from changes on the `workflowRuns` topic: a new run, a run entering `waiting`, a
+run entering `failed`. A single-instance lock makes a second launch show the running window.
+
+The server bundle is one esbuild ESM file. Server modules find files next to their sources with
+`new URL('<relative>', import.meta.url)`; the build rewrites each module's `import.meta.url` to
+its repository path under `out/server/` and copies every file so named there (server
+`package.json`, migrations, Outlook fixtures, `bridge.ps1`). better-sqlite3 stays outside the
+bundle in `out/server/native/better-sqlite3` with its N-API prebuilds. N-API binaries load in
+Electron's Node unchanged, so nothing is rebuilt: `@electron/rebuild` would need the C++
+toolchain the install deliberately avoids, and electron-builder's rebuild is off. `pnpm --filter
+@wow/desktop smoke` proves the bundle under Electron's Node (SQLite opens, RPC answers, clean
+stop), and CI runs it before building the NSIS installer on `windows-latest`. No code signing, no
+auto-update.
+
+## Chat view
+
+`apps/web/src/chat`. `/chat` shows the thread list (grouped Needs you, Working, Idle, Done; failed
+threads sit under Idle with a marker; pinned first, then by `updatedAt`) next to `/chat/new` (the
+draft: provider instance, project or folder, model, effort, permission mode; the thread is created
+with the first message, titled by its first line) or `/chat/$threadId`. A thread subscribes to
+`threads`, `turns`, `threadItems`, `approvals` and `questions`; whether a turn runs comes from
+`turns`, never from a local timer. Rows skip layout off screen (`content-visibility: auto`) and
+tool input and output only render while a row is open, which keeps long conversations cheap
+without a virtual list. Palette commands: every thread, New thread, Switch provider (a thread
+keeps its instance, so this opens a draft on the other instance in the same project or folder) and
+Stop turn while a turn runs.
 
 ## Look
 
@@ -336,4 +470,10 @@ copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
 - Outlook: bridge script tested on `windows-latest` with Outlook absent (expects the "unavailable"
   path) and the mock everywhere.
 - Web: Playwright against the server with `WOW_OUTLOOK=mock` and `WOW_PROVIDERS=mock` (a mock
-  adapter that replays fixtures and asks for an approval and a question).
+  adapter that replays fixtures and asks for an approval and a question). The chat tests start
+  `apps/web/e2e/server.ts`: the server with a scripted `MockProviderAdapter` registered as the
+  claude and codex factories (the prompt picks the scenario), one seeded instance and project,
+  and skill rows written straight into the projection until skills discovery dispatches them.
+  Its PATH holds empty stand-in `claude` and `codex` files for `provider.detect`. The settings
+  tests start a second copy in its own home and port (`WOW_E2E_HOME`, `WOW_E2E_PORT`), because
+  they add and remove instances and change global settings.

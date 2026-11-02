@@ -3,6 +3,7 @@ import type { Dirent } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { codexPolicyFile, parseCodexPolicy, parseSkillFile, skillFileName } from './parse.js';
+import { invocationsFor } from './invocations.js';
 
 export interface SkillRoot {
   readonly dir: string;
@@ -112,10 +113,7 @@ async function readSkill(dir: string, root: SkillRoot): Promise<Skill | ScanProb
     source: root.source,
     // Behavior 27: such skills are still offered, because the app invokes them explicitly.
     manualOnly: frontmatter.disableModelInvocation || allowImplicit === false,
-    invocations: {
-      claude: root.plugin ? `/${root.plugin}:${name}` : `/${name}`,
-      codex: `$${name}`,
-    },
+    invocations: invocationsFor(name, root.plugin),
   };
 }
 

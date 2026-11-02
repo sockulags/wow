@@ -21,6 +21,9 @@
     },
     {
       "path": "../../packages/workflow-engine"
+    },
+    {
+      "path": "../../packages/provider-claude"
     }
   ]
 }

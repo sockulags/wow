@@ -47,6 +47,8 @@ export const providerInstances = sqliteTable('provider_instances', {
   defaultPermissionMode: text(),
   status: text().$type<ProviderInstanceStatus>().notNull(),
   account: text(),
+  version: text(),
+  statusMessage: text(),
 });
 
 export const threads = sqliteTable(

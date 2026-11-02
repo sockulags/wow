@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { ApprovalDecision, ApprovalKind, ProviderKind, ThreadState } from './provider.js';
+import {
+  ApprovalDecision,
+  ApprovalKind,
+  ProviderKind,
+  QuestionOption,
+  TaskStatus,
+  ThreadState,
+} from './provider.js';
 import { SecretRef } from './settings.js';
 import { StepRun, WorkflowRunState, WorkflowStep } from './workflow.js';
 
@@ -36,6 +43,9 @@ export const ProviderInstance = z.object({
   defaultPermissionMode: z.string().nullable(),
   status: ProviderInstanceStatus,
   account: z.string().nullable(),
+  // Provider version and error text from the last "Test", shown with the status badge.
+  version: z.string().nullable(),
+  statusMessage: z.string().nullable(),
 });
 export type ProviderInstance = z.infer<typeof ProviderInstance>;
 
@@ -104,6 +114,49 @@ export const ThreadItem = z.object({
   streaming: z.boolean(),
 });
 export type ThreadItem = z.infer<typeof ThreadItem>;
+
+// What `payload` holds per item kind, as the server's thread orchestrator writes it.
+export const TextItemPayload = z.object({ text: z.string() });
+export type TextItemPayload = z.infer<typeof TextItemPayload>;
+
+export const ToolCallItemPayload = z.object({
+  name: z.string(),
+  input: z.unknown(),
+  output: z.string(),
+  status: z.enum(['running', 'ok', 'error']),
+});
+export type ToolCallItemPayload = z.infer<typeof ToolCallItemPayload>;
+
+export const ApprovalItemPayload = z.object({
+  approvalId: Id,
+  kind: ApprovalKind,
+  summary: z.string(),
+});
+export type ApprovalItemPayload = z.infer<typeof ApprovalItemPayload>;
+
+export const QuestionItemPayload = z.object({
+  questionId: Id,
+  question: z.string(),
+  options: z.array(QuestionOption),
+  multiSelect: z.boolean(),
+});
+export type QuestionItemPayload = z.infer<typeof QuestionItemPayload>;
+
+export const TaskListItemPayload = z.object({
+  tasks: z.array(z.object({ id: z.string(), content: z.string(), status: TaskStatus })),
+});
+export type TaskListItemPayload = z.infer<typeof TaskListItemPayload>;
+
+// Token usage and the context report arrive separately and merge into one item per turn.
+export const UsageItemPayload = Usage.partial().extend({
+  context: z
+    .object({ usedTokens: z.number().int().nonnegative(), maxTokens: z.number().int().positive() })
+    .optional(),
+});
+export type UsageItemPayload = z.infer<typeof UsageItemPayload>;
+
+export const ErrorItemPayload = z.object({ message: z.string() });
+export type ErrorItemPayload = z.infer<typeof ErrorItemPayload>;
 
 export const Approval = z.object({
   id: Id,

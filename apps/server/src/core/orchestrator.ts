@@ -1,20 +1,26 @@
 import {
   SecretRef,
+  type Approval,
   type BacklogItem,
-  type Command,
   type DomainEvent,
   type Project,
   type ProjectChanges,
   type ProviderInstance,
+  type Question,
   type RpcErrorCode,
+  type ServerCommand,
   type SettingDefinition,
   type SettingScopeRef,
   type Skill,
+  type Thread,
+  type Turn,
   type Workflow,
   type WorkflowRun,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
-import { decideWorkflow } from './workflows.js';
+import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
+import { decideThread, isThreadCommand } from './threads.js';
+import { decideWorkflow, isWorkflowCommand } from './workflows.js';
 
 // The orchestrator decides which events a command produces. It is a pure function of the command,
 // a read-only view of the projections and the context; it never writes or performs effects.
@@ -22,15 +28,26 @@ import { decideWorkflow } from './workflows.js';
 export interface ReadModel {
   project(id: string): Project | undefined;
   providerInstanceExists(id: string): boolean;
+  providerInstance(id: string): ProviderInstance | undefined;
+  // Threads that use the instance, and how many of them have a turn running.
+  instanceUsage(id: string): { readonly threads: number; readonly runningTurns: number };
   // Stored value at exactly this scope, or undefined when none is stored.
   setting(key: string, scope: SettingScopeRef): { value: unknown } | undefined;
-  providerInstance(id: string): ProviderInstance | undefined;
+  thread(id: string): Thread | undefined;
+  runningTurn(threadId: string): Turn | undefined;
+  turnCount(threadId: string): number;
+  // Index the next item of the thread gets.
+  nextItemIndex(threadId: string): number;
+  itemExists(id: string): boolean;
+  approval(id: string): Approval | undefined;
+  question(id: string): Question | undefined;
+  // Approvals and questions of the thread that are still waiting for an answer.
+  openRequests(threadId: string): number;
   skills(): Skill[];
   workflow(id: string): Workflow | undefined;
   run(id: string): WorkflowRun | undefined;
   // True while a run of this workflow is running or waiting at a gate.
   hasLiveRun(workflowId: string): boolean;
-  threadExists(id: string): boolean;
   backlogItem(id: string): BacklogItem | undefined;
 }
 
@@ -50,7 +67,14 @@ export class CommandRejected extends Error {
   }
 }
 
-export function decide(command: Command, read: ReadModel, context: DecideContext): DomainEvent[] {
+export function decide(
+  command: ServerCommand,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  if (isProviderInstanceCommand(command)) return decideProviderInstance(command, read);
+  if (isThreadCommand(command)) return decideThread(command, read, context);
+  if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
   switch (command.type) {
     case 'project.create': {
       if (read.project(command.projectId)) {
@@ -158,16 +182,6 @@ export function decide(command: Command, read: ReadModel, context: DecideContext
       if (upserted.length === 0 && removed.length === 0) return [];
       return [{ kind: 'skills.synced', aggregate: 'skills', payload: { upserted, removed } }];
     }
-    case 'workflow.create':
-    case 'workflow.update':
-    case 'workflow.delete':
-    case 'workflowRun.start':
-    case 'workflowRun.continue':
-    case 'workflowRun.stop':
-    case 'workflowRun.stepCompleted':
-    case 'workflowRun.stepFailed':
-    case 'workflowRun.artifactsFound':
-      return decideWorkflow(command, read, context);
   }
 }
 

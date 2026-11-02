@@ -1,10 +1,11 @@
-import { WorkflowRun } from '@wow/contracts';
+import { WorkflowRun, type DetectedProvider } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import type { Engine } from '../core/engine.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
 import { workflowRuns } from '../db/schema.js';
+import type { ProviderService } from '../providers/service.js';
 import type { SettingsService } from '../settings/service.js';
 import type { SkillsService } from '../skills/service.js';
 import type { WorkflowRunner } from '../workflows/runner.js';
@@ -24,6 +25,8 @@ export interface HandlerDeps {
   readonly db: Db;
   readonly skills: SkillsService;
   readonly workflows: WorkflowRunner;
+  readonly providers: ProviderService;
+  readonly detectProviders: () => Promise<DetectedProvider[]>;
   readonly info: { readonly version: string; readonly home: string };
 }
 
@@ -41,6 +44,10 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       return { removed: deps.subscriptions.unsubscribe(subscriptionId) };
     },
     'settings.resolve': (context) => deps.settings.resolveAll(context),
+    'provider.test': ({ providerInstanceId }) => deps.providers.test(providerInstanceId),
+    'provider.listModels': ({ providerInstanceId }) =>
+      deps.providers.listModels(providerInstanceId),
+    'provider.detect': () => deps.detectProviders(),
     'secrets.set': ({ name, value }) => deps.secrets.set(name, value),
     'secrets.delete': async ({ name }) => ({ removed: await deps.secrets.delete(name) }),
     'secrets.status': async () => ({

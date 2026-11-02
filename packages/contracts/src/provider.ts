@@ -139,6 +139,106 @@ export const ProviderEvent = z.discriminatedUnion('type', [
 ]);
 export type ProviderEvent = z.infer<typeof ProviderEvent>;
 
+export interface PermissionModeOption {
+  readonly id: string;
+  readonly label: string;
+}
+
+export interface ProviderChatOptions {
+  // What the thread header offers. The adapters accept exactly these keys: provider-claude checks
+  // the SDK's permission modes, provider-codex maps each key to an approval policy and a sandbox.
+  readonly permissionModes: readonly PermissionModeOption[];
+  // Effort that leaves the choice to the provider, offered next to the model's own levels.
+  readonly defaultEffort: string | null;
+  // The message that compacts the conversation, or null when the provider has no such action.
+  readonly compactPrompt: string | null;
+}
+
+export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOptions>> = {
+  claude: {
+    permissionModes: [
+      { id: 'default', label: 'Ask for permissions' },
+      { id: 'acceptEdits', label: 'Accept edits' },
+      { id: 'plan', label: 'Plan only' },
+      { id: 'auto', label: 'Auto' },
+      { id: 'dontAsk', label: 'Do not ask (deny what is not allowed)' },
+      { id: 'bypassPermissions', label: 'Bypass permissions' },
+    ],
+    defaultEffort: 'default',
+    compactPrompt: '/compact',
+  },
+  codex: {
+    permissionModes: [
+      { id: 'read-only', label: 'Read only' },
+      { id: 'auto', label: 'Auto (workspace write, ask outside it)' },
+      { id: 'untrusted', label: 'Ask for every untrusted command' },
+      { id: 'full-access', label: 'Full access (no sandbox, never ask)' },
+    ],
+    defaultEffort: null,
+    compactPrompt: null,
+  },
+};
+
+// What onboarding needs per provider kind: the executable looked for on PATH and the variable that
+// names its config directory (spec 31, 32). The server detects; the settings page labels.
+export interface ProviderSetup {
+  readonly label: string;
+  readonly binaryName: string;
+  readonly configDirEnv: string;
+  // Under the user's home directory, used when the variable is not set.
+  readonly defaultConfigDir: string;
+}
+
+export const providerSetup: Readonly<Record<ProviderKind, ProviderSetup>> = {
+  claude: {
+    label: 'Claude',
+    binaryName: 'claude',
+    configDirEnv: 'CLAUDE_CONFIG_DIR',
+    defaultConfigDir: '.claude',
+  },
+  codex: {
+    label: 'Codex',
+    binaryName: 'codex',
+    configDirEnv: 'CODEX_HOME',
+    defaultConfigDir: '.codex',
+  },
+};
+
+// One provider CLI as `provider.detect` found it: binaryPath is null when it is not on PATH.
+export const DetectedProvider = z.object({
+  kind: ProviderKind,
+  binaryPath: z.string().min(1).nullable(),
+  configDir: z.string().min(1),
+});
+export type DetectedProvider = z.infer<typeof DetectedProvider>;
+
+// What `listModels` answers: one row per model the installed provider offers.
+export const ProviderModel = z.object({
+  id: z.string().min(1),
+  label: z.string(),
+  description: z.string(),
+  efforts: z.array(z.string().min(1)),
+});
+export type ProviderModel = z.infer<typeof ProviderModel>;
+
+// What `test` answers. A failed test is a result with ok false and a message, not an exception,
+// so the settings page can show why.
+export const ProviderTestResult = z.object({
+  ok: z.boolean(),
+  account: z.string().nullable(),
+  version: z.string().nullable(),
+  message: z.string().nullable(),
+});
+export type ProviderTestResult = z.infer<typeof ProviderTestResult>;
+
+// What the server hands an adapter when it creates one for an instance.
+export interface ProviderAdapterContext {
+  // The instance environment with secret references replaced by their values.
+  resolveEnv(): Promise<Record<string, string>>;
+  // providers.testTimeoutMs, read when a test starts.
+  testTimeoutMs(): number;
+}
+
 // What every provider adapter implements. The server owns adapters, feeds them commands and
 // turns the events they emit into thread commands; nothing outside an adapter sees its wire format.
 export interface ProviderAdapter {

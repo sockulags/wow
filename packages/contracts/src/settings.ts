@@ -9,6 +9,7 @@ export type SettingScope = z.infer<typeof SettingScope>;
 
 export const SettingGroup = z.enum([
   'providers',
+  'chat',
   'calendar',
   'outlook',
   'scheduler',
@@ -120,6 +121,16 @@ export type KeyValueList = z.infer<typeof KeyValueList>;
 export const Theme = z.enum(['dark', 'light']);
 export type Theme = z.infer<typeof Theme>;
 
+export const Density = z.enum(['comfortable', 'compact']);
+export type Density = z.infer<typeof Density>;
+
+// One installed font family name; it goes into a CSS font stack, so no quotes or separators.
+export const FontFamily = z
+  .string()
+  .trim()
+  .min(1)
+  .regex(/^[^"';,{}<>\\]+$/, 'Use one font family name without quotes or commas');
+
 const keybinding = (label: string, description: string, binding: string) =>
   defineSetting({
     schema: Keybinding,
@@ -195,6 +206,33 @@ export const defaultSkillDirectories = [
 ] as const;
 
 export const settingsRegistry = {
+  'providers.testTimeoutMs': defineSetting({
+    schema: z.number().int().min(5000).max(600_000),
+    group: 'providers',
+    label: 'Test timeout (ms)',
+    description:
+      'How long the "Test" action of a provider instance may take, including its trivial turn, before it is reported as failed.',
+    default: 120_000,
+    scope: 'provider',
+  }),
+  'chat.contextMeter': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Context meter',
+    description:
+      "Show how much of the model's context window the thread uses, from the provider's latest report, with a compact action where the provider supports it.",
+    default: true,
+    scope: 'provider',
+  }),
+  'chat.resumePrompt': defineSetting({
+    schema: z.string().min(1),
+    group: 'chat',
+    label: 'Resume message',
+    description:
+      'What "Resume" sends to continue a thread whose last turn was stopped or failed. The provider session is resumed, so the agent keeps its context.',
+    default: 'Continue where you left off.',
+    scope: 'provider',
+  }),
   'calendar.zone': defineSetting({
     schema: TimeZoneSetting,
     group: 'calendar',
@@ -299,6 +337,41 @@ export const settingsRegistry = {
     default: true,
     scope: 'global',
   }),
+  'scheduler.paused': defineSetting({
+    schema: z.boolean(),
+    group: 'scheduler',
+    label: 'Paused',
+    description:
+      'Stop firing triggers until resumed. Triggers that come due while paused are handled like missed ones when the scheduler resumes. The tray menu toggles this.',
+    default: false,
+    scope: 'global',
+  }),
+  'desktop.autostart': defineSetting({
+    schema: z.boolean(),
+    group: 'desktop',
+    label: 'Start at sign-in',
+    description:
+      'Start wow in the tray when you sign in to Windows, so triggers run without opening it.',
+    default: false,
+    scope: 'global',
+  }),
+  'desktop.closeToTray': defineSetting({
+    schema: z.boolean(),
+    group: 'desktop',
+    label: 'Close to tray',
+    description:
+      'Closing the window keeps wow running in the tray, so triggers still fire. Quit from the tray menu. Off: closing the window quits.',
+    default: true,
+    scope: 'global',
+  }),
+  'desktop.startMinimized': defineSetting({
+    schema: z.boolean(),
+    group: 'desktop',
+    label: 'Start in the tray',
+    description: 'Start without showing the window. Click the tray icon to open it.',
+    default: false,
+    scope: 'global',
+  }),
   'workflows.templates': defineSetting({
     schema: z
       .array(WorkflowTemplate)
@@ -346,6 +419,32 @@ export const settingsRegistry = {
     default: 'dark',
     scope: 'global',
   }),
+  'appearance.uiFont': defineSetting({
+    schema: FontFamily,
+    group: 'appearance',
+    label: 'Interface font',
+    description:
+      'Font family for the interface. Falls back to the system font when it is not installed.',
+    default: 'Inter Variable',
+    scope: 'global',
+  }),
+  'appearance.codeFont': defineSetting({
+    schema: FontFamily,
+    group: 'appearance',
+    label: 'Code font',
+    description:
+      'Font family for code, tool output and keys. Falls back to the system monospace font.',
+    default: 'JetBrains Mono Variable',
+    scope: 'global',
+  }),
+  'appearance.density': defineSetting({
+    schema: Density,
+    group: 'appearance',
+    label: 'Density',
+    description: 'Compact makes text and spacing smaller so more fits on screen.',
+    default: 'comfortable',
+    scope: 'global',
+  }),
   'keybindings.palette': keybinding('Command palette', 'Open the command palette.', 'Mod+K'),
   'keybindings.toggleSidebar': keybinding(
     'Toggle sidebar',
@@ -367,6 +466,12 @@ export const settingsRegistry = {
   'keybindings.goWorkflows': keybinding('Go to Workflows', 'Open the workflows.', 'Mod+3'),
   'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+4'),
   'keybindings.goSettings': keybinding('Go to Settings', 'Open the settings.', 'Mod+,'),
+  'keybindings.newThread': keybinding('New thread', 'Start a new chat thread.', 'Mod+Alt+N'),
+  'keybindings.stopTurn': keybinding(
+    'Stop turn',
+    'Interrupt the running turn of the open thread. What it produced so far stays.',
+    'Mod+.',
+  ),
   'advanced.port': defineSetting({
     schema: z.number().int().min(0).max(65535),
     group: 'advanced',
