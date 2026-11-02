@@ -1,11 +1,12 @@
+import type { SubscriptionTopic } from '@wow/contracts';
 import type { z } from 'zod';
 import { createStore, type StoreApi } from 'zustand/vanilla';
-import type { Connection } from './connection.js';
+import type { Connection, TopicParams } from './connection.js';
 
 export interface SubscriptionState<T> {
-  // Undefined until the server pushed the first snapshot.
+  // Undefined until the server sent the first snapshot.
   readonly data: T | undefined;
-  // Set when the server pushed something the schema rejects; the last good data is kept.
+  // Set when the server sent something the schema rejects; the last good data is kept.
   readonly error: string | undefined;
 }
 
@@ -17,15 +18,15 @@ export interface SubscriptionStore<T> extends StoreApi<SubscriptionState<T>> {
 // pushed; it never fills in data of its own.
 export function createSubscriptionStore<S extends z.ZodType>(
   connection: Connection,
-  name: string,
+  topic: SubscriptionTopic,
   schema: S,
-  params: unknown = null,
+  params: TopicParams | null = null,
 ): SubscriptionStore<z.output<S>> {
   const store = createStore<SubscriptionState<z.output<S>>>(() => ({
     data: undefined,
     error: undefined,
   }));
-  const stop = connection.subscribe(name, params, (raw) => {
+  const stop = connection.subscribe(topic, params, (raw) => {
     const parsed = schema.safeParse(raw);
     if (parsed.success) store.setState({ data: parsed.data, error: undefined });
     else store.setState({ error: parsed.error.message });

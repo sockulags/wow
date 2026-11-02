@@ -363,6 +363,17 @@ describe('provider service', () => {
     expect(rows('turns').map((turn) => turn['id'])).toEqual(['t1:turn:0', 't1:turn:1']);
   });
 
+  it('pins and unpins a thread without touching its activity time', () => {
+    const before = rows('threads')[0];
+    expect(dispatch({ type: 'thread.setPinned', threadId: 't1', pinned: true }).seqs).toHaveLength(
+      1,
+    );
+    expect(dispatch({ type: 'thread.setPinned', threadId: 't1', pinned: true }).seqs).toEqual([]);
+    expect(rows('threads')[0]).toEqual({ ...before, pinned: true });
+    dispatch({ type: 'thread.setPinned', threadId: 't1', pinned: false });
+    expect(rows('threads')[0]).toEqual(before);
+  });
+
   it('stops a running turn and keeps its partial output', async () => {
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Long task' });
     expect(() => dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Again' })).toThrow(

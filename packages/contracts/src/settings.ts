@@ -8,6 +8,7 @@ export type SettingScope = z.infer<typeof SettingScope>;
 
 export const SettingGroup = z.enum([
   'providers',
+  'chat',
   'calendar',
   'outlook',
   'scheduler',
@@ -140,6 +141,24 @@ export const settingsRegistry = {
     description:
       'How long the "Test" action of a provider instance may take, including its trivial turn, before it is reported as failed.',
     default: 120_000,
+    scope: 'provider',
+  }),
+  'chat.contextMeter': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Context meter',
+    description:
+      "Show how much of the model's context window the thread uses, from the provider's latest report, with a compact action where the provider supports it.",
+    default: true,
+    scope: 'provider',
+  }),
+  'chat.resumePrompt': defineSetting({
+    schema: z.string().min(1),
+    group: 'chat',
+    label: 'Resume message',
+    description:
+      'What "Resume" sends to continue a thread whose last turn was stopped or failed. The provider session is resumed, so the agent keeps its context.',
+    default: 'Continue where you left off.',
     scope: 'provider',
   }),
   'calendar.zone': defineSetting({
@@ -310,6 +329,12 @@ export const settingsRegistry = {
   'keybindings.goWorkflows': keybinding('Go to Workflows', 'Open the workflows.', 'Mod+3'),
   'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+4'),
   'keybindings.goSettings': keybinding('Go to Settings', 'Open the settings.', 'Mod+,'),
+  'keybindings.newThread': keybinding('New thread', 'Start a new chat thread.', 'Mod+Alt+N'),
+  'keybindings.stopTurn': keybinding(
+    'Stop turn',
+    'Interrupt the running turn of the open thread. What it produced so far stays.',
+    'Mod+.',
+  ),
   'advanced.port': defineSetting({
     schema: z.number().int().min(0).max(65535),
     group: 'advanced',

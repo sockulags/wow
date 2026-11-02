@@ -62,6 +62,7 @@ export const sections: readonly Section[] = [
 
 export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
   providers: 'Providers',
+  chat: 'Chat',
   calendar: 'Calendar',
   outlook: 'Outlook',
   scheduler: 'Scheduler',

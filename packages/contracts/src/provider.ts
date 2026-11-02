@@ -139,6 +139,46 @@ export const ProviderEvent = z.discriminatedUnion('type', [
 ]);
 export type ProviderEvent = z.infer<typeof ProviderEvent>;
 
+export interface PermissionModeOption {
+  readonly id: string;
+  readonly label: string;
+}
+
+export interface ProviderChatOptions {
+  // What the thread header offers. The adapters accept exactly these keys: provider-claude checks
+  // the SDK's permission modes, provider-codex maps each key to an approval policy and a sandbox.
+  readonly permissionModes: readonly PermissionModeOption[];
+  // Effort that leaves the choice to the provider, offered next to the model's own levels.
+  readonly defaultEffort: string | null;
+  // The message that compacts the conversation, or null when the provider has no such action.
+  readonly compactPrompt: string | null;
+}
+
+export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOptions>> = {
+  claude: {
+    permissionModes: [
+      { id: 'default', label: 'Ask for permissions' },
+      { id: 'acceptEdits', label: 'Accept edits' },
+      { id: 'plan', label: 'Plan only' },
+      { id: 'auto', label: 'Auto' },
+      { id: 'dontAsk', label: 'Do not ask (deny what is not allowed)' },
+      { id: 'bypassPermissions', label: 'Bypass permissions' },
+    ],
+    defaultEffort: 'default',
+    compactPrompt: '/compact',
+  },
+  codex: {
+    permissionModes: [
+      { id: 'read-only', label: 'Read only' },
+      { id: 'auto', label: 'Auto (workspace write, ask outside it)' },
+      { id: 'untrusted', label: 'Ask for every untrusted command' },
+      { id: 'full-access', label: 'Full access (no sandbox, never ask)' },
+    ],
+    defaultEffort: null,
+    compactPrompt: null,
+  },
+};
+
 // What `listModels` answers: one row per model the installed provider offers.
 export const ProviderModel = z.object({
   id: z.string().min(1),

@@ -89,6 +89,8 @@ export const Command = z.discriminatedUnion('type', [
     effort: z.string().min(1).optional(),
     permissionMode: z.string().min(1).optional(),
   }),
+  // Pinned threads sort above the others in their sidebar group (spec 21).
+  z.object({ type: z.literal('thread.setPinned'), threadId: Id, pinned: z.boolean() }),
   z.object({ type: z.literal('approval.answer'), approvalId: Id, decision: ApprovalDecision }),
   z.object({ type: z.literal('question.answer'), questionId: Id, answer: z.string() }),
 ]);
@@ -183,6 +185,11 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('thread.sessionStarted'),
     aggregate: Id,
     payload: z.object({ threadId: Id, providerSessionId: z.string().min(1), updatedAt: Timestamp }),
+  }),
+  z.object({
+    kind: z.literal('thread.pinned'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, pinned: z.boolean() }),
   }),
   z.object({
     kind: z.literal('thread.stateChanged'),

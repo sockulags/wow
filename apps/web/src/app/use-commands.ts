@@ -1,6 +1,9 @@
 import { settingValue } from '@wow/client-runtime';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useEffect, useMemo } from 'react';
+import { chatCommands } from '@/chat/commands';
+import { useTopic } from '@/chat/data';
+import { runningTurn } from '@/chat/model';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
 import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
 import { useRuntime } from './runtime';
@@ -9,10 +12,30 @@ export function useCommands(): {
   readonly commands: readonly AppCommand[];
   readonly context: CommandContext;
 } {
-  const { settings, layout } = useRuntime();
+  const { settings, layout, draft, connection } = useRuntime();
   const navigate = useNavigate();
-  const commands = useMemo(() => buildCommands(), []);
-  const context = useMemo(() => ({ navigate, settings, layout }), [navigate, settings, layout]);
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const openThreadId = /^\/chat\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
+  const threads = useTopic('threads');
+  const instances = useTopic('providerInstances');
+  const turns = useTopic('turns', openThreadId);
+  const staticCommands = useMemo(() => buildCommands(), []);
+  const commands = useMemo(
+    () => [
+      ...chatCommands({
+        threads: threads ?? [],
+        instances: instances ?? [],
+        openThread: threads?.find((thread) => thread.id === openThreadId),
+        running: runningTurn(turns ?? []) !== undefined,
+      }),
+      ...staticCommands,
+    ],
+    [staticCommands, threads, instances, turns, openThreadId],
+  );
+  const context = useMemo(
+    () => ({ navigate, settings, layout, draft, connection }),
+    [navigate, settings, layout, draft, connection],
+  );
   return { commands, context };
 }
 

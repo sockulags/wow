@@ -13,7 +13,7 @@ import type { AppCommand, CommandContext, CommandGroup as Group } from './comman
 import { formatBinding } from './keybindings';
 import { useLayout, useRuntime } from './runtime';
 
-const groupOrder: readonly Group[] = ['Navigation', 'Settings', 'Actions'];
+const groupOrder: readonly Group[] = ['Chat', 'Threads', 'Navigation', 'Settings', 'Actions'];
 
 export function CommandPalette({
   commands,
@@ -32,24 +32,27 @@ export function CommandPalette({
       open={open}
       onOpenChange={setOpen}
       title="Command palette"
-      description="Search views, settings and actions"
+      description="Search threads, views, settings and actions"
       showCloseButton={false}
     >
       <CommandInput placeholder="Type a command or search…" />
       <CommandList>
         <CommandEmpty>No results.</CommandEmpty>
-        {groupOrder.map((group) => (
-          <CommandGroup key={group} heading={group}>
-            {commands
-              .filter((command) => command.group === group && command.id !== 'palette.open')
-              .map((command) => {
+        {groupOrder.map((group) => {
+          const members = commands.filter(
+            (command) => command.group === group && command.id !== 'palette.open',
+          );
+          if (members.length === 0) return null;
+          return (
+            <CommandGroup key={group} heading={group}>
+              {members.map((command) => {
                 const binding = command.keybinding
                   ? settingValue(values, command.keybinding)
                   : undefined;
                 return (
                   <CommandItem
                     key={command.id}
-                    value={command.title}
+                    value={command.value ?? command.title}
                     keywords={[...(command.keywords ?? [])]}
                     onSelect={() => {
                       setOpen(false);
@@ -63,8 +66,9 @@ export function CommandPalette({
                   </CommandItem>
                 );
               })}
-          </CommandGroup>
-        ))}
+            </CommandGroup>
+          );
+        })}
       </CommandList>
     </CommandDialog>
   );
