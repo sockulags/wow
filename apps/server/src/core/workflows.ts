@@ -19,6 +19,7 @@ import {
 import { invocationsFor } from '@wow/skills';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveStored } from '../settings/service.js';
+import { backlogFollowsRun } from './backlog.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 
 // Decisions for workflow definitions and runs. Run transitions come from the pure workflow
@@ -221,6 +222,7 @@ function transitionEvents(
     aggregate: run.id,
     payload: { cause, run, effects: later },
   });
+  events.push(...backlogFollowsRun(run, read));
   return events;
 }
 

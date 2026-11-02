@@ -9,7 +9,15 @@ import { sections, settingGroupTitles, settingsByGroup } from './sections';
 // cards, backlog items, workflows) so the palette searches them together.
 
 export type CommandGroup =
-  'Calendar' | 'Cards' | 'Threads' | 'Chat' | 'Workflows' | 'Navigation' | 'Settings' | 'Actions';
+  | 'Calendar'
+  | 'Cards'
+  | 'Threads'
+  | 'Chat'
+  | 'Workflows'
+  | 'Backlog'
+  | 'Navigation'
+  | 'Settings'
+  | 'Actions';
 
 export interface CommandContext {
   readonly navigate: ReturnType<typeof useNavigate>;

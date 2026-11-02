@@ -246,6 +246,32 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
     case 'card.deleted':
       tx.delete(calendarItems).where(eq(calendarItems.id, event.payload.cardId)).run();
       return ['calendarItems'];
+    case 'backlog.created':
+      tx.insert(backlogItems).values(event.payload).run();
+      return ['backlogItems'];
+    case 'backlog.updated':
+      tx.update(backlogItems)
+        .set(event.payload.changes)
+        .where(eq(backlogItems.id, event.payload.backlogItemId))
+        .run();
+      return ['backlogItems'];
+    case 'backlog.deleted': {
+      const id = event.payload.backlogItemId;
+      tx.delete(backlogItems).where(eq(backlogItems.id, id)).run();
+      // A card keeps its time and workflow; only the link to the deleted item goes.
+      const cards = tx
+        .update(calendarItems)
+        .set({ backlogItemId: null })
+        .where(eq(calendarItems.backlogItemId, id))
+        .run();
+      return cards.changes > 0 ? ['backlogItems', 'calendarItems'] : ['backlogItems'];
+    }
+    case 'backlog.published':
+      tx.update(backlogItems)
+        .set({ remote: event.payload.remote })
+        .where(eq(backlogItems.id, event.payload.backlogItemId))
+        .run();
+      return ['backlogItems'];
     case 'outlook.synced': {
       const { calendarUpsert, calendarRemove, mailUpsert, mailRemove } = event.payload;
       const topics: SubscriptionTopic[] = ['outlookStatus'];
@@ -360,6 +386,13 @@ export function readModel(tx: DbOrTx): ReadModel {
         .all()
         .some((row) => isLiveRunState(row.state)),
     backlogItem: (id) => tx.select().from(backlogItems).where(eq(backlogItems.id, id)).get(),
+    backlogItemHasLiveRun: (id) =>
+      tx
+        .select({ state: workflowRuns.state })
+        .from(workflowRuns)
+        .where(eq(workflowRuns.backlogItemId, id))
+        .all()
+        .some((row) => isLiveRunState(row.state)),
     thread: (id) => tx.select().from(threads).where(eq(threads.id, id)).get(),
     runningTurn: (threadId) =>
       tx

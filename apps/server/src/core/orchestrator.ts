@@ -21,6 +21,7 @@ import {
   type WorkflowRun,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
+import { decideBacklog, isBacklogCommand } from './backlog.js';
 import { decideCalendar, isCalendarCommand } from './calendar.js';
 import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
 import { decideThread, isThreadCommand } from './threads.js';
@@ -58,6 +59,8 @@ export interface ReadModel {
   // True while a run of this workflow is running or waiting at a gate.
   hasLiveRun(workflowId: string): boolean;
   backlogItem(id: string): BacklogItem | undefined;
+  // True while a run started for this backlog item is running or waiting at a gate.
+  backlogItemHasLiveRun(id: string): boolean;
 }
 
 export interface DecideContext {
@@ -85,6 +88,7 @@ export function decide(
   if (isThreadCommand(command)) return decideThread(command, read, context);
   if (isCalendarCommand(command)) return decideCalendar(command, read, context);
   if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
+  if (isBacklogCommand(command)) return decideBacklog(command, read, context);
   switch (command.type) {
     case 'project.create': {
       if (read.project(command.projectId)) {

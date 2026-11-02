@@ -11,6 +11,7 @@ import { ProvidersSection } from '@/providers/providers-section';
 import { isSettingGroup, settingGroupTitles, settingsByGroup } from '@/app/sections';
 import { fieldKind } from './field-kind';
 import { Field } from './fields';
+import { SecretField } from './secret-field';
 
 const formatDefault = (value: unknown): string =>
   typeof value === 'string' ? (value === '' ? '(none)' : value) : JSON.stringify(value);
@@ -69,14 +70,18 @@ function SettingRow({
         )}
       </div>
       <p className="text-xs text-muted-foreground">{definition.description}</p>
-      <Field
-        id={id}
-        label={definition.label}
-        kind={kind}
-        value={shown}
-        invalid={issues.length > 0}
-        onChange={change}
-      />
+      {definition.schema.meta()?.['widget'] === 'secret' ? (
+        <SecretField id={id} label={definition.label} settingKey={settingKey} value={shown} />
+      ) : (
+        <Field
+          id={id}
+          label={definition.label}
+          kind={kind}
+          value={shown}
+          invalid={issues.length > 0}
+          onChange={change}
+        />
+      )}
       {issues.length > 0 && (
         <ul role="alert" className="text-xs text-destructive">
           {issues.map((issue) => (

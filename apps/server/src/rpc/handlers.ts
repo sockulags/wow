@@ -10,6 +10,8 @@ import type { OutlookService } from '../outlook/service.js';
 import type { ProviderService } from '../providers/service.js';
 import type { SettingsService } from '../settings/service.js';
 import type { SkillsService } from '../skills/service.js';
+import { TrackerError } from '../trackers/http.js';
+import type { TrackerService } from '../trackers/service.js';
 import type { WorkflowRunner } from '../workflows/runner.js';
 import { RpcFault, type Handlers } from './router.js';
 
@@ -28,6 +30,7 @@ export interface HandlerDeps {
   readonly skills: SkillsService;
   readonly workflows: WorkflowRunner;
   readonly providers: ProviderService;
+  readonly trackers: TrackerService;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
   // Undefined until the Outlook service has started, or when the server runs without one.
   readonly outlook: () => OutlookService | undefined;
@@ -76,6 +79,17 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       names: await deps.secrets.names(),
     }),
     'skills.refresh': async () => ({ skills: await deps.skills.refresh() }),
+    'trackers.preview': ({ backlogItemId, service }) =>
+      deps.trackers.preview(backlogItemId, service),
+    'trackers.publish': async ({ backlogItemId, service }) => {
+      try {
+        return await deps.trackers.publish(backlogItemId, service);
+      } catch (error) {
+        // A tracker that refuses the issue or cannot be reached is the user's to fix.
+        if (error instanceof TrackerError) throw new RpcFault('rejected', error.message);
+        throw error;
+      }
+    },
     'workflowRuns.detectArtifacts': async ({ runId }) => {
       await deps.workflows.detectArtifacts(runId);
       const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();

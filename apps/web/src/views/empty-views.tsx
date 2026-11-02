@@ -1,10 +1,8 @@
 import type { LucideIcon } from 'lucide-react';
-import { ListTodoIcon } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
-// Placeholder until the backlog unit (U12) replaces it. It says what will appear so the shell is
-// usable from day one.
+// Shared empty and not-found states.
 
 export function EmptyState({
   icon: Icon,
@@ -28,12 +26,6 @@ export function EmptyState({
     </section>
   );
 }
-
-export const BacklogView = () => (
-  <EmptyState icon={ListTodoIcon} title="Backlog is empty">
-    Ideas that are not tickets yet will appear here.
-  </EmptyState>
-);
 
 export const NotFoundView = () => (
   <section className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">

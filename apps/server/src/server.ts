@@ -25,6 +25,7 @@ import { closeConnection, createHandlers, type Connection } from './rpc/handlers
 import { route } from './rpc/router.js';
 import { SettingsService } from './settings/service.js';
 import { SkillsService } from './skills/service.js';
+import { TrackerService } from './trackers/service.js';
 import { detectArtifacts, type ArtifactDetector } from './workflows/artifacts.js';
 import { WorkflowRunner } from './workflows/runner.js';
 
@@ -61,6 +62,8 @@ export interface StartOptions {
   // Replaces the chokidar watcher on the skill folders, for tests.
   readonly watchSkills?: WatchFactory;
   readonly detectArtifacts?: ArtifactDetector;
+  // Replaces the global fetch the tracker clients use, for tests.
+  readonly fetch?: typeof fetch;
 }
 
 export interface RunningServer {
@@ -77,6 +80,7 @@ export interface RunningServer {
   readonly skills: SkillsService;
   readonly workflows: WorkflowRunner;
   readonly providerService: ProviderService;
+  readonly trackers: TrackerService;
   readonly logger: Logger;
   stop(): Promise<void>;
 }
@@ -150,6 +154,14 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     userHome: options.userHome ?? homedir(),
     ...(options.watchSkills ? { watch: options.watchSkills } : {}),
   });
+  const trackers = new TrackerService({
+    db: database.db,
+    engine,
+    settings,
+    secrets,
+    logger,
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
   const handlers = createHandlers({
     engine,
     subscriptions,
@@ -159,6 +171,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     skills,
     workflows,
     providers: providerService,
+    trackers,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     outlook: () => outlook,
     info: { version, home },
@@ -288,6 +301,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     skills,
     workflows,
     providerService,
+    trackers,
     logger,
     stop,
   };

@@ -50,7 +50,7 @@ describe('shell', () => {
     const { router } = await renderApp('/calendar');
     await user.keyboard('{Control>}k{/Control}');
     const dialog = await screen.findByRole('dialog');
-    await user.type(within(dialog).getByRole('combobox'), 'backlog');
+    await user.type(within(dialog).getByRole('combobox'), 'go to backlog');
     expect(within(dialog).getByRole('option', { name: /Go to Backlog/ })).toBeTruthy();
     await user.keyboard('{Enter}');
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -115,6 +115,7 @@ describe('shell', () => {
       'Scheduler',
       'Workflows',
       'Skills',
+      'Trackers',
       'Appearance',
       'Keybindings',
       'Desktop',

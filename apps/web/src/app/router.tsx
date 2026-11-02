@@ -13,7 +13,14 @@ import { ChatHome, ChatLayout } from '@/chat/chat-view';
 import { NewThreadView } from '@/chat/new-thread';
 import { ThreadView } from '@/chat/thread-view';
 import { SettingsPage } from '@/settings/settings-page';
-import { BacklogView, NotFoundView } from '@/views/empty-views';
+import {
+  BacklogHome,
+  BacklogLayout,
+  ItemView,
+  NewItemView,
+  validateBacklogItemSearch,
+} from '@/backlog/backlog-view';
+import { NotFoundView } from '@/views/empty-views';
 import { EditWorkflowView, NewWorkflowView } from '@/workflows/builder';
 import { RunView } from '@/workflows/run-view';
 import { WorkflowsHome, WorkflowsLayout } from '@/workflows/workflows-view';
@@ -121,7 +128,31 @@ const workflowRoute = createRoute({
 const backlogRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/backlog',
-  component: BacklogView,
+  component: BacklogLayout,
+});
+
+const backlogIndexRoute = createRoute({
+  getParentRoute: () => backlogRoute,
+  path: '/',
+  component: BacklogHome,
+});
+
+const newBacklogItemRoute = createRoute({
+  getParentRoute: () => backlogRoute,
+  path: '/new',
+  component: NewItemView,
+});
+
+const backlogItemRoute = createRoute({
+  getParentRoute: () => backlogRoute,
+  path: '/$itemId',
+  // `?dialog=plan|jira|github` opens that dialog, so palette commands can.
+  validateSearch: validateBacklogItemSearch,
+  component: function BacklogItemRoute() {
+    const { itemId } = backlogItemRoute.useParams();
+    const { dialog } = backlogItemRoute.useSearch();
+    return <ItemView key={itemId} itemId={itemId} dialog={dialog} />;
+  },
 });
 
 const settingsIndexRoute = createRoute({
@@ -152,7 +183,7 @@ const routeTree = rootRoute.addChildren([
     workflowRunRoute,
     workflowRoute,
   ]),
-  backlogRoute,
+  backlogRoute.addChildren([backlogIndexRoute, newBacklogItemRoute, backlogItemRoute]),
   settingsIndexRoute,
   settingsGroupRoute,
 ]);
