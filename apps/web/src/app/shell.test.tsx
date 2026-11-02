@@ -113,6 +113,8 @@ describe('shell', () => {
       'Calendar',
       'Outlook',
       'Scheduler',
+      'Workflows',
+      'Skills',
       'Appearance',
       'Keybindings',
       'Desktop',

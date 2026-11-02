@@ -14,6 +14,7 @@ import type {
   TriggerState,
   TurnState,
   Usage,
+  WorkflowRunState,
   WorkflowStep,
 } from '@wow/contracts';
 import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
@@ -199,7 +200,7 @@ export const workflowRuns = sqliteTable('workflow_runs', {
   projectId: text().notNull(),
   calendarItemId: text(),
   backlogItemId: text(),
-  state: text().notNull(),
+  state: text().$type<WorkflowRunState>().notNull(),
   currentStep: integer().notNull(),
   steps: json<StepRun[]>().notNull(),
   startedAt: text().notNull(),

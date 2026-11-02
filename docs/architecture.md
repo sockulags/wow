@@ -40,8 +40,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test` and `provider.listModels`
-  (`{providerInstanceId}`), `provider.detect`, `outlook.open` (`{entryId}`) and `outlook.refresh`.
-  Error codes are `RpcErrorCode`.
+  (`{providerInstanceId}`), `provider.detect`, `skills.refresh`, `workflowRuns.detectArtifacts`
+  (`{runId}`), `outlook.open` (`{entryId}`) and `outlook.refresh`. Error codes are `RpcErrorCode`.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
@@ -61,7 +61,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   of the command and the event sequence numbers, so a retry returns the first receipt
   (`duplicate: true`) without new events, and reusing an id for a different command is a
   `conflict`. A rejected command stores nothing, so its id can be retried. Commands only the
-  server issues (`provider.events`, `providerInstance.recordTest`) are `InternalCommand`s: they go
+  server issues (`provider.events`, `providerInstance.recordTest`, `skills.sync`, the workflow
+  runner's step outcomes) are `InternalCommand`s: they go
   through the same engine but `dispatch` over RPC does not accept them.
 - **Hooks.** `startServer({hooks})` takes provider adapter factories per kind (`ProviderAdapter`
   in contracts, created with the instance and a `ProviderAdapterContext` that resolves the
@@ -107,8 +108,9 @@ mail_items       id, externalId, folder, from, subject, receivedAt, unread, snip
 outlook_status   singleton: lastSyncAt, lastError?, unavailableSince?, unreadCount, bridgeVersion
 backlog_items    id, title, body, tags(json), state, runId?, remote(json: service,key,url)?, createdAt
 workflows        id, name, templateKind?, steps(json: WorkflowStep[]), createdAt, updatedAt
-workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, state, currentStep,
-                 steps(json: StepRun[]), startedAt, endedAt
+workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, state ('running'|
+                 'waiting'|'done'|'failed'|'stopped'), currentStep, steps(json: StepRun[]),
+                 startedAt, endedAt
 triggers         id, calendarItemId, workflowId, runAt, zone, state ('scheduled'|'fired'|'missed'|
                  'cancelled'), runId?
 skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
@@ -120,7 +122,7 @@ command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempo
 
 `WorkflowStep = {id, skillName, providerInstanceId, model?, effort?, permissionMode?, gateBefore,
 gateAfter, extraPrompt?, expectedArtifacts: string[]}`. `StepRun = {stepId, state, threadId?,
-startedAt?, endedAt?, artifactsFound: string[]}`.
+startedAt?, endedAt?, artifactsFound: string[], finalMessage?, error?}`.
 
 ## Providers
 
@@ -296,6 +298,18 @@ frontmatter (`name`, `description`, `disable-model-invocation`) and `agents/open
 Plugin-installed Claude skills are found under the Claude plugin cache when `skills.includeClaudePlugins`
 is on and get `/plugin:name`. A `chokidar` watcher refreshes the projection.
 
+`skills.directories` entries use `~` for the home folder and `<project>` for every project folder;
+the four defaults keep their source and anything else is `custom`. A skill's id is its folder.
+`manualOnly` is set by `disable-model-invocation: true` or `allow_implicit_invocation: false`; such
+skills are still offered because the app invokes them explicitly. Plugin skills are read from
+`~/.claude/plugins/installed_plugins.json` (the last install of each plugin), or, without that file,
+from the newest version folder in `~/.claude/plugins/cache/<marketplace>/<plugin>/`; the plugin
+name comes from `.claude-plugin/plugin.json`. A `SKILL.md` that does not parse is logged and
+skipped. The server's `SkillsService` scans at startup, when a watched folder changes, when the
+skills settings or the project list change, and on `skills.refresh`; scans run one at a time and a
+burst of changes shares one queued scan. It sends the result as a `skills.sync` command, which
+stores only the differences.
+
 ## Workflow engine
 
 `packages/workflow-engine` is pure: given a workflow, a run and an event (step completed, gate
@@ -305,12 +319,47 @@ with prompt, notify, finish). The server performs them. The step prompt is:
 ```text
 <skill invocation for the step's provider>  <extraPrompt>
 
-<handover: workflow.handoverTemplate rendered with previous step's final assistant message,
+<handover: workflows.handoverTemplate rendered with previous step's final assistant message,
  the backlog item body if any, and the expected artifact paths>
 ```
 
-`workflow.handoverTemplate` is a setting. Artifact detection runs `fast-glob` with the step's
-`expectedArtifacts` in the project `cwd` when the step completes and on run view open.
+`workflows.handoverTemplate` is a setting (project scope). `{{name}}` is replaced and
+`{{#name}}…{{/name}}` is dropped when the value is empty; the values are `previousStep`,
+`previousMessage`, `backlogBody`, `previousArtifacts` (found by earlier steps) and
+`expectedArtifacts` (this step's globs). Artifact detection runs `fast-glob` with the step's
+`expectedArtifacts` in the project `cwd` when the step completes and on run view open
+(`workflowRuns.detectArtifacts`).
+
+Gates. A gate sits between two steps. After a step with `gateAfter` its turn is over and the step
+itself shows `waiting` (its thread shows "needs you"). Before a step with `gateBefore` that step
+shows `waiting` without a thread, and the previous step's thread shows "needs you". The run is
+`waiting` in both cases and `pendingGate(run)` tells them apart. One Continue passes the gate
+between two steps even when both flags are set. Stop ends the run as `stopped`, interrupts a
+running turn and keeps every thread.
+
+Commands: `workflow.create|update|delete`, `workflowRun.start|continue|stop` from clients, and
+`skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound` as `InternalCommand`s from
+the server. The orchestrator calls `startRun`/`advance` and stores one `workflowRun.changed` event
+(the run plus the effects to perform), an idle `thread.created` with `runId` and `stepId` for each
+started step (model, effort and permission mode from the step, then the provider instance
+defaults) and `thread.stateChanged` for gates. Step changes and deletes are refused while a run of
+the workflow is live, because a run follows its steps by position. Thread ids are
+`<runId>.<stepId>`. The step's invocation comes from the skills projection, matched by name
+(`plugin:name` picks a Claude plugin's skill); `invocationsFor` in `packages/skills` formats both
+the scanned skills and unknown ones.
+
+`WorkflowRunner` performs the effects after commit through the thread commands: `startStep`
+dispatches `thread.sendMessage` with the rendered prompt, so the provider service starts the turn
+like any other, and `interrupt` dispatches `thread.interrupt`. A step ends when the persisted
+`turn.ended` of its thread does: completed becomes `workflowRun.stepCompleted` with the turn's
+last assistant text as the final message and the artifacts found, failed (with the turn's error
+item) or interrupted becomes `workflowRun.stepFailed`. Command ids derive from the turn, so a
+repeated report is a duplicate. A step with no model, effort or permission mode fails instead of
+starting. At startup the runner subscribes before `ProviderService.recover()`, so a step whose turn
+was running fails with the recovered turn; `recover()` on the runner then settles steps whose turn
+ended unseen or never started. `notify` effects go to `onNotify` listeners; the scheduler unit
+turns them into desktop notifications. `missedTriggerOutcome(policy)` is the engine's table for
+the scheduler's missed policy.
 
 ## Settings registry
 
@@ -332,7 +381,7 @@ from `packages/client-runtime`.
 
 The settings below are the registry. `apps/server/src/settings/coverage.test.ts` reads this list:
 a key named here and missing from the registry, or registered and missing here, fails the tests.
-A group marked with a unit (`(U7)`) belongs to a unit not delivered yet; its keys must not exist
+A group marked with a unit (`(U12)`) belongs to a unit not delivered yet; its keys must not exist
 until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`
@@ -343,8 +392,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `outlook.mailRail`, `outlook.mailLimit`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
   `scheduler.paused`
-- workflows (U7): `workflows.templates`, `workflows.handoverTemplate`
-- skills (U7): `skills.directories`, `skills.includeClaudePlugins`
+- workflows: `workflows.templates`, `workflows.handoverTemplate`
+- skills: `skills.directories`, `skills.includeClaudePlugins`
 - trackers (U12): `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
   `trackers.jira.projectKey`, `trackers.jira.issueType`, `trackers.jira.email`,
   `trackers.github.baseUrl`, `trackers.github.owner`, `trackers.github.repo`,

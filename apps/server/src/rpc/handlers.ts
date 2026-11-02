@@ -1,11 +1,16 @@
-import type { DetectedProvider } from '@wow/contracts';
+import { WorkflowRun, type DetectedProvider } from '@wow/contracts';
 import { OutlookError } from '@wow/outlook-bridge';
 import type { SecretStore } from '@wow/secrets';
+import { eq } from 'drizzle-orm';
 import type { Engine } from '../core/engine.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
+import type { Db } from '../db/database.js';
+import { workflowRuns } from '../db/schema.js';
 import type { OutlookService } from '../outlook/service.js';
 import type { ProviderService } from '../providers/service.js';
 import type { SettingsService } from '../settings/service.js';
+import type { SkillsService } from '../skills/service.js';
+import type { WorkflowRunner } from '../workflows/runner.js';
 import { RpcFault, type Handlers } from './router.js';
 
 // One per WebSocket. Subscriptions it opened end with it.
@@ -19,6 +24,9 @@ export interface HandlerDeps {
   readonly subscriptions: Subscriptions;
   readonly settings: SettingsService;
   readonly secrets: SecretStore;
+  readonly db: Db;
+  readonly skills: SkillsService;
+  readonly workflows: WorkflowRunner;
   readonly providers: ProviderService;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
   // Undefined until the Outlook service has started, or when the server runs without one.
@@ -67,6 +75,13 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       protection: deps.secrets.protection,
       names: await deps.secrets.names(),
     }),
+    'skills.refresh': async () => ({ skills: await deps.skills.refresh() }),
+    'workflowRuns.detectArtifacts': async ({ runId }) => {
+      await deps.workflows.detectArtifacts(runId);
+      const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();
+      if (!run) throw new RpcFault('not_found', `No run ${runId}`);
+      return WorkflowRun.parse(run);
+    },
   };
 }
 

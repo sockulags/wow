@@ -7,7 +7,11 @@ import { readDesktopSettings } from './desktop-settings.js';
 import { runNotices, runStates } from './notifications.js';
 import { trayMenu, trayTooltip } from './tray-menu.js';
 
-const run = (id: string, state: string, overrides: Partial<WorkflowRun> = {}): WorkflowRun => ({
+const run = (
+  id: string,
+  state: WorkflowRun['state'],
+  overrides: Partial<WorkflowRun> = {},
+): WorkflowRun => ({
   id,
   workflowId: 'wf-feature',
   projectId: 'p1',

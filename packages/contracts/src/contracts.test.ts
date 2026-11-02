@@ -84,7 +84,7 @@ describe('workflow contracts', () => {
 describe('settings registry', () => {
   const entries: [string, SettingDefinition][] = Object.entries(settingsRegistry);
 
-  it('fills in the providers, chat, calendar, outlook, scheduler, appearance, keybindings, desktop and advanced groups', () => {
+  it('fills in the providers, chat, calendar, outlook, scheduler, workflows, skills, appearance, keybindings, desktop and advanced groups', () => {
     const groups = new Set(entries.map(([, definition]) => definition.group));
     expect(groups).toEqual(
       new Set([
@@ -93,11 +93,44 @@ describe('settings registry', () => {
         'calendar',
         'outlook',
         'scheduler',
+        'workflows',
+        'skills',
         'appearance',
         'keybindings',
         'desktop',
         'advanced',
       ]),
+    );
+  });
+
+  it('seeds the Bug, Feature and Initiative templates (behavior 25)', () => {
+    const outline = settingsRegistry['workflows.templates'].default.map((template) => [
+      template.name,
+      template.steps.map((step) => `${step.skillName}${step.gateAfter ? ' (gate after)' : ''}`),
+    ]);
+    expect(outline).toEqual([
+      ['Bug', ['deliver-work', 'check-work']],
+      [
+        'Feature',
+        ['capture-intent (gate after)', 'plan-work (gate after)', 'deliver-work', 'check-work'],
+      ],
+      [
+        'Initiative',
+        [
+          'capture-intent (gate after)',
+          'plan-work (gate after)',
+          'shape-work (gate after)',
+          'deliver-work',
+          'check-work',
+        ],
+      ],
+    ]);
+  });
+
+  it('refuses templates that share a kind', () => {
+    const [bug] = settingsRegistry['workflows.templates'].default;
+    expect(settingsRegistry['workflows.templates'].schema.safeParse([bug, bug]).success).toBe(
+      false,
     );
   });
 

@@ -52,10 +52,10 @@ function checkLinks(read: ReadModel, links: Links): void {
   if (links.projectId && !read.project(links.projectId)) {
     throw new CommandRejected('not_found', `No project ${links.projectId}`);
   }
-  if (links.backlogItemId && !read.backlogItemExists(links.backlogItemId)) {
+  if (links.backlogItemId && !read.backlogItem(links.backlogItemId)) {
     throw new CommandRejected('not_found', `No backlog item ${links.backlogItemId}`);
   }
-  if (links.workflowId && !read.workflowExists(links.workflowId)) {
+  if (links.workflowId && !read.workflow(links.workflowId)) {
     throw new CommandRejected('not_found', `No workflow ${links.workflowId}`);
   }
 }

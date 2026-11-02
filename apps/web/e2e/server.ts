@@ -8,6 +8,7 @@ import {
 } from '@wow/server';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import path from 'node:path';
 import {
   e2eBinDir,
   e2eBinary,
@@ -153,9 +154,25 @@ await mkdir(e2eBinDir(home), { recursive: true });
 for (const name of ['claude', 'codex']) {
   await writeFile(e2eBinary(home, name), '', { mode: 0o755 });
 }
+// Skills discovery reads "~/.claude/skills"; "~" is a folder inside the server's home, so the tests
+// never see the real user's skills.
+const userHome = path.join(home, 'user-home');
+for (const [name, description] of [
+  ['deliver-work', 'Deliver one unit of planned work end to end.'],
+  ['capture-intent', 'Turn a rough idea into an intent and a spec.'],
+  ['check-work', 'Review delivered work against its contract.'],
+] as const) {
+  const dir = path.join(userHome, '.claude', 'skills', name);
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    path.join(dir, 'SKILL.md'),
+    `---\nname: ${name}\ndescription: ${description}\n---\n\nInvented fixture skill.\n`,
+  );
+}
 const server = await startServer({
   home,
   port,
+  userHome,
   env: {
     ...process.env,
     WOW_PROVIDERS: '',
@@ -209,27 +226,6 @@ server.engine.dispatch('seed-project', {
   name: 'Demo',
   cwd: home,
 });
-
-// No command writes skills yet (skills discovery lands separately), so the fixtures go straight
-// into the projection the skills topic reads.
-const insertSkill = server.database.sqlite.prepare(
-  'INSERT INTO skills (id, name, description, dir, source, manual_only, invocations) VALUES (?, ?, ?, ?, ?, ?, ?)',
-);
-for (const [name, description] of [
-  ['deliver-work', 'Deliver one unit of planned work end to end.'],
-  ['capture-intent', 'Turn a rough idea into an intent and a spec.'],
-  ['check-work', 'Review delivered work against its contract.'],
-] as const) {
-  insertSkill.run(
-    `user-claude:${name}`,
-    name,
-    description,
-    `/home/me/.claude/skills/${name}`,
-    'user-claude',
-    0,
-    JSON.stringify({ claude: `/${name}`, codex: `$${name}` }),
-  );
-}
 
 const stop = () => {
   control.close();

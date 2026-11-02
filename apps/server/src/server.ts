@@ -1,5 +1,6 @@
 import type { ServerMessage } from '@wow/contracts';
 import { SecretStore, defaultProtector, type Protector } from '@wow/secrets';
+import type { WatchFactory } from '@wow/skills';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -23,6 +24,9 @@ import { ProviderService } from './providers/service.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
 import { route } from './rpc/router.js';
 import { SettingsService } from './settings/service.js';
+import { SkillsService } from './skills/service.js';
+import { detectArtifacts, type ArtifactDetector } from './workflows/artifacts.js';
+import { WorkflowRunner } from './workflows/runner.js';
 
 export const serverInfoFileName = 'server.json';
 export const databaseFileName = 'wow.sqlite';
@@ -52,6 +56,11 @@ export interface StartOptions {
   readonly hooks?: ServerHooks;
   readonly protector?: Protector;
   readonly logSink?: LogSink;
+  // The folder "~" means in skills.directories. Defaults to the user's home folder.
+  readonly userHome?: string;
+  // Replaces the chokidar watcher on the skill folders, for tests.
+  readonly watchSkills?: WatchFactory;
+  readonly detectArtifacts?: ArtifactDetector;
 }
 
 export interface RunningServer {
@@ -65,6 +74,8 @@ export interface RunningServer {
   readonly subscriptions: Subscriptions;
   readonly secrets: SecretStore;
   readonly providers: ProviderAdapters;
+  readonly skills: SkillsService;
+  readonly workflows: WorkflowRunner;
   readonly providerService: ProviderService;
   readonly logger: Logger;
   stop(): Promise<void>;
@@ -120,14 +131,33 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     secrets,
     logger,
   });
+  const workflows = new WorkflowRunner({
+    db: database.db,
+    engine,
+    detectArtifacts: options.detectArtifacts ?? detectArtifacts,
+    logger,
+  });
+  // The runner listens first, so a step whose turn recovery fails also fails its run.
   providerService.recover();
   // Set once the Outlook hook has started, which happens after the socket listens.
   let outlook: OutlookService | undefined;
+  workflows.recover();
+  const skills = new SkillsService({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    userHome: options.userHome ?? homedir(),
+    ...(options.watchSkills ? { watch: options.watchSkills } : {}),
+  });
   const handlers = createHandlers({
     engine,
     subscriptions,
     settings,
     secrets,
+    db: database.db,
+    skills,
+    workflows,
     providers: providerService,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     outlook: () => outlook,
@@ -151,6 +181,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       wss.once('error', reject);
     });
   } catch (error) {
+    await workflows.stop();
     await providerService.stop();
     database.close();
     throw error;
@@ -199,7 +230,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     dispatch: (commandId, command) => engine.dispatch(commandId, command),
   };
-  const services: BackgroundService[] = [];
+  const services: BackgroundService[] = [workflows];
   const stopServices = async () => {
     for (const service of services.splice(0).toReversed()) {
       try {
@@ -210,6 +241,9 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     }
   };
   try {
+    services.push(skills);
+    // A folder that cannot be read must not keep the server from starting.
+    await skills.start().catch((error: unknown) => logger.error('skill scan failed', error));
     const mode = outlookMode(options.platform ?? process.platform, env);
     if (options.hooks?.outlook) {
       outlook = await options.hooks.outlook(mode, context);
@@ -251,6 +285,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     subscriptions,
     secrets,
     providers,
+    skills,
+    workflows,
     providerService,
     logger,
     stop,
