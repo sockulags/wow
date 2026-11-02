@@ -63,37 +63,43 @@ async function reveal(page: Page, minute: number) {
   }, minute);
 }
 
-// Records Ctrl key presses and Ctrl+wheel events after the app has seen them, and whether the
-// app kept them from the browser (which would zoom the page).
+// Keeps the Ctrl key presses and Ctrl+wheel events the page receives from now on. Whether the
+// app kept one from the browser (which would zoom the page) is read once dispatch has finished,
+// so it does not depend on the order of listeners on the window.
 async function watchZoomEvents(page: Page) {
   await page.evaluate(() => {
-    const seen: string[] = [];
-    (globalThis as { zoomEvents?: string[] }).zoomEvents = seen;
-    // On the window, so these run after the app's own listener.
+    type Seen = { type: string; ctrlKey: boolean; code?: string; defaultPrevented: boolean };
+    const seen: Seen[] = [];
+    (globalThis as { zoomEvents?: Seen[] }).zoomEvents = seen;
     const target = globalThis as unknown as {
       addEventListener(
         type: 'keydown' | 'wheel',
-        listener: (event: { ctrlKey: boolean; code: string; defaultPrevented: boolean }) => void,
-        options?: { passive: boolean },
+        listener: (event: Seen) => void,
+        options?: { capture: boolean; passive: boolean },
       ): void;
     };
-    target.addEventListener('keydown', (event) => {
-      if (event.ctrlKey && !event.code.startsWith('Control')) {
-        seen.push(`key ${event.code} ${event.defaultPrevented}`);
-      }
-    });
-    target.addEventListener(
-      'wheel',
-      (event) => {
-        if (event.ctrlKey) seen.push(`wheel ${event.defaultPrevented}`);
-      },
-      { passive: true },
-    );
+    const keep = (event: Seen) => {
+      if (event.ctrlKey && !event.code?.startsWith('Control')) seen.push(event);
+    };
+    target.addEventListener('keydown', keep, { capture: true, passive: true });
+    target.addEventListener('wheel', keep, { capture: true, passive: true });
   });
 }
 
 const zoomEvents = (page: Page) =>
-  page.evaluate(() => (globalThis as { zoomEvents?: string[] }).zoomEvents ?? []);
+  page.evaluate(() =>
+    (
+      (
+        globalThis as {
+          zoomEvents?: { type: string; code?: string; defaultPrevented: boolean }[];
+        }
+      ).zoomEvents ?? []
+    ).map((event) =>
+      event.type === 'wheel'
+        ? `wheel ${event.defaultPrevented}`
+        : `key ${event.code} ${event.defaultPrevented}`,
+    ),
+  );
 
 async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
   await page.mouse.move(from.x, from.y);

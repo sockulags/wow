@@ -1,6 +1,6 @@
 import { settingValue } from '@wow/client-runtime';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { backlogCommands } from '@/backlog/commands';
 import { calendarCommands } from '@/calendar/commands';
 import { validateCalendarSearch } from '@/calendar/search';
@@ -109,13 +109,19 @@ export function useGlobalKeybindings(
   commands: readonly AppCommand[],
   context: CommandContext,
 ): void {
+  // The listener is added once and reads the latest commands at key time. Re-adding it whenever a
+  // topic changes the command list would move it behind listeners added later on the window, and
+  // they would see a shortcut the app is about to claim as unclaimed.
+  const latest = useRef({ commands, context });
+  latest.current = { commands, context };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
+      const current = latest.current;
       const pressed = eventToBinding(event);
       if (!pressed) return;
-      const { values } = context.settings.getState();
-      const command = commands.find((candidate) => {
+      const { values } = current.context.settings.getState();
+      const command = current.commands.find((candidate) => {
         if (!candidate.keybinding) return false;
         const binding = settingValue(values, candidate.keybinding);
         return (
@@ -129,9 +135,9 @@ export function useGlobalKeybindings(
       // but only repeatable commands run again.
       event.preventDefault();
       if (event.repeat && !command.repeatable) return;
-      command.run(context);
+      command.run(current.context);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [commands, context]);
+  }, []);
 }
