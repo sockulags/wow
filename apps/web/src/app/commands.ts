@@ -4,6 +4,7 @@ import type { useNavigate } from '@tanstack/react-router';
 import type { DraftStore } from '@/chat/draft';
 import type { LayoutStore } from './runtime';
 import type { UpdatesClient } from './updates';
+import { toggleContextPanel, toggleContextPanelFocus } from '@/panel/panel-state';
 import { sections, settingGroupTitles, settingsByGroup } from './sections';
 
 // Everything the user can do from the keyboard. Feature units add their own commands here (threads,
@@ -50,10 +51,8 @@ export interface AppCommand {
   run(context: CommandContext): void;
 }
 
-const toggle =
-  (key: 'sidebarOpen' | 'rightPanelOpen') =>
-  ({ layout }: CommandContext) =>
-    layout.setState((state) => ({ [key]: !state[key] }));
+const toggleSidebar = ({ layout }: CommandContext) =>
+  layout.setState((state) => ({ sidebarOpen: !state.sidebarOpen }));
 
 export function buildCommands(): readonly AppCommand[] {
   const navigation: AppCommand[] = sections.map((section) => ({
@@ -86,14 +85,23 @@ export function buildCommands(): readonly AppCommand[] {
       title: 'Toggle sidebar',
       group: 'Actions',
       keybinding: 'keybindings.toggleSidebar',
-      run: toggle('sidebarOpen'),
+      run: toggleSidebar,
     },
     {
       id: 'layout.toggleRightPanel',
-      title: 'Toggle right panel',
+      title: 'Toggle context panel',
       group: 'Actions',
+      keywords: ['right panel', 'details', 'split view'],
       keybinding: 'keybindings.toggleRightPanel',
-      run: toggle('rightPanelOpen'),
+      run: toggleContextPanel,
+    },
+    {
+      id: 'layout.focusContextPanel',
+      title: 'Focus context panel',
+      group: 'Actions',
+      keywords: ['right panel', 'details', 'move focus'],
+      keybinding: 'keybindings.focusContextPanel',
+      run: toggleContextPanelFocus,
     },
     {
       id: 'appearance.toggleTheme',

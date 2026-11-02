@@ -57,6 +57,7 @@ function keyName(event: KeyLike): string | undefined {
   if (mapped) return mapped;
   if (NAMED_KEYS.has(code)) return code;
   if (NAMED_KEYS.has(key)) return key;
+  if (/^F([1-9]|1[0-2])$/.test(key)) return key;
   if (/^[a-z0-9]$/i.test(key)) return key.toUpperCase();
   return undefined;
 }

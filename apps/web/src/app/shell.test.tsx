@@ -85,11 +85,11 @@ describe('shell', () => {
     const user = userEvent.setup();
     const { runtime } = await renderApp('/calendar');
     await act(() => runtime.settings.write('keybindings.toggleRightPanel', 'Mod+Shift+R'));
-    expect(screen.queryByRole('complementary', { name: 'Details' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Context panel' })).toBeNull();
     await user.keyboard('{Control>}j{/Control}');
-    expect(screen.queryByRole('complementary', { name: 'Details' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Context panel' })).toBeNull();
     await user.keyboard('{Control>}{Shift>}r{/Shift}{/Control}');
-    expect(screen.getByRole('complementary', { name: 'Details' })).toBeTruthy();
+    expect(screen.getByRole('complementary', { name: 'Context panel' })).toBeTruthy();
   });
 
   it('runs shortcuts with Ctrl while the palette has focus (cmdk would claim Ctrl+J and Ctrl+K)', async () => {
@@ -102,7 +102,7 @@ describe('shell', () => {
     await user.keyboard('{Control>}k{/Control}');
     expect(screen.getByRole('dialog')).toBeTruthy();
     await user.keyboard('{Control>}j{/Control}');
-    expect(await screen.findByRole('complementary', { name: 'Details' })).toBeTruthy();
+    expect(await screen.findByRole('complementary', { name: 'Context panel' })).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 

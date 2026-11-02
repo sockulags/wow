@@ -34,6 +34,16 @@ export const e2eProjectsHome = path.join(tmpdir(), 'wow-e2e-projects-home');
 export const e2eProjectsPort = 4541;
 export const e2eProjectsOutlookControlPort = 4542;
 export const e2eProjectsTrackerPort = 4543;
+// A fifth server for the context panel tests (e2e/panel.spec.ts). They open the panel and change
+// its width, which are global settings that would change how the calendar tests' clicks behave.
+// Its home seeds a workflow that waits after its step and a card tomorrow that runs it.
+export const e2ePanelHome = path.join(tmpdir(), 'wow-e2e-panel-home');
+export const e2ePanelPort = 4551;
+export const e2ePanelOutlookControlPort = 4552;
+export const e2ePanelTrackerPort = 4553;
+export const e2ePanelWorkflowId = 'panel-e2e';
+export const e2ePanelCardId = 'panel-e2e-card';
+
 // The folders those session files point at: two exist, one is gone.
 export const e2eWorkspace = (home: string, name: string) => path.join(home, 'workspaces', name);
 

@@ -18,6 +18,9 @@ import {
   e2eCodexInstanceId,
   e2eHome,
   e2eOutlookControlPort,
+  e2ePanelCardId,
+  e2ePanelHome,
+  e2ePanelWorkflowId,
   e2ePort,
   e2eProjectId,
   e2eProjectsHome,
@@ -332,6 +335,43 @@ server.engine.dispatch('seed-workflow', {
   ],
 });
 
+// The panel server: a one-step workflow that waits for the user after its step, and a card
+// tomorrow at 10:00 (this machine's zone) that runs it, started through POST /fire?cardId=….
+if (home === e2ePanelHome) {
+  server.engine.dispatch('seed-panel-workflow', {
+    type: 'workflow.create',
+    workflowId: e2ePanelWorkflowId,
+    name: 'Panel e2e',
+    steps: [
+      {
+        id: 'review',
+        skillName: 'check-work',
+        providerInstanceId: e2eProviderInstanceId,
+        model: 'mock-model',
+        effort: 'default',
+        permissionMode: 'default',
+        gateBefore: false,
+        gateAfter: true,
+        expectedArtifacts: [],
+      },
+    ],
+  });
+  const start = new Date();
+  start.setDate(start.getDate() + 1);
+  start.setHours(10, 0, 0, 0);
+  server.engine.dispatch('seed-panel-card', {
+    type: 'card.create',
+    cardId: e2ePanelCardId,
+    title: 'Review the search panel',
+    start: start.toISOString(),
+    end: new Date(start.getTime() + 60 * 60_000).toISOString(),
+    zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    body: 'Invented notes for the panel tests.',
+    projectId: e2eProjectId,
+    workflowId: e2ePanelWorkflowId,
+  });
+}
+
 const received: { path: string; authorization: string | undefined; body: unknown }[] = [];
 const readBody = async (request: IncomingMessage): Promise<unknown> => {
   const chunks: Buffer[] = [];
@@ -340,10 +380,11 @@ const readBody = async (request: IncomingMessage): Promise<unknown> => {
   return text === '' ? undefined : (JSON.parse(text) as unknown);
 };
 
-// What the scheduler does when a card's time comes (U11), for the backlog item's card.
-function fire(backlogItemId: string): string | undefined {
+// What the scheduler does when a card's time comes (U11), for the backlog item's card or a card
+// named by its id.
+function fire(match: (card: CalendarItem) => boolean): string | undefined {
   const cards = snapshot(server.database.db, { topic: 'calendarItems' }) as CalendarItem[];
-  const card = cards.find((candidate) => candidate.backlogItemId === backlogItemId);
+  const card = cards.find(match);
   if (!card?.workflowId || !card.projectId) return undefined;
   const runId = `run-${card.id}`;
   server.engine.dispatch(`fire-${card.id}`, {
@@ -366,7 +407,11 @@ const trackers = createServer((request, response) => {
   };
   if (request.method === 'GET' && url.pathname === '/requests') return json(200, received);
   if (request.method === 'POST' && url.pathname === '/fire') {
-    const runId = fire(url.searchParams.get('backlogItemId') ?? '');
+    const backlogItemId = url.searchParams.get('backlogItemId');
+    const cardId = url.searchParams.get('cardId');
+    const runId = fire((card) =>
+      cardId === null ? card.backlogItemId === backlogItemId : card.id === cardId,
+    );
     return runId ? json(200, { runId }) : json(404, { error: 'No such card' });
   }
   if (request.method !== 'POST') return json(404, {});

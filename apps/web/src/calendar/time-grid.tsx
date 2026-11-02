@@ -14,7 +14,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { cardTitle } from './commands';
-import { eventTokens } from './event-tokens';
 import {
   applyCardKey,
   cardKeyChange,
@@ -214,10 +213,13 @@ interface BlockProps {
   readonly heightPx: number;
   readonly stop: string;
   readonly active: boolean;
+  // Shown in the context panel; only marked while the panel is open.
+  readonly selected: boolean;
 }
 
 const blockBase =
   'relative flex h-full flex-col overflow-clip rounded-md border px-1.5 py-0.5 text-xs outline-none @max-[4rem]:px-0.5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background';
+const selectedBlock = 'ring-2 ring-ring ring-offset-1 ring-offset-background';
 
 // The title stays in view while a tall block is scrolled past (its row is sticky), and wraps on
 // whole words into the lines it has; a narrow block keeps it on one line with an ellipsis.
@@ -251,6 +253,7 @@ function OutlookBlock({
   heightPx,
   stop,
   active,
+  selected,
   open,
   onOpenChange,
   cardMinutes,
@@ -276,9 +279,11 @@ function OutlookBlock({
             data-stop={stop}
             aria-haspopup="dialog"
             aria-label={itemLabel(item, zone)}
+            aria-current={selected ? 'true' : undefined}
             className={cn(
               blockBase,
-              'cursor-pointer border-(--event-outlook-border) bg-(--event-outlook) hover:brightness-[0.98] dark:hover:brightness-110',
+              'cursor-pointer border-event-outlook-border bg-event-outlook hover:brightness-[0.98] dark:hover:brightness-110',
+              selected && selectedBlock,
             )}
           >
             <span className="sticky top-0 flex min-w-0 items-start gap-1">
@@ -357,6 +362,7 @@ function CardBlock({
   heightPx,
   stop,
   active,
+  selected,
   dragging,
   onRunNow,
 }: BlockProps & {
@@ -390,12 +396,14 @@ function CardBlock({
         data-kind={kind}
         data-stop={stop}
         aria-label={itemLabel(item, zone)}
+        aria-current={selected ? 'true' : undefined}
         className={cn(
           blockBase,
-          'cursor-grab touch-none border-(--event-card-border) bg-(--event-card) shadow-xs select-none',
+          'cursor-grab touch-none border-event-card-border bg-event-card shadow-xs select-none',
           kind === 'trigger' && cn('border-l-[3px]', stateBorder[state]),
           kind === 'unrunnable' && 'border-dashed',
           dragging && 'cursor-grabbing opacity-80 shadow-md',
+          selected && selectedBlock,
         )}
       >
         <span className="sticky top-0 flex min-w-0 items-start gap-1">
@@ -469,6 +477,7 @@ function OverflowButton({
   cardMinutes,
   onEdit,
   onNewCard,
+  onSelect,
 }: {
   readonly chip: OverflowChip;
   readonly zone: string;
@@ -479,6 +488,8 @@ function OverflowButton({
   readonly cardMinutes: number;
   readonly onEdit: (cardId: string) => void;
   readonly onNewCard: (range: NewCardRange) => void;
+  // Shows the item in the context panel; false when the panel is closed and the item opens here.
+  readonly onSelect: (itemId: string) => boolean;
 }) {
   const [meeting, setMeeting] = useState<CalendarItem>();
   const count = chip.items.length;
@@ -528,7 +539,8 @@ function OverflowButton({
                   size="sm"
                   className="h-auto w-full justify-start gap-2 py-1.5 text-left"
                   onClick={() => {
-                    if (item.source === 'local') {
+                    if (onSelect(item.id)) onOpenChange(false);
+                    else if (item.source === 'local') {
                       onOpenChange(false);
                       onEdit(item.id);
                     } else setMeeting(item);
@@ -578,6 +590,12 @@ export interface TimeGridProps {
   onFloor?(height: number): void;
   onCreate(range: Range): void;
   onEdit(cardId: string): void;
+  // The item shown in the context panel, and whether the panel is open. While it is, a click or
+  // Enter selects an item for the panel instead of opening its dialog or popover, and the arrow
+  // keys move the selection with the focus (owner decision F-1).
+  readonly selectedId?: string | undefined;
+  readonly panelShown?: boolean;
+  onSelect?(itemId: string): void;
   // Cards that offer a one-click "Run now", and what it does.
   readonly runNowIds?: ReadonlySet<string>;
   onRunNow?(cardId: string): void;
@@ -606,10 +624,18 @@ export function TimeGrid({
   onFloor,
   onCreate,
   onEdit,
+  selectedId,
+  panelShown = false,
+  onSelect,
   runNowIds,
   onRunNow,
   onChange,
 }: TimeGridProps) {
+  // True when the panel takes the item; the caller opens it in place otherwise.
+  const select = (itemId: string): boolean => {
+    onSelect?.(itemId);
+    return panelShown;
+  };
   const columnsRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [gesture, setGesture] = useState<Gesture>();
@@ -874,7 +900,7 @@ export function TimeGrid({
         to > from ? atMinute(day, to, zone) : new Date(start.getTime() + cardMinutes * 60_000);
       onCreate({ start: start.toISOString(), end: end.toISOString() });
     } else if (!gesture.moved) {
-      onEdit(gesture.card.id);
+      if (!select(gesture.card.id)) onEdit(gesture.card.id);
     } else {
       const moved = preview(gesture.card);
       commit(gesture.card, { start: moved.start, end: moved.end });
@@ -894,12 +920,19 @@ export function TimeGrid({
     const move = gridMove(event);
     if (move) {
       event.preventDefault();
-      focusStop(nextStop(stops, key, move));
+      const next = nextStop(stops, key, move);
+      focusStop(next);
+      const nextItem = next === undefined ? undefined : itemOfStop(next);
+      if (panelShown && nextItem) onSelect?.(nextItem.id);
       return;
     }
     const item = itemOfStop(key);
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
+      // Enter on the card the panel already shows opens its form.
+      const shownInPanel = panelShown && item?.id === selectedId;
+      if (item && !shownInPanel && select(item.id)) return;
+      if (shownInPanel && item?.source !== 'local') return;
       if (item?.source === 'local') onEdit(item.id);
       else setOpenStop(key);
       return;
@@ -929,7 +962,7 @@ export function TimeGrid({
   const newCard = (range: NewCardRange) => onCreate(range);
 
   return (
-    <div className={cn('flex min-h-0 flex-1 flex-col', eventTokens)}>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div
         className="grid shrink-0 border-b border-border [scrollbar-gutter:stable] overflow-hidden"
         style={columns}
@@ -973,8 +1006,8 @@ export function TimeGrid({
                   <span
                     key={item.id}
                     className={cn(
-                      'flex items-center gap-1 truncate rounded-sm border border-(--event-outlook-border) bg-(--event-outlook) px-1 text-2xs',
-                      item.source === 'local' && 'border-(--event-card-border) bg-(--event-card)',
+                      'flex items-center gap-1 truncate rounded-sm border border-event-outlook-border bg-event-outlook px-1 text-2xs',
+                      item.source === 'local' && 'border-event-card-border bg-event-card',
                       item.state === 'cancelled' && 'line-through opacity-60',
                     )}
                   >
@@ -1008,7 +1041,7 @@ export function TimeGrid({
             {showsToday && (
               <span
                 data-testid="now-dot"
-                className="absolute -right-1 z-[5] size-2 -translate-y-1/2 rounded-full bg-(--event-now)"
+                className="absolute -right-1 z-[5] size-2 -translate-y-1/2 rounded-full bg-event-now"
                 style={{ top: px(nowMinute) }}
               />
             )}
@@ -1054,7 +1087,7 @@ export function TimeGrid({
                     <div
                       aria-hidden
                       data-testid="work-hours"
-                      className="pointer-events-none absolute inset-x-0 bg-(--event-work-hours)"
+                      className="pointer-events-none absolute inset-x-0 bg-event-work-hours"
                       style={{ top: px(work.top), height: px(work.bottom - work.top) }}
                     />
                   )}
@@ -1064,7 +1097,7 @@ export function TimeGrid({
                       aria-hidden
                       data-testid={isNowDay ? 'now-line' : 'now-line-faint'}
                       className={cn(
-                        'pointer-events-none absolute inset-x-0 z-[5] bg-(--event-now)',
+                        'pointer-events-none absolute inset-x-0 z-[5] bg-event-now',
                         isNowDay ? 'h-0.5' : 'h-px opacity-30',
                       )}
                       style={{ top: px(nowMinute) - (isNowDay ? 1 : 0) }}
@@ -1083,6 +1116,7 @@ export function TimeGrid({
                         heightPx,
                         stop: key,
                         active: rovingStop === key,
+                        selected: panelShown && selectedId === placed.item.id,
                       };
                       return (
                         <div
@@ -1117,7 +1151,10 @@ export function TimeGrid({
                             <OutlookBlock
                               {...common}
                               open={openStop === key}
-                              onOpenChange={(next) => setOpenStop(next ? key : undefined)}
+                              onOpenChange={(next) => {
+                                if (next && select(placed.item.id)) return;
+                                setOpenStop(next ? key : undefined);
+                              }}
                               cardMinutes={cardMinutes}
                               onNewCard={newCard}
                             />
@@ -1149,6 +1186,7 @@ export function TimeGrid({
                             cardMinutes={cardMinutes}
                             onEdit={onEdit}
                             onNewCard={newCard}
+                            onSelect={select}
                           />
                         </div>
                       );

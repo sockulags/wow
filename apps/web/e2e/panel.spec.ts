@@ -1,0 +1,180 @@
+import { expect, test, type Page } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { e2ePanelCardId, e2ePanelHome, e2ePanelTrackerPort } from './env';
+
+// The context panel (owner decisions F-1, F-2) against its own copy of the e2e server, whose home
+// seeds a card tomorrow at 10:00 that runs a one-step workflow with a gate after the step. The
+// panel's open state and width are global settings, so these tests run in order on that server.
+test.describe.configure({ mode: 'serial' });
+
+test.beforeEach(async ({ page }) => {
+  // What the desktop preload injects: the contents of `~/.wow/server.json`.
+  const info: unknown = JSON.parse(await readFile(path.join(e2ePanelHome, 'server.json'), 'utf8'));
+  await page.addInitScript((serverInfo) => {
+    (globalThis as { wowServerInfo?: unknown }).wowServerInfo = serverInfo;
+  }, info);
+});
+
+const pad = (value: number) => String(value).padStart(2, '0');
+
+// YYYY-MM-DD of today plus `days` in this machine's zone, which the server shares.
+function localDay(days = 0): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+const panel = (page: Page) => page.getByRole('complementary', { name: 'Context panel' });
+const calendar = (page: Page) => page.getByRole('region', { name: 'Calendar' });
+
+// Starts the card's run the way the scheduler does at the card's time.
+async function fire(cardId: string): Promise<void> {
+  const response = await fetch(`http://127.0.0.1:${e2ePanelTrackerPort}/fire?cardId=${cardId}`, {
+    method: 'POST',
+  });
+  expect(response.ok).toBe(true);
+}
+
+test.describe('context panel', () => {
+  test('a selected card shows its step thread, and its gate continues from the panel', async ({
+    page,
+  }) => {
+    await page.goto(`/calendar?view=day&date=${localDay(1)}`);
+    await expect(panel(page)).toBeHidden();
+    await page.getByRole('button', { name: 'Toggle context panel' }).click();
+    await expect(panel(page).getByTestId('empty-state')).toContainText('Nothing selected');
+
+    await fire(e2ePanelCardId);
+    const card = calendar(page).getByRole('button', { name: /^Review the search panel, 10:00/ });
+    await card.click();
+    // With the panel open a click selects the card instead of opening its dialog.
+    await expect(page).toHaveURL(new RegExp(`item=${e2ePanelCardId}`));
+    await expect(page.getByRole('dialog', { name: 'Edit card' })).toBeHidden();
+    await expect(card).toHaveAttribute('aria-current', 'true');
+
+    const details = panel(page).getByTestId('panel-card');
+    await expect(details.getByTestId('panel-title')).toHaveText('Review the search panel');
+    await expect(details.getByTestId('fact-Project')).toHaveText('Demo');
+    await expect(details.getByTestId('fact-Workflow')).toHaveText('Panel e2e');
+    await expect(details).toContainText('Invented notes for the panel tests.');
+
+    // The step's thread streams in live, with the gate and the step's composer under it.
+    const thread = panel(page).getByTestId('panel-step-thread');
+    await expect(thread).toContainText('Step 1 of 1');
+    await expect(thread.getByTestId('conversation')).toContainText('You said:');
+    await expect(details.getByTestId('fact-State')).toHaveText('Needs you');
+    await expect(thread.getByRole('combobox', { name: 'Message' })).toBeVisible();
+    const gate = thread.getByRole('region', { name: 'Gate' });
+    await expect(gate).toContainText('check-work finished. Continue ends the run.');
+    await gate.getByRole('button', { name: 'Continue' }).click();
+    await expect(gate).toBeHidden();
+    await expect(details.getByTestId('fact-State')).toHaveText('Done');
+    await expect(card).toHaveAccessibleName(/, done$/);
+
+    // The chat view's panel shows the thread's setup instead of the conversation again.
+    await thread.getByRole('link', { name: 'Open thread' }).click();
+    await expect(page).toHaveURL(/\/chat\/[^/]+$/);
+    const threadDetails = panel(page).getByTestId('panel-thread');
+    await expect(threadDetails.getByTestId('fact-Model')).toHaveText('Mock model');
+    await expect(threadDetails.getByTestId('fact-Provider')).toHaveText('Mock Claude');
+    await expect(threadDetails.getByTestId('fact-Run')).toContainText('Panel e2e · check-work');
+    await expect(threadDetails.getByTestId('fact-Card')).toContainText('Review the search panel');
+    await expect(threadDetails.getByTestId('fact-Turns')).toHaveText('1');
+  });
+
+  test('a selected meeting shows its details with Join and Open in Outlook', async ({ page }) => {
+    await page.goto(`/calendar?view=day&date=${localDay()}`);
+    // The panel stayed open from the last test: it is a setting on the server.
+    await expect(panel(page)).toBeVisible();
+    await calendar(page)
+      .getByRole('button', { name: 'Lunch with Eli, 12:00–13:00, read-only' })
+      .click();
+    const meeting = panel(page).getByTestId('panel-meeting');
+    await expect(meeting).toContainText('Lunch with Eli');
+    await expect(meeting).toContainText('Corner bistro');
+    await expect(meeting.getByRole('button', { name: 'Open in Outlook' })).toBeEnabled();
+    // Only the panel shows it; the block's popover stays closed.
+    await expect(page.getByTestId('outlook-details')).toHaveCount(1);
+
+    // The arrow keys move the selection with the focus while the panel is open.
+    await calendar(page)
+      .getByRole('button', { name: 'Lunch with Eli, 12:00–13:00, read-only' })
+      .press('ArrowUp');
+    await expect(meeting).toContainText('Team standup');
+    await expect(meeting).toContainText('Ada Lindqvist');
+    await expect(meeting.getByRole('link', { name: 'Join' })).toHaveAttribute(
+      'href',
+      /^https:\/\/teams\.microsoft\.com\//,
+    );
+  });
+
+  test('keeps its width after a reload, and its key moves the focus in and back', async ({
+    page,
+  }) => {
+    await page.goto(`/calendar?view=day&date=${localDay(1)}&item=${e2ePanelCardId}`);
+    const aside = panel(page);
+    await expect(aside.getByTestId('panel-card')).toBeVisible();
+    const before = await aside.boundingBox();
+    const handle = aside.getByTestId('context-panel-resize');
+    const grip = await handle.boundingBox();
+    if (!before || !grip) throw new Error('the panel is not on screen');
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(grip.x + grip.width / 2 - 100, grip.y + grip.height / 2);
+    await page.mouse.up();
+    const widened = Math.round(before.width) + 100;
+    await expect(handle).toHaveAttribute('aria-valuenow', String(widened));
+
+    await page.reload();
+    await expect(aside.getByTestId('panel-card')).toBeVisible();
+    await expect(handle).toHaveAttribute('aria-valuenow', String(widened));
+    expect(Math.round((await aside.boundingBox())?.width ?? 0)).toBe(widened);
+    // The arrow keys on the edge resize it too.
+    await handle.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(handle).toHaveAttribute('aria-valuenow', String(widened - 16));
+
+    // F6 moves the focus into the panel and back to where it was.
+    const today = page.getByRole('button', { name: 'Today' });
+    await today.focus();
+    await page.keyboard.press('F6');
+    await expect(aside).toBeFocused();
+    await page.keyboard.press('F6');
+    await expect(today).toBeFocused();
+
+    // "Show in panel" from the palette focuses it as well; Ctrl+J closes it.
+    await page.keyboard.press('Control+k');
+    const palette = page.getByRole('dialog');
+    await palette.getByRole('combobox').fill('show in panel');
+    await expect(palette.getByRole('option').first()).toHaveText(/^Show in panel/);
+    await page.keyboard.press('Enter');
+    await expect(aside).toBeFocused();
+    await page.keyboard.press('Control+j');
+    await expect(aside).toBeHidden();
+    await expect(page.getByRole('dialog', { name: 'Edit card' })).toBeHidden();
+  });
+
+  test('folds away below the breakpoint and opens over the view there', async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await page.goto(`/calendar?view=day&date=${localDay(1)}&item=${e2ePanelCardId}`);
+    const toggle = page.getByRole('button', { name: 'Toggle context panel' });
+    await toggle.click();
+    await expect(panel(page)).toBeVisible();
+    await expect(panel(page)).not.toHaveAttribute('data-overlay');
+
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await expect(panel(page)).toBeHidden();
+    await toggle.click();
+    await expect(panel(page)).toHaveAttribute('data-overlay', '');
+    await panel(page).getByRole('button', { name: 'Close context panel' }).click();
+    await expect(panel(page)).toBeHidden();
+
+    // Opening and closing it over the view left the setting alone: wide again, it is docked.
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await expect(panel(page)).toBeVisible();
+    await expect(panel(page)).not.toHaveAttribute('data-overlay');
+    await toggle.click();
+    await expect(panel(page)).toBeHidden();
+  });
+});

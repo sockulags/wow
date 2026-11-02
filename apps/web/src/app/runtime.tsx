@@ -36,7 +36,12 @@ export type CardDialog =
 // without one, from the in-memory settings source).
 export interface LayoutState {
   readonly sidebarOpen: boolean;
-  readonly rightPanelOpen: boolean;
+  // The context panel opened over the view in a narrow window, where it does not take room and
+  // the appearance.contextPanel setting does not apply. Folds away again on its own.
+  readonly contextPanelPeek: boolean;
+  // Set by "Focus context panel" when the panel still has to open; the panel takes the focus once
+  // it is there and clears it.
+  readonly contextPanelFocus: boolean;
   readonly paletteOpen: boolean;
   readonly providerDialog: ProviderDialog | undefined;
   readonly projectDialog: ProjectDialog | undefined;
@@ -48,7 +53,8 @@ export type LayoutStore = StoreApi<LayoutState>;
 export const createLayoutStore = (): LayoutStore =>
   createStore<LayoutState>(() => ({
     sidebarOpen: true,
-    rightPanelOpen: false,
+    contextPanelPeek: false,
+    contextPanelFocus: false,
     paletteOpen: false,
     providerDialog: undefined,
     projectDialog: undefined,

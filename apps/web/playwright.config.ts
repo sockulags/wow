@@ -1,6 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 import {
   e2eHome,
+  e2ePanelHome,
+  e2ePanelOutlookControlPort,
+  e2ePanelPort,
+  e2ePanelTrackerPort,
   e2ePort,
   e2eProjectsHome,
   e2eProjectsOutlookControlPort,
@@ -70,6 +74,19 @@ export default defineConfig({
         WOW_E2E_PORT: String(e2eProjectsPort),
         WOW_E2E_OUTLOOK_CONTROL_PORT: String(e2eProjectsOutlookControlPort),
         WOW_E2E_TRACKER_PORT: String(e2eProjectsTrackerPort),
+        WOW_OUTLOOK: 'mock',
+      },
+      reuseExistingServer: false,
+    },
+    {
+      // A copy for the context panel tests, which open the panel and resize it (global settings).
+      command: 'pnpm exec tsx e2e/server.ts',
+      port: e2ePanelPort,
+      env: {
+        WOW_E2E_HOME: e2ePanelHome,
+        WOW_E2E_PORT: String(e2ePanelPort),
+        WOW_E2E_OUTLOOK_CONTROL_PORT: String(e2ePanelOutlookControlPort),
+        WOW_E2E_TRACKER_PORT: String(e2ePanelTrackerPort),
         WOW_OUTLOOK: 'mock',
       },
       reuseExistingServer: false,
