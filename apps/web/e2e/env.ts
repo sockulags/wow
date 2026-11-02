@@ -8,6 +8,12 @@ export const e2ePort = 4517;
 export const e2eProviderInstanceId = 'mock-claude';
 export const e2eProjectId = 'demo';
 
+// The first server's mock Outlook answers here: PUT /unavailable?message=… makes every Outlook
+// request fail, DELETE /unavailable brings it back, GET /opened lists the items Outlook was asked
+// to open. The settings copy listens on its own port.
+export const e2eOutlookControlPort = 4519;
+export const e2eSettingsOutlookControlPort = 4520;
+
 // A second server for the settings tests. They add and remove provider instances and change
 // global settings, which must not leak into the chat tests running next to them.
 export const e2eSettingsHome = path.join(tmpdir(), 'wow-e2e-settings-home');

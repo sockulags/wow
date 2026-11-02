@@ -1,12 +1,20 @@
 import type { ProviderCommand, ProviderEvent } from '@wow/contracts';
-import { MockProviderAdapter, startServer, type MockScript } from '@wow/server';
+import { MockOutlookSource, loadFixtures } from '@wow/outlook-bridge';
+import {
+  MockProviderAdapter,
+  startOutlookService,
+  startServer,
+  type MockScript,
+} from '@wow/server';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import {
   e2eBinDir,
   e2eBinary,
   e2eClaudeConfigDir,
   e2eCodexHome,
   e2eHome,
+  e2eOutlookControlPort,
   e2ePort,
   e2eProjectId,
   e2eProviderInstanceId,
@@ -15,6 +23,9 @@ import {
 // WOW_E2E_HOME and WOW_E2E_PORT start a second copy for the settings tests (playwright.config.ts).
 const home = process.env['WOW_E2E_HOME'] ?? e2eHome;
 const port = Number(process.env['WOW_E2E_PORT'] ?? e2ePort);
+const outlookControlPort = Number(
+  process.env['WOW_E2E_OUTLOOK_CONTROL_PORT'] ?? e2eOutlookControlPort,
+);
 
 // Starts the wow server for the chat tests with a scripted mock provider. The prompt picks the
 // scenario: "approve" asks for an approval, "question" asks a question, "wait" streams a little
@@ -132,6 +143,10 @@ const chatScript: MockScript = (command) => {
   }
 };
 
+// The invented Outlook fixtures, placed relative to today. The calendar tests make it fail and
+// come back through the control port below.
+const outlook = new MockOutlookSource({ fixtures: await loadFixtures() });
+
 await rm(home, { recursive: true, force: true });
 // Provider detection looks at the server's PATH; the mock adapters never run these files.
 await mkdir(e2eBinDir(home), { recursive: true });
@@ -153,8 +168,29 @@ const server = await startServer({
       claude: () => new MockProviderAdapter('claude', chatScript),
       codex: () => new MockProviderAdapter('codex', chatScript),
     },
+    outlook: (mode, context) => {
+      if (mode !== 'mock') throw new Error('The e2e server runs with WOW_OUTLOOK=mock');
+      return startOutlookService(mode, context, { source: outlook });
+    },
   },
 });
+
+const control = createServer((request, response) => {
+  const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+  if (url.pathname === '/unavailable' && request.method === 'PUT') {
+    outlook.setUnavailable(url.searchParams.get('message') ?? 'Outlook is not running');
+  } else if (url.pathname === '/unavailable' && request.method === 'DELETE') {
+    outlook.setUnavailable(null);
+  } else if (url.pathname === '/opened' && request.method === 'GET') {
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify(outlook.opened));
+    return;
+  } else {
+    response.statusCode = 404;
+  }
+  response.end();
+});
+await new Promise<void>((resolve) => control.listen(outlookControlPort, '127.0.0.1', resolve));
 
 server.engine.dispatch('seed-instance', {
   type: 'providerInstance.create',
@@ -195,6 +231,9 @@ for (const [name, description] of [
   );
 }
 
-const stop = () => void server.stop().then(() => process.exit(0));
+const stop = () => {
+  control.close();
+  void server.stop().then(() => process.exit(0));
+};
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);

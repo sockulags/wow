@@ -7,11 +7,13 @@ import {
   redirect,
   type RouterHistory,
 } from '@tanstack/react-router';
+import { CalendarView } from '@/calendar/calendar-view';
+import { validateCalendarSearch } from '@/calendar/search';
 import { ChatHome, ChatLayout } from '@/chat/chat-view';
 import { NewThreadView } from '@/chat/new-thread';
 import { ThreadView } from '@/chat/thread-view';
 import { SettingsPage } from '@/settings/settings-page';
-import { BacklogView, CalendarView, NotFoundView, WorkflowsView } from '@/views/empty-views';
+import { BacklogView, NotFoundView, WorkflowsView } from '@/views/empty-views';
 import { isSettingGroup, settingsByGroup } from './sections';
 import { Shell } from './shell';
 
@@ -31,7 +33,10 @@ const indexRoute = createRoute({
 const calendarRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/calendar',
-  component: CalendarView,
+  validateSearch: validateCalendarSearch,
+  component: function CalendarRoute() {
+    return <CalendarView search={calendarRoute.useSearch()} />;
+  },
 });
 
 const chatRoute = createRoute({

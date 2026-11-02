@@ -1,6 +1,8 @@
 import { settingValue } from '@wow/client-runtime';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useEffect, useMemo } from 'react';
+import { calendarCommands } from '@/calendar/commands';
+import { validateCalendarSearch } from '@/calendar/search';
 import { chatCommands } from '@/chat/commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
@@ -16,13 +18,23 @@ export function useCommands(): {
   const { settings, layout, draft, connection } = useRuntime();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const locationSearch = useRouterState({ select: (state) => state.location.search });
   const openThreadId = /^\/chat\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const threads = useTopic('threads');
   const instances = useTopic('providerInstances');
   const turns = useTopic('turns', openThreadId);
+  const calendarItems = useTopic('calendarItems');
+  const calendarSearch = useMemo(
+    () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
+    [pathname, locationSearch],
+  );
   const staticCommands = useMemo(() => buildCommands(), []);
   const commands = useMemo(
     () => [
+      ...calendarCommands({
+        search: calendarSearch,
+        cards: (calendarItems ?? []).filter((item) => item.source === 'local'),
+      }),
       ...chatCommands({
         threads: threads ?? [],
         instances: instances ?? [],
@@ -32,7 +44,7 @@ export function useCommands(): {
       ...providerCommands(instances ?? []),
       ...staticCommands,
     ],
-    [staticCommands, threads, instances, turns, openThreadId],
+    [staticCommands, threads, instances, turns, openThreadId, calendarItems, calendarSearch],
   );
   const context = useMemo(
     () => ({ navigate, settings, layout, draft, connection }),

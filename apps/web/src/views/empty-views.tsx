@@ -1,12 +1,12 @@
 import type { LucideIcon } from 'lucide-react';
-import { CalendarDaysIcon, ListTodoIcon, WorkflowIcon } from 'lucide-react';
+import { ListTodoIcon, WorkflowIcon } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
-// Placeholders until the feature units (U9 calendar, U10 workflows, U12 backlog) replace
-// them. Each says what will appear so the shell is usable from day one.
+// Placeholders until the feature units (U10 workflows, U12 backlog) replace them. Each says what
+// will appear so the shell is usable from day one.
 
-function EmptyState({
+export function EmptyState({
   icon: Icon,
   title,
   children,
@@ -28,12 +28,6 @@ function EmptyState({
     </section>
   );
 }
-
-export const CalendarView = () => (
-  <EmptyState icon={CalendarDaysIcon} title="No calendar items yet">
-    Outlook meetings, unread mail and your own cards will appear here.
-  </EmptyState>
-);
 
 export const WorkflowsView = () => (
   <EmptyState icon={WorkflowIcon} title="No workflows yet">

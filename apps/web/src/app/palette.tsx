@@ -13,7 +13,15 @@ import type { AppCommand, CommandContext, CommandGroup as Group } from './comman
 import { formatBinding } from './keybindings';
 import { useLayout, useRuntime } from './runtime';
 
-const groupOrder: readonly Group[] = ['Chat', 'Threads', 'Navigation', 'Settings', 'Actions'];
+const groupOrder: readonly Group[] = [
+  'Calendar',
+  'Chat',
+  'Threads',
+  'Cards',
+  'Navigation',
+  'Settings',
+  'Actions',
+];
 
 export function CommandPalette({
   commands,

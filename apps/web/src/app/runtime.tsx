@@ -17,6 +17,12 @@ export type ProviderDialog =
   | { readonly type: 'edit'; readonly providerInstanceId: string }
   | { readonly type: 'wizard' };
 
+// The card dialog: a new card for a time range (from a click, a drag or the palette), or an
+// existing card. Times are ISO instants.
+export type CardDialog =
+  | { readonly type: 'create'; readonly start: string; readonly end: string }
+  | { readonly type: 'edit'; readonly cardId: string };
+
 // UI-only state: which panels and dialogs are open. Everything else comes from the server (or,
 // without one, from the in-memory settings source).
 export interface LayoutState {
@@ -24,6 +30,7 @@ export interface LayoutState {
   readonly rightPanelOpen: boolean;
   readonly paletteOpen: boolean;
   readonly providerDialog: ProviderDialog | undefined;
+  readonly cardDialog: CardDialog | undefined;
 }
 
 export type LayoutStore = StoreApi<LayoutState>;
@@ -34,6 +41,7 @@ export const createLayoutStore = (): LayoutStore =>
     rightPanelOpen: false,
     paletteOpen: false,
     providerDialog: undefined,
+    cardDialog: undefined,
   }));
 
 export interface Runtime {
