@@ -191,9 +191,29 @@ export class ProviderService {
             answer: event.payload.answer,
           });
           break;
+        // The adapter was made from the old instance row; the next use makes one from the new.
+        case 'providerInstance.updated':
+        case 'providerInstance.deleted':
+          this.#release(event.payload.providerInstanceId, event.payload.releasedSecrets);
+          break;
         default:
           break;
       }
+    }
+  }
+
+  #release(providerInstanceId: string, secrets: readonly string[]): void {
+    const adapter = this.#adapters.get(providerInstanceId);
+    this.#adapters.delete(providerInstanceId);
+    adapter
+      ?.dispose()
+      .catch((error: unknown) => this.#deps.logger.error('provider adapter failed to stop', error));
+    for (const name of secrets) {
+      this.#deps.secrets
+        .delete(name)
+        .catch((error: unknown) =>
+          this.#deps.logger.warn(`could not delete secret ${name}`, error),
+        );
     }
   }
 

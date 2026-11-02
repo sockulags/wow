@@ -49,6 +49,24 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
     case 'providerInstance.created':
       tx.insert(providerInstances).values(event.payload).run();
       return ['providerInstances'];
+    case 'providerInstance.updated':
+      tx.update(providerInstances)
+        .set(event.payload.changes)
+        .where(eq(providerInstances.id, event.payload.providerInstanceId))
+        .run();
+      return ['providerInstances'];
+    case 'providerInstance.deleted': {
+      const id = event.payload.providerInstanceId;
+      tx.delete(providerInstances).where(eq(providerInstances.id, id)).run();
+      tx.delete(settings)
+        .where(eq(settings.scope, `provider:${id}`))
+        .run();
+      tx.update(projects)
+        .set({ defaultProviderInstanceId: null })
+        .where(eq(projects.defaultProviderInstanceId, id))
+        .run();
+      return ['providerInstances', 'settings', 'projects'];
+    }
     case 'providerInstance.tested': {
       const { providerInstanceId, ...status } = event.payload;
       tx.update(providerInstances)
@@ -194,6 +212,20 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(providerInstances)
         .where(eq(providerInstances.id, id))
         .get() !== undefined,
+    providerInstance: (id) =>
+      tx.select().from(providerInstances).where(eq(providerInstances.id, id)).get(),
+    instanceUsage: (id) => ({
+      threads:
+        tx.select({ n: count() }).from(threads).where(eq(threads.providerInstanceId, id)).get()
+          ?.n ?? 0,
+      runningTurns:
+        tx
+          .select({ n: count() })
+          .from(turns)
+          .innerJoin(threads, eq(turns.threadId, threads.id))
+          .where(and(eq(threads.providerInstanceId, id), eq(turns.state, 'running')))
+          .get()?.n ?? 0,
+    }),
     setting: (key, scope) =>
       tx
         .select({ value: settings.value })
