@@ -6,6 +6,8 @@ import path from 'node:path';
 export const e2eHome = path.join(tmpdir(), 'wow-e2e-home');
 export const e2ePort = 4517;
 export const e2eProviderInstanceId = 'mock-claude';
+// A Codex instance on the chat server only, for the `$name` invocation form (behavior 18).
+export const e2eCodexInstanceId = 'mock-codex';
 export const e2eProjectId = 'demo';
 
 // The first server's mock Outlook answers here: PUT /unavailable?message=… makes every Outlook
