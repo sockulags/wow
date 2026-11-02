@@ -3,13 +3,18 @@ import {
   SecretRef,
   TrackerPreview,
   settingsRegistry,
+  trackerAccountKeys,
   type BacklogItem,
+  type Project,
+  type PublishProject,
   type TrackerService,
 } from '@wow/contracts';
+import { dispatch } from '@wow/client-runtime';
 import { ExternalLinkIcon } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useRuntime } from '@/app/runtime';
-import { errorMessage } from '@/chat/data';
+import { errorMessage, useTopic } from '@/chat/data';
+import { ChoiceSelect } from '@/components/choice-select';
 import { FormField } from '@/components/form-field';
 import { LoadingState } from '@/components/states';
 import { Button } from '@/components/ui/button';
@@ -24,6 +29,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { notify } from '@/lib/feedback';
+import { sourceLabel } from '@/projects/project-trackers';
 import { MarkdownPreview } from './markdown';
 import { trackerNames } from './model';
 
@@ -48,6 +54,62 @@ export function RemoteLink({ remote }: { remote: BacklogRemote }) {
   );
 }
 
+const projectSources: Readonly<Record<PublishProject['source'], string | undefined>> = {
+  chosen: undefined,
+  card: "From the item's card",
+  run: "From the item's run",
+};
+
+// Undefined: the item's card or run decides; null: no project, the defaults in Settings →
+// Trackers; else the chosen project.
+type ProjectChoice = string | null | undefined;
+
+const NO_PROJECT = '';
+const UNCHOSEN = '\u0001unchosen';
+
+// Which project the issue is for. Shown whenever projects exist, so the user sees whose tracker
+// settings apply and can change it; it asks first when the item has no project.
+function ProjectPicker({
+  projects,
+  preview,
+  onChoose,
+}: {
+  projects: readonly Project[];
+  preview: TrackerPreview;
+  onChoose: (choice: ProjectChoice) => void;
+}) {
+  const value = preview.project ? preview.project.id : preview.needsProject ? UNCHOSEN : NO_PROJECT;
+  return (
+    <FormField
+      id="publish-project"
+      label="Project"
+      source={preview.project ? projectSources[preview.project.source] : undefined}
+      help={
+        preview.needsProject
+          ? 'This item has no card or run in a project. Choose the project the issue is for; wow uses its repository and Jira project.'
+          : undefined
+      }
+    >
+      <ChoiceSelect
+        value={value}
+        placeholder="Choose a project"
+        choices={[
+          ...projects.map((project) => ({ value: project.id, label: project.name })),
+          { value: NO_PROJECT, label: 'No project (the defaults in Settings → Trackers)' },
+        ]}
+        onValueChange={(next) => onChoose(next === NO_PROJECT ? null : next)}
+        onCloseAutoFocus={(event) => {
+          // A choice that needs settings opens the set-up form: its first field takes the focus.
+          const next = document.getElementById('publish-setup-0');
+          if (!next) return;
+          event.preventDefault();
+          next.focus();
+        }}
+      />
+    </FormField>
+  );
+}
+
 type Stage =
   | { readonly type: 'loading' }
   | { readonly type: 'failed'; readonly message: string }
@@ -59,11 +121,13 @@ type Stage =
 function SetUp({
   service,
   missing,
+  project,
   onSaved,
   onCancel,
 }: {
   service: TrackerService;
   missing: readonly string[];
+  project: PublishProject | null;
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -87,6 +151,16 @@ function SetUp({
               await connection.request('secrets.set', { name: `setting:${key}`, value }),
             )
           : value;
+        // Sign-in is shared by every project; where issues go is kept for the project (F-4).
+        if (project && !trackerAccountKeys.has(key)) {
+          await dispatch(connection, {
+            type: 'setting.set',
+            key,
+            scope: `project:${project.id}`,
+            value: stored,
+          });
+          continue;
+        }
         const result = await settings.write(key as RegistryKey, stored as never);
         if (!result.ok) throw new Error(`${settingLabel(key)}: ${result.issues.join('; ')}`);
       }
@@ -105,8 +179,9 @@ function SetUp({
     >
       <p className="text-sm">
         {name} needs {missing.length === 1 ? 'one more setting' : 'a few settings'} before wow can
-        create the issue. wow keeps {missing.length === 1 ? 'it' : 'them'} for next time; Settings →
-        Trackers has the rest.
+        create the issue. wow keeps {missing.length === 1 ? 'it' : 'them'} for next time: sign-in is
+        shared by all projects
+        {project ? `, the rest is kept for ${project.name}` : ''}.
       </p>
       {missing.map((key, index) => (
         <FormField
@@ -151,8 +226,12 @@ function PublishBody({
   onDone: () => void;
 }) {
   const { connection } = useRuntime();
+  const projects = useTopic('projects');
   const [stage, setStage] = useState<Stage>({ type: 'loading' });
   const [attempt, setAttempt] = useState(0);
+  const [projectChoice, setProjectChoice] = useState<ProjectChoice>(undefined);
+  // The last preview's project, so the picker stays put while the next preview loads.
+  const [shown, setShown] = useState<TrackerPreview>();
   const [title, setTitle] = useState(item.title);
   const [labels, setLabels] = useState<readonly string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -166,16 +245,24 @@ function PublishBody({
     let current = true;
     setStage({ type: 'loading' });
     connection
-      .request('trackers.preview', { backlogItemId: item.id, service })
+      .request('trackers.preview', {
+        backlogItemId: item.id,
+        service,
+        ...(projectChoice !== undefined ? { projectId: projectChoice } : {}),
+      })
       .then((result) => TrackerPreview.parse(result))
       .then(
-        (preview) => current && setStage({ type: 'preview', preview }),
+        (preview) => {
+          if (!current) return;
+          setStage({ type: 'preview', preview });
+          setShown(preview);
+        },
         (caught: unknown) => current && setStage({ type: 'failed', message: errorMessage(caught) }),
       );
     return () => {
       current = false;
     };
-  }, [connection, item.id, service, attempt]);
+  }, [connection, item.id, service, attempt, projectChoice]);
 
   const create = async () => {
     if (!connection || title.trim() === '') return;
@@ -188,6 +275,7 @@ function PublishBody({
           service,
           title: title.trim(),
           ...(labels.length > 0 ? { labels: [...labels] } : {}),
+          ...(stage.type === 'preview' ? { projectId: stage.preview.project?.id ?? null } : {}),
         }),
       );
       setStage({ type: 'created', remote });
@@ -207,7 +295,19 @@ function PublishBody({
     </Button>
   );
 
-  if (stage.type === 'loading') return <LoadingState rows={3} label="Preparing the issue" />;
+  const picker =
+    projects && projects.length > 0 && shown && !shown.existing ? (
+      <ProjectPicker projects={projects} preview={shown} onChoose={setProjectChoice} />
+    ) : null;
+
+  if (stage.type === 'loading') {
+    return (
+      <>
+        {picker}
+        <LoadingState rows={3} label="Preparing the issue" />
+      </>
+    );
+  }
   if (stage.type === 'failed') {
     return (
       <>
@@ -249,28 +349,56 @@ function PublishBody({
       </>
     );
   }
+  if (preview.needsProject) {
+    return (
+      <>
+        {picker}
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onDone}>
+            Cancel
+          </Button>
+        </DialogFooter>
+      </>
+    );
+  }
   if (preview.missing.length > 0) {
     return (
-      <SetUp
-        service={service}
-        missing={preview.missing}
-        onCancel={onDone}
-        onSaved={() => setAttempt(attempt + 1)}
-      />
+      <>
+        {picker}
+        <SetUp
+          key={preview.project?.id ?? 'defaults'}
+          service={service}
+          missing={preview.missing}
+          project={preview.project}
+          onCancel={onDone}
+          onSaved={() => setAttempt(attempt + 1)}
+        />
+      </>
     );
   }
 
   const configured = preview.labels;
+  const where = service === 'jira' ? 'Jira project' : 'Repository';
   return (
     <>
-      <p className="text-xs text-muted-foreground">
-        Nothing is sent until you press Publish issue. wow does not follow the issue afterwards.
+      {picker}
+      <p data-testid="preview-summary" className="text-sm">
+        Publishes to {service === 'jira' ? 'Jira project ' : ''}
+        <span className="font-mono font-medium">{preview.target}</span>
+        {preview.targetHost ? ` on ${preview.targetHost}` : ''}
+        {preview.project ? ` for ${preview.project.name}` : ''}. Nothing is sent until you press
+        Publish issue, and wow does not follow the issue afterwards.
       </p>
       <div className="grid gap-4">
         <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-sm">
-          <dt className="text-muted-foreground">{service === 'jira' ? 'Project' : 'Repository'}</dt>
-          <dd data-testid="preview-target" className="font-mono">
-            {preview.target}
+          <dt className="text-muted-foreground">{where}</dt>
+          <dd className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+            <span data-testid="preview-target" className="font-mono">
+              {preview.target}
+            </span>
+            <span data-testid="preview-target-source" className="text-2xs text-muted-foreground">
+              {sourceLabel(preview.targetSource, preview.target)}
+            </span>
           </dd>
           {preview.issueType && (
             <>

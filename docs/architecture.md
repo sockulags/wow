@@ -42,10 +42,12 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test` and `provider.listModels`
   (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`,
   `workflowRuns.detectArtifacts` (`{runId}`), `workflows.matchArtifacts` (`{projectId, globs}`),
-  `outlook.open` (`{entryId}`), `outlook.refresh`, `trackers.test` (`{service}`, signs in with the
-  stored tracker settings and answers `{ok, account, message, missing}`), and `trackers.preview`
-  (`{backlogItemId, service}`) and `trackers.publish` (`{backlogItemId, service, title?,
-labels?}`). Error codes are `RpcErrorCode`.
+  `outlook.open` (`{entryId}`), `outlook.refresh`, `projects.git` (every project folder's git
+  status and remotes), `trackers.project` (`{projectId}`, one project's tracker settings with their
+  sources and suggestions), `trackers.test` (`{service, projectId?}`, signs in with the tracker
+  settings as they apply and answers `{ok, account, message, missing}`), and `trackers.preview`
+  (`{backlogItemId, service, projectId?}`) and `trackers.publish` (`{backlogItemId, service,
+projectId?, title?, labels?}`). Error codes are `RpcErrorCode`.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
@@ -496,7 +498,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.jira.email`, `trackers.jira.token` (secret), `trackers.jira.projectKey`,
   `trackers.jira.issueType`, `trackers.github.baseUrl`, `trackers.github.token` (secret),
   `trackers.github.owner`, `trackers.github.repo`, `trackers.github.labels`,
-  `trackers.requestTimeoutMs`
+  `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs`, `trackers.jira.keyScanCommits` (the
+  `trackers.jira.*` and `trackers.github.*` ones are project-scoped, see "Backlog and trackers")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -520,7 +523,9 @@ PowerShell call (`-EncodedCommand` script, value on stdin, so the secret never a
 command line); elsewhere the file is plain with mode `0600` and the UI shows a warning
 (`secrets.status` reports the protection). Writes go to a `0600` temporary file that is renamed
 over the store. Settings marked `secret` store a reference `{secretRef}`, never the value; the
-orchestrator rejects anything else.
+orchestrator rejects anything else. The settings page names the entry `setting:<key>` for a global
+value and `setting:project:<projectId>:<key>` for a project's own; the tracker service deletes the
+latter when `project.deleted` commits, since the project's settings rows go with the project.
 
 ## Desktop
 
@@ -626,6 +631,23 @@ project and its `project:<id>` settings and unlinks what pointed at it rather th
 - finished workflow runs keep `projectId` as history; the run view shows no project name and finds
   no artifacts for them.
 
+**Git** (`apps/server/src/projects/git.ts`, owner decision F-4, audit E-12). The server reads a
+project folder with `git -C <folder>`: `rev-parse --git-dir` (fails: `noRepository`), `remote -v`
+and `symbolic-ref --short HEAD`, with `GIT_TERMINAL_PROMPT=0` and `GIT_OPTIONAL_LOCKS=0`, so nothing
+waits for credentials or takes a lock, and `trackers.gitTimeoutMs` as the limit. Without git on the
+PATH it reads `<folder>/.git/config` and `HEAD` itself (`gitUnavailable` when that fails too). A
+folder that is gone is `folderMissing`. `parseRemoteUrl` reads https, ssh://, git:// and scp-like
+`user@host:path` remotes and local paths, drops user names and passwords from https URLs, and
+names a GitHub repository for `owner/repo` paths: github.com (also `ssh.github.com`) gives
+`https://api.github.com`, any other host is taken as GitHub Enterprise Server with
+`https://<host>/api/v3`; deeper paths (GitLab subgroups), local paths and known other hosts
+(GitLab, Bitbucket, Azure DevOps, Codeberg) give none. The primary remote is `origin`, else the
+first GitHub one, else the first. `projects.git` answers `ProjectGit` for every project
+(`{projectId, status, remotes, primary, branch, message}`); it is read on demand, not projected,
+because it is live I/O on the user's files. `guessJiraKeys` counts distinct `KEY-123` references
+in the branch names and the last `trackers.jira.keyScanCommits` commit messages (`git log
+--format=%s%n%b`), skipping look-alikes such as `UTF-8` and `SHA-256`.
+
 **Discovery** ("Import from Claude and Codex", `projects.discover`). Each adapter package reads
 its own CLI's session files and answers `ProviderFolder[]` (`{cwd, lastUsedAt}`, in contracts):
 `discoverClaudeFolders(configDir)` in `packages/provider-claude` reads
@@ -653,6 +675,11 @@ registry groups and listed after Providers) lists the projects with their folder
 renames, removes and imports them in dialogs opened through the layout store's `projectDialog`,
 so palette commands open the same dialogs: Settings: Projects, New project, Import projects from
 Claude and Codex, and Rename project and Remove project for each one. A refused command keeps its dialog open with the server's message.
+Each row shows the folder's primary remote and branch from `projects.git` (asked again when a
+project's id or folder changes), or "No git repository", "No git remote", "Git not found" or a
+"Folder missing" warning. **Trackers** expands `projects/project-trackers.tsx` in the row (the
+palette's "Trackers for project …" opens it through `#trackers-<id>`), described under
+"Backlog and trackers".
 
 ## Chat view
 
@@ -914,6 +941,34 @@ backlog item also emits `backlog.updated` when the item's state or `runId` diffe
 means: running or waiting is `running`, done is `done`, failed or stopped is `planned`. The item
 keeps the `runId`, so the backlog shows the failed step's error from the run (behavior 29).
 
+**Per-project settings** (owner decision F-4). Every `trackers.jira.*` and `trackers.github.*`
+setting has `scope: 'project'`, so it can be stored globally (the defaults, Settings → Trackers) and
+per project (`project:<id>`); `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs` and
+`trackers.jira.keyScanCommits` stay global. `trackers/resolve.ts` decides a project's values
+without I/O, in this order: stored for the project, then the project's git remote (GitHub owner,
+repository and API URL of the primary remote), then the global default, then the Outlook profile's
+`address` (Jira email, only for Jira Cloud and only while nothing is stored), then the registry
+default. Each value carries its source (`TrackerValueSource`: `project`, `gitRemote`, `global`,
+`outlook`, `default`), which the UI shows as the field's marker. The remote wins over the global
+default because the default usually names one repository and the remote names this project's.
+Tokens follow the same order without the git and Outlook steps: decision, one token per tracker
+account, stored globally and shared by every project, with an optional project override (its own
+secret entry, see "Secrets"). Most people sign in to one Jira site and one GitHub host with one
+account; a project on another site or host stores its own token. Guesses that are only likely are
+suggestions (`TrackerSuggestion`) the user confirms: the Jira site another project stores (most
+used first) while this one has none, and the Jira key `guessJiraKeys` finds most often when it
+differs from the current value and the project has not set one. `trackers.project {projectId}`
+answers `ProjectTrackers` (`{projectId, git, settings, suggestions}`).
+
+**Publish target.** `publishTarget` picks whose settings a preview or publish uses: the
+`projectId` the dialog sends (`null` means none: the defaults), else the project of the item's
+newest card with one, else of its newest run; a project that no longer exists is skipped. Without
+any, `needsProject` is true while projects exist and the defaults apply meanwhile. The preview says
+`project` (`{id, name, source: 'chosen'|'card'|'run'}`), `targetSource` and `targetHost`
+(github.com, the Enterprise host or the Jira site), and `publish` resolves the same way, so what
+the preview names is where the issue goes. A not-set-up refusal names Settings → Projects → <name>
+when a project applies.
+
 `apps/server/src/trackers` publishes (behavior 30). `TrackerService.preview` returns the issue it
 would create (the item's title and markdown body as written; the client renders the markdown), the
 target, the settings still empty
@@ -952,10 +1007,24 @@ project, date, start and end in `calendar.zone`: it suggests `nextFreeSlot` (the
 around non-cancelled, timed `calendarItems`, up to `calendar.lookaheadDays` ahead), warns about
 overlaps, preselects the workflow of the newest card made from a backlog item, and dispatches
 `backlog.plan`. "Publish to Jira" and "Publish to GitHub" ask `trackers.preview`: an item that
-already has an issue gets "Open <key>"; a tracker that is not set up asks for the missing settings
-in the dialog (secret ones through `secrets.set`, like the settings page) and asks again; otherwise
-the preview shows the target, an editable title, the tags to add as labels and the rendered body,
-and "Publish issue" calls `trackers.publish`. Palette commands: New
+already has an issue gets "Open <key>"; a Project select (whenever projects exist) shows whose
+trackers apply, marked "From the item's card" or "From the item's run", and when `needsProject`
+it asks for one before anything else ("No project" sends `projectId: null`); a tracker that is
+not set up asks for the missing settings in the dialog (secret ones through `secrets.set`, like
+the settings page), storing sign-in settings (site, auth mode, email, tokens, GitHub API URL)
+globally and the rest for the chosen project, and asks again; otherwise the preview says
+"Publishes to <target> on <host> for <project>", shows the target with its source marker, an
+editable title, the tags to add as labels and the rendered body, and "Publish issue" calls
+`trackers.publish` with the same `projectId`.
+
+Settings → Projects → Trackers (`projects/project-trackers.tsx`) renders `trackers.project` and
+asks again on every `settings` push. GitHub owner, repository and API URL and Jira site, project
+key and issue type are `FormField`s with the source as marker; a typed value is validated with the
+registry schema and stored with `setting.set` at `project:<id>` on blur or Enter, emptying a
+project value resets it, and "Use git remote" / "Use default" resets it. A suggestion shows below
+its field with "Use <value>". Sign-in is one line ("Signs in with the shared GitHub token") with
+"Use a different token", which opens a `SecretField` for the project's own token. Each tracker
+has the same Test connection as Settings → Trackers, with the `projectId`. Palette commands: New
 backlog item, every item, and for the open item Plan on calendar, Publish to Jira and Publish to
 GitHub.
 
