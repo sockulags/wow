@@ -15,6 +15,7 @@
     "@wow/contracts": "workspace:*",
     "@wow/outlook-bridge": "workspace:*",
     "@wow/provider-claude": "workspace:*",
+    "@wow/provider-codex": "workspace:*",
     "@wow/secrets": "workspace:*",
     "@wow/skills": "workspace:*",
     "@wow/workflow-engine": "workspace:*",

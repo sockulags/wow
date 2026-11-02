@@ -231,6 +231,15 @@ export const settingsRegistry = {
     default: 120_000,
     scope: 'provider',
   }),
+  'providers.requestTimeoutMs': defineSetting({
+    schema: z.number().int().min(1000).max(600_000),
+    group: 'providers',
+    label: 'Request timeout (ms)',
+    description:
+      'How long a provider app-server (Codex) may take to answer one request, such as starting a thread or a turn, before the request fails and the app-server is restarted. Streamed turn output is not limited by it.',
+    default: 60_000,
+    scope: 'provider',
+  }),
   'chat.contextMeter': defineSetting({
     schema: z.boolean(),
     group: 'chat',
