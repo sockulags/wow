@@ -145,6 +145,7 @@ const userHome = path.join(home, 'user-home');
 for (const [name, description] of [
   ['deliver-work', 'Deliver one unit of planned work end to end.'],
   ['capture-intent', 'Turn a rough idea into an intent and a spec.'],
+  ['plan-work', 'Split a spec into ordered units of work.'],
   ['check-work', 'Review delivered work against its contract.'],
 ] as const) {
   const dir = path.join(userHome, '.claude', 'skills', name);
@@ -154,6 +155,10 @@ for (const [name, description] of [
     `---\nname: ${name}\ndescription: ${description}\n---\n\nInvented fixture skill.\n`,
   );
 }
+// The seeded project's folder is the server home; an intent there is what the Feature template's
+// first step expects, so the workflow tests see a found artifact.
+await mkdir(path.join(home, 'intents', 'demo'), { recursive: true });
+await writeFile(path.join(home, 'intents', 'demo', 'intent.md'), '# Demo intent\n');
 const server = await startServer({
   home,
   port,

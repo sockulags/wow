@@ -8,7 +8,7 @@ import { sections, settingGroupTitles, settingsByGroup } from './sections';
 // Everything the user can do from the keyboard. Feature units add their own commands here (threads,
 // cards, backlog items, workflows) so the palette searches them together.
 
-export type CommandGroup = 'Threads' | 'Chat' | 'Navigation' | 'Settings' | 'Actions';
+export type CommandGroup = 'Threads' | 'Chat' | 'Workflows' | 'Navigation' | 'Settings' | 'Actions';
 
 export interface CommandContext {
   readonly navigate: ReturnType<typeof useNavigate>;

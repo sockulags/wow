@@ -1,0 +1,99 @@
+import type { Workflow, WorkflowRun, WorkflowTemplate } from '@wow/contracts';
+import { dispatch } from '@wow/client-runtime';
+import type { AppCommand } from '@/app/commands';
+import { gateOf, isLive, runStateLabels, sortRuns } from './model';
+
+export interface WorkflowCommandData {
+  readonly workflows: readonly Workflow[];
+  readonly runs: readonly WorkflowRun[];
+  readonly templates: readonly WorkflowTemplate[];
+  // The run open in the run view, if any.
+  readonly openRun: WorkflowRun | undefined;
+}
+
+// Palette commands for workflows (spec 22): new workflow (blank or from a template), every
+// workflow and run, refresh skills, and Continue and Stop for the open run.
+export function workflowCommands({
+  workflows,
+  runs,
+  templates,
+  openRun,
+}: WorkflowCommandData): AppCommand[] {
+  const commands: AppCommand[] = [
+    {
+      id: 'workflows.new',
+      title: 'New workflow',
+      group: 'Workflows',
+      keywords: ['workflow', 'builder', 'create'],
+      run: ({ navigate }) => void navigate({ to: '/workflows/new' }),
+    },
+    {
+      id: 'workflows.refreshSkills',
+      title: 'Refresh skills',
+      group: 'Workflows',
+      keywords: ['skills', 'scan', 'rescan', 'reload'],
+      run: ({ connection }) => void connection?.request('skills.refresh', {}).catch(() => {}),
+    },
+  ];
+  for (const template of templates) {
+    commands.push({
+      id: `workflows.new.${template.kind}`,
+      title: `New workflow from template: ${template.name}`,
+      value: `New workflow from template ${template.name} ${template.kind}`,
+      group: 'Workflows',
+      keywords: ['workflow', 'template', template.kind],
+      run: ({ navigate }) =>
+        void navigate({ to: '/workflows/new', search: { template: template.kind } }),
+    });
+  }
+
+  if (openRun && isLive(openRun)) {
+    const runId = openRun.id;
+    if (gateOf(openRun)) {
+      commands.push({
+        id: 'workflowRun.continue',
+        title: 'Continue run',
+        group: 'Workflows',
+        keywords: ['gate', 'next step', 'resume'],
+        run: ({ connection }) => {
+          if (connection) void dispatch(connection, { type: 'workflowRun.continue', runId });
+        },
+      });
+    }
+    commands.push({
+      id: 'workflowRun.stop',
+      title: 'Stop run',
+      group: 'Workflows',
+      keywords: ['cancel', 'abort', 'gate'],
+      run: ({ connection }) => {
+        if (connection) void dispatch(connection, { type: 'workflowRun.stop', runId });
+      },
+    });
+  }
+
+  for (const workflow of workflows) {
+    commands.push({
+      id: `workflow.${workflow.id}`,
+      title: `Workflow: ${workflow.name}`,
+      value: `Workflow ${workflow.name} ${workflow.id}`,
+      group: 'Workflows',
+      keywords: ['workflow', 'edit', 'run'],
+      run: ({ navigate }) =>
+        void navigate({ to: '/workflows/$workflowId', params: { workflowId: workflow.id } }),
+    });
+  }
+  const names = new Map(workflows.map((workflow) => [workflow.id, workflow.name]));
+  for (const run of sortRuns(runs)) {
+    const name = names.get(run.workflowId) ?? 'Workflow';
+    commands.push({
+      id: `workflowRun.${run.id}`,
+      title: `Run: ${name} (${runStateLabels[run.state].toLowerCase()})`,
+      value: `Run ${name} ${run.state} ${run.id}`,
+      group: 'Workflows',
+      keywords: ['run', 'workflow', run.state],
+      run: ({ navigate }) =>
+        void navigate({ to: '/workflows/runs/$runId', params: { runId: run.id } }),
+    });
+  }
+  return commands;
+}
