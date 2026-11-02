@@ -299,6 +299,7 @@ export const InternalCommand = z.discriminatedUnion('type', [
     runAt: Timestamp,
     policy: MissedTriggerPolicy,
     runId: Id,
+  }),
   // The tracker service created the issue; the item keeps its key and URL (behavior 30).
   z.object({
     type: z.literal('backlog.published'),

@@ -24,6 +24,7 @@ export const e2eSettingsPort = 4518;
 export const e2eTriggersHome = path.join(tmpdir(), 'wow-e2e-triggers-home');
 export const e2eTriggersPort = 4531;
 export const e2eTriggersOutlookControlPort = 4532;
+export const e2eTriggersTrackerPort = 4533;
 
 // What provider detection finds: stand-in CLIs on the server's PATH and their config directories,
 // all inside the server's home.

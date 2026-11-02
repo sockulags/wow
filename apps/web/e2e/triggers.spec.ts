@@ -12,6 +12,7 @@ import {
   e2eTriggersHome,
   e2eTriggersOutlookControlPort,
   e2eTriggersPort,
+  e2eTriggersTrackerPort,
 } from './env';
 
 // U11 ground truth against the scripted mock provider: a trigger set a few seconds ahead fires
@@ -43,6 +44,7 @@ async function startWowServer(fresh: boolean): Promise<void> {
       WOW_E2E_HOME: e2eTriggersHome,
       WOW_E2E_PORT: String(e2eTriggersPort),
       WOW_E2E_OUTLOOK_CONTROL_PORT: String(e2eTriggersOutlookControlPort),
+      WOW_E2E_TRACKER_PORT: String(e2eTriggersTrackerPort),
       WOW_E2E_KEEP_HOME: fresh ? '0' : '1',
       WOW_E2E_CLOCK_OFFSET_SECONDS: String(offsetSeconds),
       WOW_OUTLOOK: 'mock',
