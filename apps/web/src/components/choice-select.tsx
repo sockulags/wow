@@ -32,6 +32,7 @@ export function ChoiceSelect({
   describedBy,
   title,
   className,
+  onCloseAutoFocus,
   'aria-describedby': ariaDescribedBy,
   'aria-invalid': ariaInvalid,
 }: {
@@ -51,6 +52,9 @@ export function ChoiceSelect({
   readonly 'aria-invalid'?: boolean | undefined;
   readonly title?: string;
   readonly className?: string;
+  // Where focus goes when the list closes; by default back to the trigger. A choice that opens a
+  // new field can call preventDefault and focus that instead.
+  readonly onCloseAutoFocus?: (event: Event) => void;
 }) {
   const known = choices.some((choice) => choice.value === value);
   return (
@@ -70,7 +74,7 @@ export function ChoiceSelect({
       >
         <SelectValue placeholder={placeholder ?? value} />
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}>
         {choices.map((choice) => (
           <SelectItem
             key={choice.value}

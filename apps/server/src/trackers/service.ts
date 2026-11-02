@@ -1,23 +1,43 @@
 import {
+  OutlookProfile,
+  SecretRef,
   settingsRegistry,
   type BacklogItem,
   type BacklogRemote,
-  type SecretRef,
+  type ProjectGit,
+  type ProjectTrackers,
+  type PublishProject,
+  type ResolvedTrackerSetting,
   type TrackerPreview,
   type TrackerTestResult,
   type TrackerService as TrackerKind,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, like } from 'drizzle-orm';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
-import { backlogItems } from '../db/schema.js';
+import {
+  backlogItems,
+  calendarItems,
+  outlookStatus,
+  projects,
+  settings as settingsTable,
+  workflowRuns,
+} from '../db/schema.js';
 import type { Logger } from '../logger.js';
+import {
+  guessJiraKeys,
+  readFolderGit,
+  readHistoryTexts,
+  type FolderGit,
+  type GitRunOptions,
+} from '../projects/git.js';
 import type { SettingsService } from '../settings/service.js';
 import { createGitHubIssue, type GitHubConfig } from './github.js';
 import { TrackerError, type NewIssue, type RequestOptions } from './http.js';
 import { createJiraIssue, type JiraConfig } from './jira.js';
+import { publishTarget, resolveTrackerSettings, trackerSuggestions } from './resolve.js';
 import { gitHubWhoAmI, jiraWhoAmI } from './whoami.js';
 
 // The settings a sign-in needs; the project key or repository only matter when publishing.
@@ -29,6 +49,14 @@ const signInKeys = new Set([
   'trackers.github.token',
 ]);
 
+// Reads a project folder's git state; tests replace it.
+export interface GitReader {
+  folder(folder: string, options: GitRunOptions): Promise<FolderGit>;
+  history(folder: string, commits: number, options: GitRunOptions): Promise<string[]>;
+}
+
+const defaultGit: GitReader = { folder: readFolderGit, history: readHistoryTexts };
+
 export interface TrackerServiceDeps {
   readonly db: Db;
   readonly engine: Engine;
@@ -37,6 +65,7 @@ export interface TrackerServiceDeps {
   readonly logger: Logger;
   // Replaces the global fetch, for tests that do not intercept it.
   readonly fetch?: typeof fetch;
+  readonly git?: GitReader;
 }
 
 type Configured<T> =
@@ -45,52 +74,228 @@ type Configured<T> =
 
 const serviceNames: Readonly<Record<TrackerKind, string>> = { jira: 'Jira', github: 'GitHub' };
 
+// The secret store entry a project's own token goes to; the shared one is `setting:<key>`.
+export const projectSecretPrefix = (projectId: string) => `setting:project:${projectId}:`;
+
+// What one publish, preview or test works with: the project (if any) and its tracker settings.
+interface Context {
+  readonly project: PublishProject | null;
+  readonly needsProject: boolean;
+  readonly values: ReadonlyMap<string, ResolvedTrackerSetting>;
+}
+
+const hostOf = (url: string): string | null => {
+  try {
+    const host = new URL(url).host;
+    return host === 'api.github.com' ? 'github.com' : host;
+  } catch {
+    return null;
+  }
+};
+
 // "Publish to Jira" and "Publish to GitHub" (behavior 30): shows the issue it would create, creates
 // it on confirm, and stores the key and URL on the item through `backlog.published`. Nothing is
-// read back from the tracker afterwards (no status sync, no import).
+// read back from the tracker afterwards (no status sync, no import). The settings come from the
+// item's project (owner decision F-4, see resolve.ts).
 export class TrackerService {
   readonly #deps: TrackerServiceDeps;
+  readonly #git: GitReader;
   // One publish per item at a time, so a double click creates one issue.
   readonly #inFlight = new Map<string, Promise<BacklogRemote>>();
+  readonly #cleanups = new Set<Promise<void>>();
 
   constructor(deps: TrackerServiceDeps) {
     this.#deps = deps;
+    this.#git = deps.git ?? defaultGit;
+    // A removed project's settings go with it (core/projects.ts); its own tokens go here.
+    deps.engine.onCommit((commit) => {
+      for (const { event } of commit.events) {
+        if (event.kind !== 'project.deleted') continue;
+        const cleanup = this.#forgetProjectSecrets(event.payload.projectId).finally(() =>
+          this.#cleanups.delete(cleanup),
+        );
+        this.#cleanups.add(cleanup);
+      }
+    });
   }
 
-  async preview(backlogItemId: string, service: TrackerKind): Promise<TrackerPreview> {
-    const item = this.#item(backlogItemId);
-    const issue = issueOf(item);
-    if (service === 'jira') {
-      const { config, missing } = await this.#jira();
-      return {
-        service,
-        target: this.#deps.settings.get('trackers.jira.projectKey'),
-        ...issue,
-        issueType: config?.issueType ?? this.#deps.settings.get('trackers.jira.issueType'),
-        labels: [],
-        missing: [...missing],
-        existing: item.remote,
-      };
+  // Settles once the tokens of removed projects are deleted; for tests and shutdown.
+  async idle(): Promise<void> {
+    await Promise.all(this.#cleanups);
+  }
+
+  async #forgetProjectSecrets(projectId: string): Promise<void> {
+    try {
+      const prefix = projectSecretPrefix(projectId);
+      for (const name of await this.#deps.secrets.names()) {
+        if (name.startsWith(prefix)) await this.#deps.secrets.delete(name);
+      }
+    } catch (error) {
+      this.#deps.logger.warn('could not delete the tokens of a removed project', {
+        projectId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
-    const { missing } = await this.#github();
-    const owner = this.#deps.settings.get('trackers.github.owner');
-    const repo = this.#deps.settings.get('trackers.github.repo');
+  }
+
+  #gitOptions(): GitRunOptions {
+    return { timeoutMs: this.#deps.settings.get('trackers.gitTimeoutMs') };
+  }
+
+  #project(projectId: string) {
+    const project = this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
+    if (!project) throw new CommandRejected('not_found', `No project ${projectId}`);
+    return project;
+  }
+
+  async #folderGit(projectId: string, cwd: string): Promise<ProjectGit> {
+    return { projectId, ...(await this.#git.folder(cwd, this.#gitOptions())) };
+  }
+
+  // Every project's git status and remotes, for Settings → Projects (audit E-12).
+  async projectsGit(): Promise<ProjectGit[]> {
+    const rows = this.#deps.db.select().from(projects).all();
+    return Promise.all(rows.map((project) => this.#folderGit(project.id, project.cwd)));
+  }
+
+  #outlookAddress(): string | null {
+    const row = this.#deps.db.select().from(outlookStatus).get();
+    const profile = OutlookProfile.safeParse(row?.profile);
+    return profile.success ? profile.data.address : null;
+  }
+
+  #resolve(projectId: string | null, git: ProjectGit | null): ResolvedTrackerSetting[] {
+    const primary = git?.remotes.find((remote) => remote.name === git.primary);
+    return resolveTrackerSettings({
+      resolve: (key) => this.#deps.settings.resolve(key, projectId ? { projectId } : {}),
+      github: primary?.github ?? null,
+      outlookAddress: this.#outlookAddress(),
+    });
+  }
+
+  async #context(projectId: string | null): Promise<Map<string, ResolvedTrackerSetting>> {
+    const project = projectId ? this.#project(projectId) : undefined;
+    const git = project ? await this.#folderGit(project.id, project.cwd) : null;
+    return new Map(this.#resolve(projectId, git).map((entry) => [entry.key, entry]));
+  }
+
+  // One project's tracker settings with their sources, and the guesses to confirm.
+  async projectTrackers(projectId: string): Promise<ProjectTrackers> {
+    const project = this.#project(projectId);
+    const git = await this.#folderGit(project.id, project.cwd);
+    const settings = this.#resolve(project.id, git);
+    const commits = this.#deps.settings.get('trackers.jira.keyScanCommits');
+    const texts =
+      git.status === 'ok' || git.status === 'noRemote'
+        ? await this.#git.history(project.cwd, commits, this.#gitOptions())
+        : [];
+    const names = new Map(
+      this.#deps.db
+        .select()
+        .from(projects)
+        .all()
+        .map((row) => [row.id, row.name]),
+    );
+    const otherSites = this.#deps.db
+      .select()
+      .from(settingsTable)
+      .where(
+        and(eq(settingsTable.key, 'trackers.jira.baseUrl'), like(settingsTable.scope, 'project:%')),
+      )
+      .all()
+      .flatMap((row) => {
+        const id = row.scope.slice('project:'.length);
+        const name = names.get(id);
+        return id !== project.id && name && typeof row.value === 'string'
+          ? [{ baseUrl: row.value, projectName: name }]
+          : [];
+      });
     return {
-      service,
-      target: owner && repo ? `${owner}/${repo}` : '',
-      ...issue,
-      issueType: null,
-      labels: [...this.#deps.settings.get('trackers.github.labels')],
-      missing: [...missing],
-      existing: item.remote,
+      projectId,
+      git,
+      settings,
+      suggestions: trackerSuggestions({
+        settings,
+        otherSites,
+        jiraKeys: guessJiraKeys(git.branch ? [git.branch, ...texts] : texts),
+      }),
     };
   }
 
-  // "Test connection": signs in with what is stored and says as whom. Failures are answers, not
-  // errors, so the settings page can show them next to the button.
-  async test(service: TrackerKind): Promise<TrackerTestResult> {
+  // Whose settings apply to the item: see publishTarget.
+  async #target(item: BacklogItem, requested: string | null | undefined): Promise<Context> {
+    if (typeof requested === 'string') this.#project(requested);
+    const { db } = this.#deps;
+    const cards = db
+      .select({ projectId: calendarItems.projectId })
+      .from(calendarItems)
+      .where(and(eq(calendarItems.backlogItemId, item.id), isNotNull(calendarItems.projectId)))
+      .orderBy(desc(calendarItems.updatedAt))
+      .all()
+      .flatMap((row) => (row.projectId ? [{ projectId: row.projectId }] : []));
+    const runs = db
+      .select({ projectId: workflowRuns.projectId })
+      .from(workflowRuns)
+      .where(eq(workflowRuns.backlogItemId, item.id))
+      .orderBy(desc(workflowRuns.startedAt))
+      .all();
+    const { project, needsProject } = publishTarget({
+      requested,
+      links: { cards, runs },
+      projects: db.select({ id: projects.id, name: projects.name }).from(projects).all(),
+    });
+    return { project, needsProject, values: await this.#context(project?.id ?? null) };
+  }
+
+  async preview(
+    backlogItemId: string,
+    service: TrackerKind,
+    projectId?: string | null,
+  ): Promise<TrackerPreview> {
+    const item = this.#item(backlogItemId);
+    const issue = issueOf(item);
+    const context = await this.#target(item, projectId);
+    const { values } = context;
+    const read = (key: string) => values.get(key);
+    const common = {
+      service,
+      ...issue,
+      existing: item.remote,
+      project: context.project,
+      needsProject: context.needsProject,
+    };
+    if (service === 'jira') {
+      const { missing } = await this.#jira(values);
+      const key = read('trackers.jira.projectKey');
+      return {
+        ...common,
+        target: String(key?.value ?? ''),
+        targetSource: key?.source ?? 'default',
+        targetHost: hostOf(String(read('trackers.jira.baseUrl')?.value ?? '')),
+        issueType: String(read('trackers.jira.issueType')?.value ?? ''),
+        labels: [],
+        missing: [...missing],
+      };
+    }
+    const { missing } = await this.#github(values);
+    const owner = String(read('trackers.github.owner')?.value ?? '');
+    const repo = read('trackers.github.repo');
+    return {
+      ...common,
+      target: owner && repo?.value ? `${owner}/${String(repo.value)}` : '',
+      targetSource: repo?.source ?? 'default',
+      targetHost: hostOf(String(read('trackers.github.baseUrl')?.value ?? '')),
+      issueType: null,
+      labels: stringList(read('trackers.github.labels')?.value),
+      missing: [...missing],
+    };
+  }
+
+  // "Test connection": signs in with what applies to the project (or the defaults) and says as
+  // whom. Failures are answers, not errors, so the page can show them next to the button.
+  async test(service: TrackerKind, projectId?: string): Promise<TrackerTestResult> {
     const options = this.#options();
-    const { settings } = this.#deps;
+    const values = await this.#context(projectId ?? null);
     const result = (
       ok: boolean,
       account: string | null,
@@ -104,40 +309,17 @@ export class TrackerService {
       missing,
     });
     try {
-      if (service === 'jira') {
-        const { config, missing } = await this.#jira();
-        const needed = missing.filter((key) => signInKeys.has(key));
-        if (needed.length > 0) {
-          return result(false, null, `Fill in ${needed.map(labelOf).join(', ')} first.`, needed);
-        }
-        const account = await jiraWhoAmI(
-          config ?? {
-            baseUrl: settings.get('trackers.jira.baseUrl'),
-            authMode: settings.get('trackers.jira.authMode'),
-            email: settings.get('trackers.jira.email'),
-            token: await this.#token(settings.get('trackers.jira.token')),
-            projectKey: settings.get('trackers.jira.projectKey'),
-            issueType: settings.get('trackers.jira.issueType'),
-          },
-          options,
-        );
-        return result(true, account, `Signed in as ${account}.`, [...missing]);
-      }
-      const { config, missing } = await this.#github();
+      const { missing } =
+        service === 'jira' ? await this.#jira(values) : await this.#github(values);
       const needed = missing.filter((key) => signInKeys.has(key));
       if (needed.length > 0) {
         return result(false, null, `Fill in ${needed.map(labelOf).join(', ')} first.`, needed);
       }
-      const account = await gitHubWhoAmI(
-        config ?? {
-          baseUrl: settings.get('trackers.github.baseUrl'),
-          token: await this.#token(settings.get('trackers.github.token')),
-          owner: settings.get('trackers.github.owner'),
-          repo: settings.get('trackers.github.repo'),
-          labels: settings.get('trackers.github.labels'),
-        },
-        options,
-      );
+      // Signing in needs only the account settings, so a missing project key does not stop it.
+      const account =
+        service === 'jira'
+          ? await jiraWhoAmI(await this.#jiraConfig(values), options)
+          : await gitHubWhoAmI(await this.#githubConfig(values), options);
       return result(true, account, `Signed in as ${account}.`, [...missing]);
     } catch (error) {
       if (error instanceof TrackerError) return result(false, null, error.message);
@@ -179,11 +361,8 @@ export class TrackerService {
         item.remote,
       );
     }
-    const options: RequestOptions = {
-      timeoutMs: this.#deps.settings.get('trackers.requestTimeoutMs'),
-      ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
-    };
-    const created = await this.#create(service, issueOf(item, edits), options);
+    const context = await this.#target(item, edits.projectId);
+    const created = await this.#create(service, context, issueOf(item, edits), this.#options());
     const remote: BacklogRemote = { service, ...created };
     try {
       this.#deps.engine.dispatch(`backlog.published:${backlogItemId}`, {
@@ -201,19 +380,23 @@ export class TrackerService {
         remote,
       );
     }
-    this.#deps.logger.info('published backlog item', { backlogItemId, key: remote.key });
+    this.#deps.logger.info('published backlog item', {
+      backlogItemId,
+      key: remote.key,
+      projectId: context.project?.id ?? null,
+    });
     return remote;
   }
 
-  async #create(service: TrackerKind, issue: NewIssue, options: RequestOptions) {
+  async #create(service: TrackerKind, context: Context, issue: NewIssue, options: RequestOptions) {
     if (service === 'jira') {
-      const jira = await this.#jira();
+      const jira = await this.#jira(context.values);
       if (jira.config) return createJiraIssue(jira.config, issue, options);
-      throw notSetUp(service, jira.missing);
+      throw notSetUp(service, jira.missing, context.project);
     }
-    const github = await this.#github();
+    const github = await this.#github(context.values);
     if (github.config) return createGitHubIssue(github.config, issue, options);
-    throw notSetUp(service, github.missing);
+    throw notSetUp(service, github.missing, context.project);
   }
 
   #item(backlogItemId: string): BacklogItem {
@@ -226,21 +409,39 @@ export class TrackerService {
     return item;
   }
 
-  async #token(ref: SecretRef | null): Promise<string> {
-    if (!ref) return '';
-    return (await this.#deps.secrets.resolve(ref)) ?? '';
+  async #token(value: unknown): Promise<string> {
+    const ref = SecretRef.safeParse(value);
+    if (!ref.success) return '';
+    return (await this.#deps.secrets.resolve(ref.data)) ?? '';
   }
 
-  async #jira(): Promise<Configured<JiraConfig>> {
-    const { settings } = this.#deps;
-    const config: JiraConfig = {
-      baseUrl: settings.get('trackers.jira.baseUrl'),
-      authMode: settings.get('trackers.jira.authMode'),
-      email: settings.get('trackers.jira.email'),
-      token: await this.#token(settings.get('trackers.jira.token')),
-      projectKey: settings.get('trackers.jira.projectKey'),
-      issueType: settings.get('trackers.jira.issueType'),
+  async #jiraConfig(values: ReadonlyMap<string, ResolvedTrackerSetting>): Promise<JiraConfig> {
+    const text = (key: string) => String(values.get(key)?.value ?? '');
+    return {
+      baseUrl: text('trackers.jira.baseUrl'),
+      authMode: text('trackers.jira.authMode') === 'pat' ? 'pat' : 'cloud-basic',
+      email: text('trackers.jira.email'),
+      token: await this.#token(values.get('trackers.jira.token')?.value),
+      projectKey: text('trackers.jira.projectKey'),
+      issueType: text('trackers.jira.issueType'),
     };
+  }
+
+  async #githubConfig(values: ReadonlyMap<string, ResolvedTrackerSetting>): Promise<GitHubConfig> {
+    const text = (key: string) => String(values.get(key)?.value ?? '');
+    return {
+      baseUrl: text('trackers.github.baseUrl'),
+      token: await this.#token(values.get('trackers.github.token')?.value),
+      owner: text('trackers.github.owner'),
+      repo: text('trackers.github.repo'),
+      labels: stringList(values.get('trackers.github.labels')?.value),
+    };
+  }
+
+  async #jira(
+    values: ReadonlyMap<string, ResolvedTrackerSetting>,
+  ): Promise<Configured<JiraConfig>> {
+    const config = await this.#jiraConfig(values);
     const missing = [
       config.baseUrl === '' && 'trackers.jira.baseUrl',
       config.authMode === 'cloud-basic' && config.email === '' && 'trackers.jira.email',
@@ -250,15 +451,10 @@ export class TrackerService {
     return missing.length === 0 ? { config, missing: [] } : { config: undefined, missing };
   }
 
-  async #github(): Promise<Configured<GitHubConfig>> {
-    const { settings } = this.#deps;
-    const config: GitHubConfig = {
-      baseUrl: settings.get('trackers.github.baseUrl'),
-      token: await this.#token(settings.get('trackers.github.token')),
-      owner: settings.get('trackers.github.owner'),
-      repo: settings.get('trackers.github.repo'),
-      labels: settings.get('trackers.github.labels'),
-    };
+  async #github(
+    values: ReadonlyMap<string, ResolvedTrackerSetting>,
+  ): Promise<Configured<GitHubConfig>> {
+    const config = await this.#githubConfig(values);
     const missing = [
       config.baseUrl === '' && 'trackers.github.baseUrl',
       config.token === '' && 'trackers.github.token',
@@ -269,22 +465,32 @@ export class TrackerService {
   }
 }
 
+const stringList = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
+
 const labelOf = (key: string) =>
   Object.hasOwn(settingsRegistry, key)
     ? settingsRegistry[key as keyof typeof settingsRegistry].label
     : key;
 
-const notSetUp = (service: TrackerKind, missing: readonly string[]) =>
+const notSetUp = (
+  service: TrackerKind,
+  missing: readonly string[],
+  project: PublishProject | null,
+) =>
   new CommandRejected(
     'rejected',
-    `${serviceNames[service]} is not set up: fill in ${missing.map(labelOf).join(', ')} in Settings → Trackers`,
+    `${serviceNames[service]} is not set up: fill in ${missing.map(labelOf).join(', ')} in ${
+      project ? `Settings → Projects → ${project.name}` : 'Settings → Trackers'
+    }`,
     { missing },
   );
 
-// What the user may change in the preview before creating the issue.
+// What the user may change in the preview before creating the issue, and the project chosen there.
 export interface IssueEdits {
   readonly title?: string | undefined;
   readonly labels?: readonly string[] | undefined;
+  readonly projectId?: string | null | undefined;
 }
 
 // The issue is the item's title (or the one edited in the preview) and its markdown body; the

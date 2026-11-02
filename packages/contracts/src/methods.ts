@@ -28,6 +28,7 @@ import {
   ProviderTestResult,
 } from './provider.js';
 import { SecretRef } from './settings.js';
+import { ProjectGit, ProjectTrackers, PublishProject, TrackerValueSource } from './trackers.js';
 
 // Subscription topics: one per projection. Thread-scoped topics need a threadId so a client
 // never receives every item of every thread.
@@ -94,6 +95,15 @@ export const TrackerPreview = z.object({
   labels: z.array(z.string()),
   missing: z.array(z.string()),
   existing: BacklogRemote.nullable(),
+  // The project whose tracker settings apply, or null for the defaults in Settings → Trackers.
+  project: PublishProject.nullable(),
+  // True when the item has no project of its own and none was chosen while projects exist: the
+  // dialog asks which project the issue is for before showing the rest (owner decision F-4).
+  needsProject: z.boolean(),
+  // Where the repository or Jira project key came from, and the host it is on ("github.com", an
+  // Enterprise host, or the Jira site), or null while not set up.
+  targetSource: TrackerValueSource,
+  targetHost: z.string().nullable(),
 });
 export type TrackerPreview = z.infer<typeof TrackerPreview>;
 
@@ -109,7 +119,13 @@ export const TrackerTestResult = z.object({
 });
 export type TrackerTestResult = z.infer<typeof TrackerTestResult>;
 
-const TrackerParams = z.object({ backlogItemId: z.string().min(1), service: TrackerService });
+// `projectId` picks whose tracker settings apply: left out, the item's card or run decides; null
+// means the defaults in Settings → Trackers.
+const TrackerParams = z.object({
+  backlogItemId: z.string().min(1),
+  service: TrackerService,
+  projectId: z.string().min(1).nullable().optional(),
+});
 
 // What the user changed in the preview before creating: the title, and the item's tags chosen as
 // labels (added to the GitHub labels setting; Jira labels cannot hold spaces, so they become
@@ -204,12 +220,23 @@ export const rpcMethods = {
     params: z.object({ projectId: z.string().min(1), globs: z.array(z.string().min(1)) }),
     result: z.object({ files: z.array(z.string()) }),
   },
+  // Each project folder's git status and remotes, for the rows in Settings → Projects. Read only.
+  'projects.git': {
+    params: NoParams,
+    result: z.object({ projects: z.array(ProjectGit) }),
+  },
+  // One project's tracker settings with where each value came from, and suggestions to confirm.
+  'trackers.project': {
+    params: z.object({ projectId: z.string().min(1) }),
+    result: ProjectTrackers,
+  },
   'trackers.preview': {
     params: TrackerParams,
     result: TrackerPreview,
   },
+  // Signs in with the settings as they apply to the project, or the defaults without one.
   'trackers.test': {
-    params: z.object({ service: TrackerService }),
+    params: z.object({ service: TrackerService, projectId: z.string().min(1).optional() }),
     result: TrackerTestResult,
   },
   // Creates the issue and stores its key and URL on the item. Refused when the item already has

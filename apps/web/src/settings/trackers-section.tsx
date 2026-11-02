@@ -1,16 +1,24 @@
 import { TrackerTestResult, type TrackerService } from '@wow/contracts';
 import { CheckCircle2Icon, CircleAlertIcon, PlugZapIcon } from 'lucide-react';
+import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
 import type { SettingEntry } from '@/app/sections';
-import { errorMessage } from '@/chat/data';
+import { errorMessage, useTopic } from '@/chat/data';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { SettingsForm } from './setting-row';
 
 const titles: Readonly<Record<TrackerService, string>> = { jira: 'Jira', github: 'GitHub' };
 
-function TestConnection({ service }: { service: TrackerService }) {
+export function TestConnection({
+  service,
+  projectId,
+}: {
+  service: TrackerService;
+  // Tests the settings as they apply to this project instead of the defaults.
+  projectId?: string | undefined;
+}) {
   const { connection } = useRuntime();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string }>();
@@ -19,7 +27,7 @@ function TestConnection({ service }: { service: TrackerService }) {
     setBusy(true);
     try {
       const answer = TrackerTestResult.parse(
-        await connection.request('trackers.test', { service }),
+        await connection.request('trackers.test', projectId ? { service, projectId } : { service }),
       );
       setResult({ ok: answer.ok, message: answer.message });
     } catch (error) {
@@ -34,7 +42,9 @@ function TestConnection({ service }: { service: TrackerService }) {
       {result && (
         <p
           role="status"
-          data-testid={`tracker-${service}-status`}
+          data-testid={
+            projectId ? `tracker-${service}-status-${projectId}` : `tracker-${service}-status`
+          }
           className={cn(
             'flex min-w-0 items-center gap-1.5 text-xs',
             result.ok ? 'text-muted-foreground' : 'text-destructive',
@@ -74,8 +84,22 @@ export function TrackersSection({ entries }: { entries: readonly SettingEntry[] 
     ['jira', jira],
     ['github', github],
   ];
+  const outlook = useTopic('outlookStatus')?.[0];
+  const email = useSetting('trackers.jira.email');
+  const address = outlook?.profile?.address ?? null;
   return (
     <div className="flex flex-col gap-6 pt-2">
+      <p className="text-xs text-muted-foreground" data-testid="trackers-defaults-note">
+        These are the defaults for every project. Tokens saved here are shared by all projects. A
+        project can use its own values in{' '}
+        <Link
+          to="/settings/projects"
+          className="rounded-sm underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Settings → Projects
+        </Link>
+        , where the GitHub repository is read from the project&apos;s git remote.
+      </p>
       {sections.map(([service, rows]) => (
         <section key={service} aria-labelledby={`tracker-${service}`}>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
@@ -84,6 +108,11 @@ export function TrackersSection({ entries }: { entries: readonly SettingEntry[] 
             </h3>
             <TestConnection service={service} />
           </div>
+          {service === 'jira' && authMode === 'cloud-basic' && email === '' && address && (
+            <p data-testid="jira-email-outlook" className="pt-2 text-xs text-muted-foreground">
+              While Jira email is empty, wow signs in as {address}, the address Outlook uses.
+            </p>
+          )}
           <SettingsForm entries={rows} />
         </section>
       ))}

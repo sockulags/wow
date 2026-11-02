@@ -161,7 +161,10 @@ test.describe('backlog', () => {
     const before = (await received()).length;
     await page.getByRole('toolbar', { name: 'Item actions' }).getByText('Publish to Jira').click();
     const dialog = page.getByRole('dialog', { name: 'Publish to Jira' });
+    // The item has no card yet, so the dialog asks whose trackers apply (owner decision F-4).
+    await choose(dialog.getByLabel('Project'), 'Demo');
     await expect(dialog.getByTestId('preview-target')).toHaveText('DEMO');
+    await expect(dialog.getByTestId('preview-summary')).toContainText('for Demo');
     await expect(dialog.getByTestId('preview-title')).toHaveValue('Publish me e2e');
     // The markdown body is shown rendered; Jira gets it as wiki markup.
     await expect(
@@ -217,6 +220,7 @@ test.describe('backlog', () => {
     const toolbar = page.getByRole('toolbar', { name: 'Item actions' });
     await toolbar.getByText('Publish to GitHub').click();
     const dialog = page.getByRole('dialog', { name: 'Publish to GitHub' });
+    await choose(dialog.getByLabel('Project'), 'Demo');
     // The missing setting is asked for right here, then the preview follows (audit D-09).
     const setUp = dialog.getByRole('form', { name: 'Set up GitHub' });
     await expect(setUp).toContainText('GitHub needs one more setting');
@@ -234,6 +238,8 @@ test.describe('backlog', () => {
     ).toHaveText('Saved');
 
     await page.goto(`/backlog/${itemId}?dialog=github`);
+    // "No project" uses the defaults in Settings → Trackers, the same as Demo without a remote.
+    await choose(dialog.getByLabel('Project'), /^No project/);
     await expect(dialog.getByTestId('preview-target')).toHaveText('acme/demo');
     const before = (await received()).length;
     await dialog.getByRole('button', { name: 'Publish issue' }).click();
