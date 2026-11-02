@@ -16,7 +16,14 @@ import {
   draftOf,
   gateMessage,
   gateOf,
+  gateRunForThread,
   moveStep,
+  reviewedStep,
+  saveAsTemplate,
+  setGate,
+  stepDisplayState,
+  stepDurationMs,
+  waitsAt,
   newStep,
   sameJson,
   sortRuns,
@@ -279,9 +286,28 @@ describe('workflowCommands', () => {
       'New workflow from template: Bug',
       'New workflow from template: Feature',
       'New workflow from template: Initiative',
-      'Workflow: Feature',
-      'Run: Feature (waiting for you)',
+      'Feature',
+      'Feature',
     ]);
+  });
+
+  it('says what each workflow and run is, and puts a waiting run under Needs you', () => {
+    const commands = workflowCommands({
+      workflows: [workflow],
+      runs: [run()],
+      templates: defaultWorkflowTemplates,
+      openRun: undefined,
+      formatWhen: () => '14:39',
+    });
+    const runCommand = commands.find((command) => command.id.startsWith('workflowRun.'));
+    expect(runCommand).toMatchObject({
+      detail: 'Run · Waiting for you · 14:39',
+      needsYou: true,
+    });
+    expect(commands.find((command) => command.id === `workflow.${workflow.id}`)).toMatchObject({
+      detail: 'Workflow',
+      searchOnly: true,
+    });
   });
 
   it('offers Continue and Stop for the open run at a gate, and only Stop while it runs', () => {
@@ -291,5 +317,79 @@ describe('workflowCommands', () => {
     expect(titles(running)).not.toContain('Continue run');
     expect(titles(running)).toContain('Stop run');
     expect(titles(run({ state: 'done' }))).not.toContain('Stop run');
+  });
+});
+
+describe('gates in the builder and the thread', () => {
+  it('reads and toggles the gate at each position of the chain', () => {
+    const draft = draftFromTemplate(feature, instance.id, '');
+    // Feature waits after capture-intent and after plan-work.
+    expect([0, 1, 2, 3, 4].map((position) => waitsAt(draft, position))).toEqual([
+      false,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    const before = setGate(draft, 0);
+    expect(before.steps[0]?.gateBefore).toBe(true);
+    const off = setGate(draft, 1);
+    expect(waitsAt(off, 1)).toBe(false);
+    expect(off.steps[0]?.gateAfter).toBe(false);
+    // A gate stored as "before the next step" is cleared by the same toggle.
+    const stored = {
+      steps: draft.steps.map((step, index) => (index === 3 ? { ...step, gateBefore: true } : step)),
+    };
+    expect(waitsAt(stored, 3)).toBe(true);
+    expect(waitsAt(setGate(stored, 3), 3)).toBe(false);
+    expect(setGate(draft, 4).steps[3]?.gateAfter).toBe(true);
+  });
+
+  it('finds the thread whose step a waiting run asks to review (spec 9)', () => {
+    const waiting = run();
+    expect(reviewedStep(waiting)?.stepId).toBe('s1');
+    expect(gateRunForThread({ id: 'run-1.s1', runId: 'run-1' }, [waiting])).toBe(waiting);
+    expect(gateRunForThread({ id: 'run-1.s2', runId: 'run-1' }, [waiting])).toBeUndefined();
+    expect(gateRunForThread({ id: 'other', runId: null }, [waiting])).toBeUndefined();
+    expect(gateRunForThread({ id: 'run-1.s1', runId: 'run-1' }, [run({ state: 'running' })])).toBe(
+      undefined,
+    );
+  });
+
+  it('shows a finished step at its gate as done, with its duration', () => {
+    const [first, second] = run().steps;
+    if (!first || !second) throw new Error('two steps');
+    expect(stepDisplayState(first)).toBe('done');
+    expect(stepDisplayState(second)).toBe('not_started');
+    expect(stepDurationMs(first)).toBe(5 * 60_000);
+    expect(stepDurationMs(second)).toBeUndefined();
+  });
+});
+
+describe('templates from the builder (E-05)', () => {
+  it('saves the steps as a new template, or replaces the one with that name', () => {
+    const draft = draftFromTemplate(feature, instance.id, '');
+    const added = saveAsTemplate(defaultWorkflowTemplates, draft, 'My feature');
+    if (typeof added === 'string') throw new Error(added);
+    expect(added.kind).toBe('my-feature');
+    expect(added.templates.at(-1)).toMatchObject({
+      kind: 'my-feature',
+      name: 'My feature',
+      steps: [
+        { skillName: 'capture-intent', gateAfter: true },
+        { skillName: 'plan-work', gateAfter: true },
+        { skillName: 'deliver-work' },
+        { skillName: 'check-work' },
+      ],
+    });
+    const replaced = saveAsTemplate(added.templates, { steps: draft.steps.slice(0, 1) }, 'feature');
+    if (typeof replaced === 'string') throw new Error(replaced);
+    expect(replaced.kind).toBe('feature');
+    expect(replaced.templates.find((t) => t.kind === 'feature')?.steps).toHaveLength(1);
+    expect(replaced.templates).toHaveLength(added.templates.length);
+    expect(saveAsTemplate([], draft, '  ')).toBe('Give the template a name');
+    expect(saveAsTemplate([], { steps: [] }, 'x')).toBe('Add a step with a skill first');
+    const clash = saveAsTemplate([{ kind: 'x', name: 'Other', steps: feature.steps }], draft, 'X');
+    expect(typeof clash === 'string' ? clash : clash.kind).toBe('x-2');
   });
 });

@@ -1,8 +1,15 @@
 import type { ProviderKind } from '@wow/contracts';
-import { ChoiceSelect } from '@/components/choice-select';
+import {
+  Select as SelectRoot,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useModels } from './data';
 import { effortOptions, modelOptions, permissionOptions } from './model';
+import { effortLabel } from './view-model';
 
 export interface ThreadSettingsValue {
   readonly model: string;
@@ -10,30 +17,45 @@ export interface ThreadSettingsValue {
   readonly permissionMode: string;
 }
 
+// A compact select whose trigger reads "Model: Mock model", so a toolbar of selects says which
+// is which (audit A-05, C-08). The list shows the values only.
 function Select({
   label,
+  name = label,
   value,
   options,
   disabled,
   onChange,
 }: {
   label: string;
+  // The accessible name, when it says more than the short visible label.
+  name?: string;
   value: string;
   options: readonly { readonly id: string; readonly label: string }[];
   disabled: boolean;
   onChange(value: string): void;
 }) {
+  const known = options.some((option) => option.id === value);
   return (
-    <ChoiceSelect
-      label={label}
-      title={label}
-      size="sm"
-      className="w-auto max-w-44 data-[size=sm]:h-7"
-      value={value}
-      disabled={disabled}
-      choices={options.map((option) => ({ value: option.id, label: option.label }))}
-      onValueChange={onChange}
-    />
+    <SelectRoot value={known ? value : ''} onValueChange={onChange} disabled={disabled}>
+      <SelectTrigger
+        aria-label={name}
+        size="sm"
+        className="w-auto max-w-72 gap-1 text-xs data-[size=sm]:h-7"
+      >
+        <span aria-hidden className="text-muted-foreground">
+          {label}:
+        </span>
+        <SelectValue placeholder={value || 'None'} />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((option) => (
+          <SelectItem key={option.id} value={option.id} className="text-xs">
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </SelectRoot>
   );
 }
 
@@ -61,7 +83,7 @@ export function ThreadSettings({
   }));
   const efforts = effortOptions(kind, models, value.model, value.effort).map((id) => ({
     id,
-    label: id === 'default' ? 'Default effort' : id,
+    label: effortLabel(id),
   }));
   return (
     <div className={cn('flex flex-wrap items-center gap-1.5', className)}>
@@ -80,7 +102,8 @@ export function ThreadSettings({
         onChange={(effort) => onChange({ effort })}
       />
       <Select
-        label="Permission mode"
+        label="Permissions"
+        name="Permission mode"
         value={value.permissionMode}
         options={permissionOptions(kind, value.permissionMode)}
         disabled={disabled}

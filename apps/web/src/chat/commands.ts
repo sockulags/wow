@@ -1,7 +1,8 @@
-import type { ProviderInstance, Thread } from '@wow/contracts';
+import type { Approval, ApprovalDecision, ProviderInstance, Thread } from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
 import { canMarkDone, threadTitle } from './model';
+import { providerLabel } from './view-model';
 
 export interface ChatCommandData {
   readonly threads: readonly Thread[];
@@ -9,15 +10,43 @@ export interface ChatCommandData {
   // The thread open in the chat view, if any, and whether a turn of it is running.
   readonly openThread: Thread | undefined;
   readonly running: boolean;
+  // The approval the open thread waits for, if any.
+  readonly approval?: Approval | undefined;
+  // The chat view is open: its contextual commands (switch provider) only exist there.
+  readonly inChat?: boolean;
 }
 
-// Palette commands for the chat (spec 22): every thread, new thread, switch provider, stop, and
-// mark done or reopen.
+const stateDetail: Readonly<Record<Thread['state'], string>> = {
+  needs_you: 'Needs you',
+  working: 'Working',
+  idle: 'Idle',
+  failed: 'Failed',
+  done: 'Done',
+};
+
+const approvalCommands: ReadonlyArray<{
+  readonly decision: ApprovalDecision;
+  readonly title: string;
+  readonly keybinding: AppCommand['keybinding'];
+}> = [
+  { decision: 'allowOnce', title: 'Allow once', keybinding: 'keybindings.approvalAllowOnce' },
+  {
+    decision: 'allowSession',
+    title: 'Allow for this session',
+    keybinding: 'keybindings.approvalAllowSession',
+  },
+  { decision: 'deny', title: 'Deny', keybinding: 'keybindings.approvalDeny' },
+];
+
+// Palette commands for the chat (spec 22): every thread, new thread, switch provider, stop, mark
+// done or reopen, and the answers to the approval the open thread waits for.
 export function chatCommands({
   threads,
   instances,
   openThread,
   running,
+  approval,
+  inChat = openThread !== undefined,
 }: ChatCommandData): AppCommand[] {
   const commands: AppCommand[] = [
     {
@@ -27,7 +56,7 @@ export function chatCommands({
       keywords: ['chat', 'agent', 'start'],
       keybinding: 'keybindings.newThread',
       run: ({ navigate, draft }) => {
-        // A new thread from an open one keeps its project and folder.
+        // A new thread from an open one keeps its provider, project and folder.
         if (openThread) {
           draft.setState({
             providerInstanceId: openThread.providerInstanceId,
@@ -42,27 +71,51 @@ export function chatCommands({
 
   // A thread stays on its provider, so switching starts a new thread on the other instance in
   // the same project and folder.
-  for (const instance of instances) {
-    if (openThread?.providerInstanceId === instance.id) continue;
-    commands.push({
-      id: `chat.switchProvider.${instance.id}`,
-      title: `Switch provider to ${instance.name} (${instance.kind})`,
-      value: `Switch provider to ${instance.name} ${instance.kind} ${instance.id}`,
-      group: 'Chat',
-      keywords: ['provider', 'claude', 'codex', instance.kind],
-      run: ({ navigate, draft }) => {
-        draft.setState({
-          providerInstanceId: instance.id,
-          ...(openThread
-            ? {
-                projectId: openThread.projectId ?? undefined,
-                cwd: openThread.projectId === null ? openThread.cwd : undefined,
-              }
-            : {}),
-        });
-        void navigate({ to: '/chat/new' });
-      },
-    });
+  if (inChat) {
+    for (const instance of instances) {
+      if (openThread?.providerInstanceId === instance.id) continue;
+      const label = providerLabel(instance, instances);
+      commands.push({
+        id: `chat.switchProvider.${instance.id}`,
+        title: `Switch provider to ${label}`,
+        value: `Switch provider to ${label} ${instance.kind}`,
+        group: 'Chat',
+        keywords: ['provider', 'claude', 'codex', instance.kind],
+        run: ({ navigate, draft }) => {
+          draft.setState({
+            providerInstanceId: instance.id,
+            ...(openThread
+              ? {
+                  projectId: openThread.projectId ?? undefined,
+                  cwd: openThread.projectId === null ? openThread.cwd : undefined,
+                }
+              : {}),
+          });
+          void navigate({ to: '/chat/new' });
+        },
+      });
+    }
+  }
+
+  if (openThread && approval && approval.decision === null) {
+    const approvalId = approval.id;
+    for (const { decision, title, keybinding } of approvalCommands) {
+      commands.push({
+        id: `chat.approval.${decision}`,
+        title,
+        group: 'Chat',
+        keywords: ['approval', 'approve', 'permission', 'request'],
+        ...(keybinding ? { keybinding } : {}),
+        detail: 'Approval',
+        run: ({ connection }) => {
+          if (connection) {
+            void dispatch(connection, { type: 'approval.answer', approvalId, decision }).catch(
+              () => undefined,
+            );
+          }
+        },
+      });
+    }
   }
 
   if (openThread && running) {
@@ -111,6 +164,9 @@ export function chatCommands({
       value: `${threadTitle(thread)} ${thread.id}`,
       group: 'Threads',
       keywords: ['thread', thread.state.replace('_', ' '), thread.model],
+      detail: `Thread · ${stateDetail[thread.state]}`,
+      needsYou: thread.state === 'needs_you',
+      recentAt: thread.updatedAt,
       run: ({ navigate }) =>
         void navigate({ to: '/chat/$threadId', params: { threadId: thread.id } }),
     });

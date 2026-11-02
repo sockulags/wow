@@ -51,24 +51,32 @@ test.describe('palette', () => {
     await choose(plan.getByLabel('Project'), 'Demo');
     await plan.getByLabel('Date').fill(localDay(30));
     await plan.getByLabel('Start').fill('10:00');
+    await plan.getByLabel('End').fill('11:00');
     await plan.getByRole('button', { name: 'Plan' }).click();
     await expect(plan).toBeHidden();
 
     await page.goto('/chat');
+    // Before typing, the palette lists what needs you, recent things and the view's actions.
+    await page.keyboard.press('Control+k');
+    const palette = page.getByRole('dialog', { name: 'Command palette' });
+    await expect(palette.getByText('Recent', { exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(palette).toBeHidden();
+
     await pick(page, 'edit card quarterly', 'Edit card: Quarterly cleanup');
     await expect(page).toHaveURL(new RegExp(`/calendar.*date=${localDay(30)}`));
     const card = page.getByRole('dialog', { name: 'Edit card' });
     await expect(card.getByLabel('Title')).toHaveValue('Quarterly cleanup');
     await card.getByRole('button', { name: 'Cancel' }).click();
 
-    await pick(page, 'backlog quarterly', 'Backlog: Quarterly cleanup');
+    await pick(page, 'backlog quarterly', 'Quarterly cleanupBacklog item');
     await expect(page).toHaveURL(itemUrl);
 
     // Its id keeps the runs of this workflow, which other tests start, out of the way.
-    await pick(page, 'workflow backlog-e2e', 'Workflow: Backlog e2e');
+    await pick(page, 'workflow backlog-e2e', 'Backlog e2eWorkflow');
     await expect(page).toHaveURL(/\/workflows\/backlog-e2e$/);
 
-    await pick(page, 'settings calendar', 'Settings: Calendar');
+    await pick(page, 'settings calendar', 'Calendar');
     await expect(page).toHaveURL(/\/settings\/calendar$/);
   });
 });

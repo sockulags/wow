@@ -152,17 +152,25 @@ export class TrackerService {
     };
   }
 
-  publish(backlogItemId: string, service: TrackerKind): Promise<BacklogRemote> {
+  publish(
+    backlogItemId: string,
+    service: TrackerKind,
+    edits: IssueEdits = {},
+  ): Promise<BacklogRemote> {
     const running = this.#inFlight.get(backlogItemId);
     if (running) return running;
-    const started = this.#publish(backlogItemId, service).finally(() =>
+    const started = this.#publish(backlogItemId, service, edits).finally(() =>
       this.#inFlight.delete(backlogItemId),
     );
     this.#inFlight.set(backlogItemId, started);
     return started;
   }
 
-  async #publish(backlogItemId: string, service: TrackerKind): Promise<BacklogRemote> {
+  async #publish(
+    backlogItemId: string,
+    service: TrackerKind,
+    edits: IssueEdits,
+  ): Promise<BacklogRemote> {
     const item = this.#item(backlogItemId);
     if (item.remote) {
       throw new CommandRejected(
@@ -175,7 +183,7 @@ export class TrackerService {
       timeoutMs: this.#deps.settings.get('trackers.requestTimeoutMs'),
       ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
     };
-    const created = await this.#create(service, issueOf(item), options);
+    const created = await this.#create(service, issueOf(item, edits), options);
     const remote: BacklogRemote = { service, ...created };
     try {
       this.#deps.engine.dispatch(`backlog.published:${backlogItemId}`, {
@@ -273,5 +281,17 @@ const notSetUp = (service: TrackerKind, missing: readonly string[]) =>
     { missing },
   );
 
-// The issue is the item's title and its markdown body as written; tags and state stay in wow.
-const issueOf = (item: BacklogItem): NewIssue => ({ title: item.title, body: item.body });
+// What the user may change in the preview before creating the issue.
+export interface IssueEdits {
+  readonly title?: string | undefined;
+  readonly labels?: readonly string[] | undefined;
+}
+
+// The issue is the item's title (or the one edited in the preview) and its markdown body; the
+// clients convert the body for their tracker. Tags become labels only when picked; state stays
+// in wow.
+const issueOf = (item: BacklogItem, edits: IssueEdits = {}): NewIssue => ({
+  title: edits.title?.trim() || item.title,
+  body: item.body,
+  ...(edits.labels && edits.labels.length > 0 ? { labels: edits.labels } : {}),
+});

@@ -72,9 +72,20 @@ describe('Jira client', () => {
         project: { key: 'WOW' },
         issuetype: { name: 'Task' },
         summary: 'Fix the login',
-        description: 'The **login** fails on Mondays.\n\n- step one',
+        description: 'The *login* fails on Mondays.\n\n* step one',
       },
     });
+  });
+
+  it('sends the picked tags as Jira labels, spaces as dashes', async () => {
+    answer(
+      'post',
+      'https://acme.atlassian.example/rest/api/2/issue',
+      201,
+      await fixture('jira-create-issue.json'),
+    );
+    await createJiraIssue(cloud, { ...issue, labels: ['ui', 'needs review', 'ui'] }, options);
+    expect(seen[0]?.body).toMatchObject({ fields: { labels: ['ui', 'needs-review'] } });
   });
 
   it('uses a bearer token for a personal access token on Jira Server', async () => {
@@ -165,6 +176,17 @@ describe('GitHub client', () => {
       options,
     );
     expect(seen[0]?.body).toEqual(issue);
+  });
+
+  it('adds the picked tags to the configured labels', async () => {
+    answer(
+      'post',
+      'https://api.github.com/repos/acme/wow/issues',
+      201,
+      await fixture('github-create-issue.json'),
+    );
+    await createGitHubIssue(github, { ...issue, labels: ['ui', 'from-wow'] }, options);
+    expect(seen[0]?.body).toEqual({ ...issue, labels: ['from-wow', 'ui'] });
   });
 
   it('passes on a validation failure', async () => {

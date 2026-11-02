@@ -1,10 +1,12 @@
 import type { BacklogItem } from '@wow/contracts';
+import { TriangleAlertIcon } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { useSetting } from '@/app/runtime';
-import { resolveZone } from '@/calendar/time';
+import { formatTime, resolveZone } from '@/calendar/time';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
 import { ChoiceSelect } from '@/components/choice-select';
 import { DateField, TimeField } from '@/components/date-time-fields';
+import { FormField } from '@/components/form-field';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -14,37 +16,61 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { nextHour, planRange } from './model';
+import { busyTimes, lastPlanningWorkflow, nextFreeSlot, overlaps, planRange } from './model';
 
 function PlanForm({ item, onDone }: { item: BacklogItem; onDone: () => void }) {
   const dispatch = useDispatch();
   const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
+  const calendar = useTopic('calendarItems') ?? [];
   const zone = resolveZone(useSetting('calendar.zone'));
   const cardMinutes = useSetting('calendar.cardMinutes');
   const firstDayOfWeek = useSetting('calendar.firstDayOfWeek');
   const snapMinutes = useSetting('calendar.snapMinutes');
-  const [initial] = useState(() => nextHour(new Date(), zone));
+  const workHours = useSetting('calendar.workHours');
+  const lookaheadDays = useSetting('calendar.lookaheadDays');
+  const busy = busyTimes(calendar);
+  // The next free slot in work hours, around what Outlook and the cards already hold.
+  const [initial] = useState(() =>
+    nextFreeSlot({
+      now: new Date(),
+      zone,
+      workHours,
+      busy,
+      minutes: cardMinutes,
+      snapMinutes,
+      days: lookaheadDays,
+    }),
+  );
+  const lastWorkflow = lastPlanningWorkflow(calendar);
   const [workflowId, setWorkflowId] = useState('');
   const [projectId, setProjectId] = useState('');
   const [date, setDate] = useState(initial.date);
   const [start, setStart] = useState(initial.start);
-  const [minutes, setMinutes] = useState(String(cardMinutes));
+  const [end, setEnd] = useState(initial.end);
   const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
-  // A single workflow or project needs no choosing.
-  const chosenWorkflow = workflowId || (workflows.length === 1 ? (workflows[0]?.id ?? '') : '');
+  const [sending, setSending] = useState(false);
+  // A single workflow or project needs no choosing; otherwise the one planned with last.
+  const chosenWorkflow =
+    workflowId ||
+    (workflows.length === 1
+      ? (workflows[0]?.id ?? '')
+      : workflows.some((workflow) => workflow.id === lastWorkflow)
+        ? (lastWorkflow ?? '')
+        : '');
   const chosenProject = projectId || (projects.length === 1 ? (projects[0]?.id ?? '') : '');
+  const range = planRange(date, start, end, zone);
+  const collisions =
+    typeof range === 'string'
+      ? []
+      : overlaps(busy, new Date(range.start).getTime(), new Date(range.end).getTime());
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (chosenWorkflow === '') return setError('Choose the workflow the card runs');
     if (chosenProject === '') return setError('Choose the project the workflow runs in');
-    const range = planRange(date, start, Number(minutes), zone);
     if (typeof range === 'string') return setError(range);
-    setBusy(true);
+    setSending(true);
     setError(undefined);
     try {
       await dispatch({
@@ -60,37 +86,43 @@ function PlanForm({ item, onDone }: { item: BacklogItem; onDone: () => void }) {
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
-      setBusy(false);
+      setSending(false);
     }
   };
 
   return (
-    <form onSubmit={(event) => void submit(event)} className="grid gap-3" aria-label="Plan">
-      <div className="grid grid-cols-2 gap-2">
-        <div className="grid gap-1.5">
-          <Label htmlFor="plan-workflow">Workflow</Label>
+    <form onSubmit={(event) => void submit(event)} className="grid gap-4" aria-label="Plan">
+      <div className="grid grid-cols-2 gap-4">
+        <FormField
+          id="plan-workflow"
+          label="Workflow"
+          source={
+            chosenWorkflow !== '' && chosenWorkflow === lastWorkflow && !workflowId
+              ? 'Last used'
+              : undefined
+          }
+          help={workflows.length === 0 ? 'Build a workflow first under Workflows.' : undefined}
+        >
           <ChoiceSelect
-            id="plan-workflow"
+            label="Workflow"
             value={chosenWorkflow}
             placeholder="Choose a workflow"
             choices={workflows.map((workflow) => ({ value: workflow.id, label: workflow.name }))}
             onValueChange={setWorkflowId}
           />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="plan-project">Project</Label>
+        </FormField>
+        <FormField id="plan-project" label="Project">
           <ChoiceSelect
-            id="plan-project"
+            label="Project"
             value={chosenProject}
             placeholder="Choose a project"
             choices={projects.map((project) => ({ value: project.id, label: project.name }))}
             onValueChange={setProjectId}
           />
-        </div>
+        </FormField>
       </div>
-      <div className="grid grid-cols-3 gap-2">
-        <div className="grid gap-1.5">
-          <Label htmlFor="plan-date">Date</Label>
+      <div className="grid grid-cols-3 gap-4">
+        <FormField id="plan-date" label="Date">
           <DateField
             id="plan-date"
             label="Date"
@@ -98,9 +130,8 @@ function PlanForm({ item, onDone }: { item: BacklogItem; onDone: () => void }) {
             firstDayOfWeek={firstDayOfWeek}
             onValueChange={setDate}
           />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="plan-start">Start</Label>
+        </FormField>
+        <FormField id="plan-start" label="Start">
           <TimeField
             id="plan-start"
             label="Start"
@@ -108,24 +139,33 @@ function PlanForm({ item, onDone }: { item: BacklogItem; onDone: () => void }) {
             stepMinutes={snapMinutes}
             onValueChange={setStart}
           />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="plan-minutes">Minutes</Label>
-          <Input
-            id="plan-minutes"
-            type="number"
-            min={1}
-            value={minutes}
-            onChange={(event) => setMinutes(event.target.value)}
+        </FormField>
+        <FormField id="plan-end" label="End">
+          <TimeField
+            id="plan-end"
+            label="End"
+            value={end}
+            stepMinutes={snapMinutes}
+            onValueChange={setEnd}
           />
-        </div>
+        </FormField>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Times are in {zone}. The workflow starts at the card&apos;s time.
-      </p>
-      {workflows.length === 0 && (
-        <p className="text-xs text-muted-foreground">Build a workflow first under Workflows.</p>
+      {collisions.length > 0 && (
+        <p data-testid="plan-overlap" className="flex items-start gap-2 text-xs text-warning">
+          <TriangleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+          Overlaps{' '}
+          {collisions
+            .map(
+              (entry) =>
+                `${entry.title} ${formatTime(new Date(entry.start), zone)}–${formatTime(new Date(entry.end), zone)}`,
+            )
+            .join(', ')}
+        </p>
       )}
+      <p className="text-xs text-muted-foreground">
+        The workflow starts at the card&apos;s time. Suggested: the next free slot in your work
+        hours.
+      </p>
       {error && (
         <p role="alert" className="text-xs text-destructive">
           {error}
@@ -135,7 +175,7 @@ function PlanForm({ item, onDone }: { item: BacklogItem; onDone: () => void }) {
         <Button type="button" variant="outline" onClick={onDone}>
           Cancel
         </Button>
-        <Button type="submit" disabled={busy}>
+        <Button type="submit" disabled={sending}>
           Plan
         </Button>
       </DialogFooter>

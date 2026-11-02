@@ -1,16 +1,19 @@
 import {
   BacklogRemote,
+  SecretRef,
   TrackerPreview,
   settingsRegistry,
   type BacklogItem,
   type TrackerService,
 } from '@wow/contracts';
-import { Link } from '@tanstack/react-router';
 import { ExternalLinkIcon } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useRuntime } from '@/app/runtime';
 import { errorMessage } from '@/chat/data';
+import { FormField } from '@/components/form-field';
+import { LoadingState } from '@/components/states';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -19,12 +22,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { notify } from '@/lib/feedback';
+import { MarkdownPreview } from './markdown';
 import { trackerNames } from './model';
 
+type RegistryKey = keyof typeof settingsRegistry;
+const isRegistryKey = (key: string): key is RegistryKey => Object.hasOwn(settingsRegistry, key);
 const settingLabel = (key: string): string =>
-  Object.hasOwn(settingsRegistry, key)
-    ? settingsRegistry[key as keyof typeof settingsRegistry].label
-    : key;
+  isRegistryKey(key) ? settingsRegistry[key].label : key;
+const isSecret = (key: string): boolean =>
+  isRegistryKey(key) && (settingsRegistry[key] as { secret?: boolean }).secret === true;
 
 export function RemoteLink({ remote }: { remote: BacklogRemote }) {
   return (
@@ -32,9 +40,9 @@ export function RemoteLink({ remote }: { remote: BacklogRemote }) {
       href={remote.url}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-1 underline-offset-2 hover:underline"
+      className="inline-flex items-center gap-1 rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <ExternalLinkIcon className="size-3" aria-hidden />
+      <ExternalLinkIcon className="size-3.5" aria-hidden />
       Open {remote.key}
     </a>
   );
@@ -45,6 +53,93 @@ type Stage =
   | { readonly type: 'failed'; readonly message: string }
   | { readonly type: 'preview'; readonly preview: TrackerPreview }
   | { readonly type: 'created'; readonly remote: BacklogRemote };
+
+// The settings the tracker still needs, filled in here instead of a detour through Settings
+// (audit D-09). Secret ones go to the secret store; the setting keeps only the reference.
+function SetUp({
+  service,
+  missing,
+  onSaved,
+  onCancel,
+}: {
+  service: TrackerService;
+  missing: readonly string[];
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const { connection, settings } = useRuntime();
+  const [values, setValues] = useState<Readonly<Record<string, string>>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const name = trackerNames[service];
+  const complete = missing.every((key) => (values[key] ?? '').trim() !== '');
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!connection || !complete) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      for (const key of missing) {
+        const value = (values[key] ?? '').trim();
+        const stored = isSecret(key)
+          ? SecretRef.parse(
+              await connection.request('secrets.set', { name: `setting:${key}`, value }),
+            )
+          : value;
+        const result = await settings.write(key as RegistryKey, stored as never);
+        if (!result.ok) throw new Error(`${settingLabel(key)}: ${result.issues.join('; ')}`);
+      }
+      onSaved();
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form
+      aria-label={`Set up ${name}`}
+      onSubmit={(event) => void save(event)}
+      className="grid gap-4"
+    >
+      <p className="text-sm">
+        {name} needs {missing.length === 1 ? 'one more setting' : 'a few settings'} before wow can
+        create the issue. wow keeps {missing.length === 1 ? 'it' : 'them'} for next time; Settings →
+        Trackers has the rest.
+      </p>
+      {missing.map((key, index) => (
+        <FormField
+          key={key}
+          id={`publish-setup-${index}`}
+          label={settingLabel(key)}
+          help={isRegistryKey(key) ? settingsRegistry[key].description : undefined}
+        >
+          <Input
+            autoFocus={index === 0}
+            type={isSecret(key) ? 'password' : 'text'}
+            autoComplete="off"
+            value={values[key] ?? ''}
+            onChange={(event) => setValues({ ...values, [key]: event.target.value })}
+          />
+        </FormField>
+      ))}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={busy || !complete || !connection}>
+          Set up {name}
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
 
 function PublishBody({
   item,
@@ -57,9 +152,11 @@ function PublishBody({
 }) {
   const { connection } = useRuntime();
   const [stage, setStage] = useState<Stage>({ type: 'loading' });
+  const [attempt, setAttempt] = useState(0);
+  const [title, setTitle] = useState(item.title);
+  const [labels, setLabels] = useState<readonly string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const name = trackerNames[service];
 
   useEffect(() => {
     if (!connection) {
@@ -67,6 +164,7 @@ function PublishBody({
       return undefined;
     }
     let current = true;
+    setStage({ type: 'loading' });
     connection
       .request('trackers.preview', { backlogItemId: item.id, service })
       .then((result) => TrackerPreview.parse(result))
@@ -77,17 +175,25 @@ function PublishBody({
     return () => {
       current = false;
     };
-  }, [connection, item.id, service]);
+  }, [connection, item.id, service, attempt]);
 
   const create = async () => {
-    if (!connection) return;
+    if (!connection || title.trim() === '') return;
     setBusy(true);
     setError(undefined);
     try {
       const remote = BacklogRemote.parse(
-        await connection.request('trackers.publish', { backlogItemId: item.id, service }),
+        await connection.request('trackers.publish', {
+          backlogItemId: item.id,
+          service,
+          title: title.trim(),
+          ...(labels.length > 0 ? { labels: [...labels] } : {}),
+        }),
       );
       setStage({ type: 'created', remote });
+      notify.success(`Created ${remote.key}`, {
+        action: { label: 'Open', onClick: () => window.open(remote.url, '_blank', 'noreferrer') },
+      });
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -97,20 +203,23 @@ function PublishBody({
 
   const close = (
     <Button type="button" variant="outline" onClick={onDone}>
-      Done
+      Close
     </Button>
   );
 
-  if (stage.type === 'loading') {
-    return <p className="text-xs text-muted-foreground">Preparing the issue…</p>;
-  }
+  if (stage.type === 'loading') return <LoadingState rows={3} label="Preparing the issue" />;
   if (stage.type === 'failed') {
     return (
       <>
-        <p role="alert" className="text-xs text-destructive">
+        <p role="alert" className="text-sm text-destructive">
           {stage.message}
         </p>
-        <DialogFooter>{close}</DialogFooter>
+        <DialogFooter>
+          {close}
+          <Button type="button" onClick={() => setAttempt(attempt + 1)}>
+            Try again
+          </Button>
+        </DialogFooter>
       </>
     );
   }
@@ -142,59 +251,90 @@ function PublishBody({
   }
   if (preview.missing.length > 0) {
     return (
-      <>
-        <div role="alert" className="grid gap-1 text-sm">
-          <p>{name} is not set up yet. Fill in:</p>
-          <ul className="list-disc pl-5 text-xs">
-            {preview.missing.map((key) => (
-              <li key={key}>{settingLabel(key)}</li>
-            ))}
-          </ul>
-        </div>
-        <DialogFooter>
-          {close}
-          <Button asChild>
-            <Link to="/settings/$group" params={{ group: 'trackers' }} onClick={onDone}>
-              Open tracker settings
-            </Link>
-          </Button>
-        </DialogFooter>
-      </>
+      <SetUp
+        service={service}
+        missing={preview.missing}
+        onCancel={onDone}
+        onSaved={() => setAttempt(attempt + 1)}
+      />
     );
   }
 
+  const configured = preview.labels;
   return (
     <>
-      <dl
-        aria-label="Issue preview"
-        className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5 text-sm"
-      >
-        <dt className="text-muted-foreground">{service === 'jira' ? 'Project' : 'Repository'}</dt>
-        <dd data-testid="preview-target" className="font-mono">
-          {preview.target}
-        </dd>
-        {preview.issueType && (
-          <>
-            <dt className="text-muted-foreground">Type</dt>
-            <dd>{preview.issueType}</dd>
-          </>
+      <p className="text-xs text-muted-foreground">
+        Nothing is sent until you press Publish issue. wow does not follow the issue afterwards.
+      </p>
+      <div className="grid gap-4">
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-sm">
+          <dt className="text-muted-foreground">{service === 'jira' ? 'Project' : 'Repository'}</dt>
+          <dd data-testid="preview-target" className="font-mono">
+            {preview.target}
+          </dd>
+          {preview.issueType && (
+            <>
+              <dt className="text-muted-foreground">Type</dt>
+              <dd>{preview.issueType}</dd>
+            </>
+          )}
+          {configured.length > 0 && (
+            <>
+              <dt className="text-muted-foreground">Labels</dt>
+              <dd>{configured.join(', ')}</dd>
+            </>
+          )}
+        </dl>
+        <FormField id="publish-title" label="Title">
+          <Input
+            data-testid="preview-title"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+        </FormField>
+        {item.tags.length > 0 && (
+          <FormField
+            id="publish-labels"
+            label={configured.length > 0 ? 'Also add as labels' : 'Add as labels'}
+            help={
+              service === 'jira' ? 'Spaces become dashes; Jira labels are one word.' : undefined
+            }
+            group
+          >
+            <div className="flex flex-wrap gap-3">
+              {item.tags.map((tag) => (
+                <label key={tag} className="flex items-center gap-1.5 text-sm">
+                  <Checkbox
+                    checked={labels.includes(tag)}
+                    onCheckedChange={(checked) =>
+                      setLabels(
+                        checked === true
+                          ? [...labels, tag]
+                          : labels.filter((candidate) => candidate !== tag),
+                      )
+                    }
+                  />
+                  {tag}
+                </label>
+              ))}
+            </div>
+          </FormField>
         )}
-        {preview.labels.length > 0 && (
-          <>
-            <dt className="text-muted-foreground">Labels</dt>
-            <dd>{preview.labels.join(', ')}</dd>
-          </>
-        )}
-        <dt className="text-muted-foreground">Title</dt>
-        <dd data-testid="preview-title">{preview.title}</dd>
-        <dt className="text-muted-foreground">Description</dt>
-        <dd
-          data-testid="preview-body"
-          className="max-h-48 overflow-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap"
-        >
-          {preview.body === '' ? '(empty)' : preview.body}
-        </dd>
-      </dl>
+        <section aria-label="Description" className="grid gap-1.5">
+          <h3 className="text-sm font-medium">Description</h3>
+          <div
+            data-testid="preview-body"
+            className="max-h-56 overflow-auto rounded-md border border-border bg-muted/40 p-3"
+          >
+            <MarkdownPreview markdown={preview.body} />
+          </div>
+          {service === 'jira' && (
+            <p className="text-xs text-muted-foreground">
+              Sent to Jira as wiki markup, so headings, lists and emphasis show as here.
+            </p>
+          )}
+        </section>
+      </div>
       {error && (
         <p role="alert" className="text-xs text-destructive">
           {error}
@@ -204,8 +344,8 @@ function PublishBody({
         <Button type="button" variant="outline" onClick={onDone}>
           Cancel
         </Button>
-        <Button type="button" disabled={busy} onClick={() => void create()}>
-          Create issue
+        <Button type="button" disabled={busy || title.trim() === ''} onClick={() => void create()}>
+          Publish issue
         </Button>
       </DialogFooter>
     </>
@@ -225,11 +365,11 @@ export function PublishDialog({
 }) {
   return (
     <Dialog open={service !== undefined} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent>
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Publish to {service ? trackerNames[service] : ''}</DialogTitle>
-          <DialogDescription>
-            Nothing is sent until you press Create issue. wow does not follow the issue afterwards.
+          <DialogDescription className="sr-only">
+            Check the issue wow creates for this backlog item.
           </DialogDescription>
         </DialogHeader>
         {service && <PublishBody key={service} item={item} service={service} onDone={onClose} />}

@@ -55,7 +55,8 @@ describe('shell', () => {
     await user.keyboard('{Enter}');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(router.state.location.pathname).toBe('/backlog');
-    expect(await screen.findByText('Backlog is empty')).toBeTruthy();
+    // Without a server the view says so rather than claiming an empty backlog.
+    expect(await screen.findByText('Not connected to the wow server')).toBeTruthy();
   });
 
   it('lists settings pages and actions in the palette', async () => {
@@ -89,6 +90,20 @@ describe('shell', () => {
     expect(screen.queryByRole('complementary', { name: 'Details' })).toBeNull();
     await user.keyboard('{Control>}{Shift>}r{/Shift}{/Control}');
     expect(screen.getByRole('complementary', { name: 'Details' })).toBeTruthy();
+  });
+
+  it('runs shortcuts with Ctrl while the palette has focus (cmdk would claim Ctrl+J and Ctrl+K)', async () => {
+    const user = userEvent.setup();
+    await renderApp('/calendar');
+    await user.keyboard('{Control>}k{/Control}');
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByRole('combobox'), 'zoom');
+    // Ctrl+K again keeps the palette open; Ctrl+J reaches the app and closes the palette.
+    await user.keyboard('{Control>}k{/Control}');
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    await user.keyboard('{Control>}j{/Control}');
+    expect(await screen.findByRole('complementary', { name: 'Details' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('toggles the sidebar with its keybinding', async () => {

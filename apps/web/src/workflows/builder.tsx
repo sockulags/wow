@@ -1,23 +1,35 @@
-import type { ProviderInstance, Skill, Workflow } from '@wow/contracts';
+import type { ProviderInstance, Skill, Workflow, WorkflowTemplate } from '@wow/contracts';
 import { Link, useNavigate } from '@tanstack/react-router';
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  ChevronRightIcon,
   GripVerticalIcon,
+  HourglassIcon,
   PlayIcon,
+  PlugIcon,
   PlusIcon,
   RefreshCwIcon,
+  ReplaceIcon,
+  BookmarkPlusIcon,
+  SearchXIcon,
   Trash2Icon,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
 import { errorMessage, useDispatch, useModels, useTopic } from '@/chat/data';
 import { ThreadSettings } from '@/chat/thread-settings';
+import { providerLabel } from '@/chat/view-model';
 import { ChoiceSelect } from '@/components/choice-select';
 import { Combobox } from '@/components/combobox';
+import { FormField } from '@/components/form-field';
+import { IconButton, WithTooltip } from '@/components/hint';
+import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { notify, offerUndo } from '@/lib/feedback';
+import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import {
   applyStepChanges,
@@ -27,21 +39,28 @@ import {
   emptyDraft,
   moveStep,
   newStep,
+  parseGlobs,
   runStateDotClass,
   runStateLabels,
   sameJson,
+  saveAsTemplate,
+  setGate,
   skillKnown,
   sortRuns,
   stepDefaults,
   stepsOf,
   validateDraft,
+  waitsAt,
   type DraftProblem,
   type DraftStep,
   type WorkflowDraft,
 } from './model';
 
-const textareaClass =
-  'w-full resize-y rounded-md border border-input bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30';
+// New steps run on the first instance whose test passed, else the first (audit C-03). A
+// workflow outlives any one chat, so the last thread's instance is not a good guess here.
+function preferredInstance(instances: readonly ProviderInstance[]): string {
+  return instances.find((instance) => instance.status === 'ready')?.id ?? instances[0]?.id ?? '';
+}
 
 // The value a step stores for a skill: its name, or plugin:name for a Claude plugin's skill.
 const skillValue = (skill: Skill): string => skill.invocations.claude.replace(/^\//, '');
@@ -75,15 +94,6 @@ function Problems({ problems }: { problems: readonly DraftProblem[] }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-      {label}
-      {children}
-    </label>
-  );
-}
-
 // Fills the model, effort and permission mode a step leaves empty with what its instance starts
 // with, once the provider has listed its models.
 function useStepDefaults(
@@ -105,6 +115,69 @@ function useStepDefaults(
   }, [instance, models, step.model, step.effort, step.permissionMode, onChange]);
 }
 
+// "Matches 2 files in Demo": the step's globs against the project chosen to run in (D-07).
+function useArtifactMatches(globs: readonly string[], projectId: string | undefined) {
+  const { connection } = useRuntime();
+  const key = globs.join('\n');
+  const [state, setState] = useState<{ key: string; files: readonly string[] }>();
+  useEffect(() => {
+    if (!connection || !projectId || key === '') return undefined;
+    let current = true;
+    connection.request('workflows.matchArtifacts', { projectId, globs: key.split('\n') }).then(
+      (result) => {
+        const files = (result as { files?: unknown }).files;
+        if (current && Array.isArray(files)) {
+          setState({ key: `${projectId}:${key}`, files: files.map(String) });
+        }
+      },
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, [connection, projectId, key]);
+  return state?.key === `${projectId}:${key}` ? state.files : undefined;
+}
+
+// Between two steps (and before the first and after the last): whether the run waits for you
+// there. One toggle per position, so a gate is a visible stop in the chain, not a checkbox.
+function GateDivider({ on, label, onToggle }: { on: boolean; label: string; onToggle(): void }) {
+  return (
+    <li className="group/gate flex items-center gap-2 px-3 py-0.5" data-testid="gate-divider">
+      <span
+        aria-hidden
+        className={cn(
+          'h-px flex-1 border-t',
+          on ? 'border-dashed border-state-needs-you/70' : 'border-transparent',
+        )}
+      />
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost"
+        aria-pressed={on}
+        aria-label={label}
+        onClick={onToggle}
+        className={cn(
+          on
+            ? 'text-foreground [&_svg]:text-state-needs-you'
+            : 'text-muted-foreground opacity-40 group-hover/gate:opacity-100 focus-visible:opacity-100',
+        )}
+      >
+        <HourglassIcon />
+        {on ? 'Waits for you' : 'Add a gate'}
+      </Button>
+      <span
+        aria-hidden
+        className={cn(
+          'h-px flex-1 border-t',
+          on ? 'border-dashed border-state-needs-you/70' : 'border-transparent',
+        )}
+      />
+    </li>
+  );
+}
+
 interface StepEditorProps {
   readonly step: DraftStep;
   readonly index: number;
@@ -113,6 +186,9 @@ interface StepEditorProps {
   readonly skills: readonly Skill[];
   readonly problems: readonly DraftProblem[];
   readonly dragging: boolean;
+  readonly expanded: boolean;
+  readonly runProject: { readonly id: string; readonly name: string } | undefined;
+  onToggle(): void;
   onChange(stepId: string, changes: Partial<DraftStep>): void;
   onRemove(stepId: string): void;
   onMove(from: number, to: number): void;
@@ -129,6 +205,9 @@ function StepEditor({
   skills,
   problems,
   dragging,
+  expanded,
+  runProject,
+  onToggle,
   onChange,
   onRemove,
   onMove,
@@ -136,6 +215,7 @@ function StepEditor({
   onDragEnd,
   onDrop,
 }: StepEditorProps) {
+  const id = useId();
   const instance = instances.find((candidate) => candidate.id === step.providerInstanceId);
   const change = useCallback(
     (changes: Partial<DraftStep>) => onChange(step.id, changes),
@@ -145,7 +225,16 @@ function StepEditor({
   const choices = skillChoices(skills);
   const known = skillKnown(step.skillName, skills);
   const selected = choices.find((skill) => skillValue(skill) === step.skillName);
+  const globs = parseGlobs(step.artifactsText);
+  const matches = useArtifactMatches(globs, runProject?.id);
   const label = `Step ${index + 1}`;
+  const summary = [
+    instance ? providerLabel(instance, instances) : 'No provider',
+    step.model,
+    globs.length > 0 ? `${globs.length} artifact${globs.length === 1 ? '' : 's'}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   return (
     <li
       aria-label={label}
@@ -156,15 +245,15 @@ function StepEditor({
         onDrop(index);
       }}
       className={cn(
-        'flex flex-col gap-2 rounded-md border border-border bg-card p-3',
+        'flex flex-col rounded-md border bg-card',
+        problems.some((problem) => !problem.warning) ? 'border-destructive/60' : 'border-border',
         dragging && 'opacity-50',
       )}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 px-2 py-1.5">
         <span
           draggable
           aria-hidden
-          title="Drag to reorder"
           onDragStart={(event) => {
             event.dataTransfer.effectAllowed = 'move';
             event.dataTransfer.setData('text/plain', step.id);
@@ -175,132 +264,142 @@ function StepEditor({
         >
           <GripVerticalIcon className="size-4" />
         </span>
-        <span className="text-xs font-medium">{label}</span>
-        <Combobox
-          label={`${label} skill`}
+        <Button
+          type="button"
+          variant="ghost"
           size="sm"
-          className="min-w-48"
-          value={step.skillName}
-          placeholder="Pick a skill…"
-          searchPlaceholder="Search skills…"
-          emptyText="No matching skill."
-          choices={[
-            ...(step.skillName !== '' && !known
-              ? [{ value: step.skillName, label: `${step.skillName} (not found)` }]
-              : []),
-            ...choices.map((skill) => ({
-              value: skillValue(skill),
-              label: `${skillValue(skill)}${skill.manualOnly ? ' (manual only)' : ''}`,
-            })),
-          ]}
-          onValueChange={(skillName) => change({ skillName })}
-        />
-        <div className="ml-auto flex items-center gap-1">
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            aria-label={`Move ${label.toLowerCase()} up`}
+          aria-expanded={expanded}
+          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${label.toLowerCase()}`}
+          onClick={onToggle}
+          className="h-7 min-w-0 flex-1 justify-start gap-2 px-1.5 font-normal"
+        >
+          <ChevronRightIcon
+            className={cn('size-4 shrink-0 transition-transform', expanded && 'rotate-90')}
+          />
+          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{index + 1}</span>
+          <span className="shrink-0 font-medium">{step.skillName || 'Pick a skill'}</span>
+          <span className="min-w-0 truncate text-xs text-muted-foreground">{summary}</span>
+        </Button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <IconButton
+            label={`Move ${label.toLowerCase()} up`}
+            size="icon-xs"
             disabled={index === 0}
             onClick={() => onMove(index, index - 1)}
           >
             <ArrowUpIcon />
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            aria-label={`Move ${label.toLowerCase()} down`}
+          </IconButton>
+          <IconButton
+            label={`Move ${label.toLowerCase()} down`}
+            size="icon-xs"
             disabled={index === count - 1}
             onClick={() => onMove(index, index + 1)}
           >
             <ArrowDownIcon />
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            aria-label={`Remove ${label.toLowerCase()}`}
+          </IconButton>
+          <IconButton
+            label={`Remove ${label.toLowerCase()}`}
+            size="icon-xs"
+            className="text-destructive hover:text-destructive"
             onClick={() => onRemove(step.id)}
           >
             <Trash2Icon />
-          </Button>
+          </IconButton>
         </div>
       </div>
-      {selected && selected.description !== '' && (
-        <p className="pl-6 text-xs text-muted-foreground">{selected.description}</p>
+      {expanded && (
+        <div className="flex flex-col gap-4 border-t border-border px-3 pt-3 pb-3 pl-9">
+          <FormField
+            id={`${id}-skill`}
+            label="Skill"
+            help={selected && selected.description !== '' ? selected.description : undefined}
+          >
+            <Combobox
+              label={`${label} skill`}
+              size="sm"
+              className="w-full max-w-sm"
+              value={step.skillName}
+              placeholder="Pick a skill…"
+              searchPlaceholder="Search skills…"
+              emptyText="No matching skill."
+              choices={[
+                ...(step.skillName !== '' && !known
+                  ? [{ value: step.skillName, label: step.skillName, detail: 'Not found' }]
+                  : []),
+                ...choices.map((skill) => ({
+                  value: skillValue(skill),
+                  label: skillValue(skill),
+                  ...(skill.manualOnly ? { detail: 'Manual only' } : {}),
+                })),
+              ]}
+              onValueChange={(skillName) => change({ skillName })}
+            />
+          </FormField>
+          <FormField id={`${id}-agent`} label="Agent" group>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <ChoiceSelect
+                label={`${label} provider instance`}
+                size="sm"
+                className="w-auto data-[size=sm]:h-7"
+                value={step.providerInstanceId}
+                placeholder="Pick a provider…"
+                choices={instances.map((candidate) => ({
+                  value: candidate.id,
+                  label: providerLabel(candidate, instances),
+                }))}
+                onValueChange={(providerInstanceId) => change({ providerInstanceId })}
+              />
+              {instance && (
+                <ThreadSettings
+                  providerInstanceId={instance.id}
+                  kind={instance.kind}
+                  value={{
+                    model: step.model ?? '',
+                    effort: step.effort ?? '',
+                    permissionMode: step.permissionMode ?? '',
+                  }}
+                  onChange={change}
+                />
+              )}
+            </div>
+          </FormField>
+          <div className="grid gap-4 md:grid-cols-2">
+            <FormField
+              id={`${id}-prompt`}
+              label="Extra prompt"
+              help="Sent after the skill invocation."
+            >
+              <Textarea
+                aria-label={`${label} extra prompt`}
+                rows={2}
+                className="text-xs"
+                value={step.extraPrompt ?? ''}
+                onChange={(event) => change({ extraPrompt: event.target.value })}
+              />
+            </FormField>
+            <FormField
+              id={`${id}-artifacts`}
+              label="Expected artifacts"
+              help={
+                runProject && globs.length > 0 && matches
+                  ? `Matches ${matches.length} file${matches.length === 1 ? '' : 's'} in ${runProject.name} now.`
+                  : 'One path or glob per line, relative to the project folder.'
+              }
+            >
+              <Textarea
+                aria-label={`${label} expected artifacts`}
+                rows={2}
+                className="font-mono text-xs placeholder:font-sans"
+                value={step.artifactsText}
+                placeholder="For example docs/*.md"
+                onChange={(event) => change({ artifactsText: event.target.value })}
+              />
+            </FormField>
+          </div>
+        </div>
       )}
-      <div className="flex flex-wrap items-center gap-1.5 pl-6">
-        <ChoiceSelect
-          label={`${label} provider instance`}
-          size="sm"
-          className="w-auto data-[size=sm]:h-7"
-          value={step.providerInstanceId}
-          placeholder="Pick a provider…"
-          choices={instances.map((candidate) => ({
-            value: candidate.id,
-            label: `${candidate.name} (${candidate.kind})`,
-          }))}
-          onValueChange={(providerInstanceId) => change({ providerInstanceId })}
-        />
-        {instance && (
-          <ThreadSettings
-            providerInstanceId={instance.id}
-            kind={instance.kind}
-            value={{
-              model: step.model ?? '',
-              effort: step.effort ?? '',
-              permissionMode: step.permissionMode ?? '',
-            }}
-            onChange={change}
-          />
-        )}
-      </div>
-      <div className="flex flex-wrap items-center gap-4 pl-6 text-xs">
-        <label className="flex items-center gap-1.5">
-          <Checkbox
-            checked={step.gateBefore}
-            onCheckedChange={(checked) => change({ gateBefore: checked === true })}
-            aria-label={`${label} gate before`}
-          />
-          Gate before
-        </label>
-        <label className="flex items-center gap-1.5">
-          <Checkbox
-            checked={step.gateAfter}
-            onCheckedChange={(checked) => change({ gateAfter: checked === true })}
-            aria-label={`${label} gate after`}
-          />
-          Gate after
-        </label>
-      </div>
-      <div className="grid gap-2 pl-6 md:grid-cols-2">
-        <Field label="Extra prompt">
-          <textarea
-            aria-label={`${label} extra prompt`}
-            rows={2}
-            className={textareaClass}
-            value={step.extraPrompt ?? ''}
-            placeholder="Added after the skill invocation"
-            onChange={(event) => change({ extraPrompt: event.target.value })}
-          />
-        </Field>
-        <Field label="Expected artifacts (one glob per line)">
-          <textarea
-            aria-label={`${label} expected artifacts`}
-            rows={2}
-            className={cn(textareaClass, 'font-mono')}
-            value={step.artifactsText}
-            placeholder="intents/*/spec.md"
-            onChange={(event) => change({ artifactsText: event.target.value })}
-          />
-        </Field>
-      </div>
       {problems.length > 0 && (
-        <div className="pl-6">
+        <div className="px-3 pb-2 pl-9">
           <Problems problems={problems} />
         </div>
       )}
@@ -308,83 +407,36 @@ function StepEditor({
   );
 }
 
-function RunPanel({ workflow, runnable }: { workflow: Workflow; runnable: boolean }) {
-  const send = useDispatch();
-  const navigate = useNavigate();
+function RunsOfWorkflow({ workflow }: { workflow: Workflow }) {
   const projects = useTopic('projects') ?? [];
   const runs = (useTopic('workflowRuns') ?? []).filter((run) => run.workflowId === workflow.id);
-  const [projectId, setProjectId] = useState<string>('');
-  const [error, setError] = useState<string>();
-  const project = projects.find((candidate) => candidate.id === projectId) ?? projects[0];
-
-  const start = async () => {
-    if (!project) return;
-    setError(undefined);
-    const runId = globalThis.crypto.randomUUID();
-    try {
-      await send({
-        type: 'workflowRun.start',
-        runId,
-        workflowId: workflow.id,
-        projectId: project.id,
-      });
-      await navigate({ to: '/workflows/runs/$runId', params: { runId } });
-    } catch (failure) {
-      setError(errorMessage(failure));
-    }
-  };
-
+  const { when } = useDateFormat();
+  if (runs.length === 0) return null;
   return (
-    <section aria-label="Run" className="flex flex-col gap-2 border-t border-border px-4 py-3">
-      <h3 className="text-xs font-medium">Run</h3>
-      <div className="flex flex-wrap items-center gap-2">
-        <ChoiceSelect
-          label="Run in project"
-          size="sm"
-          className="w-auto min-w-40"
-          value={project?.id ?? ''}
-          placeholder="No projects"
-          disabled={projects.length === 0}
-          choices={projects.map((candidate) => ({ value: candidate.id, label: candidate.name }))}
-          onValueChange={setProjectId}
-        />
-        <Button size="sm" disabled={!project || !runnable} onClick={() => void start()}>
-          <PlayIcon />
-          Run now
-        </Button>
-        {!runnable && (
-          <span className="text-xs text-muted-foreground">Save the changes to run them.</span>
-        )}
-        {error && (
-          <span role="alert" className="text-xs text-destructive">
-            {error}
-          </span>
-        )}
-      </div>
-      {runs.length > 0 && (
-        <ul aria-label="Runs of this workflow" className="flex flex-col gap-0.5">
-          {sortRuns(runs).map((run) => (
-            <li key={run.id}>
-              <Link
-                to="/workflows/runs/$runId"
-                params={{ runId: run.id }}
-                className="flex items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-accent"
-              >
-                <span
-                  aria-hidden
-                  className={cn('size-1.5 rounded-full', runStateDotClass[run.state])}
-                />
-                <span>{runStateLabels[run.state]}</span>
-                <span className="text-muted-foreground">
-                  {projects.find((candidate) => candidate.id === run.projectId)?.name ??
-                    run.projectId}{' '}
-                  · {new Date(run.startedAt).toLocaleString()}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
+    <section aria-label="Runs of this workflow" className="mt-6 flex flex-col gap-1">
+      <h3 className="px-2 text-xs font-medium text-muted-foreground">Runs</h3>
+      <ul className="flex flex-col gap-0.5">
+        {sortRuns(runs).map((run) => (
+          <li key={run.id}>
+            <Link
+              to="/workflows/runs/$runId"
+              params={{ runId: run.id }}
+              className="flex items-center gap-2 rounded-md px-2 py-1 text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span
+                aria-hidden
+                className={cn('size-1.5 rounded-full', runStateDotClass[run.state])}
+              />
+              <span>{runStateLabels[run.state]}</span>
+              <span className="text-muted-foreground">
+                {projects.find((candidate) => candidate.id === run.projectId)?.name ??
+                  run.projectId}{' '}
+                · {when(run.startedAt)}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -398,18 +450,28 @@ function Builder({
   initial: WorkflowDraft;
   instances: readonly ProviderInstance[];
 }) {
-  const { connection } = useRuntime();
+  const { connection, settings } = useRuntime();
   const send = useDispatch();
   const navigate = useNavigate();
   const skills = useTopic('skills') ?? [];
+  const projects = useTopic('projects') ?? [];
   const templates = useSetting('workflows.templates');
   const [draft, setDraft] = useState<WorkflowDraft>(initial);
   const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  const [templateName, setTemplateName] = useState<string>();
+  const [templateError, setTemplateError] = useState<string>();
   const [dragIndex, setDragIndex] = useState<number>();
   const [refreshing, setRefreshing] = useState(false);
+  const [projectId, setProjectId] = useState<string>('');
+  const [starting, setStarting] = useState(false);
+  // New workflows open every step; an existing one shows the chain, one line per step.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
+    () => new Set(workflow ? [] : initial.steps.map((step) => step.id)),
+  );
 
   const problems = validateDraft(draft, instances, skills);
   const shown = attempted ? problems : problems.filter((problem) => problem.warning);
@@ -419,25 +481,67 @@ function Builder({
     workflow.name !== draft.name.trim() ||
     workflow.templateKind !== draft.templateKind ||
     !sameJson(workflow.steps, steps);
-  const firstInstance = instances[0]?.id ?? '';
+  const firstInstance = preferredInstance(instances);
+  const runProject = projects.find((candidate) => candidate.id === projectId) ?? projects[0];
+  const basedOn = templates.find((candidate) => candidate.kind === draft.templateKind);
+  const blockedReason =
+    instances.length === 0
+      ? 'Add a provider instance first'
+      : draft.name.trim() === ''
+        ? 'Give the workflow a name first'
+        : draft.steps.length === 0
+          ? 'Add at least one step first'
+          : undefined;
 
-  const [changeStep] = useState(
-    () => (stepId: string, changes: Partial<DraftStep>) =>
-      setDraft((current) => ({
-        ...current,
-        steps: current.steps.map((step) =>
-          step.id === stepId ? applyStepChanges(step, changes) : step,
-        ),
-      })),
-  );
+  const [changeStep] = useState(() => (stepId: string, changes: Partial<DraftStep>) => {
+    setSaved(false);
+    setDraft((current) => ({
+      ...current,
+      steps: current.steps.map((step) =>
+        step.id === stepId ? applyStepChanges(step, changes) : step,
+      ),
+    }));
+  });
 
+  const edit = (next: (current: WorkflowDraft) => WorkflowDraft) => {
+    setSaved(false);
+    setDraft(next);
+  };
   const move = (from: number, to: number) =>
-    setDraft((current) => ({ ...current, steps: moveStep(current.steps, from, to) }));
+    edit((current) => ({ ...current, steps: moveStep(current.steps, from, to) }));
+  const toggle = (stepId: string) =>
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(stepId)) next.delete(stepId);
+      else next.add(stepId);
+      return next;
+    });
+
+  const applyTemplate = (chosen: WorkflowTemplate | undefined) => {
+    const next = chosen
+      ? draftFromTemplate(chosen, firstInstance, draft.name)
+      : { ...emptyDraft, name: draft.name };
+    edit(() => next);
+    setExpanded(new Set(workflow ? [] : next.steps.map((step) => step.id)));
+    setReplacing(false);
+  };
 
   const save = async () => {
     setAttempted(true);
     setError(undefined);
-    if (blocking(problems).length > 0) return;
+    if (blocking(problems).length > 0) {
+      // Open the steps that need attention.
+      setExpanded(
+        (current) =>
+          new Set([
+            ...current,
+            ...problems.flatMap((problem) =>
+              problem.stepId && !problem.warning ? [problem.stepId] : [],
+            ),
+          ]),
+      );
+      return;
+    }
     setSaving(true);
     try {
       if (workflow) {
@@ -448,6 +552,7 @@ function Builder({
           templateKind: draft.templateKind,
           steps,
         });
+        setSaved(true);
       } else {
         const workflowId = globalThis.crypto.randomUUID();
         await send({
@@ -457,6 +562,7 @@ function Builder({
           ...(draft.templateKind === null ? {} : { templateKind: draft.templateKind }),
           steps,
         });
+        notify.success(`Workflow ${draft.name.trim()} created`);
         await navigate({ to: '/workflows/$workflowId', params: { workflowId } });
       }
       setAttempted(false);
@@ -467,15 +573,53 @@ function Builder({
     }
   };
 
+  // Deleted at once; Undo puts the same row back (owner decision F-9).
   const remove = async () => {
     if (!workflow) return;
     try {
       await send({ type: 'workflow.delete', workflowId: workflow.id });
+      offerUndo({
+        message: `Workflow ${workflow.name} deleted`,
+        undoneMessage: `Workflow ${workflow.name} restored`,
+        undo: () => send({ type: 'workflow.restore', workflow }),
+      });
       await navigate({ to: '/workflows' });
     } catch (failure) {
       setError(errorMessage(failure));
-      setConfirmDelete(false);
     }
+  };
+
+  const run = async () => {
+    if (!workflow || !runProject) return;
+    setError(undefined);
+    setStarting(true);
+    const runId = globalThis.crypto.randomUUID();
+    try {
+      await send({
+        type: 'workflowRun.start',
+        runId,
+        workflowId: workflow.id,
+        projectId: runProject.id,
+      });
+      await navigate({ to: '/workflows/runs/$runId', params: { runId } });
+    } catch (failure) {
+      setError(errorMessage(failure));
+      setStarting(false);
+    }
+  };
+
+  // Templates are edited here as well as in Settings (audit E-05); the JSON editor there stays
+  // for what this does not cover, such as deleting one.
+  const saveTemplate = async () => {
+    const result = saveAsTemplate(templates, draft, templateName ?? '');
+    if (typeof result === 'string') return setTemplateError(result);
+    const written = await settings.write('workflows.templates', result.templates);
+    if (!written.ok) return setTemplateError(written.issues.join('; '));
+    notify.success(`Template ${(templateName ?? '').trim()} saved`, {
+      description: 'New workflows can start from it.',
+    });
+    setTemplateName(undefined);
+    setTemplateError(undefined);
   };
 
   const refreshSkills = async () => {
@@ -490,6 +634,22 @@ function Builder({
     }
   };
 
+  const saveButton = (
+    <Button
+      type="submit"
+      size="sm"
+      variant={workflow ? 'outline' : 'default'}
+      disabled={saving || !dirty || blockedReason !== undefined}
+    >
+      {workflow ? 'Save' : 'Create workflow'}
+    </Button>
+  );
+  const runBlocked = !runProject
+    ? 'Add a project to run in'
+    : dirty
+      ? 'Save the changes to run them'
+      : undefined;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <form
@@ -500,107 +660,237 @@ function Builder({
           void save();
         }}
       >
-        <header className="flex shrink-0 flex-col gap-2 border-b border-border px-4 py-2">
-          <div className="flex items-center gap-2">
+        <header className="flex shrink-0 flex-col gap-3 border-b border-border px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-medium">{workflow ? 'Edit workflow' : 'New workflow'}</h2>
-            <div className="ml-auto flex items-center gap-1">
-              {workflow &&
-                (confirmDelete ? (
-                  <>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => void remove()}
-                    >
-                      Delete {workflow.name}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setConfirmDelete(false)}
-                    >
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    type="button"
+            {workflow && basedOn && (
+              <span data-testid="based-on" className="text-xs text-muted-foreground">
+                Based on {basedOn.name}
+              </span>
+            )}
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {saved && !dirty && (
+                <span role="status" className="text-xs text-muted-foreground">
+                  Saved
+                </span>
+              )}
+              {workflow && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => void remove()}
+                >
+                  <Trash2Icon />
+                  Delete
+                </Button>
+              )}
+              {blockedReason ? (
+                <WithTooltip label={blockedReason}>
+                  <span tabIndex={0} className="rounded-md">
+                    {saveButton}
+                  </span>
+                </WithTooltip>
+              ) : (
+                saveButton
+              )}
+              {workflow && (
+                <div role="group" aria-label="Run" className="flex items-center">
+                  <ChoiceSelect
+                    label="Run in project"
                     size="sm"
-                    variant="ghost"
-                    onClick={() => setConfirmDelete(true)}
-                  >
-                    <Trash2Icon />
-                    Delete
-                  </Button>
-                ))}
-              <Button type="submit" size="sm" disabled={saving || !dirty}>
-                {workflow ? 'Save' : 'Create workflow'}
+                    className="w-auto max-w-40 rounded-r-none border-r-0"
+                    value={runProject?.id ?? ''}
+                    placeholder="No projects"
+                    disabled={projects.length === 0}
+                    choices={projects.map((candidate) => ({
+                      value: candidate.id,
+                      label: candidate.name,
+                    }))}
+                    onValueChange={setProjectId}
+                  />
+                  <WithTooltip label={runBlocked ?? `Run in ${runProject?.name ?? ''}`}>
+                    <span tabIndex={runBlocked ? 0 : -1} className="rounded-md">
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="rounded-l-none"
+                        disabled={runBlocked !== undefined || starting}
+                        onClick={() => void run()}
+                      >
+                        <PlayIcon />
+                        Run now
+                      </Button>
+                    </span>
+                  </WithTooltip>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-end gap-4">
+            <FormField id="workflow-name" label="Workflow name" className="w-72">
+              <Input
+                autoFocus={!workflow}
+                value={draft.name}
+                placeholder={workflow ? undefined : 'For example Feature: search panel'}
+                onChange={(event) => edit((current) => ({ ...current, name: event.target.value }))}
+                className="h-8"
+              />
+            </FormField>
+            {!workflow && (
+              <FormField id="workflow-template" label="Start from" group>
+                <div role="group" aria-label="Start from template" className="flex gap-1">
+                  {[undefined, ...templates].map((candidate) => {
+                    const pressed =
+                      candidate === undefined
+                        ? draft.templateKind === null
+                        : draft.templateKind === candidate.kind;
+                    const button = (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={pressed ? 'secondary' : 'outline'}
+                        aria-pressed={pressed}
+                        onClick={() => applyTemplate(candidate)}
+                      >
+                        {candidate?.name ?? 'Blank'}
+                      </Button>
+                    );
+                    return candidate ? (
+                      <WithTooltip
+                        key={candidate.kind}
+                        label={candidate.steps.map((step) => step.skillName).join(' → ')}
+                      >
+                        {button}
+                      </WithTooltip>
+                    ) : (
+                      <span key="blank">{button}</span>
+                    );
+                  })}
+                </div>
+              </FormField>
+            )}
+            <div className="ml-auto flex items-center gap-1">
+              {workflow && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  aria-expanded={replacing}
+                  onClick={() => setReplacing(!replacing)}
+                >
+                  <ReplaceIcon />
+                  Replace steps with template…
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                aria-expanded={templateName !== undefined}
+                disabled={draft.steps.length === 0}
+                onClick={() =>
+                  setTemplateName(
+                    templateName === undefined ? (basedOn?.name ?? draft.name) : undefined,
+                  )
+                }
+              >
+                <BookmarkPlusIcon />
+                Save as template…
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={!connection || refreshing}
+                onClick={() => void refreshSkills()}
+              >
+                <RefreshCwIcon className={cn(refreshing && 'animate-spin')} />
+                Refresh skills
               </Button>
             </div>
           </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <Field label="Name">
-              <Input
-                aria-label="Workflow name"
-                value={draft.name}
-                onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-                className="h-8 w-64"
-              />
-            </Field>
-            <Field label="Template kind">
-              <ChoiceSelect
-                label="Template kind"
-                size="sm"
-                className="w-auto min-w-32"
-                value={draft.templateKind ?? ''}
-                choices={[
-                  { value: '', label: 'None' },
-                  ...(draft.templateKind !== null &&
-                  !templates.some((template) => template.kind === draft.templateKind)
-                    ? [{ value: draft.templateKind, label: draft.templateKind }]
-                    : []),
-                  ...templates.map((template) => ({ value: template.kind, label: template.name })),
-                ]}
-                onValueChange={(kind) =>
-                  setDraft({ ...draft, templateKind: kind === '' ? null : kind })
-                }
-              />
-            </Field>
+          {templateName !== undefined && (
             <div
               role="group"
-              aria-label="Start from template"
-              className="flex items-center gap-1 pb-0.5"
+              aria-label="Save as template"
+              className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm"
             >
-              <span className="text-[11px] text-muted-foreground">Start from</span>
-              {templates.map((template) => (
+              <FormField
+                id="template-name"
+                label="Template name"
+                help="Saves the skills, gates and expected artifacts. A template with this name is replaced."
+                error={templateError}
+                className="min-w-64 flex-1"
+              >
+                <Input
+                  autoFocus
+                  value={templateName}
+                  onChange={(event) => {
+                    setTemplateName(event.target.value);
+                    setTemplateError(undefined);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void saveTemplate();
+                    }
+                  }}
+                  className="h-8"
+                />
+              </FormField>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setTemplateName(undefined)}
+              >
+                Cancel
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => void saveTemplate()}>
+                Save template
+              </Button>
+            </div>
+          )}
+          {replacing && workflow && (
+            <div
+              role="group"
+              aria-label="Replace steps with template"
+              className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm"
+            >
+              <span className="min-w-0 flex-1">
+                This replaces all {draft.steps.length} steps. Nothing changes until you save.
+              </span>
+              {templates.map((candidate) => (
                 <Button
-                  key={template.kind}
+                  key={candidate.kind}
                   type="button"
                   size="sm"
                   variant="outline"
-                  title={template.steps.map((step) => step.skillName).join(' → ')}
-                  onClick={() =>
-                    setDraft(draftFromTemplate(template, firstInstance, workflow ? draft.name : ''))
-                  }
+                  onClick={() => applyTemplate(candidate)}
                 >
-                  {template.name}
+                  {candidate.name}
                 </Button>
               ))}
+              <Button type="button" size="sm" variant="ghost" onClick={() => setReplacing(false)}>
+                Cancel
+              </Button>
             </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="ml-auto"
-              disabled={!connection || refreshing}
-              onClick={() => void refreshSkills()}
-            >
-              <RefreshCwIcon className={cn(refreshing && 'animate-spin')} />
-              Refresh skills
-            </Button>
-          </div>
+          )}
+          {instances.length === 0 && (
+            <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
+              <PlugIcon aria-hidden className="size-3.5" />
+              Every step runs on a provider instance.{' '}
+              <Link
+                to="/settings/$group"
+                params={{ group: 'providers' }}
+                className="text-foreground underline underline-offset-2"
+              >
+                Add a provider instance
+              </Link>
+            </p>
+          )}
           <Problems problems={shown.filter((problem) => problem.stepId === undefined)} />
           {error && (
             <p role="alert" className="text-xs text-destructive">
@@ -609,53 +899,94 @@ function Builder({
           )}
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          <ol aria-label="Steps" className="flex flex-col gap-2">
+          <ol aria-label="Steps" className="flex flex-col">
             {draft.steps.map((step, index) => (
-              <StepEditor
+              <StepPosition
                 key={step.id}
-                step={step}
+                draft={draft}
                 index={index}
-                count={draft.steps.length}
-                instances={instances}
-                skills={skills}
-                problems={shown.filter((problem) => problem.stepId === step.id)}
-                dragging={dragIndex === index}
-                onChange={changeStep}
-                onRemove={(stepId) =>
-                  setDraft((current) => ({
-                    ...current,
-                    steps: current.steps.filter((candidate) => candidate.id !== stepId),
-                  }))
-                }
-                onMove={move}
-                onDragStart={setDragIndex}
-                onDragEnd={() => setDragIndex(undefined)}
-                onDrop={(to) => {
-                  if (dragIndex !== undefined) move(dragIndex, to);
-                  setDragIndex(undefined);
-                }}
-              />
+                onToggleGate={() => edit((current) => setGate(current, index))}
+              >
+                <StepEditor
+                  step={step}
+                  index={index}
+                  count={draft.steps.length}
+                  instances={instances}
+                  skills={skills}
+                  problems={shown.filter((problem) => problem.stepId === step.id)}
+                  dragging={dragIndex === index}
+                  expanded={expanded.has(step.id)}
+                  runProject={runProject}
+                  onToggle={() => toggle(step.id)}
+                  onChange={changeStep}
+                  onRemove={(stepId) =>
+                    edit((current) => ({
+                      ...current,
+                      steps: current.steps.filter((candidate) => candidate.id !== stepId),
+                    }))
+                  }
+                  onMove={move}
+                  onDragStart={setDragIndex}
+                  onDragEnd={() => setDragIndex(undefined)}
+                  onDrop={(to) => {
+                    if (dragIndex !== undefined) move(dragIndex, to);
+                    setDragIndex(undefined);
+                  }}
+                />
+              </StepPosition>
             ))}
+            {draft.steps.length > 0 && (
+              <GateDivider
+                on={waitsAt(draft, draft.steps.length)}
+                label="Gate after the last step"
+                onToggle={() => edit((current) => setGate(current, current.steps.length))}
+              />
+            )}
           </ol>
           <Button
             type="button"
             size="sm"
             variant="outline"
             className="mt-2"
-            onClick={() =>
-              setDraft((current) => ({
-                ...current,
-                steps: [...current.steps, newStep(firstInstance)],
-              }))
-            }
+            onClick={() => {
+              const step = newStep(firstInstance);
+              edit((current) => ({ ...current, steps: [...current.steps, step] }));
+              setExpanded((current) => new Set([...current, step.id]));
+            }}
           >
             <PlusIcon />
             Add step
           </Button>
+          {workflow && <RunsOfWorkflow workflow={workflow} />}
         </div>
       </form>
-      {workflow && <RunPanel workflow={workflow} runnable={!dirty} />}
     </div>
+  );
+}
+
+// The gate before a step, then the step.
+function StepPosition({
+  draft,
+  index,
+  onToggleGate,
+  children,
+}: {
+  draft: WorkflowDraft;
+  index: number;
+  onToggleGate(): void;
+  children: ReactNode;
+}) {
+  return (
+    <>
+      <GateDivider
+        on={waitsAt(draft, index)}
+        label={
+          index === 0 ? 'Gate before step 1' : `Gate between step ${index} and step ${index + 1}`
+        }
+        onToggle={onToggleGate}
+      />
+      {children}
+    </>
   );
 }
 
@@ -665,7 +996,7 @@ export function NewWorkflowView({ template }: { template: string | undefined }) 
   const templates = useSetting('workflows.templates');
   if (!instances) return null;
   const chosen = templates.find((candidate) => candidate.kind === template);
-  const initial = chosen ? draftFromTemplate(chosen, instances[0]?.id ?? '', '') : emptyDraft;
+  const initial = chosen ? draftFromTemplate(chosen, preferredInstance(instances), '') : emptyDraft;
   return (
     <Builder key={template ?? ''} workflow={undefined} initial={initial} instances={instances} />
   );
@@ -678,12 +1009,16 @@ export function EditWorkflowView({ workflowId }: { workflowId: string }) {
   const workflow = workflows.find((candidate) => candidate.id === workflowId);
   if (!workflow) {
     return (
-      <section className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
-        <h2 className="text-sm font-medium">Workflow not found</h2>
-        <Link to="/workflows" className="text-xs text-muted-foreground underline">
-          Back to the workflows
-        </Link>
-      </section>
+      <EmptyState
+        icon={SearchXIcon}
+        title="Workflow not found"
+        description="It may have been deleted."
+        action={
+          <Button asChild size="sm" variant="outline">
+            <Link to="/workflows">Back to the workflows</Link>
+          </Button>
+        }
+      />
     );
   }
   return (

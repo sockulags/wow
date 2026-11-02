@@ -100,6 +100,13 @@ export function decideWorkflow(
         { kind: 'workflow.deleted', aggregate: workflow.id, payload: { workflowId: workflow.id } },
       ];
     }
+    case 'workflow.restore': {
+      const { workflow } = command;
+      if (read.workflow(workflow.id)) {
+        throw new CommandRejected('conflict', `Workflow ${workflow.id} already exists`);
+      }
+      return [{ kind: 'workflow.created', aggregate: workflow.id, payload: workflow }];
+    }
     case 'workflowRun.start':
       return startRunEvents(command.type, command, read, context);
     case 'workflowRun.continue':

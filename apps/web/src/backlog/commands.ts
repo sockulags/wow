@@ -53,10 +53,12 @@ export function backlogCommands({ items, openItem }: BacklogCommandData): AppCom
   for (const item of items) {
     commands.push({
       id: `backlogItem.${item.id}`,
-      title: `Backlog: ${item.title}`,
+      title: item.title,
       value: `Backlog ${item.title} ${item.tags.join(' ')} ${item.id}`,
       group: 'Backlog',
       keywords: ['backlog', backlogStateLabels[item.state].toLowerCase(), ...item.tags],
+      detail: `Backlog item · ${backlogStateLabels[item.state]}`,
+      recentAt: item.createdAt,
       run: ({ navigate }) => void navigate({ to: '/backlog/$itemId', params: { itemId: item.id } }),
     });
   }

@@ -83,6 +83,13 @@ export function decideBacklog(
       }
       return [{ kind: 'backlog.deleted', aggregate: item.id, payload: { backlogItemId: item.id } }];
     }
+    case 'backlog.restore': {
+      const { item } = command;
+      if (read.backlogItem(item.id)) {
+        throw new CommandRejected('conflict', `Backlog item ${item.id} already exists`);
+      }
+      return [{ kind: 'backlog.created', aggregate: item.id, payload: item }];
+    }
     case 'backlog.plan': {
       const item = requireItem(read, command.backlogItemId);
       if (read.backlogItemHasLiveRun(item.id)) {

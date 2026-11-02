@@ -189,7 +189,10 @@ test.describe('triggers', () => {
       .getByRole('link', { name: 'Chat' })
       .click();
     await expect(
-      page.getByRole('region', { name: 'Needs you' }).getByText('Bug e2e: deliver-work'),
+      // A run's thread is listed by its step, with the workflow on the second line.
+      page
+        .getByRole('region', { name: 'Needs you' })
+        .getByRole('link', { name: /^deliver-work Bug e2e · / }),
     ).toBeVisible();
 
     // Deleting the card asks whether to stop the run; the thread stays.
