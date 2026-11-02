@@ -27,6 +27,11 @@ const port = Number(process.env['WOW_E2E_PORT'] ?? e2ePort);
 const outlookControlPort = Number(
   process.env['WOW_E2E_OUTLOOK_CONTROL_PORT'] ?? e2eOutlookControlPort,
 );
+// The trigger tests restart the server on the same home (WOW_E2E_KEEP_HOME) with its clock moved
+// ahead (WOW_E2E_CLOCK_OFFSET_SECONDS), so a trigger's time passes while it is down without
+// the test waiting for it.
+const keepHome = process.env['WOW_E2E_KEEP_HOME'] === '1';
+const clockOffsetMs = Number(process.env['WOW_E2E_CLOCK_OFFSET_SECONDS'] ?? '0') * 1000;
 
 // Starts the wow server for the chat tests with a scripted mock provider. The prompt picks the
 // scenario: "approve" asks for an approval, "question" asks a question, "wait" streams a little
@@ -148,7 +153,7 @@ const chatScript: MockScript = (command) => {
 // come back through the control port below.
 const outlook = new MockOutlookSource({ fixtures: await loadFixtures() });
 
-await rm(home, { recursive: true, force: true });
+if (!keepHome) await rm(home, { recursive: true, force: true });
 // Provider detection looks at the server's PATH; the mock adapters never run these files.
 await mkdir(e2eBinDir(home), { recursive: true });
 for (const name of ['claude', 'codex']) {
@@ -178,6 +183,7 @@ const server = await startServer({
   home,
   port,
   userHome,
+  ...(clockOffsetMs === 0 ? {} : { clock: () => new Date(Date.now() + clockOffsetMs) }),
   env: {
     ...process.env,
     WOW_PROVIDERS: '',
@@ -231,6 +237,10 @@ server.engine.dispatch('seed-project', {
   name: 'Demo',
   cwd: home,
 });
+
+// Seeding again after a restart repeats the same command ids, which the server answers as
+// duplicates. The trigger tests wait for this line.
+process.stdout.write('wow e2e server ready\n');
 
 const stop = () => {
   control.close();

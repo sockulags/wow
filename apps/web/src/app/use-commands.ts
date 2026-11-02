@@ -29,6 +29,8 @@ export function useCommands(): {
   const runs = useTopic('workflowRuns');
   const templates = useSetting('workflows.templates');
   const calendarItems = useTopic('calendarItems');
+  const triggers = useTopic('triggers');
+  const schedulerPaused = useSetting('scheduler.paused');
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
     [pathname, locationSearch],
@@ -39,6 +41,8 @@ export function useCommands(): {
       ...calendarCommands({
         search: calendarSearch,
         cards: (calendarItems ?? []).filter((item) => item.source === 'local'),
+        triggers: triggers ?? [],
+        schedulerPaused,
       }),
       ...chatCommands({
         threads: threads ?? [],
@@ -67,6 +71,8 @@ export function useCommands(): {
       openRunId,
       calendarItems,
       calendarSearch,
+      triggers,
+      schedulerPaused,
     ],
   );
   const context = useMemo(

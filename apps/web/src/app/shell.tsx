@@ -4,6 +4,7 @@ import { useLayoutEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { ProviderDialogs } from '@/providers/provider-dialogs';
 import { formatBinding } from './keybindings';
+import { Toaster } from './notifications';
 import { CommandPalette } from './palette';
 import { useLayout, useRuntime, useSetting } from './runtime';
 import { sections } from './sections';
@@ -105,6 +106,7 @@ export function Shell() {
       {rightPanelOpen && <RightPanel />}
       <CommandPalette commands={commands} context={context} />
       <ProviderDialogs />
+      <Toaster />
     </div>
   );
 }

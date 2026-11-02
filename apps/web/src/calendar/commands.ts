@@ -1,5 +1,5 @@
-import type { CalendarItem } from '@wow/contracts';
-import { settingValue, type SettingValues } from '@wow/client-runtime';
+import type { CalendarItem, Trigger } from '@wow/contracts';
+import { dispatch, settingValue, type SettingValues } from '@wow/client-runtime';
 import type { AppCommand, CommandContext } from '@/app/commands';
 import { stepDays, type CalendarViewKind } from './layout';
 import { anchorDate, todayIn, type CalendarSearch } from './search';
@@ -41,10 +41,26 @@ export function newCardRange(
 
 export const cardTitle = (card: CalendarItem): string => card.title || 'Untitled card';
 
+// Missed cards whose trigger offers a one-click "Run now" (missed policy `mark`, spec 12).
+export function runNowCardIds(
+  cards: readonly CalendarItem[],
+  triggers: readonly Trigger[],
+): ReadonlySet<string> {
+  const missed = new Set(cards.filter((card) => card.state === 'missed').map((card) => card.id));
+  return new Set(
+    triggers
+      .filter((trigger) => trigger.state === 'missed' && trigger.offerRunNow)
+      .map((trigger) => trigger.calendarItemId)
+      .filter((id) => missed.has(id)),
+  );
+}
+
 export interface CalendarCommandData {
   // The calendar's URL state when it is the open view, else undefined.
   readonly search: CalendarSearch | undefined;
   readonly cards: readonly CalendarItem[];
+  readonly triggers: readonly Trigger[];
+  readonly schedulerPaused: boolean;
 }
 
 const zoneSetting = ({ settings }: CommandContext) =>
@@ -52,7 +68,12 @@ const zoneSetting = ({ settings }: CommandContext) =>
 
 // Palette commands for the calendar (spec 7, 22). Today, next, previous and the view switches only
 // exist while the calendar is open, so their plain-key shortcuts do nothing elsewhere.
-export function calendarCommands({ search, cards }: CalendarCommandData): AppCommand[] {
+export function calendarCommands({
+  search,
+  cards,
+  triggers,
+  schedulerPaused,
+}: CalendarCommandData): AppCommand[] {
   const commands: AppCommand[] = [];
   if (search) {
     const view: CalendarViewKind = search.view ?? 'week';
@@ -138,7 +159,35 @@ export function calendarCommands({ search, cards }: CalendarCommandData): AppCom
         if (connection) void connection.request('outlook.refresh', {}).catch(() => undefined);
       },
     },
+    {
+      id: 'scheduler.togglePaused',
+      title: schedulerPaused ? 'Resume scheduler' : 'Pause scheduler',
+      group: 'Actions',
+      keywords: ['scheduler', 'triggers', schedulerPaused ? 'resume' : 'pause'],
+      run: ({ settings }) => void settings.write('scheduler.paused', !schedulerPaused),
+    },
   );
+
+  const runNow = runNowCardIds(cards, triggers);
+  for (const card of cards) {
+    if (!runNow.has(card.id)) continue;
+    commands.push({
+      id: `card.runNow.${card.id}`,
+      title: `Run now: ${cardTitle(card)}`,
+      value: `Run now ${cardTitle(card)} ${card.id}`,
+      group: 'Cards',
+      keywords: ['missed', 'trigger', 'workflow', 'start'],
+      run: ({ connection }) => {
+        // The outcome shows up on the card, which follows its run.
+        if (!connection) return;
+        void dispatch(connection, {
+          type: 'card.runNow',
+          cardId: card.id,
+          runId: globalThis.crypto.randomUUID(),
+        }).catch(() => undefined);
+      },
+    });
+  }
 
   for (const card of cards) {
     commands.push({
