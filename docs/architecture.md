@@ -453,6 +453,27 @@ without a virtual list. Palette commands: every thread, New thread, Switch provi
 keeps its instance, so this opens a draft on the other instance in the same project or folder) and
 Stop turn while a turn runs.
 
+## Workflow builder and run view
+
+`apps/web/src/workflows`. `/workflows` lists the workflows and their runs (live runs first) next
+to `/workflows/new` (`?template=<kind>` starts from that entry of `workflows.templates`),
+`/workflows/$workflowId` (the builder for a saved workflow plus Run now in a chosen project and
+its runs) or `/workflows/runs/$runId`. The builder edits a local draft: name, template kind, and
+ordered steps reordered by dragging a step's handle or with its move buttons. A step picks a skill
+from the `skills` topic (stored as its name, or `plugin:name` for a Claude plugin's skill), a
+provider instance, and model, effort and permission mode with the chat's pickers; empty ones are
+filled with the instance defaults, else the first listed model. Expected artifact globs are typed
+one per line. Validation needs a name, a step, and per step a skill, an instance, a model, an
+effort and a permission mode; a skill missing from the scan is only a warning, because the server
+invokes unknown skills by name. "Start from" a template replaces the steps; Refresh skills calls
+`skills.refresh`. Run now is offered only for the saved steps. The run view asks
+`workflowRuns.detectArtifacts` when it opens and renders the run row: each step's state, its
+thread link, the expected globs and the found files as `file://` links into the project folder
+with a copy-path button. The gate bar reads the gate the way `pendingGate` does (the current step
+has ended: after it; not started: before it) and offers Continue and Stop; Stop alone while a step
+runs. Palette commands: New workflow, New workflow from each template, Refresh skills, every
+workflow and run, and Continue run and Stop run for the open run.
+
 ## Look
 
 T3 Code is the reference: dark neutral surface, one left sidebar, main area, optional right panel,
@@ -474,6 +495,8 @@ copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
   `apps/web/e2e/server.ts`: the server with a scripted `MockProviderAdapter` registered as the
   claude and codex factories (the prompt picks the scenario), one seeded instance and project,
   and skill rows written straight into the projection until skills discovery dispatches them.
-  Its PATH holds empty stand-in `claude` and `codex` files for `provider.detect`. The settings
+  Its PATH holds empty stand-in `claude` and `codex` files for `provider.detect`. The workflow
+  tests use the same server: its fixture skills cover the Feature template's first steps, and an
+  invented `intents/demo/intent.md` in the project folder is the artifact step 1 finds. The settings
   tests start a second copy in its own home and port (`WOW_E2E_HOME`, `WOW_E2E_PORT`), because
   they add and remove instances and change global settings.

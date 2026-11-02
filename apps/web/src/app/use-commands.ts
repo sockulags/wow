@@ -5,9 +5,10 @@ import { chatCommands } from '@/chat/commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { providerCommands } from '@/providers/commands';
+import { workflowCommands } from '@/workflows/commands';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
 import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
-import { useRuntime } from './runtime';
+import { useRuntime, useSetting } from './runtime';
 
 export function useCommands(): {
   readonly commands: readonly AppCommand[];
@@ -20,6 +21,10 @@ export function useCommands(): {
   const threads = useTopic('threads');
   const instances = useTopic('providerInstances');
   const turns = useTopic('turns', openThreadId);
+  const openRunId = /^\/workflows\/runs\/([^/]+)$/.exec(pathname)?.[1];
+  const workflows = useTopic('workflows');
+  const runs = useTopic('workflowRuns');
+  const templates = useSetting('workflows.templates');
   const staticCommands = useMemo(() => buildCommands(), []);
   const commands = useMemo(
     () => [
@@ -29,10 +34,26 @@ export function useCommands(): {
         openThread: threads?.find((thread) => thread.id === openThreadId),
         running: runningTurn(turns ?? []) !== undefined,
       }),
+      ...workflowCommands({
+        workflows: workflows ?? [],
+        runs: runs ?? [],
+        templates,
+        openRun: runs?.find((run) => run.id === openRunId),
+      }),
       ...providerCommands(instances ?? []),
       ...staticCommands,
     ],
-    [staticCommands, threads, instances, turns, openThreadId],
+    [
+      staticCommands,
+      threads,
+      instances,
+      turns,
+      openThreadId,
+      workflows,
+      runs,
+      templates,
+      openRunId,
+    ],
   );
   const context = useMemo(
     () => ({ navigate, settings, layout, draft, connection }),

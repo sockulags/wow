@@ -11,7 +11,10 @@ import { ChatHome, ChatLayout } from '@/chat/chat-view';
 import { NewThreadView } from '@/chat/new-thread';
 import { ThreadView } from '@/chat/thread-view';
 import { SettingsPage } from '@/settings/settings-page';
-import { BacklogView, CalendarView, NotFoundView, WorkflowsView } from '@/views/empty-views';
+import { BacklogView, CalendarView, NotFoundView } from '@/views/empty-views';
+import { EditWorkflowView, NewWorkflowView } from '@/workflows/builder';
+import { RunView } from '@/workflows/run-view';
+import { WorkflowsHome, WorkflowsLayout } from '@/workflows/workflows-view';
 import { isSettingGroup, settingsByGroup } from './sections';
 import { Shell } from './shell';
 
@@ -71,7 +74,43 @@ const threadRoute = createRoute({
 const workflowsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/workflows',
-  component: WorkflowsView,
+  component: WorkflowsLayout,
+});
+
+const workflowsIndexRoute = createRoute({
+  getParentRoute: () => workflowsRoute,
+  path: '/',
+  component: WorkflowsHome,
+});
+
+const newWorkflowRoute = createRoute({
+  getParentRoute: () => workflowsRoute,
+  path: '/new',
+  // `?template=<kind>` starts the builder from that template of the workflows.templates setting.
+  validateSearch: (search: Record<string, unknown>): { template?: string } =>
+    typeof search['template'] === 'string' ? { template: search['template'] } : {},
+  component: function NewWorkflowRoute() {
+    const { template } = newWorkflowRoute.useSearch();
+    return <NewWorkflowView key={template ?? ''} template={template} />;
+  },
+});
+
+const workflowRunRoute = createRoute({
+  getParentRoute: () => workflowsRoute,
+  path: '/runs/$runId',
+  component: function WorkflowRunRoute() {
+    const { runId } = workflowRunRoute.useParams();
+    return <RunView key={runId} runId={runId} />;
+  },
+});
+
+const workflowRoute = createRoute({
+  getParentRoute: () => workflowsRoute,
+  path: '/$workflowId',
+  component: function WorkflowRoute() {
+    const { workflowId } = workflowRoute.useParams();
+    return <EditWorkflowView key={workflowId} workflowId={workflowId} />;
+  },
 });
 
 const backlogRoute = createRoute({
@@ -102,7 +141,12 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   calendarRoute,
   chatRoute.addChildren([chatIndexRoute, newThreadRoute, threadRoute]),
-  workflowsRoute,
+  workflowsRoute.addChildren([
+    workflowsIndexRoute,
+    newWorkflowRoute,
+    workflowRunRoute,
+    workflowRoute,
+  ]),
   backlogRoute,
   settingsIndexRoute,
   settingsGroupRoute,
