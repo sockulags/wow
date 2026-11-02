@@ -82,7 +82,7 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   them as commands, and applies `scheduler.missedPolicy` (`run` | `mark` | `skip`) once at startup
   for triggers whose time passed while the server was down. Times are stored as UTC ISO strings
   plus the IANA zone they were entered in; `Temporal` polyfill (`@js-temporal/polyfill`) does zone
-  math. Default zone is the system zone.
+  math. Default zone is the system zone. Details in "Scheduler and triggers".
 - **Services, thin transports.** Each feature is a service with an `Effect`-free plain TypeScript
   API; RPC handlers only validate and call services.
 
@@ -112,7 +112,9 @@ workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, sta
                  'waiting'|'done'|'failed'|'stopped'), currentStep, steps(json: StepRun[]),
                  startedAt, endedAt
 triggers         id, calendarItemId, workflowId, runAt, zone, state ('scheduled'|'fired'|'missed'|
-                 'cancelled'), runId?
+                 'cancelled'), runId?, offerRunNow
+notifications    id, at, kind ('started'|'waiting'|'failed'), title, body, path, runId?,
+                 calendarItemId?
 skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
                  'project-agents'|'custom'), manualOnly, invocations(json: {claude, codex})
 settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
@@ -357,9 +359,44 @@ item) or interrupted becomes `workflowRun.stepFailed`. Command ids derive from t
 repeated report is a duplicate. A step with no model, effort or permission mode fails instead of
 starting. At startup the runner subscribes before `ProviderService.recover()`, so a step whose turn
 was running fails with the recovered turn; `recover()` on the runner then settles steps whose turn
-ended unseen or never started. `notify` effects go to `onNotify` listeners; the scheduler unit
-turns them into desktop notifications. `missedTriggerOutcome(policy)` is the engine's table for
-the scheduler's missed policy.
+ended unseen or never started. `notify` effects go to `onNotify` listeners; the orchestrator also
+stores them as notifications (see "Scheduler and triggers"). `missedTriggerOutcome(policy)` is the
+engine's table for the scheduler's missed policy.
+
+## Scheduler and triggers
+
+A local card with a workflow and a project has one trigger, id `<cardId>:trigger`, at its start
+(`core/triggers.ts`). `card.create` and a `card.update` that changes the start, zone, project or
+workflow bring it in line: a start in the future makes it `scheduled`, a start already past makes
+it `missed` with `offerRunNow` (the user placed the card in the past, so it is not run on its own),
+and a card without a workflow or project cancels it. A card that has started a run keeps its fired
+trigger. Every change is one `trigger.set` event with the whole row.
+
+`Scheduler` (`apps/server/src/scheduler/service.ts`) is started last by `startServer` and stopped
+first. Every `scheduler.tickSeconds` it dispatches `trigger.fire {triggerId, runAt, runId}` for each
+`scheduled` trigger whose `runAt` has passed; the orchestrator ignores a trigger that is no longer
+scheduled at that time, so a moved card or a repeated tick fires nothing. At start, and when
+`scheduler.paused` turns off, it dispatches `trigger.applyMissed {policy}` for the due ones instead:
+`run` fires them, `mark` sets the trigger `missed` with `offerRunNow`, `skip` sets it `missed`
+without; the card shows `missed` in both. While paused nothing fires. Firing starts the run with
+the card's project and backlog item through the same code as `workflowRun.start`; a run that cannot
+start (its workflow is gone, say) fires the trigger without a run and fails the card instead of
+retrying every tick. `startServer({clock, schedulerTimers})` lets tests move time and call
+`scheduler.tick()` themselves.
+
+The card follows its run: every run transition with a `calendarItemId` sets the card's `state`
+(`running`, `waiting`, `done`, `failed`, `stopped`) and `runId` with `card.stateChanged`; a card run
+again follows the newer run. `card.runNow {cardId, runId}` starts a run for a card with a workflow
+and project and no live run, and fires its trigger. `card.delete` of a card whose run is running or
+waiting is refused with `conflict` unless it says `stopRun`: `true` stops the run in the same
+command, `false` leaves it going; the threads stay either way.
+
+Notifications are the server's channel to the user. While `scheduler.notifications` is on, the
+orchestrator stores a `notification.sent` row when a trigger starts a run, when a run waits at a
+gate and when a run or a trigger fails; ids derive from the run, step and gate, so a repeated
+transition notifies once. Clients read the `notifications` topic (newest first): the web app shows
+the rows that arrive after its first snapshot as toasts for `scheduler.toastSeconds`, and clicking
+one opens its `path`.
 
 ## Settings registry
 
@@ -392,7 +429,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - outlook: `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`,
   `outlook.mailRail`, `outlook.mailLimit`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
-  `scheduler.paused`
+  `scheduler.paused`, `scheduler.toastSeconds`
 - workflows: `workflows.templates`, `workflows.handoverTemplate`
 - skills: `skills.directories`, `skills.includeClaudePlugins`
 - trackers (U12): `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
@@ -434,7 +471,8 @@ channel when the desktop dies, into the SIGTERM the server entry handles. A serv
 stop in time is killed; one that dies unexpectedly leads to a Restart / Quit dialog.
 
 Tray icon with Open, New thread (`/chat?new=1`), Pause/Resume scheduler and Quit; clicking it
-opens the window. Pause toggles the `scheduler.paused` setting, which the scheduler honours.
+opens the window. Pause toggles the `scheduler.paused` setting, which the scheduler honours; the
+web app's palette has the same Pause/Resume scheduler command.
 `desktop.closeToTray`, `desktop.autostart` (`app.setLoginItemSettings` with `--hidden`, so a login
 start stays in the tray) and `desktop.startMinimized` are settings the desktop follows through the
 `settings` topic. Notifications use Electron's `Notification`, gated by `scheduler.notifications`,
@@ -502,7 +540,11 @@ moves it (also to another day), dragging its lower edge resizes it, both snapped
 deletes. While a drag is in progress the card is drawn where the pointer is; when the pointer is
 released the card is drawn at its new place until the server's row arrives, and the server row
 wins. Cards show their `state` as a badge; the calendar only creates them `scheduled`, the
-scheduler changes it. The mail rail lists `mailItems` newest first with the `unreadCount` from
+scheduler and the card's run change it. A missed card whose trigger offers it has a one-click
+"Run now" on the card and a "Run now: <card>" palette command; the dialog shows the card's run with
+a link to it, offers Run now for a missed or failed card, and asks "Stop run and delete" or "Keep
+run and delete" before deleting a card whose run is live. While `scheduler.paused` is on the
+toolbar shows "Scheduler paused", which resumes it. The mail rail lists `mailItems` newest first with the `unreadCount` from
 `outlook_status`; clicking an entry calls `outlook.open`. A banner shows "Outlook unavailable since
 <time>" while `outlook_status.lastError` is set. Palette commands: today, next, previous, day view,
 week view (on the calendar only, with the `keybindings.calendar*` keys), New card, Refresh
@@ -536,4 +578,8 @@ copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
   they add and remove instances and change global settings. Both run with `WOW_OUTLOOK=mock` and
   the fixture-backed `MockOutlookSource`; the first answers on a small HTTP control port
   (`e2eOutlookControlPort`) so the calendar tests can make the mock fail, bring it back and read
-  which items Outlook was asked to open.
+  which items Outlook was asked to open. The trigger tests start a third copy themselves
+  (`e2eTriggersHome`, `e2eTriggersPort`) because they restart it: `WOW_E2E_KEEP_HOME=1` keeps the
+  home across a restart and `WOW_E2E_CLOCK_OFFSET_SECONDS` runs the server's clock ahead, so a
+  trigger's time passes while the server is down without the test waiting. The server prints
+  `wow e2e server ready` once it is seeded.

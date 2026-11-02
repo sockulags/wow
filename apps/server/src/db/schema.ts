@@ -4,6 +4,7 @@ import type {
   BacklogRemote,
   BacklogState,
   CalendarItemSource,
+  NotificationKind,
   ProviderInstanceStatus,
   ProviderKind,
   SecretRef,
@@ -217,9 +218,24 @@ export const triggers = sqliteTable(
     zone: text().notNull(),
     state: text().$type<TriggerState>().notNull(),
     runId: text(),
+    offerRunNow: bool().notNull().default(false),
   },
-  (table) => [index('triggers_due_idx').on(table.state, table.runAt)],
+  (table) => [
+    index('triggers_due_idx').on(table.state, table.runAt),
+    index('triggers_card_idx').on(table.calendarItemId),
+  ],
 );
+
+export const notifications = sqliteTable('notifications', {
+  id: text().primaryKey(),
+  at: text().notNull(),
+  kind: text().$type<NotificationKind>().notNull(),
+  title: text().notNull(),
+  body: text().notNull(),
+  path: text().notNull(),
+  runId: text(),
+  calendarItemId: text(),
+});
 
 export const skills = sqliteTable('skills', {
   id: text().primaryKey(),

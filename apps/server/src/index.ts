@@ -17,6 +17,7 @@ export {
   type OutlookServiceOptions,
 } from './outlook/service.js';
 export { ProviderService, type ProviderServiceDeps } from './providers/service.js';
+export { Scheduler, type SchedulerDeps, type SchedulerTimers } from './scheduler/service.js';
 export { SettingsService, type SettingContext } from './settings/service.js';
 export {
   databaseFileName,

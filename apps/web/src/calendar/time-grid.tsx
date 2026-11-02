@@ -1,5 +1,5 @@
 import { CardState, type CalendarItem, type WorkHours } from '@wow/contracts';
-import { LockIcon, VideoIcon } from 'lucide-react';
+import { LockIcon, PlayIcon, VideoIcon } from 'lucide-react';
 import {
   useEffect,
   useLayoutEffect,
@@ -58,6 +58,7 @@ const stateStyles: Readonly<Record<CardState, string>> = {
   waiting: 'border-l-state-needs-you bg-state-needs-you/15',
   done: 'border-l-state-done',
   failed: 'border-l-state-failed',
+  stopped: 'border-l-muted-foreground/60',
   missed: 'border-l-state-failed',
 };
 
@@ -67,6 +68,7 @@ const badgeStyles: Readonly<Record<CardState, string>> = {
   waiting: 'text-state-needs-you',
   done: 'text-state-done',
   failed: 'text-state-failed',
+  stopped: 'text-muted-foreground',
   missed: 'text-state-failed',
 };
 
@@ -129,11 +131,14 @@ function CardBlock({
   zone,
   dragging,
   onEdit,
+  onRunNow,
 }: {
   item: CalendarItem;
   zone: string;
   dragging: boolean;
   onEdit: () => void;
+  // Set for a missed card whose trigger offers "Run now" (spec 12).
+  onRunNow: (() => void) | undefined;
 }) {
   const state = cardState(item);
   const onKeyDown = (event: KeyboardEvent) => {
@@ -160,6 +165,23 @@ function CardBlock({
         <StateBadge state={state} />
       </span>
       <span className="truncate text-[11px] text-muted-foreground">{timeRange(item, zone)}</span>
+      {onRunNow && (
+        <button
+          type="button"
+          aria-label={`Run now: ${cardTitle(item)}`}
+          className="mt-0.5 inline-flex w-fit items-center gap-1 rounded border border-border bg-background px-1 text-[11px] hover:bg-accent"
+          // The card's own pointer handling would start a drag.
+          onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRunNow();
+          }}
+        >
+          <PlayIcon className="size-3" aria-hidden />
+          Run now
+        </button>
+      )}
       <span
         data-resize
         aria-hidden
@@ -181,6 +203,9 @@ export interface TimeGridProps {
   readonly hourHeight: number;
   onCreate(range: Range): void;
   onEdit(cardId: string): void;
+  // Cards that offer a one-click "Run now", and what it does.
+  readonly runNowIds?: ReadonlySet<string>;
+  onRunNow?(cardId: string): void;
   // Stores a moved or resized card; the grid shows the new place until the server's row matches.
   onChange(cardId: string, range: Range): Promise<unknown>;
 }
@@ -196,6 +221,8 @@ export function TimeGrid({
   hourHeight,
   onCreate,
   onEdit,
+  runNowIds,
+  onRunNow,
   onChange,
 }: TimeGridProps) {
   const columnsRef = useRef<HTMLDivElement>(null);
@@ -469,6 +496,11 @@ export function TimeGrid({
                           zone={zone}
                           dragging={draggingId === placed.item.id}
                           onEdit={() => onEdit(placed.item.id)}
+                          onRunNow={
+                            onRunNow && runNowIds?.has(placed.item.id)
+                              ? () => onRunNow(placed.item.id)
+                              : undefined
+                          }
                         />
                       ) : (
                         <OutlookBlock item={placed.item} zone={zone} />

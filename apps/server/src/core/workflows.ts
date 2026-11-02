@@ -1,4 +1,6 @@
 import {
+  type AppNotification,
+  type CardState,
   type DomainEvent,
   type RunEffect,
   type ServerCommand,
@@ -10,6 +12,7 @@ import {
 } from '@wow/contracts';
 import {
   advance,
+  pendingGate,
   RunRejected,
   startRun,
   type EngineContext,
@@ -96,38 +99,8 @@ export function decideWorkflow(
         { kind: 'workflow.deleted', aggregate: workflow.id, payload: { workflowId: workflow.id } },
       ];
     }
-    case 'workflowRun.start': {
-      if (read.run(command.runId)) {
-        throw new CommandRejected('conflict', `Run ${command.runId} already exists`);
-      }
-      const workflow = requireWorkflow(read, command.workflowId);
-      if (!read.project(command.projectId)) {
-        throw new CommandRejected('not_found', `No project ${command.projectId}`);
-      }
-      for (const step of workflow.steps) {
-        if (!read.providerInstance(step.providerInstanceId)) {
-          throw new CommandRejected(
-            'rejected',
-            `Step ${step.skillName} uses provider instance ${step.providerInstanceId}, which does not exist`,
-          );
-        }
-      }
-      const backlogBody = backlogBodyOf(read, command.backlogItemId ?? null);
-      const engineContext = runContext(read, context, command.projectId, backlogBody);
-      const transition = engineCall(() =>
-        startRun(
-          workflow,
-          {
-            runId: command.runId,
-            projectId: command.projectId,
-            calendarItemId: command.calendarItemId ?? null,
-            backlogItemId: command.backlogItemId ?? null,
-          },
-          engineContext,
-        ),
-      );
-      return transitionEvents(command.type, workflow, undefined, transition, read, context);
-    }
+    case 'workflowRun.start':
+      return startRunEvents(command.type, command, read, context);
     case 'workflowRun.continue':
       return runInput(command.type, command.runId, { type: 'continue' }, read, context);
     case 'workflowRun.stop':
@@ -164,7 +137,54 @@ export function decideWorkflow(
   }
 }
 
-function runInput(
+export interface RunStart {
+  readonly runId: string;
+  readonly workflowId: string;
+  readonly projectId: string;
+  readonly calendarItemId?: string | null | undefined;
+  readonly backlogItemId?: string | null | undefined;
+}
+
+// A new run of the workflow: a client's Run now, a card's Run now or a firing trigger.
+export function startRunEvents(
+  cause: string,
+  start: RunStart,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  if (read.run(start.runId)) {
+    throw new CommandRejected('conflict', `Run ${start.runId} already exists`);
+  }
+  const workflow = requireWorkflow(read, start.workflowId);
+  if (!read.project(start.projectId)) {
+    throw new CommandRejected('not_found', `No project ${start.projectId}`);
+  }
+  for (const step of workflow.steps) {
+    if (!read.providerInstance(step.providerInstanceId)) {
+      throw new CommandRejected(
+        'rejected',
+        `Step ${step.skillName} uses provider instance ${step.providerInstanceId}, which does not exist`,
+      );
+    }
+  }
+  const backlogBody = backlogBodyOf(read, start.backlogItemId ?? null);
+  const engineContext = runContext(read, context, start.projectId, backlogBody);
+  const transition = engineCall(() =>
+    startRun(
+      workflow,
+      {
+        runId: start.runId,
+        projectId: start.projectId,
+        calendarItemId: start.calendarItemId ?? null,
+        backlogItemId: start.backlogItemId ?? null,
+      },
+      engineContext,
+    ),
+  );
+  return transitionEvents(cause, workflow, undefined, transition, read, context);
+}
+
+export function runInput(
   cause: string,
   runId: string,
   input: RunInput,
@@ -221,7 +241,85 @@ function transitionEvents(
     aggregate: run.id,
     payload: { cause, run, effects: later },
   });
+  events.push(...cardFollowsRun(before, run, read, context));
+  events.push(...runNotifications(workflow, run, effects, read, context));
   return events;
+}
+
+// Every run state has a card state of the same name; `waiting` is what the card shows as "needs
+// you".
+const cardStateOfRun = (state: WorkflowRun['state']): CardState => state;
+
+// A card shows the state of the run it started (spec 8, 9). A card run again later follows the
+// newer run, so an older run's late changes leave it alone.
+function cardFollowsRun(
+  before: WorkflowRun | undefined,
+  run: WorkflowRun,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  if (run.calendarItemId === null) return [];
+  const card = read.calendarItem(run.calendarItemId);
+  if (!card || card.source !== 'local') return [];
+  if (before !== undefined && card.runId !== run.id) return [];
+  const state = cardStateOfRun(run.state);
+  if (card.state === state && card.runId === run.id) return [];
+  return [
+    {
+      kind: 'card.stateChanged',
+      aggregate: card.id,
+      payload: { cardId: card.id, state, runId: run.id, updatedAt: context.now },
+    },
+  ];
+}
+
+const NOTIFICATIONS_KEY = 'scheduler.notifications';
+
+export function notificationsEnabled(read: ReadModel, context: DecideContext): boolean {
+  const definition = context.registry[NOTIFICATIONS_KEY];
+  if (!definition) return false;
+  const { value } = resolveStored(NOTIFICATIONS_KEY, definition, {}, (scope) =>
+    read.setting(NOTIFICATIONS_KEY, scope),
+  );
+  return value === true;
+}
+
+export const runPath = (runId: string) => `/workflows/runs/${runId}`;
+
+// A run waiting at a gate or failing tells the user through the notification channel (spec 9).
+function runNotifications(
+  workflow: Workflow,
+  run: WorkflowRun,
+  effects: readonly RunEffect[],
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const notices = effects.filter(
+    (effect): effect is Extract<RunEffect, { type: 'notify' }> =>
+      effect.type === 'notify' && effect.reason !== 'done',
+  );
+  if (notices.length === 0 || !notificationsEnabled(read, context)) return [];
+  const card = run.calendarItemId === null ? undefined : read.calendarItem(run.calendarItemId);
+  return notices.map((notice): DomainEvent => {
+    const step = workflow.steps.find((entry) => entry.id === notice.stepId);
+    const body = [workflow.name, step?.skillName, card?.title].filter(Boolean).join(' · ');
+    const waiting = notice.reason === 'waiting';
+    const gate = pendingGate(run);
+    const id = waiting
+      ? `${run.id}:waiting:${notice.stepId ?? ''}:${gate?.position ?? ''}`
+      : `${run.id}:failed`;
+    const notification: AppNotification = {
+      id,
+      at: context.now,
+      kind: waiting ? 'waiting' : 'failed',
+      title: waiting ? 'Waiting for you' : 'Workflow run failed',
+      body,
+      path: runPath(run.id),
+      runId: run.id,
+      calendarItemId: run.calendarItemId,
+    };
+    return { kind: 'notification.sent', aggregate: id, payload: notification };
+  });
 }
 
 // The thread a step runs in, created idle; the runner sends the step's prompt as its first

@@ -5,6 +5,7 @@ import {
   BacklogItem,
   CalendarItem,
   MailItem,
+  AppNotification,
   OutlookStatus,
   Project,
   ProviderInstance,
@@ -38,6 +39,7 @@ export const subscriptionTopics = {
   workflows: { row: Workflow, threadScoped: false },
   workflowRuns: { row: WorkflowRun, threadScoped: false },
   triggers: { row: Trigger, threadScoped: false },
+  notifications: { row: AppNotification, threadScoped: false },
   skills: { row: Skill, threadScoped: false },
   settings: { row: SettingRow, threadScoped: false },
 } as const;

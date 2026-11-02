@@ -1,4 +1,5 @@
-import type { CalendarItem, Command } from '@wow/contracts';
+import { isLiveRunState, type CalendarItem, type Command, type WorkflowRun } from '@wow/contracts';
+import { Link } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import {
   useLayout,
@@ -71,6 +72,61 @@ function formRange(form: Form, zone: string): { start: string; end: string } | s
 
 const orNull = (value: string) => (value === '' ? null : value);
 
+const runStateLabels: Readonly<Record<WorkflowRun['state'], string>> = {
+  running: 'running',
+  waiting: 'waiting for you',
+  done: 'done',
+  failed: 'failed',
+  stopped: 'stopped',
+};
+
+// The card's workflow run, and what can be done with it from here (spec 12, 13).
+function RunStatus({
+  card,
+  run,
+  busy,
+  onRunNow,
+}: {
+  card: CalendarItem;
+  run: WorkflowRun | undefined;
+  busy: boolean;
+  onRunNow: () => void;
+}) {
+  const canRun =
+    card.workflowId !== null &&
+    card.projectId !== null &&
+    (run === undefined || !isLiveRunState(run.state));
+  const offer = canRun && (card.state === 'missed' || card.state === 'failed');
+  if (!run && !offer) return null;
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5 text-xs">
+      {run ? (
+        <span>
+          Workflow run {runStateLabels[run.state]}.{' '}
+          <Link
+            to="/workflows/runs/$runId"
+            params={{ runId: run.id }}
+            className="underline underline-offset-2"
+          >
+            Open run
+          </Link>
+        </span>
+      ) : (
+        <span>
+          {card.state === 'missed'
+            ? 'The trigger was missed.'
+            : 'The workflow run could not start.'}
+        </span>
+      )}
+      {offer && (
+        <Button type="button" size="sm" className="ml-auto" disabled={busy} onClick={onRunNow}>
+          Run now
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function CardForm({
   dialog,
   card,
@@ -86,6 +142,11 @@ function CardForm({
   const projects = useTopic('projects') ?? [];
   const workflows = useTopic('workflows') ?? [];
   const backlog = useTopic('backlogItems') ?? [];
+  const runs = useTopic('workflowRuns');
+  const run = card?.runId ? runs?.find((entry) => entry.id === card.runId) : undefined;
+  const liveRun = run && isLiveRunState(run.state) ? run : undefined;
+  // Deleting a card whose run is live asks first whether to stop the run (spec 13).
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [form, setForm] = useState(() => initialForm(dialog, card, zone));
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -231,10 +292,63 @@ function CardForm({
         </div>
       </div>
       <p className="text-xs text-muted-foreground">Times are in {zone}.</p>
+      {card && (
+        <RunStatus
+          card={card}
+          run={run}
+          busy={busy}
+          onRunNow={() =>
+            void send({
+              type: 'card.runNow',
+              cardId: card.id,
+              runId: globalThis.crypto.randomUUID(),
+            })
+          }
+        />
+      )}
       {error && (
         <p role="alert" className="text-xs text-destructive">
           {error}
         </p>
+      )}
+      {confirmDelete && dialog.type === 'edit' && liveRun && (
+        <div
+          role="alertdialog"
+          aria-label="Stop the run?"
+          className="grid gap-2 rounded-md border border-destructive/50 p-2 text-xs"
+        >
+          <p>
+            This card's workflow run is {runStateLabels[liveRun.state]}. Stop it too? Its threads
+            are kept either way.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={busy}
+              onClick={() =>
+                void send({ type: 'card.delete', cardId: dialog.cardId, stopRun: true })
+              }
+            >
+              Stop run and delete
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() =>
+                void send({ type: 'card.delete', cardId: dialog.cardId, stopRun: false })
+              }
+            >
+              Keep run and delete
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+              Keep the card
+            </Button>
+          </div>
+        </div>
       )}
       <DialogFooter>
         {dialog.type === 'edit' && (
@@ -242,8 +356,12 @@ function CardForm({
             type="button"
             variant="destructive"
             className="mr-auto"
-            disabled={busy}
-            onClick={() => void send({ type: 'card.delete', cardId: dialog.cardId })}
+            disabled={busy || confirmDelete}
+            onClick={() =>
+              liveRun
+                ? setConfirmDelete(true)
+                : void send({ type: 'card.delete', cardId: dialog.cardId })
+            }
           >
             Delete
           </Button>

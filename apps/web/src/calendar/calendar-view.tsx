@@ -5,18 +5,19 @@ import {
   CalendarDaysIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  PauseIcon,
   PlusIcon,
   RefreshCwIcon,
 } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { formatBinding } from '@/app/keybindings';
 import { useConnectionState, useRuntime, useSetting } from '@/app/runtime';
-import { useDispatch, useTopic } from '@/chat/data';
+import { errorMessage, useDispatch, useTopic } from '@/chat/data';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { EmptyState } from '@/views/empty-views';
 import { CardDialog } from './card-dialog';
-import { newCardRange } from './commands';
+import { newCardRange, runNowCardIds } from './commands';
 import { stepDays, visibleDays, type CalendarViewKind } from './layout';
 import { MailRail } from './mail-rail';
 import { anchorDate, todayIn, type CalendarSearch } from './search';
@@ -83,6 +84,9 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const items = useTopic('calendarItems') ?? noItems;
   const status = useTopic('outlookStatus')?.[0];
   const mail = useTopic('mailItems') ?? [];
+  const triggers = useTopic('triggers');
+  const paused = useSetting('scheduler.paused');
+  const [runError, setRunError] = useState<string>();
 
   const zone = resolveZone(zoneSetting);
   const view: CalendarViewKind = search.view ?? 'week';
@@ -90,6 +94,13 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const today = todayIn(zoneSetting);
   const days = visibleDays(view, anchor, firstDay);
   const cards = useMemo(() => items.filter((item) => item.source === 'local'), [items]);
+  const runNowIds = useMemo(() => runNowCardIds(cards, triggers ?? []), [cards, triggers]);
+  const runNow = (cardId: string) => {
+    setRunError(undefined);
+    dispatch({ type: 'card.runNow', cardId, runId: globalThis.crypto.randomUUID() }).catch(
+      (error: unknown) => setRunError(errorMessage(error)),
+    );
+  };
   const first = days[0] ?? anchor;
   const last = days.at(-1) ?? anchor;
 
@@ -132,6 +143,18 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           </h2>
           <span className="text-[11px] text-muted-foreground">{zone}</span>
           <div className="ml-auto flex items-center gap-1">
+            {paused && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-state-needs-you"
+                title="Triggers do not fire while the scheduler is paused. Click to resume."
+                onClick={() => void settings.write('scheduler.paused', false)}
+              >
+                <PauseIcon />
+                Scheduler paused
+              </Button>
+            )}
             <div role="group" aria-label="View" className="flex rounded-md border border-border">
               {(['day', 'week'] as const).map((kind) => (
                 <button
@@ -175,6 +198,14 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           </div>
         </div>
         <OutlookBanner status={status} zone={zone} />
+        {runError && (
+          <div
+            role="alert"
+            className="shrink-0 border-b border-border bg-state-failed/10 px-3 py-1.5 text-xs"
+          >
+            {runError}
+          </div>
+        )}
         <TimeGrid
           days={days}
           today={today}
@@ -186,6 +217,8 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           hourHeight={hourHeight}
           onCreate={(range) => layout.setState({ cardDialog: { type: 'create', ...range } })}
           onEdit={(cardId) => layout.setState({ cardDialog: { type: 'edit', cardId } })}
+          runNowIds={runNowIds}
+          onRunNow={runNow}
           onChange={(cardId, range) => dispatch({ type: 'card.update', cardId, ...range })}
         />
       </section>
