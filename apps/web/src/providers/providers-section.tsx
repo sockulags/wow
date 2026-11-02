@@ -211,6 +211,7 @@ export function ProvidersSection() {
   const { connection, layout } = useRuntime();
   const { rows: instances, status } = useTopicState('providerInstances');
   const threads = useTopic('threads');
+  const offline = !connection || status === 'disconnected';
   const detected = useDetected();
   const defaultId = lastUsedInstanceId(threads, instances);
   const add = (kind: ProviderKind) => layout.setState({ providerDialog: { type: 'create', kind } });
@@ -225,18 +226,18 @@ export function ProvidersSection() {
           The Claude and Codex CLIs wow runs. New threads start on the one you used last.
         </p>
         <div className="ml-auto flex items-center gap-1">
-          <Button variant="outline" size="sm" disabled={!connection} onClick={() => add('claude')}>
+          <Button variant="outline" size="sm" disabled={offline} onClick={() => add('claude')}>
             <PlusIcon />
             Add Claude
           </Button>
-          <Button variant="outline" size="sm" disabled={!connection} onClick={() => add('codex')}>
+          <Button variant="outline" size="sm" disabled={offline} onClick={() => add('codex')}>
             <PlusIcon />
             Add Codex
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            disabled={!connection}
+            disabled={offline}
             onClick={() => layout.setState({ providerDialog: { type: 'wizard' } })}
           >
             <SearchIcon />

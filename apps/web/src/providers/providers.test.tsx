@@ -157,7 +157,8 @@ describe('first-run wizard', () => {
     // Then projects (owner decision F-10).
     await user.click(within(wizard).getByRole('button', { name: 'Continue' }));
     expect(await within(wizard).findByRole('heading', { name: 'Add your projects' })).toBeTruthy();
-    await user.click(within(wizard).getByRole('button', { name: 'Skip' }));
+    // Nothing to import here, so Continue is the only way on.
+    await user.click(within(wizard).getByRole('button', { name: 'Continue' }));
     await user.click(within(wizard).getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).toBeNull();
   });

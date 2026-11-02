@@ -72,7 +72,7 @@ describe('settings widgets', () => {
 describe('keybindings', () => {
   it('groups by where a key works and marks conflicts that can fire together', () => {
     expect(keyScope('keybindings.calendarToday')).toBe('Calendar');
-    expect(keyScope('keybindings.newThread')).toBe('Chat');
+    expect(keyScope('keybindings.stopTurn')).toBe('Chat');
     expect(keyScope('keybindings.palette')).toBe('General');
     const conflicts = keyConflicts({
       'keybindings.palette': 'Mod+K',

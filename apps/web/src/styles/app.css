@@ -115,3 +115,14 @@
 .wow-delayed-appear {
   animation: wow-appear 0ms linear 150ms both;
 }
+
+/* Shiki output (components/code-block.tsx) carries both themes as CSS variables. */
+.wow-code pre {
+  background: transparent !important;
+}
+.wow-code .shiki span {
+  color: var(--shiki-light);
+}
+.dark .wow-code .shiki span {
+  color: var(--shiki-dark);
+}

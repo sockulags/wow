@@ -136,7 +136,7 @@ export async function draftToCommand(
 
 // The first choice of the model, effort and permission selects: the provider decides (audit E-02).
 export const defaultChoiceLabel = (kind: ProviderKind): string =>
-  `Default (${providerSetup[kind].label}'s choice)`;
+  `${providerSetup[kind].label}'s default`;
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 

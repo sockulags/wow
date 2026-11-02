@@ -326,9 +326,11 @@ export function FirstRunWizard({ onClose }: { onClose: () => void }) {
           )}
           {step === 'projects' && (
             <>
-              <Button variant="outline" onClick={() => setStep('done')}>
-                Skip
-              </Button>
+              {discovered.offered.length > 0 && (
+                <Button variant="outline" onClick={() => setStep('done')}>
+                  Skip
+                </Button>
+              )}
               {discovered.offered.length > 0 ? (
                 <Button
                   ref={primary}

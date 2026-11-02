@@ -43,7 +43,7 @@ test.describe('settings', () => {
     await editor.getByLabel('Variable 1 value').fill('sk-e2e-secret');
     await editor.getByRole('checkbox', { name: 'Variable 1 secret' }).check();
     await editor.getByLabel('Launch arguments').fill('--verbose');
-    await expect(editor.getByLabel('Default model')).toHaveText("Default (Claude's choice)");
+    await expect(editor.getByLabel('Default model')).toHaveText("Claude's default");
     await choose(editor.getByLabel('Default permissions'), 'Accept edits');
     await editor.getByRole('button', { name: 'Add instance' }).click();
     await expect(editor).toBeHidden();
@@ -126,7 +126,10 @@ test.describe('settings', () => {
     await wizard.getByRole('button', { name: 'Continue' }).click();
     // Then projects, imported from the folders the new instances worked in (owner decision F-10).
     await expect(wizard.getByRole('heading', { name: 'Add your projects' })).toBeVisible();
-    await wizard.getByRole('button', { name: 'Skip' }).click();
+    await wizard
+      .getByRole('button', { name: /^(Skip|Continue)$/ })
+      .first()
+      .click();
     await wizard.getByRole('button', { name: 'Close' }).click();
 
     for (const name of ['Claude', 'Codex']) {

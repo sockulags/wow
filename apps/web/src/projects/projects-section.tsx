@@ -68,6 +68,7 @@ export function ProjectsSection() {
   const { connection, layout } = useRuntime();
   const { rows: projects, status } = useTopicState('projects');
   const threads = useTopic('threads');
+  const offline = !connection || status === 'disconnected';
   const items = useTopic('calendarItems');
   const open = (type: 'create' | 'import') => layout.setState({ projectDialog: { type } });
 
@@ -78,11 +79,11 @@ export function ProjectsSection() {
           A project is a folder. Threads, cards and workflow runs work in it.
         </p>
         <div className="ml-auto flex items-center gap-1">
-          <Button variant="outline" size="sm" disabled={!connection} onClick={() => open('create')}>
+          <Button variant="outline" size="sm" disabled={offline} onClick={() => open('create')}>
             <PlusIcon />
             Add project
           </Button>
-          <Button variant="ghost" size="sm" disabled={!connection} onClick={() => open('import')}>
+          <Button variant="ghost" size="sm" disabled={offline} onClick={() => open('import')}>
             <DownloadIcon />
             Import from Claude and Codex
           </Button>
