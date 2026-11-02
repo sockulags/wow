@@ -51,6 +51,7 @@ function fakeServer(
       onData(rows.get(topic) ?? []);
       return () => set.delete(onData);
     },
+    retry: () => undefined,
     close: () => undefined,
   };
   return {

@@ -50,6 +50,8 @@ export interface Connection {
     params: TopicParams | null,
     onData: (data: unknown) => void,
   ): () => void;
+  // Tries to connect now instead of waiting for the next scheduled attempt ("Retry now").
+  retry(): void;
   close(): void;
 }
 
@@ -238,6 +240,11 @@ export function createConnection(options: ConnectionOptions): Connection {
         byServerId.delete(serverId);
         if (open) transmit(makeRequest('unsubscribe', { subscriptionId: serverId }), ignore);
       };
+    },
+    retry() {
+      if (closedByUser || retryTimer === undefined) return;
+      clearTimeout(retryTimer);
+      connect();
     },
     close() {
       closedByUser = true;

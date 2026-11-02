@@ -1,31 +1,7 @@
-import type { LucideIcon } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
-import type { ReactNode } from 'react';
 
-// Shared empty and not-found states.
-
-export function EmptyState({
-  icon: Icon,
-  title,
-  children,
-}: {
-  icon: LucideIcon;
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <section
-      aria-labelledby="empty-title"
-      className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center"
-    >
-      <Icon className="size-6 text-muted-foreground" aria-hidden />
-      <h2 id="empty-title" className="text-sm font-medium">
-        {title}
-      </h2>
-      <p className="max-w-sm text-xs text-muted-foreground">{children}</p>
-    </section>
-  );
-}
+// The shared EmptyState lives in components/states; re-exported for older imports.
+export { EmptyState } from '@/components/states';
 
 export const NotFoundView = () => (
   <section className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">

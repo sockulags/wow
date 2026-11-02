@@ -23,6 +23,7 @@ function connectionWith(rows: unknown[], fail?: RpcClientError) {
       onData(rows);
       return () => undefined;
     },
+    retry: () => undefined,
     close: () => undefined,
   };
   return { connection, requests, push: (data: unknown) => push?.(data) };

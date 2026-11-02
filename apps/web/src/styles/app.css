@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
 @import './tokens.css';
 
 @custom-variant dark (&:is(.dark *));
@@ -7,6 +8,11 @@
   /* The appearance.uiFont and appearance.codeFont settings set the first family. */
   --font-sans: var(--app-font-ui, 'Inter Variable'), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--app-font-code, 'JetBrains Mono Variable'), ui-monospace, monospace;
+
+  /* Four type sizes (design rules): 2xs 11px meta, xs 12px secondary, sm 14px body, base 16px
+     titles. All rem, so the density setting scales them. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -28,6 +34,13 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-overlay: var(--overlay);
+  --color-border-strong: var(--border-strong);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -44,7 +57,7 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
 
   html,
@@ -77,4 +90,28 @@
     appearance: none;
     margin: 0;
   }
+}
+
+/* Dialogs and popovers fade and zoom; nothing moves for people who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Skeletons appear only when loading takes long enough to notice. */
+@keyframes wow-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.wow-delayed-appear {
+  animation: wow-appear 0ms linear 150ms both;
 }

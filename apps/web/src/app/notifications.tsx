@@ -1,8 +1,10 @@
 import type { AppNotification } from '@wow/contracts';
 import { useNavigate } from '@tanstack/react-router';
-import { AlertTriangleIcon, BellIcon, PlayIcon, XIcon } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertTriangleIcon, BellIcon, PlayIcon } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { useTopic } from '@/chat/data';
+import { Toaster } from '@/components/ui/sonner';
 import { cn } from '@/lib/utils';
 import { useSetting } from './runtime';
 
@@ -17,96 +19,36 @@ export function freshNotifications(
 }
 
 const icons = { started: PlayIcon, waiting: BellIcon, failed: AlertTriangleIcon } as const;
+const iconClass = {
+  started: 'text-state-working',
+  waiting: 'text-state-needs-you',
+  failed: 'text-state-failed',
+} as const;
 
-function Toast({
-  notification,
-  seconds,
-  onClose,
-}: {
-  notification: AppNotification;
-  seconds: number;
-  onClose: (id: string) => void;
-}) {
-  const navigate = useNavigate();
-  const Icon = icons[notification.kind];
-  const { id } = notification;
-  useEffect(() => {
-    const timer = setTimeout(() => onClose(id), seconds * 1000);
-    return () => clearTimeout(timer);
-  }, [onClose, id, seconds]);
-  return (
-    <li
-      data-testid="toast"
-      className="flex w-80 items-start gap-2 rounded-md border border-border bg-popover p-3 text-xs text-popover-foreground shadow-md"
-    >
-      <Icon
-        aria-hidden
-        className={cn(
-          'mt-0.5 size-3.5 shrink-0',
-          notification.kind === 'waiting' && 'text-state-needs-you',
-          notification.kind === 'failed' && 'text-state-failed',
-          notification.kind === 'started' && 'text-state-working',
-        )}
-      />
-      <button
-        type="button"
-        className="min-w-0 flex-1 text-left"
-        onClick={() => {
-          void navigate({ to: notification.path });
-          onClose(id);
-        }}
-      >
-        <span className="block font-medium">{notification.title}</span>
-        {notification.body !== '' && (
-          <span className="block truncate text-muted-foreground">{notification.body}</span>
-        )}
-      </button>
-      <button
-        type="button"
-        aria-label="Dismiss"
-        className="text-muted-foreground hover:text-foreground"
-        onClick={() => onClose(id)}
-      >
-        <XIcon className="size-3.5" />
-      </button>
-    </li>
-  );
-}
-
-// The web app's side of the server's notification channel: a toast per new notification (spec 9).
-// The desktop app shows the same events as system notifications.
-export function Toaster() {
+// The web app's side of the server's notification channel: a toast per new notification (spec 9),
+// with "Open" to go where it points. The desktop app shows the same events as system
+// notifications. The same toaster carries the feedback toasts of `lib/feedback`.
+export function AppToaster() {
   const rows = useTopic('notifications');
   const seconds = useSetting('scheduler.toastSeconds');
+  const theme = useSetting('appearance.theme');
+  const navigate = useNavigate();
   const seen = useRef<Set<string>>(undefined);
-  const [shown, setShown] = useState<readonly AppNotification[]>([]);
 
   useEffect(() => {
     if (rows === undefined) return;
     const fresh = freshNotifications(seen.current, rows);
     seen.current = new Set([...(seen.current ?? []), ...rows.map((row) => row.id)]);
-    if (fresh.length > 0) setShown((current) => [...current, ...fresh]);
-  }, [rows]);
+    for (const notification of fresh) {
+      const Icon = icons[notification.kind];
+      toast(notification.title, {
+        id: notification.id,
+        icon: <Icon aria-hidden className={cn('size-4', iconClass[notification.kind])} />,
+        ...(notification.body !== '' ? { description: notification.body } : {}),
+        action: { label: 'Open', onClick: () => void navigate({ to: notification.path }) },
+      });
+    }
+  }, [rows, navigate]);
 
-  const close = useCallback(
-    (id: string) => setShown((current) => current.filter((entry) => entry.id !== id)),
-    [],
-  );
-
-  return (
-    <ol
-      aria-label="Notifications"
-      aria-live="polite"
-      className="pointer-events-auto fixed right-3 bottom-3 z-50 flex flex-col gap-2"
-    >
-      {shown.map((notification) => (
-        <Toast
-          key={notification.id}
-          notification={notification}
-          seconds={seconds}
-          onClose={close}
-        />
-      ))}
-    </ol>
-  );
+  return <Toaster theme={theme} duration={seconds * 1000} />;
 }
