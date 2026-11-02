@@ -3,6 +3,7 @@ import { settingValue, type Connection, type SettingsStore } from '@wow/client-r
 import type { useNavigate } from '@tanstack/react-router';
 import type { DraftStore } from '@/chat/draft';
 import type { LayoutStore } from './runtime';
+import type { UpdatesClient } from './updates';
 import { sections, settingGroupTitles, settingsByGroup } from './sections';
 
 // Everything the user can do from the keyboard. Feature units add their own commands here (threads,
@@ -25,6 +26,7 @@ export interface CommandContext {
   readonly layout: LayoutStore;
   readonly draft: DraftStore;
   readonly connection: Connection | undefined;
+  readonly updates?: UpdatesClient | undefined;
 }
 
 export interface AppCommand {

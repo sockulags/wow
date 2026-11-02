@@ -1,4 +1,4 @@
-export type TrayAction = 'open' | 'newThread' | 'toggleScheduler' | 'quit';
+export type TrayAction = 'open' | 'newThread' | 'toggleScheduler' | 'installUpdate' | 'quit';
 
 export type TrayEntry =
   | {
@@ -13,6 +13,8 @@ export interface TrayState {
   // False while the server is starting: actions that need it are disabled.
   readonly serverReady: boolean;
   readonly schedulerPaused: boolean;
+  // The downloaded release waiting for "Restart to update", if any.
+  readonly updateReady: string | undefined;
 }
 
 const item = (label: string, action: TrayAction, enabled: boolean): TrayEntry => ({
@@ -32,9 +34,18 @@ export function trayMenu(state: TrayState): TrayEntry[] {
       state.serverReady,
     ),
     { kind: 'separator' },
+    ...(state.updateReady === undefined
+      ? []
+      : [item(`Restart to update (${state.updateReady})`, 'installUpdate', state.serverReady)]),
     item('Quit', 'quit', true),
   ];
 }
 
 export const trayTooltip = (state: TrayState): string =>
-  !state.serverReady ? 'wow (starting)' : state.schedulerPaused ? 'wow (scheduler paused)' : 'wow';
+  !state.serverReady
+    ? 'wow (starting)'
+    : state.updateReady !== undefined
+      ? `wow (update ${state.updateReady} ready)`
+      : state.schedulerPaused
+        ? 'wow (scheduler paused)'
+        : 'wow';

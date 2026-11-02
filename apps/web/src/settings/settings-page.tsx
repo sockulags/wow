@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { useRuntime } from '@/app/runtime';
 import { ProvidersSection } from '@/providers/providers-section';
 import { isSettingGroup, settingGroupTitles, settingsByGroup } from '@/app/sections';
+import { UpdateStatusPanel } from '@/app/update-banner';
 import { fieldKind } from './field-kind';
 import { Field } from './fields';
 import { SecretField } from './secret-field';
@@ -143,6 +144,7 @@ export function SettingsPage() {
           {current ? settingGroupTitles[current] : 'Settings'}
         </h2>
         {current === 'providers' && <ProvidersSection />}
+        {current === 'updates' && <UpdateStatusPanel />}
         {/* Remount per group so drafts never leak between pages. */}
         <SettingsForm key={group} entries={entries} />
       </section>

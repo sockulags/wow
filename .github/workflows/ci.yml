@@ -67,7 +67,8 @@ jobs:
           path: apps/web/test-results
           if-no-files-found: ignore
 
-  # Builds the Windows installer and keeps it as a workflow artifact. Unsigned, no auto-update.
+  # Builds the Windows installer and keeps it as a workflow artifact. Unsigned. The auto-update
+  # files (latest.yml and the installer's .blockmap) must come out of `dist` next to it.
   desktop-installer:
     name: desktop installer (windows-latest)
     runs-on: windows-latest
@@ -88,8 +89,22 @@ jobs:
       # The bundled server under Electron's Node: better-sqlite3 loads, RPC answers, clean stop.
       - run: pnpm --filter @wow/desktop smoke
       - run: pnpm --filter @wow/desktop dist
+      # electron-updater finds the release through latest.yml, which names this installer.
+      - name: check auto-update files
+        working-directory: apps/desktop/release
+        run: |
+          installer=$(ls wow-setup-*.exe)
+          test -f latest.yml
+          test -f "$installer.blockmap"
+          grep -q "path: $installer" latest.yml
+          test -f win-unpacked/resources/app-update.yml
+          grep -q 'provider: github' win-unpacked/resources/app-update.yml
+          cat latest.yml
       - uses: actions/upload-artifact@v4
         with:
           name: wow-installer-windows
-          path: apps/desktop/release/*.exe
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.exe.blockmap
+            apps/desktop/release/latest.yml
           if-no-files-found: error

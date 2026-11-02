@@ -28,3 +28,13 @@ export function decodeServerInfoArg(argv: readonly string[]): unknown {
   if (arg === undefined) return undefined;
   return JSON.parse(decodeURIComponent(arg.slice(serverInfoArgPrefix.length))) as unknown;
 }
+
+// IPC between the preload's `window.wowDesktop.updates` and the main process (behavior 35).
+export const updateChannels = {
+  // main → renderer: the update state, on every change.
+  state: 'wow:update-state',
+  // renderer → main (invoke): the current state, null when updates do not run in this build.
+  getState: 'wow:update-get-state',
+  check: 'wow:update-check',
+  install: 'wow:update-install',
+} as const;

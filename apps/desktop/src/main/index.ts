@@ -5,12 +5,14 @@ import {
   Tray,
   app,
   dialog,
+  ipcMain,
   nativeImage,
   net,
   protocol,
   shell,
   type MenuItemConstructorOptions,
 } from 'electron';
+import electronUpdaterModule from 'electron-updater';
 import { randomUUID } from 'node:crypto';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -22,9 +24,11 @@ import {
   encodeServerInfoArg,
   hiddenFlag,
   productName,
+  updateChannels,
 } from '../app.js';
 import { rendererFile } from './app-protocol.js';
 import { DesktopController, type DesktopShell } from './controller.js';
+import { electronUpdater } from './electron-updater.js';
 import { serverStartTimeoutMs, serverStopTimeoutMs } from './limits.js';
 import { RpcClient } from './rpc-client.js';
 import { ServerProcess, wowHome, type ServerEndpoint } from './server-process.js';
@@ -180,6 +184,21 @@ const electronShell: DesktopShell = {
     });
     return response === 0;
   },
+  setUpdateState(state) {
+    window?.webContents.send(updateChannels.state, state);
+  },
+  async confirmUpdateRestart(message) {
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      title: productName,
+      message: 'Restart to update?',
+      detail: message,
+      buttons: ['Restart and update', 'Later'],
+      defaultId: 1,
+      cancelId: 1,
+    });
+    return response === 0;
+  },
   exit(code) {
     tray?.destroy();
     logStream.end(() => app.exit(code));
@@ -206,6 +225,37 @@ const controller = new DesktopController({
     }),
   connect: (endpoint) =>
     RpcClient.connect(endpoint, (message, error) => electronShell.log('warn', message, error)),
+  // Nothing updates in development: an unpackaged build has no app-update.yml to update from.
+  ...(app.isPackaged
+    ? {
+        updates: {
+          updater: electronUpdater(electronUpdaterModule.autoUpdater, (level, message) =>
+            electronShell.log(level, message),
+          ),
+          currentVersion: app.getVersion(),
+          timers: {
+            every: (ms: number, run: () => void) => {
+              const timer = setInterval(run, ms);
+              return () => clearInterval(timer);
+            },
+          },
+          now: () => new Date(),
+        },
+      }
+    : {}),
+});
+
+// Only the app's own pages may use the update bridge.
+const fromApp = (event: Electron.IpcMainInvokeEvent): boolean =>
+  event.senderFrame?.url.startsWith(`${appOrigin}/`) ?? false;
+ipcMain.handle(updateChannels.getState, (event) =>
+  fromApp(event) ? (controller.updateState ?? null) : null,
+);
+ipcMain.handle(updateChannels.check, async (event) => {
+  if (fromApp(event)) await controller.checkForUpdates();
+});
+ipcMain.handle(updateChannels.install, async (event) => {
+  if (fromApp(event)) await controller.installUpdate();
 });
 
 if (!app.requestSingleInstanceLock()) {
@@ -217,6 +267,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => undefined);
   // Sign-out, shutdown or an app menu quit: stop the server cleanly first.
   app.on('before-quit', (event) => {
+    // "Restart to update" already stopped the server; the installer needs the app to quit.
+    if (controller.installingUpdate) return;
     event.preventDefault();
     void controller.quit();
   });

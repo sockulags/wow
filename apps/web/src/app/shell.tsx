@@ -9,6 +9,7 @@ import { CommandPalette } from './palette';
 import { useLayout, useRuntime, useSetting } from './runtime';
 import { sections } from './sections';
 import { Sidebar } from './sidebar';
+import { UpdateBanner } from './update-banner';
 import { useCommands, useGlobalKeybindings } from './use-commands';
 
 function useApplyTheme() {
@@ -99,6 +100,7 @@ export function Shell() {
             </Button>
           </div>
         </header>
+        <UpdateBanner />
         <div className="min-h-0 flex-1 overflow-auto">
           <Outlet />
         </div>

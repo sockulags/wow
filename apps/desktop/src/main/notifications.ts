@@ -1,11 +1,14 @@
 import type { Workflow, WorkflowRun } from '@wow/contracts';
 
-export interface RunNotice {
-  readonly runId: string;
+export interface Notice {
   readonly title: string;
   readonly body: string;
   // Where the window opens when the notification is clicked.
   readonly path: string;
+}
+
+export interface RunNotice extends Notice {
+  readonly runId: string;
 }
 
 // Run states the user hears about when a run enters them. A run that appears is "started".

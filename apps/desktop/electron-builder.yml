@@ -1,5 +1,5 @@
 # Windows installer for wow. Run `pnpm --filter @wow/desktop build` first; `dist` packages out/.
-# No code signing and no auto-update in this version.
+# No code signing in this version.
 appId: dev.wow.desktop
 productName: wow
 copyright: Copyright © 2026 wow
@@ -14,8 +14,15 @@ files:
   - out/renderer/**
   - out/assets/**
   - '!**/*.map'
-# No auto-update in this version, so nothing to publish to.
-publish: null
+# Auto-update reads GitHub Releases of sockulags/wow (behavior 35). With a publish provider, `dist`
+# writes latest.yml and the installer's .blockmap next to the installer and puts app-update.yml in
+# the packaged resources for electron-updater. `dist` still runs with --publish never: the release
+# workflow uploads the three files to a stable (not draft, not prerelease) release.
+publish:
+  provider: github
+  owner: sockulags
+  repo: wow
+  releaseType: release
 npmRebuild: false
 nodeGypRebuild: false
 # The server runs from real files: PowerShell must read the Outlook bridge script and the native

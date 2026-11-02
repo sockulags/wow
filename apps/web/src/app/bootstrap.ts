@@ -9,6 +9,7 @@ import {
 import { createDraftStore } from '@/chat/draft';
 import { createServerSettingsSource } from '@/settings/server-source';
 import { createLayoutStore, type Runtime } from './runtime';
+import { createUpdatesClient } from './updates';
 
 declare global {
   interface Window {
@@ -32,8 +33,10 @@ export function createRuntime(): Runtime {
   const connection: Connection | undefined = endpoint
     ? createConnection({ url: endpoint })
     : undefined;
+  const updatesBridge = window.wowDesktop?.updates;
   return {
     connection,
+    updates: updatesBridge ? createUpdatesClient(updatesBridge) : undefined,
     layout: createLayoutStore(),
     draft: createDraftStore(),
     // Without a server (development, the shell tests) settings live in memory.

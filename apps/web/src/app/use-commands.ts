@@ -10,14 +10,16 @@ import { runningTurn } from '@/chat/model';
 import { providerCommands } from '@/providers/commands';
 import { workflowCommands } from '@/workflows/commands';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
+import { updateCommands } from './updates';
 import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
-import { useRuntime, useSetting } from './runtime';
+import { useRuntime, useSetting, useUpdateState } from './runtime';
 
 export function useCommands(): {
   readonly commands: readonly AppCommand[];
   readonly context: CommandContext;
 } {
-  const { settings, layout, draft, connection } = useRuntime();
+  const { settings, layout, draft, connection, updates } = useRuntime();
+  const updateState = useUpdateState();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const locationSearch = useRouterState({ select: (state) => state.location.search });
@@ -64,9 +66,11 @@ export function useCommands(): {
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
       }),
       ...providerCommands(instances ?? []),
+      ...updateCommands(updateState),
       ...staticCommands,
     ],
     [
+      updateState,
       staticCommands,
       threads,
       instances,
@@ -85,8 +89,8 @@ export function useCommands(): {
     ],
   );
   const context = useMemo(
-    () => ({ navigate, settings, layout, draft, connection }),
-    [navigate, settings, layout, draft, connection],
+    () => ({ navigate, settings, layout, draft, connection, updates }),
+    [navigate, settings, layout, draft, connection, updates],
   );
   return { commands, context };
 }
