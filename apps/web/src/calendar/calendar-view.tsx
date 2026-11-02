@@ -72,6 +72,7 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const firstDay = useSetting('calendar.firstDayOfWeek');
   const workHours = useSetting('calendar.workHours');
   const snap = useSetting('calendar.snapMinutes');
+  const hourHeight = useSetting('calendar.hourHeight');
   const cardMinutes = useSetting('calendar.cardMinutes');
   const mailRail = useSetting('outlook.mailRail');
   const todayKey = useSetting('keybindings.calendarToday');
@@ -182,6 +183,7 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           workHours={workHours}
           snap={snap}
           cardMinutes={cardMinutes}
+          hourHeight={hourHeight}
           onCreate={(range) => layout.setState({ cardDialog: { type: 'create', ...range } })}
           onEdit={(cardId) => layout.setState({ cardDialog: { type: 'edit', cardId } })}
           onChange={(cardId, range) => dispatch({ type: 'card.update', cardId, ...range })}

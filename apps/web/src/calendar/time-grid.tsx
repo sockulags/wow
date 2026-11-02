@@ -22,9 +22,6 @@ import {
   type LocalDate,
 } from './time';
 
-// Pixel height of one hour in the grid. Layout, not a preference: density scales the text.
-const HOUR_PX = 48;
-const px = (minutes: number) => (minutes / 60) * HOUR_PX;
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
 type Range = { readonly start: string; readonly end: string };
@@ -180,6 +177,8 @@ export interface TimeGridProps {
   readonly workHours: WorkHours;
   readonly snap: number;
   readonly cardMinutes: number;
+  // Pixel height of one hour (the calendar.hourHeight setting).
+  readonly hourHeight: number;
   onCreate(range: Range): void;
   onEdit(cardId: string): void;
   // Stores a moved or resized card; the grid shows the new place until the server's row matches.
@@ -194,6 +193,7 @@ export function TimeGrid({
   workHours,
   snap,
   cardMinutes,
+  hourHeight,
   onCreate,
   onEdit,
   onChange,
@@ -204,11 +204,13 @@ export function TimeGrid({
   const [pending, setPending] = useState<ReadonlyMap<string, Range>>(new Map());
   const workStart = parseClockTime(workHours.start) ?? 0;
   const daysKey = days.map(isoDate).join(',');
+  const px = (minutes: number) => (minutes / 60) * hourHeight;
 
   // Start the day at work hours instead of midnight.
   useLayoutEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, px(workStart) - HOUR_PX / 2);
-  }, [daysKey, workStart]);
+    if (scrollRef.current)
+      scrollRef.current.scrollTop = Math.max(0, ((workStart - 30) / 60) * hourHeight);
+  }, [daysKey, workStart, hourHeight]);
 
   // A stored move replaces the pending one once the server's row shows it.
   useEffect(() => {
@@ -252,7 +254,7 @@ export function TimeGrid({
     );
     const minute = Math.min(
       MINUTES_PER_DAY,
-      Math.max(0, ((event.clientY - rect.top) / HOUR_PX) * 60),
+      Math.max(0, ((event.clientY - rect.top) / hourHeight) * 60),
     );
     return { dayIndex, minute };
   };
@@ -433,7 +435,7 @@ export function TimeGrid({
                     height: px(MINUTES_PER_DAY),
                     backgroundImage:
                       'linear-gradient(to bottom, var(--border) 1px, transparent 1px)',
-                    backgroundSize: `100% ${HOUR_PX}px`,
+                    backgroundSize: `100% ${hourHeight}px`,
                   }}
                 >
                   {work && (

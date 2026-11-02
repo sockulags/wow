@@ -387,7 +387,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - providers: `providers.testTimeoutMs`
 - chat: `chat.contextMeter`, `chat.resumePrompt`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`,
-  `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`
+  `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`,
+  `calendar.hourHeight`
 - outlook: `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`,
   `outlook.mailRail`, `outlook.mailLimit`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,

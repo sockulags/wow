@@ -11,8 +11,6 @@ import { e2eHome, e2eOutlookControlPort } from './env';
 // These tests switch the shared mock Outlook off and on.
 test.describe.configure({ mode: 'serial' });
 
-const HOUR_PX = 48;
-
 test.beforeEach(async ({ page }) => {
   // What the desktop preload injects: the contents of `~/.wow/server.json`.
   const info: unknown = JSON.parse(await readFile(path.join(e2eHome, 'server.json'), 'utf8'));
@@ -48,11 +46,12 @@ async function runPaletteCommand(page: Page, title: string) {
   await page.keyboard.press('Enter');
 }
 
-// A point in a day column at a wall-clock time, a few pixels below the line.
+// A point in a day column at a wall-clock time, a few pixels below the line. The column is one
+// whole day tall, so the hour height comes from the rendered page, not the setting's default.
 async function pointAt(column: Locator, minute: number, nudge = 2) {
   const box = await column.boundingBox();
   if (!box) throw new Error('day column is not on screen');
-  return { x: box.x + box.width / 2, y: box.y + (minute / 60) * HOUR_PX + nudge };
+  return { x: box.x + box.width / 2, y: box.y + (minute / (24 * 60)) * box.height + nudge };
 }
 
 async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {

@@ -286,6 +286,14 @@ export const settingsRegistry = {
     default: 30,
     scope: 'global',
   }),
+  'calendar.hourHeight': defineSetting({
+    schema: z.number().int().min(24).max(160),
+    group: 'calendar',
+    label: 'Hour height (pixels)',
+    description: 'Height of one hour in the day and week views. Larger values zoom in.',
+    default: 48,
+    scope: 'global',
+  }),
   'outlook.pollSeconds': defineSetting({
     schema: z.number().int().min(15).max(3600),
     group: 'outlook',
