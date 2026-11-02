@@ -1,5 +1,5 @@
 import { providerChatOptions, type ProviderInstance, type Thread } from '@wow/contracts';
-import { PinIcon, PinOffIcon, RotateCcwIcon } from 'lucide-react';
+import { CircleCheckIcon, PinIcon, PinOffIcon, RotateCcwIcon, Undo2Icon } from 'lucide-react';
 import { useLayoutEffect, useRef } from 'react';
 import { useSetting } from '@/app/runtime';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +9,7 @@ import { Composer } from './composer';
 import { useDispatch, useTopic } from './data';
 import { ConversationItem, WorkingIndicator } from './items';
 import {
+  canMarkDone,
   contextPercent,
   formatTokens,
   lastTurn,
@@ -73,6 +74,31 @@ function ThreadHeader({
         >
           {thread.pinned ? <PinOffIcon /> : <PinIcon />}
         </Button>
+        {thread.state === 'done' ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void send({ type: 'thread.setDone', threadId: thread.id, done: false })}
+          >
+            <Undo2Icon />
+            Reopen thread
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!canMarkDone(thread)}
+            title={
+              canMarkDone(thread)
+                ? undefined
+                : 'Available once the agent stops working and nothing waits for you'
+            }
+            onClick={() => void send({ type: 'thread.setDone', threadId: thread.id, done: true })}
+          >
+            <CircleCheckIcon />
+            Mark thread done
+          </Button>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <span

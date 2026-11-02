@@ -1,7 +1,7 @@
 import type { ProviderInstance, Thread } from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
-import { threadTitle } from './model';
+import { canMarkDone, threadTitle } from './model';
 
 export interface ChatCommandData {
   readonly threads: readonly Thread[];
@@ -11,7 +11,8 @@ export interface ChatCommandData {
   readonly running: boolean;
 }
 
-// Palette commands for the chat (spec 22): every thread, new thread, switch provider and stop.
+// Palette commands for the chat (spec 22): every thread, new thread, switch provider, stop, and
+// mark done or reopen.
 export function chatCommands({
   threads,
   instances,
@@ -74,6 +75,31 @@ export function chatCommands({
       keybinding: 'keybindings.stopTurn',
       run: ({ connection }) => {
         if (connection) void dispatch(connection, { type: 'thread.interrupt', threadId });
+      },
+    });
+  }
+
+  if (openThread && openThread.state === 'done') {
+    const threadId = openThread.id;
+    commands.push({
+      id: 'chat.reopen',
+      title: 'Reopen thread',
+      group: 'Chat',
+      keywords: ['done', 'undo', 'idle'],
+      run: ({ connection }) => {
+        if (connection)
+          void dispatch(connection, { type: 'thread.setDone', threadId, done: false });
+      },
+    });
+  } else if (openThread && canMarkDone(openThread)) {
+    const threadId = openThread.id;
+    commands.push({
+      id: 'chat.markDone',
+      title: 'Mark thread done',
+      group: 'Chat',
+      keywords: ['done', 'finish', 'complete', 'archive'],
+      run: ({ connection }) => {
+        if (connection) void dispatch(connection, { type: 'thread.setDone', threadId, done: true });
       },
     });
   }

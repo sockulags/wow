@@ -56,6 +56,39 @@ test.describe('chat', () => {
     await expect(idle.getByRole('link').first()).toContainText('Hello there');
   });
 
+  test('marks a thread done, reopens it, and a new message reopens it too', async ({ page }) => {
+    await startThread(page, 'Wrap this up');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Wrap this up',
+    );
+    const done = threadList(page).getByRole('region', { name: 'Done' });
+    const idle = threadList(page).getByRole('region', { name: 'Idle' });
+
+    await page.getByRole('button', { name: 'Mark thread done' }).click();
+    await expect(page.getByTestId('thread-state')).toHaveText('Done');
+    await expect(done.getByRole('link', { name: /Wrap this up/ })).toBeVisible();
+
+    await page.keyboard.press('Control+k');
+    const palette = page.getByRole('dialog');
+    await palette.getByRole('combobox').fill('reopen thread');
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(idle.getByRole('link', { name: /Wrap this up/ })).toBeVisible();
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('mark thread done');
+    await page.keyboard.press('Enter');
+    await expect(done.getByRole('link', { name: /Wrap this up/ })).toBeVisible();
+
+    const composer = page.getByRole('combobox', { name: 'Message' });
+    await composer.fill('One more thing');
+    await composer.press('Enter');
+    await expect(conversation(page).getByText('You said: One more thing')).toBeVisible();
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(idle.getByRole('link', { name: /Wrap this up/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Mark thread done' })).toBeEnabled();
+  });
+
   test('approves a command and the turn goes on', async ({ page }) => {
     await startThread(page, 'Please approve running the tests');
     const approval = conversation(page).getByRole('region', { name: 'Approval request' });

@@ -375,6 +375,55 @@ describe('provider service', () => {
     expect(rows('threads')[0]).toEqual(before);
   });
 
+  it('marks a thread done, reopens it, and a new message reopens it too', async () => {
+    expect(dispatch({ type: 'thread.setDone', threadId: 't1', done: true }).seqs).toHaveLength(1);
+    expect(thread()).toMatchObject({ state: 'done' });
+    expect(dispatch({ type: 'thread.setDone', threadId: 't1', done: true }).seqs).toEqual([]);
+    dispatch({ type: 'thread.setDone', threadId: 't1', done: false });
+    expect(thread()).toMatchObject({ state: 'idle' });
+    expect(dispatch({ type: 'thread.setDone', threadId: 't1', done: false }).seqs).toEqual([]);
+
+    dispatch({ type: 'thread.setDone', threadId: 't1', done: true });
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'One more thing' });
+    expect(thread()).toMatchObject({ state: 'working' });
+    expect(() => dispatch({ type: 'thread.setDone', threadId: 't1', done: true })).toThrow(
+      /is working/,
+    );
+
+    const asked = committed('approval.requested');
+    adapter.emit({
+      type: 'approvalRequested',
+      threadId: 't1',
+      approvalId: 'a1',
+      kind: 'command',
+      summary: 'Run pnpm test',
+      request: { command: 'pnpm test' },
+    });
+    await asked;
+    expect(() => dispatch({ type: 'thread.setDone', threadId: 't1', done: true })).toThrow(
+      /waiting for you/,
+    );
+
+    const ended = committed('turn.ended');
+    adapter.emit({ type: 'turnCompleted', threadId: 't1' });
+    await ended;
+    expect(thread()).toMatchObject({ state: 'idle' });
+    expect(() => dispatch({ type: 'thread.setDone', threadId: 'missing', done: true })).toThrow(
+      /No thread/,
+    );
+  });
+
+  it('reopens a thread whose last turn failed with its failed marker', async () => {
+    adapter.failNext = 'Provider went away';
+    const ended = committed('turn.ended');
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Hi' });
+    await ended;
+    dispatch({ type: 'thread.setDone', threadId: 't1', done: true });
+    expect(thread()).toMatchObject({ state: 'done' });
+    dispatch({ type: 'thread.setDone', threadId: 't1', done: false });
+    expect(thread()).toMatchObject({ state: 'failed' });
+  });
+
   it('stops a running turn and keeps its partial output', async () => {
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Long task' });
     expect(() => dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Again' })).toThrow(

@@ -185,6 +185,12 @@ The sidebar groups threads under **Needs you**, **Working**, **Idle** and **Done
 threads first (pin from the thread header). A thread whose turn failed sits under Idle with a
 marker. A thread started by a workflow shows the workflow and step name.
 
+**Mark thread done** in the thread header (or in the palette) moves a thread you have finished
+with to **Done**. It is available while the agent neither works nor waits for you. **Reopen
+thread** puts it back under Idle (a thread whose last turn failed keeps its marker), and sending a
+new message to a done thread reopens it as well. A workflow step's thread moves to Done by itself
+when its step completes; with a gate after the step, that happens once you press Continue.
+
 Change model, effort or permission mode in the thread header; the next turn uses them. **Ctrl+.**
 or the stop button interrupts a running turn and keeps what it produced. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
@@ -311,8 +317,6 @@ These are known; the rest of this guide describes the intended behavior.
 - **No screen to add projects.** The server stores projects and every view picks from them, but
   the app has no form to create, rename or remove one yet. Until it does, threads can use a typed
   folder; triggers and workflow runs need a project.
-- **The "Done" group** in the chat sidebar stays empty: no thread is marked done yet. Finished
-  workflow steps stay under Idle.
 
 ## Troubleshooting
 

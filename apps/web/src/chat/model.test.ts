@@ -1,6 +1,8 @@
 import type { Skill, Thread, ThreadItem, WorkflowRun } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
+import { chatCommands } from './commands';
 import {
+  canMarkDone,
   effortOptions,
   filterSkills,
   groupThreads,
@@ -173,5 +175,29 @@ describe('context meter', () => {
       ]),
     ).toEqual({ usedTokens: 40, maxTokens: 100 });
     expect(latestContext([usage(0, { inputTokens: 1 })])).toBeUndefined();
+  });
+});
+
+const doneTitles = (open: Thread | undefined) =>
+  chatCommands({ threads: [], instances: [], openThread: open, running: false })
+    .map((command) => command.title)
+    .filter((title) => title === 'Mark thread done' || title === 'Reopen thread');
+
+describe('done threads', () => {
+  it('offers Mark thread done or Reopen thread for the open thread from its state', () => {
+    expect(doneTitles(undefined)).toEqual([]);
+    expect(doneTitles(thread('a'))).toEqual(['Mark thread done']);
+    expect(doneTitles(thread('a', { state: 'failed' }))).toEqual(['Mark thread done']);
+    expect(doneTitles(thread('a', { state: 'done' }))).toEqual(['Reopen thread']);
+    expect(doneTitles(thread('a', { state: 'working' }))).toEqual([]);
+    expect(doneTitles(thread('a', { state: 'needs_you' }))).toEqual([]);
+  });
+
+  it('allows marking done only when the agent neither works nor waits', () => {
+    expect(
+      (['idle', 'failed', 'working', 'needs_you', 'done'] as const).map((state) =>
+        canMarkDone({ state }),
+      ),
+    ).toEqual([true, true, false, false, false]);
   });
 });

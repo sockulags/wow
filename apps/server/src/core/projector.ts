@@ -4,7 +4,7 @@ import {
   type Project,
   type SubscriptionTopic,
 } from '@wow/contracts';
-import { and, count, eq, inArray, isNull, max } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, max } from 'drizzle-orm';
 import type { DbOrTx } from '../db/database.js';
 import {
   approvals,
@@ -418,6 +418,8 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(turns)
         .where(and(eq(turns.threadId, threadId), eq(turns.state, 'running')))
         .get(),
+    lastTurn: (threadId) =>
+      tx.select().from(turns).where(eq(turns.threadId, threadId)).orderBy(desc(turns.index)).get(),
     turnCount: (threadId) =>
       tx.select({ n: count() }).from(turns).where(eq(turns.threadId, threadId)).get()?.n ?? 0,
     nextItemIndex: (threadId) => {
