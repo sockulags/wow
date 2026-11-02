@@ -4,6 +4,7 @@ import {
   findJoinUrl,
   type Appointment,
   type PingResult,
+  type ProfileResult,
   type UnreadMailResult,
   type UnreadMessage,
 } from './protocol.js';
@@ -23,6 +24,7 @@ import {
   zonedInstant,
   type LocalDate,
 } from './zone.js';
+import { windowsIdOf } from './windows-zones.js';
 
 export interface MockOutlookOptions {
   readonly fixtures: OutlookFixturesInput;
@@ -106,6 +108,15 @@ export class MockOutlookSource implements OutlookSource {
     this.opened.push(entryId);
   }
 
+  // A fixture profile without a zone answers with the zone the fixtures are written in.
+  async profile(): Promise<ProfileResult> {
+    this.#assertAvailable();
+    const profile = this.#fixtures.profile;
+    return profile.timeZoneId === null
+      ? { ...profile, timeZoneId: windowsIdOf(this.#zone, this.#clock.now()) }
+      : profile;
+  }
+
   async close(): Promise<void> {}
 
   #assertAvailable(): void {
@@ -150,6 +161,7 @@ export class MockOutlookSource implements OutlookSource {
       organizer: fixture.organizer,
       joinUrl: findJoinUrl(fixture.body, fixture.location),
       busyStatus: fixture.busyStatus,
+      body: fixture.body,
     };
   }
 }

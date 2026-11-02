@@ -7,7 +7,7 @@ import {
   TaskStatus,
   ThreadState,
 } from './provider.js';
-import { SecretRef } from './settings.js';
+import { SecretRef, Weekday, WorkHours } from './settings.js';
 import { StepRun, WorkflowRunState, WorkflowStep } from './workflow.js';
 
 // Row shapes of the projection tables in docs/architecture.md, as clients receive them through
@@ -211,7 +211,11 @@ export const CalendarItem = z.object({
   allDay: z.boolean(),
   location: z.string().nullable(),
   joinUrl: z.string().nullable(),
+  // A card's notes; for an Outlook item the start of its body as plain text.
   body: z.string().nullable(),
+  // Who organizes an Outlook meeting, as Outlook names them; null for cards. Defaults to null so
+  // events stored before it existed still replay.
+  organizer: z.string().nullable().default(null),
   projectId: Id.nullable(),
   backlogItemId: Id.nullable(),
   workflowId: Id.nullable(),
@@ -234,6 +238,18 @@ export const MailItem = z.object({
 });
 export type MailItem = z.infer<typeof MailItem>;
 
+// Calendar preferences read from Outlook (F-8). Each part is null when Outlook does not say. The
+// calendar settings default to these and fall back to the system's when they are null.
+export const OutlookProfile = z.object({
+  // IANA zone of Outlook's calendar.
+  zone: z.string().min(1).nullable(),
+  workHours: WorkHours.nullable(),
+  firstDayOfWeek: Weekday.nullable(),
+  // The signed-in user's SMTP address, so meetings they organize can say "You".
+  address: z.string().min(1).nullable(),
+});
+export type OutlookProfile = z.infer<typeof OutlookProfile>;
+
 export const OutlookStatus = z.object({
   lastSyncAt: Timestamp.nullable(),
   lastError: z.string().nullable(),
@@ -242,6 +258,8 @@ export const OutlookStatus = z.object({
   // Unread mail in the configured folders, including messages beyond the rail's limit.
   unreadCount: z.number().int().nonnegative(),
   bridgeVersion: z.string().nullable(),
+  // The last profile Outlook returned; kept while Outlook is unavailable.
+  profile: OutlookProfile.nullable(),
 });
 export type OutlookStatus = z.infer<typeof OutlookStatus>;
 

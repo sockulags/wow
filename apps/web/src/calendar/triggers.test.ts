@@ -15,6 +15,7 @@ const card = (id: string, state: string): CalendarItem => ({
   location: null,
   joinUrl: null,
   body: null,
+  organizer: null,
   projectId: 'p1',
   backlogItemId: null,
   workflowId: 'wf1',

@@ -325,6 +325,8 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         unavailableSince: null,
         unreadCount: event.payload.unreadCount,
         bridgeVersion: event.payload.bridgeVersion,
+        // A poll that could not read the profile keeps the one stored.
+        ...(event.payload.profile ? { profile: event.payload.profile } : {}),
       };
       tx.insert(outlookStatus)
         .values({ id: OUTLOOK_STATUS_ROW, ...status })
@@ -355,6 +357,7 @@ const outlookStatusColumns = {
   unavailableSince: outlookStatus.unavailableSince,
   unreadCount: outlookStatus.unreadCount,
   bridgeVersion: outlookStatus.bridgeVersion,
+  profile: outlookStatus.profile,
 };
 
 export function readOutlookStatus(tx: DbOrTx) {

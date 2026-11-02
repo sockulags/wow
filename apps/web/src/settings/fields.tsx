@@ -13,6 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { eventToBinding, formatBinding } from '@/app/keybindings';
+import { FromOutlookField, ZoneField } from '@/calendar/settings-fields';
 import { cn } from '@/lib/utils';
 import type { FieldKind, ListItemKind } from './field-kind';
 
@@ -76,6 +77,10 @@ export function readableValue(
   }
   if (typeof value === 'string') {
     if (kind.kind === 'keybinding') return formatBinding(value);
+    if ((kind.kind === 'fromOutlook' || kind.kind === 'timeZone') && value === 'outlook') {
+      return 'From Outlook';
+    }
+    if (kind.kind === 'timeZone' && value === 'system') return 'System';
     return optionLabel(options, value);
   }
   if (Array.isArray(value)) {
@@ -650,6 +655,19 @@ export function Field(props: FieldProps) {
         </div>
       );
     }
+    case 'timeZone':
+      return <ZoneField {...props} />;
+    case 'fromOutlook':
+      return (
+        <FromOutlookField
+          id={id}
+          preference={kind.inner.kind === 'enum' ? 'weekday' : 'workHours'}
+          value={value}
+          onChange={onChange}
+        >
+          <Field {...props} kind={kind.inner} />
+        </FromOutlookField>
+      );
     case 'json':
       return <JsonField {...props} />;
   }

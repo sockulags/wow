@@ -20,6 +20,7 @@ describe.runIf(process.platform === 'win32')('bridge.ps1 without Outlook', () =>
       source.calendar({ from: '2026-11-02T00:00:00+01:00', to: '2026-11-09T00:00:00+01:00' }),
     ).rejects.toMatchObject({ code: 'unavailable' });
     await expect(source.unreadMail(['Inbox'], 10)).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(source.profile()).rejects.toMatchObject({ code: 'unavailable' });
     await expect(source.ping()).resolves.toMatchObject({ outlook: 'unavailable' });
     expect(source.starts).toBe(1);
   });

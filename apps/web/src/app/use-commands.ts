@@ -36,6 +36,9 @@ export function useCommands(): {
   const calendarItems = useTopic('calendarItems');
   const triggers = useTopic('triggers');
   const schedulerPaused = useSetting('scheduler.paused');
+  const outlookProfile = useTopic('outlookStatus')?.[0]?.profile;
+  const showWeekends = useSetting('calendar.showWeekends');
+  const mailRailCollapsed = useSetting('outlook.mailRailCollapsed');
   const backlogItems = useTopic('backlogItems');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
@@ -50,6 +53,9 @@ export function useCommands(): {
         cards: (calendarItems ?? []).filter((item) => item.source === 'local'),
         triggers: triggers ?? [],
         schedulerPaused,
+        profile: outlookProfile,
+        showWeekends,
+        mailRailCollapsed,
       }),
       ...chatCommands({
         threads: threads ?? [],
@@ -73,6 +79,9 @@ export function useCommands(): {
       ...staticCommands,
     ],
     [
+      outlookProfile,
+      showWeekends,
+      mailRailCollapsed,
       updateState,
       staticCommands,
       threads,

@@ -1,8 +1,7 @@
-import type { CalendarItem, OutlookStatus } from '@wow/contracts';
+import type { OutlookStatus } from '@wow/contracts';
 import { useNavigate } from '@tanstack/react-router';
 import {
-  AlertTriangleIcon,
-  CalendarDaysIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   MinusIcon,
@@ -12,265 +11,391 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useStore } from 'zustand';
-import { formatBinding } from '@/app/keybindings';
-import { useConnectionState, useRuntime, useSetting } from '@/app/runtime';
+import { useRuntime, useSetting } from '@/app/runtime';
+import { ShellToolbar } from '@/app/shell-toolbar';
+import { useTopicState } from '@/app/topic-state';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
+import { Banner } from '@/components/banner';
+import { IconButton, ShortcutHint, WithTooltip } from '@/components/hint';
+import { DisconnectedState, Stale } from '@/components/states';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { EmptyState } from '@/views/empty-views';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { notify } from '@/lib/feedback';
+import { formatWhen } from '@/lib/format';
 import { CardDialog } from './card-dialog';
 import { newCardRange, runNowCardIds } from './commands';
 import { stepDays, visibleDays, type CalendarViewKind } from './layout';
 import { MailRail } from './mail-rail';
-import { anchorDate, todayIn, type CalendarSearch } from './search';
+import { useCalendarPrefs, useOutlookProfile } from './prefs';
+import { anchorDate, type CalendarSearch } from './search';
 import {
   addDays,
   formatDateRange,
   formatLongDay,
-  formatTime,
+  formatShortDay,
+  formatZone,
   isoDate,
+  isoWeek,
   localDate,
-  resolveZone,
-  sameDate,
+  systemZone,
 } from './time';
 import { TimeGrid } from './time-grid';
-import { calendarZoom, zoomBounds } from './zoom';
+import { useNarrowWindow } from './use-narrow';
+import { calendarZoom, presetHeight, zoomBounds, zoomPercent, zoomPresets } from './zoom';
 
-const noItems: readonly CalendarItem[] = [];
-
-function OutlookBanner({ status, zone }: { status: OutlookStatus | undefined; zone: string }) {
+// While Outlook cannot be read (spec 4): what happened, since when, and what to try.
+function OutlookBanner({
+  status,
+  zone,
+  onRetry,
+}: {
+  status: OutlookStatus | undefined;
+  zone: string;
+  onRetry: () => void;
+}) {
   if (!status?.lastError) return null;
-  const since = status.unavailableSince ? new Date(status.unavailableSince) : undefined;
-  const when = since
-    ? sameDate(localDate(since, zone), todayIn(zone))
-      ? formatTime(since, zone)
-      : `${isoDate(localDate(since, zone))} ${formatTime(since, zone)}`
-    : undefined;
+  const since = status.unavailableSince ? formatWhen(status.unavailableSince, zone) : undefined;
   return (
-    <div
-      role="status"
-      className="flex shrink-0 items-center gap-2 border-b border-border bg-state-needs-you/10 px-3 py-1.5 text-xs"
+    <Banner
+      tone="warning"
+      testId="outlook-banner"
+      actions={
+        <>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button size="xs" variant="ghost">
+                What to check
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80 text-xs">
+              <ul className="flex list-disc flex-col gap-1.5 pl-4">
+                <li>Outlook (classic) is open on this computer and signed in.</li>
+                <li>No Outlook dialog is waiting for an answer, such as a sign-in prompt.</li>
+                <li>
+                  wow only reads Outlook. It never starts it, so open Outlook and then try again.
+                </li>
+              </ul>
+            </PopoverContent>
+          </Popover>
+          <Button size="xs" variant="outline" onClick={onRetry}>
+            <RefreshCwIcon />
+            Try again
+          </Button>
+        </>
+      }
     >
-      <AlertTriangleIcon className="size-3.5 shrink-0 text-state-needs-you" aria-hidden />
       <span className="font-medium">
-        {when ? `Outlook unavailable since ${when}` : 'Outlook unavailable'}
-      </span>
-      <span className="truncate text-muted-foreground">
+        {since ? `Outlook unavailable since ${since}` : 'Outlook unavailable'}.
+      </span>{' '}
+      <span className="text-muted-foreground">
         {status.lastError}. Showing the last items read from Outlook.
       </span>
+    </Banner>
+  );
+}
+
+// [-] [100% ▾] [+]: the percent opens a menu of levels and Reset (audit B-12, B-13).
+function ZoomControls({ hourHeight, floor }: { hourHeight: number; floor: number }) {
+  const { settings } = useRuntime();
+  const zoom = calendarZoom(settings);
+  const [open, setOpen] = useState(false);
+  const percent = zoomPercent(hourHeight);
+  return (
+    <div role="group" aria-label="Zoom" className="flex items-center">
+      <IconButton
+        label="Zoom out calendar"
+        shortcut="keybindings.calendarZoomOut"
+        disabled={hourHeight <= Math.max(zoomBounds.min, floor)}
+        onClick={() => zoom.step(-1)}
+      >
+        <MinusIcon />
+      </IconButton>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Zoom level ${percent}%`}
+            data-testid="calendar-zoom"
+            className="w-16 gap-0.5 px-1 tabular-nums"
+          >
+            {percent}%
+            <ChevronDownIcon className="size-3.5 text-muted-foreground" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="center" className="w-44 p-1">
+          <div role="menu" aria-label="Zoom levels" className="flex flex-col">
+            {zoomPresets.map((preset) => {
+              const height = presetHeight(preset);
+              return (
+                <Button
+                  key={preset}
+                  role="menuitemradio"
+                  aria-checked={percent === preset}
+                  variant="ghost"
+                  size="sm"
+                  disabled={height < floor}
+                  className="justify-between tabular-nums"
+                  onClick={() => {
+                    zoom.set(height);
+                    setOpen(false);
+                  }}
+                >
+                  {preset}%{percent === preset && <span aria-hidden>✓</span>}
+                </Button>
+              );
+            })}
+            <Button
+              role="menuitem"
+              variant="ghost"
+              size="sm"
+              className="justify-between border-t border-border"
+              onClick={() => {
+                zoom.reset();
+                setOpen(false);
+              }}
+            >
+              Reset calendar zoom
+              <ShortcutHint shortcut="keybindings.calendarZoomReset" />
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+      <IconButton
+        label="Zoom in calendar"
+        shortcut="keybindings.calendarZoomIn"
+        disabled={hourHeight >= zoomBounds.max}
+        onClick={() => zoom.step(1)}
+      >
+        <PlusIcon />
+      </IconButton>
     </div>
   );
 }
 
-function Shortcut({ binding }: { binding: string }) {
-  return binding === '' ? null : (
-    <kbd className="ml-1 font-mono text-[10px] text-muted-foreground">{formatBinding(binding)}</kbd>
-  );
-}
-
 function ConnectedCalendar({ search }: { search: CalendarSearch }) {
-  const { connection, layout } = useRuntime();
+  const { connection, layout, settings } = useRuntime();
   const navigate = useNavigate();
   const dispatch = useDispatch();
-  const zoneSetting = useSetting('calendar.zone');
-  const firstDay = useSetting('calendar.firstDayOfWeek');
-  const workHours = useSetting('calendar.workHours');
+  const prefs = useCalendarPrefs();
+  const profile = useOutlookProfile();
   const snap = useSetting('calendar.snapMinutes');
   const storedHourHeight = useSetting('calendar.hourHeight');
   const cardMinutes = useSetting('calendar.cardMinutes');
+  const showWeekends = useSetting('calendar.showWeekends');
+  const maxColumns = useSetting('calendar.weekMaxColumns');
   const mailRail = useSetting('outlook.mailRail');
-  const todayKey = useSetting('keybindings.calendarToday');
-  const nextKey = useSetting('keybindings.calendarNext');
-  const previousKey = useSetting('keybindings.calendarPrevious');
-  const newCardKey = useSetting('keybindings.newCard');
-  const zoomInKey = useSetting('keybindings.calendarZoomIn');
-  const zoomOutKey = useSetting('keybindings.calendarZoomOut');
-  const zoomResetKey = useSetting('keybindings.calendarZoomReset');
-  const { settings } = useRuntime();
+  const mailRailCollapsed = useSetting('outlook.mailRailCollapsed');
+  // A narrow window folds the rail on its own; opening it there only lasts until it is folded.
+  const narrow = useNarrowWindow();
+  const [railPeek, setRailPeek] = useState(false);
+  const railCollapsed = mailRailCollapsed || (narrow && !railPeek);
   const zoom = calendarZoom(settings);
-  const hourHeight = useStore(zoom.store, (state) => state.pending) ?? storedHourHeight;
-  const zoomPercent = Math.round((hourHeight / zoomBounds.default) * 100);
-  const items = useTopic('calendarItems') ?? noItems;
+  const pendingHeight = useStore(zoom.store, (state) => state.pending);
+  const floor = useStore(zoom.store, (state) => state.floor);
+  // At the lowest zoom the day fills the view instead of leaving space under 24:00.
+  const hourHeight = Math.max(pendingHeight ?? storedHourHeight, floor);
+  const { rows: items = [], status: itemsStatus } = useTopicState('calendarItems');
   const status = useTopic('outlookStatus')?.[0];
-  const mail = useTopic('mailItems') ?? [];
   const triggers = useTopic('triggers');
   const paused = useSetting('scheduler.paused');
-  const [runError, setRunError] = useState<string>();
 
-  const zone = resolveZone(zoneSetting);
+  const zone = prefs.zone;
   const view: CalendarViewKind = search.view ?? 'week';
-  const anchor = anchorDate(search, zoneSetting);
-  const today = todayIn(zoneSetting);
-  const days = visibleDays(view, anchor, firstDay);
+  const anchor = anchorDate(search, zone);
+  const today = localDate(new Date(), zone);
+  const days = visibleDays(view, anchor, prefs.firstDayOfWeek, showWeekends);
   const cards = useMemo(() => items.filter((item) => item.source === 'local'), [items]);
   const runNowIds = useMemo(() => runNowCardIds(cards, triggers ?? []), [cards, triggers]);
   const runNow = (cardId: string) => {
-    setRunError(undefined);
     dispatch({ type: 'card.runNow', cardId, runId: globalThis.crypto.randomUUID() }).catch(
-      (error: unknown) => setRunError(errorMessage(error)),
+      (error: unknown) =>
+        notify.error('The workflow could not start', { description: errorMessage(error) }),
     );
   };
+  const refresh = () => void connection?.request('outlook.refresh', {}).catch(() => undefined);
   const first = days[0] ?? anchor;
   const last = days.at(-1) ?? anchor;
+  // The zone is only worth a word when it is not the computer's own (audit B-09).
+  const foreignZone = zone === systemZone() ? undefined : zone;
 
   const go = (next: CalendarSearch) => void navigate({ to: '/calendar', search: next });
   const shift = (direction: 1 | -1) =>
     go({ ...search, date: isoDate(addDays(anchor, direction * stepDays(view))) });
+  const newCard = () =>
+    layout.setState({
+      cardDialog: {
+        type: 'create',
+        ...newCardRange(anchor, settings.getState().values, profile),
+      },
+    });
 
   return (
     <div className="flex h-full min-h-0">
-      <section aria-label="Calendar" className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => go(search.view ? { view: search.view } : {})}
+      <section aria-label="Calendar" className="@container flex min-w-0 flex-1 flex-col">
+        <ShellToolbar>
+          <a
+            href="#calendar-grid"
+            className="sr-only rounded-md bg-background px-2 py-1 text-xs focus:not-sr-only focus:ring-2 focus:ring-ring"
+            onClick={(event) => {
+              event.preventDefault();
+              const grid = document.getElementById('calendar-grid');
+              const target =
+                grid?.querySelector<HTMLElement>('[data-stop][tabindex="0"]') ?? grid ?? undefined;
+              target?.focus();
+            }}
           >
-            Today
-            <Shortcut binding={todayKey} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={view === 'day' ? 'Previous day' : 'Previous week'}
-            title={previousKey === '' ? undefined : formatBinding(previousKey)}
-            onClick={() => shift(-1)}
-          >
-            <ChevronLeftIcon />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={view === 'day' ? 'Next day' : 'Next week'}
-            title={nextKey === '' ? undefined : formatBinding(nextKey)}
-            onClick={() => shift(1)}
-          >
-            <ChevronRightIcon />
-          </Button>
-          <h2 className="px-1 text-sm font-medium" data-testid="calendar-range">
-            {view === 'day' ? formatLongDay(anchor) : formatDateRange(first, last)}
-          </h2>
-          <span className="text-[11px] text-muted-foreground">{zone}</span>
-          <div className="ml-auto flex items-center gap-1">
-            {paused && (
+            Skip to calendar
+          </a>
+          <div className="@container flex min-w-0 flex-1 items-center gap-1 overflow-hidden whitespace-nowrap">
+            <WithTooltip label="Today" shortcut="keybindings.calendarToday">
               <Button
-                variant="ghost"
+                variant="outline"
                 size="sm"
-                className="text-state-needs-you"
-                title="Triggers do not fire while the scheduler is paused. Click to resume."
-                onClick={() => void settings.write('scheduler.paused', false)}
+                onClick={() => go(search.view ? { view: search.view } : {})}
               >
-                <PauseIcon />
-                Scheduler paused
+                Today
               </Button>
+            </WithTooltip>
+            <IconButton
+              label={view === 'day' ? 'Previous day' : 'Previous week'}
+              shortcut="keybindings.calendarPrevious"
+              onClick={() => shift(-1)}
+            >
+              <ChevronLeftIcon />
+            </IconButton>
+            <IconButton
+              label={view === 'day' ? 'Next day' : 'Next week'}
+              shortcut="keybindings.calendarNext"
+              onClick={() => shift(1)}
+            >
+              <ChevronRightIcon />
+            </IconButton>
+            <h2
+              className="shrink-0 px-1 text-sm font-medium tabular-nums"
+              data-testid="calendar-range"
+            >
+              {view === 'day' ? (
+                <>
+                  <span className="hidden @[40rem]:inline">{formatLongDay(anchor)}</span>
+                  <span className="@[40rem]:hidden">{formatShortDay(anchor)}</span>
+                </>
+              ) : (
+                <>
+                  <span className="hidden @[40rem]:inline">{formatDateRange(first, last)}</span>
+                  <span className="@[40rem]:hidden">{formatDateRange(first, last, false)}</span>
+                </>
+              )}
+            </h2>
+            {view === 'week' && (
+              <span
+                className="hidden shrink-0 text-xs text-muted-foreground tabular-nums @[46rem]:inline"
+                data-testid="calendar-week"
+              >
+                Week {isoWeek(first)}
+              </span>
             )}
-            <div
-              role="group"
-              aria-label="Zoom"
-              className="flex items-center rounded-md border border-border"
-            >
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="rounded-r-none"
-                aria-label="Zoom out calendar"
-                title={zoomOutKey === '' ? undefined : formatBinding(zoomOutKey)}
-                disabled={hourHeight <= zoomBounds.min}
-                onClick={() => zoom.step(-1)}
-              >
-                <MinusIcon />
-              </Button>
-              <button
-                type="button"
-                aria-label="Reset calendar zoom"
-                title={`Reset to 100%${zoomResetKey === '' ? '' : ` (${formatBinding(zoomResetKey)})`}`}
-                data-testid="calendar-zoom"
-                onClick={() => zoom.reset()}
-                className="min-w-11 px-1 text-center text-xs text-muted-foreground tabular-nums hover:text-foreground"
-              >
-                {zoomPercent}%
-              </button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="rounded-l-none"
-                aria-label="Zoom in calendar"
-                title={zoomInKey === '' ? undefined : formatBinding(zoomInKey)}
-                disabled={hourHeight >= zoomBounds.max}
-                onClick={() => zoom.step(1)}
-              >
-                <PlusIcon />
-              </Button>
-            </div>
-            <div role="group" aria-label="View" className="flex rounded-md border border-border">
-              {(['day', 'week'] as const).map((kind) => (
-                <button
-                  key={kind}
-                  type="button"
-                  aria-pressed={view === kind}
-                  onClick={() => go({ ...search, view: kind })}
-                  className={cn(
-                    'px-2 py-1 text-xs capitalize first:rounded-l-md last:rounded-r-md',
-                    view === kind ? 'bg-accent font-medium' : 'text-muted-foreground',
-                  )}
+            {foreignZone && (
+              <WithTooltip label={`Times are in ${foreignZone}, not this computer's zone`}>
+                <span
+                  tabIndex={0}
+                  data-testid="calendar-zone"
+                  className="hidden shrink-0 truncate rounded-sm text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring @[60rem]:inline"
                 >
-                  {kind}
-                </button>
-              ))}
+                  {formatZone(foreignZone)}
+                </span>
+              </WithTooltip>
+            )}
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              {paused && (
+                <WithTooltip label="Triggers do not fire while the scheduler is paused. Click to resume.">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-warning"
+                    aria-label="Scheduler paused. Resume"
+                    onClick={() => void settings.write('scheduler.paused', false)}
+                  >
+                    <PauseIcon />
+                    <span className="hidden @[48rem]:inline">Scheduler paused</span>
+                  </Button>
+                </WithTooltip>
+              )}
+              <div className="hidden @[34rem]:flex">
+                <ZoomControls hourHeight={hourHeight} floor={floor} />
+              </div>
+              <ToggleGroup
+                type="single"
+                aria-label="View"
+                value={view}
+                onValueChange={(next) => {
+                  if (next === 'day' || next === 'week') go({ ...search, view: next });
+                }}
+                className="gap-0"
+              >
+                <WithTooltip label="Day view" shortcut="keybindings.calendarDayView">
+                  <ToggleGroupItem value="day" className="rounded-r-none">
+                    Day
+                  </ToggleGroupItem>
+                </WithTooltip>
+                <WithTooltip label="Week view" shortcut="keybindings.calendarWeekView">
+                  <ToggleGroupItem value="week" className="-ml-px rounded-l-none">
+                    Week
+                  </ToggleGroupItem>
+                </WithTooltip>
+              </ToggleGroup>
+              <IconButton label="Refresh Outlook" onClick={refresh}>
+                <RefreshCwIcon />
+              </IconButton>
+              <WithTooltip label="New card" shortcut="keybindings.newCard">
+                <Button variant="outline" size="sm" aria-label="New card" onClick={newCard}>
+                  <PlusIcon />
+                  <span className="hidden @[42rem]:inline">New card</span>
+                </Button>
+              </WithTooltip>
             </div>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Refresh Outlook"
-              onClick={() => void connection?.request('outlook.refresh', {}).catch(() => undefined)}
-            >
-              <RefreshCwIcon />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                layout.setState({
-                  cardDialog: {
-                    type: 'create',
-                    ...newCardRange(anchor, settings.getState().values),
-                  },
-                })
-              }
-            >
-              <PlusIcon />
-              New card
-              <Shortcut binding={newCardKey} />
-            </Button>
           </div>
-        </div>
-        <OutlookBanner status={status} zone={zone} />
-        {runError && (
-          <div
-            role="alert"
-            className="shrink-0 border-b border-border bg-state-failed/10 px-3 py-1.5 text-xs"
-          >
-            {runError}
-          </div>
-        )}
-        <TimeGrid
-          days={days}
-          today={today}
-          items={items}
-          zone={zone}
-          workHours={workHours}
-          snap={snap}
-          cardMinutes={cardMinutes}
-          hourHeight={hourHeight}
-          onZoom={(steps) => zoom.step(steps)}
-          onCreate={(range) => layout.setState({ cardDialog: { type: 'create', ...range } })}
-          onEdit={(cardId) => layout.setState({ cardDialog: { type: 'edit', cardId } })}
-          runNowIds={runNowIds}
-          onRunNow={runNow}
-          onChange={(cardId, range) => dispatch({ type: 'card.update', cardId, ...range })}
-        />
+        </ShellToolbar>
+        <OutlookBanner status={status} zone={zone} onRetry={refresh} />
+        <Stale status={itemsStatus} className="flex min-h-0 flex-1 flex-col">
+          <TimeGrid
+            view={view}
+            days={days}
+            today={today}
+            items={items}
+            zone={zone}
+            workHours={prefs.workHours}
+            snap={snap}
+            cardMinutes={cardMinutes}
+            maxColumns={maxColumns}
+            hourHeight={hourHeight}
+            onZoom={(steps) => zoom.step(steps)}
+            onFloor={(height) => zoom.setFloor(height)}
+            onCreate={(range) => layout.setState({ cardDialog: { type: 'create', ...range } })}
+            onEdit={(cardId) => layout.setState({ cardDialog: { type: 'edit', cardId } })}
+            runNowIds={runNowIds}
+            onRunNow={runNow}
+            onChange={(cardId, range) => dispatch({ type: 'card.update', cardId, ...range })}
+          />
+        </Stale>
       </section>
-      {mailRail && <MailRail mail={mail} unreadCount={status?.unreadCount ?? 0} zone={zone} />}
+      {mailRail && (
+        <MailRail
+          status={status}
+          zone={zone}
+          collapsed={railCollapsed}
+          onCollapsedChange={(next) => {
+            if (narrow) {
+              setRailPeek(!next);
+              if (!next && mailRailCollapsed)
+                void settings.write('outlook.mailRailCollapsed', false);
+              return;
+            }
+            void settings.write('outlook.mailRailCollapsed', next);
+          }}
+        />
+      )}
       <CardDialog cards={cards} />
     </div>
   );
@@ -278,14 +403,7 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
 
 // Day and week views of Outlook items and local cards (spec 1 to 7).
 export function CalendarView({ search }: { search: CalendarSearch }) {
-  const { configured } = useConnectionState();
-  if (!configured) {
-    return (
-      <EmptyState icon={CalendarDaysIcon} title="No calendar items yet">
-        Outlook meetings, unread mail and your own cards will appear here once the app is connected
-        to the wow server.
-      </EmptyState>
-    );
-  }
+  const { connection } = useRuntime();
+  if (!connection) return <DisconnectedState offline />;
   return <ConnectedCalendar search={search} />;
 }

@@ -9,6 +9,7 @@ import {
   CardState,
   MailItem,
   OutlookItemState,
+  OutlookProfile,
   Project,
   ProviderInstance,
   ProviderInstanceStatus,
@@ -239,6 +240,8 @@ export const OutlookCalendarRow = CalendarItem.pick({
   allDay: true,
   location: true,
   joinUrl: true,
+  body: true,
+  organizer: true,
 }).extend({ externalId: z.string().min(1), state: OutlookItemState });
 export type OutlookCalendarRow = z.infer<typeof OutlookCalendarRow>;
 
@@ -265,6 +268,8 @@ export const InternalCommand = z.discriminatedUnion('type', [
     mail: z.array(MailItem),
     unreadCount: z.number().int().nonnegative(),
     bridgeVersion: z.string(),
+    // Null when Outlook could not say this poll; the stored profile is then kept.
+    profile: OutlookProfile.nullable(),
   }),
   // A failed poll. The cached rows stay; only the status changes.
   z.object({
@@ -616,6 +621,8 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       mailRemove: z.array(Id),
       unreadCount: z.number().int().nonnegative(),
       bridgeVersion: z.string(),
+      // Absent in events stored before Outlook profiles were read.
+      profile: OutlookProfile.nullable().optional(),
     }),
   }),
   z.object({

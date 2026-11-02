@@ -6,9 +6,11 @@ import type { Clock, OutlookSource } from './source.js';
 export * from './fixtures.js';
 export * from './mock-source.js';
 export * from './powershell-source.js';
+export * from './profile.js';
 export * from './protocol.js';
 export * from './source.js';
 export * from './sync.js';
+export * from './windows-zones.js';
 export * from './zone.js';
 
 export interface CreateOutlookSourceOptions {

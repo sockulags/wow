@@ -157,6 +157,42 @@ describe('OutlookSync', () => {
     expect(sink.status.lastSyncAt).toBe('2026-11-04T09:02:00.000Z');
   });
 
+  it('reads the profile each poll and windows the week from it when settings say "outlook"', async () => {
+    const { sync, sink, source } = setup({ zone: 'outlook', firstDayOfWeek: 'outlook' });
+    source.setFixtures({
+      ...fixtures,
+      profile: { ...fixtures.profile, timeZoneId: 'Tokyo Standard Time', firstDayOfWeek: 0 },
+    });
+    await sync.syncOnce();
+    const snapshot = sink.snapshots.at(-1);
+    expect(snapshot?.profile).toMatchObject({ zone: 'Asia/Tokyo', firstDayOfWeek: 'sunday' });
+    // Wednesday 4 November in Tokyo; the week starts on Sunday 1 November there.
+    expect(snapshot?.window.from).toBe('2026-10-31T15:00:00.000Z');
+    expect(snapshot?.calendar[0]?.zone).toBe('Asia/Tokyo');
+  });
+
+  it('keeps syncing with the last profile when reading the profile fails', async () => {
+    const { sync, sink, source } = setup({ zone: 'outlook' });
+    source.setFixtures({
+      ...fixtures,
+      profile: { ...fixtures.profile, timeZoneId: 'Tokyo Standard Time' },
+    });
+    await sync.syncOnce();
+    expect(sink.snapshots.at(-1)?.profile?.zone).toBe('Asia/Tokyo');
+    source.profile = () => Promise.reject(new Error('IPM.Configuration.WorkHours is locked'));
+    expect(await sync.syncOnce()).toBe('synced');
+    expect(sink.snapshots.at(-1)?.profile).toBeNull();
+    expect(sink.snapshots.at(-1)?.calendar[0]?.zone).toBe('Asia/Tokyo');
+  });
+
+  it('keeps a short snippet of a meeting body without the Teams block', async () => {
+    const { sync, sink } = setup();
+    await sync.syncOnce();
+    const standup = [...sink.calendar.values()].find((row) => row.title === 'Team standup');
+    expect(standup?.snippet).toBe('Daily sync for the invented Lantern team.');
+    expect(standup?.organizer).toBe('Ada Lindqvist');
+  });
+
   it('clears the mail rail when it is turned off', async () => {
     const { sync, sink, change } = setup();
     await sync.syncOnce();

@@ -8,7 +8,7 @@ test.describe('shell', () => {
     await expect(page).toHaveURL(/\/calendar$/);
     const nav = page.getByRole('navigation', { name: 'Sections' });
     const routes = [
-      ['Calendar', /\/calendar$/, 'No calendar items yet'],
+      ['Calendar', /\/calendar$/, 'Not connected to the wow server'],
       ['Chat', /\/chat$/, 'No threads yet'],
       ['Workflows', /\/workflows$/, 'No workflows yet'],
       ['Backlog', /\/backlog$/, 'Backlog is empty'],

@@ -105,10 +105,12 @@ thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'rea
 approvals        id, threadId, itemId, kind, request(json), decision?, decidedAt?
 questions        id, threadId, itemId, request(json), answer?, answeredAt?
 calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end, zone, allDay,
-                 location?, joinUrl?, body?, projectId?, backlogItemId?, workflowId?, runId?, state,
-                 updatedAt   -- state: CardState for cards, 'scheduled'|'cancelled' for Outlook
+                 location?, joinUrl?, body?, organizer?, projectId?, backlogItemId?, workflowId?,
+                 runId?, state, updatedAt   -- state: CardState for cards, 'scheduled'|'cancelled'
+                 for Outlook; body: a card's notes or an Outlook item's snippet
 mail_items       id, externalId, folder, from, subject, receivedAt, unread, snippet
-outlook_status   singleton: lastSyncAt, lastError?, unavailableSince?, unreadCount, bridgeVersion
+outlook_status   singleton: lastSyncAt, lastError?, unavailableSince?, unreadCount, bridgeVersion,
+                 profile(json: OutlookProfile)?
 backlog_items    id, title, body, tags(json), state, runId?, remote(json: service,key,url)?, createdAt
 workflows        id, name, templateKind?, steps(json: WorkflowStep[]), createdAt, updatedAt
 workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, state ('running'|
@@ -241,13 +243,16 @@ not running or stopped answering), `bad_request` or `failed`:
 → {"id":2,"op":"calendar","from":"2026-11-02T00:00:00+01:00","to":"2026-11-16T00:00:00+01:00"}
 ← {"id":2,"result":{"items":[{"entryId":"...","subject":"...","start":"...","end":"...",
      "location":"...","isAllDay":false,"isRecurring":true,"isCancelled":false,"organizer":"...",
-     "joinUrl":"https://teams...","busyStatus":2}]}}
+     "joinUrl":"https://teams...","busyStatus":2,"body":"..."}]}}
 → {"id":3,"op":"unreadMail","folders":["Inbox"],"limit":50}
 ← {"id":3,"result":{"items":[{"entryId":"...","folder":"Inbox","from":"...","subject":"...",
      "receivedAt":"...","snippet":"..."}],"unreadCount":7}}
 → {"id":4,"op":"open","entryId":"..."}     (Outlook shows the item)
 ← {"id":4,"result":{"opened":true}}
-← {"id":5,"error":{"code":"unavailable","message":"Outlook is not running"}}
+→ {"id":5,"op":"profile"}
+← {"id":5,"result":{"timeZoneId":"W. Europe Standard Time","workHoursXml":"<Root ...>",
+     "firstDayOfWeek":1,"address":"you@example.com"}}
+← {"id":6,"error":{"code":"unavailable","message":"Outlook is not running"}}
 ```
 
 The schemas for these lines live in `packages/outlook-bridge/src/protocol.ts`, not in
@@ -263,9 +268,41 @@ without an end date never runs out of occurrences. `GetDefaultFolder(6)` and
 inbox, then at the top of the mailbox. Times go out as `DateTimeOffset` strings with the local
 offset. A cancelled meeting that is still in the calendar has `isCancelled` (MeetingStatus 5 or 7).
 The Teams join link is read from the item body or the `Location` when it looks like a
-`teams.microsoft.com/l/meetup-join` URL.
+`teams.microsoft.com/l/meetup-join` URL. The body goes out cut at 2000 characters;
+`bodySnippet` keeps the text before the Teams invitation block (the line of underscores), without
+links, on one line of at most 240 characters, and the server stores that as the row's `body`. The
+organizer goes out as Outlook names them.
 
-`OutlookSource` is the interface (`ping`, `calendar`, `unreadMail`, `open`, `close`).
+### Outlook profile
+
+`profile` (owner decision F-8) reads what Outlook knows about the user's calendar, still without
+changing anything: `Application.TimeZones.CurrentTimeZone.ID` (a Windows zone id), the calendar
+folder's `IPM.Configuration.WorkHours` message read with `GetStorage(..., olIdentifyByMessageClass)`
+and its `PR_ROAMING_XMLSTREAM` property (WorkingHours.xsd XML; `GetStorage` hands back an unsaved
+empty item when there is none, and nothing is saved), the first day of the week of the user's
+Windows region (`Get-Culture`), which Outlook starts from, and the user's SMTP address
+(`CurrentUser.AddressEntry`, via `GetExchangeUser()` on Exchange). Each part is read on its own
+and is null when it cannot be read.
+
+`profile.ts` turns the answer into the `OutlookProfile` in `packages/contracts`: the Windows id
+becomes an IANA zone through the CLDR world mapping in `windows-zones.ts` (Windows PowerShell 5.1
+runs on .NET Framework, which cannot convert ids), and when the system zone keeps the same clock
+all year it is preferred as the more precise name ("W. Europe Standard Time" maps to Berlin; a
+machine in Stockholm keeps Stockholm). The XML's time slot and work days become `WorkHours`; the
+XML's own zone name is the fallback zone. An address without `@` (an X.500 path) is left out.
+
+`OutlookSync` reads the profile at every good poll and keeps the last one for polls where reading
+it fails; a profile that cannot be read never fails the poll. The snapshot carries it, the
+`outlook.sync` command and `outlook.synced` event carry it on (the event field is optional, so
+events stored before it replay), and the projector stores it in `outlook_status.profile`, keeping
+the stored one when a poll brings none. `resolveCalendarPrefs` (contracts) resolves the settings'
+`outlook` value against it the same way on both sides: Outlook's value, else the system zone,
+08:00–17:00 Monday to Friday and the region's first day (`Intl.Locale` week info), and an explicit
+setting always wins. The server uses it for the polled window, the web app for the grid. The mock
+answers `profile` from `fixtures/profile.json`; a null `timeZoneId` there means the zone the
+fixtures are written in, which the mock turns back into a Windows id (`windowsIdOf`).
+
+`OutlookSource` is the interface (`ping`, `calendar`, `unreadMail`, `open`, `profile`, `close`).
 `PowershellOutlookSource` starts the bridge on first use, numbers requests, and times each one out
 after `outlook.requestTimeoutMs`; a timeout (Outlook blocked by a modal dialog) or an exit rejects
 every pending request, kills the process, and the next request starts a fresh one.
@@ -275,7 +312,8 @@ meeting, unread mail in two folders) and is selected off Windows and with `WOW_O
 (`prefersMock`, `createOutlookSource`).
 
 `OutlookSync` polls every `outlook.pollSeconds` (re-read before each poll; one poll at a time). The
-window runs from the start of the current week (`calendar.firstDayOfWeek` in `calendar.zone`) to
+window runs from the start of the current week (`calendar.firstDayOfWeek` in `calendar.zone`, both
+resolved against the profile read in the same poll) to
 the end of the day `calendar.lookaheadDays` after today. Unread mail is read only while
 `outlook.mailRail` is on, at most `outlook.mailLimit` messages from `outlook.folders`. A poll
 hands the server's `OutlookSink` either a snapshot or a failure:
@@ -298,8 +336,9 @@ The server side is `apps/server/src/outlook/service.ts` (`startOutlookService`, 
 (`core/calendar.ts`) compares the snapshot with the stored rows and emits one `outlook.synced` event
 with only the changed and removed rows plus the new status, so the history holds what changed, not
 every poll's full contents. A failure that repeats the stored error adds no event. `outlook.open`
-asks the source to show an item and `outlook.refresh` polls at once (the palette's "Refresh
-Outlook"). An Outlook row never changes through a card command, and a card id may not start with
+asks the source to show an item (a calendar row passes its external id, and `entryIdOf` opens a
+recurring occurrence's series) and `outlook.refresh` polls at once (the palette's "Refresh
+Outlook" and the banner's "Try again"). An Outlook row never changes through a card command, and a card id may not start with
 `outlook`.
 
 ## Skills discovery
@@ -441,11 +480,12 @@ until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.offerSetup`
 - chat: `chat.contextMeter`, `chat.resumePrompt`
-- calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`,
+- calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
+  to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`,
   `calendar.hourHeight`, `calendar.zoomStep`
 - outlook: `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`,
-  `outlook.mailRail`, `outlook.mailLimit`
+  `outlook.mailRail`, `outlook.mailRailCollapsed`, `outlook.mailLimit`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
   `scheduler.paused`, `scheduler.toastSeconds`
 - workflows: `workflows.templates`, `workflows.handoverTemplate`
@@ -653,51 +693,120 @@ workflow and run, and Continue run and Stop run for the open run.
 ## Calendar view
 
 `apps/web/src/calendar`. `/calendar?view=day|week&date=YYYY-MM-DD` shows a time grid for one day or
-one week starting on `calendar.firstDayOfWeek`, in `calendar.zone`, with `calendar.workHours`
-shaded; the URL holds the view, so a reload shows the same range. Days are counted in local dates
-and an instant's place in a day is its wall-clock time in the zone, so a week that crosses a DST
-change still has seven columns and a 09:15 meeting sits at 09:15 on both sides of it
-(`time.ts`, `layout.ts`). All-day Outlook items sit in a row above the grid. Timed Outlook items
-and local cards that overlap are laid out side by side by `layoutColumns` (`overlap.ts`, a pure
-function): items that overlap directly or through a chain form a cluster, each takes the first
-column free at its start, every item of a cluster is 1/columns wide and stretches right over
-neighbouring columns that stay free for its whole length. Items shorter than the drawn minimum
-block height (18 px) take that much time in the layout, so zero-length and very short items get a
-column of their own instead of being covered; that minimum depends on the zoom. Blocks leave a
-strip on the right of each day free for clicking a new card, carry their full title, time and
-place as a `title` for hover, and widen over the day while focused by keyboard. Outlook items are
-focusable like cards, so Tab walks the day's items in time order.
+one week; the URL holds the view, so a reload shows the same range. The zone, the first day of the
+week and the work hours come from `useCalendarPrefs` (`prefs.ts`), which resolves the settings'
+`outlook` default against `outlook_status.profile` with `resolveCalendarPrefs` (see "Outlook
+profile"); nothing in the calendar reads the raw settings. Week view has seven days, or five with
+`calendar.showWeekends` off. Days are counted in local dates and an instant's place in a day is
+its wall-clock time in the zone, so a week that crosses a DST change still has seven columns and a
+09:15 meeting sits at 09:15 on both sides of it (`time.ts`, `layout.ts`). All-day items sit in a
+row above the grid; today's date number is in a filled circle and weekend headers are muted.
+
+Layout. Timed Outlook items and local cards that overlap are laid out side by side by
+`layoutColumns` (`overlap.ts`, a pure function): items that overlap directly or through a chain
+form a cluster, each takes the first column free at its start, every item of a cluster is
+1/columns wide and stretches right over neighbouring columns that stay free for its whole length.
+Items shorter than the drawn minimum block height (18 px) take that much time in the layout, so
+zero-length and very short items get a column of their own; that minimum depends on the zoom. In
+week view `capColumns` caps a cluster at `calendar.weekMaxColumns` columns: the first columns keep
+their items and the rest of the cluster goes behind one "+N" button whose popover lists them (a
+card opens its dialog, a meeting shows its details in place). Day view shows every column. Blocks
+leave a strip on the right of each day free for clicking a new card. `blockLines` (`time-grid.tsx`)
+spends a block's height: the title wraps on whole words into the lines left after the time and any
+button row, keeps its row sticky while a tall block scrolls past, and a block too short for a
+button row gets Join as an icon on the title line. Every block has a tooltip with its full title,
+time and place on hover and on focus, and widens over the day while focused by keyboard. Event
+colors are the `--event-*` custom properties set on the grid (`event-tokens.ts`): Outlook items a
+blue tint, cards the card surface, both with borders of at least 3:1, on a work-hours band lighter
+than both.
+
+Cards. `cardKind` (`items.ts`) tells a trigger (a workflow and a project) from a card with a
+workflow but no project (dashed, a warning icon and "No project, will not run") and a plain card.
+Only triggers carry a workflow icon, a state color on the left border and the state in sentence
+case (Scheduled, Running, Needs you, Done, Failed, Stopped, Missed); the calendar only creates them
+`scheduled`, the scheduler and the card's run change it. Local cards are created by clicking (a
+`calendar.cardMinutes` card) or dragging a range, then named in the card dialog; dragging a card
+moves it (also to another day), dragging its lower edge resizes it, both snapped to
+`calendar.snapMinutes`. While a drag is in progress the card is drawn where the pointer is; when
+the pointer is released the card is drawn at its new place until the server's row arrives, and the
+server row wins. A missed card whose trigger offers it has a "Run now" button and a "Run now:
+<card>" palette command. While `scheduler.paused` is on the toolbar shows "Scheduler paused",
+which resumes it.
+
+The card dialog (`card-dialog.tsx`, rules in `card-form.ts`) uses the shared `FormField`. An end at
+or before the start is an error ("Ends before it starts") that disables Create with the reason in
+its tooltip; 00:00 means midnight at the end of the day, and the length shows under End. Workflow
+and project sit together under "Run a workflow" with a line that says what will happen
+(`triggerSummary`: "Starts at 16:30 in Demo · 4 steps, 2 gates", "Will not run: pick a project",
+or the live run with "Open run"), Run now for a missed or failed card, and a Notes field (the
+card's `body`). A new card starts with the project of the card changed last (`lastUsedProjectId`)
+and the zone is named only when it is not the system's. "Delete card" deletes at once and offers
+Undo (`offerUndo`, owner decision F-9), which creates the card again with the same id and fields;
+a card whose run is live first asks "Stop run and delete" or "Keep run and delete". The dialog
+gives focus back to whatever had it when it opened.
+
+Outlook items are read-only: a lock marker, "Teams meeting" instead of a raw Teams link
+(`meetingPlace`), Join, struck through when cancelled. A click or Enter opens their details popover
+(`outlook-details.tsx`): time, place, organizer, the body snippet, Join, "Open in Outlook"
+(`outlook.open` with the row's external id) and "Card before" / "Card after", which open the card
+dialog for `calendar.cardMinutes` right before or after the meeting.
+
+Keyboard (`grid-keys.ts`, pure). The grid is one Tab stop with roving focus over its "stops"
+(blocks and "+N" buttons, keyed by day and id so an item spanning two days has one per column).
+Up/Down move within a day, Left/Right to the nearest stop in time on the closest day that has one,
+Home/End to the day's first and last, Ctrl+Home/End to the range's; Enter or Space opens. Alt+Up
+/ Alt+Down move a card by the snap step and Alt+Left / Alt+Right by a day at the same wall-clock
+time; Alt+Shift+Up / Down move its end, never below one snap step. A moved card keeps the focus,
+also when it lands in another column. These are the standard grid keys, so they are not
+keybindings settings. A "Skip to calendar" link at the start of the calendar focuses the grid.
 
 The hour height is `calendar.hourHeight` and is the zoom. Ctrl+wheel and pinch on the grid (a
 non-passive `wheel` listener that calls `preventDefault`, so neither the browser nor Electron
 zooms the page), the `keybindings.calendarZoomIn` / `calendarZoomOut` / `calendarZoomReset` keys,
-the matching palette commands ("Zoom in calendar", "Zoom out calendar", "Reset calendar zoom",
-calendar only) and the toolbar's − / % / + controls all go through `calendarZoom` (`zoom.ts`): it
-multiplies the height by `calendar.zoomStep` percent per step (fractional steps for a pinch),
-clamps to the setting's schema bounds, shows the newest requested height at once as a pending
-value and writes it with `setting.set`, one write in flight and the last request winning, until
-the stored setting reaches it. The grid keeps the minute under the pointer (wheel) or at the
-middle of the view (keys, buttons, a change from elsewhere) at the same place on screen. Zoom
-keys are `repeatable` commands: the global key handler claims held keys and runs repeatable ones
-again on auto-repeat. A range opens at the start of work hours, or centred on now when today is
-in view and now is outside that window; a now-line follows the clock minute by minute in today's
-column. Outlook items are read-only (a lock marker, the Teams join link when there
-is one, struck through when cancelled). Local cards are created by clicking (a
-`calendar.cardMinutes` card) or dragging a range, then named in the card dialog; dragging a card
-moves it (also to another day), dragging its lower edge resizes it, both snapped to
-`calendar.snapMinutes`; the dialog edits title, times, project, workflow and backlog item and
-deletes. While a drag is in progress the card is drawn where the pointer is; when the pointer is
-released the card is drawn at its new place until the server's row arrives, and the server row
-wins. Cards show their `state` as a badge; the calendar only creates them `scheduled`, the
-scheduler and the card's run change it. A missed card whose trigger offers it has a one-click
-"Run now" on the card and a "Run now: <card>" palette command; the dialog shows the card's run with
-a link to it, offers Run now for a missed or failed card, and asks "Stop run and delete" or "Keep
-run and delete" before deleting a card whose run is live. While `scheduler.paused` is on the
-toolbar shows "Scheduler paused", which resumes it. The mail rail lists `mailItems` newest first with the `unreadCount` from
-`outlook_status`; clicking an entry calls `outlook.open`. A banner shows "Outlook unavailable since
-<time>" while `outlook_status.lastError` is set. Palette commands: today, next, previous, day view,
-week view, zoom in, zoom out, reset zoom (on the calendar only, with the `keybindings.calendar*`
-keys), New card, Refresh Outlook, and one "Edit card" entry per card.
+the matching palette commands (calendar only) and the toolbar's − / level menu / + controls all go
+through `calendarZoom` (`zoom.ts`). A whole step multiplies the shown percent by
+`calendar.zoomStep` and lands on tens of percent (120 %, 140 %…); pinch steps stay fractional. The
+level menu offers 50, 75, 100, 150, 200 and 300 % and Reset. The grid reports the height at which
+24 hours fill it (`setFloor`); zooming out stops there and a stored height below it is drawn at
+it, so the lowest zoom never leaves space under 24:00. Heights are clamped to the setting's schema
+bounds (24 to 144 px, 50 to 300 %), shown at once as a pending value and written with
+`setting.set`, one write in flight and the last request winning, until the stored setting reaches
+it. The grid keeps the minute under the pointer (wheel) or at the middle of the view at the same
+place on screen. Zoom keys are `repeatable` commands. A range opens at the start of work hours, or
+centred on now when today is in view and now is outside that window. The now-line follows the clock
+minute by minute under the blocks (it never covers their text), with its dot in the time gutter
+and a faint line across the other days of the week.
+
+Toolbar. One 40 px row of `size=sm` controls that never wraps: Today, previous and next as icon
+buttons with their keys in tooltips, the range ("2–8 Nov 2026", `formatDateRange`) with the ISO
+week number, the zone ("Tokyo, UTC+9", `formatZone`) only when it differs from the system zone,
+the zoom controls, Day/Week as a toggle group, Refresh Outlook and New card. Container queries drop
+the year, the week number, the zoom controls and the New card label as the calendar narrows. While
+`outlook_status.lastError` is set the shared `Banner` says "Outlook unavailable since <time>"
+(`formatWhen`) with the error, **What to check** and **Try again** (`outlook.refresh`). An error
+from Run now is a toast.
+
+Mail rail (`mail-rail.tsx`). `mailItems` newest first with the `unreadCount` from `outlook_status`:
+sender, `formatWhen` time, subject and one line of snippet, one Tab stop with the arrow keys
+between messages. A click calls `outlook.open` and confirms with a toast. While Outlook is
+unavailable the header says "Last read <time>" and the list is dimmed. The rail folds to a 40 px
+strip with the count: its button, the `keybindings.toggleMailRail` key and the palette ("Collapse
+mail rail" / "Show mail rail") write `outlook.mailRailCollapsed` (owner decision F-3); below a
+1200 px window it folds on its own and opening it there lasts until it is folded again
+(`use-narrow.ts`). Before the first snapshot it shows the shared loading state, then the compact
+empty state.
+
+Settings. `calendar.zone` uses the `timeZone` widget, a searchable `Combobox` of
+`Intl.supportedValuesOf('timeZone')` labelled with their offsets, with "From Outlook (<zone>)" and
+"System (<zone>)" first. `calendar.workHours` and `calendar.firstDayOfWeek` use the `fromOutlook`
+widget (`settings-fields.tsx`): Outlook's value ("From Outlook: 08:30–17:00, Mon–Fri"), or the
+fallback while Outlook has not been read, with an Override switch that reveals the editor (start
+and end time fields and a Mon–Sun toggle group, or a weekday select) and switches back to
+`outlook`.
+
+Palette commands: today, next, previous, day view, week view, zoom in, zoom out, reset zoom and
+collapse or show the mail rail (on the calendar only, with their keys), hide or show weekends,
+New card, Refresh Outlook, and one "Edit card" entry per card.
 
 ## Backlog and trackers
 

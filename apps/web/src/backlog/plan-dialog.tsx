@@ -1,7 +1,7 @@
 import type { BacklogItem } from '@wow/contracts';
 import { useState, type FormEvent } from 'react';
 import { useSetting } from '@/app/runtime';
-import { resolveZone } from '@/calendar/time';
+import { useCalendarPrefs } from '@/calendar/prefs';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
 import { ChoiceSelect } from '@/components/choice-select';
 import { DateField, TimeField } from '@/components/date-time-fields';
@@ -22,9 +22,9 @@ function PlanForm({ item, onDone }: { item: BacklogItem; onDone: () => void }) {
   const dispatch = useDispatch();
   const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
-  const zone = resolveZone(useSetting('calendar.zone'));
+  // "outlook" resolved against Outlook's profile (F-8), like the calendar itself.
+  const { zone, firstDayOfWeek } = useCalendarPrefs();
   const cardMinutes = useSetting('calendar.cardMinutes');
-  const firstDayOfWeek = useSetting('calendar.firstDayOfWeek');
   const snapMinutes = useSetting('calendar.snapMinutes');
   const [initial] = useState(() => nextHour(new Date(), zone));
   const [workflowId, setWorkflowId] = useState('');

@@ -67,7 +67,6 @@ function checkLinks(read: ReadModel, links: Links): void {
 const toCalendarItem = (row: OutlookCalendarRow, at: string): CalendarItem => ({
   ...row,
   source: 'outlook',
-  body: null,
   projectId: null,
   backlogItemId: null,
   workflowId: null,
@@ -144,6 +143,7 @@ export function decideCalendar(
         location: null,
         joinUrl: null,
         body: command.body ?? null,
+        organizer: null,
         projectId: command.projectId ?? null,
         backlogItemId: command.backlogItemId ?? null,
         workflowId: command.workflowId ?? null,
@@ -217,6 +217,7 @@ export function decideCalendar(
             mailRemove: mail.remove,
             unreadCount: command.unreadCount,
             bridgeVersion: command.bridgeVersion,
+            profile: command.profile,
           },
         },
       ];
