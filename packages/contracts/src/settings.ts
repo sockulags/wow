@@ -19,6 +19,7 @@ export const SettingGroup = z.enum([
   'appearance',
   'keybindings',
   'desktop',
+  'updates',
   'advanced',
 ]);
 export type SettingGroup = z.infer<typeof SettingGroup>;
@@ -418,6 +419,23 @@ export const settingsRegistry = {
     label: 'Start in the tray',
     description: 'Start without showing the window. Click the tray icon to open it.',
     default: false,
+    scope: 'global',
+  }),
+  'updates.enabled': defineSetting({
+    schema: z.boolean(),
+    group: 'updates',
+    label: 'Automatic updates',
+    description:
+      'Check GitHub Releases for a newer stable wow at startup and every check interval, download it in the background, and offer "Restart to update". Off: wow never checks.',
+    default: true,
+    scope: 'global',
+  }),
+  'updates.checkIntervalMinutes': defineSetting({
+    schema: z.number().int().min(15).max(10_080),
+    group: 'updates',
+    label: 'Check interval (minutes)',
+    description: 'How often the desktop app looks for a new release while it runs.',
+    default: 240,
     scope: 'global',
   }),
   'workflows.templates': defineSetting({

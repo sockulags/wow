@@ -1,6 +1,7 @@
+import type { UpdateState } from '@wow/contracts';
 import { EventEmitter } from 'node:events';
 import type { DesktopShell } from '../main/controller.js';
-import type { RunNotice } from '../main/notifications.js';
+import type { Notice } from '../main/notifications.js';
 import type { ServerEndpoint } from '../main/server-process.js';
 import type { TrayEntry } from '../main/tray-menu.js';
 
@@ -8,9 +9,11 @@ export type ShellCall =
   | { readonly kind: 'openWindow'; readonly endpoint: ServerEndpoint; readonly path?: string }
   | { readonly kind: 'closeWindow' }
   | { readonly kind: 'setTray'; readonly entries: TrayEntry[]; readonly tooltip: string }
-  | { readonly kind: 'notify'; readonly notice: RunNotice; readonly click: () => void }
+  | { readonly kind: 'notify'; readonly notice: Notice; readonly click: () => void }
   | { readonly kind: 'setLoginItem'; readonly openAtLogin: boolean }
   | { readonly kind: 'askRestart'; readonly message: string }
+  | { readonly kind: 'setUpdateState'; readonly state: UpdateState }
+  | { readonly kind: 'confirmUpdateRestart'; readonly message: string }
   | { readonly kind: 'exit'; readonly code: number };
 
 // Records what the controller asks of Electron, and lets a test wait for a call without polling.
@@ -18,6 +21,7 @@ export class FakeShell implements DesktopShell {
   readonly calls: ShellCall[] = [];
   readonly logs: string[] = [];
   restartAnswer = false;
+  updateRestartAnswer = true;
   readonly #events = new EventEmitter();
 
   waitFor<K extends ShellCall['kind']>(
@@ -58,7 +62,7 @@ export class FakeShell implements DesktopShell {
   setTray(entries: TrayEntry[], tooltip: string): void {
     this.#record({ kind: 'setTray', entries, tooltip });
   }
-  notify(notice: RunNotice, onClick: () => void): void {
+  notify(notice: Notice, onClick: () => void): void {
     this.#record({ kind: 'notify', notice, click: onClick });
   }
   setLoginItem(openAtLogin: boolean): void {
@@ -67,6 +71,13 @@ export class FakeShell implements DesktopShell {
   askRestart(message: string): Promise<boolean> {
     this.#record({ kind: 'askRestart', message });
     return Promise.resolve(this.restartAnswer);
+  }
+  setUpdateState(state: UpdateState): void {
+    this.#record({ kind: 'setUpdateState', state });
+  }
+  confirmUpdateRestart(message: string): Promise<boolean> {
+    this.#record({ kind: 'confirmUpdateRestart', message });
+    return Promise.resolve(this.updateRestartAnswer);
   }
   exit(code: number): void {
     this.#record({ kind: 'exit', code });

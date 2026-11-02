@@ -442,6 +442,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`
 - keybindings: `keybindings.*`, one per command that has a shortcut
 - desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
+- updates: `updates.enabled`, `updates.checkIntervalMinutes`
 - advanced: `advanced.port`, `advanced.logLevel`, `advanced.secretsTimeoutMs` (`WOW_HOME` is an
   environment variable, see "Server")
 
@@ -490,8 +491,41 @@ bundle in `out/server/native/better-sqlite3` with its N-API prebuilds. N-API bin
 Electron's Node unchanged, so nothing is rebuilt: `@electron/rebuild` would need the C++
 toolchain the install deliberately avoids, and electron-builder's rebuild is off. `pnpm --filter
 @wow/desktop smoke` proves the bundle under Electron's Node (SQLite opens, RPC answers, clean
-stop), and CI runs it before building the NSIS installer on `windows-latest`. No code signing, no
-auto-update.
+stop), and CI runs it before building the NSIS installer on `windows-latest`. No code signing.
+
+**Auto-update** (behavior 35). `electron-updater` reads GitHub Releases of `sockulags/wow`: the
+`publish` block in `electron-builder.yml` (provider `github`, `releaseType: release`) makes `dist`
+write `latest.yml` and the installer's `.blockmap` next to the installer and `app-update.yml` into
+the packaged resources. `dist` still runs with `--publish never`; the release workflow uploads the
+installer, its `.blockmap` and `latest.yml` to a release that is neither a draft nor a prerelease,
+because electron-updater only looks at the newest stable one. The repository is public, so no
+token is needed. The installer is per-user, so an update needs no admin rights; it is unsigned,
+and with no publisher name in `app-update.yml` electron-updater skips the signature check.
+
+`UpdateManager` (`apps/desktop/src/main/updates.ts`) owns the update state (`UpdateState` in
+contracts: `idle`, `checking`, `available`, `downloading` with a percent, `ready`, `error`, plus
+the current and the new version and the last error). It follows `updates.enabled` and
+`updates.checkIntervalMinutes` through the `settings` topic: it checks when updates are on at
+start or are turned on, and on an interval; it never checks while a check or download runs or an
+update is ready. electron-updater sits behind the `Updater` seam (`electron-updater.ts`:
+`autoDownload` on, `autoInstallOnAppQuit` off, no prereleases or downgrades), so the tests drive a
+fake. The main process creates it only when `app.isPackaged`; in development there is no update
+state and nothing runs. Every change goes to the web app through the preload
+(`window.wowDesktop.updates`: `getState`, `onState`, `check`, `install` over IPC that only
+`wow://app` pages may call) and to the tray; the web app keeps the last state it received
+(`apps/web/src/app/updates.ts`) and shows it in a bar above every view (ready or failed), on
+Settings → Updates, and as the palette commands "Check for updates" and "Restart to update". The
+update state stays in the main process rather than the server because the desktop is the only
+place that can act on it and it means nothing to a server without the desktop. A ready update also
+raises one system notification.
+
+"Restart to update" (web app or tray) is `DesktopController.installUpdate`: if a thread is working
+or waiting on the user, or a workflow run is running (from the `threads` and `workflowRuns`
+topics), a dialog says so and the user decides, because the restart ends those turns as failed.
+Then the server stops through the normal lifecycle (`wow:shutdown`, `server.json` removed) and
+`quitAndInstall(silent, run after)` hands over; `before-quit` lets this quit through. If the
+installer cannot start, the server starts again, the window opens on Settings → Updates and the
+error is shown.
 
 ## Chat view
 

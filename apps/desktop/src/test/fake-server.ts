@@ -15,13 +15,21 @@ export type FakeServerMode = 'exit-early' | 'ignore-shutdown';
 
 export const fakeLaunch = (
   home: string,
-  overrides: { mode?: FakeServerMode; stopTimeoutMs?: number } = {},
+  overrides: {
+    mode?: FakeServerMode;
+    stopTimeoutMs?: number;
+    settings?: Readonly<Record<string, unknown>>;
+  } = {},
 ): ServerLaunch => ({
   // Node stands in for the Electron binary; the child ignores ELECTRON_RUN_AS_NODE.
   execPath: process.execPath,
   entry: fakeServerEntry,
   home,
-  env: { ...process.env, FAKE_SERVER_MODE: overrides.mode },
+  env: {
+    ...process.env,
+    FAKE_SERVER_MODE: overrides.mode,
+    FAKE_SERVER_SETTINGS: JSON.stringify(overrides.settings ?? {}),
+  },
   startTimeoutMs: 20_000,
   stopTimeoutMs: overrides.stopTimeoutMs ?? 20_000,
 });

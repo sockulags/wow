@@ -205,3 +205,6 @@ to Outlook, Jira or GitHub unless you press a button that says so.
 
 - 2026-11-02: auto-update added (behavior 35, plan U17), before v0.1.0 so every install updates
   itself. Code signing stays out for now.
+- 2026-11-02 (U17): the update state lives in the desktop main process and reaches the web app
+  through the preload bridge, not the server: only the desktop can act on it. "Restart to update"
+  says so when a turn or workflow run is running, and the user decides (plan U17 open risk).

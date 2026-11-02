@@ -16,6 +16,12 @@ triggers fire while the window is closed.
   the tray), `desktop.startMinimized`. Notifications follow `scheduler.notifications` and come
   from changes on the server's `workflowRuns` topic (started, waiting for you, failed).
 - One instance: a second launch shows the running window.
+- Auto-update from GitHub Releases of `sockulags/wow` with `electron-updater` (packaged builds
+  only): checks at start and every `updates.checkIntervalMinutes` while `updates.enabled` is on,
+  downloads in the background, then notifies and offers "Restart to update" in the tray and the
+  web app (palette, banner, Settings → Updates). Restarting asks first when a turn or workflow run
+  is running, stops the server, then runs the installer silently and starts wow again. The web app
+  gets the state through the preload (`window.wowDesktop.updates`).
 
 ## Commands
 
@@ -25,11 +31,13 @@ pnpm --filter @wow/desktop build       # web app + out/ (main, preload, server b
 pnpm --filter @wow/desktop exec install-electron   # Electron binary, once, for start/smoke
 pnpm --filter @wow/desktop smoke       # bundled server under Electron's Node
 pnpm --filter @wow/desktop start       # run the built app
-pnpm --filter @wow/desktop dist        # Windows NSIS installer in release/ (on Windows)
+pnpm --filter @wow/desktop dist        # Windows NSIS installer, its .blockmap and latest.yml in release/ (on Windows)
 ```
 
 `WOW_HOME` moves `~/.wow`; `WOW_OUTLOOK=mock` and `WOW_PROVIDERS=mock` reach the server as usual.
 The desktop writes its own log and the server's output to `~/.wow/desktop.log`.
 
-The installer is unsigned and there is no auto-update. CI builds it on `windows-latest` and keeps it
-as the `wow-installer-windows` artifact.
+The installer is unsigned. CI builds it on `windows-latest`, checks that `dist` wrote `latest.yml`
+and the `.blockmap`, and keeps all three as the `wow-installer-windows` artifact. A release must
+upload the installer, its `.blockmap` and `latest.yml` to a GitHub release that is neither a draft
+nor a prerelease; installed apps update from the newest such release.
