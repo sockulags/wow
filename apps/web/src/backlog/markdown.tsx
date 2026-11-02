@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { CodeBlock } from '@/components/code-block';
 import { cn } from '@/lib/utils';
 
 // A small markdown preview for backlog bodies (audit D-12, D-08): headings, paragraphs, lists,
@@ -191,12 +192,12 @@ export function MarkdownPreview({ markdown, className }: { markdown: string; cla
             );
           case 'code':
             return (
-              <pre
+              <CodeBlock
                 key={key}
-                className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs whitespace-pre"
-              >
-                {block.text}
-              </pre>
+                code={block.text}
+                language={block.language}
+                className="text-xs"
+              />
             );
           case 'rule':
             return <hr key={key} className="border-border" />;

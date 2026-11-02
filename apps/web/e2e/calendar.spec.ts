@@ -44,7 +44,7 @@ async function runPaletteCommand(page: Page, title: string) {
   await page.keyboard.press('Control+k');
   await page.getByRole('dialog').getByRole('combobox').fill(title);
   await page.keyboard.press('Enter');
-  // Keys pressed while the palette still closes would go to its search box.
+  // The palette fades out; until it is gone its input still has focus and takes plain keys.
   await expect(page.getByRole('dialog')).toBeHidden();
 }
 

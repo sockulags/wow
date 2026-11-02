@@ -22,11 +22,13 @@ import {
   appOrigin,
   appScheme,
   encodeServerInfoArg,
+  appChannels,
   folderChannels,
   hiddenFlag,
   productName,
   updateChannels,
 } from '../app.js';
+import { applicationMenu } from './app-menu.js';
 import { rendererFile } from './app-protocol.js';
 import { DesktopController, type DesktopShell } from './controller.js';
 import { electronUpdater } from './electron-updater.js';
@@ -112,6 +114,8 @@ function createWindow(endpoint: ServerEndpoint): BrowserWindow {
   created.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith(`${appOrigin}/`)) event.preventDefault();
   });
+  // Pinch and Ctrl+wheel belong to the calendar's own zoom, not to the page (audit B-14).
+  void created.webContents.setVisualZoomLevelLimits(1, 1);
   created.once('ready-to-show', () => created.show());
   return created;
 }
@@ -258,6 +262,12 @@ ipcMain.handle(updateChannels.check, async (event) => {
 ipcMain.handle(updateChannels.install, async (event) => {
   if (fromApp(event)) await controller.installUpdate();
 });
+// Settings marked "Restart required": start again with the same arguments, then quit cleanly.
+ipcMain.handle(appChannels.restart, (event) => {
+  if (!fromApp(event)) return;
+  app.relaunch();
+  void controller.quit();
+});
 ipcMain.handle(folderChannels.pick, async (event) => {
   if (!fromApp(event)) return null;
   const options: Electron.OpenDialogOptions = {
@@ -286,6 +296,10 @@ if (!app.requestSingleInstanceLock()) {
     void controller.quit();
   });
   void app.whenReady().then(async () => {
+    const menu = applicationMenu(process.platform, app.isPackaged);
+    if (menu !== undefined) {
+      Menu.setApplicationMenu(menu === null ? null : Menu.buildFromTemplate([...menu]));
+    }
     protocol.handle(appScheme, (request) => {
       const file = rendererFile(rendererDir, request.url);
       if (file === undefined) return new Response('Not found', { status: 404 });

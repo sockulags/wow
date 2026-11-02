@@ -32,8 +32,28 @@ export class TrackerError extends Error {
 
 export const trimBase = (url: string) => url.trim().replace(/\/+$/, '');
 
-export async function postJson(
+export function postJson(
   service: string,
+  url: string,
+  headers: Record<string, string>,
+  body: unknown,
+  options: RequestOptions,
+): Promise<unknown> {
+  return requestJson(service, 'POST', url, headers, body, options);
+}
+
+export function getJson(
+  service: string,
+  url: string,
+  headers: Record<string, string>,
+  options: RequestOptions,
+): Promise<unknown> {
+  return requestJson(service, 'GET', url, headers, undefined, options);
+}
+
+async function requestJson(
+  service: string,
+  method: 'GET' | 'POST',
   url: string,
   headers: Record<string, string>,
   body: unknown,
@@ -43,9 +63,13 @@ export async function postJson(
   let response: Response;
   try {
     response = await send(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...headers },
-      body: JSON.stringify(body),
+      method,
+      headers: {
+        ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
+        accept: 'application/json',
+        ...headers,
+      },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(options.timeoutMs),
     });
   } catch (error) {

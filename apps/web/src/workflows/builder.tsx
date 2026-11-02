@@ -1,4 +1,4 @@
-import type { ProviderInstance, Skill, Thread, Workflow, WorkflowTemplate } from '@wow/contracts';
+import type { ProviderInstance, Skill, Workflow, WorkflowTemplate } from '@wow/contracts';
 import { Link, useNavigate } from '@tanstack/react-router';
 import {
   ArrowDownIcon,
@@ -11,6 +11,7 @@ import {
   PlusIcon,
   RefreshCwIcon,
   ReplaceIcon,
+  BookmarkPlusIcon,
   SearchXIcon,
   Trash2Icon,
 } from 'lucide-react';
@@ -18,7 +19,7 @@ import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
 import { errorMessage, useDispatch, useModels, useTopic } from '@/chat/data';
 import { ThreadSettings } from '@/chat/thread-settings';
-import { lastUsedThread, providerLabel } from '@/chat/view-model';
+import { providerLabel } from '@/chat/view-model';
 import { ChoiceSelect } from '@/components/choice-select';
 import { Combobox } from '@/components/combobox';
 import { FormField } from '@/components/form-field';
@@ -42,6 +43,7 @@ import {
   runStateDotClass,
   runStateLabels,
   sameJson,
+  saveAsTemplate,
   setGate,
   skillKnown,
   sortRuns,
@@ -54,19 +56,10 @@ import {
   type WorkflowDraft,
 } from './model';
 
-// New steps run on the instance the user started a thread on last (owner decision F-5), else
-// the first one whose test passed, else the first.
-function preferredInstance(
-  instances: readonly ProviderInstance[],
-  threads: readonly Thread[],
-): string {
-  const last = lastUsedThread(threads)?.providerInstanceId;
-  return (
-    instances.find((instance) => instance.id === last)?.id ??
-    instances.find((instance) => instance.status === 'ready')?.id ??
-    instances[0]?.id ??
-    ''
-  );
+// New steps run on the first instance whose test passed, else the first (audit C-03). A
+// workflow outlives any one chat, so the last thread's instance is not a good guess here.
+function preferredInstance(instances: readonly ProviderInstance[]): string {
+  return instances.find((instance) => instance.status === 'ready')?.id ?? instances[0]?.id ?? '';
 }
 
 // The value a step stores for a skill: its name, or plugin:name for a Claude plugin's skill.
@@ -457,12 +450,11 @@ function Builder({
   initial: WorkflowDraft;
   instances: readonly ProviderInstance[];
 }) {
-  const { connection } = useRuntime();
+  const { connection, settings } = useRuntime();
   const send = useDispatch();
   const navigate = useNavigate();
   const skills = useTopic('skills') ?? [];
   const projects = useTopic('projects') ?? [];
-  const threads = useTopic('threads') ?? [];
   const templates = useSetting('workflows.templates');
   const [draft, setDraft] = useState<WorkflowDraft>(initial);
   const [attempted, setAttempted] = useState(false);
@@ -470,6 +462,8 @@ function Builder({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [replacing, setReplacing] = useState(false);
+  const [templateName, setTemplateName] = useState<string>();
+  const [templateError, setTemplateError] = useState<string>();
   const [dragIndex, setDragIndex] = useState<number>();
   const [refreshing, setRefreshing] = useState(false);
   const [projectId, setProjectId] = useState<string>('');
@@ -487,7 +481,7 @@ function Builder({
     workflow.name !== draft.name.trim() ||
     workflow.templateKind !== draft.templateKind ||
     !sameJson(workflow.steps, steps);
-  const firstInstance = preferredInstance(instances, threads);
+  const firstInstance = preferredInstance(instances);
   const runProject = projects.find((candidate) => candidate.id === projectId) ?? projects[0];
   const basedOn = templates.find((candidate) => candidate.kind === draft.templateKind);
   const blockedReason =
@@ -612,6 +606,20 @@ function Builder({
       setError(errorMessage(failure));
       setStarting(false);
     }
+  };
+
+  // Templates are edited here as well as in Settings (audit E-05); the JSON editor there stays
+  // for what this does not cover, such as deleting one.
+  const saveTemplate = async () => {
+    const result = saveAsTemplate(templates, draft, templateName ?? '');
+    if (typeof result === 'string') return setTemplateError(result);
+    const written = await settings.write('workflows.templates', result.templates);
+    if (!written.ok) return setTemplateError(written.issues.join('; '));
+    notify.success(`Template ${(templateName ?? '').trim()} saved`, {
+      description: 'New workflows can start from it.',
+    });
+    setTemplateName(undefined);
+    setTemplateError(undefined);
   };
 
   const refreshSkills = async () => {
@@ -780,6 +788,21 @@ function Builder({
                 type="button"
                 size="sm"
                 variant="ghost"
+                aria-expanded={templateName !== undefined}
+                disabled={draft.steps.length === 0}
+                onClick={() =>
+                  setTemplateName(
+                    templateName === undefined ? (basedOn?.name ?? draft.name) : undefined,
+                  )
+                }
+              >
+                <BookmarkPlusIcon />
+                Save as template…
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
                 disabled={!connection || refreshing}
                 onClick={() => void refreshSkills()}
               >
@@ -788,6 +811,48 @@ function Builder({
               </Button>
             </div>
           </div>
+          {templateName !== undefined && (
+            <div
+              role="group"
+              aria-label="Save as template"
+              className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm"
+            >
+              <FormField
+                id="template-name"
+                label="Template name"
+                help="Saves the skills, gates and expected artifacts. A template with this name is replaced."
+                error={templateError}
+                className="min-w-64 flex-1"
+              >
+                <Input
+                  autoFocus
+                  value={templateName}
+                  onChange={(event) => {
+                    setTemplateName(event.target.value);
+                    setTemplateError(undefined);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void saveTemplate();
+                    }
+                  }}
+                  className="h-8"
+                />
+              </FormField>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setTemplateName(undefined)}
+              >
+                Cancel
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => void saveTemplate()}>
+                Save template
+              </Button>
+            </div>
+          )}
           {replacing && workflow && (
             <div
               role="group"
@@ -928,13 +993,10 @@ function StepPosition({
 // The builder for a new workflow, blank or from a template (`?template=<kind>`).
 export function NewWorkflowView({ template }: { template: string | undefined }) {
   const instances = useTopic('providerInstances');
-  const threads = useTopic('threads');
   const templates = useSetting('workflows.templates');
   if (!instances) return null;
   const chosen = templates.find((candidate) => candidate.kind === template);
-  const initial = chosen
-    ? draftFromTemplate(chosen, preferredInstance(instances, threads ?? []), '')
-    : emptyDraft;
+  const initial = chosen ? draftFromTemplate(chosen, preferredInstance(instances), '') : emptyDraft;
   return (
     <Builder key={template ?? ''} workflow={undefined} initial={initial} instances={instances} />
   );

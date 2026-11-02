@@ -18,6 +18,8 @@ export type FieldKind =
   | { readonly kind: 'list'; readonly item: ListItemKind }
   | { readonly kind: 'keyValue' }
   | { readonly kind: 'keybinding' }
+  | { readonly kind: 'workHours' }
+  | { readonly kind: 'template'; readonly placeholders: readonly string[] }
   | { readonly kind: 'object'; readonly fields: readonly ObjectField[] }
   | { readonly kind: 'json' };
 
@@ -38,6 +40,16 @@ export function fieldKind(schema: z.ZodType): FieldKind {
   const widget = schema.meta()?.['widget'];
   if (widget === 'keybinding') return { kind: 'keybinding' };
   if (widget === 'keyValue') return { kind: 'keyValue' };
+  if (widget === 'workHours') return { kind: 'workHours' };
+  if (widget === 'template') {
+    const placeholders = schema.meta()?.['placeholders'];
+    return {
+      kind: 'template',
+      placeholders: Array.isArray(placeholders)
+        ? placeholders.filter((name): name is string => typeof name === 'string')
+        : [],
+    };
+  }
 
   if (schema instanceof z.ZodOptional || schema instanceof z.ZodDefault) {
     return fieldKind(schema.unwrap() as z.ZodType);

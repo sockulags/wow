@@ -181,7 +181,7 @@ test.describe('triggers', () => {
     // The mock provider finishes step 1 at once, so the run goes straight to its gate.
     await expect(card.getByTestId('card-state')).toHaveText('waiting', { timeout: 15_000 });
     await expect(
-      page.getByRole('region', { name: /Notifications/ }).getByText('Waiting for you'),
+      page.getByRole('region', { name: /^Notifications/ }).getByText('Waiting for you'),
     ).toBeVisible();
 
     await page

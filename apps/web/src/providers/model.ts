@@ -1,5 +1,8 @@
 import {
+  ProviderTestResult,
   providerSetup,
+  type ProviderModel,
+  type Thread,
   type Command,
   type SecretRef,
   type ProviderInstance,
@@ -129,4 +132,75 @@ export async function draftToCommand(
   return existing
     ? { type: 'providerInstance.update', providerInstanceId, ...fields }
     : { type: 'providerInstance.create', providerInstanceId, kind: draft.kind, ...fields };
+}
+
+// The first choice of the model, effort and permission selects: the provider decides (audit E-02).
+export const defaultChoiceLabel = (kind: ProviderKind): string =>
+  `${providerSetup[kind].label}'s default`;
+
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+// The efforts the chosen model offers, or every effort any model offers while the provider picks
+// the model. A stored effort stays selectable.
+export function effortChoices(
+  kind: ProviderKind,
+  models: readonly ProviderModel[],
+  model: string,
+  stored: string,
+  providerDefault: string | null,
+): { value: string; label: string }[] {
+  const efforts =
+    model === ''
+      ? models.flatMap((entry) => entry.efforts)
+      : (models.find((entry) => entry.id === model)?.efforts ?? []);
+  const values = [...new Set([...efforts, ...(stored !== '' ? [stored] : [])])].filter(
+    (effort) => effort !== '' && effort !== providerDefault,
+  );
+  return [
+    { value: '', label: defaultChoiceLabel(kind) },
+    ...values.map((effort) => ({ value: effort, label: capitalize(effort) })),
+  ];
+}
+
+// The instance the user started a thread on most recently: the default for new threads (owner
+// decision F-5). Read from the server's threads, so it survives restarts with nothing extra
+// stored.
+export function lastUsedInstanceId(
+  threads: readonly Pick<Thread, 'providerInstanceId' | 'createdAt'>[] | undefined,
+  instances: readonly Pick<ProviderInstance, 'id'>[] | undefined,
+): string | undefined {
+  if (!threads || !instances) return undefined;
+  const known = new Set(instances.map((instance) => instance.id));
+  let best: { id: string; at: string } | undefined;
+  for (const thread of threads) {
+    if (!known.has(thread.providerInstanceId)) continue;
+    if (!best || thread.createdAt > best.at) {
+      best = { id: thread.providerInstanceId, at: thread.createdAt };
+    }
+  }
+  return best?.id;
+}
+
+interface Requester {
+  request(method: string, params?: unknown): Promise<unknown>;
+}
+
+// Runs the instance's test; the result is also stored on the instance and arrives through the
+// subscription. A request that fails reads as a failed test.
+export async function testInstance(
+  connection: Requester,
+  providerInstanceId: string,
+): Promise<ProviderTestResult> {
+  try {
+    return ProviderTestResult.parse(
+      await connection.request('provider.test', { providerInstanceId }),
+    );
+  } catch (error) {
+    return {
+      ok: false,
+      account: null,
+      version: null,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
 }

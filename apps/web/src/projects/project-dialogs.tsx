@@ -1,6 +1,8 @@
 import type { Project } from '@wow/contracts';
 import { FolderOpenIcon } from 'lucide-react';
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useState } from 'react';
+import { ConfirmDialog } from '@/components/confirm-dialog';
+import { FormField } from '@/components/form-field';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -11,11 +13,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { useLayout, useRuntime } from '@/app/runtime';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
 import { ImportProjects } from './import-dialog';
-import { newProjectId } from './model';
+import { notify } from '@/lib/feedback';
+import { folderName, newProjectId } from './model';
 
 function Issue({ text }: { text: string | undefined }) {
   if (!text) return null;
@@ -23,26 +25,6 @@ function Issue({ text }: { text: string | undefined }) {
     <p role="alert" className="text-xs text-destructive">
       {text}
     </p>
-  );
-}
-
-function Row({
-  label,
-  htmlFor,
-  hint,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  hint?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={htmlFor}>{label}</Label>
-      {children}
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-    </div>
   );
 }
 
@@ -79,41 +61,41 @@ function FolderField({
   const { pickFolder } = useRuntime();
   if (!pickFolder) {
     return (
-      <Row
+      <FormField
+        id={id}
         label="Folder"
-        htmlFor={id}
-        hint="The full path of a folder on this computer, for example C:\Users\me\code\wow."
+        help="The full path of a folder on this computer, for example C:\Users\me\code\wow."
       >
         <Input
-          id={id}
+          autoFocus
           className="font-mono"
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />
-      </Row>
+      </FormField>
     );
   }
   return (
-    <Row label="Folder" htmlFor={id}>
-      <div className="flex gap-1.5">
+    <div className="flex min-w-0 items-end gap-1.5">
+      <FormField id={id} label="Folder" className="flex-1">
         <Input
-          id={id}
           readOnly
           className="font-mono"
           placeholder="No folder chosen"
           value={value}
           onClick={() => void pickFolder().then((picked) => picked && onChange(picked))}
         />
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void pickFolder().then((picked) => picked && onChange(picked))}
-        >
-          <FolderOpenIcon />
-          Choose folder…
-        </Button>
-      </div>
-    </Row>
+      </FormField>
+      <Button
+        type="button"
+        variant="outline"
+        autoFocus
+        onClick={() => void pickFolder().then((picked) => picked && onChange(picked))}
+      >
+        <FolderOpenIcon />
+        Choose folder…
+      </Button>
+    </div>
   );
 }
 
@@ -121,16 +103,21 @@ function CreateProject({ onClose }: { onClose: () => void }) {
   const send = useDispatch();
   const id = useId();
   const [name, setName] = useState('');
+  // The name follows the folder until the user types one (audit E-12).
+  const [named, setNamed] = useState(false);
   const [cwd, setCwd] = useState('');
   const { busy, issue, setIssue, submit } = useSubmit(onClose);
+  const chooseFolder = (folder: string) => {
+    setCwd(folder);
+    if (!named) setName(folderName(folder));
+  };
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New project</DialogTitle>
           <DialogDescription>
-            A name and a folder. Threads, cards and workflow runs in the project work in that
-            folder.
+            A folder on this computer. Threads, cards and workflow runs in the project work in it.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -151,18 +138,23 @@ function CreateProject({ onClose }: { onClose: () => void }) {
             );
           }}
         >
-          <Row label="Name" htmlFor={`${id}-name`}>
+          <FolderField id={`${id}-folder`} value={cwd} onChange={chooseFolder} />
+          <FormField
+            id={`${id}-name`}
+            label="Name"
+            help={named ? undefined : 'Taken from the folder. Change it if you like.'}
+          >
             <Input
-              id={`${id}-name`}
-              autoFocus
               value={name}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => {
+                setName(event.target.value);
+                setNamed(true);
+              }}
             />
-          </Row>
-          <FolderField id={`${id}-folder`} value={cwd} onChange={setCwd} />
+          </FormField>
           <Issue text={issue} />
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose}>
+            <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
             <Button type="submit" disabled={busy}>
@@ -202,17 +194,12 @@ function RenameProject({ project, onClose }: { project: Project; onClose: () => 
             );
           }}
         >
-          <Row label="Name" htmlFor={`${id}-name`}>
-            <Input
-              id={`${id}-name`}
-              autoFocus
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </Row>
+          <FormField id={`${id}-name`} label="Name">
+            <Input autoFocus value={name} onChange={(event) => setName(event.target.value)} />
+          </FormField>
           <Issue text={issue} />
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose}>
+            <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
             <Button type="submit" disabled={busy}>
@@ -225,38 +212,26 @@ function RenameProject({ project, onClose }: { project: Project; onClose: () => 
   );
 }
 
+// Removing a project unlinks its cards and threads, which Undo could not link again, so it asks
+// first (owner decision F-9: confirm only what cannot be undone).
 function RemoveProject({ project, onClose }: { project: Project; onClose: () => void }) {
   const send = useDispatch();
-  const { busy, issue, submit } = useSubmit(onClose);
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Remove {project.name}?</DialogTitle>
-          <DialogDescription>
-            The folder and its files stay. Threads keep working in the folder without a project.
-            Cards lose the project, so their triggers will not fire. Finished runs keep their
-            history. A project with a workflow run in progress cannot be removed.
-          </DialogDescription>
-        </DialogHeader>
-        <Issue text={issue} />
-        <DialogFooter>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Keep
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={busy}
-            onClick={() =>
-              void submit(() => send({ type: 'project.delete', projectId: project.id }))
-            }
-          >
-            Remove project
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      open
+      title={`Remove ${project.name}?`}
+      description="The folder and its files stay. Threads keep working in the folder without a project, cards lose the project so their triggers will not fire, and finished runs keep their history."
+      confirmLabel="Remove"
+      onCancel={onClose}
+      onConfirm={() => {
+        onClose();
+        send({ type: 'project.delete', projectId: project.id }).then(
+          () => notify.success(`${project.name} removed`),
+          (error: unknown) =>
+            notify.error(`${project.name} was not removed`, { description: errorMessage(error) }),
+        );
+      }}
+    />
   );
 }
 

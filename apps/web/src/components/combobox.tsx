@@ -85,6 +85,7 @@ export function Combobox({
                   key={choice.value}
                   value={choice.value}
                   keywords={[choice.label, ...(choice.detail ? [choice.detail] : [])]}
+                  className={cn(size === 'sm' && 'text-xs')}
                   onSelect={() => {
                     onValueChange(choice.value);
                     setOpen(false);

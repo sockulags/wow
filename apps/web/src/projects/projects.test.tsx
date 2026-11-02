@@ -109,7 +109,8 @@ describe('Settings → Projects', () => {
     const server = fakeServer({ projects: [wow], providerInstances: [instance] });
     await renderApp('/settings/projects', runtimeFor(server.connection));
     const row = within(await screen.findByRole('listitem', { name: 'wow' }));
-    expect(row.getByText('/home/me/code/wow')).toBeTruthy();
+    expect(row.getByTestId('path-text').textContent).toBe('/home/me/code/wow');
+    expect(row.getByText('0 threads · 0 cards')).toBeTruthy();
     const nav = screen.getByRole('navigation', { name: 'Settings groups' });
     const links = within(nav)
       .getAllByRole('link')
@@ -128,15 +129,18 @@ describe('Settings → Projects', () => {
         : undefined,
     );
     await renderApp('/settings/projects', runtimeFor(server.connection));
-    expect(await screen.findByText(/^No projects yet\./)).toBeTruthy();
+    expect(await screen.findByText('No projects yet')).toBeTruthy();
 
-    await user.click(screen.getByRole('button', { name: 'New project' }));
+    await user.click(screen.getAllByRole('button', { name: 'Add project' })[0]!);
     const dialog = within(await screen.findByRole('dialog', { name: 'New project' }));
     await user.click(dialog.getByRole('button', { name: 'Add project' }));
     expect(dialog.getByRole('alert').textContent).toBe('Give the project a name and a folder');
 
-    await user.type(dialog.getByLabelText('Name'), ' Site ');
+    // The folder comes first and names the project until a name is typed (audit E-12).
     await user.type(dialog.getByLabelText('Folder'), '/nowhere');
+    expect(dialog.getByLabelText('Name')).toHaveProperty('value', 'nowhere');
+    await user.clear(dialog.getByLabelText('Name'));
+    await user.type(dialog.getByLabelText('Name'), ' Site ');
     await user.click(dialog.getByRole('button', { name: 'Add project' }));
     expect((await dialog.findByRole('alert')).textContent).toBe('No folder /nowhere');
     expect(server.commands).toEqual([]);
@@ -172,12 +176,12 @@ describe('Settings → Projects', () => {
 
     const renamed = within(await screen.findByRole('listitem', { name: 'wow app' }));
     await user.click(renamed.getByRole('button', { name: 'Remove' }));
-    const remove = within(await screen.findByRole('dialog', { name: 'Remove wow app?' }));
+    const remove = within(await screen.findByRole('alertdialog', { name: 'Remove wow app?' }));
     expect(remove.getByText(/Threads keep working in the folder/)).toBeTruthy();
-    await user.click(remove.getByRole('button', { name: 'Remove project' }));
+    await user.click(remove.getByRole('button', { name: 'Remove' }));
     expect(server.commands.at(-1)).toEqual({ type: 'project.delete', projectId: 'p1' });
     server.publish('projects', []);
-    expect(await screen.findByText(/^No projects yet\./)).toBeTruthy();
+    expect(await screen.findByText('No projects yet')).toBeTruthy();
   });
 });
 
@@ -209,7 +213,7 @@ describe('project palette commands', () => {
       'remove project wow',
     );
     await user.keyboard('{Enter}');
-    expect(await screen.findByRole('dialog', { name: 'Remove wow?' })).toBeTruthy();
+    expect(await screen.findByRole('alertdialog', { name: 'Remove wow?' })).toBeTruthy();
   });
 });
 
@@ -220,11 +224,10 @@ describe('choosing the folder', () => {
     const answers: (string | null)[] = [null, '/home/me/picked'];
     const pickFolder = () => Promise.resolve(answers.shift() ?? null);
     await renderApp('/settings/projects', runtimeFor(server.connection, pickFolder));
-    await user.click(await screen.findByRole('button', { name: 'New project' }));
+    await user.click((await screen.findAllByRole('button', { name: 'Add project' }))[0]!);
     const dialog = within(await screen.findByRole('dialog', { name: 'New project' }));
     const folder = dialog.getByLabelText('Folder');
     expect(folder).toHaveProperty('readOnly', true);
-    await user.type(dialog.getByLabelText('Name'), 'Picked');
     // Cancelling the system dialog leaves the field empty.
     await user.click(dialog.getByRole('button', { name: 'Choose folder…' }));
     expect(folder).toHaveProperty('value', '');
@@ -232,7 +235,7 @@ describe('choosing the folder', () => {
     expect(await dialog.findByDisplayValue('/home/me/picked')).toBeTruthy();
     await user.click(dialog.getByRole('button', { name: 'Add project' }));
     expect(server.commands).toEqual([
-      expect.objectContaining({ type: 'project.create', name: 'Picked', cwd: '/home/me/picked' }),
+      expect.objectContaining({ type: 'project.create', name: 'picked', cwd: '/home/me/picked' }),
     ]);
   });
 });
@@ -276,9 +279,10 @@ describe('Import from Claude and Codex', () => {
       await screen.findByRole('dialog', { name: 'Import from Claude and Codex' }),
     );
     const list = within(await dialog.findByRole('list', { name: 'Folders to import' }));
-    expect(list.getByText('/home/me/code/wow')).toBeTruthy();
-    expect(list.getByText('Claude: Work')).toBeTruthy();
-    expect(list.getAllByText('Codex: Codex')).toHaveLength(3);
+    expect(list.getAllByTestId('path-text')[0]?.textContent).toBe('/home/me/code/wow');
+    // Kinds once each, and the last use in words (audit E-13).
+    expect(list.getByText(/^Claude, Codex · last used /)).toBeTruthy();
+    expect(list.getAllByText('Codex')).toHaveLength(2);
     expect(dialog.getByText('3 of 3 selected')).toBeTruthy();
 
     await user.click(list.getByRole('checkbox', { name: 'old' }));
@@ -316,16 +320,19 @@ describe('Import from Claude and Codex', () => {
       '/home/me/code/site: No folder /home/me/code/site',
     );
     const list = within(dialog.getByRole('list', { name: 'Folders to import' }));
-    expect(list.queryByText('/home/me/code/wow')).toBeNull();
-    expect(list.getByText('/home/me/code/site')).toBeTruthy();
+    expect(list.getAllByTestId('path-text').map((path) => path.textContent)).toEqual([
+      '/home/me/code/site',
+    ]);
   });
 
   it('says so when there is nothing new', async () => {
     const user = userEvent.setup();
     const server = fakeServer({ projects: [], providerInstances: [instance] });
     await renderApp('/settings/projects', runtimeFor(server.connection));
-    await user.click(await screen.findByRole('button', { name: 'Import from Claude and Codex' }));
-    expect(await screen.findByText(/^Nothing new to import/)).toBeTruthy();
+    await user.click(
+      (await screen.findAllByRole('button', { name: 'Import from Claude and Codex' }))[0]!,
+    );
+    expect(await screen.findByText('Nothing new to import')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Import 0 projects' })).toHaveProperty(
       'disabled',
       true,

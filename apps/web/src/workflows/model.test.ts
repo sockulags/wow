@@ -19,6 +19,7 @@ import {
   gateRunForThread,
   moveStep,
   reviewedStep,
+  saveAsTemplate,
   setGate,
   stepDisplayState,
   stepDurationMs,
@@ -362,5 +363,33 @@ describe('gates in the builder and the thread', () => {
     expect(stepDisplayState(second)).toBe('not_started');
     expect(stepDurationMs(first)).toBe(5 * 60_000);
     expect(stepDurationMs(second)).toBeUndefined();
+  });
+});
+
+describe('templates from the builder (E-05)', () => {
+  it('saves the steps as a new template, or replaces the one with that name', () => {
+    const draft = draftFromTemplate(feature, instance.id, '');
+    const added = saveAsTemplate(defaultWorkflowTemplates, draft, 'My feature');
+    if (typeof added === 'string') throw new Error(added);
+    expect(added.kind).toBe('my-feature');
+    expect(added.templates.at(-1)).toMatchObject({
+      kind: 'my-feature',
+      name: 'My feature',
+      steps: [
+        { skillName: 'capture-intent', gateAfter: true },
+        { skillName: 'plan-work', gateAfter: true },
+        { skillName: 'deliver-work' },
+        { skillName: 'check-work' },
+      ],
+    });
+    const replaced = saveAsTemplate(added.templates, { steps: draft.steps.slice(0, 1) }, 'feature');
+    if (typeof replaced === 'string') throw new Error(replaced);
+    expect(replaced.kind).toBe('feature');
+    expect(replaced.templates.find((t) => t.kind === 'feature')?.steps).toHaveLength(1);
+    expect(replaced.templates).toHaveLength(added.templates.length);
+    expect(saveAsTemplate([], draft, '  ')).toBe('Give the template a name');
+    expect(saveAsTemplate([], { steps: [] }, 'x')).toBe('Add a step with a skill first');
+    const clash = saveAsTemplate([{ kind: 'x', name: 'Other', steps: feature.steps }], draft, 'X');
+    expect(typeof clash === 'string' ? clash : clash.kind).toBe('x-2');
   });
 });

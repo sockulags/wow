@@ -38,6 +38,17 @@ export type SecretRef = z.infer<typeof SecretRef>;
 export const LogLevel = z.enum(['error', 'warn', 'info', 'debug']);
 export type LogLevel = z.infer<typeof LogLevel>;
 
+// The unit a number setting is stored in. The settings page shows it as a suffix and shows
+// milliseconds as seconds, so labels carry no unit.
+export const SettingUnit = z.enum(['ms', 'seconds', 'minutes', 'days', 'pixels', 'percent']);
+export type SettingUnit = z.infer<typeof SettingUnit>;
+
+// How the settings page names one value of an enum setting; the stored value stays the id.
+export interface SettingOption {
+  readonly label: string;
+  readonly description?: string;
+}
+
 export interface SettingDefinition<S extends z.ZodType = z.ZodType> {
   readonly schema: S;
   readonly group: SettingGroup;
@@ -47,6 +58,11 @@ export interface SettingDefinition<S extends z.ZodType = z.ZodType> {
   readonly scope: SettingScope;
   readonly restartRequired?: boolean;
   readonly secret?: boolean;
+  readonly unit?: SettingUnit;
+  // Labels for enum values (and enum list items). Without them the page shows the raw value.
+  readonly options?: Readonly<Record<string, SettingOption>>;
+  // Show the choices as a radio group with descriptions instead of a select.
+  readonly radio?: boolean;
 }
 
 const defineSetting = <S extends z.ZodType>(definition: SettingDefinition<S>) => definition;
@@ -61,6 +77,16 @@ export const Weekday = z.enum([
   'sunday',
 ]);
 export type Weekday = z.infer<typeof Weekday>;
+
+export const weekdayOptions: Readonly<Record<Weekday, SettingOption>> = {
+  monday: { label: 'Monday' },
+  tuesday: { label: 'Tuesday' },
+  wednesday: { label: 'Wednesday' },
+  thursday: { label: 'Thursday' },
+  friday: { label: 'Friday' },
+  saturday: { label: 'Saturday' },
+  sunday: { label: 'Sunday' },
+};
 
 const isTimeZone = (zone: string): boolean => {
   try {
@@ -85,7 +111,8 @@ export const WorkHours = z
   .refine((hours) => hours.start < hours.end, {
     message: 'Work hours must end after they start',
     path: ['end'],
-  });
+  })
+  .meta({ widget: 'workHours' });
 export type WorkHours = z.infer<typeof WorkHours>;
 
 // A shortcut such as "Mod+K" or "Mod+Shift+P". "Mod" is Ctrl on Windows and Linux and Cmd on
@@ -225,20 +252,31 @@ export const settingsRegistry = {
   'providers.testTimeoutMs': defineSetting({
     schema: z.number().int().min(5000).max(600_000),
     group: 'providers',
-    label: 'Test timeout (ms)',
+    label: 'Test timeout',
     description:
       'How long the "Test" action of a provider instance may take, including its trivial turn, before it is reported as failed.',
     default: 120_000,
     scope: 'provider',
+    unit: 'ms',
   }),
   'providers.requestTimeoutMs': defineSetting({
     schema: z.number().int().min(1000).max(600_000),
     group: 'providers',
-    label: 'Request timeout (ms)',
+    label: 'Request timeout',
     description:
       'How long a provider app-server (Codex) may take to answer one request, such as starting a thread or a turn, before the request fails and the app-server is restarted. Streamed turn output is not limited by it.',
     default: 60_000,
     scope: 'provider',
+    unit: 'ms',
+  }),
+  'providers.offerSetup': defineSetting({
+    schema: z.boolean(),
+    group: 'providers',
+    label: 'Offer setup at start',
+    description:
+      'Open the setup guide for providers and projects when wow starts without a provider instance. "Not now" in the guide turns this off.',
+    default: true,
+    scope: 'global',
   }),
   'chat.contextMeter': defineSetting({
     schema: z.boolean(),
@@ -283,6 +321,7 @@ export const settingsRegistry = {
     description: 'Day the week view starts on.',
     default: 'monday',
     scope: 'global',
+    options: weekdayOptions,
   }),
   'calendar.workHours': defineSetting({
     schema: WorkHours,
@@ -299,52 +338,58 @@ export const settingsRegistry = {
   'calendar.lookaheadDays': defineSetting({
     schema: z.number().int().min(1).max(90),
     group: 'calendar',
-    label: 'Lookahead (days)',
+    label: 'Lookahead',
     description: 'How many days ahead Outlook items are read and cached.',
     default: 14,
     scope: 'global',
+    unit: 'days',
   }),
   'calendar.snapMinutes': defineSetting({
     schema: z.number().int().min(1).max(60),
     group: 'calendar',
-    label: 'Snap (minutes)',
+    label: 'Snap to',
     description: 'Cards snap to this many minutes when created, moved or resized with the mouse.',
     default: 15,
     scope: 'global',
+    unit: 'minutes',
   }),
   'calendar.cardMinutes': defineSetting({
     schema: z.number().int().min(5).max(480),
     group: 'calendar',
-    label: 'New card length (minutes)',
+    label: 'New card length',
     description: 'Length of a card created with a single click or the "New card" command.',
     default: 30,
     scope: 'global',
+    unit: 'minutes',
   }),
   'calendar.hourHeight': defineSetting({
     schema: z.number().int().min(24).max(160),
     group: 'calendar',
-    label: 'Hour height (pixels)',
+    label: 'Hour height',
     description:
       'Height of one hour in the day and week views, which is the calendar zoom. Ctrl+mouse wheel, pinch and the zoom commands change it.',
     default: 48,
     scope: 'global',
+    unit: 'pixels',
   }),
   'calendar.zoomStep': defineSetting({
     schema: z.number().int().min(5).max(100),
     group: 'calendar',
-    label: 'Zoom step (percent)',
+    label: 'Zoom step',
     description:
       'How much one zoom command, key press or mouse-wheel notch changes the hour height.',
     default: 20,
     scope: 'global',
+    unit: 'percent',
   }),
   'outlook.pollSeconds': defineSetting({
     schema: z.number().int().min(15).max(3600),
     group: 'outlook',
-    label: 'Poll interval (seconds)',
+    label: 'Poll interval',
     description: 'How often calendar items and unread mail are read from Outlook.',
     default: 60,
     scope: 'global',
+    unit: 'seconds',
   }),
   'outlook.folders': defineSetting({
     schema: z.array(z.string().min(1)).min(1),
@@ -358,11 +403,12 @@ export const settingsRegistry = {
   'outlook.requestTimeoutMs': defineSetting({
     schema: z.number().int().min(1000).max(300000),
     group: 'outlook',
-    label: 'Request timeout (ms)',
+    label: 'Request timeout',
     description:
       'How long one request to Outlook may take. A request that takes longer (for example while Outlook shows a dialog) marks Outlook unavailable and restarts the bridge on the next poll.',
     default: 20000,
     scope: 'global',
+    unit: 'ms',
   }),
   'outlook.mailRail': defineSetting({
     schema: z.boolean(),
@@ -383,10 +429,11 @@ export const settingsRegistry = {
   'scheduler.tickSeconds': defineSetting({
     schema: z.number().int().min(1).max(3600),
     group: 'scheduler',
-    label: 'Tick interval (seconds)',
+    label: 'Tick interval',
     description: 'How often the scheduler looks for due triggers.',
     default: 30,
     scope: 'global',
+    unit: 'seconds',
   }),
   'scheduler.missedPolicy': defineSetting({
     schema: MissedTriggerPolicy,
@@ -396,6 +443,21 @@ export const settingsRegistry = {
       'What happens at startup to triggers whose time passed while the server was down: run them now, mark them missed with a "Run now" action, or mark them missed and skip them.',
     default: 'mark',
     scope: 'global',
+    radio: true,
+    options: {
+      run: {
+        label: 'Run them now',
+        description: 'Start every missed workflow as soon as wow starts.',
+      },
+      mark: {
+        label: 'Mark as missed',
+        description: 'Show them as missed on the calendar with a "Run now" action.',
+      },
+      skip: {
+        label: 'Skip them',
+        description: 'Show them as missed and do not offer to run them.',
+      },
+    },
   }),
   'scheduler.notifications': defineSetting({
     schema: z.boolean(),
@@ -409,10 +471,12 @@ export const settingsRegistry = {
   'scheduler.toastSeconds': defineSetting({
     schema: z.number().int().min(1).max(600),
     group: 'scheduler',
-    label: 'Toast duration (seconds)',
-    description: 'How long a notification stays in the corner of the web app.',
+    label: 'Toast duration',
+    description:
+      'How long a notification or a confirmation (with its Undo) stays in the corner of the window.',
     default: 8,
     scope: 'global',
+    unit: 'seconds',
   }),
   'scheduler.paused': defineSetting({
     schema: z.boolean(),
@@ -461,10 +525,11 @@ export const settingsRegistry = {
   'updates.checkIntervalMinutes': defineSetting({
     schema: z.number().int().min(15).max(10_080),
     group: 'updates',
-    label: 'Check interval (minutes)',
+    label: 'Check interval',
     description: 'How often the desktop app looks for a new release while it runs.',
     default: 240,
     scope: 'global',
+    unit: 'minutes',
   }),
   'workflows.templates': defineSetting({
     schema: z
@@ -480,11 +545,20 @@ export const settingsRegistry = {
     scope: 'global',
   }),
   'workflows.handoverTemplate': defineSetting({
-    schema: z.string(),
+    schema: z.string().meta({
+      widget: 'template',
+      placeholders: [
+        'previousStep',
+        'previousMessage',
+        'backlogBody',
+        'previousArtifacts',
+        'expectedArtifacts',
+      ],
+    }),
     group: 'workflows',
     label: 'Handover text',
     description:
-      'Text added to every step prompt after the skill invocation. {{previousStep}}, {{previousMessage}}, {{backlogBody}}, {{previousArtifacts}} and {{expectedArtifacts}} are replaced; {{#name}}…{{/name}} is left out when that value is empty.',
+      'Text added to every step prompt after the skill invocation. The placeholders below are replaced; a {{#name}}…{{/name}} section is left out when that value is empty.',
     default: defaultHandoverTemplate,
     scope: 'project',
   }),
@@ -518,16 +592,26 @@ export const settingsRegistry = {
     schema: JiraAuthMode,
     group: 'trackers',
     label: 'Jira sign-in',
-    description:
-      'cloud-basic signs in to Jira Cloud with your email and an API token; pat uses a personal access token (Jira Server or Data Center).',
+    description: 'How wow signs in to Jira.',
     default: 'cloud-basic',
     scope: 'global',
+    radio: true,
+    options: {
+      'cloud-basic': {
+        label: 'Jira Cloud',
+        description: 'Your Atlassian email and an API token.',
+      },
+      pat: {
+        label: 'Jira Server or Data Center',
+        description: 'A personal access token.',
+      },
+    },
   }),
   'trackers.jira.email': defineSetting({
     schema: z.string().trim(),
     group: 'trackers',
     label: 'Jira email',
-    description: 'Your Atlassian account email. Only used with cloud-basic sign-in.',
+    description: 'Your Atlassian account email. Only used for Jira Cloud.',
     default: '',
     scope: 'global',
   }),
@@ -536,7 +620,7 @@ export const settingsRegistry = {
     group: 'trackers',
     label: 'Jira token',
     description:
-      'API token (cloud-basic) or personal access token (pat). Stored in the wow secret store and never shown again.',
+      'An API token for Jira Cloud, or a personal access token for Jira Server or Data Center. Stored in the wow secret store and never shown again.',
     default: null,
     scope: 'global',
     secret: true,
@@ -603,11 +687,12 @@ export const settingsRegistry = {
   'trackers.requestTimeoutMs': defineSetting({
     schema: z.number().int().min(1000).max(300_000),
     group: 'trackers',
-    label: 'Request timeout (ms)',
+    label: 'Request timeout',
     description:
       'How long creating an issue in Jira or GitHub may take before it is reported as failed.',
     default: 30_000,
     scope: 'global',
+    unit: 'ms',
   }),
   'appearance.theme': defineSetting({
     schema: Theme,
@@ -616,6 +701,8 @@ export const settingsRegistry = {
     description: 'Dark or light colors.',
     default: 'dark',
     scope: 'global',
+    radio: true,
+    options: { dark: { label: 'Dark' }, light: { label: 'Light' } },
   }),
   'appearance.uiFont': defineSetting({
     schema: FontFamily,
@@ -642,6 +729,7 @@ export const settingsRegistry = {
     description: 'Compact makes text and spacing smaller so more fits on screen.',
     default: 'comfortable',
     scope: 'global',
+    options: { comfortable: { label: 'Comfortable' }, compact: { label: 'Compact' } },
   }),
   'appearance.paletteRecent': defineSetting({
     schema: z.number().int().min(0).max(20),
@@ -754,14 +842,30 @@ export const settingsRegistry = {
     description: 'How much the server writes to its log.',
     default: 'info',
     scope: 'global',
+    options: {
+      error: { label: 'Errors only' },
+      warn: { label: 'Warnings and errors' },
+      info: { label: 'Information' },
+      debug: { label: 'Everything (debug)' },
+    },
   }),
   'advanced.secretsTimeoutMs': defineSetting({
     schema: z.number().int().min(1000).max(600_000),
     group: 'advanced',
-    label: 'Secret store timeout (ms)',
+    label: 'Secret store timeout',
     description:
       'How long one DPAPI protect or unprotect call may take on Windows before it is stopped and reported as failed.',
     default: 30_000,
+    scope: 'global',
+    unit: 'ms',
+  }),
+  'advanced.showSettingKeys': defineSetting({
+    schema: z.boolean(),
+    group: 'advanced',
+    label: 'Show setting keys',
+    description:
+      "Show each setting's key and stored default under it, for editing config files or reporting issues.",
+    default: false,
     scope: 'global',
   }),
 } as const satisfies Record<string, SettingDefinition>;

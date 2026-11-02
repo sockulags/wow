@@ -9,3 +9,9 @@ export function uniqueName(name: string, taken: Iterable<string>): string {
   while (used.has(`${name} ${n}`.toLowerCase())) n += 1;
   return `${name} ${n}`;
 }
+
+// The last segment of a folder path, as the default project name: C:\code\wow gives wow.
+export function folderName(folder: string): string {
+  const trimmed = folder.trim().replace(/[\\/]+$/, '');
+  return trimmed.split(/[\\/]/).pop() ?? trimmed;
+}

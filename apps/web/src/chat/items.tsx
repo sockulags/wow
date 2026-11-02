@@ -25,6 +25,7 @@ import {
   WrenchIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { CodeBlock } from '@/components/code-block';
 import { WithTooltip } from '@/components/hint';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -92,10 +93,40 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
   );
 }
 
+// Assistant text with its fenced code blocks highlighted. A fence still being streamed (not
+// closed yet) stays plain text until it closes.
+export function splitFences(
+  text: string,
+): ReadonlyArray<{ readonly code: boolean; readonly text: string; readonly language: string }> {
+  const parts: { code: boolean; text: string; language: string }[] = [];
+  const fence = /^```([\w+-]*)[^\n]*\n([\s\S]*?)^```[ \t]*$/gm;
+  let at = 0;
+  for (const match of text.matchAll(fence)) {
+    if (match.index > at)
+      parts.push({ code: false, text: text.slice(at, match.index), language: '' });
+    parts.push({ code: true, text: (match[2] ?? '').replace(/\n$/, ''), language: match[1] ?? '' });
+    at = match.index + match[0].length;
+  }
+  if (at < text.length) parts.push({ code: false, text: text.slice(at), language: '' });
+  return parts;
+}
+
 function AssistantText({ payload, streaming }: { payload: TextItemPayload; streaming: boolean }) {
   return (
     <div className="text-sm leading-relaxed whitespace-pre-wrap" aria-busy={streaming}>
-      {payload.text}
+      {splitFences(payload.text).map((part, index) =>
+        part.code ? (
+          <CodeBlock
+            // Parts only grow at the end while streaming, so the index is a stable key.
+            key={index}
+            code={part.text}
+            language={part.language}
+            className="my-2 text-xs whitespace-pre"
+          />
+        ) : (
+          <span key={index}>{part.text.replace(/^\n/, '')}</span>
+        ),
+      )}
       {streaming && (
         <span
           aria-hidden
@@ -161,15 +192,19 @@ function ToolCall({ payload, context }: { payload: ToolCallItemPayload; context:
         <div className="flex flex-col gap-2 border-t border-border p-2">
           <section aria-label="Tool input">
             <h4 className="mb-1 text-2xs text-muted-foreground">Input</h4>
-            <pre className="max-h-64 overflow-auto rounded bg-muted p-2 font-mono text-2xs whitespace-pre-wrap">
-              {JSON.stringify(payload.input, null, 2)}
-            </pre>
+            <CodeBlock
+              code={JSON.stringify(payload.input, null, 2)}
+              language="json"
+              className="max-h-64 text-2xs"
+            />
           </section>
           <section aria-label="Tool output">
             <h4 className="mb-1 text-2xs text-muted-foreground">Output</h4>
-            <pre className="max-h-96 overflow-auto rounded bg-muted p-2 font-mono text-2xs whitespace-pre-wrap">
-              {payload.output === '' ? '(no output)' : payload.output}
-            </pre>
+            {payload.output === '' ? (
+              <p className="text-2xs text-muted-foreground">No output.</p>
+            ) : (
+              <CodeBlock code={payload.output} className="max-h-96 text-2xs" />
+            )}
           </section>
         </div>
       )}

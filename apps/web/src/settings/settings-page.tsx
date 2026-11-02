@@ -1,165 +1,152 @@
 import type { SettingDefinition, SettingGroup } from '@wow/contracts';
-import { resolveSetting, validateSetting, type SettingsState } from '@wow/client-runtime';
 import { Link, useParams } from '@tanstack/react-router';
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
-import { useStore } from 'zustand';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
+import { SearchIcon, SearchXIcon } from 'lucide-react';
+import { Fragment, useId, useMemo, useState, type ReactNode } from 'react';
+import { EmptyState } from '@/components/states';
+import { Input } from '@/components/ui/input';
 import { useRuntime } from '@/app/runtime';
 import { ProjectsSection } from '@/projects/projects-section';
 import { ProvidersSection } from '@/providers/providers-section';
 import { isSettingGroup, settingGroupTitles, settingsByGroup } from '@/app/sections';
 import { UpdateStatusPanel } from '@/app/update-banner';
-import { fieldKind } from './field-kind';
-import { Field } from './fields';
-import { SecretField } from './secret-field';
+import { KeybindingsTable } from './keybindings-table';
+import { SettingsForm } from './setting-row';
+import { TrackersSection } from './trackers-section';
 
-const formatDefault = (value: unknown): string =>
-  typeof value === 'string' ? (value === '' ? '(none)' : value) : JSON.stringify(value);
+export { SettingRow, SettingsForm } from './setting-row';
 
-function SettingRow({
-  settingKey,
-  definition,
-}: {
-  settingKey: string;
-  definition: SettingDefinition;
-}) {
-  const { settings } = useRuntime();
-  const values = useStore(settings, (state: SettingsState) => state.values);
-  const kind = useMemo(() => fieldKind(definition.schema), [definition.schema]);
-  const [draft, setDraft] = useState<{ value: unknown } | undefined>(undefined);
-  const [issues, setIssues] = useState<readonly string[]>([]);
-  const id = `setting-${settingKey}`;
-  const shown = draft ? draft.value : resolveSetting(settings.definitions, values, settingKey);
-  const modified = settingKey in values;
-
-  const change = (next: unknown) => {
-    const draftBox = { value: next };
-    setDraft(draftBox);
-    const local = validateSetting(settings.definitions, settingKey, next);
-    setIssues(local.ok ? [] : local.issues);
-    if (!local.ok) return;
-    void settings.write(settingKey, next).then((result) => {
-      if (!result.ok) {
-        setIssues(result.issues);
-        return;
-      }
-      // Drop the draft only if the user has not typed something newer meanwhile.
-      setDraft((current) => (current === draftBox ? undefined : current));
-    });
-  };
-
-  const reset = () => {
-    setDraft(undefined);
-    setIssues([]);
-    void settings.reset(settingKey);
-  };
-
-  return (
-    <div
-      data-testid={id}
-      className="flex flex-col gap-2 border-b border-border py-4 last:border-b-0"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <Label htmlFor={id}>{definition.label}</Label>
-        {definition.restartRequired && <Badge variant="outline">Restart required</Badge>}
-        {definition.secret && <Badge variant="outline">Secret</Badge>}
-        {modified && (
-          <Button variant="link" size="sm" className="ml-auto h-auto p-0 text-xs" onClick={reset}>
-            Reset to default
-          </Button>
-        )}
-      </div>
-      <p className="text-xs text-muted-foreground">{definition.description}</p>
-      {definition.schema.meta()?.['widget'] === 'secret' ? (
-        <SecretField id={id} label={definition.label} settingKey={settingKey} value={shown} />
-      ) : (
-        <Field
-          id={id}
-          label={definition.label}
-          kind={kind}
-          value={shown}
-          invalid={issues.length > 0}
-          onChange={change}
-        />
-      )}
-      {issues.length > 0 && (
-        <ul role="alert" className="text-xs text-destructive">
-          {issues.map((issue) => (
-            <li key={issue}>{issue}</li>
-          ))}
-        </ul>
-      )}
-      <p className="font-mono text-[11px] text-muted-foreground">
-        {settingKey} · default {formatDefault(definition.default)}
-      </p>
-    </div>
-  );
-}
-
-export function SettingsForm({
-  entries,
-}: {
-  entries: readonly (readonly [string, SettingDefinition])[];
-}) {
-  return (
-    <div className="flex flex-col">
-      {entries.map(([key, definition]) => (
-        <SettingRow key={key} settingKey={key} definition={definition} />
-      ))}
-    </div>
-  );
+// Groups that only mean something in the installed desktop app (audit E-14).
+export function useHiddenGroups(): ReadonlySet<SettingGroup> {
+  const { updates, pickFolder } = useRuntime();
+  return useMemo(() => {
+    const hidden = new Set<SettingGroup>();
+    if (updates === undefined) hidden.add('updates');
+    if (pickFolder === undefined) hidden.add('desktop');
+    return hidden;
+  }, [updates, pickFolder]);
 }
 
 const navLinkClass =
-  'flex h-7 items-center rounded-md px-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground';
+  'flex h-7 items-center rounded-md px-2 text-sm text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring';
 const activeNavLink = {
   className: 'bg-accent text-accent-foreground font-medium',
   'aria-current': 'page',
 } as const;
 
-// The settings pages: one per registry group, plus Projects (server rows, not settings) after
-// Providers.
-function SettingsLayout({ title, children }: { title: string; children: ReactNode }) {
+const matches = (query: string, key: string, definition: SettingDefinition) => {
+  const text =
+    `${key} ${definition.label} ${definition.description} ${settingGroupTitles[definition.group]}`.toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((word) => text.includes(word));
+};
+
+function SearchResults({ query, hidden }: { query: string; hidden: ReadonlySet<SettingGroup> }) {
   const { settings } = useRuntime();
   const groups = useMemo(() => settingsByGroup(settings.definitions), [settings.definitions]);
+  const found = [...groups.entries()]
+    .filter(([group]) => !hidden.has(group))
+    .map(([group, entries]) => [group, entries.filter(([k, d]) => matches(query, k, d))] as const)
+    .filter(([, entries]) => entries.length > 0);
+  if (found.length === 0) {
+    return (
+      <EmptyState
+        icon={SearchXIcon}
+        title="No settings match"
+        description={`Nothing matches "${query}". Try another word.`}
+      />
+    );
+  }
+  return (
+    <div className="flex flex-col gap-6">
+      {found.map(([group, entries]) => (
+        <section key={group} aria-label={settingGroupTitles[group]}>
+          <h3 className="text-xs font-medium text-muted-foreground">{settingGroupTitles[group]}</h3>
+          <SettingsForm entries={entries} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
+// The settings pages: one per registry group, plus Projects (server rows, not settings) after
+// Providers. The shell header says "Settings"; the page heading names the group, so nothing is
+// said three times (audit E-17).
+function SettingsLayout({ title, children }: { title: string; children: ReactNode }) {
+  const { settings } = useRuntime();
+  const hidden = useHiddenGroups();
+  const groups = useMemo(() => settingsByGroup(settings.definitions), [settings.definitions]);
+  const [query, setQuery] = useState('');
+  const searchId = useId();
+  const searching = query.trim() !== '';
   return (
     <div className="flex h-full">
-      <nav aria-label="Settings groups" className="w-48 shrink-0 border-r border-border p-2">
+      <nav
+        aria-label="Settings groups"
+        className="flex w-48 shrink-0 flex-col gap-2 border-r border-border p-2 max-lg:w-40"
+      >
+        <div className="relative">
+          <label htmlFor={searchId} className="sr-only">
+            Search settings
+          </label>
+          <SearchIcon
+            aria-hidden
+            className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            id={searchId}
+            type="search"
+            placeholder="Search settings"
+            className="h-8 pl-7 text-xs"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => event.key === 'Escape' && setQuery('')}
+          />
+        </div>
         <ul className="flex flex-col gap-0.5">
-          {[...groups.keys()].map((name) => (
-            <Fragment key={name}>
-              <li>
-                <Link
-                  to="/settings/$group"
-                  params={{ group: name }}
-                  className={navLinkClass}
-                  activeProps={activeNavLink}
-                >
-                  {settingGroupTitles[name]}
-                </Link>
-              </li>
-              {name === 'providers' && (
+          {[...groups.keys()]
+            .filter((name) => !hidden.has(name))
+            .map((name) => (
+              <Fragment key={name}>
                 <li>
                   <Link
-                    to="/settings/projects"
+                    to="/settings/$group"
+                    params={{ group: name }}
                     className={navLinkClass}
                     activeProps={activeNavLink}
+                    onClick={() => setQuery('')}
                   >
-                    Projects
+                    {settingGroupTitles[name]}
                   </Link>
                 </li>
-              )}
-            </Fragment>
-          ))}
+                {name === 'providers' && (
+                  <li>
+                    <Link
+                      to="/settings/projects"
+                      className={navLinkClass}
+                      activeProps={activeNavLink}
+                      onClick={() => setQuery('')}
+                    >
+                      Projects
+                    </Link>
+                  </li>
+                )}
+              </Fragment>
+            ))}
         </ul>
       </nav>
-      <section aria-labelledby="settings-title" className="min-w-0 flex-1 overflow-auto px-6 py-4">
-        <h2 id="settings-title" className="text-base font-semibold">
-          {title}
-        </h2>
-        {children}
+      <section
+        aria-labelledby="settings-title"
+        className="min-w-0 flex-1 overflow-auto px-6 py-4 max-lg:px-4"
+      >
+        <div className="mx-auto max-w-3xl">
+          <h2 id="settings-title" className="text-base font-semibold">
+            {searching ? 'Search results' : title}
+          </h2>
+          {searching ? <SearchResults query={query.trim()} hidden={hidden} /> : children}
+        </div>
       </section>
     </div>
   );
@@ -168,16 +155,28 @@ function SettingsLayout({ title, children }: { title: string; children: ReactNod
 export function SettingsPage() {
   const { group } = useParams({ from: '/settings/$group' });
   const { settings } = useRuntime();
+  const hidden = useHiddenGroups();
   const groups = useMemo(() => settingsByGroup(settings.definitions), [settings.definitions]);
   const current: SettingGroup | undefined = isSettingGroup(group) ? group : undefined;
   const entries = current ? (groups.get(current) ?? []) : [];
 
   return (
     <SettingsLayout title={current ? settingGroupTitles[current] : 'Settings'}>
+      {current !== undefined && hidden.has(current) && (
+        <p data-testid="desktop-only" className="mt-2 text-xs text-muted-foreground">
+          These settings apply to the installed desktop app; this window cannot use them.
+        </p>
+      )}
       {current === 'providers' && <ProvidersSection />}
       {current === 'updates' && <UpdateStatusPanel />}
       {/* Remount per group so drafts never leak between pages. */}
-      <SettingsForm key={group} entries={entries} />
+      {current === 'trackers' ? (
+        <TrackersSection key={group} entries={entries} />
+      ) : current === 'keybindings' ? (
+        <KeybindingsTable key={group} entries={entries} />
+      ) : (
+        <SettingsForm key={group} entries={entries} />
+      )}
     </SettingsLayout>
   );
 }

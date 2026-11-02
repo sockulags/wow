@@ -3,7 +3,7 @@ import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { createTestRuntime, renderApp } from '@/test/render';
-import { createUpdatesClient, type DesktopUpdatesBridge } from './updates';
+import { createUpdatesClient, describeUpdateError, type DesktopUpdatesBridge } from './updates';
 
 // The web app's side of auto-update (behavior 35): it shows the state the desktop sends and
 // passes "Check for updates" and "Restart to update" back.
@@ -96,14 +96,33 @@ describe('updates in the web app', () => {
     expect(bridge.installs).toBe(2);
   });
 
-  it('shows a failed check until dismissed', async () => {
+  it('hides the ready banner with Later and links to the release notes', async () => {
+    const user = userEvent.setup();
+    const bridge = new FakeBridge({ ...idle, status: 'ready', version: '0.2.0', percent: 100 });
+    await renderApp('/calendar', runtimeWith(bridge));
+    const banner = await screen.findByRole('status', { name: 'Update' });
+    expect(within(banner).getByRole('link', { name: "What's new" }).getAttribute('href')).toBe(
+      'https://github.com/sockulags/wow/releases/tag/v0.2.0',
+    );
+    await user.click(within(banner).getByRole('button', { name: 'Later' }));
+    expect(screen.queryByRole('status', { name: 'Update' })).toBeNull();
+  });
+
+  it('shows a failed check in words until dismissed', async () => {
     const user = userEvent.setup();
     const bridge = new FakeBridge({ ...idle, status: 'error', error: 'offline' });
     await renderApp('/calendar', runtimeWith(bridge));
-    const banner = await screen.findByRole('status', { name: 'Update' });
+    const banner = await screen.findByRole('alert', { name: 'Update' });
     expect(banner.textContent).toMatch(/Update failed: offline/);
     await user.click(within(banner).getByRole('button', { name: 'Dismiss' }));
-    expect(screen.queryByRole('status', { name: 'Update' })).toBeNull();
+    expect(screen.queryByRole('alert', { name: 'Update' })).toBeNull();
+  });
+
+  it('translates common updater errors', () => {
+    expect(describeUpdateError('net::ERR_INTERNET_DISCONNECTED', '18:30')).toBe(
+      'No internet connection. wow will try again at 18:30.',
+    );
+    expect(describeUpdateError('something odd', undefined)).toBe('Update failed: something odd');
   });
 
   it('hides "Check for updates" while updates are off', async () => {

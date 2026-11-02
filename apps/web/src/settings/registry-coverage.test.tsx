@@ -3,7 +3,7 @@ import { screen, within } from '@testing-library/react';
 import { cleanup } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { settingGroupTitles, settingsByGroup } from '@/app/sections';
-import { renderApp } from '@/test/render';
+import { createTestRuntime, renderApp } from '@/test/render';
 import { fieldKind } from './field-kind';
 
 // Spec 33: every setting in the registry renders on its group's page with its description,
@@ -35,7 +35,11 @@ describe('settings registry coverage', () => {
   });
 
   it.each([...settingsByGroup().entries()])('renders every %s setting', async (group, entries) => {
-    await renderApp(`/settings/${group}`);
+    // Keys and raw defaults show only with advanced.showSettingKeys (owner decision F-11).
+    await renderApp(
+      `/settings/${group}`,
+      createTestRuntime(undefined, { 'advanced.showSettingKeys': true }),
+    );
     expect(await screen.findByRole('heading', { name: settingGroupTitles[group] })).toBeTruthy();
     for (const [key, definition] of entries) {
       const row = within(screen.getByTestId(`setting-${key}`));
@@ -44,5 +48,11 @@ describe('settings registry coverage', () => {
       expect(row.getByText(`${key} · default ${formatDefault(definition.default)}`)).toBeTruthy();
     }
     cleanup();
+  });
+
+  it('hides setting keys and raw defaults unless asked', async () => {
+    await renderApp('/settings/calendar');
+    const row = within(await screen.findByTestId('setting-calendar.zone'));
+    expect(row.queryByText(/calendar\.zone · default/)).toBeNull();
   });
 });

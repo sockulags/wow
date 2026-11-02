@@ -65,6 +65,13 @@ test.describe('workflows', () => {
     await steps.nth(2).getByRole('button', { name: 'Move step 3 down' }).click();
     await expect(steps.nth(3).getByLabel('Step 4 skill')).toHaveText('check-work');
 
+    // The steps can become a template of their own (audit E-05).
+    await builder.getByRole('button', { name: 'Save as template…' }).click();
+    const saveTemplate = builder.getByRole('group', { name: 'Save as template' });
+    await saveTemplate.getByLabel('Template name').fill('Feature e2e template');
+    await saveTemplate.getByRole('button', { name: 'Save template' }).click();
+    await expect(templates.getByRole('button', { name: 'Feature e2e template' })).toBeVisible();
+
     await builder.getByRole('button', { name: 'Create workflow' }).click();
     await expect(page).toHaveURL(/\/workflows\/[0-9a-f-]{36}$/);
     await expect(

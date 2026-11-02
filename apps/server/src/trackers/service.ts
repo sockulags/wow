@@ -4,6 +4,7 @@ import {
   type BacklogRemote,
   type SecretRef,
   type TrackerPreview,
+  type TrackerTestResult,
   type TrackerService as TrackerKind,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
@@ -15,8 +16,18 @@ import { backlogItems } from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import type { SettingsService } from '../settings/service.js';
 import { createGitHubIssue, type GitHubConfig } from './github.js';
-import type { NewIssue, RequestOptions } from './http.js';
+import { TrackerError, type NewIssue, type RequestOptions } from './http.js';
 import { createJiraIssue, type JiraConfig } from './jira.js';
+import { gitHubWhoAmI, jiraWhoAmI } from './whoami.js';
+
+// The settings a sign-in needs; the project key or repository only matter when publishing.
+const signInKeys = new Set([
+  'trackers.jira.baseUrl',
+  'trackers.jira.email',
+  'trackers.jira.token',
+  'trackers.github.baseUrl',
+  'trackers.github.token',
+]);
 
 export interface TrackerServiceDeps {
   readonly db: Db;
@@ -72,6 +83,72 @@ export class TrackerService {
       labels: [...this.#deps.settings.get('trackers.github.labels')],
       missing: [...missing],
       existing: item.remote,
+    };
+  }
+
+  // "Test connection": signs in with what is stored and says as whom. Failures are answers, not
+  // errors, so the settings page can show them next to the button.
+  async test(service: TrackerKind): Promise<TrackerTestResult> {
+    const options = this.#options();
+    const { settings } = this.#deps;
+    const result = (
+      ok: boolean,
+      account: string | null,
+      message: string,
+      missing: string[] = [],
+    ) => ({
+      service,
+      ok,
+      account,
+      message,
+      missing,
+    });
+    try {
+      if (service === 'jira') {
+        const { config, missing } = await this.#jira();
+        const needed = missing.filter((key) => signInKeys.has(key));
+        if (needed.length > 0) {
+          return result(false, null, `Fill in ${needed.map(labelOf).join(', ')} first.`, needed);
+        }
+        const account = await jiraWhoAmI(
+          config ?? {
+            baseUrl: settings.get('trackers.jira.baseUrl'),
+            authMode: settings.get('trackers.jira.authMode'),
+            email: settings.get('trackers.jira.email'),
+            token: await this.#token(settings.get('trackers.jira.token')),
+            projectKey: settings.get('trackers.jira.projectKey'),
+            issueType: settings.get('trackers.jira.issueType'),
+          },
+          options,
+        );
+        return result(true, account, `Signed in as ${account}.`, [...missing]);
+      }
+      const { config, missing } = await this.#github();
+      const needed = missing.filter((key) => signInKeys.has(key));
+      if (needed.length > 0) {
+        return result(false, null, `Fill in ${needed.map(labelOf).join(', ')} first.`, needed);
+      }
+      const account = await gitHubWhoAmI(
+        config ?? {
+          baseUrl: settings.get('trackers.github.baseUrl'),
+          token: await this.#token(settings.get('trackers.github.token')),
+          owner: settings.get('trackers.github.owner'),
+          repo: settings.get('trackers.github.repo'),
+          labels: settings.get('trackers.github.labels'),
+        },
+        options,
+      );
+      return result(true, account, `Signed in as ${account}.`, [...missing]);
+    } catch (error) {
+      if (error instanceof TrackerError) return result(false, null, error.message);
+      throw error;
+    }
+  }
+
+  #options(): RequestOptions {
+    return {
+      timeoutMs: this.#deps.settings.get('trackers.requestTimeoutMs'),
+      ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
     };
   }
 

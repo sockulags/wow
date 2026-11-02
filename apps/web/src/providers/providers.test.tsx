@@ -114,13 +114,16 @@ describe('first-run wizard', () => {
 
     const wizard = await screen.findByRole('dialog', { name: 'Set up providers' });
     const list = await within(wizard).findByRole('list', { name: 'Detected providers' });
-    expect(within(list).getByText('/opt/bin/claude')).toBeTruthy();
-    expect(within(list).getByText('codex not found on PATH')).toBeTruthy();
+    expect(within(list).getAllByTestId('path-text')[0]?.textContent).toBe('/opt/bin/claude');
+    expect(within(list).getByText('codex is not installed, or not on the PATH.')).toBeTruthy();
     expect(within(list).getByRole('checkbox', { name: 'Claude' }).getAttribute('data-state')).toBe(
       'checked',
     );
 
-    await user.click(within(wizard).getByRole('button', { name: 'Create and test' }));
+    // The primary action has focus, not "Not now" (audit A-11).
+    const primary = within(wizard).getByRole('button', { name: 'Set up 1 provider' });
+    expect(document.activeElement).toBe(primary);
+    await user.click(primary);
     const [create] = dispatched(server);
     expect(create).toMatchObject({
       type: 'providerInstance.create',
@@ -150,6 +153,26 @@ describe('first-run wizard', () => {
     const created = within(wizard).getByRole('list', { name: 'Created instances' });
     expect(within(created).getByTestId('provider-status').textContent).toBe('Ready');
     expect(within(created).getByText('me@example.com · 2.1.316')).toBeTruthy();
+
+    // Then projects (owner decision F-10).
+    await user.click(within(wizard).getByRole('button', { name: 'Continue' }));
+    expect(await within(wizard).findByRole('heading', { name: 'Add your projects' })).toBeTruthy();
+    // Nothing to import here, so Continue is the only way on.
+    await user.click(within(wizard).getByRole('button', { name: 'Continue' }));
+    await user.click(within(wizard).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('remembers "Not now"', async () => {
+    const user = userEvent.setup();
+    const server = fakeServer((method) => (method === 'provider.detect' ? [] : []), {
+      providerInstances: [],
+    });
+    const runtime = runtimeFor(server.connection);
+    await renderApp('/calendar', runtime);
+    const wizard = await screen.findByRole('dialog', { name: 'Set up providers' });
+    await user.click(within(wizard).getByRole('button', { name: 'Not now' }));
+    expect(runtime.settings.getState().values['providers.offerSetup']).toBe(false);
   });
 });
 
@@ -181,10 +204,7 @@ describe('Settings → Providers', () => {
     await user.click(row.getByRole('button', { name: 'Edit' }));
     const editor = await screen.findByRole('dialog', { name: 'Edit Work' });
     const form = within(editor);
-    expect(form.getByLabelText('Config directory (CLAUDE_CONFIG_DIR)')).toHaveProperty(
-      'value',
-      '/home/me/.claude-work',
-    );
+    expect(form.getByLabelText('Config folder')).toHaveProperty('value', '/home/me/.claude-work');
     expect(form.getByLabelText('Variable 1 value').getAttribute('placeholder')).toBe(
       'Stored. Type to replace.',
     );
@@ -193,7 +213,7 @@ describe('Settings → Providers', () => {
     await user.type(form.getByLabelText('Variable 2 value'), 'http://proxy:8080');
     await user.click(form.getByRole('checkbox', { name: 'Variable 2 secret' }));
     await user.type(form.getByLabelText('Launch arguments'), '--verbose');
-    await user.click(form.getByRole('combobox', { name: 'Default permission mode' }));
+    await user.click(form.getByRole('combobox', { name: 'Default permissions' }));
     await user.click(await screen.findByRole('option', { name: 'Accept edits' }));
     await user.click(form.getByRole('button', { name: 'Save' }));
 
@@ -214,9 +234,10 @@ describe('Settings → Providers', () => {
       }),
     );
     expect(screen.queryByRole('dialog', { name: 'Edit Work' })).toBeNull();
-  });
+    // Many typed keys through a full dialog; the default 5 s is tight on a loaded machine.
+  }, 15_000);
 
-  it('asks before removing and shows why the server refused', async () => {
+  it('asks before removing an instance with stored secrets, and shows why the server refused', async () => {
     const user = userEvent.setup();
     const server = fakeServer(
       (method) => {
@@ -229,7 +250,8 @@ describe('Settings → Providers', () => {
     const row = within(await screen.findByRole('listitem', { name: 'Work' }));
     await user.click(row.getByRole('button', { name: 'Remove' }));
     expect(dispatched(server)).toEqual([]);
-    await user.click(row.getByRole('button', { name: 'Remove Work' }));
+    const confirm = within(await screen.findByRole('alertdialog', { name: 'Remove Work?' }));
+    await user.click(confirm.getByRole('button', { name: 'Remove' }));
     expect(dispatched(server)).toEqual([
       { type: 'providerInstance.delete', providerInstanceId: 'claude-work' },
     ]);

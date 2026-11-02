@@ -113,6 +113,48 @@ export function setGate<D extends Pick<WorkflowDraft, 'steps'>>(draft: D, positi
   };
 }
 
+// "Save as template" (audit E-05): the draft's skills, gates and artifacts under a name. A
+// template with that name (or the kind the draft came from, when the name is the same) is
+// replaced; otherwise a new kind is made from the name. Provider settings stay with the workflow.
+export function saveAsTemplate(
+  templates: readonly WorkflowTemplate[],
+  draft: Pick<WorkflowDraft, 'steps'>,
+  name: string,
+): { readonly templates: WorkflowTemplate[]; readonly kind: string } | string {
+  const title = name.trim();
+  if (title === '') return 'Give the template a name';
+  const steps = draft.steps
+    .filter((step) => step.skillName.trim() !== '')
+    .map((step) => ({
+      skillName: step.skillName.trim(),
+      gateBefore: step.gateBefore,
+      gateAfter: step.gateAfter,
+      expectedArtifacts: parseGlobs(step.artifactsText),
+    }));
+  if (steps.length === 0) return 'Add a step with a skill first';
+  const existing = templates.find(
+    (template) => template.name.trim().toLowerCase() === title.toLowerCase(),
+  );
+  const base =
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'template';
+  let kind = existing?.kind ?? base;
+  if (!existing) {
+    for (let n = 2; templates.some((template) => template.kind === kind); n += 1) {
+      kind = `${base}-${n}`;
+    }
+  }
+  const saved: WorkflowTemplate = { kind, name: title, steps };
+  return {
+    kind,
+    templates: existing
+      ? templates.map((template) => (template.kind === kind ? saved : template))
+      : [...templates, saved],
+  };
+}
+
 export function moveStep<T>(steps: readonly T[], from: number, to: number): T[] {
   if (from === to || from < 0 || from >= steps.length || to < 0 || to >= steps.length) {
     return [...steps];

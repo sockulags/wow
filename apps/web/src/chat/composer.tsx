@@ -62,7 +62,7 @@ function SkillPicker({
       <Command
         shouldFilter={false}
         value={active?.id ?? ''}
-        className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground"
+        className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-2xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground"
       >
         <CommandList id={id} label="Skills" className="max-h-72">
           {skills.length === 0 && (
@@ -85,10 +85,10 @@ function SkillPicker({
                   >
                     <span className="flex w-full items-baseline gap-2">
                       <span className="font-medium">{skill.name}</span>
-                      <span className="font-mono text-[11px] text-muted-foreground">
+                      <span className="font-mono text-2xs text-muted-foreground">
                         {skill.invocations[kind]}
                       </span>
-                      <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+                      <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
                         {skillSourceLabel(skill)}
                       </span>
                     </span>

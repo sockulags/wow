@@ -12,7 +12,7 @@ export function StatusBadge({ instance }: { instance: ProviderInstance }) {
       className={cn(
         instance.status === 'ready' && 'border-state-done/50 text-state-done',
         instance.status === 'error' && 'border-state-failed/50 text-state-failed',
-        instance.status === 'unknown' && 'text-muted-foreground',
+        instance.status === 'unknown' && 'border-warning/50 text-warning',
       )}
     >
       {statusLabels[instance.status]}

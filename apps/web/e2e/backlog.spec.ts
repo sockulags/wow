@@ -231,7 +231,7 @@ test.describe('backlog', () => {
       page
         .getByTestId('setting-trackers.github.token')
         .getByTestId('setting-trackers.github.token-status'),
-    ).toHaveText('A value is stored.');
+    ).toHaveText('Saved');
 
     await page.goto(`/backlog/${itemId}?dialog=github`);
     await expect(dialog.getByTestId('preview-target')).toHaveText('acme/demo');

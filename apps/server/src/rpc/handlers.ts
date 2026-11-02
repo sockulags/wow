@@ -106,6 +106,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     'skills.refresh': async () => ({ skills: await deps.skills.refresh() }),
     'trackers.preview': ({ backlogItemId, service }) =>
       deps.trackers.preview(backlogItemId, service),
+    'trackers.test': ({ service }) => deps.trackers.test(service),
     'trackers.publish': async ({ backlogItemId, service, title, labels }) => {
       try {
         return await deps.trackers.publish(backlogItemId, service, { title, labels });

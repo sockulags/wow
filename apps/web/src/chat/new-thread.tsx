@@ -23,6 +23,7 @@ import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { lastUsedInstanceId } from '@/providers/model';
 import { Composer, type ComposerHandle } from './composer';
 import { useDispatch, useModels, useTopic } from './data';
 import { effortOptions, threadTitle, titleFromMessage } from './model';
@@ -93,9 +94,10 @@ export function NewThreadView() {
   >({});
 
   const last = lastUsedThread(threads);
+  const lastInstanceId = lastUsedInstanceId(threads, instances);
   const instance =
     instances?.find((candidate) => candidate.id === picked.providerInstanceId) ??
-    instances?.find((candidate) => candidate.id === last?.providerInstanceId) ??
+    instances?.find((candidate) => candidate.id === lastInstanceId) ??
     instances?.find((candidate) => candidate.status === 'ready') ??
     instances?.[0];
   const { models } = useModels(instance?.id);
