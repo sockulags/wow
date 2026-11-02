@@ -35,6 +35,7 @@ const instance: ProviderInstance = {
 const context: ProviderAdapterContext = {
   resolveEnv: () => Promise.resolve({ ANTHROPIC_API_KEY: 'resolved-secret' }),
   testTimeoutMs: () => 60_000,
+  requestTimeoutMs: () => 60_000,
 };
 
 const startTurn = (overrides: Partial<Extract<ProviderCommand, { type: 'startTurn' }>> = {}) =>

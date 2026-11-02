@@ -1,4 +1,4 @@
-import { createClaudeAdapter } from '@wow/provider-claude';
+import { installedProviders } from './providers/installed.js';
 import { startOutlookService } from './outlook/service.js';
 import { startServer } from './server.js';
 
@@ -6,7 +6,7 @@ import { startServer } from './server.js';
 // bundle.
 const server = await startServer({
   hooks: {
-    providers: { claude: createClaudeAdapter },
+    providers: installedProviders,
     outlook: (mode, context) => startOutlookService(mode, context),
   },
 });

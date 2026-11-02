@@ -9,8 +9,9 @@ import { codexAdapterFactory } from '@wow/provider-codex';
 startServer({
   hooks: {
     providers: {
-      // requestTimeoutMs is read before every request; resolveEnv turns secret refs into values.
-      codex: codexAdapterFactory({ requestTimeoutMs, resolveEnv }),
+      // The request timeout (providers.requestTimeoutMs, read before every request) and the
+      // resolved instance env come from the server's ProviderAdapterContext.
+      codex: codexAdapterFactory(),
     },
   },
 });

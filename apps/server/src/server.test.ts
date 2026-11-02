@@ -145,7 +145,11 @@ describe('startup', () => {
         version: null,
         statusMessage: null,
       },
-      { resolveEnv: () => Promise.resolve({}), testTimeoutMs: () => 1000 },
+      {
+        resolveEnv: () => Promise.resolve({}),
+        testTimeoutMs: () => 1000,
+        requestTimeoutMs: () => 1000,
+      },
     );
     const done = new Promise<string>((resolve) =>
       adapter.onEvent((event) => {

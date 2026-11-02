@@ -43,6 +43,7 @@ const adapter = () =>
   new ClaudeAdapter(instance(), {
     resolveEnv: () => Promise.resolve({}),
     testTimeoutMs: () => 120_000,
+    requestTimeoutMs: () => 60_000,
   });
 
 describe.runIf(real)('Claude adapter against the installed claude', () => {
