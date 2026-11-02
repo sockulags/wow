@@ -29,6 +29,7 @@ export function Banner({
   actions,
   className,
   testId,
+  label,
 }: {
   readonly tone: BannerTone;
   readonly icon?: LucideIcon | undefined;
@@ -38,12 +39,15 @@ export function Banner({
   readonly actions?: ReactNode | undefined;
   readonly className?: string | undefined;
   readonly testId?: string | undefined;
+  // Accessible name of the bar, such as "Update".
+  readonly label?: string | undefined;
 }) {
   const style = tones[tone];
   const Icon = icon ?? style.icon;
   return (
     <div
       role={tone === 'info' ? 'status' : 'alert'}
+      aria-label={label}
       data-testid={testId}
       data-tone={tone}
       className={cn(

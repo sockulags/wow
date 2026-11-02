@@ -91,7 +91,12 @@ export class TrackerService {
   async test(service: TrackerKind): Promise<TrackerTestResult> {
     const options = this.#options();
     const { settings } = this.#deps;
-    const result = (ok: boolean, account: string | null, message: string, missing: string[] = []) => ({
+    const result = (
+      ok: boolean,
+      account: string | null,
+      message: string,
+      missing: string[] = [],
+    ) => ({
       service,
       ok,
       account,

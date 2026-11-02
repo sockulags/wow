@@ -32,6 +32,8 @@ export function ChoiceSelect({
   describedBy,
   title,
   className,
+  'aria-describedby': ariaDescribedBy,
+  'aria-invalid': ariaInvalid,
 }: {
   readonly id?: string;
   // Accessible name when no <Label htmlFor> points at the trigger.
@@ -44,6 +46,9 @@ export function ChoiceSelect({
   readonly disabled?: boolean;
   readonly invalid?: boolean;
   readonly describedBy?: string | undefined;
+  // Set by a FormField around the select.
+  readonly 'aria-describedby'?: string | undefined;
+  readonly 'aria-invalid'?: boolean | undefined;
   readonly title?: string;
   readonly className?: string;
 }) {
@@ -57,8 +62,8 @@ export function ChoiceSelect({
       <SelectTrigger
         id={id}
         aria-label={label}
-        aria-invalid={invalid || undefined}
-        aria-describedby={describedBy}
+        aria-invalid={invalid || ariaInvalid || undefined}
+        aria-describedby={describedBy ?? ariaDescribedBy}
         title={title}
         size={size}
         className={cn('w-full', size === 'sm' && 'text-xs', className)}

@@ -1,5 +1,4 @@
 import { expect, test } from '@playwright/test';
-import { choose } from './controls';
 
 // U3 ground truth: open every route, toggle the theme, change a setting.
 
@@ -13,7 +12,7 @@ test.describe('shell', () => {
       ['Chat', /\/chat$/, 'No threads yet'],
       ['Workflows', /\/workflows$/, 'No workflows yet'],
       ['Backlog', /\/backlog$/, 'Backlog is empty'],
-      ['Settings', /\/settings\/providers$/, 'Test timeout (ms)'],
+      ['Settings', /\/settings\/providers$/, 'Test timeout'],
     ] as const;
     for (const [name, url, text] of routes) {
       await nav.getByRole('link', { name }).click();
@@ -35,7 +34,7 @@ test.describe('shell', () => {
 
     await page.goto('/settings/appearance');
     await expect(html).toHaveClass(/dark/);
-    await choose(page.getByLabel('Theme'), 'light');
+    await page.getByRole('radio', { name: 'Light' }).click();
     await expect(html).not.toHaveClass(/dark/);
   });
 
@@ -57,7 +56,7 @@ test.describe('shell', () => {
 
   test('rejects an invalid value and keeps the old one', async ({ page }) => {
     await page.goto('/settings/calendar');
-    const lookahead = page.getByLabel('Lookahead (days)');
+    const lookahead = page.getByLabel('Lookahead');
     await lookahead.fill('500');
     await expect(
       page.getByTestId('setting-calendar.lookaheadDays').getByRole('alert'),
@@ -66,6 +65,8 @@ test.describe('shell', () => {
     await expect(
       page.getByTestId('setting-calendar.lookaheadDays').getByRole('alert'),
     ).toBeHidden();
-    await expect(page.getByText('Reset to default')).toBeVisible();
+    await expect(
+      page.getByTestId('setting-calendar.lookaheadDays').getByText('Reset to default'),
+    ).toBeVisible();
   });
 });

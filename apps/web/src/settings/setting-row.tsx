@@ -127,7 +127,7 @@ export function SettingRow({
           </Label>
           {definition.restartRequired && <Badge variant="outline">Restart required</Badge>}
           {differs && !secret && (
-            <div className="ml-auto xl:hidden">
+            <div className="ml-auto">
               <ResetButton label={definition.label} definition={definition} onReset={reset} />
             </div>
           )}
@@ -162,11 +162,6 @@ export function SettingRow({
               />
             )}
           </div>
-          {differs && !secret && (
-            <div className="hidden shrink-0 xl:block">
-              <ResetButton label={definition.label} definition={definition} onReset={reset} />
-            </div>
-          )}
         </div>
         {issues.length > 0 && (
           <ul id={errorId} role="alert" className="text-xs text-destructive">

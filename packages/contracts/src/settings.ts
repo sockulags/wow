@@ -65,7 +65,6 @@ export interface SettingDefinition<S extends z.ZodType = z.ZodType> {
   readonly radio?: boolean;
 }
 
-
 const defineSetting = <S extends z.ZodType>(definition: SettingDefinition<S>) => definition;
 
 export const Weekday = z.enum([
@@ -437,12 +436,18 @@ export const settingsRegistry = {
     scope: 'global',
     radio: true,
     options: {
-      run: { label: 'Run them now', description: 'Start every missed workflow as soon as wow starts.' },
+      run: {
+        label: 'Run them now',
+        description: 'Start every missed workflow as soon as wow starts.',
+      },
       mark: {
         label: 'Mark as missed',
         description: 'Show them as missed on the calendar with a "Run now" action.',
       },
-      skip: { label: 'Skip them', description: 'Show them as missed and do not offer to run them.' },
+      skip: {
+        label: 'Skip them',
+        description: 'Show them as missed and do not offer to run them.',
+      },
     },
   }),
   'scheduler.notifications': defineSetting({
@@ -578,8 +583,7 @@ export const settingsRegistry = {
     schema: JiraAuthMode,
     group: 'trackers',
     label: 'Jira sign-in',
-    description:
-      'How wow signs in to Jira.',
+    description: 'How wow signs in to Jira.',
     default: 'cloud-basic',
     scope: 'global',
     radio: true,
@@ -598,8 +602,7 @@ export const settingsRegistry = {
     schema: z.string().trim(),
     group: 'trackers',
     label: 'Jira email',
-    description:
-      'Your Atlassian account email. Only used for Jira Cloud.',
+    description: 'Your Atlassian account email. Only used for Jira Cloud.',
     default: '',
     scope: 'global',
   }),
@@ -818,7 +821,7 @@ export const settingsRegistry = {
     group: 'advanced',
     label: 'Show setting keys',
     description:
-      'Show each setting\'s key and stored default under it, for editing config files or reporting issues.',
+      "Show each setting's key and stored default under it, for editing config files or reporting issues.",
     default: false,
     scope: 'global',
   }),

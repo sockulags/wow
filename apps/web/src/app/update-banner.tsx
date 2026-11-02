@@ -1,49 +1,76 @@
 import type { UpdateState } from '@wow/contracts';
-import { AlertTriangleIcon, DownloadIcon, XIcon } from 'lucide-react';
+import { DownloadIcon, XIcon } from 'lucide-react';
 import { useState } from 'react';
+import { formatTime } from '@/calendar/time';
+import { Banner } from '@/components/banner';
+import { IconButton } from '@/components/hint';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { useRuntime, useUpdateState } from './runtime';
-import { describeUpdate } from './updates';
+import { useDateFormat } from '@/lib/format';
+import { useRuntime, useSetting, useUpdateState } from './runtime';
+import { describeUpdate, describeUpdateError, releaseNotesUrl } from './updates';
 
-// Shown above every view once an update is downloaded ("Restart to update") or a check failed. The
-// main process asks first when a turn or workflow run is running.
+// Shown above every view once an update is downloaded ("Restart to update", "Later", "What's
+// new") or a check failed. The main process asks first when a turn or workflow run is running.
 export function UpdateBanner() {
   const { updates } = useRuntime();
   const state = useUpdateState();
-  // Dismissing hides this error only; the next failure shows again.
+  const interval = useSetting('updates.checkIntervalMinutes');
+  const { zone } = useDateFormat();
+  // "Later" hides this version and "Dismiss" this error, for this session; the next one shows.
   const [dismissed, setDismissed] = useState<string | undefined>(undefined);
   if (updates === undefined || state === undefined) return null;
-  const errorKey = state.status === 'error' ? `${state.checkedAt}:${state.error}` : undefined;
-  if (state.status !== 'ready' && (errorKey === undefined || errorKey === dismissed)) return null;
-  const ready = state.status === 'ready';
-  const Icon = ready ? DownloadIcon : AlertTriangleIcon;
+  const key =
+    state.status === 'ready'
+      ? `ready:${state.version ?? ''}`
+      : state.status === 'error'
+        ? `error:${state.checkedAt}:${state.error}`
+        : undefined;
+  if (key === undefined || key === dismissed) return null;
+  if (state.status === 'ready') {
+    const version = state.version;
+    return (
+      <Banner
+        tone="info"
+        icon={DownloadIcon}
+        label="Update"
+        actions={
+          <>
+            {version && (
+              <Button size="xs" variant="ghost" asChild>
+                <a href={releaseNotesUrl(version)} target="_blank" rel="noreferrer">
+                  What&apos;s new
+                </a>
+              </Button>
+            )}
+            <Button size="xs" variant="outline" onClick={() => setDismissed(key)}>
+              Later
+            </Button>
+            <Button size="xs" onClick={() => updates.install()}>
+              Restart to update
+            </Button>
+          </>
+        }
+      >
+        {describeUpdate(state)}
+      </Banner>
+    );
+  }
+  const retryAt =
+    state.enabled && state.checkedAt
+      ? formatTime(new Date(Date.parse(state.checkedAt) + interval * 60_000), zone)
+      : undefined;
   return (
-    <div
-      role="status"
-      aria-label="Update"
-      className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-3 py-1.5 text-xs"
-    >
-      <Icon
-        aria-hidden
-        className={cn('size-3.5 shrink-0', ready ? 'text-state-done' : 'text-state-failed')}
-      />
-      <span className="min-w-0 flex-1 truncate">{describeUpdate(state)}</span>
-      {ready ? (
-        <Button size="sm" onClick={() => updates.install()}>
-          Restart to update
-        </Button>
-      ) : (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Dismiss"
-          onClick={() => setDismissed(errorKey)}
-        >
+    <Banner
+      tone="warning"
+      label="Update"
+      actions={
+        <IconButton label="Dismiss" size="icon-xs" onClick={() => setDismissed(key)}>
           <XIcon />
-        </Button>
-      )}
-    </div>
+        </IconButton>
+      }
+    >
+      {describeUpdateError(state.error, retryAt)}
+    </Banner>
   );
 }
 

@@ -193,9 +193,7 @@ test.describe('backlog', () => {
     const row = page.getByTestId('setting-trackers.github.token');
     await row.getByLabel('GitHub token').fill('github-e2e-token');
     await row.getByRole('button', { name: 'Save' }).click();
-    await expect(row.getByTestId('setting-trackers.github.token-status')).toHaveText(
-      'Saved',
-    );
+    await expect(row.getByTestId('setting-trackers.github.token-status')).toHaveText('Saved');
     await expect(row.getByLabel('GitHub token')).toHaveValue('');
 
     await page.goto(`/backlog/${itemId}?dialog=github`);

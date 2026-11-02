@@ -36,7 +36,7 @@ test.describe('projects', () => {
 
     await page.goto('/settings/projects');
     await expect(projectList(page).getByRole('listitem', { name: 'Demo' })).toBeVisible();
-    await projectList(page).getByRole('button', { name: 'New project' }).click();
+    await projectList(page).getByRole('button', { name: 'Add project' }).click();
     const create = page.getByRole('dialog', { name: 'New project' });
     await create.getByLabel('Name').fill('Site e2e');
     await create.getByLabel('Folder').fill(path.join(home, 'projects-e2e-missing'));
@@ -70,8 +70,8 @@ test.describe('projects', () => {
       .getByRole('listitem', { name: 'Site renamed' })
       .getByRole('button', { name: 'Remove' })
       .click();
-    const remove = page.getByRole('dialog', { name: 'Remove Site renamed?' });
-    await remove.getByRole('button', { name: 'Remove project' }).click();
+    const remove = page.getByRole('alertdialog', { name: 'Remove Site renamed?' });
+    await remove.getByRole('button', { name: 'Remove' }).click();
     await expect(remove).toBeHidden();
     await expect(projectList(page).getByRole('listitem', { name: 'Site renamed' })).toBeHidden();
 
@@ -90,7 +90,7 @@ test.describe('choosing and importing folders', () => {
       };
     }, folder);
     await page.goto('/settings/projects');
-    await projectList(page).getByRole('button', { name: 'New project' }).click();
+    await projectList(page).getByRole('button', { name: 'Add project' }).click();
     const create = page.getByRole('dialog', { name: 'New project' });
     await create.getByLabel('Name').fill('Picked e2e');
     await expect(create.getByLabel('Folder')).toHaveAttribute('readonly', '');
@@ -113,10 +113,9 @@ test.describe('choosing and importing folders', () => {
     const list = dialog.getByRole('list', { name: 'Folders to import' });
     await expect(list.getByRole('listitem')).toHaveCount(2);
     const alpha = list.getByRole('listitem').filter({ hasText: e2eWorkspace(home, 'alpha') });
-    await expect(alpha).toContainText('Claude: Discovery Claude');
-    await expect(alpha).toContainText('Codex: Discovery Codex');
+    await expect(alpha).toContainText('Claude, Codex');
     const beta = list.getByRole('listitem').filter({ hasText: e2eWorkspace(home, 'beta') });
-    await expect(beta).not.toContainText('Claude:');
+    await expect(beta).not.toContainText('Claude');
     await expect(list).not.toContainText(e2eWorkspace(home, 'gone'));
 
     await beta.getByRole('checkbox').click();

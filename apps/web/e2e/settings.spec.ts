@@ -19,9 +19,13 @@ test.beforeEach(async ({ page }) => {
 
 const instances = (page: Page) => page.getByRole('region', { name: 'Provider instances' });
 
-async function remove(row: Locator, name: string) {
+// An instance with stored secrets asks first, since they cannot be restored; one without is
+// removed at once and offers Undo (owner decision F-9).
+async function remove(row: Locator, { secrets = false } = {}) {
   await row.getByRole('button', { name: 'Remove', exact: true }).click();
-  await row.getByRole('button', { name: `Remove ${name}` }).click();
+  if (secrets) {
+    await row.page().getByRole('alertdialog').getByRole('button', { name: 'Remove' }).click();
+  }
   await expect(row).toBeHidden();
 }
 
@@ -33,23 +37,19 @@ test.describe('settings', () => {
     await editor.getByLabel('Name').fill('Claude e2e');
     await editor.getByRole('button', { name: 'Detect' }).click();
     await expect(editor.getByLabel('Binary path')).toHaveValue(e2eBinary(home, 'claude'));
-    await expect(editor.getByLabel('Config directory (CLAUDE_CONFIG_DIR)')).toHaveValue(
-      e2eClaudeConfigDir(home),
-    );
+    await expect(editor.getByLabel('Config folder')).toHaveValue(e2eClaudeConfigDir(home));
     await editor.getByRole('button', { name: 'Add variable' }).click();
     await editor.getByLabel('Variable 1 name').fill('ANTHROPIC_API_KEY');
     await editor.getByLabel('Variable 1 value').fill('sk-e2e-secret');
     await editor.getByRole('checkbox', { name: 'Variable 1 secret' }).check();
     await editor.getByLabel('Launch arguments').fill('--verbose');
-    await editor.getByLabel('Default model').fill('mock-model');
-    await editor.getByLabel('Default effort').fill('high');
-    await choose(editor.getByLabel('Default permission mode'), 'Accept edits');
+    await expect(editor.getByLabel('Default model')).toHaveText("Default (Claude's choice)");
+    await choose(editor.getByLabel('Default permissions'), 'Accept edits');
     await editor.getByRole('button', { name: 'Add instance' }).click();
     await expect(editor).toBeHidden();
 
+    // Saving tests the instance at once (audit E-03).
     const row = instances(page).getByRole('listitem', { name: 'Claude e2e' });
-    await expect(row.getByTestId('provider-status')).toHaveText('Not tested');
-    await row.getByRole('button', { name: 'Test' }).click();
     await expect(row.getByTestId('provider-status')).toHaveText('Ready');
     await expect(row.getByTestId('provider-account')).toHaveText('mock');
     await expect(row.getByTestId('provider-version')).toHaveText('mock');
@@ -66,20 +66,20 @@ test.describe('settings', () => {
       'Stored. Type to replace.',
     );
     await expect(edit.getByLabel('Launch arguments')).toHaveValue('--verbose');
-    await edit
-      .getByLabel('Config directory (CLAUDE_CONFIG_DIR)')
-      .fill(`${e2eClaudeConfigDir(home)}-2`);
+    // The editor lists the models the tested instance reports.
+    await choose(edit.getByLabel('Default model'), /mock/i);
+    await edit.getByLabel('Config folder').fill(`${e2eClaudeConfigDir(home)}-2`);
     await edit.getByRole('button', { name: 'Save' }).click();
     await expect(edit).toBeHidden();
-    // A new config directory is a different setup; its last test no longer applies.
-    await expect(row.getByTestId('provider-status')).toHaveText('Not tested');
-    await expect(row).toContainText(`${e2eClaudeConfigDir(home)}-2`);
+    // A new config folder is a different setup: its old result is cleared and it is tested again.
+    await expect(row.getByTestId('provider-status')).toHaveText('Ready');
+    await expect(row.getByTestId('path-text').last()).toHaveText(`${e2eClaudeConfigDir(home)}-2`);
 
     await page.reload();
     await expect(
       instances(page).getByRole('listitem', { name: 'Claude e2e' }).getByTestId('provider-status'),
-    ).toHaveText('Not tested');
-    await remove(instances(page).getByRole('listitem', { name: 'Claude e2e' }), 'Claude e2e');
+    ).toHaveText('Ready');
+    await remove(instances(page).getByRole('listitem', { name: 'Claude e2e' }), { secrets: true });
   });
 
   test('adds and tests a Codex instance with CODEX_HOME', async ({ page }) => {
@@ -89,17 +89,20 @@ test.describe('settings', () => {
     await editor.getByLabel('Name').fill('Codex e2e');
     await editor.getByRole('button', { name: 'Detect' }).click();
     await expect(editor.getByLabel('Binary path')).toHaveValue(e2eBinary(home, 'codex'));
-    await expect(editor.getByLabel('Config directory (CODEX_HOME)')).toHaveValue(
-      e2eCodexHome(home),
-    );
-    await choose(editor.getByLabel('Default permission mode'), 'Read only');
+    await expect(editor.getByLabel('Config folder')).toHaveValue(e2eCodexHome(home));
+    await choose(editor.getByLabel('Default permissions'), 'Read only');
     await editor.getByRole('button', { name: 'Add instance' }).click();
 
     const row = instances(page).getByRole('listitem', { name: 'Codex e2e' });
     await row.getByRole('button', { name: 'Test' }).click();
     await expect(row.getByTestId('provider-status')).toHaveText('Ready');
-    await expect(row).toContainText(e2eCodexHome(home));
-    await remove(row, 'Codex e2e');
+    await expect(row.getByTestId('path-text').last()).toHaveText(e2eCodexHome(home));
+    await remove(row);
+    // Removed at once, with Undo in a toast.
+    await page.getByRole('button', { name: 'Undo' }).click();
+    const back = instances(page).getByRole('listitem', { name: 'Codex e2e' });
+    await expect(back).toBeVisible();
+    await remove(back);
   });
 
   test('the wizard creates the detected CLIs from the palette', async ({ page }) => {
@@ -109,24 +112,34 @@ test.describe('settings', () => {
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/\/settings\/providers$/);
 
-    const wizard = page.getByRole('dialog', { name: 'Set up providers' });
+    const wizard = page.getByRole('dialog');
+    await expect(wizard.getByRole('heading', { name: 'Set up providers' })).toBeVisible();
     const detected = wizard.getByRole('list', { name: 'Detected providers' });
-    await expect(detected).toContainText(e2eBinary(home, 'claude'));
-    await expect(detected).toContainText(e2eBinary(home, 'codex'));
-    await wizard.getByRole('button', { name: 'Create and test' }).click();
+    await expect(detected.getByTestId('path-text').first()).toHaveText(e2eBinary(home, 'claude'));
+    await expect(detected).toContainText('Codex');
+    // The primary action has focus, not "Not now" (audit A-11).
+    await expect(wizard.getByRole('button', { name: 'Set up 2 providers' })).toBeFocused();
+    await page.keyboard.press('Enter');
 
     const created = wizard.getByRole('list', { name: 'Created instances' });
     await expect(created.getByTestId('provider-status')).toHaveText(['Ready', 'Ready']);
-    await wizard.getByRole('button', { name: 'Done' }).click();
+    await wizard.getByRole('button', { name: 'Continue' }).click();
+    // Then projects, imported from the folders the new instances worked in (owner decision F-10).
+    await expect(wizard.getByRole('heading', { name: 'Add your projects' })).toBeVisible();
+    await wizard.getByRole('button', { name: 'Skip' }).click();
+    await wizard.getByRole('button', { name: 'Close' }).click();
 
     for (const name of ['Claude', 'Codex']) {
       const row = instances(page).getByRole('listitem', { name, exact: true });
       await expect(row.getByTestId('provider-status')).toHaveText('Ready');
-      await remove(row, name);
+      await remove(row);
     }
   });
 
   test('renders every registry setting with its description and default', async ({ page }) => {
+    // Keys and raw defaults show only with "Show setting keys" (owner decision F-11).
+    await page.goto('/settings/advanced');
+    await page.getByLabel('Show setting keys').click();
     const groups = new Set(Object.values(settingsRegistry).map((entry) => entry.group));
     for (const group of groups) {
       await page.goto(`/settings/${group}`);
@@ -138,18 +151,20 @@ test.describe('settings', () => {
         await expect(row).toContainText(`${key} · default`);
       }
     }
+    await page.goto('/settings/advanced');
+    await page.getByLabel('Show setting keys').click();
   });
 
   test('a setting change applies at once and is stored on the server', async ({ page }) => {
     await page.goto('/settings/appearance');
     const html = page.locator('html');
     await expect(html).toHaveAttribute('data-density', 'comfortable');
-    await choose(page.getByLabel('Density'), 'compact');
+    await choose(page.getByLabel('Density'), 'Compact');
     await expect(html).toHaveAttribute('data-density', 'compact');
 
     await page.reload();
     await expect(html).toHaveAttribute('data-density', 'compact');
-    await expect(page.getByLabel('Density')).toHaveText('compact');
+    await expect(page.getByLabel('Density')).toHaveText('Compact');
 
     await page.getByTestId('setting-appearance.density').getByText('Reset to default').click();
     await expect(html).toHaveAttribute('data-density', 'comfortable');

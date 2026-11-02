@@ -21,6 +21,8 @@ declare global {
       readonly updates?: DesktopUpdatesBridge;
       // The native folder dialog (apps/desktop/src/preload).
       readonly pickFolder?: () => Promise<unknown>;
+      // Relaunches the desktop app.
+      readonly restart?: () => Promise<unknown>;
     };
   }
 }
@@ -100,6 +102,31 @@ export function describeUpdate(state: UpdateState): string {
     case 'ready':
       return `${release} is downloaded. Restart to update.`;
     case 'error':
-      return `Update failed: ${state.error ?? 'unknown error'}`;
+      return describeUpdateError(state.error, undefined);
   }
+}
+
+// The release page of a version, for "What's new".
+export const releaseNotesUrl = (version: string): string =>
+  `https://github.com/sockulags/wow/releases/tag/v${version}`;
+
+// Common updater errors in words (audit E-14); anything else keeps its own message.
+export function describeUpdateError(error: string | null, retryAt: string | undefined): string {
+  const text = error ?? '';
+  const retry = retryAt ? ` wow will try again at ${retryAt}.` : '';
+  if (
+    /ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED/.test(
+      text,
+    )
+  ) {
+    return `No internet connection.${retry}`;
+  }
+  if (/ETIMEDOUT|ERR_TIMED_OUT|ERR_CONNECTION_(RESET|REFUSED|CLOSED)/.test(text)) {
+    return `The update server did not answer.${retry}`;
+  }
+  if (/\b(403|429)\b|rate limit/i.test(text)) return `GitHub refused the check for now.${retry}`;
+  if (/sha512|checksum|signature/i.test(text)) {
+    return 'The downloaded update did not pass its check and was discarded. wow will download it again.';
+  }
+  return `Update failed: ${text || 'unknown error'}`;
 }
