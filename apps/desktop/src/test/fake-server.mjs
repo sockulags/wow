@@ -19,10 +19,12 @@ if (mode === 'exit-early') {
 }
 
 const token = randomBytes(16).toString('hex');
-const settings = new Map();
+// FAKE_SERVER_SETTINGS: JSON object of global settings the server starts with.
+const settings = new Map(Object.entries(JSON.parse(process.env.FAKE_SERVER_SETTINGS ?? '{}')));
 const rows = new Map([
   ['workflows', []],
   ['workflowRuns', []],
+  ['threads', []],
 ]);
 const subscribers = new Map();
 let nextSubscription = 1;

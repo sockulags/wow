@@ -20,10 +20,10 @@ and troubleshooting. Technical details are in `docs/architecture.md`.
 
 ### Install
 
-Run the installer (`wow-setup-<version>.exe`, from the `wow-installer-windows` artifact of the CI
-run). It is not code-signed, so Windows SmartScreen asks once: choose "More info", then "Run
-anyway". There is no auto-update; install a newer build over the old one. Your data stays in
-`%USERPROFILE%\.wow`.
+Run the installer (`wow-setup-<version>.exe`, from the latest release on GitHub or the
+`wow-installer-windows` artifact of a CI run). It is not code-signed, so Windows SmartScreen asks
+once: choose "More info", then "Run anyway". After that wow updates itself (see "Updates"). Your
+data stays in `%USERPROFILE%\.wow`.
 
 From a checkout instead:
 
@@ -76,6 +76,21 @@ Closing the window keeps wow running in the tray (`desktop.closeToTray`), so car
 fire. Click the tray icon to bring the window back; its menu has Open, New thread, Pause or Resume
 scheduler, and Quit. Turn on `desktop.autostart` to start wow at login; it then starts in the
 tray. Starting wow a second time shows the window that is already running.
+
+### Updates
+
+The installed app looks for a newer stable release on GitHub (`sockulags/wow`) when it starts and
+every `updates.checkIntervalMinutes` (four hours by default), and downloads it in the background.
+When the download is done you get a notification, a bar above every view, a "Restart to update"
+entry in the tray menu and in the palette. Restarting stops the server cleanly, installs the new
+version without questions and starts it again; your data in `~/.wow` stays as it is. If a turn is
+running or a workflow run is working, wow tells you first: restarting ends those turns as failed,
+so choose "Later" to let them finish. Nothing installs until you choose to restart.
+
+"Check for updates" in the palette checks now; Settings → Updates shows the current version, the
+progress, and the last error. A failed check (no network, say) shows the error and the app keeps
+working; the next check tries again. Turn `updates.enabled` off to stop checking altogether.
+Prereleases are never offered. A build run from a checkout never updates itself.
 
 ## Providers
 
@@ -258,7 +273,7 @@ Tokens are stored encrypted; clearing the field deletes the stored token.
 ## Settings
 
 Settings are grouped: Providers, Chat, Calendar, Outlook, Scheduler, Workflows, Skills, Trackers,
-Appearance, Keybindings, Desktop and Advanced. Every setting shows its description, its default
+Appearance, Keybindings, Desktop, Updates and Advanced. Every setting shows its description, its default
 and its current value. A change applies at once, except settings marked **Restart required**
 (the server port), which apply after quitting and starting wow again. A value that does not pass
 validation is refused and the old one stays.
@@ -271,6 +286,7 @@ Useful ones to know:
 - `workflows.templates`, `workflows.handoverTemplate`
 - `appearance.theme` (dark by default), `appearance.density`
 - `desktop.closeToTray`, `desktop.autostart`, `desktop.startMinimized`
+- `updates.enabled`, `updates.checkIntervalMinutes`
 
 ## Where wow keeps things
 

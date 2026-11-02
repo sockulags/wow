@@ -119,6 +119,7 @@ describe('shell', () => {
       'Appearance',
       'Keybindings',
       'Desktop',
+      'Updates',
       'Advanced',
     ]);
     expect(await screen.findByLabelText('Test timeout (ms)')).toBeTruthy();

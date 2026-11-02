@@ -86,7 +86,7 @@ describe('runNotices', () => {
 
 describe('trayMenu', () => {
   it('offers open, new thread, pause and quit', () => {
-    const entries = trayMenu({ serverReady: true, schedulerPaused: false });
+    const entries = trayMenu({ serverReady: true, schedulerPaused: false, updateReady: undefined });
     expect(entries.map((entry) => (entry.kind === 'item' ? entry.label : '-'))).toEqual([
       'Open',
       'New thread',
@@ -94,19 +94,41 @@ describe('trayMenu', () => {
       '-',
       'Quit',
     ]);
-    expect(trayTooltip({ serverReady: true, schedulerPaused: false })).toBe('wow');
+    expect(trayTooltip({ serverReady: true, schedulerPaused: false, updateReady: undefined })).toBe(
+      'wow',
+    );
   });
 
   it('offers resume while paused and only quit while the server is not ready', () => {
-    expect(trayMenu({ serverReady: true, schedulerPaused: true })[2]).toMatchObject({
+    expect(
+      trayMenu({ serverReady: true, schedulerPaused: true, updateReady: undefined })[2],
+    ).toMatchObject({
       label: 'Resume scheduler',
       action: 'toggleScheduler',
     });
-    const starting = trayMenu({ serverReady: false, schedulerPaused: false });
+    const starting = trayMenu({
+      serverReady: false,
+      schedulerPaused: false,
+      updateReady: undefined,
+    });
     expect(
       starting.flatMap((entry) => (entry.kind === 'item' && entry.enabled ? [entry.action] : [])),
     ).toEqual(['quit']);
-    expect(trayTooltip({ serverReady: false, schedulerPaused: false })).toBe('wow (starting)');
+    expect(
+      trayTooltip({ serverReady: false, schedulerPaused: false, updateReady: undefined }),
+    ).toBe('wow (starting)');
+  });
+
+  it('offers "Restart to update" above Quit once an update is downloaded', () => {
+    const entries = trayMenu({ serverReady: true, schedulerPaused: false, updateReady: '0.2.0' });
+    expect(entries.at(-2)).toMatchObject({
+      label: 'Restart to update (0.2.0)',
+      action: 'installUpdate',
+      enabled: true,
+    });
+    expect(trayTooltip({ serverReady: true, schedulerPaused: false, updateReady: '0.2.0' })).toBe(
+      'wow (update 0.2.0 ready)',
+    );
   });
 });
 
@@ -118,6 +140,8 @@ describe('readDesktopSettings', () => {
       startMinimized: false,
       schedulerPaused: false,
       notifications: true,
+      updatesEnabled: true,
+      updateCheckIntervalMinutes: 240,
     });
     const resolved: ResolvedSetting[] = [
       { key: 'desktop.autostart', value: true, source: 'global' },

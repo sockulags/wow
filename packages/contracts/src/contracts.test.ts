@@ -99,6 +99,7 @@ describe('settings registry', () => {
         'appearance',
         'keybindings',
         'desktop',
+        'updates',
         'advanced',
       ]),
     );

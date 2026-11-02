@@ -1,13 +1,14 @@
-import type { Workflow, WorkflowRun } from '@wow/contracts';
+import type { Thread, UpdateState, Workflow, WorkflowRun } from '@wow/contracts';
 import {
   desktopSettingKeys,
   readDesktopSettings,
   type DesktopSettings,
 } from './desktop-settings.js';
-import { runNotices, runStates, type RunNotice, type RunStates } from './notifications.js';
+import { runNotices, runStates, type Notice, type RunStates } from './notifications.js';
 import type { RpcClient } from './rpc-client.js';
 import type { ServerEndpoint, ServerProcess } from './server-process.js';
 import { trayMenu, trayTooltip, type TrayAction, type TrayEntry } from './tray-menu.js';
+import { restartWarning, UpdateManager, type Updater, type UpdateTimers } from './updates.js';
 
 // What the controller needs from Electron. `main/index.ts` implements it with BrowserWindow, Tray,
 // Notification and app; tests implement it with plain objects.
@@ -17,9 +18,13 @@ export interface DesktopShell {
   // Destroys the window, for example because the server it was connected to is gone.
   closeWindow(): void;
   setTray(entries: TrayEntry[], tooltip: string): void;
-  notify(notice: RunNotice, onClick: () => void): void;
+  notify(notice: Notice, onClick: () => void): void;
   setLoginItem(openAtLogin: boolean): void;
   askRestart(message: string): Promise<boolean>;
+  // Hands the update state to the web app (the preload bridge).
+  setUpdateState(state: UpdateState): void;
+  // Asks whether to restart for the update although work is running; true means restart.
+  confirmUpdateRestart(message: string): Promise<boolean>;
   exit(code: number): void;
   log(level: 'info' | 'warn' | 'error', message: string, error?: unknown): void;
 }
@@ -31,11 +36,19 @@ export interface ControllerOptions {
   readonly newCommandId: () => string;
   // Started by the login item: open in the tray whatever startMinimized says.
   readonly launchedHidden: boolean;
+  // Auto-update, only in a packaged build: without it nothing checks, downloads or installs.
+  readonly updates?: {
+    readonly updater: Updater;
+    readonly currentVersion: string;
+    readonly timers: UpdateTimers;
+    readonly now: () => Date;
+  };
 }
 
 export type CloseDecision = 'hide' | 'close';
 
 export const newThreadPath = '/chat?new=1';
+export const updatesPath = '/settings/updates';
 
 // The desktop's main-process logic: owns the server child, follows the settings it acts on, and
 // turns tray, window and run events into calls on the shell. All state shown to the user comes
@@ -50,10 +63,22 @@ export class DesktopController {
   #loginItem: boolean | undefined;
   #workflows: readonly Workflow[] = [];
   #runStates: RunStates | undefined;
+  #runs: readonly WorkflowRun[] = [];
+  #threads: readonly Thread[] = [];
   #quitting: Promise<void> | undefined;
+  readonly #updates: UpdateManager | undefined;
+  #installing = false;
 
   constructor(options: ControllerOptions) {
     this.#options = options;
+    const updates = options.updates;
+    this.#updates =
+      updates === undefined
+        ? undefined
+        : new UpdateManager({
+            ...updates,
+            onState: (state, previous) => this.#updateChanged(state, previous),
+          });
   }
 
   get settings(): DesktopSettings | undefined {
@@ -62,6 +87,17 @@ export class DesktopController {
 
   get server(): ServerProcess | undefined {
     return this.#server;
+  }
+
+  // Undefined in an unpackaged build, where updates do not run.
+  get updateState(): UpdateState | undefined {
+    return this.#updates?.state;
+  }
+
+  // True once "Restart to update" has stopped the server and handed over to the installer, which
+  // quits the app itself.
+  get installingUpdate(): boolean {
+    return this.#installing;
   }
 
   async start(): Promise<void> {
@@ -98,6 +134,9 @@ export class DesktopController {
       case 'toggleScheduler':
         void this.toggleScheduler();
         return;
+      case 'installUpdate':
+        void this.installUpdate();
+        return;
       case 'quit':
         void this.quit();
         return;
@@ -123,19 +162,51 @@ export class DesktopController {
     }
   }
 
+  // The palette's "Check for updates".
+  checkForUpdates(): Promise<void> {
+    return this.#updates?.check() ?? Promise.resolve();
+  }
+
+  // "Restart to update" from the web app or the tray: says so when work is running and lets the
+  // user decide, stops the server through the normal lifecycle, then lets the installer quit the
+  // app. If the installer cannot start, the server starts again and the error is shown.
+  async installUpdate(): Promise<void> {
+    const updates = this.#updates;
+    if (updates?.state.status !== 'ready' || this.#quitting !== undefined) return;
+    const warning = restartWarning(this.#threads, this.#runs);
+    if (warning !== undefined && !(await this.#options.shell.confirmUpdateRestart(warning))) return;
+    if (this.#quitting !== undefined) return;
+    this.#installing = true;
+    this.#quitting = (async () => {
+      await this.#stopServer();
+      try {
+        updates.install();
+      } catch (error) {
+        updates.fail(error);
+      }
+    })();
+    await this.#quitting;
+  }
+
   quit(): Promise<void> {
     this.#quitting ??= (async () => {
-      this.#renderTray();
-      this.#client?.close();
-      this.#client = undefined;
-      try {
-        await this.#server?.stop();
-      } catch (error) {
-        this.#options.shell.log('error', 'server did not stop cleanly', error);
-      }
+      this.#updates?.stop();
+      await this.#stopServer();
       this.#options.shell.exit(0);
     })();
     return this.#quitting;
+  }
+
+  async #stopServer(): Promise<void> {
+    this.#renderTray();
+    this.#client?.close();
+    this.#client = undefined;
+    try {
+      await this.#server?.stop();
+    } catch (error) {
+      this.#options.shell.log('error', 'server did not stop cleanly', error);
+    }
+    this.#server = undefined;
   }
 
   async #launch(): Promise<void> {
@@ -157,6 +228,9 @@ export class DesktopController {
         this.#workflows = rows;
       });
       await client.subscribe('workflowRuns', (rows) => this.#runsChanged(rows));
+      await client.subscribe('threads', (rows) => {
+        this.#threads = rows;
+      });
     } catch (error) {
       this.#client?.close();
       this.#client = undefined;
@@ -183,10 +257,13 @@ export class DesktopController {
       this.#loginItem = settings.autostart;
       this.#options.shell.setLoginItem(settings.autostart);
     }
+    if (this.#quitting === undefined)
+      this.#updates?.configure(settings.updatesEnabled, settings.updateCheckIntervalMinutes);
     this.#renderTray();
   }
 
   #runsChanged(runs: readonly WorkflowRun[]): void {
+    this.#runs = runs;
     const notices = runNotices(this.#runStates, runs, this.#workflows);
     this.#runStates = runStates(runs);
     if (!(this.#settings?.notifications ?? false)) return;
@@ -215,10 +292,43 @@ export class DesktopController {
     }
   }
 
+  #updateChanged(state: UpdateState, previous: UpdateState): void {
+    this.#options.shell.setUpdateState(state);
+    this.#renderTray();
+    if (state.status === 'ready' && previous.status !== 'ready')
+      this.#options.shell.notify(
+        {
+          title: state.version === null ? 'An update is ready' : `wow ${state.version} is ready`,
+          body: 'Restart to update. Your data stays as it is.',
+          path: updatesPath,
+        },
+        () => this.open(updatesPath),
+      );
+    if (state.status === 'error' && this.#installing) void this.#installFailed(state.error);
+  }
+
+  // The installer did not take over: the app is still here without its server.
+  async #installFailed(message: string | null): Promise<void> {
+    this.#options.shell.log('error', `update install failed: ${message ?? 'unknown error'}`);
+    await this.#quitting;
+    this.#installing = false;
+    this.#quitting = undefined;
+    this.#runStates = undefined;
+    try {
+      await this.#launch();
+      this.open(updatesPath);
+    } catch (error) {
+      this.#options.shell.log('error', 'server restart after a failed update failed', error);
+      await this.quit();
+    }
+  }
+
   #renderTray(): void {
+    const update = this.#updates?.state;
     const state = {
       serverReady: this.#client !== undefined && this.#quitting === undefined,
       schedulerPaused: this.#settings?.schedulerPaused ?? false,
+      updateReady: update?.status === 'ready' ? (update.version ?? '') : undefined,
     };
     this.#options.shell.setTray(trayMenu(state), trayTooltip(state));
   }

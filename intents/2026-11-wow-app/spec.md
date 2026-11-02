@@ -134,6 +134,11 @@ to Outlook, Jira or GitHub unless you press a button that says so.
     without restart unless the setting is marked "restart required".
 34. Given the app is closed to the tray, when a trigger fires, then it still runs, and clicking the
     tray icon restores the window.
+35. Given an installed wow and a newer stable GitHub release, when the app starts or the update
+    interval passes, then it downloads the update in the background and offers "Restart to
+    update"; restarting stops the server cleanly and installs it, and the next start runs the new
+    version with the same `~/.wow` data. Updates are on by default and can be turned off in
+    settings; "Check for updates" in the palette checks now.
 
 ## Boundaries and non-goals
 
@@ -170,6 +175,11 @@ to Outlook, Jira or GitHub unless you press a button that says so.
 - **Settings are a schema-driven registry.** A zod schema per setting with group, description,
   default and scope; the settings UI is generated from it. This is how "everything configurable"
   stays cheap.
+- **Auto-update from GitHub Releases with electron-updater, on from the first release.** The repo
+  is public, so the app reads `latest.yml` from the newest stable release without a token. The
+  installer is per-user, so updates need no admin rights. Unsigned for now: SmartScreen warns on
+  first install, updates still work. Rejected: manual reinstall per version (0.1.0 users would be
+  stranded), a custom update server (more to run).
 - **Secrets encrypted with Windows DPAPI through PowerShell on Windows, plain `0600` file with a
   warning elsewhere.** Keeps the server standalone; the desktop app is not the only writer.
 
@@ -192,3 +202,9 @@ to Outlook, Jira or GitHub unless you press a button that says so.
   on `windows-latest`.
 
 ## Decision log
+
+- 2026-11-02: auto-update added (behavior 35, plan U17), before v0.1.0 so every install updates
+  itself. Code signing stays out for now.
+- 2026-11-02 (U17): the update state lives in the desktop main process and reaches the web app
+  through the preload bridge, not the server: only the desktop can act on it. "Restart to update"
+  says so when a turn or workflow run is running, and the user decides (plan U17 open risk).

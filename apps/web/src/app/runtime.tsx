@@ -1,4 +1,4 @@
-import type { ProviderKind, SettingKey, SettingValue } from '@wow/contracts';
+import type { ProviderKind, SettingKey, SettingValue, UpdateState } from '@wow/contracts';
 import {
   settingValue,
   type Connection,
@@ -9,6 +9,7 @@ import {
 import { createContext, useContext, type ReactNode } from 'react';
 import { createStore, useStore, type StoreApi } from 'zustand';
 import type { DraftStore } from '@/chat/draft';
+import type { UpdatesClient } from './updates';
 
 // The provider dialog that is open: the editor for a new or existing instance, or the first-run
 // wizard. Palette commands open them from anywhere.
@@ -50,6 +51,8 @@ export interface Runtime {
   readonly draft: DraftStore;
   // Absent when the web app runs without a server (development, tests).
   readonly connection: Connection | undefined;
+  // Present only inside the desktop app, which owns the update state.
+  readonly updates?: UpdatesClient | undefined;
 }
 
 const RuntimeContext = createContext<Runtime | undefined>(undefined);
@@ -67,6 +70,15 @@ export function useRuntime(): Runtime {
 export function useSetting<K extends SettingKey>(key: K): SettingValue<K> {
   const { settings } = useRuntime();
   return useStore(settings, (state: SettingsState) => settingValue(state.values, key));
+}
+
+const noUpdates: StoreApi<UpdateState | undefined> = createStore<UpdateState | undefined>(
+  () => undefined,
+);
+
+// The desktop's update state, undefined outside the desktop app.
+export function useUpdateState(): UpdateState | undefined {
+  return useStore(useRuntime().updates?.store ?? noUpdates);
 }
 
 export function useLayout<T>(selector: (state: LayoutState) => T): T {

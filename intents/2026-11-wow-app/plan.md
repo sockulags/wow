@@ -29,7 +29,8 @@ agents at a time (worker, reviewer and integrator share the three slots). Every 
 - [U13] Provider onboarding and settings coverage — depends on U8
 - [U14] Electron desktop: server lifecycle, tray, autostart, installer — depends on U2, U3
 - [U15] End-to-end tests and user guide — depends on U8, U11, U12, U13, U14
-- [U16] Windows smoke and release candidate — depends on U15
+- [U16] Windows smoke and release candidate — depends on U15, U17
+- [U17] Auto-update from GitHub Releases — depends on U14
 
 ### U1 Monorepo scaffold, contracts skeleton, CI
 
@@ -270,12 +271,39 @@ Ground truth: completed checklist pasted into the release notes.
 Delivery target: pull request plus tag
 Open risks: none
 
+### U17 Auto-update from GitHub Releases
+
+Outcome: the installed app updates itself from GitHub Releases of `sockulags/wow` (spec behavior
+35). `electron-updater` in `apps/desktop`; electron-builder `publish` set to the GitHub provider so
+`dist` writes `latest.yml` and the `.blockmap` next to the installer (still `--publish never`; the
+release workflow uploads them). The main process checks at startup and every
+`updates.checkIntervalMinutes`, downloads in the background, and shows a notification and a
+"Restart to update" action in the web app and the tray; installing stops the server through the
+existing lifecycle before `quitAndInstall`. Settings-registry entries `updates.enabled` (default
+true) and `updates.checkIntervalMinutes`; a palette command "Check for updates"; update state
+(idle, checking, available, downloading with percent, ready, error) reaches the web app as
+persisted state through the server or the desktop bridge, never derived in the UI. Nothing runs in
+an unpackaged or dev build. Spec, `docs/architecture.md`, `docs/user-guide.md` and the desktop
+README describe it.
+Boundaries: no code signing. No prerelease channel. `.github/workflows/release.yml` belongs to
+U16 and is not on main yet; write in the pull request exactly what it must upload (`latest.yml`,
+the installer and its `.blockmap`, release not draft and not prerelease) instead of creating it.
+Acceptance: behavior 35.
+Ground truth: `pnpm --filter @wow/desktop test` with a fake updater covers: disabled setting means
+no check; check at start and on interval; download progress and ready state reach the client;
+"Restart to update" stops the server before install; errors leave the app running and show the
+error. `electron-builder` config test or snapshot shows the GitHub publish provider and that
+`latest.yml` is produced by `dist` on Windows CI. Repository checks green.
+Delivery target: pull request
+Open risks: an update installed while a turn or workflow step is running; the restart action must
+say so and the user decides.
+
 ## Epic contract
 
 Epic outcome: a morning with the app open covers the day without Outlook, two terminals and a
 notes file side by side.
 Acceptance: spec "Behavior" sections, all.
-Children or delivery units: U1 to U16 as above; the split follows package boundaries (one adapter,
+Children or delivery units: U1 to U17 as above; the split follows package boundaries (one adapter,
 one view, one engine per unit) so three agents can work without touching the same files.
 Aggregate verification: `pnpm typecheck && pnpm lint && pnpm test && pnpm e2e` on `main` after
 every integration, Windows installer artifact, `docs/windows-smoke.md`.

@@ -72,6 +72,7 @@ export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
   appearance: 'Appearance',
   keybindings: 'Keybindings',
   desktop: 'Desktop',
+  updates: 'Updates',
   advanced: 'Advanced',
 };
 
