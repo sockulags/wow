@@ -5,7 +5,8 @@ import { appId, decodeServerInfoArg, encodeServerInfoArg } from '../app.js';
 import { rendererFile } from './app-protocol.js';
 import { readDesktopSettings } from './desktop-settings.js';
 import { runNotices, runStates } from './notifications.js';
-import { trayMenu, trayTooltip } from './tray-menu.js';
+import { applicationMenu } from './app-menu.js';
+import { trayMenu, traySummary, trayTooltip } from './tray-menu.js';
 
 const run = (
   id: string,
@@ -178,5 +179,41 @@ describe('rendererFile', () => {
     );
     expect(rendererFile(dir, 'wow://app/..%5c..%5csecret.txt')).toBeUndefined();
     expect(rendererFile(dir, 'not a url')).toBeUndefined();
+  });
+});
+
+describe('tray summary', () => {
+  it('says how many need you and what fires next', () => {
+    const summary = traySummary(
+      [{ state: 'needs_you' }, { state: 'idle' }, { state: 'needs_you' }],
+      [{ state: 'waiting' }, { state: 'running' }],
+      [
+        { state: 'fired', runAt: '2026-11-02T09:00:00.000Z', calendarItemId: 'old' },
+        { state: 'scheduled', runAt: '2026-11-02T17:30:00.000Z', calendarItemId: 'late' },
+        { state: 'scheduled', runAt: '2026-11-02T15:30:00.000Z', calendarItemId: 'soon' },
+      ],
+      [
+        { id: 'soon', title: 'Nightly triage' },
+        { id: 'late', title: 'Release' },
+      ],
+      new Date('2026-11-02T12:00:00.000Z'),
+      (instant) => instant.toISOString().slice(11, 16),
+    );
+    expect(summary).toEqual({ needsYou: 3, next: { title: 'Nightly triage', at: '15:30' } });
+    const state = { serverReady: true, schedulerPaused: false, updateReady: undefined, ...summary };
+    expect(trayMenu(state).slice(0, 2)).toMatchObject([
+      { label: '3 need you', action: 'openChat' },
+      { label: 'Next: Nightly triage at 15:30', action: 'openCalendar' },
+    ]);
+    expect(trayTooltip(state)).toBe('wow · 3 need you');
+  });
+});
+
+describe('application menu', () => {
+  it('drops the default zoom, reload and DevTools menu in packaged builds', () => {
+    expect(applicationMenu('win32', true)).toBeNull();
+    expect(applicationMenu('linux', true)).toBeNull();
+    expect(applicationMenu('darwin', true)).toEqual([{ role: 'appMenu' }, { role: 'editMenu' }]);
+    expect(applicationMenu('win32', false)).toBeUndefined();
   });
 });

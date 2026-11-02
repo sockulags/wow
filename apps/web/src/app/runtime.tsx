@@ -66,6 +66,8 @@ export interface Runtime {
   // The desktop's native folder dialog: the chosen folder, or null when cancelled. Absent in the
   // browser build, where a folder is typed instead.
   readonly pickFolder?: (() => Promise<string | null>) | undefined;
+  // The desktop's "Restart now" for settings marked restartRequired. Absent in the browser build.
+  readonly restartApp?: (() => void) | undefined;
 }
 
 const RuntimeContext = createContext<Runtime | undefined>(undefined);

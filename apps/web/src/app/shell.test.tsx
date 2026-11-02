@@ -119,11 +119,10 @@ describe('shell', () => {
       'Trackers',
       'Appearance',
       'Keybindings',
-      'Desktop',
-      'Updates',
       'Advanced',
     ]);
-    expect(await screen.findByLabelText('Test timeout (ms)')).toBeTruthy();
+    // Desktop and Updates only show in the desktop app.
+    expect(await screen.findByLabelText('Test timeout')).toBeTruthy();
   });
 
   it('opens a new thread from the tray link and the keybinding', async () => {

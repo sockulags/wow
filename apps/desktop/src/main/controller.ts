@@ -1,4 +1,11 @@
-import type { Thread, UpdateState, Workflow, WorkflowRun } from '@wow/contracts';
+import type {
+  CalendarItem,
+  Thread,
+  Trigger,
+  UpdateState,
+  Workflow,
+  WorkflowRun,
+} from '@wow/contracts';
 import {
   desktopSettingKeys,
   readDesktopSettings,
@@ -7,7 +14,13 @@ import {
 import { runNotices, runStates, type Notice, type RunStates } from './notifications.js';
 import type { RpcClient } from './rpc-client.js';
 import type { ServerEndpoint, ServerProcess } from './server-process.js';
-import { trayMenu, trayTooltip, type TrayAction, type TrayEntry } from './tray-menu.js';
+import {
+  trayMenu,
+  traySummary,
+  trayTooltip,
+  type TrayAction,
+  type TrayEntry,
+} from './tray-menu.js';
 import { restartWarning, UpdateManager, type Updater, type UpdateTimers } from './updates.js';
 
 // What the controller needs from Electron. `main/index.ts` implements it with BrowserWindow, Tray,
@@ -36,6 +49,9 @@ export interface ControllerOptions {
   readonly newCommandId: () => string;
   // Started by the login item: open in the tray whatever startMinimized says.
   readonly launchedHidden: boolean;
+  // The clock and local time format for the tray's "Next: … at 16:30"; tests pass fixed ones.
+  readonly now?: () => Date;
+  readonly formatTime?: (instant: Date) => string;
   // Auto-update, only in a packaged build: without it nothing checks, downloads or installs.
   readonly updates?: {
     readonly updater: Updater;
@@ -48,6 +64,8 @@ export interface ControllerOptions {
 export type CloseDecision = 'hide' | 'close';
 
 export const newThreadPath = '/chat?new=1';
+const localTime = (instant: Date) =>
+  instant.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
 export const updatesPath = '/settings/updates';
 
 // The desktop's main-process logic: owns the server child, follows the settings it acts on, and
@@ -65,6 +83,8 @@ export class DesktopController {
   #runStates: RunStates | undefined;
   #runs: readonly WorkflowRun[] = [];
   #threads: readonly Thread[] = [];
+  #triggers: readonly Trigger[] = [];
+  #items: readonly CalendarItem[] = [];
   #quitting: Promise<void> | undefined;
   readonly #updates: UpdateManager | undefined;
   #installing = false;
@@ -127,6 +147,12 @@ export class DesktopController {
     switch (action) {
       case 'open':
         this.open();
+        return;
+      case 'openChat':
+        this.open('/chat');
+        return;
+      case 'openCalendar':
+        this.open('/calendar');
         return;
       case 'newThread':
         this.open(newThreadPath);
@@ -227,9 +253,21 @@ export class DesktopController {
       await client.subscribe('workflows', (rows) => {
         this.#workflows = rows;
       });
-      await client.subscribe('workflowRuns', (rows) => this.#runsChanged(rows));
+      await client.subscribe('workflowRuns', (rows) => {
+        this.#runsChanged(rows);
+        this.#renderTray();
+      });
       await client.subscribe('threads', (rows) => {
         this.#threads = rows;
+        this.#renderTray();
+      });
+      await client.subscribe('triggers', (rows) => {
+        this.#triggers = rows;
+        this.#renderTray();
+      });
+      await client.subscribe('calendarItems', (rows) => {
+        this.#items = rows;
+        this.#renderTray();
       });
     } catch (error) {
       this.#client?.close();
@@ -325,10 +363,21 @@ export class DesktopController {
 
   #renderTray(): void {
     const update = this.#updates?.state;
+    const serverReady = this.#client !== undefined && this.#quitting === undefined;
     const state = {
-      serverReady: this.#client !== undefined && this.#quitting === undefined,
+      serverReady,
       schedulerPaused: this.#settings?.schedulerPaused ?? false,
       updateReady: update?.status === 'ready' ? (update.version ?? '') : undefined,
+      ...(serverReady
+        ? traySummary(
+            this.#threads,
+            this.#runs,
+            this.#triggers,
+            this.#items,
+            (this.#options.now ?? (() => new Date()))(),
+            this.#options.formatTime ?? localTime,
+          )
+        : {}),
     };
     this.#options.shell.setTray(trayMenu(state), trayTooltip(state));
   }

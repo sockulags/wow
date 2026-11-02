@@ -37,10 +37,17 @@ pnpm --filter @wow/desktop start
 ### The first window
 
 On first start the app starts its local server, then opens on the calendar. With no provider set
-up yet, the **Set up providers** dialog lists the `claude` and `codex` CLIs it found on your
-`PATH`, with the config folder each one uses. Create an instance for each one you want; the dialog
-tests each instance and shows the logged-in account or the error. You can skip it and add
-instances later in Settings → Providers.
+up yet, a short setup guide opens:
+
+1. **Set up providers** lists the `claude` and `codex` CLIs it found on your `PATH`, with the
+   config folder each one uses, already checked. **Set up** creates an instance for each and tests
+   it, showing the logged-in account or the error.
+2. **Add your projects** lists the folders those CLIs have already worked in, checked. **Import**
+   turns each into a project; **Skip** moves on.
+3. **You are set up** offers **Start a thread**.
+
+**Not now** closes the guide and it does not open again (the `providers.offerSetup` setting; turn
+it back on, or use "Detect installed providers" in the palette, to see it again).
 
 A project is a name and a folder; threads, cards and workflow runs work in that folder. Add your
 projects in Settings → Projects (see "Projects" below). A thread can also use any folder you type
@@ -48,7 +55,11 @@ instead of a project; cards with a trigger and workflow runs need a project.
 
 ### Finding your way
 
-The left sidebar has Calendar, Chat, Workflows, Backlog and Settings. Everything you can do is in
+The left sidebar has Calendar, Chat, Workflows, Backlog and Settings. Chat and Workflows show a
+yellow count when threads or runs wait for you; hovering an item or focusing it shows its key.
+Below 1280 pixels wide the sidebar narrows to icons. When the window cannot reach the wow server, a
+bar under the header says so and offers **Retry now**; lists keep what they last showed, dimmed,
+until the connection is back. Everything you can do is in
 the command palette: press **Ctrl+K** and type. The palette searches threads, cards, backlog items,
 workflows, runs, settings pages and actions together; arrow keys and Enter pick.
 
@@ -72,28 +83,32 @@ Default keys (all changeable in Settings → Keybindings):
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
-the whole window.
+the whole window. The installed app has no window menu: Ctrl+R, Ctrl+Shift+I and the browser's
+page zoom are off, so these keys always reach wow.
 
 ### Tray and autostart
 
 Closing the window keeps wow running in the tray (`desktop.closeToTray`), so card triggers still
-fire. Click the tray icon to bring the window back; its menu has Open, New thread, Pause or Resume
-scheduler, and Quit. Turn on `desktop.autostart` to start wow at login; it then starts in the
+fire. Click the tray icon to bring the window back. Its menu starts with what needs you ("3 need
+you" opens Chat) and the next trigger ("Next: Nightly triage at 16:30" opens the calendar), then
+has Open, New thread, Pause or Resume scheduler, and Quit; the tray tooltip shows the same count. Turn on `desktop.autostart` to start wow at login; it then starts in the
 tray. Starting wow a second time shows the window that is already running.
 
 ### Updates
 
 The installed app looks for a newer stable release on GitHub (`sockulags/wow`) when it starts and
 every `updates.checkIntervalMinutes` (four hours by default), and downloads it in the background.
-When the download is done you get a notification, a bar above every view, a "Restart to update"
-entry in the tray menu and in the palette. Restarting stops the server cleanly, installs the new
+When the download is done you get a notification, a bar above every view (with **What's new**,
+which opens the release notes, and **Later**, which hides the bar until the next version), a
+"Restart to update" entry in the tray menu and in the palette. Restarting stops the server cleanly, installs the new
 version without questions and starts it again; your data in `~/.wow` stays as it is. If a turn is
 running or a workflow run is working, wow tells you first: restarting ends those turns as failed,
 so choose "Later" to let them finish. Nothing installs until you choose to restart.
 
 "Check for updates" in the palette checks now; Settings → Updates shows the current version, the
-progress, and the last error. A failed check (no network, say) shows the error and the app keeps
-working; the next check tries again. Turn `updates.enabled` off to stop checking altogether.
+progress, and the last error. A failed check shows what went wrong in words ("No internet connection.
+wow will try again at 18:30.") and the app keeps working; the next check tries again. Settings →
+Desktop and Settings → Updates only appear in the installed app. Turn `updates.enabled` off to stop checking altogether.
 Prereleases are never offered. A build run from a checkout never updates itself.
 
 ## Providers
@@ -102,18 +117,27 @@ A provider instance is one CLI with one config folder and its own environment. Y
 several of the same kind, for example a work and a personal Claude account.
 
 Settings → Providers lists the instances with the result of their last test (status, account,
-version). For each instance you set:
+version), the binary they run (with "from PATH" when the server found it there) and their config
+folder. The instance your newest thread started on is marked **Default for new threads**. For each
+instance you set:
 
 - **Claude**: binary path, config folder (`CLAUDE_CONFIG_DIR`, defaults to `~/.claude`),
   environment variables, launch arguments, default model and effort.
 - **Codex**: binary path, `CODEX_HOME` (defaults to `~/.codex`), environment variables, default
   model and effort.
 
+When the editor opens it fills an empty binary path and config folder with what the server
+detects, marked **Detected**; **Detect** looks again. Default model and effort start on "Claude's
+default" (or Codex's): the provider picks. Once an instance is saved and tested, the editor lists
+its models and the efforts each model offers.
+
 Mark an environment variable as secret to store it encrypted (Windows DPAPI, for your user only).
 **Test** runs a trivial turn (Claude) or starts the app-server and lists models (Codex), and shows
-the account or the error. Changing the binary, folder, environment or arguments clears the last
-test result. An instance cannot be edited or removed while a turn runs on it, and cannot be
-removed while threads use it.
+the account or the error. wow tests an instance by itself after you add or save it, and at start
+for any instance that was never tested. Changing the binary, folder, environment or arguments
+clears the last test result. An instance cannot be edited or removed while a turn runs on it, and
+cannot be removed while threads use it. **Remove** removes at once and offers **Undo**; an instance
+with secret variables asks first, because its stored secrets are deleted and cannot come back.
 
 ## Calendar
 
@@ -300,8 +324,9 @@ Tokens are stored encrypted; clearing the field deletes the stored token.
 
 ## Projects
 
-Settings → Projects lists your projects with their folders. **New project** (also "New project"
-in the palette) asks for a name and a folder. In the desktop app **Choose folder…** opens the
+Settings → Projects lists your projects with their folders and how many threads and cards use
+each. **Add project** (also "New project" in the palette) asks for the folder first and names the
+project after it; type another name if you like. In the desktop app **Choose folder…** opens the
 system folder dialog; only the browser build of the app (development) takes a typed path, and the
 server refuses a folder it cannot find. A name another project already has is refused too. Every
 project picker (new thread, card dialog, Run now, Plan on calendar) offers the new project at once.
@@ -309,8 +334,8 @@ project picker (new thread, card dialog, Run now, Plan on calendar) offers the n
 **Import from Claude and Codex** (also in the palette) looks through the session history of every
 provider instance in Settings → Providers: Claude Code's `projects` folder in the instance's config
 directory and Codex's `sessions` folder in its `CODEX_HOME`. It lists each folder they worked in
-that still exists and is not a project yet, with the instances that used it and when, all checked.
-Uncheck what you do not want and press **Import**; each folder becomes a project named after it
+that still exists and is not a project yet, with which CLIs used it and how long ago, all checked.
+Uncheck what you do not want (the box above the list checks or clears all) and press **Import**; each folder becomes a project named after it
 (with a number when the name is taken). Nothing is changed in Claude's or Codex's files.
 
 **Rename** changes only the name; threads, cards and runs follow it. **Remove** asks first and
@@ -323,10 +348,20 @@ project …" for every project.
 ## Settings
 
 Settings are grouped: Providers, Projects, Chat, Calendar, Outlook, Scheduler, Workflows, Skills, Trackers,
-Appearance, Keybindings, Desktop, Updates and Advanced. Every setting shows its description, its default
-and its current value. A change applies at once, except settings marked **Restart required**
-(the server port), which apply after quitting and starting wow again. A value that does not pass
-validation is refused and the old one stays.
+Appearance, Keybindings, Desktop, Updates and Advanced. The search box above the groups finds a
+setting by its name or description across all of them. Every setting shows its description and
+its current value; numbers show their unit, and times in milliseconds are shown in seconds.
+**Reset to default** appears only when a value differs from the default, and its tooltip says
+what the default is. A change applies at once, except settings marked **Restart required** (the
+server port): in the installed app **Restart now** appears after you change one. A value that does
+not pass validation is refused and the old one stays. Turn on **Show setting keys** (Advanced) to
+see each setting's key and raw default, for config files and bug reports.
+
+Work hours are two times and a row of day buttons. The handover text has buttons that insert
+each `{{placeholder}}` at the cursor. Settings → Trackers has a Jira and a GitHub section, each
+with **Test connection**, which signs in with what you entered and says as whom; the Jira email is
+only asked for Jira Cloud. Settings → Keybindings groups the keys by where they work and marks a
+key that two commands share; click a key and press the new combination.
 
 Useful ones to know:
 
