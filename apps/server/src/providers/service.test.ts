@@ -166,6 +166,7 @@ describe('provider service', () => {
     expect(thread()).toMatchObject({ state: 'working' });
     expect(await context?.resolveEnv()).toEqual({ ANTHROPIC_API_KEY: 'sk-test', PLAIN: 'yes' });
     expect(context?.testTimeoutMs()).toBe(120_000);
+    expect(context?.requestTimeoutMs()).toBe(60_000);
 
     let stored = committed('approval.requested');
     adapter.emit(

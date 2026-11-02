@@ -237,6 +237,8 @@ export interface ProviderAdapterContext {
   resolveEnv(): Promise<Record<string, string>>;
   // providers.testTimeoutMs, read when a test starts.
   testTimeoutMs(): number;
+  // providers.requestTimeoutMs, read before every request to a provider app-server.
+  requestTimeoutMs(): number;
 }
 
 // What every provider adapter implements. The server owns adapters, feeds them commands and

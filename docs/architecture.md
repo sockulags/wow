@@ -67,9 +67,10 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   through the same engine but `dispatch` over RPC does not accept them.
 - **Hooks.** `startServer({hooks})` takes provider adapter factories per kind (`ProviderAdapter`
   in contracts, created with the instance and a `ProviderAdapterContext` that resolves the
-  instance env with its secrets and reads `providers.testTimeoutMs`; `main.ts` registers the
-  Claude adapter), an Outlook service factory that receives `mock` or `bridge` (mock off Windows or
-  with `WOW_OUTLOOK=mock`), and further background services. Services read settings and change
+  instance env with its secrets and reads `providers.testTimeoutMs` and
+  `providers.requestTimeoutMs`; `main.ts` registers `installedProviders` from
+  `apps/server/src/providers/installed.ts`, the Claude and Codex adapters), an Outlook service
+  factory that receives `mock` or `bridge` (mock off Windows or with `WOW_OUTLOOK=mock`), and further background services. Services read settings and change
   state only through `dispatch`. `WOW_PROVIDERS=mock` gives every provider instance the mock
   adapter.
 - **SQLite** via `better-sqlite3` + `drizzle-orm`, file `~/.wow/wow.sqlite`. better-sqlite3 loads
@@ -163,7 +164,9 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   version only inside `userAgent`; the adapter reads it there and "Test" fails with a clear message
   when it is not the generated version. Permission modes (`read-only`, `auto`, `untrusted`,
   `full-access`) are an approval policy plus a sandbox; model, effort and permission mode travel
-  with every `turn/start`. Details in `packages/provider-codex/README.md`.
+  with every `turn/start`. Every request waits at most `providers.requestTimeoutMs` (read per
+  request); a timeout fails the request and restarts the app-server. Details in
+  `packages/provider-codex/README.md`.
 - **Provider service** (`apps/server/src/providers/service.ts`). Thread commands
   (`thread.create`, `thread.sendMessage`, `thread.interrupt`, `thread.configure`,
   `thread.setPinned`, `approval.answer`, `question.answer`) become events; after commit the service sends the
@@ -423,7 +426,7 @@ a key named here and missing from the registry, or registered and missing here, 
 A group marked with a unit (`(U12)`) belongs to a unit not delivered yet; its keys must not exist
 until that unit removes the mark. `group.*` covers every key of the group.
 
-- providers: `providers.testTimeoutMs`
+- providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`
 - chat: `chat.contextMeter`, `chat.resumePrompt`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`,
   `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`,

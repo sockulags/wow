@@ -280,6 +280,8 @@ validation is refused and the old one stays.
 
 Useful ones to know:
 
+- `providers.testTimeoutMs`, `providers.requestTimeoutMs` (how long Codex may take to answer one
+  request; can be set per provider instance)
 - `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`, `calendar.lookaheadDays`
 - `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`
 - `scheduler.missedPolicy`, `scheduler.notifications`, `scheduler.paused`
@@ -309,9 +311,6 @@ These are known; the rest of this guide describes the intended behavior.
 - **No screen to add projects.** The server stores projects and every view picks from them, but
   the app has no form to create, rename or remove one yet. Until it does, threads can use a typed
   folder; triggers and workflow runs need a project.
-- **Codex threads in the installed app.** The Codex adapter exists and Settings → Providers can
-  add a Codex instance, but the bundled server does not register it yet, so a Codex turn fails with
-  "No adapter is installed for codex providers". Claude works.
 - **The "Done" group** in the chat sidebar stays empty: no thread is marked done yet. Finished
   workflow steps stay under Idle.
 
@@ -330,7 +329,8 @@ These are known; the rest of this guide describes the intended behavior.
 - Check the binary path; `where claude` or `where codex` in a terminal shows what is on `PATH`.
 - Check the config folder: it must be the one the CLI is logged in with. Run the CLI once in a
   terminal with the same `CLAUDE_CONFIG_DIR` or `CODEX_HOME` and log in there.
-- A slow first start can exceed `providers.testTimeoutMs`; raise it and test again.
+- A slow first start can exceed `providers.testTimeoutMs`; raise it and test again. For Codex,
+  "codex did not answer … within … ms" means one request exceeded `providers.requestTimeoutMs`.
 - Codex: wow is generated against one app-server protocol version. A test that reports a version
   mismatch means the installed `codex` is newer or older than the one wow knows.
 

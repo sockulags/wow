@@ -1,4 +1,4 @@
-import type { ProviderInstance, ProviderKind } from '@wow/contracts';
+import type { ProviderAdapterContext, ProviderInstance, ProviderKind } from '@wow/contracts';
 import { CodexAdapter, type CodexAdapterOptions } from './adapter.js';
 
 export const providerKind: ProviderKind = 'codex';
@@ -21,8 +21,14 @@ export {
 } from './process.js';
 export { codexProtocolVersion } from './protocol/generated/index.js';
 
-// What the server registers under hooks.providers.codex.
+// What the server registers under hooks.providers.codex. The request timeout and the secret
+// environment come from the server's context; options replace them only in tests.
 export const codexAdapterFactory =
-  (options: Omit<CodexAdapterOptions, 'instance'>) =>
-  (instance: ProviderInstance): CodexAdapter =>
-    new CodexAdapter({ ...options, instance });
+  (options: Partial<Omit<CodexAdapterOptions, 'instance'>> = {}) =>
+  (instance: ProviderInstance, context: ProviderAdapterContext): CodexAdapter =>
+    new CodexAdapter({
+      requestTimeoutMs: () => context.requestTimeoutMs(),
+      resolveEnv: () => context.resolveEnv(),
+      ...options,
+      instance,
+    });

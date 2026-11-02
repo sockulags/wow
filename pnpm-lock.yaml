@@ -71,6 +71,9 @@ importers:
       '@wow/provider-claude':
         specifier: workspace:*
         version: link:../../packages/provider-claude
+      '@wow/provider-codex':
+        specifier: workspace:*
+        version: link:../../packages/provider-codex
       '@wow/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets

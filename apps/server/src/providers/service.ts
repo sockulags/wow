@@ -113,6 +113,8 @@ export class ProviderService {
       resolveEnv: () => this.#resolveEnv(instance),
       testTimeoutMs: () =>
         this.#deps.settings.get('providers.testTimeoutMs', { providerInstanceId }),
+      requestTimeoutMs: () =>
+        this.#deps.settings.get('providers.requestTimeoutMs', { providerInstanceId }),
     });
     adapter.onEvent((event) => this.#enqueue(event));
     this.#adapters.set(providerInstanceId, adapter);
