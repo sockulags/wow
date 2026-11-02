@@ -23,6 +23,7 @@ import type { OutlookService } from './outlook/service.js';
 import { ProviderService } from './providers/service.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
 import { route } from './rpc/router.js';
+import { Scheduler, type SchedulerTimers } from './scheduler/service.js';
 import { SettingsService } from './settings/service.js';
 import { SkillsService } from './skills/service.js';
 import { detectArtifacts, type ArtifactDetector } from './workflows/artifacts.js';
@@ -61,6 +62,10 @@ export interface StartOptions {
   // Replaces the chokidar watcher on the skill folders, for tests.
   readonly watchSkills?: WatchFactory;
   readonly detectArtifacts?: ArtifactDetector;
+  // The time the engine stamps and the scheduler compares triggers with, for tests.
+  readonly clock?: () => Date;
+  // Replaces the scheduler's timer, for tests that call `scheduler.tick()` themselves.
+  readonly schedulerTimers?: SchedulerTimers;
 }
 
 export interface RunningServer {
@@ -77,6 +82,7 @@ export interface RunningServer {
   readonly skills: SkillsService;
   readonly workflows: WorkflowRunner;
   readonly providerService: ProviderService;
+  readonly scheduler: Scheduler;
   readonly logger: Logger;
   stop(): Promise<void>;
 }
@@ -110,6 +116,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   let logger: Logger = createLogger(() => 'info', options.logSink);
   const engine = new Engine(database.db, {
     onListenerError: (error) => logger.error('commit listener failed', error),
+    ...(options.clock ? { clock: options.clock } : {}),
   });
   const settings = new SettingsService(database.db, engine);
   logger = createLogger(() => settings.get('advanced.logLevel'), options.logSink);
@@ -230,6 +237,14 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     dispatch: (commandId, command) => engine.dispatch(commandId, command),
   };
+  const scheduler = new Scheduler({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    ...(options.clock ? { clock: options.clock } : {}),
+    ...(options.schedulerTimers ? { timers: options.schedulerTimers } : {}),
+  });
   const services: BackgroundService[] = [workflows];
   const stopServices = async () => {
     for (const service of services.splice(0).toReversed()) {
@@ -250,6 +265,9 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       services.push(outlook);
     }
     for (const start of options.hooks?.services ?? []) services.push(await start(context));
+    // Last, so it stops first: no trigger fires into services that are already gone.
+    services.push(scheduler);
+    scheduler.start();
   } catch (error) {
     await stopServices();
     await providerService.stop();
@@ -288,6 +306,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     skills,
     workflows,
     providerService,
+    scheduler,
     logger,
     stop,
   };

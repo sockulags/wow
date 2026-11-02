@@ -183,8 +183,17 @@ export const CalendarItemSource = z.enum(['outlook', 'local']);
 export type CalendarItemSource = z.infer<typeof CalendarItemSource>;
 
 // What a local card shows as its badge. The calendar creates cards `scheduled`; the scheduler
-// moves them through the others. Outlook items are `scheduled` or `cancelled`.
-export const CardState = z.enum(['scheduled', 'running', 'waiting', 'done', 'failed', 'missed']);
+// and the card's workflow run move them through the others (`waiting` is "needs you", `stopped`
+// is a run the user stopped). Outlook items are `scheduled` or `cancelled`.
+export const CardState = z.enum([
+  'scheduled',
+  'running',
+  'waiting',
+  'done',
+  'failed',
+  'stopped',
+  'missed',
+]);
 export type CardState = z.infer<typeof CardState>;
 
 export const OutlookItemState = z.enum(['scheduled', 'cancelled']);
@@ -294,8 +303,29 @@ export const Trigger = z.object({
   zone: z.string().min(1),
   state: TriggerState,
   runId: Id.nullable(),
+  // A missed trigger the card offers a one-click "Run now" for (missed policy `mark`).
+  offerRunNow: z.boolean(),
 });
 export type Trigger = z.infer<typeof Trigger>;
+
+// What the server tells the user about without being asked: a run started by a trigger, a run
+// waiting at a gate, a failed run or trigger. The desktop app shows them as system notifications,
+// the web app as toasts. Only stored while `scheduler.notifications` is on.
+export const NotificationKind = z.enum(['started', 'waiting', 'failed']);
+export type NotificationKind = z.infer<typeof NotificationKind>;
+
+export const AppNotification = z.object({
+  id: Id,
+  at: Timestamp,
+  kind: NotificationKind,
+  title: z.string().min(1),
+  body: z.string(),
+  // Where the app goes when the notification is clicked.
+  path: z.string().min(1),
+  runId: Id.nullable(),
+  calendarItemId: Id.nullable(),
+});
+export type AppNotification = z.infer<typeof AppNotification>;
 
 export const SkillSource = z.enum([
   'user-claude',

@@ -98,7 +98,7 @@ describe('SettingsService', () => {
 
   it('rejects values that fail the schema, unknown keys and scopes the setting does not allow', () => {
     expect(() =>
-      dispatch({ type: 'setting.set', key: 'scheduler.tickSeconds', scope: 'global', value: 1 }),
+      dispatch({ type: 'setting.set', key: 'scheduler.tickSeconds', scope: 'global', value: 0 }),
     ).toThrow(/Invalid value/);
     expect(() =>
       dispatch({ type: 'setting.set', key: 'nope.key', scope: 'global', value: 1 }),

@@ -392,7 +392,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - outlook: `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`,
   `outlook.mailRail`, `outlook.mailLimit`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
-  `scheduler.paused`
+  `scheduler.paused`, `scheduler.toastSeconds`
 - workflows: `workflows.templates`, `workflows.handoverTemplate`
 - skills: `skills.directories`, `skills.includeClaudePlugins`
 - trackers (U12): `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),

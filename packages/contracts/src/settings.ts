@@ -337,7 +337,7 @@ export const settingsRegistry = {
     scope: 'global',
   }),
   'scheduler.tickSeconds': defineSetting({
-    schema: z.number().int().min(5).max(3600),
+    schema: z.number().int().min(1).max(3600),
     group: 'scheduler',
     label: 'Tick interval (seconds)',
     description: 'How often the scheduler looks for due triggers.',
@@ -357,8 +357,17 @@ export const settingsRegistry = {
     schema: z.boolean(),
     group: 'scheduler',
     label: 'Desktop notifications',
-    description: 'Notify when a workflow run starts, waits for you, or fails.',
+    description:
+      'Notify when a trigger starts a workflow run, when a run waits for you, and when a run or trigger fails.',
     default: true,
+    scope: 'global',
+  }),
+  'scheduler.toastSeconds': defineSetting({
+    schema: z.number().int().min(1).max(600),
+    group: 'scheduler',
+    label: 'Toast duration (seconds)',
+    description: 'How long a notification stays in the corner of the web app.',
+    default: 8,
     scope: 'global',
   }),
   'scheduler.paused': defineSetting({

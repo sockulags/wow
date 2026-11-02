@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import {
+  AppNotification,
   Approval,
   CalendarItem,
+  CardState,
   MailItem,
   OutlookItemState,
   Project,
@@ -11,6 +13,7 @@ import {
   Skill,
   Thread,
   ThreadItem,
+  Trigger,
   Turn,
   TurnState,
   Usage,
@@ -24,7 +27,7 @@ import {
   ProviderTestResult,
   ThreadState,
 } from './provider.js';
-import { SecretRef, SettingScopeRef } from './settings.js';
+import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
 import { RunEffect, WorkflowStep } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
@@ -149,7 +152,11 @@ export const Command = z.discriminatedUnion('type', [
     backlogItemId: Id.nullable().optional(),
     workflowId: Id.nullable().optional(),
   }),
-  z.object({ type: z.literal('card.delete'), cardId: Id }),
+  // A card whose run is running or waiting needs `stopRun`: the app asks whether to stop the run
+  // first (spec 13). The run's threads are kept either way.
+  z.object({ type: z.literal('card.delete'), cardId: Id, stopRun: z.boolean().optional() }),
+  // Starts the card's workflow now, for a missed card's "Run now" (spec 12).
+  z.object({ type: z.literal('card.runNow'), cardId: Id, runId: Id }),
   z.object({
     type: z.literal('workflow.create'),
     workflowId: Id,
@@ -245,6 +252,17 @@ export const InternalCommand = z.discriminatedUnion('type', [
     type: z.literal('workflowRun.artifactsFound'),
     runId: Id,
     found: z.array(z.object({ stepId: Id, paths: z.array(z.string()) })),
+  }),
+  // The scheduler's tick found the trigger due (spec 8). `runAt` is the time it saw, so a card
+  // moved in the meantime does not fire.
+  z.object({ type: z.literal('trigger.fire'), triggerId: Id, runAt: Timestamp, runId: Id }),
+  // A trigger whose time passed while the server was down or the scheduler paused (spec 12).
+  z.object({
+    type: z.literal('trigger.applyMissed'),
+    triggerId: Id,
+    runAt: Timestamp,
+    policy: MissedTriggerPolicy,
+    runId: Id,
   }),
 ]);
 export type InternalCommand = z.infer<typeof InternalCommand>;
@@ -498,6 +516,20 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     payload: z.object({ cardId: Id, changes: CardChanges, updatedAt: Timestamp }),
   }),
   z.object({ kind: z.literal('card.deleted'), aggregate: Id, payload: z.object({ cardId: Id }) }),
+  // The card follows its trigger and its run.
+  z.object({
+    kind: z.literal('card.stateChanged'),
+    aggregate: Id,
+    payload: z.object({
+      cardId: Id,
+      state: CardState,
+      runId: Id.nullable(),
+      updatedAt: Timestamp,
+    }),
+  }),
+  // The trigger row as it now is.
+  z.object({ kind: z.literal('trigger.set'), aggregate: Id, payload: Trigger }),
+  z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
   // Only what changed since the stored rows; `at` is the poll time.
   z.object({
     kind: z.literal('outlook.synced'),

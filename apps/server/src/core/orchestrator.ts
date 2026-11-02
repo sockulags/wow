@@ -16,6 +16,7 @@ import {
   type SettingScopeRef,
   type Skill,
   type Thread,
+  type Trigger,
   type Turn,
   type Workflow,
   type WorkflowRun,
@@ -24,6 +25,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { decideCalendar, isCalendarCommand } from './calendar.js';
 import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
 import { decideThread, isThreadCommand } from './threads.js';
+import { decideTrigger, isTriggerCommand } from './triggers.js';
 import { decideWorkflow, isWorkflowCommand } from './workflows.js';
 
 // The orchestrator decides which events a command produces. It is a pure function of the command,
@@ -58,6 +60,7 @@ export interface ReadModel {
   // True while a run of this workflow is running or waiting at a gate.
   hasLiveRun(workflowId: string): boolean;
   backlogItem(id: string): BacklogItem | undefined;
+  trigger(id: string): Trigger | undefined;
 }
 
 export interface DecideContext {
@@ -83,6 +86,7 @@ export function decide(
 ): DomainEvent[] {
   if (isProviderInstanceCommand(command)) return decideProviderInstance(command, read);
   if (isThreadCommand(command)) return decideThread(command, read, context);
+  if (isTriggerCommand(command)) return decideTrigger(command, read, context);
   if (isCalendarCommand(command)) return decideCalendar(command, read, context);
   if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
   switch (command.type) {

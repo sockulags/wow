@@ -11,6 +11,7 @@ import {
   backlogItems,
   calendarItems,
   mailItems,
+  notifications,
   outlookStatus,
   projects,
   providerInstances,
@@ -19,6 +20,7 @@ import {
   skills,
   threadItems,
   threads,
+  triggers,
   turns,
   workflowRuns,
   workflows,
@@ -246,6 +248,21 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
     case 'card.deleted':
       tx.delete(calendarItems).where(eq(calendarItems.id, event.payload.cardId)).run();
       return ['calendarItems'];
+    case 'card.stateChanged': {
+      const { cardId, ...changes } = event.payload;
+      tx.update(calendarItems).set(changes).where(eq(calendarItems.id, cardId)).run();
+      return ['calendarItems'];
+    }
+    case 'trigger.set':
+      tx.insert(triggers)
+        .values(event.payload)
+        .onConflictDoUpdate({ target: triggers.id, set: event.payload })
+        .run();
+      return ['triggers'];
+    case 'notification.sent':
+      // A transition performed twice tells the user once.
+      tx.insert(notifications).values(event.payload).onConflictDoNothing().run();
+      return ['notifications'];
     case 'outlook.synced': {
       const { calendarUpsert, calendarRemove, mailUpsert, mailRemove } = event.payload;
       const topics: SubscriptionTopic[] = ['outlookStatus'];
@@ -360,6 +377,7 @@ export function readModel(tx: DbOrTx): ReadModel {
         .all()
         .some((row) => isLiveRunState(row.state)),
     backlogItem: (id) => tx.select().from(backlogItems).where(eq(backlogItems.id, id)).get(),
+    trigger: (id) => tx.select().from(triggers).where(eq(triggers.id, id)).get(),
     thread: (id) => tx.select().from(threads).where(eq(threads.id, id)).get(),
     runningTurn: (threadId) =>
       tx

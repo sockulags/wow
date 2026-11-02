@@ -58,6 +58,7 @@ const stateStyles: Readonly<Record<CardState, string>> = {
   waiting: 'border-l-state-needs-you bg-state-needs-you/15',
   done: 'border-l-state-done',
   failed: 'border-l-state-failed',
+  stopped: 'border-l-muted-foreground/60',
   missed: 'border-l-state-failed',
 };
 
@@ -67,6 +68,7 @@ const badgeStyles: Readonly<Record<CardState, string>> = {
   waiting: 'text-state-needs-you',
   done: 'text-state-done',
   failed: 'text-state-failed',
+  stopped: 'text-muted-foreground',
   missed: 'text-state-failed',
 };
 

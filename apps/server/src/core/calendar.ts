@@ -8,6 +8,7 @@ import type {
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
+import { cardDeleteEvents, cardTriggerEvents } from './triggers.js';
 
 // Decisions for local cards and the Outlook cache. Cards are the user's own calendar items and
 // never reach Outlook; Outlook rows only change through `outlook.sync`, never through card
@@ -19,13 +20,16 @@ type CalendarCommand = Extract<
 >;
 
 export const isCalendarCommand = (command: ServerCommand): command is CalendarCommand =>
-  command.type.startsWith('card.') || command.type.startsWith('outlook.');
+  (command.type.startsWith('card.') && command.type !== 'card.runNow') ||
+  command.type.startsWith('outlook.');
 
 // Outlook rows are `outlook:<id>` and mail rows `outlook-mail:<id>`; a card id may not look like
 // either, so a card can never replace a cached Outlook row.
 const outlookIdPrefix = 'outlook';
 
 const OUTLOOK_STATUS_AGGREGATE = 'outlook';
+
+const triggerFields = ['start', 'zone', 'projectId', 'workflowId'] as const;
 
 function requireCard(read: ReadModel, cardId: string): CalendarItem {
   const item = read.calendarItem(cardId);
@@ -128,30 +132,28 @@ export function decideCalendar(
       }
       checkRange(command.start, command.end);
       checkLinks(read, command);
+      const card: CalendarItem = {
+        id: command.cardId,
+        source: 'local',
+        externalId: null,
+        title: command.title,
+        start: command.start,
+        end: command.end,
+        zone: command.zone,
+        allDay: false,
+        location: null,
+        joinUrl: null,
+        body: command.body ?? null,
+        projectId: command.projectId ?? null,
+        backlogItemId: command.backlogItemId ?? null,
+        workflowId: command.workflowId ?? null,
+        runId: null,
+        state: 'scheduled',
+        updatedAt: context.now,
+      };
       return [
-        {
-          kind: 'card.created',
-          aggregate: command.cardId,
-          payload: {
-            id: command.cardId,
-            source: 'local',
-            externalId: null,
-            title: command.title,
-            start: command.start,
-            end: command.end,
-            zone: command.zone,
-            allDay: false,
-            location: null,
-            joinUrl: null,
-            body: command.body ?? null,
-            projectId: command.projectId ?? null,
-            backlogItemId: command.backlogItemId ?? null,
-            workflowId: command.workflowId ?? null,
-            runId: null,
-            state: 'scheduled',
-            updatedAt: context.now,
-          },
-        },
+        { kind: 'card.created', aggregate: card.id, payload: card },
+        ...cardTriggerEvents(card, read, context),
       ];
     }
     case 'card.update': {
@@ -175,17 +177,24 @@ export function decideCalendar(
           Object.assign(changes, { [field]: value });
       }
       if (Object.keys(changes).length === 0) return [];
-      return [
+      const events: DomainEvent[] = [
         {
           kind: 'card.updated',
           aggregate: command.cardId,
           payload: { cardId: command.cardId, changes, updatedAt: context.now },
         },
       ];
+      // Moving the card moves its trigger (spec 6); its workflow and project decide whether it
+      // has one.
+      if (triggerFields.some((field) => field in changes)) {
+        events.push(...cardTriggerEvents(Object.assign({ ...card }, changes), read, context));
+      }
+      return events;
     }
     case 'card.delete': {
-      requireCard(read, command.cardId);
+      const card = requireCard(read, command.cardId);
       return [
+        ...cardDeleteEvents(card, command.stopRun, read, context),
         { kind: 'card.deleted', aggregate: command.cardId, payload: { cardId: command.cardId } },
       ];
     }
