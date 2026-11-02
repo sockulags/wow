@@ -208,6 +208,22 @@ export const settingsRegistry = {
     default: 14,
     scope: 'global',
   }),
+  'calendar.snapMinutes': defineSetting({
+    schema: z.number().int().min(1).max(60),
+    group: 'calendar',
+    label: 'Snap (minutes)',
+    description: 'Cards snap to this many minutes when created, moved or resized with the mouse.',
+    default: 15,
+    scope: 'global',
+  }),
+  'calendar.cardMinutes': defineSetting({
+    schema: z.number().int().min(5).max(480),
+    group: 'calendar',
+    label: 'New card length (minutes)',
+    description: 'Length of a card created with a single click or the "New card" command.',
+    default: 30,
+    scope: 'global',
+  }),
   'outlook.pollSeconds': defineSetting({
     schema: z.number().int().min(15).max(3600),
     group: 'outlook',
@@ -365,6 +381,24 @@ export const settingsRegistry = {
   'keybindings.goWorkflows': keybinding('Go to Workflows', 'Open the workflows.', 'Mod+3'),
   'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+4'),
   'keybindings.goSettings': keybinding('Go to Settings', 'Open the settings.', 'Mod+,'),
+  'keybindings.calendarToday': keybinding('Calendar: today', 'Show today in the calendar.', 'T'),
+  'keybindings.calendarNext': keybinding(
+    'Calendar: next',
+    'Move the calendar forward by one day in day view or one week in week view.',
+    'N',
+  ),
+  'keybindings.calendarPrevious': keybinding(
+    'Calendar: previous',
+    'Move the calendar back by one day in day view or one week in week view.',
+    'P',
+  ),
+  'keybindings.calendarDayView': keybinding('Calendar: day view', 'Show one day.', 'D'),
+  'keybindings.calendarWeekView': keybinding('Calendar: week view', 'Show one week.', 'W'),
+  'keybindings.newCard': keybinding(
+    'New card',
+    'Open the form for a new card on the day the calendar shows (while the calendar is open).',
+    'C',
+  ),
   'keybindings.newThread': keybinding('New thread', 'Start a new chat thread.', 'Mod+Alt+N'),
   'keybindings.stopTurn': keybinding(
     'Stop turn',

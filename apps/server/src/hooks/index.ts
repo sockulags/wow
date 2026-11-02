@@ -1,4 +1,6 @@
-import type { Command, DispatchResult, ProviderKind } from '@wow/contracts';
+import type { DispatchResult, ProviderKind, ServerCommand } from '@wow/contracts';
+import type { Logger } from '../logger.js';
+import type { OutlookService } from '../outlook/service.js';
 import type { SettingsService } from '../settings/service.js';
 import type { OutlookMode } from './outlook.js';
 import type { ProviderAdapterFactory } from './providers.js';
@@ -17,7 +19,8 @@ export {
 export interface ServiceContext {
   readonly home: string;
   readonly settings: SettingsService;
-  dispatch(commandId: string, command: Command): DispatchResult;
+  readonly logger: Logger;
+  dispatch(commandId: string, command: ServerCommand): DispatchResult;
 }
 
 // A long-running part of the server (Outlook polling, the scheduler, skill watching) started
@@ -29,8 +32,9 @@ export interface BackgroundService {
 export interface ServerHooks {
   // Provider units register their adapter factory here.
   readonly providers?: Partial<Record<ProviderKind, ProviderAdapterFactory>>;
-  // The Outlook unit plugs in its source; `mode` says whether to use the mock or the bridge.
-  readonly outlook?: (mode: OutlookMode, context: ServiceContext) => Promise<BackgroundService>;
+  // Starts the Outlook service (`startOutlookService`); `mode` says whether to use the mock or the
+  // bridge. Without it the calendar shows local cards only and `outlook.*` methods fail.
+  readonly outlook?: (mode: OutlookMode, context: ServiceContext) => Promise<OutlookService>;
   // Further services (scheduler, skills watcher) started in order.
   readonly services?: ReadonlyArray<(context: ServiceContext) => Promise<BackgroundService>>;
 }

@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import {
   Approval,
+  CalendarItem,
+  MailItem,
+  OutlookItemState,
   Project,
   ProviderInstance,
   ProviderInstanceStatus,
@@ -24,6 +27,7 @@ import { SecretRef, SettingScopeRef } from './settings.js';
 // add their own members to both unions.
 
 const Id = z.string().min(1);
+const Timestamp = z.iso.datetime({ offset: true });
 
 export const CommandId = z.string().min(1).max(200);
 export type CommandId = z.infer<typeof CommandId>;
@@ -108,9 +112,50 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('thread.setPinned'), threadId: Id, pinned: z.boolean() }),
   z.object({ type: z.literal('approval.answer'), approvalId: Id, decision: ApprovalDecision }),
   z.object({ type: z.literal('question.answer'), questionId: Id, answer: z.string() }),
+  // A local card (spec 5). Times are instants; `zone` is the zone they were entered in. Cards
+  // never reach Outlook.
+  z.object({
+    type: z.literal('card.create'),
+    cardId: Id,
+    title: z.string().trim().min(1),
+    start: Timestamp,
+    end: Timestamp,
+    zone: z.string().min(1),
+    body: z.string().optional(),
+    projectId: Id.optional(),
+    backlogItemId: Id.optional(),
+    workflowId: Id.optional(),
+  }),
+  // Moving, resizing and editing (spec 6). Outlook items are read-only and refused.
+  z.object({
+    type: z.literal('card.update'),
+    cardId: Id,
+    title: z.string().trim().min(1).optional(),
+    start: Timestamp.optional(),
+    end: Timestamp.optional(),
+    zone: z.string().min(1).optional(),
+    body: z.string().nullable().optional(),
+    projectId: Id.nullable().optional(),
+    backlogItemId: Id.nullable().optional(),
+    workflowId: Id.nullable().optional(),
+  }),
+  z.object({ type: z.literal('card.delete'), cardId: Id }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command['type'];
+
+// One Outlook calendar row as the sync delivers it; the server fills in the local-only fields.
+export const OutlookCalendarRow = CalendarItem.pick({
+  id: true,
+  title: true,
+  start: true,
+  end: true,
+  zone: true,
+  allDay: true,
+  location: true,
+  joinUrl: true,
+}).extend({ externalId: z.string().min(1), state: OutlookItemState });
+export type OutlookCalendarRow = z.infer<typeof OutlookCalendarRow>;
 
 // Commands only the server issues: what provider adapters report, and test results. They go
 // through the same pipeline as client commands but are not accepted over RPC.
@@ -124,6 +169,25 @@ export const InternalCommand = z.discriminatedUnion('type', [
     type: z.literal('providerInstance.recordTest'),
     providerInstanceId: Id,
     result: ProviderTestResult,
+  }),
+  // A good Outlook poll: everything Outlook returned for the window. The orchestrator compares it
+  // with the stored rows, so only changes become events.
+  z.object({
+    type: z.literal('outlook.sync'),
+    at: Timestamp,
+    window: z.object({ from: Timestamp, to: Timestamp }),
+    calendar: z.array(OutlookCalendarRow),
+    mail: z.array(MailItem),
+    unreadCount: z.number().int().nonnegative(),
+    bridgeVersion: z.string(),
+  }),
+  // A failed poll. The cached rows stay; only the status changes.
+  z.object({
+    type: z.literal('outlook.fail'),
+    at: Timestamp,
+    code: z.string().min(1),
+    message: z.string(),
+    unavailableSince: Timestamp,
   }),
 ]);
 export type InternalCommand = z.infer<typeof InternalCommand>;
@@ -154,14 +218,24 @@ export const ProviderInstanceChanges = ProviderInstance.pick({
 }).partial();
 export type ProviderInstanceChanges = z.infer<typeof ProviderInstanceChanges>;
 
+export const CardChanges = CalendarItem.pick({
+  title: true,
+  start: true,
+  end: true,
+  zone: true,
+  body: true,
+  projectId: true,
+  backlogItemId: true,
+  workflowId: true,
+}).partial();
+export type CardChanges = z.infer<typeof CardChanges>;
+
 export const ThreadChanges = Thread.pick({
   model: true,
   effort: true,
   permissionMode: true,
 }).partial();
 export type ThreadChanges = z.infer<typeof ThreadChanges>;
-
-const Timestamp = z.iso.datetime({ offset: true });
 
 export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('project.created'), aggregate: Id, payload: Project }),
@@ -331,6 +405,32 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       answer: z.string(),
       answeredAt: Timestamp,
     }),
+  }),
+  z.object({ kind: z.literal('card.created'), aggregate: Id, payload: CalendarItem }),
+  z.object({
+    kind: z.literal('card.updated'),
+    aggregate: Id,
+    payload: z.object({ cardId: Id, changes: CardChanges, updatedAt: Timestamp }),
+  }),
+  z.object({ kind: z.literal('card.deleted'), aggregate: Id, payload: z.object({ cardId: Id }) }),
+  // Only what changed since the stored rows; `at` is the poll time.
+  z.object({
+    kind: z.literal('outlook.synced'),
+    aggregate: Id,
+    payload: z.object({
+      at: Timestamp,
+      calendarUpsert: z.array(CalendarItem),
+      calendarRemove: z.array(Id),
+      mailUpsert: z.array(MailItem),
+      mailRemove: z.array(Id),
+      unreadCount: z.number().int().nonnegative(),
+      bridgeVersion: z.string(),
+    }),
+  }),
+  z.object({
+    kind: z.literal('outlook.failed'),
+    aggregate: Id,
+    payload: z.object({ lastError: z.string(), unavailableSince: Timestamp }),
   }),
 ]);
 export type DomainEvent = z.infer<typeof DomainEvent>;

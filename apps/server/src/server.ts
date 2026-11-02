@@ -18,6 +18,7 @@ import {
 } from './hooks/index.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
 import { detectProviders } from './providers/detect.js';
+import type { OutlookService } from './outlook/service.js';
 import { ProviderService } from './providers/service.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
 import { route } from './rpc/router.js';
@@ -120,6 +121,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
   });
   providerService.recover();
+  // Set once the Outlook hook has started, which happens after the socket listens.
+  let outlook: OutlookService | undefined;
   const handlers = createHandlers({
     engine,
     subscriptions,
@@ -127,6 +130,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     secrets,
     providers: providerService,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
+    outlook: () => outlook,
     info: { version, home },
   });
 
@@ -192,6 +196,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const context: ServiceContext = {
     home,
     settings,
+    logger,
     dispatch: (commandId, command) => engine.dispatch(commandId, command),
   };
   const services: BackgroundService[] = [];
@@ -206,7 +211,10 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   };
   try {
     const mode = outlookMode(options.platform ?? process.platform, env);
-    if (options.hooks?.outlook) services.push(await options.hooks.outlook(mode, context));
+    if (options.hooks?.outlook) {
+      outlook = await options.hooks.outlook(mode, context);
+      services.push(outlook);
+    }
     for (const start of options.hooks?.services ?? []) services.push(await start(context));
   } catch (error) {
     await stopServices();

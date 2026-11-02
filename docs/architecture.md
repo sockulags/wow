@@ -40,7 +40,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test` and `provider.listModels`
-  (`{providerInstanceId}`), `provider.detect`. Error codes are `RpcErrorCode`.
+  (`{providerInstanceId}`), `provider.detect`, `outlook.open` (`{entryId}`) and `outlook.refresh`.
+  Error codes are `RpcErrorCode`.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
@@ -99,10 +100,11 @@ thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'rea
                  'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
 approvals        id, threadId, itemId, kind, request(json), decision?, decidedAt?
 questions        id, threadId, itemId, request(json), answer?, answeredAt?
-calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end, zone, location?,
-                 joinUrl?, body?, projectId?, backlogItemId?, workflowId?, runId?, state, updatedAt
+calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end, zone, allDay,
+                 location?, joinUrl?, body?, projectId?, backlogItemId?, workflowId?, runId?, state,
+                 updatedAt   -- state: CardState for cards, 'scheduled'|'cancelled' for Outlook
 mail_items       id, externalId, folder, from, subject, receivedAt, unread, snippet
-outlook_status   singleton: lastSyncAt, lastError?, bridgeVersion
+outlook_status   singleton: lastSyncAt, lastError?, unavailableSince?, unreadCount, bridgeVersion
 backlog_items    id, title, body, tags(json), state, runId?, remote(json: service,key,url)?, createdAt
 workflows        id, name, templateKind?, steps(json: WorkflowStep[]), createdAt, updatedAt
 workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, state, currentStep,
@@ -275,6 +277,16 @@ hands the server's `OutlookSink` either a snapshot or a failure:
   one, for the "Outlook unavailable since <time>" banner). The server sets
   `outlook_status.lastError` and keeps the cached rows.
 
+The server side is `apps/server/src/outlook/service.ts` (`startOutlookService`, registered as the
+`outlook` hook in `main.ts`). It runs `OutlookSync` and turns each snapshot into an internal
+`outlook.sync` command and each failure into `outlook.fail`. The orchestrator
+(`core/calendar.ts`) compares the snapshot with the stored rows and emits one `outlook.synced` event
+with only the changed and removed rows plus the new status, so the history holds what changed, not
+every poll's full contents. A failure that repeats the stored error adds no event. `outlook.open`
+asks the source to show an item and `outlook.refresh` polls at once (the palette's "Refresh
+Outlook"). An Outlook row never changes through a card command, and a card id may not start with
+`outlook`.
+
 ## Skills discovery
 
 `packages/skills` scans the directories in `skills.directories` (defaults: `~/.claude/skills`,
@@ -326,7 +338,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - providers: `providers.testTimeoutMs`
 - chat: `chat.contextMeter`, `chat.resumePrompt`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`,
-  `calendar.lookaheadDays`
+  `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`
 - outlook: `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`,
   `outlook.mailRail`, `outlook.mailLimit`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
@@ -403,6 +415,28 @@ without a virtual list. Palette commands: every thread, New thread, Switch provi
 keeps its instance, so this opens a draft on the other instance in the same project or folder) and
 Stop turn while a turn runs.
 
+## Calendar view
+
+`apps/web/src/calendar`. `/calendar?view=day|week&date=YYYY-MM-DD` shows a time grid for one day or
+one week starting on `calendar.firstDayOfWeek`, in `calendar.zone`, with `calendar.workHours`
+shaded; the URL holds the view, so a reload shows the same range. Days are counted in local dates
+and an instant's place in a day is its wall-clock time in the zone, so a week that crosses a DST
+change still has seven columns and a 09:15 meeting sits at 09:15 on both sides of it
+(`time.ts`, `layout.ts`). All-day Outlook items sit in a row above the grid; overlapping items share
+the column side by side. Outlook items are read-only (a lock marker, the Teams join link when there
+is one, struck through when cancelled). Local cards are created by clicking (a
+`calendar.cardMinutes` card) or dragging a range, then named in the card dialog; dragging a card
+moves it (also to another day), dragging its lower edge resizes it, both snapped to
+`calendar.snapMinutes`; the dialog edits title, times, project, workflow and backlog item and
+deletes. While a drag is in progress the card is drawn where the pointer is; when the pointer is
+released the card is drawn at its new place until the server's row arrives, and the server row
+wins. Cards show their `state` as a badge; the calendar only creates them `scheduled`, the
+scheduler changes it. The mail rail lists `mailItems` newest first with the `unreadCount` from
+`outlook_status`; clicking an entry calls `outlook.open`. A banner shows "Outlook unavailable since
+<time>" while `outlook_status.lastError` is set. Palette commands: today, next, previous, day view,
+week view (on the calendar only, with the `keybindings.calendar*` keys), New card, Refresh
+Outlook, and one "Edit card" entry per card.
+
 ## Look
 
 T3 Code is the reference: dark neutral surface, one left sidebar, main area, optional right panel,
@@ -426,4 +460,7 @@ copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
   and skill rows written straight into the projection until skills discovery dispatches them.
   Its PATH holds empty stand-in `claude` and `codex` files for `provider.detect`. The settings
   tests start a second copy in its own home and port (`WOW_E2E_HOME`, `WOW_E2E_PORT`), because
-  they add and remove instances and change global settings.
+  they add and remove instances and change global settings. Both run with `WOW_OUTLOOK=mock` and
+  the fixture-backed `MockOutlookSource`; the first answers on a small HTTP control port
+  (`e2eOutlookControlPort`) so the calendar tests can make the mock fail, bring it back and read
+  which items Outlook was asked to open.

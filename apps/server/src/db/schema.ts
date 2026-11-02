@@ -138,6 +138,7 @@ export const calendarItems = sqliteTable(
     start: text().notNull(),
     end: text().notNull(),
     zone: text().notNull(),
+    allDay: bool().notNull().default(false),
     location: text(),
     joinUrl: text(),
     body: text(),
@@ -167,6 +168,8 @@ export const outlookStatus = sqliteTable('outlook_status', {
   id: integer().primaryKey(),
   lastSyncAt: text(),
   lastError: text(),
+  unavailableSince: text(),
+  unreadCount: integer().notNull().default(0),
   bridgeVersion: text(),
 });
 

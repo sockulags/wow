@@ -15,6 +15,13 @@
       "when": 1793574494922,
       "tag": "0001_provider_instance_status",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793603109368,
+      "tag": "0002_calendar_cards_and_outlook_status",
+      "breakpoints": true
     }
   ]
 }
