@@ -2,6 +2,7 @@ import { SecretRef } from '@wow/contracts';
 import { useState } from 'react';
 import { useRuntime } from '@/app/runtime';
 import { errorMessage } from '@/chat/data';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -16,16 +17,19 @@ export function SecretField({
   label,
   settingKey,
   value,
+  describedBy,
 }: {
   id: string;
   label: string;
   settingKey: string;
   value: unknown;
+  describedBy?: string | undefined;
 }) {
   const { connection, settings } = useRuntime();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [confirming, setConfirming] = useState(false);
   const stored = SecretRef.safeParse(value).success;
 
   const run = async (action: () => Promise<void>) => {
@@ -61,14 +65,15 @@ export function SecretField({
     });
 
   return (
-    <div className="grid gap-1.5">
+    <div className="grid max-w-xl gap-1.5">
       <div className="flex items-center gap-2">
         <Input
           id={id}
           type="password"
           autoComplete="off"
           aria-label={label}
-          placeholder={stored ? 'Stored; type to replace' : 'Not set'}
+          aria-describedby={[`${id}-status`, describedBy].filter(Boolean).join(' ')}
+          placeholder={stored ? 'Stored. Type to replace.' : 'Not set'}
           value={text}
           disabled={!connection}
           onChange={(event) => setText(event.target.value)}
@@ -87,15 +92,26 @@ export function SecretField({
             size="sm"
             variant="outline"
             disabled={busy}
-            onClick={() => void clear()}
+            onClick={() => setConfirming(true)}
           >
             Clear
           </Button>
         )}
+        <ConfirmDialog
+          open={confirming}
+          title={`Delete the stored ${label}?`}
+          description="The value is deleted from the wow secret store and cannot be shown or restored. You can save a new one at any time."
+          confirmLabel="Delete"
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false);
+            void clear();
+          }}
+        />
       </div>
       <p data-testid={`${id}-status`} className="text-xs text-muted-foreground">
-        {stored ? 'A value is stored.' : 'No value stored.'}
-        {!connection && ' Connect to the wow server to store one.'}
+        {stored ? 'Saved' : 'Not set'}
+        {!connection && '. Connect to the wow server to save one.'}
       </p>
       {error && (
         <p role="alert" className="text-xs text-destructive">

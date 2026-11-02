@@ -29,6 +29,7 @@ export function ChoiceSelect({
   size = 'default',
   disabled,
   invalid,
+  describedBy,
   title,
   className,
 }: {
@@ -42,6 +43,7 @@ export function ChoiceSelect({
   readonly size?: 'sm' | 'default';
   readonly disabled?: boolean;
   readonly invalid?: boolean;
+  readonly describedBy?: string | undefined;
   readonly title?: string;
   readonly className?: string;
 }) {
@@ -56,6 +58,7 @@ export function ChoiceSelect({
         id={id}
         aria-label={label}
         aria-invalid={invalid || undefined}
+        aria-describedby={describedBy}
         title={title}
         size={size}
         className={cn('w-full', size === 'sm' && 'text-xs', className)}

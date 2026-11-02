@@ -1,16 +1,18 @@
 import { Outlet, useRouterState } from '@tanstack/react-router';
 import { PanelLeftIcon, PanelRightIcon, SearchIcon } from 'lucide-react';
-import { useLayoutEffect } from 'react';
+import { useLayoutEffect, useState } from 'react';
+import { IconButton, ShortcutHint } from '@/components/hint';
 import { Button } from '@/components/ui/button';
 import { ProjectDialogs } from '@/projects/project-dialogs';
 import { ProviderDialogs } from '@/providers/provider-dialogs';
-import { formatBinding } from './keybindings';
+import { ConnectionBanner } from './connection-banner';
 import { AppToaster } from './notifications';
 import { CommandPalette } from './palette';
 import { useLayout, useRuntime, useSetting } from './runtime';
 import { sections } from './sections';
 import { Sidebar } from './sidebar';
 import { UpdateBanner } from './update-banner';
+import { ShellToolbarSlot } from './shell-toolbar';
 import { useCommands, useGlobalKeybindings } from './use-commands';
 
 function useApplyTheme() {
@@ -54,10 +56,10 @@ export function Shell() {
   const { layout } = useRuntime();
   const sidebarOpen = useLayout((state) => state.sidebarOpen);
   const rightPanelOpen = useLayout((state) => state.rightPanelOpen);
-  const paletteBinding = useSetting('keybindings.palette');
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const title = sections.find((section) => pathname.startsWith(section.path))?.title ?? 'wow';
   const { commands, context } = useCommands();
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null);
   useGlobalKeybindings(commands, context);
   useApplyTheme();
   useApplyAppearance();
@@ -66,18 +68,19 @@ export function Shell() {
     <div className="flex h-full overflow-hidden bg-background text-foreground">
       {sidebarOpen && <Sidebar />}
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-11 shrink-0 items-center gap-1 border-b border-border px-2">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Toggle sidebar"
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-2">
+          <IconButton
+            label="Toggle sidebar"
+            shortcut="keybindings.toggleSidebar"
             aria-pressed={sidebarOpen}
             onClick={() => layout.setState({ sidebarOpen: !sidebarOpen })}
           >
             <PanelLeftIcon />
-          </Button>
-          <h1 className="px-1 text-sm font-medium">{title}</h1>
-          <div className="ml-auto flex items-center gap-1">
+          </IconButton>
+          <h1 className="shrink-0 px-1 text-sm font-medium">{title}</h1>
+          {/* Views put their toolbar here with <ShellToolbar>, so it shares the header row. */}
+          <div ref={setToolbarSlot} className="flex min-w-0 flex-1 items-center gap-2" />
+          <div className="flex shrink-0 items-center gap-1">
             <Button
               variant="outline"
               size="sm"
@@ -85,26 +88,26 @@ export function Shell() {
               onClick={() => layout.setState({ paletteOpen: true })}
             >
               <SearchIcon />
-              Search
-              {paletteBinding !== '' && (
-                <kbd className="font-mono text-xs">{formatBinding(paletteBinding)}</kbd>
-              )}
+              <span className="max-lg:sr-only">Search</span>
+              <ShortcutHint shortcut="keybindings.palette" className="max-lg:hidden" />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Toggle right panel"
+            <IconButton
+              label="Toggle right panel"
+              shortcut="keybindings.toggleRightPanel"
               aria-pressed={rightPanelOpen}
               onClick={() => layout.setState({ rightPanelOpen: !rightPanelOpen })}
             >
               <PanelRightIcon />
-            </Button>
+            </IconButton>
           </div>
         </header>
+        <ConnectionBanner />
         <UpdateBanner />
-        <div className="min-h-0 flex-1 overflow-auto">
-          <Outlet />
-        </div>
+        <ShellToolbarSlot value={toolbarSlot}>
+          <div className="min-h-0 flex-1 overflow-auto">
+            <Outlet />
+          </div>
+        </ShellToolbarSlot>
       </main>
       {rightPanelOpen && <RightPanel />}
       <CommandPalette commands={commands} context={context} />

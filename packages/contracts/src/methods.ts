@@ -97,6 +97,18 @@ export const TrackerPreview = z.object({
 });
 export type TrackerPreview = z.infer<typeof TrackerPreview>;
 
+// "Test connection" in Settings → Trackers: signs in with the stored settings and says as whom
+// (audit E-08). `missing` names settings still empty; nothing is sent while any are.
+export const TrackerTestResult = z.object({
+  service: TrackerService,
+  ok: z.boolean(),
+  // The signed-in account: Jira display name and email, or the GitHub login.
+  account: z.string().nullable(),
+  message: z.string(),
+  missing: z.array(z.string()),
+});
+export type TrackerTestResult = z.infer<typeof TrackerTestResult>;
+
 const TrackerParams = z.object({ backlogItemId: z.string().min(1), service: TrackerService });
 
 // Every method the server answers. A request's params and the response's result are validated
@@ -181,6 +193,10 @@ export const rpcMethods = {
   'trackers.preview': {
     params: TrackerParams,
     result: TrackerPreview,
+  },
+  'trackers.test': {
+    params: z.object({ service: TrackerService }),
+    result: TrackerTestResult,
   },
   // Creates the issue and stores its key and URL on the item. Refused when the item already has
   // one or the tracker is not configured.

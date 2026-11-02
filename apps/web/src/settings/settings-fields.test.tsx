@@ -87,8 +87,8 @@ const definitions = {
   },
 } satisfies Record<string, SettingDefinition>;
 
-function setup() {
-  const runtime = createTestRuntime(definitions);
+function setup(initial: Record<string, unknown> = {}) {
+  const runtime = createTestRuntime(definitions, initial);
   const view = renderWithRuntime(<SettingsForm entries={Object.entries(definitions)} />, runtime);
   const row = (key: keyof typeof definitions) => within(screen.getByTestId(`setting-${key}`));
   const value = (key: keyof typeof definitions) => runtime.settings.getState().values[key];
@@ -119,7 +119,7 @@ describe('field kinds', () => {
 
 describe('generated settings fields', () => {
   it('renders label, description, default and restart marker', () => {
-    const { row } = setup();
+    const { row } = setup({ 'advanced.showSettingKeys': true });
     expect(row('advanced.port').getByText('Port')).toBeTruthy();
     expect(row('advanced.port').getByText('A number field.')).toBeTruthy();
     expect(row('advanced.port').getByText('Restart required')).toBeTruthy();
@@ -223,8 +223,11 @@ describe('generated settings fields', () => {
 
   it('resets a changed setting to its default', async () => {
     const { row, value, user } = setup();
+    expect(row('advanced.enabled').queryAllByRole('button', { name: /^Reset/ })).toEqual([]);
     await user.click(row('advanced.enabled').getByRole('switch'));
-    await user.click(row('advanced.enabled').getByRole('button', { name: 'Reset to default' }));
+    await user.click(
+      row('advanced.enabled').getAllByRole('button', { name: 'Reset Enabled to default' })[0]!,
+    );
     expect(value('advanced.enabled')).toBeUndefined();
     expect(row('advanced.enabled').getByRole('switch').getAttribute('aria-checked')).toBe('false');
   });

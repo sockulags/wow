@@ -406,7 +406,10 @@ one opens its `path`.
 
 `packages/contracts/src/settings.ts` exports `settingsRegistry`: a map of key → `{schema: zod,
 group, label, description, default, scope: 'global'|'project'|'provider', restartRequired?,
-secret?}`. The server validates writes against it; the settings UI renders groups and fields from
+secret?, unit?, options?, radio?}`. `unit` (`ms`, `seconds`, `minutes`, `days`, `pixels`,
+`percent`) is shown as a suffix after a number field, so labels carry no unit; milliseconds are
+shown and typed as seconds. `options` names each enum value (`{label, description?}`), so the page
+never shows a raw id; `radio` shows the choices as a radio group with their descriptions. The server validates writes against it; the settings UI renders groups and fields from
 it (text, number, boolean, enum, list, key-value with secret flag, keybinding). Adding a setting is
 one entry. A definition's `scope` is the narrowest place it may be stored: `global` settings only
 globally, `project` settings also per project, `provider` settings also per project and per
@@ -414,8 +417,10 @@ provider instance. Reads resolve provider over project over global over the defa
 stored value that no longer passes the schema. Writes are `setting.set` / `setting.reset`
 commands, so they are events like everything else; the server reads SQLite on every `get`, so a
 change applies at once, and services holding derived state listen with `onChange`. The page picks the editor from the zod schema type; schemas that need a special editor
-carry `.meta({ widget: 'keybinding' | 'keyValue' | 'secret' })` (see `Keybinding`, `KeyValueList`
-and `SecretSetting`, a password field for a secret setting's reference). Objects
+carry `.meta({ widget: 'keybinding' | 'keyValue' | 'secret' | 'workHours' | 'template' })` (see
+`Keybinding`, `KeyValueList`, `SecretSetting`, a password field for a secret setting's reference,
+`WorkHours`, two time fields and a Mon–Sun toggle group, and the handover template, a text area
+whose `placeholders` meta lists the `{{name}}` chips it can insert). Objects
 render their fields; anything else falls back to a JSON editor. Connected to a server, the web app
 reads the `settings` topic and writes global values with `setting.set` / `setting.reset`
 (`apps/web/src/settings/server-source.ts`); without one it uses the in-memory `SettingsSource`
@@ -426,7 +431,7 @@ a key named here and missing from the registry, or registered and missing here, 
 A group marked with a unit (`(U12)`) belongs to a unit not delivered yet; its keys must not exist
 until that unit removes the mark. `group.*` covers every key of the group.
 
-- providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`
+- providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.offerSetup`
 - chat: `chat.contextMeter`, `chat.resumePrompt`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`,
   `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`,
@@ -446,7 +451,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - keybindings: `keybindings.*`, one per command that has a shortcut
 - desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
 - updates: `updates.enabled`, `updates.checkIntervalMinutes`
-- advanced: `advanced.port`, `advanced.logLevel`, `advanced.secretsTimeoutMs` (`WOW_HOME` is an
+- advanced: `advanced.port`, `advanced.logLevel`, `advanced.secretsTimeoutMs`,
+  `advanced.showSettingKeys` (`WOW_HOME` is an
   environment variable, see "Server")
 
 The same test fails when `apps/server/src` or `apps/web/src` declares a tunable-looking constant

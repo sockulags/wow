@@ -194,7 +194,7 @@ test.describe('backlog', () => {
     await row.getByLabel('GitHub token').fill('github-e2e-token');
     await row.getByRole('button', { name: 'Save' }).click();
     await expect(row.getByTestId('setting-trackers.github.token-status')).toHaveText(
-      'A value is stored.',
+      'Saved',
     );
     await expect(row.getByLabel('GitHub token')).toHaveValue('');
 
