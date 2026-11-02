@@ -36,6 +36,37 @@ jobs:
       - run: pnpm test
       - run: git diff --check
 
+  # Playwright against the mock providers, the Outlook mock and the mock trackers (spec "Ground
+  # truth"). Nothing here talks to a real provider, Outlook or tracker.
+  e2e:
+    name: e2e (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @wow/web exec playwright install --with-deps chromium
+      - run: pnpm e2e
+        env:
+          CI: 'true'
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-traces-${{ matrix.os }}
+          path: apps/web/test-results
+          if-no-files-found: ignore
+
   # Builds the Windows installer and keeps it as a workflow artifact. Unsigned, no auto-update.
   desktop-installer:
     name: desktop installer (windows-latest)

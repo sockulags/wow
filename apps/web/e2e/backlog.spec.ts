@@ -120,6 +120,13 @@ test.describe('backlog', () => {
     await expect(page.getByTestId('backlog-run')).toContainText('Backlog e2e (failed)');
     await expect(page.getByTestId('backlog-state')).toHaveText('Planned');
     await expect(page.getByTestId('backlog-run-problem')).toContainText('The build broke');
+
+    // The run view marks the failed step and keeps its thread (behavior 26).
+    await page.getByTestId('backlog-run').getByRole('link').click();
+    await expect(page.getByTestId('run-state')).toHaveText('Failed');
+    const step = page.getByRole('list', { name: 'Run steps' }).getByTestId('run-step');
+    await expect(step.getByTestId('step-state')).toHaveText('Failed');
+    await expect(step.getByRole('link', { name: 'Open thread' })).toBeVisible();
   });
 
   test('publishes to Jira after a preview and offers the existing issue next time', async ({

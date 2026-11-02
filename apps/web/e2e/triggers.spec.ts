@@ -17,7 +17,7 @@ import {
 
 // U11 ground truth against the scripted mock provider: a trigger set a few seconds ahead fires
 // into a run that stops at its gate, and server restarts with the clock moved past a trigger's
-// time exercise each missed-trigger policy (behaviors 8, 9, 12, 13). This file owns its server,
+// time exercise each missed-trigger policy (behaviors 6, 8, 9, 12, 13). This file owns its server,
 // because it stops and starts it.
 
 test.describe.configure({ mode: 'serial' });
@@ -235,6 +235,28 @@ test.describe('triggers', () => {
       }
     });
   }
+
+  test('moving a card with a workflow moves its trigger', async ({ page }) => {
+    await setSetting('scheduler.missedPolicy', 'mark');
+    const start = await createCard('Moved card', 120);
+    await openDay(page, start);
+    await cardBlock(page, 'Moved card').click();
+    const dialog = page.getByRole('dialog', { name: 'Edit card' });
+    const nextDay = new Date(start.getTime() + 24 * 60 * 60_000).toLocaleDateString('sv-SE');
+    await dialog.getByLabel('Date').fill(nextDay);
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(cardBlock(page, 'Moved card')).toHaveCount(0);
+
+    // The old time passes while the server is down; the trigger went with the card, so nothing
+    // is missed.
+    await restart(600);
+    await useServer(page);
+    await page.goto(`/calendar?view=day&date=${nextDay}`);
+    const card = cardBlock(page, 'Moved card');
+    await expect(card.getByTestId('card-state')).toHaveText('scheduled');
+    await expect(card.getByRole('button', { name: 'Run now: Moved card' })).toHaveCount(0);
+  });
 
   test('a paused scheduler holds a due trigger until it is resumed', async ({ page }) => {
     await setSetting('scheduler.missedPolicy', 'mark');

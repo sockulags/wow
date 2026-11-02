@@ -15,6 +15,7 @@ import {
   e2eBinary,
   e2eClaudeConfigDir,
   e2eCodexHome,
+  e2eCodexInstanceId,
   e2eHome,
   e2eOutlookControlPort,
   e2ePort,
@@ -238,6 +239,19 @@ server.engine.dispatch('seed-instance', {
   launchArgs: [],
   defaultPermissionMode: 'default',
 });
+// Only the chat server gets a Codex instance; the settings tests count and add instances themselves.
+if (home === e2eHome) {
+  server.engine.dispatch('seed-codex-instance', {
+    type: 'providerInstance.create',
+    providerInstanceId: e2eCodexInstanceId,
+    kind: 'codex',
+    name: 'Mock Codex',
+    binaryPath: 'codex',
+    configDir: '/home/me/.codex',
+    env: {},
+    launchArgs: [],
+  });
+}
 server.engine.dispatch('seed-project', {
   type: 'project.create',
   projectId: e2eProjectId,

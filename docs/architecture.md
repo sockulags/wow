@@ -615,8 +615,9 @@ copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
 - Web: Playwright against the server with `WOW_OUTLOOK=mock` and `WOW_PROVIDERS=mock` (a mock
   adapter that replays fixtures and asks for an approval and a question). The chat tests start
   `apps/web/e2e/server.ts`: the server with a scripted `MockProviderAdapter` registered as the
-  claude and codex factories (the prompt picks the scenario), one seeded instance and project,
-  and skill rows written straight into the projection until skills discovery dispatches them.
+  claude and codex factories (the prompt picks the scenario), a seeded Claude instance and
+  project (plus a Codex instance on this first server only, for the `$name` form), and fixture
+  `SKILL.md` files in the server's own user home that skills discovery finds.
   Its PATH holds empty stand-in `claude` and `codex` files for `provider.detect`. The workflow
   tests use the same server: its fixture skills cover the Feature template's first steps, and an
   invented `intents/demo/intent.md` in the project folder is the artifact step 1 finds. The settings
@@ -628,8 +629,9 @@ copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
   (`e2eTriggersHome`, `e2eTriggersPort`) because they restart it: `WOW_E2E_KEEP_HOME=1` keeps the
   home across a restart and `WOW_E2E_CLOCK_OFFSET_SECONDS` runs the server's clock ahead, so a
   trigger's time passes while the server is down without the test waiting. The server prints
-  `wow e2e server ready` once it is seeded.
-  which items Outlook was asked to open. The backlog tests publish to a mock Jira and GitHub on
+  `wow e2e server ready` once it is seeded. The backlog tests publish to a mock Jira and GitHub on
   `e2eTrackerPort`, which the server's tracker settings point at (GitHub without its token, which
   the test enters on the settings page); the same port lists what the trackers received and starts
-  a backlog item's card run the way the scheduler will (`POST /fire`).
+  a backlog item's card run the way the scheduler will (`POST /fire`). CI runs `pnpm e2e` on
+  `ubuntu-latest` and `windows-latest` (the `e2e` job) and keeps the traces of a failed run.
+  Tests wait for what the page shows, never for time: no sleeps, polls or retries.

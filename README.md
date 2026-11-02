@@ -28,9 +28,11 @@ pnpm install --frozen-lockfile
 pnpm typecheck   # tsc -b over the project references in tsconfig.json
 pnpm lint        # oxlint, then prettier --check
 pnpm test        # vitest in every package
+pnpm e2e         # Playwright against mock providers, the Outlook mock and mock trackers
 ```
 
-The package layout is described in `docs/architecture.md`.
+The package layout is described in `docs/architecture.md`. How to use the app is in
+`docs/user-guide.md`; the manual Windows check is `docs/windows-smoke.md`.
 
 ## Target machine
 

@@ -81,6 +81,38 @@ test.describe('chat', () => {
     );
   });
 
+  test('denies a command and the provider hears it', async ({ page }) => {
+    await startThread(page, 'Approve deleting the cache');
+    const approval = conversation(page).getByRole('region', { name: 'Approval request' });
+    await expect(approval.getByRole('button')).toHaveText([
+      'Allow once',
+      'Allow for this session',
+      'Deny',
+    ]);
+    await approval.getByRole('button', { name: 'Deny' }).click();
+    await expect(approval).toContainText('Denied');
+    await expect(conversation(page).getByText('The command was denied.')).toBeVisible();
+    await expect(conversation(page).getByTestId('item-tool_call')).toContainText('error');
+  });
+
+  test('allows a command for the session', async ({ page }) => {
+    await startThread(page, 'Approve the build');
+    const approval = conversation(page).getByRole('region', { name: 'Approval request' });
+    await approval.getByRole('button', { name: 'Allow for this session' }).click();
+    await expect(approval).toContainText('Allowed for this session');
+    await expect(conversation(page).getByText('The command ran.')).toBeVisible();
+  });
+
+  test('answers a question with free text', async ({ page }) => {
+    await startThread(page, 'Ask me another question');
+    const question = conversation(page).getByRole('region', { name: 'Question' });
+    await expect(question.getByRole('button', { name: 'Red' })).toBeVisible();
+    await question.getByLabel('Your answer').fill('Green, please');
+    await question.getByLabel('Your answer').press('Enter');
+    await expect(question).toContainText('Answered: Green, please');
+    await expect(conversation(page).getByText('You chose Green, please.')).toBeVisible();
+  });
+
   test('answers a question with an option', async ({ page }) => {
     await startThread(page, 'Ask me a question');
     const question = conversation(page).getByRole('region', { name: 'Question' });
@@ -111,10 +143,30 @@ test.describe('chat', () => {
     );
   });
 
+  test('inserts the Codex invocation form on a Codex instance', async ({ page }) => {
+    await page.goto('/chat/new');
+    await page.getByLabel('Provider instance').selectOption({ label: 'Mock Codex (codex)' });
+    await page.getByLabel('Project').selectOption({ label: 'Demo' });
+    const composer = page.getByRole('combobox', { name: 'Message' });
+    await composer.pressSequentially('$check');
+    const skills = page.getByRole('listbox', { name: 'Skills' });
+    await expect(skills.getByRole('option').first()).toHaveText(/^check-work\$check-work/);
+    await composer.press('Enter');
+    await expect(composer).toHaveValue('$check-work ');
+    await composer.pressSequentially('the release');
+    await composer.press('Enter');
+    await expect(conversation(page).getByTestId('item-user')).toHaveText('$check-work the release');
+  });
+
   test('stops a running turn, keeps its output and resumes after a reload', async ({ page }) => {
     await startThread(page, 'Wait for me');
     await expect(conversation(page).getByText('Working on it')).toBeVisible();
     await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await expect(
+      threadList(page)
+        .getByRole('region', { name: 'Working' })
+        .getByRole('link', { name: /Wait for me/ }),
+    ).toBeVisible();
     await page.keyboard.press('Control+.');
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
     await expect(conversation(page).getByText('Working on it')).toBeVisible();
