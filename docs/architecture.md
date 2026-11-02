@@ -20,7 +20,7 @@ packages/
   skills/        SKILL.md discovery.
   workflow-engine/   workflow definitions, runs, gates, step handover. Pure; the server wires it.
   secrets/       DPAPI (Windows) or 0600 file (elsewhere) secret store.
-docs/            architecture (this file), user guide, windows-smoke checklist.
+docs/            architecture (this file), user guide, windows-smoke checklist, releases/ notes.
 intents/         agent-os intent, spec and plan.
 .claude/workflows/build-wow.js   delivers the plan with at most three agents at a time.
 ```
@@ -526,6 +526,15 @@ Then the server stops through the normal lifecycle (`wow:shutdown`, `server.json
 `quitAndInstall(silent, run after)` hands over; `before-quit` lets this quit through. If the
 installer cannot start, the server starts again, the window opens on Settings → Updates and the
 error is shown.
+
+Releases: the version is `apps/desktop/package.json` (the installer name) and
+`apps/server/package.json` (what the server reports), kept equal. The owner runs
+`docs/windows-smoke.md` against the installer from the release candidate's CI run and fills in the
+checklist in `docs/releases/v<version>.md`. Pushing tag `v<version>` runs
+`.github/workflows/release.yml`: it refuses a tag that differs from the desktop version or whose
+notes still say "Smoke result: pending", then builds and smoke-tests the installer from the tagged
+commit and attaches it to the GitHub release for the tag, creating the release from the notes file
+if it does not exist.
 
 ## Chat view
 
