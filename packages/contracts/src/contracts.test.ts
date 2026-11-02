@@ -84,7 +84,7 @@ describe('workflow contracts', () => {
 describe('settings registry', () => {
   const entries: [string, SettingDefinition][] = Object.entries(settingsRegistry);
 
-  it('fills in the providers, chat, calendar, outlook, scheduler, workflows, skills, appearance, keybindings, desktop and advanced groups', () => {
+  it('fills in every settings group', () => {
     const groups = new Set(entries.map(([, definition]) => definition.group));
     expect(groups).toEqual(
       new Set([
@@ -95,6 +95,7 @@ describe('settings registry', () => {
         'scheduler',
         'workflows',
         'skills',
+        'trackers',
         'appearance',
         'keybindings',
         'desktop',

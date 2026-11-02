@@ -3,6 +3,7 @@ import { Command, CommandId, DispatchResult } from './commands.js';
 import {
   Approval,
   BacklogItem,
+  BacklogRemote,
   CalendarItem,
   MailItem,
   AppNotification,
@@ -14,6 +15,7 @@ import {
   Skill,
   Thread,
   ThreadItem,
+  TrackerService,
   Trigger,
   Turn,
   Workflow,
@@ -71,6 +73,26 @@ export const SecretProtection = z.enum(['dpapi', 'none']);
 export type SecretProtection = z.infer<typeof SecretProtection>;
 
 const NoParams = z.object({}).strict();
+
+// What "Publish to Jira" or "Publish to GitHub" would create, shown before the user confirms
+// (behavior 30). `missing` names the tracker settings still empty; `existing` is the issue the
+// item was already published as, which the app offers to open instead.
+export const TrackerPreview = z.object({
+  service: TrackerService,
+  // "PROJ" for Jira, "owner/repo" for GitHub, empty while not configured.
+  target: z.string(),
+  title: z.string(),
+  body: z.string(),
+  // The Jira issue type, or null for GitHub.
+  issueType: z.string().nullable(),
+  // GitHub labels; empty for Jira.
+  labels: z.array(z.string()),
+  missing: z.array(z.string()),
+  existing: BacklogRemote.nullable(),
+});
+export type TrackerPreview = z.infer<typeof TrackerPreview>;
+
+const TrackerParams = z.object({ backlogItemId: z.string().min(1), service: TrackerService });
 
 // Every method the server answers. A request's params and the response's result are validated
 // against these on the server, and the client runtime can use the same schemas.
@@ -144,6 +166,16 @@ export const rpcMethods = {
   'workflowRuns.detectArtifacts': {
     params: z.object({ runId: z.string().min(1) }),
     result: WorkflowRun,
+  },
+  'trackers.preview': {
+    params: TrackerParams,
+    result: TrackerPreview,
+  },
+  // Creates the issue and stores its key and URL on the item. Refused when the item already has
+  // one or the tracker is not configured.
+  'trackers.publish': {
+    params: TrackerParams,
+    result: BacklogRemote,
   },
 } as const satisfies Record<string, { params: z.ZodType; result: z.ZodType }>;
 

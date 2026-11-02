@@ -1,6 +1,7 @@
 import { settingValue } from '@wow/client-runtime';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useEffect, useMemo } from 'react';
+import { backlogCommands } from '@/backlog/commands';
 import { calendarCommands } from '@/calendar/commands';
 import { validateCalendarSearch } from '@/calendar/search';
 import { chatCommands } from '@/chat/commands';
@@ -31,6 +32,8 @@ export function useCommands(): {
   const calendarItems = useTopic('calendarItems');
   const triggers = useTopic('triggers');
   const schedulerPaused = useSetting('scheduler.paused');
+  const backlogItems = useTopic('backlogItems');
+  const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
     [pathname, locationSearch],
@@ -56,6 +59,10 @@ export function useCommands(): {
         templates,
         openRun: runs?.find((run) => run.id === openRunId),
       }),
+      ...backlogCommands({
+        items: backlogItems ?? [],
+        openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
+      }),
       ...providerCommands(instances ?? []),
       ...staticCommands,
     ],
@@ -73,6 +80,8 @@ export function useCommands(): {
       calendarSearch,
       triggers,
       schedulerPaused,
+      backlogItems,
+      openBacklogItemId,
     ],
   );
   const context = useMemo(

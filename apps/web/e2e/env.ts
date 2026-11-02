@@ -32,3 +32,12 @@ export const e2eClaudeConfigDir = (home: string) => path.join(home, 'claude-conf
 export const e2eCodexHome = (home: string) => path.join(home, 'codex-home');
 export const e2eBinary = (home: string, name: string) =>
   path.join(e2eBinDir(home), process.platform === 'win32' ? `${name}.cmd` : name);
+
+// The mock Jira and GitHub the backlog tests publish to (e2e/server.ts): POST
+// /jira/rest/api/2/issue and POST /github/repos/<owner>/<repo>/issues create invented issues, GET
+// /requests lists what was received. The same port answers POST /fire?backlogItemId=…, which starts
+// the workflow run of the item's card the way a trigger does. The settings copy listens on
+// its own port.
+export const e2eTrackerPort = 4521;
+export const e2eSettingsTrackerPort = 4522;
+export const e2eWorkflowId = 'backlog-e2e';

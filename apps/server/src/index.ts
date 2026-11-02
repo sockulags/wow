@@ -19,6 +19,7 @@ export {
 export { ProviderService, type ProviderServiceDeps } from './providers/service.js';
 export { Scheduler, type SchedulerDeps, type SchedulerTimers } from './scheduler/service.js';
 export { SettingsService, type SettingContext } from './settings/service.js';
+export { TrackerService, type TrackerServiceDeps } from './trackers/service.js';
 export {
   databaseFileName,
   readServerInfo,

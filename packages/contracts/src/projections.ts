@@ -249,8 +249,12 @@ export type OutlookStatus = z.infer<typeof OutlookStatus>;
 export const BacklogState = z.enum(['idea', 'planned', 'running', 'done', 'dropped']);
 export type BacklogState = z.infer<typeof BacklogState>;
 
+export const TrackerService = z.enum(['jira', 'github']);
+export type TrackerService = z.infer<typeof TrackerService>;
+
+// The issue an item was published as (behavior 30). Nothing is read back from the tracker.
 export const BacklogRemote = z.object({
-  service: z.enum(['jira', 'github']),
+  service: TrackerService,
   key: z.string().min(1),
   url: z.string().min(1),
 });

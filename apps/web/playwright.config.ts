@@ -5,6 +5,7 @@ import {
   e2eSettingsHome,
   e2eSettingsOutlookControlPort,
   e2eSettingsPort,
+  e2eSettingsTrackerPort,
 } from './e2e/env';
 
 const port = 5173;
@@ -51,6 +52,7 @@ export default defineConfig({
         WOW_E2E_HOME: e2eSettingsHome,
         WOW_E2E_PORT: String(e2eSettingsPort),
         WOW_E2E_OUTLOOK_CONTROL_PORT: String(e2eSettingsOutlookControlPort),
+        WOW_E2E_TRACKER_PORT: String(e2eSettingsTrackerPort),
         WOW_OUTLOOK: 'mock',
       },
       reuseExistingServer: false,

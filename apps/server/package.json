@@ -28,6 +28,7 @@
     "@types/better-sqlite3": "^9.6.0",
     "@types/ws": "^8.18.2",
     "drizzle-kit": "^0.31.11",
+    "msw": "^3.0.3",
     "tsx": "^4.23.15"
   }
 }

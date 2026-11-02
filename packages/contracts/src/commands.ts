@@ -2,6 +2,9 @@ import { z } from 'zod';
 import {
   AppNotification,
   Approval,
+  BacklogItem,
+  BacklogRemote,
+  BacklogState,
   CalendarItem,
   CardState,
   MailItem,
@@ -35,6 +38,9 @@ import { RunEffect, WorkflowStep } from './workflow.js';
 
 const Id = z.string().min(1);
 const Timestamp = z.iso.datetime({ offset: true });
+
+// The server stores tags trimmed, non-empty and unique, in the order given.
+const BacklogTags = z.array(z.string());
 
 const WorkflowSteps = z
   .array(WorkflowStep)
@@ -183,6 +189,36 @@ export const Command = z.discriminatedUnion('type', [
   // The user's answer at a gate (behaviors 9 to 11).
   z.object({ type: z.literal('workflowRun.continue'), runId: Id }),
   z.object({ type: z.literal('workflowRun.stop'), runId: Id }),
+  // Backlog items stay in wow until the user publishes one (behavior 28).
+  z.object({
+    type: z.literal('backlog.create'),
+    backlogItemId: Id,
+    title: z.string().trim().min(1),
+    body: z.string(),
+    tags: BacklogTags,
+  }),
+  z.object({
+    type: z.literal('backlog.update'),
+    backlogItemId: Id,
+    title: z.string().trim().min(1).optional(),
+    body: z.string().optional(),
+    tags: BacklogTags.optional(),
+    state: BacklogState.optional(),
+  }),
+  // Refused while a run of the item is live; cards that pointed at it lose the link.
+  z.object({ type: z.literal('backlog.delete'), backlogItemId: Id }),
+  // "Plan on calendar" (behavior 29): a card with the item, a workflow, a project and a time, and
+  // the item becomes planned, in one step.
+  z.object({
+    type: z.literal('backlog.plan'),
+    backlogItemId: Id,
+    cardId: Id,
+    workflowId: Id,
+    projectId: Id,
+    start: Timestamp,
+    end: Timestamp,
+    zone: z.string().min(1),
+  }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command['type'];
@@ -263,6 +299,11 @@ export const InternalCommand = z.discriminatedUnion('type', [
     runAt: Timestamp,
     policy: MissedTriggerPolicy,
     runId: Id,
+  // The tracker service created the issue; the item keeps its key and URL (behavior 30).
+  z.object({
+    type: z.literal('backlog.published'),
+    backlogItemId: Id,
+    remote: BacklogRemote,
   }),
 ]);
 export type InternalCommand = z.infer<typeof InternalCommand>;
@@ -304,6 +345,15 @@ export const CardChanges = CalendarItem.pick({
   workflowId: true,
 }).partial();
 export type CardChanges = z.infer<typeof CardChanges>;
+
+export const BacklogChanges = BacklogItem.pick({
+  title: true,
+  body: true,
+  tags: true,
+  state: true,
+  runId: true,
+}).partial();
+export type BacklogChanges = z.infer<typeof BacklogChanges>;
 
 export const ThreadChanges = Thread.pick({
   model: true,
@@ -530,6 +580,23 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   // The trigger row as it now is.
   z.object({ kind: z.literal('trigger.set'), aggregate: Id, payload: Trigger }),
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
+  z.object({ kind: z.literal('backlog.created'), aggregate: Id, payload: BacklogItem }),
+  // Edits by the user, "Plan on calendar", and the item following its run (behavior 29).
+  z.object({
+    kind: z.literal('backlog.updated'),
+    aggregate: Id,
+    payload: z.object({ backlogItemId: Id, changes: BacklogChanges }),
+  }),
+  z.object({
+    kind: z.literal('backlog.deleted'),
+    aggregate: Id,
+    payload: z.object({ backlogItemId: Id }),
+  }),
+  z.object({
+    kind: z.literal('backlog.published'),
+    aggregate: Id,
+    payload: z.object({ backlogItemId: Id, remote: BacklogRemote }),
+  }),
   // Only what changed since the stored rows; `at` is the poll time.
   z.object({
     kind: z.literal('outlook.synced'),

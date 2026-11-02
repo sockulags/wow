@@ -19,6 +19,7 @@ const groupOrder: readonly Group[] = [
   'Threads',
   'Cards',
   'Workflows',
+  'Backlog',
   'Navigation',
   'Settings',
   'Actions',

@@ -26,6 +26,7 @@ import { route } from './rpc/router.js';
 import { Scheduler, type SchedulerTimers } from './scheduler/service.js';
 import { SettingsService } from './settings/service.js';
 import { SkillsService } from './skills/service.js';
+import { TrackerService } from './trackers/service.js';
 import { detectArtifacts, type ArtifactDetector } from './workflows/artifacts.js';
 import { WorkflowRunner } from './workflows/runner.js';
 
@@ -66,6 +67,8 @@ export interface StartOptions {
   readonly clock?: () => Date;
   // Replaces the scheduler's timer, for tests that call `scheduler.tick()` themselves.
   readonly schedulerTimers?: SchedulerTimers;
+  // Replaces the global fetch the tracker clients use, for tests.
+  readonly fetch?: typeof fetch;
 }
 
 export interface RunningServer {
@@ -83,6 +86,7 @@ export interface RunningServer {
   readonly workflows: WorkflowRunner;
   readonly providerService: ProviderService;
   readonly scheduler: Scheduler;
+  readonly trackers: TrackerService;
   readonly logger: Logger;
   stop(): Promise<void>;
 }
@@ -157,6 +161,14 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     userHome: options.userHome ?? homedir(),
     ...(options.watchSkills ? { watch: options.watchSkills } : {}),
   });
+  const trackers = new TrackerService({
+    db: database.db,
+    engine,
+    settings,
+    secrets,
+    logger,
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
   const handlers = createHandlers({
     engine,
     subscriptions,
@@ -166,6 +178,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     skills,
     workflows,
     providers: providerService,
+    trackers,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     outlook: () => outlook,
     info: { version, home },
@@ -307,6 +320,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     workflows,
     providerService,
     scheduler,
+    trackers,
     logger,
     stop,
   };

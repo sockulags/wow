@@ -41,7 +41,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test` and `provider.listModels`
   (`{providerInstanceId}`), `provider.detect`, `skills.refresh`, `workflowRuns.detectArtifacts`
-  (`{runId}`), `outlook.open` (`{entryId}`) and `outlook.refresh`. Error codes are `RpcErrorCode`.
+  (`{runId}`), `outlook.open` (`{entryId}`), `outlook.refresh`, and `trackers.preview` and
+  `trackers.publish` (`{backlogItemId, service}`). Error codes are `RpcErrorCode`.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
@@ -410,7 +411,8 @@ provider instance. Reads resolve provider over project over global over the defa
 stored value that no longer passes the schema. Writes are `setting.set` / `setting.reset`
 commands, so they are events like everything else; the server reads SQLite on every `get`, so a
 change applies at once, and services holding derived state listen with `onChange`. The page picks the editor from the zod schema type; schemas that need a special editor
-carry `.meta({ widget: 'keybinding' | 'keyValue' })` (see `Keybinding` and `KeyValueList`). Objects
+carry `.meta({ widget: 'keybinding' | 'keyValue' | 'secret' })` (see `Keybinding`, `KeyValueList`
+and `SecretSetting`, a password field for a secret setting's reference). Objects
 render their fields; anything else falls back to a JSON editor. Connected to a server, the web app
 reads the `settings` topic and writes global values with `setting.set` / `setting.reset`
 (`apps/web/src/settings/server-source.ts`); without one it uses the in-memory `SettingsSource`
@@ -432,10 +434,11 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `scheduler.paused`, `scheduler.toastSeconds`
 - workflows: `workflows.templates`, `workflows.handoverTemplate`
 - skills: `skills.directories`, `skills.includeClaudePlugins`
-- trackers (U12): `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
-  `trackers.jira.projectKey`, `trackers.jira.issueType`, `trackers.jira.email`,
-  `trackers.github.baseUrl`, `trackers.github.owner`, `trackers.github.repo`,
-  `trackers.github.labels`
+- trackers: `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
+  `trackers.jira.email`, `trackers.jira.token` (secret), `trackers.jira.projectKey`,
+  `trackers.jira.issueType`, `trackers.github.baseUrl`, `trackers.github.token` (secret),
+  `trackers.github.owner`, `trackers.github.repo`, `trackers.github.labels`,
+  `trackers.requestTimeoutMs`
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`
 - keybindings: `keybindings.*`, one per command that has a shortcut
 - desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
@@ -550,6 +553,49 @@ toolbar shows "Scheduler paused", which resumes it. The mail rail lists `mailIte
 week view (on the calendar only, with the `keybindings.calendar*` keys), New card, Refresh
 Outlook, and one "Edit card" entry per card.
 
+## Backlog and trackers
+
+`apps/server/src/core/backlog.ts` decides `backlog.create|update|delete|plan` and the internal
+`backlog.published`. Tags are stored trimmed and unique. `backlog.plan` ("Plan on calendar") is one
+command for the card and the item: it builds the `card.create` the calendar would accept (title from
+the item, the chosen workflow, project and time, linked to the item) and moves the item to
+`planned`, so a refused card leaves the item as it was. Delete and plan are refused while a run of
+the item is live; delete unlinks the item's cards. Every `workflowRun.changed` of a run with a
+backlog item also emits `backlog.updated` when the item's state or `runId` differs from what the run
+means: running or waiting is `running`, done is `done`, failed or stopped is `planned`. The item
+keeps the `runId`, so the backlog shows the failed step's error from the run (behavior 29).
+
+`apps/server/src/trackers` publishes (behavior 30). `TrackerService.preview` returns the issue it
+would create (the item's title and markdown body as written), the target, the settings still empty
+(`missing`, as keys) and the issue the item already has (`existing`). `publish` refuses an item that
+has one and a tracker that is not set up, creates the issue, and dispatches `backlog.published`
+with `{service, key, url}`; one publish per item runs at a time, so a double click creates one
+issue. Nothing is read back from the tracker afterwards. The payload is deliberately minimal:
+
+- **Jira**: `POST <baseUrl>/rest/api/2/issue` with `{fields: {project: {key}, issuetype: {name},
+summary, description}}`. v2 because Cloud, Server and Data Center accept the same field names
+  there and take the description as a plain string (v3 is Cloud only and wants an Atlassian
+  Document). `cloud-basic` sends `Basic base64(email:token)`, `pat` sends `Bearer <token>`. The key
+  comes from the answer and the URL is `<baseUrl>/browse/<key>`.
+- **GitHub**: `POST <baseUrl>/repos/<owner>/<repo>/issues` with `{title, body, labels?}`,
+  `Bearer <token>`, `X-GitHub-Api-Version: 2022-11-28`; Enterprise Server is the same under
+  `https://<host>/api/v3`. The key is `owner/repo#<number>` and the URL the answer's `html_url`.
+
+A refusal or a timeout (`trackers.requestTimeoutMs`) is a `rejected` RPC error carrying what the
+tracker said (Jira's `errorMessages` and `errors`, GitHub's `message` and `errors`). Tokens are
+secret settings: the settings page stores the value with `secrets.set` as `setting:<key>` and saves
+the reference; clearing the field resets the setting and deletes the secret.
+
+`apps/web/src/backlog`. `/backlog` lists the items (filter by text, state and tag) next to
+`/backlog/$itemId` (title, markdown body, tags, state; the body is edited as text and shown as
+written) or `/backlog/new`. "Plan on calendar" opens a dialog for workflow, project, date and time
+(`calendar.cardMinutes` long, in `calendar.zone`) and dispatches `backlog.plan`. "Publish to Jira"
+and "Publish to GitHub" ask `trackers.preview`: an item that already has an issue gets "Open
+<key>", a tracker that is not set up names the settings and links to Settings → Trackers, otherwise
+the preview shows the issue and "Create issue" calls `trackers.publish`. Palette commands: New
+backlog item, every item, and for the open item Plan on calendar, Publish to Jira and Publish to
+GitHub.
+
 ## Look
 
 T3 Code is the reference: dark neutral surface, one left sidebar, main area, optional right panel,
@@ -583,3 +629,7 @@ copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
   home across a restart and `WOW_E2E_CLOCK_OFFSET_SECONDS` runs the server's clock ahead, so a
   trigger's time passes while the server is down without the test waiting. The server prints
   `wow e2e server ready` once it is seeded.
+  which items Outlook was asked to open. The backlog tests publish to a mock Jira and GitHub on
+  `e2eTrackerPort`, which the server's tracker settings point at (GitHub without its token, which
+  the test enters on the settings page); the same port lists what the trackers received and starts
+  a backlog item's card run the way the scheduler will (`POST /fire`).

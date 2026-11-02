@@ -141,6 +141,21 @@ const keybinding = (label: string, description: string, binding: string) =>
     scope: 'global',
   });
 
+// A tracker's base URL: http or https, or empty while the tracker is not set up.
+export const TrackerUrl = z
+  .string()
+  .trim()
+  .refine((value) => value === '' || /^https?:\/\/[^\s/]+/.test(value), {
+    message: 'Use an http or https URL, such as https://acme.atlassian.net, or leave empty',
+  });
+
+export const JiraAuthMode = z.enum(['cloud-basic', 'pat']);
+export type JiraAuthMode = z.infer<typeof JiraAuthMode>;
+
+// A stored token: the reference to it in the secret store, or null while none is set. The
+// settings page renders a password field that stores the value with `secrets.set`.
+export const SecretSetting = SecretRef.nullable().meta({ widget: 'secret' });
+
 export const MissedTriggerPolicy = z.enum(['run', 'mark', 'skip']);
 export type MissedTriggerPolicy = z.infer<typeof MissedTriggerPolicy>;
 
@@ -442,6 +457,110 @@ export const settingsRegistry = {
     label: 'Claude plugin skills',
     description: 'Also offer skills from installed Claude Code plugins, invoked as /plugin:skill.',
     default: true,
+    scope: 'global',
+  }),
+  'trackers.jira.baseUrl': defineSetting({
+    schema: TrackerUrl,
+    group: 'trackers',
+    label: 'Jira URL',
+    description:
+      'Address of your Jira site, such as https://acme.atlassian.net for Jira Cloud or https://jira.example.com for Jira Server or Data Center.',
+    default: '',
+    scope: 'global',
+  }),
+  'trackers.jira.authMode': defineSetting({
+    schema: JiraAuthMode,
+    group: 'trackers',
+    label: 'Jira sign-in',
+    description:
+      'cloud-basic signs in to Jira Cloud with your email and an API token; pat uses a personal access token (Jira Server or Data Center).',
+    default: 'cloud-basic',
+    scope: 'global',
+  }),
+  'trackers.jira.email': defineSetting({
+    schema: z.string().trim(),
+    group: 'trackers',
+    label: 'Jira email',
+    description: 'Your Atlassian account email. Only used with cloud-basic sign-in.',
+    default: '',
+    scope: 'global',
+  }),
+  'trackers.jira.token': defineSetting({
+    schema: SecretSetting,
+    group: 'trackers',
+    label: 'Jira token',
+    description:
+      'API token (cloud-basic) or personal access token (pat). Stored in the wow secret store and never shown again.',
+    default: null,
+    scope: 'global',
+    secret: true,
+  }),
+  'trackers.jira.projectKey': defineSetting({
+    schema: z.string().trim(),
+    group: 'trackers',
+    label: 'Jira project key',
+    description: 'Project new issues are created in, such as PROJ.',
+    default: '',
+    scope: 'global',
+  }),
+  'trackers.jira.issueType': defineSetting({
+    schema: z.string().trim().min(1),
+    group: 'trackers',
+    label: 'Jira issue type',
+    description: 'Issue type name new issues get, such as Task or Story.',
+    default: 'Task',
+    scope: 'global',
+  }),
+  'trackers.github.baseUrl': defineSetting({
+    schema: TrackerUrl,
+    group: 'trackers',
+    label: 'GitHub API URL',
+    description:
+      'https://api.github.com for github.com, or https://<host>/api/v3 for GitHub Enterprise Server.',
+    default: 'https://api.github.com',
+    scope: 'global',
+  }),
+  'trackers.github.token': defineSetting({
+    schema: SecretSetting,
+    group: 'trackers',
+    label: 'GitHub token',
+    description:
+      'Token allowed to create issues in the repository. Stored in the wow secret store and never shown again.',
+    default: null,
+    scope: 'global',
+    secret: true,
+  }),
+  'trackers.github.owner': defineSetting({
+    schema: z.string().trim(),
+    group: 'trackers',
+    label: 'GitHub owner',
+    description: 'User or organization that owns the repository issues are created in.',
+    default: '',
+    scope: 'global',
+  }),
+  'trackers.github.repo': defineSetting({
+    schema: z.string().trim(),
+    group: 'trackers',
+    label: 'GitHub repository',
+    description: 'Repository name issues are created in, without the owner.',
+    default: '',
+    scope: 'global',
+  }),
+  'trackers.github.labels': defineSetting({
+    schema: z.array(z.string().trim().min(1)),
+    group: 'trackers',
+    label: 'GitHub labels',
+    description: 'Labels every issue published to GitHub gets. Leave empty for none.',
+    default: [],
+    scope: 'global',
+  }),
+  'trackers.requestTimeoutMs': defineSetting({
+    schema: z.number().int().min(1000).max(300_000),
+    group: 'trackers',
+    label: 'Request timeout (ms)',
+    description:
+      'How long creating an issue in Jira or GitHub may take before it is reported as failed.',
+    default: 30_000,
     scope: 'global',
   }),
   'appearance.theme': defineSetting({
