@@ -12,7 +12,7 @@ import { validateCalendarSearch } from '@/calendar/search';
 import { ChatHome, ChatLayout } from '@/chat/chat-view';
 import { NewThreadView } from '@/chat/new-thread';
 import { ThreadView } from '@/chat/thread-view';
-import { SettingsPage } from '@/settings/settings-page';
+import { ProjectsSettingsPage, SettingsPage } from '@/settings/settings-page';
 import {
   BacklogHome,
   BacklogLayout,
@@ -164,6 +164,13 @@ const settingsIndexRoute = createRoute({
   },
 });
 
+// Projects are server rows, not registry settings, so their page has its own path.
+const settingsProjectsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/projects',
+  component: ProjectsSettingsPage,
+});
+
 export const settingsGroupRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings/$group',
@@ -185,6 +192,7 @@ const routeTree = rootRoute.addChildren([
   ]),
   backlogRoute.addChildren([backlogIndexRoute, newBacklogItemRoute, backlogItemRoute]),
   settingsIndexRoute,
+  settingsProjectsRoute,
   settingsGroupRoute,
 ]);
 

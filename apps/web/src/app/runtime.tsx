@@ -18,6 +18,12 @@ export type ProviderDialog =
   | { readonly type: 'edit'; readonly providerInstanceId: string }
   | { readonly type: 'wizard' };
 
+// The project dialog: a new project, or renaming or removing one. Palette commands open them.
+export type ProjectDialog =
+  | { readonly type: 'create' }
+  | { readonly type: 'rename'; readonly projectId: string }
+  | { readonly type: 'remove'; readonly projectId: string };
+
 // The card dialog: a new card for a time range (from a click, a drag or the palette), or an
 // existing card. Times are ISO instants.
 export type CardDialog =
@@ -31,6 +37,7 @@ export interface LayoutState {
   readonly rightPanelOpen: boolean;
   readonly paletteOpen: boolean;
   readonly providerDialog: ProviderDialog | undefined;
+  readonly projectDialog: ProjectDialog | undefined;
   readonly cardDialog: CardDialog | undefined;
 }
 
@@ -42,6 +49,7 @@ export const createLayoutStore = (): LayoutStore =>
     rightPanelOpen: false,
     paletteOpen: false,
     providerDialog: undefined,
+    projectDialog: undefined,
     cardDialog: undefined,
   }));
 

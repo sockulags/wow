@@ -55,19 +55,22 @@ export const Command = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('project.create'),
     projectId: Id,
-    name: z.string().min(1),
-    cwd: z.string().min(1),
+    // The server refuses a name another project has and a folder that does not exist.
+    name: z.string().trim().min(1),
+    cwd: z.string().trim().min(1),
     defaultProviderInstanceId: Id.optional(),
     defaultModel: z.string().min(1).optional(),
   }),
   z.object({
     type: z.literal('project.update'),
     projectId: Id,
-    name: z.string().min(1).optional(),
-    cwd: z.string().min(1).optional(),
+    name: z.string().trim().min(1).optional(),
+    cwd: z.string().trim().min(1).optional(),
     defaultProviderInstanceId: Id.nullable().optional(),
     defaultModel: z.string().min(1).nullable().optional(),
   }),
+  // Refused while a run in the project is live. Cards lose the project and their pending trigger;
+  // threads keep their folder; finished runs keep the id.
   z.object({ type: z.literal('project.delete'), projectId: Id }),
   z.object({
     type: z.literal('setting.set'),

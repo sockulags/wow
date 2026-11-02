@@ -539,6 +539,32 @@ notes still say "Smoke result: pending", then builds and smoke-tests the install
 commit and attaches it to the GitHub release for the tag, creating the release from the notes file
 if it does not exist.
 
+## Projects
+
+A project is a name and a folder (`projects` row). `apps/server/src/core/projects.ts` decides
+`project.create`, `project.update` and `project.delete`. Names and folders are trimmed, and a name
+another project has (ignoring case) is a `conflict`, because pickers show projects by name. The
+`dispatch` handler checks that a create or an update that sets `cwd` names an absolute path to an
+existing folder and refuses it with `rejected` otherwise; the check sits in the RPC layer because
+the orchestrator does no I/O, so commands dispatched inside the server (the e2e seed) skip it.
+
+`project.delete` is refused with `conflict` while a run in the project is running or waiting,
+because the runner would start the next step without the project's folder. Otherwise it removes the
+project and its `project:<id>` settings and unlinks what pointed at it rather than deleting it:
+
+- local cards get a `card.update` with `projectId: null` through the calendar's own decision, so a
+  scheduled or missed trigger becomes `cancelled` (a card without a project has no trigger);
+- threads keep their `cwd` and lose `projectId` in the projection of `project.deleted`, so they
+  read and resume as folder threads;
+- finished workflow runs keep `projectId` as history; the run view shows no project name and finds
+  no artifacts for them.
+
+`apps/web/src/projects`. Settings → Projects (`/settings/projects`, a page of its own next to the
+registry groups and listed after Providers) lists the projects with their folders and adds,
+renames and removes them in dialogs opened through the layout store's `projectDialog`, so palette
+commands open the same dialogs: Settings: Projects, New project, and Rename project and Remove
+project for each one. A refused command keeps its dialog open with the server's message.
+
 ## Chat view
 
 `apps/web/src/chat`. `/chat` shows the thread list (grouped Needs you, Working, Idle, Done; failed

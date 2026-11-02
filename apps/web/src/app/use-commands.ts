@@ -7,6 +7,7 @@ import { validateCalendarSearch } from '@/calendar/search';
 import { chatCommands } from '@/chat/commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
+import { projectCommands } from '@/projects/commands';
 import { providerCommands } from '@/providers/commands';
 import { workflowCommands } from '@/workflows/commands';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
@@ -26,6 +27,7 @@ export function useCommands(): {
   const openThreadId = /^\/chat\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const threads = useTopic('threads');
   const instances = useTopic('providerInstances');
+  const projects = useTopic('projects');
   const turns = useTopic('turns', openThreadId);
   const openRunId = /^\/workflows\/runs\/([^/]+)$/.exec(pathname)?.[1];
   const workflows = useTopic('workflows');
@@ -66,6 +68,7 @@ export function useCommands(): {
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
       }),
       ...providerCommands(instances ?? []),
+      ...projectCommands(projects ?? []),
       ...updateCommands(updateState),
       ...staticCommands,
     ],
@@ -74,6 +77,7 @@ export function useCommands(): {
       staticCommands,
       threads,
       instances,
+      projects,
       turns,
       openThreadId,
       workflows,

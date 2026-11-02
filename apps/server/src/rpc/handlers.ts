@@ -1,7 +1,9 @@
-import { WorkflowRun, type DetectedProvider } from '@wow/contracts';
+import { WorkflowRun, type Command, type DetectedProvider } from '@wow/contracts';
 import { OutlookError } from '@wow/outlook-bridge';
 import type { SecretStore } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
+import { stat } from 'node:fs/promises';
+import path from 'node:path';
 import type { Engine } from '../core/engine.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
@@ -43,10 +45,25 @@ function requireOutlook(deps: HandlerDeps): OutlookService {
   return outlook;
 }
 
+// A project's folder is where its threads and runs work, so it has to be one that exists. The
+// orchestrator does no I/O, so the check happens here, before the command is decided.
+export async function checkProjectFolder(command: Command): Promise<void> {
+  if (command.type !== 'project.create' && command.type !== 'project.update') return;
+  if (command.cwd === undefined) return;
+  if (!path.isAbsolute(command.cwd)) {
+    throw new RpcFault('rejected', `Use a full folder path, not ${command.cwd}`);
+  }
+  const found = await stat(command.cwd).catch(() => undefined);
+  if (!found?.isDirectory()) throw new RpcFault('rejected', `No folder ${command.cwd}`);
+}
+
 export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
   return {
     'server.info': () => ({ version: deps.info.version, home: deps.info.home, pid: process.pid }),
-    dispatch: ({ commandId, command }) => deps.engine.dispatch(commandId, command),
+    dispatch: async ({ commandId, command }) => {
+      await checkProjectFolder(command);
+      return deps.engine.dispatch(commandId, command);
+    },
     subscribe: (params, connection) => {
       const opened = deps.subscriptions.subscribe(params, connection.push);
       connection.subscriptionIds.add(opened.subscriptionId);

@@ -217,13 +217,38 @@ describe('rpc', () => {
     expect(response).toMatchObject({ error: { code: 'not_found', message: 'No project missing' } });
   });
 
+  it('refuses a project whose folder is relative or does not exist', async () => {
+    const missing = path.join(home, 'not-there');
+    const create = (commandId: string, cwd: string) =>
+      client.request('dispatch', {
+        commandId,
+        command: { type: 'project.create', projectId: 'p1', name: 'wow', cwd },
+      });
+    expect(await create('c1', 'relative/folder')).toMatchObject({
+      error: { code: 'rejected', message: 'Use a full folder path, not relative/folder' },
+    });
+    expect(await create('c2', missing)).toMatchObject({
+      error: { code: 'rejected', message: `No folder ${missing}` },
+    });
+    const file = path.join(home, 'a-file');
+    await writeFile(file, '');
+    expect(await create('c3', file)).toMatchObject({ error: { code: 'rejected' } });
+    expect(await create('c4', home)).toMatchObject({ result: { duplicate: false } });
+    expect(
+      await client.request('dispatch', {
+        commandId: 'c5',
+        command: { type: 'project.update', projectId: 'p1', cwd: missing },
+      }),
+    ).toMatchObject({ error: { code: 'rejected', message: `No folder ${missing}` } });
+  });
+
   it('pushes projection changes to subscribers after the command commits', async () => {
     const subscribed = await client.request('subscribe', { topic: 'projects' });
     if (!('result' in subscribed)) throw new Error('subscribe failed');
     const { subscriptionId, data } = subscribed.result as { subscriptionId: string; data: [] };
     expect(data).toEqual([]);
 
-    const command = { type: 'project.create', projectId: 'p1', name: 'wow', cwd: '/w' };
+    const command = { type: 'project.create', projectId: 'p1', name: 'wow', cwd: home };
     const pushed = client.nextPush();
     const dispatched = await client.request('dispatch', { commandId: 'c1', command });
     expect(dispatched).toMatchObject({ result: { seqs: [1], duplicate: false } });
