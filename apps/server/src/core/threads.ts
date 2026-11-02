@@ -25,6 +25,7 @@ type ThreadCommand = Extract<
       | 'thread.interrupt'
       | 'thread.configure'
       | 'thread.setPinned'
+      | 'thread.setDone'
       | 'approval.answer'
       | 'question.answer'
       | 'provider.events';
@@ -240,6 +241,27 @@ export function decideThread(
         },
       ];
     }
+    case 'thread.setDone': {
+      const thread = requireThread(read, command.threadId);
+      if (!command.done) {
+        if (thread.state !== 'done') return [];
+        // Reopening keeps the failed marker of a thread whose last turn failed.
+        const state = read.lastTurn(thread.id)?.state === 'failed' ? 'failed' : 'idle';
+        return [stateChanged(thread.id, state, now)];
+      }
+      if (thread.state === 'done') return [];
+      if (
+        thread.state === 'working' ||
+        thread.state === 'needs_you' ||
+        read.runningTurn(thread.id)
+      ) {
+        throw new CommandRejected(
+          'rejected',
+          `Thread ${thread.id} is ${thread.state === 'needs_you' ? 'waiting for you' : 'working'}`,
+        );
+      }
+      return [stateChanged(thread.id, 'done', now)];
+    }
     case 'approval.answer': {
       const approval = read.approval(command.approvalId);
       if (!approval) throw new CommandRejected('not_found', `No approval ${command.approvalId}`);
@@ -291,6 +313,12 @@ export function decideThread(
   }
 }
 
+const stateChanged = (threadId: string, state: ThreadState, now: string): DomainEvent => ({
+  kind: 'thread.stateChanged',
+  aggregate: threadId,
+  payload: { threadId, state, updatedAt: now },
+});
+
 // After the last open request of a thread is answered, the agent works again.
 function resumeWork(
   read: ReadModel,
@@ -299,13 +327,7 @@ function resumeWork(
   now: string,
 ): DomainEvent[] {
   if (state !== 'needs_you' || read.openRequests(threadId) > 1) return [];
-  return [
-    {
-      kind: 'thread.stateChanged',
-      aggregate: threadId,
-      payload: { threadId, state: 'working', updatedAt: now },
-    },
-  ];
+  return [stateChanged(threadId, 'working', now)];
 }
 
 const endedThreadState = {

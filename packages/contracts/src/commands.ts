@@ -129,6 +129,9 @@ export const Command = z.discriminatedUnion('type', [
   }),
   // Pinned threads sort above the others in their sidebar group (spec 21).
   z.object({ type: z.literal('thread.setPinned'), threadId: Id, pinned: z.boolean() }),
+  // Done threads sit in the sidebar's Done group (spec 21). Refused while the thread works or
+  // needs the user; reopening puts it back under Idle, and a new message reopens it too.
+  z.object({ type: z.literal('thread.setDone'), threadId: Id, done: z.boolean() }),
   z.object({ type: z.literal('approval.answer'), approvalId: Id, decision: ApprovalDecision }),
   z.object({ type: z.literal('question.answer'), questionId: Id, answer: z.string() }),
   // A local card (spec 5). Times are instants; `zone` is the zone they were entered in. Cards

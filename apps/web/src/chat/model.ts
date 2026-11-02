@@ -43,6 +43,10 @@ export function groupThreads(
   );
 }
 
+// The server refuses to put away a thread that works or waits for the user; the controls follow.
+export const canMarkDone = (thread: Pick<Thread, 'state'>): boolean =>
+  thread.state === 'idle' || thread.state === 'failed';
+
 export const threadTitle = (thread: Pick<Thread, 'title'>): string =>
   thread.title.trim() === '' ? 'New thread' : thread.title;
 

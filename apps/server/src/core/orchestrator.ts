@@ -42,6 +42,8 @@ export interface ReadModel {
   setting(key: string, scope: SettingScopeRef): { value: unknown } | undefined;
   thread(id: string): Thread | undefined;
   runningTurn(threadId: string): Turn | undefined;
+  // The thread's turn with the highest index, running or not.
+  lastTurn(threadId: string): Turn | undefined;
   turnCount(threadId: string): number;
   // Index the next item of the thread gets.
   nextItemIndex(threadId: string): number;

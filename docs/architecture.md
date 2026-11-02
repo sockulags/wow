@@ -164,24 +164,24 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   when it is not the generated version. Permission modes (`read-only`, `auto`, `untrusted`,
   `full-access`) are an approval policy plus a sandbox; model, effort and permission mode travel
   with every `turn/start`. Details in `packages/provider-codex/README.md`.
-- **Provider service** (`apps/server/src/providers/service.ts`). Thread commands
-  (`thread.create`, `thread.sendMessage`, `thread.interrupt`, `thread.configure`,
-  `thread.setPinned`, `approval.answer`, `question.answer`) become events; after commit the service sends the
-  matching `ProviderCommand` to the instance's adapter (one adapter per instance, created on first
-  use). `thread.sendMessage` starts turn `<threadId>:turn:<n>` with the thread's model, effort,
-  permission mode and stored provider session id as `resumeId`. Adapter events are queued and
-  stored one batch per thread per tick as a `provider.events` command, which the orchestrator
+- **Provider service** (`apps/server/src/providers/service.ts`). Thread commands (`thread.create`,
+  `thread.sendMessage`, `thread.interrupt`, `thread.configure`, `thread.setPinned`,
+  `thread.setDone`, `approval.answer`, `question.answer`) become events; after commit the service
+  sends the matching `ProviderCommand` to the instance's adapter (one adapter per instance, created
+  on first use). `thread.sendMessage` starts turn `<threadId>:turn:<n>` with the thread's model,
+  effort, permission mode and stored provider session id as `resumeId`. Adapter events are queued
+  and stored one batch per thread per tick as a `provider.events` command, which the orchestrator
   (`core/threads.ts`) turns into rows: text and reasoning deltas append to one
   `assistant_text`/`reasoning` item per provider item id (`{text}`), tool calls are `tool_call`
   items (`{name, input, output, status}`), `approval` and `question` items point at their
-  `approvals`/`questions` rows (the payload of each item kind is a schema in
-  `packages/contracts`, `*ItemPayload`), the task list is one `task_list` item per turn (`{tasks}`), and
-  usage plus context usage merge into one `usage` item per turn and the turn's `usage`. Provider
-  ids are only unique per session, so row ids are prefixed with the turn or thread id. Thread
-  state: `working` while a turn runs, `needs_you` while an approval or question is open, `idle`
-  after a completed or interrupted turn, `failed` after a failed one. An effect that cannot start
-  or interrupt a turn fails the turn with the reason; a turn still `running` at startup failed
-  with the previous server process and is marked so. Events after a turn ended are dropped.
+  `approvals`/`questions` rows (the payload of each item kind is a schema in `packages/contracts`,
+  `*ItemPayload`), the task list is one `task_list` item per turn (`{tasks}`), and usage plus
+  context usage merge into one `usage` item per turn and the turn's `usage`. Provider ids are only
+  unique per session, so row ids are prefixed with the turn or thread id. Thread state: `working`
+  while a turn runs, `needs_you` while an approval or question is open, `idle` after a completed or
+  interrupted turn, `failed` after a failed one. An effect that cannot start or interrupt a turn
+  fails the turn with the reason; a turn still `running` at startup failed with the previous server
+  process and is marked so. Events after a turn ended are dropped.
 - **Claude details.** The SDK version is pinned exactly in `packages/provider-claude/package.json`.
   `launchArgs` (`--flag value`, `--flag=value`, `--flag`) become the SDK's `extraArgs`. Effort
   `default` leaves the effort to Claude Code; other values must be an SDK `EffortLevel`. A thread
@@ -547,7 +547,12 @@ with the first message, titled by its first line) or `/chat/$threadId`. A thread
 tool input and output only render while a row is open, which keeps long conversations cheap
 without a virtual list. Palette commands: every thread, New thread, Switch provider (a thread
 keeps its instance, so this opens a draft on the other instance in the same project or folder) and
-Stop turn while a turn runs.
+Stop turn while a turn runs, and Mark thread done or Reopen thread for the open thread (also in
+the thread header). `thread.setDone {threadId, done}` stores `thread.stateChanged` with `done`, or
+on reopen `failed` when the thread's last turn failed and `idle` otherwise; marking done is refused
+while the thread is `working` or `needs_you`, and `turn.started` makes a done thread `working`
+again, so a new message reopens it. A workflow step's thread becomes `done` through the engine's
+`setThreadState` effect when the step completes (after Continue when the step has a gate after).
 
 ## Workflow builder and run view
 

@@ -287,6 +287,9 @@ describe('workflow runs', () => {
     expect(done.steps.map((entry) => entry.state)).toEqual(['done', 'done']);
     expect(thread('r1.s1')?.state).toBe('done');
     expect(thread('r1.s2')).toMatchObject({ state: 'done', providerInstanceId: 'codex-work' });
+    // A finished step's thread can be reopened like any other.
+    dispatch({ type: 'thread.setDone', threadId: 'r1.s1', done: false });
+    expect(thread('r1.s1')?.state).toBe('idle');
     expect(startTurns()[1]).toMatchObject({
       threadId: 'r1.s2',
       model: 'gpt-5',
@@ -321,6 +324,10 @@ describe('workflow runs', () => {
     expect(waiting.steps.map((entry) => entry.state)).toEqual(['done', 'waiting']);
     expect(thread('r2.b')).toBeUndefined();
     expect(thread('r2.a')?.state).toBe('needs_you');
+    // The gate's thread is where the run waits for the user, so it cannot be put away.
+    expect(() => dispatch({ type: 'thread.setDone', threadId: 'r2.a', done: true })).toThrow(
+      /waiting for you/,
+    );
     expect(startTurns()).toHaveLength(1);
   });
 
