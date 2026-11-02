@@ -2,11 +2,10 @@ import { Outlet, useRouterState } from '@tanstack/react-router';
 import { PanelLeftIcon, PanelRightIcon, SearchIcon } from 'lucide-react';
 import { useLayoutEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { LocalUndoToaster } from '@/chat/local-undo';
 import { ProjectDialogs } from '@/projects/project-dialogs';
 import { ProviderDialogs } from '@/providers/provider-dialogs';
 import { formatBinding } from './keybindings';
-import { Toaster } from './notifications';
+import { AppToaster } from './notifications';
 import { CommandPalette } from './palette';
 import { useLayout, useRuntime, useSetting } from './runtime';
 import { sections } from './sections';
@@ -111,8 +110,7 @@ export function Shell() {
       <CommandPalette commands={commands} context={context} />
       <ProviderDialogs />
       <ProjectDialogs />
-      <Toaster />
-      <LocalUndoToaster />
+      <AppToaster />
     </div>
   );
 }
