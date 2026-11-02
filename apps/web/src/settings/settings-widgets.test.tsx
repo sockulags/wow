@@ -47,7 +47,7 @@ describe('settings widgets', () => {
     const row = within(await screen.findByTestId('setting-calendar.hourHeight'));
     expect(row.queryAllByRole('button', { name: /^Reset/ })).toEqual([]);
     fireEvent.change(row.getByLabelText('Hour height'), { target: { value: '60' } });
-    const [reset] = row.getAllByRole('button', { name: 'Reset Hour height to default' });
+    const [reset] = row.getAllByRole('button', { name: 'Reset to default' });
     await user.click(reset!);
     expect(row.queryAllByRole('button', { name: /^Reset/ })).toEqual([]);
   });

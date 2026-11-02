@@ -226,7 +226,7 @@ describe('generated settings fields', () => {
     expect(row('advanced.enabled').queryAllByRole('button', { name: /^Reset/ })).toEqual([]);
     await user.click(row('advanced.enabled').getByRole('switch'));
     await user.click(
-      row('advanced.enabled').getAllByRole('button', { name: 'Reset Enabled to default' })[0]!,
+      row('advanced.enabled').getAllByRole('button', { name: 'Reset to default' })[0]!,
     );
     expect(value('advanced.enabled')).toBeUndefined();
     expect(row('advanced.enabled').getByRole('switch').getAttribute('aria-checked')).toBe('false');

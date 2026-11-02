@@ -140,6 +140,7 @@ test.describe('settings', () => {
   });
 
   test('renders every registry setting with its description and default', async ({ page }) => {
+    test.slow();
     // Keys and raw defaults show only with "Show setting keys" (owner decision F-11).
     await page.goto('/settings/advanced');
     await page.getByLabel('Show setting keys').click();

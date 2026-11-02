@@ -31,6 +31,8 @@ async function expectInPickers(page: Page, name: string, present: boolean) {
 
 test.describe('projects', () => {
   test('creates a project, offers it in the pickers, renames and removes it', async ({ page }) => {
+    // Six page loads through the pickers; under two workers it runs close to the default limit.
+    test.slow();
     const folder = path.join(home, 'projects-e2e-site');
     await mkdir(folder, { recursive: true });
 

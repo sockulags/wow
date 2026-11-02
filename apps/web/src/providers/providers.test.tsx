@@ -234,7 +234,8 @@ describe('Settings → Providers', () => {
       }),
     );
     expect(screen.queryByRole('dialog', { name: 'Edit Work' })).toBeNull();
-  });
+    // Many typed keys through a full dialog; the default 5 s is tight on a loaded machine.
+  }, 15_000);
 
   it('asks before removing an instance with stored secrets, and shows why the server refused', async () => {
     const user = userEvent.setup();

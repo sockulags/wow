@@ -41,8 +41,9 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test` and `provider.listModels`
   (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`,
-  `workflowRuns.detectArtifacts` (`{runId}`), `outlook.open` (`{entryId}`), `outlook.refresh`, and `trackers.preview` and
-  `trackers.publish` (`{backlogItemId, service}`). Error codes are `RpcErrorCode`.
+  `workflowRuns.detectArtifacts` (`{runId}`), `outlook.open` (`{entryId}`), `outlook.refresh`, `trackers.test` (`{service}`,
+  signs in with the stored tracker settings and answers `{ok, account, message, missing}`), and
+  `trackers.preview` and `trackers.publish` (`{backlogItemId, service}`). Error codes are `RpcErrorCode`.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
@@ -211,8 +212,14 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   commands do the same from anywhere. `provider.detect` looks for `claude` and `codex` on the
   server's PATH (PATHEXT on Windows) and reports the config directory each would use
   (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `~/.claude` / `~/.codex`); what the onboarding needs
-  per kind is `providerSetup` in contracts. With no instance at all the web app opens a first-run
-  wizard that creates and tests one instance per detected CLI. Secret environment values go to
+  per kind is `providerSetup` in contracts. With no instance at all, and while
+  `providers.offerSetup` is on, the web app opens a first-run wizard: it creates and tests one
+  instance per detected CLI, then offers `projects.discover`'s folders as projects; "Not now"
+  turns the setting off. The instance editor runs `provider.detect` when it opens to fill an empty
+  binary path and config folder, lists `provider.listModels` for a saved instance, and tests after
+  every save; instances still `unknown` are tested when the app starts. The default instance for
+  new threads is the one the newest thread uses (`lastUsedInstanceId` in
+  `apps/web/src/providers/model.ts`), so nothing extra is stored. Secret environment values go to
   `secrets.set` as `provider:<instanceId>:env:<NAME>` and the instance stores the reference.
   `providerInstance.update` clears the last test when the binary, config directory, environment or
   launch arguments change, and both it and `providerInstance.delete` are refused while a turn runs
@@ -399,8 +406,9 @@ Notifications are the server's channel to the user. While `scheduler.notificatio
 orchestrator stores a `notification.sent` row when a trigger starts a run, when a run waits at a
 gate and when a run or a trigger fails; ids derive from the run, step and gate, so a repeated
 transition notifies once. Clients read the `notifications` topic (newest first): the web app shows
-the rows that arrive after its first snapshot as toasts for `scheduler.toastSeconds`, and clicking
-one opens its `path`.
+the rows that arrive after its first snapshot as toasts for `scheduler.toastSeconds`, whose "Open"
+action opens its `path`. The toasts are sonner's (`AppToaster` in `app/notifications.tsx`); the
+same toaster carries the app's own feedback (see "Look").
 
 ## Settings registry
 
@@ -483,14 +491,24 @@ bootstrap reads. On quit the desktop sends `{type: 'wow:shutdown'}` over the chi
 channel when the desktop dies, into the SIGTERM the server entry handles. A server that does not
 stop in time is killed; one that dies unexpectedly leads to a Restart / Quit dialog.
 
-Tray icon with Open, New thread (`/chat?new=1`), Pause/Resume scheduler and Quit; clicking it
-opens the window. Pause toggles the `scheduler.paused` setting, which the scheduler honours; the
+Tray icon whose menu starts with the day: "3 need you" (threads in `needs_you` plus runs
+`waiting`, opens `/chat`) and "Next: <card> at 16:30" (the earliest `scheduled` trigger, from the
+`triggers` and `calendarItems` topics, opens `/calendar`), then Open, New thread (`/chat?new=1`),
+Pause/Resume scheduler and Quit (`traySummary` and `trayMenu` in `tray-menu.ts`); the tooltip
+carries the count. Clicking the icon opens the window. Pause toggles the `scheduler.paused` setting, which the scheduler honours; the
 web app's palette has the same Pause/Resume scheduler command.
 `desktop.closeToTray`, `desktop.autostart` (`app.setLoginItemSettings` with `--hidden`, so a login
 start stays in the tray) and `desktop.startMinimized` are settings the desktop follows through the
 `settings` topic. Notifications use Electron's `Notification`, gated by `scheduler.notifications`,
 and are derived from changes on the `workflowRuns` topic: a new run, a run entering `waiting`, a
 run entering `failed`. A single-instance lock makes a second launch show the running window.
+
+A packaged build replaces Electron's default application menu (`app-menu.ts`): none on Windows
+and Linux, the app and Edit menus on macOS. The default menu's accelerators zoomed the page
+(Ctrl+=, Ctrl+-, Ctrl+0, which the calendar binds), reloaded it (Ctrl+R) and opened DevTools;
+development keeps it. Page zoom is locked with `setVisualZoomLevelLimits(1, 1)`. The preload's
+`window.wowDesktop.restart` (IPC `wow:app-restart`, `wow://app` pages only) relaunches the app for
+settings marked `restartRequired`; the web app shows it as "Restart now".
 
 The server bundle is one esbuild ESM file. Server modules find files next to their sources with
 `new URL('<relative>', import.meta.url)`; the build rewrites each module's `import.meta.url` to
@@ -736,6 +754,40 @@ pickers, whose popups ignore the theme: they compose `ChoiceSelect` (shadcn Sele
 list, stepped by `calendar.snapMinutes`) from `apps/web/src/components`. A Vitest guard
 (`src/test/native-controls.test.ts`) fails on `<select>`, `<option>`, `<datalist>`, `list=` and
 date or time inputs outside `components/ui`.
+
+Shared pieces in `apps/web/src/components` (views compose them; none restyles `components/ui`):
+
+- `ui/*`: shadcn primitives, plus `tooltip`, `kbd`, `textarea`, `toggle-group`, `radio-group`,
+  `alert-dialog`, `skeleton`, `separator` and `sonner`. Animations come from `tw-animate-css`;
+  `prefers-reduced-motion` turns them off. Inputs, textareas and select triggers set their own
+  `text-foreground`, so a value never takes a label's muted color. Dialog children are `min-w-0`,
+  so a long path cannot widen a dialog.
+- `hint.tsx`: `IconButton` (label as `aria-label` and tooltip, with the key from a
+  `keybindings.*` setting), `WithTooltip`, `KeyHint` and `ShortcutHint`.
+- `form-field.tsx`: `FormField`, the one field layout (label, control, help, error) that wires
+  `id`, `aria-describedby` and `aria-invalid` onto its single child.
+- `states.tsx`: `EmptyState` (icon, title, one sentence, actions; `compact` for side lists),
+  `LoadingState` (skeletons that fade in after 150 ms), `DisconnectedState`, `TopicPlaceholder`
+  and `Stale`. `app/topic-state.ts` adds `useTopicState(topic)`, which reports `loading`, `ready`,
+  `disconnected` or `offline` next to the rows, so a view never shows an empty state before the
+  first snapshot and keeps the last rows, dimmed, while the connection is down.
+  `app/connection-banner.tsx` shows the not-connected bar with "Retry now"
+  (`Connection.retry()`).
+- `banner.tsx` (`Banner`, info, warning or error, for lasting conditions only),
+  `confirm-dialog.tsx` (`ConfirmDialog`, only for actions that cannot be undone),
+  `path-text.tsx` (`PathText`, one line, ellipsis in the middle, full path in a tooltip) and
+  `code-block.tsx` (`CodeBlock`, Shiki loaded on first use with its JavaScript regex engine).
+- `lib/feedback.ts`: `notify.success|error|info|warning` and `offerUndo({message, undo})`.
+  Destructive actions delete at once and offer Undo; only irreversible ones (stored secrets, a
+  project whose cards and threads lose their link) confirm first.
+- `lib/format.ts`: `formatWhen`, `formatRelative`, `formatDuration` and `useDateFormat()`, in the
+  `calendar.zone` zone. The UI never prints ISO timestamps.
+- `app/shell-toolbar.tsx`: `ShellToolbar` renders a view's toolbar into the shell header row.
+
+Tokens add `--warning`, `--info`, `--destructive-foreground`, `--overlay` and `--border-strong`,
+and an 11px `text-2xs` step; type uses only `text-2xs`, `text-xs`, `text-sm` and `text-base`. The
+sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" counts read from the
+`threads` and `workflowRuns` topics.
 
 ## Testing strategy
 

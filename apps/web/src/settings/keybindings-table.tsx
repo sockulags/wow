@@ -95,9 +95,7 @@ function KeybindingRow({
         />
       </div>
       <div role="cell" className="w-36 text-right">
-        {differs && (
-          <ResetButton label={definition.label} definition={definition} onReset={reset} />
-        )}
+        {differs && <ResetButton definition={definition} onReset={reset} />}
       </div>
     </div>
   );

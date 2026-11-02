@@ -58,11 +58,9 @@ export function useSettingField(settingKey: string, definition: SettingDefinitio
 }
 
 export function ResetButton({
-  label,
   definition,
   onReset,
 }: {
-  label: string;
   definition: SettingDefinition;
   onReset: () => void;
 }) {
@@ -71,13 +69,7 @@ export function ResetButton({
     <WithTooltip
       label={`Default: ${readableValue(definition.default, kind, definition.options, definition.unit)}`}
     >
-      <Button
-        variant="ghost"
-        size="xs"
-        className="text-muted-foreground"
-        aria-label={`Reset ${label} to default`}
-        onClick={onReset}
-      >
+      <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={onReset}>
         <RotateCcwIcon />
         Reset to default
       </Button>
@@ -128,7 +120,7 @@ export function SettingRow({
           {definition.restartRequired && <Badge variant="outline">Restart required</Badge>}
           {differs && !secret && (
             <div className="ml-auto">
-              <ResetButton label={definition.label} definition={definition} onReset={reset} />
+              <ResetButton definition={definition} onReset={reset} />
             </div>
           )}
         </div>
