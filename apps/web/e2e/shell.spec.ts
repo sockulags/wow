@@ -8,7 +8,7 @@ test.describe('shell', () => {
     await expect(page).toHaveURL(/\/calendar$/);
     const nav = page.getByRole('navigation', { name: 'Sections' });
     const routes = [
-      ['Calendar', /\/calendar$/, 'No calendar items yet'],
+      ['Calendar', /\/calendar$/, 'Not connected to the wow server'],
       // Without a server the views say so instead of claiming to be empty (audit A-08).
       ['Chat', /\/chat$/, 'Not connected to the wow server'],
       ['Workflows', /\/workflows$/, 'Not connected to the wow server'],

@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { choose } from './controls';
 import { e2eHome, e2eOutlookControlPort } from './env';
 
 // U9 ground truth against the mock Outlook (WOW_OUTLOOK=mock, e2e/server.ts): Outlook items and
@@ -42,10 +43,14 @@ const calendar = (page: Page) => page.getByRole('region', { name: 'Calendar' });
 
 async function runPaletteCommand(page: Page, title: string) {
   await page.keyboard.press('Control+k');
-  await page.getByRole('dialog').getByRole('combobox').fill(title);
+  const palette = page.getByRole('dialog');
+  await palette.getByRole('combobox').fill(title);
+  // Enter runs the highlighted command, so wait until the filter has put this one first.
+  // The palette shows a command without its group prefix ("Calendar: ").
+  const shown = title.replace(/^\w+: /, '');
+  await expect(palette.getByRole('option').first()).toHaveText(new RegExp(`^${shown}`, 'i'));
   await page.keyboard.press('Enter');
-  // The palette fades out; until it is gone its input still has focus and takes plain keys.
-  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(palette).toBeHidden();
 }
 
 // A point in a day column at a wall-clock time, a few pixels below the line. The column is one
@@ -114,12 +119,21 @@ test.describe('calendar', () => {
   test('shows Outlook items read-only with the Teams link, and unread mail', async ({ page }) => {
     await page.goto(`/calendar?view=day&date=${localDay()}`);
     const view = calendar(page);
-    await expect(
-      view.getByRole('group', { name: 'Lunch with Eli, 12:00–13:00, read-only' }),
-    ).toBeVisible();
+    const lunch = view.getByRole('button', { name: 'Lunch with Eli, 12:00–13:00, read-only' });
+    await expect(lunch).toBeVisible();
+
+    // A meeting opens its read-only details: place, organizer, Join and Open in Outlook.
+    await lunch.click();
+    const details = page.getByTestId('outlook-details');
+    await expect(details).toContainText('Corner bistro');
+    await details.getByRole('button', { name: 'Open in Outlook' }).click();
+    await expect(page.getByText('Opened in Outlook').first()).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(details).toBeHidden();
+    await expect(lunch).toBeFocused();
 
     await page.goto('/calendar');
-    const standups = view.getByRole('group', { name: 'Team standup, 09:15–09:30, read-only' });
+    const standups = view.getByRole('button', { name: 'Team standup, 09:15–09:30, read-only' });
     // One per weekday occurrence of the recurring meeting.
     await expect(standups).toHaveCount(5);
     await expect(standups.first().getByLabel('Read-only')).toBeVisible();
@@ -127,10 +141,16 @@ test.describe('calendar', () => {
       standups.first().getByRole('link', { name: 'Join Teams meeting' }),
     ).toHaveAttribute('href', /^https:\/\/teams\.microsoft\.com\/l\/meetup-join\//);
     await expect(standups.first().getByRole('button')).toHaveCount(0);
+    // A Teams link reads as "Teams meeting", never as the raw URL.
+    await standups.first().click();
+    await expect(page.getByTestId('outlook-details')).toContainText('Teams meeting');
+    await expect(page.getByTestId('outlook-details')).not.toContainText('https://');
+    await expect(page.getByTestId('outlook-details')).toContainText('Ada Lindqvist');
+    await page.keyboard.press('Escape');
 
     await page.goto(`/calendar?view=day&date=${localDay(2)}`);
     await expect(
-      view.getByRole('group', {
+      view.getByRole('button', {
         name: 'Canceled: Architecture sync, 13:00–13:45, cancelled, read-only',
       }),
     ).toBeVisible();
@@ -139,25 +159,37 @@ test.describe('calendar', () => {
 
     const rail = page.getByRole('complementary', { name: 'Unread mail' });
     await expect(rail.getByLabel('3 unread')).toBeVisible();
-    await expect(rail.getByRole('button')).toHaveText([
+    const messages = rail.getByRole('list', { name: 'Unread messages' }).getByRole('button');
+    await expect(messages).toHaveText([
       /Nightly build for lantern-web passed/,
       /Notes before tomorrow's design review/,
       /Offsite agenda draft/,
     ]);
-    await rail.getByRole('button', { name: /Nightly build/ }).click();
-    await expect(rail.getByRole('status')).toHaveText(
-      'Opened in Outlook: Nightly build for lantern-web passed',
-    );
+    // One Tab stop for the list; the arrow keys move between messages.
+    await messages.first().focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(messages.nth(1)).toBeFocused();
+    await messages.first().click();
+    await expect(page.getByText('Opened in Outlook').first()).toBeVisible();
     expect(await control('/opened', 'GET')).toContain('mock-mail-build');
+
+    // The rail folds to its count and back, from its button and its key.
+    await rail.getByRole('button', { name: 'Collapse mail rail' }).click();
+    await expect(rail.getByRole('button', { name: 'Show mail rail, 3 unread' })).toBeVisible();
+    await expect(messages).toHaveCount(0);
+    await page.reload();
+    await expect(rail.getByRole('button', { name: 'Show mail rail, 3 unread' })).toBeVisible();
+    await page.keyboard.press('m');
+    await expect(messages).toHaveCount(3);
   });
 
   test('shows a banner while Outlook is unavailable and keeps the cached items', async ({
     page,
   }) => {
     await page.goto(`/calendar?view=day&date=${localDay()}`);
-    const lunch = calendar(page).getByRole('group', { name: /^Lunch with Eli/ });
+    const lunch = calendar(page).getByRole('button', { name: /^Lunch with Eli/ });
     await expect(lunch).toBeVisible();
-    const banner = page.getByRole('status').filter({ hasText: 'Outlook unavailable' });
+    const banner = page.getByTestId('outlook-banner');
     await expect(banner).toBeHidden();
 
     await control('/unavailable?message=Outlook%20is%20not%20running', 'PUT');
@@ -165,13 +197,16 @@ test.describe('calendar', () => {
     await expect(banner).toContainText(/Outlook unavailable since \d\d:\d\d/);
     await expect(banner).toContainText('Outlook is not running');
     await expect(lunch).toBeVisible();
+    const rail = page.getByRole('complementary', { name: 'Unread mail' });
     await expect(
-      page.getByRole('complementary', { name: 'Unread mail' }).getByRole('button'),
+      rail.getByRole('list', { name: 'Unread messages' }).getByRole('button'),
     ).toHaveCount(3);
+    await expect(rail.getByTestId('mail-stale')).toContainText(/Last read \d\d:\d\d/);
 
     await control('/unavailable', 'DELETE');
-    await page.getByRole('button', { name: 'Refresh Outlook' }).click();
+    await banner.getByRole('button', { name: 'Try again' }).click();
     await expect(banner).toBeHidden();
+    await expect(rail.getByTestId('mail-stale')).toHaveCount(0);
   });
 
   test('creates, moves and resizes a card, and it stays after a reload', async ({ page }) => {
@@ -189,19 +224,20 @@ test.describe('calendar', () => {
     await dialog.getByLabel('Title').press('Enter');
     await expect(dialog).toBeHidden();
     const card = calendar(page).getByRole('button', { name: /^Focus block, / });
-    await expect(card).toHaveAccessibleName('Focus block, 16:00–17:00, scheduled');
-    await expect(card.getByTestId('card-state')).toHaveText('scheduled');
+    await expect(card).toHaveAccessibleName('Focus block, 16:00–17:00');
+    // Only triggers (a workflow in a project) carry a state.
+    await expect(card.getByTestId('card-state')).toHaveCount(0);
 
     // Move it one hour later by its middle.
     await drag(page, await pointAt(column, 16 * 60 + 30), await pointAt(column, 17 * 60 + 30));
-    await expect(card).toHaveAccessibleName('Focus block, 17:00–18:00, scheduled');
+    await expect(card).toHaveAccessibleName('Focus block, 17:00–18:00');
 
     // Stretch its lower edge by half an hour.
     await drag(page, await pointAt(column, 18 * 60, -2), await pointAt(column, 18 * 60 + 30, -2));
-    await expect(card).toHaveAccessibleName('Focus block, 17:00–18:30, scheduled');
+    await expect(card).toHaveAccessibleName('Focus block, 17:00–18:30');
 
     await page.reload();
-    await expect(card).toHaveAccessibleName('Focus block, 17:00–18:30, scheduled');
+    await expect(card).toHaveAccessibleName('Focus block, 17:00–18:30');
 
     // A click makes a card of the configured length; the dialog deletes it again.
     const slot = await pointAt(column, 15 * 60);
@@ -211,12 +247,22 @@ test.describe('calendar', () => {
     await created.getByLabel('Title').fill('Quick note');
     await created.getByRole('button', { name: 'Create card' }).click();
     const quick = calendar(page).getByRole('button', { name: /^Quick note, / });
-    await expect(quick).toHaveAccessibleName('Quick note, 15:00–15:30, scheduled');
+    await expect(quick).toHaveAccessibleName('Quick note, 15:00–15:30');
     await quick.focus();
     await page.keyboard.press('Enter');
     await page
       .getByRole('dialog', { name: 'Edit card' })
-      .getByRole('button', { name: 'Delete' })
+      .getByRole('button', { name: 'Delete card' })
+      .click();
+    await expect(quick).toHaveCount(0);
+    // Deleting happens at once and offers Undo.
+    await page.getByRole('button', { name: 'Undo' }).click();
+    await expect(quick).toHaveAccessibleName('Quick note, 15:00–15:30');
+    await quick.focus();
+    await page.keyboard.press('Enter');
+    await page
+      .getByRole('dialog', { name: 'Edit card' })
+      .getByRole('button', { name: 'Delete card' })
       .click();
     await expect(quick).toHaveCount(0);
     await page.reload();
@@ -227,19 +273,29 @@ test.describe('calendar', () => {
   test('moves by day and week with the keys and the palette', async ({ page }) => {
     await page.goto('/calendar?view=day&date=2026-10-24');
     const range = page.getByTestId('calendar-range');
-    await expect(range).toHaveText('Saturday 24 October 2026');
+    // The toolbar keeps a long and a short form and shows the one that fits.
+    const shown = { useInnerText: true };
+    await expect(range).toHaveText('Saturday 24 October 2026', shown);
     await page.keyboard.press('n');
     await expect(page).toHaveURL(/date=2026-10-25/);
-    await expect(range).toHaveText('Sunday 25 October 2026');
+    await expect(range).toHaveText('Sunday 25 October 2026', shown);
     await page.keyboard.press('w');
     await expect(page).toHaveURL(/view=week/);
-    // The week of the October DST change, starting on the default Monday.
-    await expect(range).toHaveText('19 Oct 2026 – 25 Oct 2026');
+    // The week of the October DST change, starting on Monday as the mock Outlook says.
+    await expect(range).toHaveText('19–25 Oct 2026', shown);
+    await expect(page.getByTestId('calendar-week')).toHaveText('Week 43');
     await expect(page.getByTestId(/^day-/)).toHaveCount(7);
     await page.keyboard.press('n');
-    await expect(range).toHaveText('26 Oct 2026 – 1 Nov 2026');
+    await expect(range).toHaveText('26 Oct – 1 Nov 2026', shown);
     await runPaletteCommand(page, 'Calendar: previous week');
-    await expect(range).toHaveText('19 Oct 2026 – 25 Oct 2026');
+    await expect(range).toHaveText('19–25 Oct 2026', shown);
+    // The palette hides and shows the weekend (calendar.showWeekends).
+    await runPaletteCommand(page, 'Calendar: hide weekends');
+    await expect(page.getByTestId(/^day-/)).toHaveCount(5);
+    await expect(range).toHaveText('19–23 Oct 2026', shown);
+    await runPaletteCommand(page, 'Calendar: show weekends');
+    await expect(page.getByTestId(/^day-/)).toHaveCount(7);
+    await expect(page.getByRole('dialog')).toBeHidden();
     await page.keyboard.press('t');
     await expect(page).not.toHaveURL(/date=/);
     await expect(page.locator('[aria-current="date"]')).toHaveCount(1);
@@ -259,7 +315,7 @@ test.describe('calendar', () => {
 
     await watchZoomEvents(page);
     await page.keyboard.press('Control+Equal');
-    await expect(level).toHaveText('121%');
+    await expect(level).toHaveText('120%');
     expect(await dayHeight()).toBe(24 * 58);
     await page.keyboard.press('Control+Minus');
     await expect(level).toHaveText('100%');
@@ -267,17 +323,23 @@ test.describe('calendar', () => {
     expect(await zoomEvents(page)).toEqual(['key Equal true', 'key Minus true']);
     await page.getByRole('button', { name: 'Zoom in calendar' }).click();
     await page.getByRole('button', { name: 'Zoom in calendar' }).click();
-    await expect(level).toHaveText('146%');
-    expect(await dayHeight()).toBe(24 * 70);
+    await expect(level).toHaveText('140%');
+    expect(await dayHeight()).toBe(24 * 67);
 
     await page.reload();
-    await expect(level).toHaveText('146%');
-    expect(await dayHeight()).toBe(24 * 70);
+    await expect(level).toHaveText('140%');
+    expect(await dayHeight()).toBe(24 * 67);
+
+    // The level opens a menu of steps.
+    await level.click();
+    await page.getByRole('menuitemradio', { name: '200%' }).click();
+    await expect(level).toHaveText('200%');
+    expect(await dayHeight()).toBe(24 * 96);
 
     await runPaletteCommand(page, 'Reset calendar zoom');
     await expect(level).toHaveText('100%');
     await runPaletteCommand(page, 'Zoom out calendar');
-    await expect(level).toHaveText('83%');
+    await expect(level).toHaveText('80%');
     await page.keyboard.press('Control+0');
     await expect(level).toHaveText('100%');
 
@@ -291,7 +353,7 @@ test.describe('calendar', () => {
     await page.keyboard.down('Control');
     await page.mouse.wheel(0, -100);
     await page.keyboard.up('Control');
-    await expect(level).toHaveText('121%');
+    await expect(level).toHaveText('120%');
     const after = await column.boundingBox();
     if (!after) throw new Error('day column is not on screen');
     expect(after.height).toBe(24 * 58);
@@ -311,7 +373,7 @@ test.describe('calendar', () => {
     await reveal(page, 9 * 60);
 
     // A local card in the middle of the invented overlapping meetings.
-    await view.getByRole('button', { name: 'New card' }).click();
+    await page.getByRole('button', { name: 'New card', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'New card' });
     await dialog.getByLabel('Title').fill('Write the release notes for lantern-web');
     await dialog.getByLabel('Start').fill('10:45');
@@ -319,9 +381,7 @@ test.describe('calendar', () => {
     await dialog.getByRole('button', { name: 'Create card' }).click();
     await expect(dialog).toBeHidden();
     const card = view.getByRole('button', { name: /^Write the release notes for lantern-web, / });
-    await expect(card).toHaveAccessibleName(
-      'Write the release notes for lantern-web, 10:45–11:45, scheduled',
-    );
+    await expect(card).toHaveAccessibleName('Write the release notes for lantern-web, 10:45–11:45');
 
     // The invented meetings from 10:00 to 12:00 and the card; the standup on weekdays sits apart.
     const blocks = view.locator('[data-item]').filter({
@@ -347,14 +407,15 @@ test.describe('calendar', () => {
       }
     }
 
-    // The full title is on hover even when the block cuts it off.
-    await expect(card).toHaveAttribute(
-      'title',
-      'Write the release notes for lantern-web\n10:45–11:45',
+    // The full title is on hover and on focus even when the block cuts it off.
+    await card.hover();
+    await expect(page.getByTestId('block-tooltip').first()).toContainText(
+      'Write the release notes for lantern-web10:45–11:45',
     );
-    await expect(
-      view.getByRole('group', { name: /^Release planning for lantern-web 2\.4, / }),
-    ).toHaveAttribute('title', 'Release planning for lantern-web 2.4\n10:00–11:30\nRoom Ferrite');
+    await view.getByRole('button', { name: /^Release planning for lantern-web 2\.4, / }).focus();
+    await expect(page.getByTestId('block-tooltip').first()).toContainText(
+      'Release planning for lantern-web 2.410:00–11:30Room Ferrite',
+    );
 
     // A narrow card still moves by mouse; then it is gone again for the other tests.
     const box = await card.boundingBox();
@@ -365,15 +426,108 @@ test.describe('calendar', () => {
       { x: box.x + box.width / 2, y: box.y + box.height / 2 },
       { x: box.x + box.width / 2, y: box.y + box.height / 2 + 2 * hour },
     );
-    await expect(card).toHaveAccessibleName(
-      'Write the release notes for lantern-web, 12:45–13:45, scheduled',
-    );
+    await expect(card).toHaveAccessibleName('Write the release notes for lantern-web, 12:45–13:45');
     await card.focus();
     await page.keyboard.press('Enter');
     await page
       .getByRole('dialog', { name: 'Edit card' })
-      .getByRole('button', { name: 'Delete' })
+      .getByRole('button', { name: 'Delete card' })
       .click();
     await expect(card).toHaveCount(0);
+  });
+
+  test('moves between items with the keyboard and moves a card with Alt', async ({ page }) => {
+    const day = localDay(4);
+    await page.goto(`/calendar?view=day&date=${day}`);
+    const view = calendar(page);
+    await reveal(page, 9 * 60);
+    await page.getByRole('button', { name: 'New card', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'New card' });
+    await dialog.getByLabel('Title').fill('Keyboard card');
+    await dialog.getByLabel('Start').fill('15:00');
+    await dialog.getByLabel('End').fill('15:30');
+    await dialog.getByRole('button', { name: 'Create card' }).click();
+    const card = view.getByRole('button', { name: /^Keyboard card, / });
+    await expect(card).toBeVisible();
+
+    // The skip link lands in the grid, which is one Tab stop.
+    await page.getByRole('link', { name: 'Skip to calendar' }).focus();
+    await page.keyboard.press('Enter');
+    const focused = page.locator('[data-stop]:focus');
+    await expect(focused).toHaveCount(1);
+    await expect(view.locator('[data-stop][tabindex="0"]')).toHaveCount(1);
+    await page.keyboard.press('End');
+    await expect(card).toBeFocused();
+    await page.keyboard.press('Home');
+    await expect(card).not.toBeFocused();
+    await page.keyboard.press('End');
+
+    // Alt+arrows move the card by the snap step; Alt+Shift+arrows move its end.
+    await page.keyboard.press('Alt+ArrowDown');
+    await expect(card).toHaveAccessibleName('Keyboard card, 15:15–15:45');
+    await expect(card).toBeFocused();
+    await page.keyboard.press('Alt+Shift+ArrowDown');
+    await expect(card).toHaveAccessibleName('Keyboard card, 15:15–16:00');
+    await page.keyboard.press('Enter');
+    const edit = page.getByRole('dialog', { name: 'Edit card' });
+    await expect(edit.getByTestId('card-duration')).toHaveText('45 min');
+    await page.keyboard.press('Escape');
+    // Focus returns to the card the dialog was opened from.
+    await expect(card).toBeFocused();
+    await page.keyboard.press('Enter');
+    await edit.getByRole('button', { name: 'Delete card' }).click();
+    await expect(card).toHaveCount(0);
+  });
+
+  test('refuses an end before the start and says what a trigger will do', async ({ page }) => {
+    await page.goto(`/calendar?view=day&date=${localDay(4)}`);
+    await page.keyboard.press('c');
+    const dialog = page.getByRole('dialog', { name: 'New card' });
+    await expect(dialog.getByLabel('Title')).toHaveAttribute(
+      'placeholder',
+      'What is this time for?',
+    );
+    await dialog.getByLabel('Title').fill('Backwards');
+    await dialog.getByLabel('Start').fill('14:45');
+    await dialog.getByLabel('End').fill('10:00');
+    await expect(dialog.getByText('Ends before it starts')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Create card' })).toBeDisabled();
+    await dialog.getByLabel('End').fill('15:30');
+    await expect(dialog.getByTestId('card-duration')).toHaveText('45 min');
+    await expect(dialog.getByRole('button', { name: 'Create card' })).toBeEnabled();
+
+    await choose(dialog.getByLabel('Workflow'), 'Backlog e2e');
+    await choose(dialog.getByLabel('Project'), 'No project');
+    await expect(dialog.getByTestId('trigger-summary')).toHaveText('Will not run: pick a project.');
+    await choose(dialog.getByLabel('Project'), 'Demo');
+    await expect(dialog.getByTestId('trigger-summary')).toContainText('Starts at 14:45 in Demo');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+  });
+
+  test('settings follow Outlook for zone, work hours and first day until overridden', async ({
+    page,
+  }) => {
+    await page.goto('/settings/calendar');
+    const hours = page.getByTestId('setting-calendar.workHours');
+    await expect(hours).toContainText('From Outlook: 08:30–17:00, Mon–Fri');
+    await expect(page.getByTestId('setting-calendar.firstDayOfWeek')).toContainText(
+      'From Outlook: Monday',
+    );
+    const zone = page.getByRole('combobox', { name: 'Time zone' });
+    await expect(zone).toContainText('From Outlook');
+    await zone.click();
+    await expect(page.getByRole('option', { name: /^System \(/ })).toBeVisible();
+    await page.getByPlaceholder(/Search zones/).fill('Tokyo');
+    await expect(page.getByRole('option', { name: 'Asia/Tokyo (UTC+9)' })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    // The calendar shades Outlook's work hours.
+    await page.goto(`/calendar?view=day&date=${localDay(7 - new Date().getDay() + 1)}`);
+    const band = page.getByTestId('work-hours').first();
+    const column = page.getByTestId(/^day-/).first();
+    const [bandBox, columnBox] = [await band.boundingBox(), await column.boundingBox()];
+    if (!bandBox || !columnBox) throw new Error('work hours are not on screen');
+    expect(Math.round(((bandBox.y - columnBox.y) / columnBox.height) * 24 * 60)).toBe(8 * 60 + 30);
   });
 });

@@ -28,7 +28,7 @@ describe('settings', () => {
       days: ['monday'],
     });
     expect(result).toEqual({ ok: false, issues: ['end: Work hours must end after they start'] });
-    expect(settingValue(store.getState().values, 'calendar.workHours').start).toBe('08:00');
+    expect(settingValue(store.getState().values, 'calendar.workHours')).toBe('outlook');
   });
 
   it('rejects unknown keys', async () => {

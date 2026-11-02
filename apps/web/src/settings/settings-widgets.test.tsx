@@ -33,6 +33,8 @@ describe('settings widgets', () => {
     const user = userEvent.setup();
     const { runtime } = await renderApp('/settings/calendar');
     const row = within(await screen.findByTestId('setting-calendar.workHours'));
+    // Work hours follow Outlook until overridden (F-8); Override starts from the fallback.
+    await user.click(row.getByRole('switch', { name: 'Override Outlook' }));
     await user.click(row.getByRole('button', { name: 'Saturday' }));
     expect(runtime.settings.getState().values['calendar.workHours']).toEqual({
       start: '08:00',

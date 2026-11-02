@@ -1,12 +1,5 @@
-import { useSetting } from '@/app/runtime';
-import {
-  addDays,
-  formatTime,
-  localDate,
-  resolveZone,
-  sameDate,
-  type LocalDate,
-} from '@/calendar/time';
+import { useCalendarPrefs } from '@/calendar/prefs';
+import { addDays, formatTime, localDate, sameDate, type LocalDate } from '@/calendar/time';
 
 // Human dates, times and durations (design rules, "Dates"; audit A-17). Never ISO in the UI.
 // `now` is a parameter so the wording is tested without a clock.
@@ -68,9 +61,10 @@ export function formatDuration(milliseconds: number): string {
   return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
 }
 
-// The formatters bound to the calendar.zone setting, so every view uses the same zone.
+// The formatters bound to the calendar's zone (calendar.zone with "outlook" resolved against
+// Outlook's profile), so every view uses the same zone as the calendar.
 export function useDateFormat() {
-  const zone = resolveZone(useSetting('calendar.zone'));
+  const { zone } = useCalendarPrefs();
   return {
     zone,
     when: (value: Date | string, now?: Date) => formatWhen(value, zone, now),

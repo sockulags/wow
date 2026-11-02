@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { z } from 'zod';
 import { ClockTime, Weekday } from '@wow/contracts';
+import { ProfileResult } from './protocol.js';
 
 // Fixtures are invented and placed relative to "today", so the mock calendar always has something
 // in the visible week.
@@ -44,9 +45,19 @@ const FixtureMessage = z.object({
 });
 export type FixtureMessage = z.infer<typeof FixtureMessage>;
 
+// What the mock answers to `profile`, in the bridge's own shape. Without a profile.json it says
+// nothing, like an Outlook whose work hours were never set.
+export const emptyProfile: ProfileResult = {
+  timeZoneId: null,
+  workHoursXml: null,
+  firstDayOfWeek: null,
+  address: null,
+};
+
 export const OutlookFixtures = z.object({
   appointments: z.array(FixtureAppointment),
   messages: z.array(FixtureMessage),
+  profile: ProfileResult.default(emptyProfile),
 });
 export type OutlookFixtures = z.infer<typeof OutlookFixtures>;
 export type OutlookFixturesInput = z.input<typeof OutlookFixtures>;
@@ -60,5 +71,13 @@ export async function loadFixtures(dir: string = defaultFixturesDir): Promise<Ou
     .object({ appointments: z.array(z.unknown()) })
     .parse(await read('calendar.json'));
   const mail = z.object({ messages: z.array(z.unknown()) }).parse(await read('mail.json'));
-  return OutlookFixtures.parse({ appointments: calendar.appointments, messages: mail.messages });
+  const profile = await read('profile.json').catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  });
+  return OutlookFixtures.parse({
+    appointments: calendar.appointments,
+    messages: mail.messages,
+    profile,
+  });
 }

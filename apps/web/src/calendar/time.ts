@@ -28,8 +28,12 @@ const WEEKDAYS: readonly Weekday[] = [
   'saturday',
 ];
 
+export const systemZone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// For callers without the Outlook profile: "outlook" falls back to the system zone, as it does
+// until Outlook is first read. The calendar itself resolves zones with `useCalendarPrefs`.
 export function resolveZone(setting: string): string {
-  return setting === 'system' ? Intl.DateTimeFormat().resolvedOptions().timeZone : setting;
+  return setting === 'system' || setting === 'outlook' ? systemZone() : setting;
 }
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
@@ -175,7 +179,60 @@ export const formatDayHeading = (date: LocalDate): string =>
 // "Monday 2 November 2026"
 export const formatLongDay = (date: LocalDate): string =>
   `${dayName(date)} ${date.day} ${monthName(date)} ${date.year}`;
-// "2 Nov 2026 – 8 Nov 2026"
-const shortDate = (date: LocalDate) => `${date.day} ${monthName(date).slice(0, 3)} ${date.year}`;
-export const formatDateRange = (first: LocalDate, last: LocalDate): string =>
-  `${shortDate(first)} – ${shortDate(last)}`;
+const shortMonth = (date: LocalDate) => monthName(date).slice(0, 3);
+
+// "2–8 Nov 2026", "30 Nov – 6 Dec 2026", "28 Dec 2026 – 3 Jan 2027". `withYear: false` drops the
+// year for a narrow toolbar.
+export function formatDateRange(first: LocalDate, last: LocalDate, withYear = true): string {
+  const year = (date: LocalDate) => (withYear ? ` ${date.year}` : '');
+  if (first.year !== last.year) {
+    return `${first.day} ${shortMonth(first)}${year(first)} – ${last.day} ${shortMonth(last)}${year(last)}`;
+  }
+  if (first.month !== last.month) {
+    return `${first.day} ${shortMonth(first)} – ${last.day} ${shortMonth(last)}${year(last)}`;
+  }
+  return `${first.day}–${last.day} ${shortMonth(last)}${year(last)}`;
+}
+
+// "Mon 2 Nov", for narrow toolbars and details.
+export const formatShortDay = (date: LocalDate): string =>
+  `${dayName(date).slice(0, 3)} ${date.day} ${shortMonth(date)}`;
+
+// The ISO 8601 week number: weeks start on Monday and week 1 holds the year's first Thursday.
+export function isoWeek(date: LocalDate): number {
+  const day = new Date(Date.UTC(date.year, date.month - 1, date.day));
+  const weekday = (day.getUTCDay() + 6) % 7;
+  day.setUTCDate(day.getUTCDate() - weekday + 3);
+  const firstThursday = new Date(Date.UTC(day.getUTCFullYear(), 0, 4));
+  const firstWeekday = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstWeekday + 3);
+  return 1 + Math.round((day.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000));
+}
+
+// "UTC+1", "UTC+5:30", "UTC" for the zone's offset at `instant`.
+export function formatOffset(zone: string, instant: Date): string {
+  const name =
+    new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'shortOffset' })
+      .formatToParts(instant)
+      .find((part) => part.type === 'timeZoneName')?.value ?? 'GMT';
+  return name.replace('GMT', 'UTC');
+}
+
+// "Stockholm, UTC+1": the city of an IANA zone and its offset now.
+export function formatZone(zone: string, instant: Date = new Date()): string {
+  const city = (zone.split('/').at(-1) ?? zone).replaceAll('_', ' ');
+  return `${city}, ${formatOffset(zone, instant)}`;
+}
+
+// "30 min", "1 h", "1 h 15 min".
+export function formatMinutes(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `${rest} min`;
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+}
+
+export const isWeekend = (date: LocalDate): boolean => {
+  const weekday = weekdayOf(date);
+  return weekday === 'saturday' || weekday === 'sunday';
+};

@@ -9,9 +9,10 @@ import {
   Trash2Icon,
 } from 'lucide-react';
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { useConnectionState, useSetting } from '@/app/runtime';
+import { useConnectionState } from '@/app/runtime';
 import { useTopicState } from '@/app/topic-state';
-import { isoDate, localDate, resolveZone } from '@/calendar/time';
+import { useCalendarPrefs } from '@/calendar/prefs';
+import { isoDate, localDate } from '@/calendar/time';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
 import { ChoiceSelect } from '@/components/choice-select';
 import { FormField } from '@/components/form-field';
@@ -328,7 +329,7 @@ function PlanStatus({ item }: { item: BacklogItem }) {
   );
   const runs = useTopic('workflowRuns') ?? [];
   const workflows = useTopic('workflows') ?? [];
-  const zone = resolveZone(useSetting('calendar.zone'));
+  const { zone } = useCalendarPrefs();
   const run = runs.find((candidate) => candidate.id === item.runId);
   const problem = runProblem(run);
   if (cards.length === 0 && !run && !item.remote) return null;

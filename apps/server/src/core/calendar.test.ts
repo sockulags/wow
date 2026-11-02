@@ -53,6 +53,8 @@ const standup = (day: string, overrides: Partial<OutlookCalendarRow> = {}): Outl
   allDay: false,
   location: 'Microsoft Teams Meeting',
   joinUrl: 'https://teams.microsoft.com/l/meetup-join/invented',
+  body: null,
+  organizer: 'Ada Lindqvist',
   state: 'scheduled',
   ...overrides,
 });
@@ -78,6 +80,7 @@ const sync = (calendar: OutlookCalendarRow[], messages: MailItem[] = []): Server
   mail: messages,
   unreadCount: messages.length,
   bridgeVersion: 'mock-1',
+  profile: null,
 });
 
 beforeEach(() => {
@@ -181,7 +184,30 @@ describe('outlook sync', () => {
       unavailableSince: null,
       unreadCount: 2,
       bridgeVersion: 'mock-1',
+      profile: null,
     });
+  });
+
+  it('stores the Outlook profile and keeps it through a poll that could not read it (F-8)', () => {
+    const profile = {
+      zone: 'Europe/Stockholm',
+      workHours: { start: '08:30', end: '17:00', days: ['monday' as const, 'friday' as const] },
+      firstDayOfWeek: 'monday' as const,
+      address: 'you@lantern.example',
+    };
+    type Sync = Extract<ServerCommand, { type: 'outlook.sync' }>;
+    const polled = (rows: OutlookCalendarRow[], changes: Partial<Sync>): Sync => ({
+      ...(sync(rows) as Sync),
+      ...changes,
+    });
+    run(polled([standup('2026-11-03', { organizer: 'Bo Strand', body: 'Agenda' })], { profile }));
+    expect((status() as { profile?: unknown } | undefined)?.profile).toEqual(profile);
+    run(polled([standup('2026-11-03')], { at: '2026-11-03T12:01:00.000Z' }));
+    expect((status() as { profile?: unknown } | undefined)?.profile).toEqual(profile);
+    run(polled([], { profile: { ...profile, firstDayOfWeek: 'sunday' } }));
+    expect(
+      (status() as { profile?: { firstDayOfWeek: string } } | undefined)?.profile?.firstDayOfWeek,
+    ).toBe('sunday');
   });
 
   it('applies moved, cancelled and deleted meetings and keeps rows outside the window', () => {

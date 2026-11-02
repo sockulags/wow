@@ -1,7 +1,8 @@
-import type { CalendarItem, Trigger } from '@wow/contracts';
+import type { CalendarItem, OutlookProfile, Trigger } from '@wow/contracts';
 import { dispatch, settingValue, type SettingValues } from '@wow/client-runtime';
 import type { AppCommand, CommandContext } from '@/app/commands';
 import { stepDays, type CalendarViewKind } from './layout';
+import { calendarPrefs } from './prefs';
 import { anchorDate, todayIn, type CalendarSearch } from './search';
 import {
   addDays,
@@ -11,7 +12,6 @@ import {
   minuteOfDay,
   MINUTES_PER_DAY,
   parseClockTime,
-  resolveZone,
   sameDate,
   type LocalDate,
 } from './time';
@@ -22,12 +22,14 @@ import { calendarZoom } from './zoom';
 export function newCardRange(
   day: LocalDate,
   values: SettingValues,
+  profile: OutlookProfile | null | undefined,
   now: Date = new Date(),
 ): { start: string; end: string } {
-  const zone = resolveZone(settingValue(values, 'calendar.zone'));
+  const prefs = calendarPrefs(values, profile);
+  const zone = prefs.zone;
   const snap = settingValue(values, 'calendar.snapMinutes');
   const length = settingValue(values, 'calendar.cardMinutes');
-  const workStart = parseClockTime(settingValue(values, 'calendar.workHours').start) ?? 0;
+  const workStart = parseClockTime(prefs.workHours.start) ?? 0;
   let minute = workStart;
   if (sameDate(day, localDate(now, zone))) {
     const next = Math.ceil(minuteOfDay(now, zone) / snap) * snap;
@@ -62,10 +64,11 @@ export interface CalendarCommandData {
   readonly cards: readonly CalendarItem[];
   readonly triggers: readonly Trigger[];
   readonly schedulerPaused: boolean;
+  // What Outlook last said about zone and work hours (F-8); undefined before the first read.
+  readonly profile?: OutlookProfile | null | undefined;
+  readonly showWeekends?: boolean | undefined;
+  readonly mailRailCollapsed?: boolean | undefined;
 }
-
-const zoneSetting = ({ settings }: CommandContext) =>
-  settingValue(settings.getState().values, 'calendar.zone');
 
 // Palette commands for the calendar (spec 7, 22). Today, next, previous and the view switches only
 // exist while the calendar is open, so their plain-key shortcuts do nothing elsewhere.
@@ -74,8 +77,13 @@ export function calendarCommands({
   cards,
   triggers,
   schedulerPaused,
+  profile,
+  showWeekends = true,
+  mailRailCollapsed = false,
 }: CalendarCommandData): AppCommand[] {
   const commands: AppCommand[] = [];
+  const zoneSetting = ({ settings }: CommandContext) =>
+    calendarPrefs(settings.getState().values, profile).zone;
   if (search) {
     const view: CalendarViewKind = search.view ?? 'week';
     const shift =
@@ -156,8 +164,24 @@ export function calendarCommands({
         keybinding: 'keybindings.calendarZoomReset',
         run: ({ settings }) => void calendarZoom(settings).reset(),
       },
+      {
+        id: 'calendar.toggleMailRail',
+        title: mailRailCollapsed ? 'Show mail rail' : 'Collapse mail rail',
+        group: 'Calendar',
+        keywords: ['mail', 'unread', 'rail', 'outlook', 'hide', 'show'],
+        keybinding: 'keybindings.toggleMailRail',
+        run: ({ settings }) => void settings.write('outlook.mailRailCollapsed', !mailRailCollapsed),
+      },
     );
   }
+
+  commands.push({
+    id: 'calendar.toggleWeekends',
+    title: showWeekends ? 'Calendar: hide weekends' : 'Calendar: show weekends',
+    group: 'Calendar',
+    keywords: ['weekend', 'saturday', 'sunday', 'week view', 'work week'],
+    run: ({ settings }) => void settings.write('calendar.showWeekends', !showWeekends),
+  });
 
   commands.push(
     {
@@ -173,7 +197,10 @@ export function calendarCommands({
           : todayIn(zoneSetting(context));
         if (!search) void context.navigate({ to: '/calendar' });
         context.layout.setState({
-          cardDialog: { type: 'create', ...newCardRange(day, context.settings.getState().values) },
+          cardDialog: {
+            type: 'create',
+            ...newCardRange(day, context.settings.getState().values, profile),
+          },
         });
       },
     },
@@ -225,7 +252,7 @@ export function calendarCommands({
       group: 'Cards',
       keywords: ['card', 'calendar', card.state],
       run: (context) => {
-        const date = isoDate(localDate(new Date(card.start), resolveZone(zoneSetting(context))));
+        const date = isoDate(localDate(new Date(card.start), zoneSetting(context)));
         void context.navigate({ to: '/calendar', search: { ...search, date } });
         context.layout.setState({ cardDialog: { type: 'edit', cardId: card.id } });
       },

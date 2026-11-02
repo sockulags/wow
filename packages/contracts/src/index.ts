@@ -1,3 +1,4 @@
+export * from './calendar-prefs.js';
 export * from './commands.js';
 export * from './methods.js';
 export * from './projections.js';

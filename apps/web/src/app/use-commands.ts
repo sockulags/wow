@@ -10,7 +10,7 @@ import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
 import { providerCommands } from '@/providers/commands';
 import { formatWhen } from '@/lib/format';
-import { resolveZone } from '@/calendar/time';
+import { useCalendarPrefs } from '@/calendar/prefs';
 import { pendingApproval } from '@/chat/view-model';
 import { workflowCommands } from '@/workflows/commands';
 import { gateRunForThread } from '@/workflows/model';
@@ -34,7 +34,8 @@ export function useCommands(): {
   const projects = useTopic('projects');
   const turns = useTopic('turns', openThreadId);
   const approvals = useTopic('approvals', openThreadId);
-  const zoneSetting = useSetting('calendar.zone');
+  // The calendar's zone with "outlook" resolved (F-8), for the cards' "when".
+  const { zone: calendarZone } = useCalendarPrefs();
   const openRunId = /^\/workflows\/runs\/([^/]+)$/.exec(pathname)?.[1];
   const workflows = useTopic('workflows');
   const runs = useTopic('workflowRuns');
@@ -42,6 +43,9 @@ export function useCommands(): {
   const calendarItems = useTopic('calendarItems');
   const triggers = useTopic('triggers');
   const schedulerPaused = useSetting('scheduler.paused');
+  const outlookProfile = useTopic('outlookStatus')?.[0]?.profile;
+  const showWeekends = useSetting('calendar.showWeekends');
+  const mailRailCollapsed = useSetting('outlook.mailRailCollapsed');
   const backlogItems = useTopic('backlogItems');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
@@ -50,7 +54,7 @@ export function useCommands(): {
   );
   const staticCommands = useMemo(() => buildCommands(), []);
   const commands = useMemo(() => {
-    const zone = resolveZone(zoneSetting);
+    const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
     const cards = (calendarItems ?? []).filter((item) => item.source === 'local');
     const cardStart = new Map(cards.map((card) => [card.id, card.start]));
@@ -66,6 +70,9 @@ export function useCommands(): {
         cards,
         triggers: triggers ?? [],
         schedulerPaused,
+        profile: outlookProfile,
+        showWeekends,
+        mailRailCollapsed,
       }).map((command) => {
         const start = command.id.startsWith('card.')
           ? cardStart.get(command.id.slice(5))
@@ -97,7 +104,10 @@ export function useCommands(): {
       ...staticCommands,
     ];
   }, [
-    zoneSetting,
+    calendarZone,
+    outlookProfile,
+    showWeekends,
+    mailRailCollapsed,
     approvals,
     pathname,
     updateState,

@@ -70,6 +70,7 @@ const meeting = (title: string, start: string, end: string, extra: Partial<Calen
     location: null,
     joinUrl: null,
     body: null,
+    organizer: null,
     projectId: null,
     backlogItemId: null,
     workflowId: null,

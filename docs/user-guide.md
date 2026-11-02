@@ -80,6 +80,7 @@ Default keys (all changeable in Settings → Keybindings):
 | C            | Calendar: new card on the day you are on |
 | Ctrl+= / -   | Calendar: zoom in, zoom out              |
 | Ctrl+0       | Calendar: reset zoom                     |
+| M            | Calendar: fold or unfold the mail rail   |
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
@@ -141,60 +142,109 @@ with secret variables asks first, because its stored secrets are deleted and can
 
 ## Calendar
 
-The calendar shows a day or a week (`D` and `W`), starting on `calendar.firstDayOfWeek` in
-`calendar.zone`, with your work hours shaded and a red line at the current time. When today is in
-view and now is outside your work hours, the grid opens on now; otherwise on the start of your
-work hours. The URL keeps the view and the date.
+The calendar shows a day or a week (`D` and `W`, or the Day and Week buttons) with your work hours
+shaded and a red line at the current time. In week view the line runs faintly across the other
+days too, and today's date sits in a filled circle. The toolbar shows the range ("2–8 Nov 2026")
+and the week number. When today is in view and now is outside your work hours, the grid opens on
+now; otherwise on the start of your work hours. The URL keeps the view and the date.
+
+Week view shows seven days. "Calendar: hide weekends" in the palette (or
+`calendar.showWeekends`) shows the five work days instead.
+
+### Zone, work hours and first day of the week
+
+By default the calendar uses what Outlook says: the zone of Outlook's calendar, the work hours set
+in Outlook and the first day of the week of your Windows region. Until Outlook has been read,
+wow uses this computer's zone, 08:00–17:00 Monday to Friday, and the region's first day. In
+Settings > Calendar each of the three shows "From Outlook: …" with an **Override Outlook** switch;
+turn it on to set your own value. The time zone is a searchable list of zones with "From Outlook"
+and "System" first.
+
+The toolbar names the zone ("Tokyo, UTC+9") only when it is not this computer's own zone, and so
+does the card form.
 
 ### Zoom
 
 Zoom changes how tall an hour is, so you see more of the day or more detail. Hold Ctrl and turn
 the mouse wheel over the grid, or pinch on a touchpad; the time under the pointer stays where it
 is. **Ctrl+=** and **Ctrl+-**, the − and + buttons in the toolbar, and "Zoom in calendar" and "Zoom
-out calendar" in the palette zoom around the middle of the view. **Ctrl+0**, a click on the
-percentage, or "Reset calendar zoom" go back to 100 %. Each step is `calendar.zoomStep` percent.
-The zoom is the `calendar.hourHeight` setting, so it stays after a restart.
+out calendar" in the palette zoom around the middle of the view, in steps of
+`calendar.zoomStep` percent that land on tens (100 %, 120 %, 140 %…). The percentage opens a menu
+of levels and Reset; **Ctrl+0** and "Reset calendar zoom" go back to 100 %. At the lowest zoom the
+whole day fills the view. The zoom is the `calendar.hourHeight` setting, so it stays after a
+restart.
 
 ### Meetings and cards at the same time
 
 Items that overlap in time sit side by side: each group of overlapping items splits the day's
-width into columns, and an item takes the full width of the columns next to it that stay free. A
-narrow block cuts its title short; hover it to see the full title, time and place, or Tab to it
-and it widens over the day until it loses focus. Tab moves through the items in time order.
+width into columns, and an item takes the full width of the columns next to it that stay free. In
+week view a group shows at most `calendar.weekMaxColumns` items side by side (two by default); the
+rest are behind a "+N" button that lists them. A title wraps to the height of its block and stays
+in view while you scroll a tall block. Hover or focus a block to see its full title, time and
+place.
+
+### The keyboard in the grid
+
+The grid is one Tab stop; "Skip to calendar", the first thing Tab reaches in the calendar, jumps
+straight to it.
+
+- **Up** and **Down** move between the items of a day, **Left** and **Right** to the nearest item
+  on the day before or after, **Home** and **End** to the first and last item of the day, and
+  **Ctrl+Home** and **Ctrl+End** to the first and last of the range.
+- **Enter** opens the item: a card's form, a meeting's details, or a "+N" list.
+- **Alt+Up** and **Alt+Down** move a card by `calendar.snapMinutes`, **Alt+Left** and
+  **Alt+Right** by a day. **Alt+Shift+Up** and **Alt+Shift+Down** move its end.
 
 ### Outlook
 
 Outlook meetings in the next `calendar.lookaheadDays` appear in their time slot with title, time,
-location or Teams link, and a lock marker: they are read-only, and wow never writes to Outlook.
-Each occurrence of a recurring meeting appears on its own. A cancelled meeting that is still in
-your calendar is struck through. All-day items sit in a row above the grid.
+place and a lock marker: they are read-only, and wow never writes to Outlook. A Teams link reads
+"Teams meeting", and Join sits on the block (an icon on the title line in short blocks). Each
+occurrence of a recurring meeting appears on its own. A cancelled meeting that is still in your
+calendar is struck through. All-day items sit in a row above the grid.
+
+Click a meeting or press Enter on it for its details: time, place, organizer and the start of its
+description, with **Join**, **Open in Outlook** and **Card before** or **Card after**, which open
+the card form for the time right before or after the meeting.
 
 wow reads Outlook every `outlook.pollSeconds` (60 by default), so a moved or cancelled meeting
-shows up within one interval. "Refresh Outlook" in the palette or the banner reads at once.
+shows up within one interval. The refresh button in the toolbar and "Refresh Outlook" in the
+palette read at once.
 
 If Outlook is not running or does not answer (a modal dialog open in Outlook blocks it), the last
-items stay on screen with a banner "Outlook unavailable since <time>". The rest of the app keeps
-working, and the banner goes away on the next good read.
+items stay on screen with a banner "Outlook unavailable since <time>". **Try again** reads at once
+and **What to check** lists the usual causes. The mail rail says when it was last read. The rest of
+the app keeps working, and the banner goes away on the next good read.
 
 ### Unread mail
 
 The mail rail lists unread mail from `outlook.folders` (Inbox by default), newest first, with the
-count. Click a message to open it in Outlook. Turn the rail off with `outlook.mailRail`.
+count, the sender, the time, the subject and one line of the message. Click a message, or move to
+it with the arrow keys and press Enter, to open it in Outlook. The fold button, `M` or "Collapse
+mail rail" in the palette fold the rail to a strip with the count (`outlook.mailRailCollapsed`);
+in a narrow window it folds on its own. Turn the rail off with `outlook.mailRail`.
 
 ### Cards
 
 Cards are your own blocks of time. They never leave the app.
 
 - **Create**: click a slot for a card of `calendar.cardMinutes`, or drag across a range, then name
-  it. `C` or "New card" in the palette opens the same form.
+  it. `C`, the New card button or "New card" in the palette opens the same form. The form starts
+  with the project you used last. An end before the start is refused ("Ends before it starts"),
+  and the form shows the length under End.
 - **Move and resize**: drag the card, also to another day; drag its lower edge to resize. Both snap
-  to `calendar.snapMinutes`.
+  to `calendar.snapMinutes`. The keyboard does the same (see above).
 - **Edit**: click the card, or press Enter on it, or use "Edit card: <title>" in the palette. The
-  dialog edits title, date, times, project, workflow and backlog item, and deletes.
+  dialog edits title, date, times, the workflow and project to run, the backlog item and notes.
+- **Delete**: "Delete card" in the form deletes it at once; **Undo** in the message that follows
+  puts it back. A card whose workflow run is still going asks first whether to stop the run.
 
 A card with a workflow and a project is a **trigger**: at the card's start time the workflow's
-first step starts (see "Triggers" below). Moving the card moves the trigger with it. The badge on
-the card shows its state: scheduled, running, waiting, done, failed, stopped or missed.
+first step starts (see "Triggers" below). Moving the card moves the trigger with it. Triggers carry
+a workflow icon and their state: Scheduled, Running, Needs you, Done, Failed, Stopped or Missed.
+Plain cards show no state. A card with a workflow but no project is drawn dashed with "No project,
+will not run". The form says what a trigger will do ("Starts at 16:30 in Demo · 4 steps, 2
+gates"), warns when it will not run, and links to its run once it has one.
 
 ## Chat
 
@@ -459,7 +509,7 @@ None are known right now; the rest of this guide describes the intended behavior
 - A dialog is open in Outlook (a reminder, a security prompt): close it. Requests time out after
   `outlook.requestTimeoutMs`.
 - You use the new Outlook: it has no COM interface; switch back to classic Outlook.
-- Press "Refresh Outlook" to try at once instead of waiting for the next poll.
+- Press **Try again** in the banner to read at once instead of waiting for the next poll.
 
 **A provider test fails**
 

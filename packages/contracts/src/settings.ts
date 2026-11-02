@@ -96,9 +96,14 @@ const isTimeZone = (zone: string): boolean => {
   }
 };
 
-export const TimeZoneSetting = z.string().refine((zone) => zone === 'system' || isTimeZone(zone), {
-  message: 'Use "system" or an IANA time zone such as Europe/Stockholm',
-});
+// "outlook" follows the zone Outlook's calendar uses, "system" the operating system's. The
+// `widget` meta tells the settings page to render a searchable zone picker.
+export const TimeZoneSetting = z
+  .string()
+  .refine((zone) => zone === 'outlook' || zone === 'system' || isTimeZone(zone), {
+    message: 'Use "outlook", "system" or an IANA time zone such as Europe/Stockholm',
+  })
+  .meta({ widget: 'timeZone' });
 
 export const ClockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM, 24-hour');
 
@@ -114,6 +119,16 @@ export const WorkHours = z
   })
   .meta({ widget: 'workHours' });
 export type WorkHours = z.infer<typeof WorkHours>;
+
+// A calendar preference Outlook also stores (F-8): "outlook" follows what Outlook says, anything
+// else overrides it. The `widget` meta tells the settings page to show Outlook's value with an
+// Override switch.
+export const FROM_OUTLOOK = 'outlook';
+const fromOutlook = <S extends z.ZodType>(schema: S) =>
+  z.union([z.literal(FROM_OUTLOOK), schema]).meta({ widget: 'fromOutlook' });
+
+export const WeekdaySetting = fromOutlook(Weekday);
+export const WorkHoursSetting = fromOutlook(WorkHours);
 
 // A shortcut such as "Mod+K" or "Mod+Shift+P". "Mod" is Ctrl on Windows and Linux and Cmd on
 // macOS. An empty string leaves the command unbound. The `widget` meta tells the settings page to
@@ -310,29 +325,44 @@ export const settingsRegistry = {
     group: 'calendar',
     label: 'Time zone',
     description:
-      'Zone the calendar is shown in and new cards are entered in. "system" follows the operating system.',
-    default: 'system',
+      "Zone the calendar is shown in and new cards are entered in. By default it is the zone Outlook's calendar uses, or the system's while Outlook has not been read.",
+    default: 'outlook',
     scope: 'global',
   }),
   'calendar.firstDayOfWeek': defineSetting({
-    schema: Weekday,
+    schema: WeekdaySetting,
     group: 'calendar',
     label: 'First day of the week',
-    description: 'Day the week view starts on.',
-    default: 'monday',
+    description:
+      "Day the week view starts on. By default it follows Outlook, or the system's region while Outlook has not been read.",
+    default: 'outlook',
     scope: 'global',
     options: weekdayOptions,
   }),
   'calendar.workHours': defineSetting({
-    schema: WorkHours,
+    schema: WorkHoursSetting,
     group: 'calendar',
     label: 'Work hours',
-    description: 'Hours and days highlighted in the day and week views.',
-    default: {
-      start: '08:00',
-      end: '17:00',
-      days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
-    },
+    description:
+      'Hours and days highlighted in the day and week views. By default they are the work hours set in Outlook, or 08:00–17:00 Monday to Friday while Outlook has not been read.',
+    default: 'outlook',
+    scope: 'global',
+  }),
+  'calendar.showWeekends': defineSetting({
+    schema: z.boolean(),
+    group: 'calendar',
+    label: 'Weekends in week view',
+    description: 'Show Saturday and Sunday in the week view. Off shows the five work days.',
+    default: true,
+    scope: 'global',
+  }),
+  'calendar.weekMaxColumns': defineSetting({
+    schema: z.number().int().min(2).max(6),
+    group: 'calendar',
+    label: 'Side-by-side items in week view',
+    description:
+      'Most items shown next to each other in one week-view day. More overlapping items go behind a "+N" button that lists them. Day view always shows them all.',
+    default: 2,
     scope: 'global',
   }),
   'calendar.lookaheadDays': defineSetting({
@@ -363,7 +393,7 @@ export const settingsRegistry = {
     unit: 'minutes',
   }),
   'calendar.hourHeight': defineSetting({
-    schema: z.number().int().min(24).max(160),
+    schema: z.number().int().min(24).max(144),
     group: 'calendar',
     label: 'Hour height',
     description:
@@ -416,6 +446,15 @@ export const settingsRegistry = {
     label: 'Mail rail',
     description: 'Read unread mail from Outlook and show it next to the calendar.',
     default: true,
+    scope: 'global',
+  }),
+  'outlook.mailRailCollapsed': defineSetting({
+    schema: z.boolean(),
+    group: 'outlook',
+    label: 'Mail rail collapsed',
+    description:
+      'Fold the mail rail to a narrow strip with the unread count. The rail button, the palette and its key change it.',
+    default: false,
     scope: 'global',
   }),
   'outlook.mailLimit': defineSetting({
@@ -793,6 +832,11 @@ export const settingsRegistry = {
     'New card',
     'Open the form for a new card on the day the calendar shows (while the calendar is open).',
     'C',
+  ),
+  'keybindings.toggleMailRail': keybinding(
+    'Toggle mail rail',
+    'Fold or unfold the unread mail rail next to the calendar (while the calendar is open).',
+    'M',
   ),
   'keybindings.newThread': keybinding('New thread', 'Start a new chat thread.', 'Mod+Alt+N'),
   'keybindings.stopTurn': keybinding(

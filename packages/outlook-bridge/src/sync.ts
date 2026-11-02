@@ -1,5 +1,11 @@
-import type { Weekday } from '@wow/contracts';
-import type { Appointment, UnreadMessage } from './protocol.js';
+import {
+  FROM_OUTLOOK,
+  resolveCalendarPrefs,
+  type OutlookProfile,
+  type Weekday,
+} from '@wow/contracts';
+import { parseProfile } from './profile.js';
+import { bodySnippet, type Appointment, type UnreadMessage } from './protocol.js';
 import {
   OutlookError,
   systemClock,
@@ -8,7 +14,7 @@ import {
   type OutlookErrorCode,
   type OutlookSource,
 } from './source.js';
-import { calendarWindow, resolveZone } from './zone.js';
+import { calendarWindow } from './zone.js';
 
 // Rows in the shape of the `calendar_items` (source 'outlook') and `mail_items` projections. The
 // server stores them; this package decides what they contain and what changed.
@@ -27,6 +33,7 @@ export interface OutlookCalendarEntry {
   readonly allDay: boolean;
   readonly recurring: boolean;
   readonly organizer: string | null;
+  readonly snippet: string | null;
   readonly busyStatus: number | null;
   readonly state: OutlookItemState;
 }
@@ -50,6 +57,10 @@ export function calendarExternalId(appointment: Appointment): string {
     : appointment.entryId;
 }
 
+// The EntryID to ask Outlook to open for a calendar row's external id: a recurring occurrence
+// opens its series. EntryIDs are hex, so "@" only ever comes from calendarExternalId.
+export const entryIdOf = (externalId: string): string => externalId.split('@')[0] ?? externalId;
+
 export function toCalendarEntry(appointment: Appointment, zone: string): OutlookCalendarEntry {
   const externalId = calendarExternalId(appointment);
   return {
@@ -64,6 +75,7 @@ export function toCalendarEntry(appointment: Appointment, zone: string): Outlook
     allDay: appointment.isAllDay,
     recurring: appointment.isRecurring,
     organizer: appointment.organizer,
+    snippet: bodySnippet(appointment.body),
     busyStatus: appointment.busyStatus,
     state: appointment.isCancelled ? 'cancelled' : 'scheduled',
   };
@@ -90,6 +102,8 @@ export interface OutlookSnapshot {
   readonly mail: readonly OutlookMailEntry[];
   readonly unreadCount: number;
   readonly bridgeVersion: string;
+  // Null when Outlook could not say this poll (the sink keeps the last one).
+  readonly profile: OutlookProfile | null;
 }
 
 export interface OutlookFailure {
@@ -159,8 +173,9 @@ export function diffMail(
 
 export interface OutlookSyncSettings {
   readonly pollSeconds: number;
+  // The settings as stored: "outlook" follows the profile read in the same poll.
   readonly zone: string;
-  readonly firstDayOfWeek: Weekday;
+  readonly firstDayOfWeek: Weekday | typeof FROM_OUTLOOK;
   readonly lookaheadDays: number;
   readonly folders: readonly string[];
   readonly mailRail: boolean;
@@ -191,6 +206,8 @@ export class OutlookSync {
   #running: Promise<void> | null = null;
   #started = false;
   #unavailableSince: string | null = null;
+  // The last profile Outlook returned, for polls where reading it fails.
+  #profile: OutlookProfile | null = null;
 
   constructor(options: OutlookSyncOptions) {
     this.#source = options.source;
@@ -229,8 +246,17 @@ export class OutlookSync {
       if (ping.outlook === 'unavailable') {
         throw new OutlookError('unavailable', ping.message ?? 'Outlook is not running');
       }
-      const zone = resolveZone(settings.zone);
-      const window = calendarWindow(now, settings);
+      const profile = await this.#readProfile(now);
+      const prefs = resolveCalendarPrefs(
+        { zone: settings.zone, firstDayOfWeek: settings.firstDayOfWeek, workHours: FROM_OUTLOOK },
+        profile ?? this.#profile,
+      );
+      const zone = prefs.zone;
+      const window = calendarWindow(now, {
+        zone,
+        firstDayOfWeek: prefs.firstDayOfWeek,
+        lookaheadDays: settings.lookaheadDays,
+      });
       const appointments = await this.#source.calendar(window);
       const mail = settings.mailRail
         ? await this.#source.unreadMail(settings.folders, settings.mailLimit)
@@ -242,6 +268,7 @@ export class OutlookSync {
         mail: mail.items.map(toMailEntry),
         unreadCount: mail.unreadCount,
         bridgeVersion: ping.version,
+        profile,
       };
     } catch (error) {
       this.#unavailableSince ??= at;
@@ -258,6 +285,19 @@ export class OutlookSync {
     this.#unavailableSince = null;
     await this.#sink.synced(snapshot);
     return 'synced';
+  }
+
+  // A profile Outlook cannot read (an old mailbox, a missing work-hours message) is not a failed
+  // poll: the calendar and mail still sync, and the settings keep their fallback.
+  async #readProfile(now: Date): Promise<OutlookProfile | null> {
+    try {
+      const profile = parseProfile(await this.#source.profile(), now);
+      this.#profile = profile;
+      return profile;
+    } catch (error) {
+      if (error instanceof OutlookError && error.code === 'unavailable') throw error;
+      return null;
+    }
   }
 
   #poll(): void {

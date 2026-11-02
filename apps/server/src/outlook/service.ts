@@ -1,6 +1,7 @@
 import {
   OutlookSync,
   createOutlookSource,
+  entryIdOf,
   type Clock,
   type OutlookFailure,
   type OutlookSnapshot,
@@ -42,11 +43,14 @@ export function snapshotCommand(snapshot: OutlookSnapshot) {
       allDay: entry.allDay,
       location: entry.location,
       joinUrl: entry.joinUrl,
+      body: entry.snippet,
+      organizer: entry.organizer,
       state: entry.state,
     })),
     mail: snapshot.mail.map((entry) => ({ ...entry })),
     unreadCount: snapshot.unreadCount,
     bridgeVersion: snapshot.bridgeVersion,
+    profile: snapshot.profile,
   };
 }
 
@@ -93,7 +97,8 @@ export async function startOutlookService(
   sync.start();
   return {
     mode,
-    open: (entryId) => source.open(entryId),
+    // Calendar rows pass their external id; an occurrence opens its series.
+    open: (entryId) => source.open(entryIdOf(entryId)),
     refresh: async () => {
       // One poll at a time: a refresh waits for the poll in flight.
       await sync.whenIdle();

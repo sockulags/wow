@@ -1,6 +1,7 @@
 # wow Outlook bridge. Reads one JSON request per line on stdin and writes one JSON response per
 # line on stdout. Read-only: it attaches to an Outlook that is already running and never starts
-# Outlook, changes items or sends mail. "open" only asks Outlook to show an item.
+# Outlook, changes items or sends mail. "open" only asks Outlook to show an item, and "profile"
+# only reads the calendar's work hours, time zone, first day of the week and the user's address.
 #
 # Started by PowershellOutlookSource as:
 #   powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File bridge.ps1
@@ -11,6 +12,12 @@ Set-StrictMode -Version 3
 $BridgeVersion = '1'
 # Longest mail snippet sent back; the rail shows one line, the rest only costs time on the pipe.
 $SnippetChars = 200
+# Longest meeting body sent back; the server keeps a short snippet of it for the calendar.
+$BodyChars = 2000
+# Outlook's olFolderCalendar, olIdentifyByMessageClass and PR_ROAMING_XMLSTREAM.
+$CalendarFolder = 9
+$IdentifyByMessageClass = 2
+$RoamingXmlStream = 'http://schemas.microsoft.com/mapi/proptag/0x7C080102'
 
 $utf8 = New-Object System.Text.UTF8Encoding $false
 $stdin = New-Object System.IO.StreamReader ([Console]::OpenStandardInput(), $utf8)
@@ -77,6 +84,8 @@ function ConvertTo-Appointment($item) {
     $organizer = Get-Property $item 'Organizer'
     if ($organizer -eq '') { $organizer = $null }
     $status = Get-Property $item 'MeetingStatus'
+    $body = [string](Get-Property $item 'Body')
+    if ($body.Length -gt $BodyChars) { $body = $body.Substring(0, $BodyChars) }
     return [ordered]@{
         entryId     = [string]$item.EntryID
         subject     = [string]$item.Subject
@@ -90,6 +99,7 @@ function ConvertTo-Appointment($item) {
         organizer   = $organizer
         joinUrl     = Find-JoinUrl (Get-Property $item 'Body') $location
         busyStatus  = [int]$item.BusyStatus
+        body        = $(if ($body -eq '') { $null } else { $body })
     }
 }
 
@@ -175,6 +185,47 @@ function Invoke-Open($request) {
     return [ordered]@{ opened = $true }
 }
 
+# Each part is read on its own and is null when Outlook does not have it, so a mailbox without
+# work hours still reports its time zone.
+function Read-WorkHoursXml($ns) {
+    try {
+        # GetStorage hands back an unsaved empty item when the message does not exist; nothing is
+        # saved here, so Outlook is not changed.
+        $storage = $ns.GetDefaultFolder($CalendarFolder).GetStorage('IPM.Configuration.WorkHours', $IdentifyByMessageClass)
+        $bytes = $storage.PropertyAccessor.GetProperty($RoamingXmlStream)
+        if ($null -eq $bytes) { return $null }
+        return $utf8.GetString([byte[]]$bytes)
+    } catch {
+        return $null
+    }
+}
+
+function Read-UserAddress($ns) {
+    try {
+        $entry = $ns.CurrentUser.AddressEntry
+        $exchange = $entry.GetExchangeUser()
+        if ($null -ne $exchange) { return [string]$exchange.PrimarySmtpAddress }
+        return [string]$entry.Address
+    } catch {
+        return $null
+    }
+}
+
+function Invoke-Profile {
+    $ns = Get-Namespace
+    $zone = $null
+    try { $zone = [string](Get-Outlook).TimeZones.CurrentTimeZone.ID } catch { }
+    $firstDay = $null
+    # Outlook starts the week on the day of the user's Windows region unless it is changed there.
+    try { $firstDay = [int](Get-Culture).DateTimeFormat.FirstDayOfWeek } catch { }
+    return [ordered]@{
+        timeZoneId     = $zone
+        workHoursXml   = Read-WorkHoursXml $ns
+        firstDayOfWeek = $firstDay
+        address        = Read-UserAddress $ns
+    }
+}
+
 function Get-ErrorInfo($record) {
     $exception = $record.Exception
     $message = $exception.Message
@@ -207,6 +258,7 @@ while ($true) {
             'calendar' { Invoke-Calendar $request }
             'unreadMail' { Invoke-UnreadMail $request }
             'open' { Invoke-Open $request }
+            'profile' { Invoke-Profile }
             default { throw "bad_request::Unknown op '$($request.op)'" }
         }
         Write-Response ([ordered]@{ id = $id; result = $result })

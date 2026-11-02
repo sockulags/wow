@@ -5,6 +5,7 @@ import type {
   BacklogState,
   CalendarItemSource,
   NotificationKind,
+  OutlookProfile,
   ProviderInstanceStatus,
   ProviderKind,
   SecretRef,
@@ -144,6 +145,7 @@ export const calendarItems = sqliteTable(
     location: text(),
     joinUrl: text(),
     body: text(),
+    organizer: text(),
     projectId: text(),
     backlogItemId: text(),
     workflowId: text(),
@@ -173,6 +175,7 @@ export const outlookStatus = sqliteTable('outlook_status', {
   unavailableSince: text(),
   unreadCount: integer().notNull().default(0),
   bridgeVersion: text(),
+  profile: json<OutlookProfile>(),
 });
 
 export const backlogItems = sqliteTable('backlog_items', {

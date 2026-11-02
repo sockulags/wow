@@ -22,6 +22,8 @@ export const Appointment = z.object({
   organizer: z.string().nullable(),
   joinUrl: z.string().nullable(),
   busyStatus: z.number().int().nullable(),
+  // The plain-text body, cut at $BodyChars in bridge.ps1; `bodySnippet` makes the details line.
+  body: z.string().nullable().default(null),
 });
 export type Appointment = z.infer<typeof Appointment>;
 
@@ -42,7 +44,8 @@ export type BridgeRequest =
   | { op: 'ping' }
   | { op: 'calendar'; from: string; to: string }
   | { op: 'unreadMail'; folders: readonly string[]; limit: number }
-  | { op: 'open'; entryId: string };
+  | { op: 'open'; entryId: string }
+  | { op: 'profile' };
 
 export const PingResult = z.object({
   version: z.string().min(1),
@@ -67,6 +70,19 @@ export type UnreadMailResult = z.infer<typeof UnreadMailResult>;
 
 export const OpenResult = z.object({ opened: z.literal(true) });
 
+// What Outlook knows about the user's calendar, as Outlook stores it. `profile.ts` turns it into
+// the OutlookProfile the calendar settings default to. Every part is null when it cannot be read.
+export const ProfileResult = z.object({
+  // Windows time zone id of Outlook's calendar, such as "W. Europe Standard Time".
+  timeZoneId: z.string().nullable(),
+  // The calendar folder's IPM.Configuration.WorkHours roaming XML.
+  workHoursXml: z.string().nullable(),
+  // .NET DayOfWeek of the user's region: 0 is Sunday.
+  firstDayOfWeek: z.number().int().min(0).max(6).nullable(),
+  address: z.string().nullable(),
+});
+export type ProfileResult = z.infer<typeof ProfileResult>;
+
 export const BridgeResponse = z.union([
   z.object({
     id: z.number().int(),
@@ -81,6 +97,7 @@ export const resultSchemas = {
   calendar: CalendarResult,
   unreadMail: UnreadMailResult,
   open: OpenResult,
+  profile: ProfileResult,
 } as const;
 
 export type BridgeOp = BridgeRequest['op'];
@@ -106,4 +123,22 @@ export function findJoinUrl(body: string | null, location: string | null): strin
     if (match) return match[0];
   }
   return null;
+}
+
+// Longest meeting snippet kept for the calendar's details popover.
+const SNIPPET_CHARS = 240;
+const TEAMS_SEPARATOR = /\n\s*_{8,}/;
+
+// The part of a meeting body worth showing: the text before the Teams invitation block (which
+// starts with a line of underscores), without links, on one line.
+export function bodySnippet(body: string | null): string | null {
+  if (!body) return null;
+  const text = (body.split(TEAMS_SEPARATOR)[0] ?? '')
+    .replace(/<?https?:\/\/\S+>?/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    // A label such as "Join:" left without the link it introduced.
+    .replace(/\s*\S+:$/, '');
+  if (text === '') return null;
+  return text.length > SNIPPET_CHARS ? `${text.slice(0, SNIPPET_CHARS - 1).trimEnd()}…` : text;
 }

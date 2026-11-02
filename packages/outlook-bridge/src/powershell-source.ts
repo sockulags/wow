@@ -9,6 +9,7 @@ import {
   type BridgeRequest,
   type BridgeResult,
   type PingResult,
+  type ProfileResult,
   type UnreadMailResult,
 } from './protocol.js';
 import {
@@ -124,6 +125,10 @@ export class PowershellOutlookSource implements OutlookSource {
 
   async open(entryId: string): Promise<void> {
     await this.#request({ op: 'open', entryId });
+  }
+
+  profile(): Promise<ProfileResult> {
+    return this.#request({ op: 'profile' });
   }
 
   async close(): Promise<void> {

@@ -21,6 +21,10 @@ export type FieldKind =
   | { readonly kind: 'workHours' }
   | { readonly kind: 'template'; readonly placeholders: readonly string[] }
   | { readonly kind: 'object'; readonly fields: readonly ObjectField[] }
+  // An IANA zone, "system" or "outlook": a searchable zone picker.
+  | { readonly kind: 'timeZone' }
+  // "outlook" or an override of the inner kind (F-8): Outlook's value with an Override switch.
+  | { readonly kind: 'fromOutlook'; readonly inner: FieldKind }
   | { readonly kind: 'json' };
 
 export interface ObjectField {
@@ -49,6 +53,13 @@ export function fieldKind(schema: z.ZodType): FieldKind {
         ? placeholders.filter((name): name is string => typeof name === 'string')
         : [],
     };
+  }
+  if (widget === 'timeZone') return { kind: 'timeZone' };
+  if (widget === 'fromOutlook' && schema instanceof z.ZodUnion) {
+    const override = (schema.options as readonly z.ZodType[]).find(
+      (option) => !(option instanceof z.ZodLiteral),
+    );
+    if (override) return { kind: 'fromOutlook', inner: fieldKind(override) };
   }
 
   if (schema instanceof z.ZodOptional || schema instanceof z.ZodDefault) {

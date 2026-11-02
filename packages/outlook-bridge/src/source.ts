@@ -1,4 +1,10 @@
-import type { Appointment, BridgeErrorCode, PingResult, UnreadMailResult } from './protocol.js';
+import type {
+  Appointment,
+  BridgeErrorCode,
+  PingResult,
+  ProfileResult,
+  UnreadMailResult,
+} from './protocol.js';
 
 export interface CalendarWindow {
   // Instants as ISO strings with an offset; the bridge converts them to Outlook's local time.
@@ -14,6 +20,8 @@ export interface OutlookSource {
   calendar(window: CalendarWindow): Promise<Appointment[]>;
   unreadMail(folders: readonly string[], limit: number): Promise<UnreadMailResult>;
   open(entryId: string): Promise<void>;
+  // Work hours, first day of the week, time zone and address (F-8). Still read-only.
+  profile(): Promise<ProfileResult>;
   close(): Promise<void>;
 }
 

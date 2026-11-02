@@ -15,6 +15,8 @@ export interface ColumnPlacement {
   readonly column: number;
   readonly span: number;
   readonly columns: number;
+  // Which cluster of the day the item belongs to, counted from the top.
+  readonly cluster: number;
 }
 
 interface Entry<T> {
@@ -50,9 +52,12 @@ export function layoutColumns<T extends Interval>(
   let order: { entry: Entry<T>; column: number }[] = [];
   let clusterEnd = Number.NEGATIVE_INFINITY;
   let lastTop = Number.NaN;
+  let clusterIndex = -1;
 
   const flush = () => {
     const columns = cluster.length;
+    if (columns === 0) return;
+    clusterIndex += 1;
     for (const { entry, column } of order) {
       let span = 1;
       while (
@@ -61,7 +66,7 @@ export function layoutColumns<T extends Interval>(
       ) {
         span += 1;
       }
-      placed.push({ ...entry.item, column, span, columns });
+      placed.push({ ...entry.item, column, span, columns, cluster: clusterIndex });
     }
     cluster = [];
     order = [];

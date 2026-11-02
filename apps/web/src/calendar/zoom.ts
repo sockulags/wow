@@ -13,16 +13,44 @@ export const zoomBounds = {
   default: definition.default,
 } as const;
 
-const clampHeight = (height: number): number =>
-  Math.min(zoomBounds.max, Math.max(zoomBounds.min, Math.round(height)));
+const clampHeight = (height: number, floor = zoomBounds.min): number =>
+  Math.min(zoomBounds.max, Math.max(Math.max(zoomBounds.min, floor), Math.round(height)));
+
+// Whole steps land on tens of percent of the default height, so the toolbar reads 120%, 140%…
+const GRID_PERCENT = 10;
+const heightAt = (percent: number) => (zoomBounds.default * percent) / 100;
+const percentOf = (height: number) => (height / zoomBounds.default) * 100;
 
 // The hour height after `steps` zoom steps of `stepPercent` each (negative steps zoom out). Steps
-// may be fractional (a trackpad pinch); a whole step always moves at least one pixel.
-export function zoomedHeight(current: number, steps: number, stepPercent: number): number {
-  const next = clampHeight(current * (1 + stepPercent / 100) ** steps);
-  if (next !== current || Math.abs(steps) < 1) return next;
-  return clampHeight(current + Math.sign(steps));
+// may be fractional (a trackpad pinch) and are not rounded; a whole step always moves at least one
+// tenth. `floor` is the height at which the whole day fits the view.
+export function zoomedHeight(
+  current: number,
+  steps: number,
+  stepPercent: number,
+  floor = zoomBounds.min,
+): number {
+  const factor = (1 + stepPercent / 100) ** steps;
+  if (!Number.isInteger(steps)) return clampHeight(current * factor, floor);
+  const direction = Math.sign(steps);
+  // From the percent shown, so 120% steps to 140%, not to the 145% its rounded pixels give.
+  let percent = Math.round((zoomPercent(current) * factor) / GRID_PERCENT) * GRID_PERCENT;
+  if (direction > 0 && heightAt(percent) <= current) percent += GRID_PERCENT;
+  if (direction < 0 && heightAt(percent) >= current) percent -= GRID_PERCENT;
+  return clampHeight(heightAt(percent), floor);
 }
+
+// The percent the toolbar shows: the tens a whole step lands on, otherwise the nearest percent.
+export function zoomPercent(height: number): number {
+  const tens = Math.round(percentOf(height) / GRID_PERCENT) * GRID_PERCENT;
+  return Math.round(heightAt(tens)) === height ? tens : Math.round(percentOf(height));
+}
+
+// Levels the zoom menu offers, inside the setting's bounds.
+export const zoomPresets: readonly number[] = [50, 75, 100, 150, 200, 300].filter(
+  (percent) => heightAt(percent) >= zoomBounds.min && heightAt(percent) <= zoomBounds.max,
+);
+export const presetHeight = (percent: number): number => Math.round(heightAt(percent));
 
 // Wheel deltas in zoom steps. Chromium reports one mouse-wheel notch as 100 pixels and a pinch
 // as small pixel deltas with ctrlKey set; line and page modes count as one notch per event.
@@ -38,6 +66,8 @@ export function wheelSteps(event: { readonly deltaY: number; readonly deltaMode:
 // value like every other setting.
 export interface ZoomState {
   readonly pending: number | undefined;
+  // The height at which the whole day fills the grid; zooming out stops there.
+  readonly floor: number;
 }
 
 export interface Zoom {
@@ -50,6 +80,8 @@ export interface Zoom {
   reset(): boolean;
   // Called when the stored value changes.
   settle(stored: number): void;
+  // The grid reports the height at which 24 hours fill it.
+  setFloor(height: number): void;
   // Settles once every requested height has been written (or failed).
   idle(): Promise<void>;
 }
@@ -59,7 +91,7 @@ const zooms = new WeakMap<SettingsStore, Zoom>();
 export function calendarZoom(settings: SettingsStore): Zoom {
   const found = zooms.get(settings);
   if (found) return found;
-  const store = createStore<ZoomState>(() => ({ pending: undefined }));
+  const store = createStore<ZoomState>(() => ({ pending: undefined, floor: zoomBounds.min }));
   const stored = () => settingValue(settings.getState().values, 'calendar.hourHeight');
   let writing = false;
   let queued: number | undefined;
@@ -97,7 +129,7 @@ export function calendarZoom(settings: SettingsStore): Zoom {
     store,
     current: () => store.getState().pending ?? stored(),
     set(height) {
-      const next = clampHeight(height);
+      const next = clampHeight(height, store.getState().floor);
       if (next === zoom.current()) return false;
       store.setState({ pending: next });
       queued = next;
@@ -106,9 +138,25 @@ export function calendarZoom(settings: SettingsStore): Zoom {
     },
     step(steps) {
       const percent = settingValue(settings.getState().values, 'calendar.zoomStep');
-      return zoom.set(zoomedHeight(zoom.current(), steps, percent));
+      return zoom.set(zoomedHeight(zoom.current(), steps, percent, store.getState().floor));
     },
-    reset: () => zoom.set(zoomBounds.default),
+    // Back to the default by clearing the stored value, so the setting reads as not changed.
+    reset() {
+      const changed = zoom.current() !== zoomBounds.default;
+      store.setState({ pending: zoomBounds.default });
+      queued = undefined;
+      idle = idle
+        .then(() => settings.reset('calendar.hourHeight'))
+        .catch(() => undefined)
+        .then(() => {
+          if (!writing && queued === undefined) store.setState({ pending: undefined });
+        });
+      return changed;
+    },
+    setFloor(height) {
+      const floor = Math.min(zoomBounds.max, Math.max(zoomBounds.min, Math.ceil(height)));
+      if (floor !== store.getState().floor) store.setState({ floor });
+    },
     idle: () => idle,
     settle(value) {
       if (store.getState().pending === value && !writing && queued === undefined) {

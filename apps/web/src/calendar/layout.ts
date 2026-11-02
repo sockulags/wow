@@ -1,6 +1,7 @@
 import type { CalendarItem, Weekday, WorkHours } from '@wow/contracts';
 import {
   addDays,
+  isWeekend,
   MINUTES_PER_DAY,
   minuteOfDay,
   parseClockTime,
@@ -13,14 +14,17 @@ import { layoutColumns, type ColumnPlacement } from './overlap';
 
 export type CalendarViewKind = 'day' | 'week';
 
+// `showWeekends: false` leaves Saturday and Sunday out of the week view (calendar.showWeekends).
 export function visibleDays(
   view: CalendarViewKind,
   anchor: LocalDate,
   firstDay: Weekday,
+  showWeekends = true,
 ): LocalDate[] {
   if (view === 'day') return [anchor];
   const first = startOfWeek(anchor, firstDay);
-  return Array.from({ length: 7 }, (_, index) => addDays(first, index));
+  const week = Array.from({ length: 7 }, (_, index) => addDays(first, index));
+  return showWeekends ? week : week.filter((day) => !isWeekend(day));
 }
 
 // Where "next" and "previous" go: one day in day view, one week in week view.
@@ -86,3 +90,39 @@ export function workSpan(
 
 export const snapMinute = (minute: number, snap: number): number =>
   Math.min(MINUTES_PER_DAY, Math.max(0, Math.round(minute / snap) * snap));
+
+// What a "+N" chip stands for: the items of one cluster that do not get a column of their own.
+export interface OverflowChip {
+  readonly cluster: number;
+  readonly items: readonly CalendarItem[];
+  // Where the chip sits: the column after the last shown one, at the first hidden item's start.
+  readonly column: number;
+  readonly columns: number;
+  readonly top: number;
+}
+
+// Caps clusters at `maxColumns` columns (week view, calendar.weekMaxColumns): the items of the
+// first `maxColumns - 1` columns keep their place, and the rest of the cluster goes behind one
+// "+N" chip in the last column. Clusters that fit are left alone.
+export function capColumns(
+  placed: readonly PlacedItem[],
+  maxColumns: number,
+): { readonly shown: PlacedItem[]; readonly overflow: OverflowChip[] } {
+  const shown: PlacedItem[] = [];
+  const hidden = new Map<number, PlacedItem[]>();
+  const keep = Math.max(1, maxColumns - 1);
+  for (const item of placed) {
+    if (item.columns <= maxColumns) shown.push(item);
+    else if (item.column < keep) {
+      shown.push({ ...item, columns: maxColumns, span: Math.min(item.span, keep - item.column) });
+    } else hidden.set(item.cluster, [...(hidden.get(item.cluster) ?? []), item]);
+  }
+  const overflow = [...hidden].map(([cluster, items]) => ({
+    cluster,
+    items: items.map((entry) => entry.item),
+    column: keep,
+    columns: maxColumns,
+    top: Math.min(...items.map((entry) => entry.top)),
+  }));
+  return { shown, overflow };
+}

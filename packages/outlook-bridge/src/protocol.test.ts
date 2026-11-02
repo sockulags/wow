@@ -15,6 +15,7 @@ const appointment = {
   organizer: 'Ada Lindqvist',
   joinUrl: null,
   busyStatus: 2,
+  body: null,
 };
 
 describe('bridge protocol', () => {

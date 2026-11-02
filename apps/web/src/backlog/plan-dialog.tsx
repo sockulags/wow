@@ -2,7 +2,8 @@ import type { BacklogItem } from '@wow/contracts';
 import { TriangleAlertIcon } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { useSetting } from '@/app/runtime';
-import { formatTime, resolveZone } from '@/calendar/time';
+import { useCalendarPrefs } from '@/calendar/prefs';
+import { formatTime } from '@/calendar/time';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
 import { ChoiceSelect } from '@/components/choice-select';
 import { DateField, TimeField } from '@/components/date-time-fields';
@@ -22,12 +23,11 @@ function PlanForm({ item, onDone }: { item: BacklogItem; onDone: () => void }) {
   const dispatch = useDispatch();
   const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
+  // "outlook" resolved against Outlook's profile (F-8), like the calendar itself.
+  const { zone, firstDayOfWeek, workHours } = useCalendarPrefs();
   const calendar = useTopic('calendarItems') ?? [];
-  const zone = resolveZone(useSetting('calendar.zone'));
   const cardMinutes = useSetting('calendar.cardMinutes');
-  const firstDayOfWeek = useSetting('calendar.firstDayOfWeek');
   const snapMinutes = useSetting('calendar.snapMinutes');
-  const workHours = useSetting('calendar.workHours');
   const lookaheadDays = useSetting('calendar.lookaheadDays');
   const busy = busyTimes(calendar);
   // The next free slot in work hours, around what Outlook and the cards already hold.

@@ -33,10 +33,10 @@ describe('keybindings', () => {
 });
 
 describe('shell', () => {
-  it('redirects / to the calendar and shows its empty state', async () => {
+  it('redirects / to the calendar and says it is not connected', async () => {
     const { router } = await renderApp('/');
     expect(router.state.location.pathname).toBe('/calendar');
-    expect(await screen.findByText('No calendar items yet')).toBeTruthy();
+    expect(await screen.findByText('Not connected to the wow server')).toBeTruthy();
     const nav = screen.getByRole('navigation', { name: 'Sections' });
     expect(
       within(nav)
