@@ -124,6 +124,30 @@ describe('tracker service', () => {
     expect(requests).toBe(1);
   });
 
+  it('sends the title edited in the preview and the tags picked as labels', async () => {
+    set('trackers.github.owner', 'acme');
+    set('trackers.github.repo', 'wow');
+    set('trackers.github.labels', ['from-wow']);
+    set('trackers.github.token', await server.secrets.set('setting:trackers.github.token', 'gh'));
+    const created = await fixture('github-create-issue.json');
+    let sent: unknown;
+    mock.use(
+      http.post('https://api.github.com/repos/acme/wow/issues', async ({ request }) => {
+        sent = await request.json();
+        return HttpResponse.json(created, { status: 201 });
+      }),
+    );
+    await server.trackers.publish('b1', 'github', {
+      title: ' Login on Mondays ',
+      labels: ['auth'],
+    });
+    expect(sent).toEqual({
+      title: 'Login on Mondays',
+      body: 'The **login** fails on Mondays.',
+      labels: ['from-wow', 'auth'],
+    });
+  });
+
   it('creates one issue when publish is pressed twice before the first answer', async () => {
     await configureGitHub();
     const [first, second] = await Promise.all([

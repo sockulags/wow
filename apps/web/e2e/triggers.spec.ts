@@ -181,7 +181,7 @@ test.describe('triggers', () => {
     // The mock provider finishes step 1 at once, so the run goes straight to its gate.
     await expect(card.getByTestId('card-state')).toHaveText('waiting', { timeout: 15_000 });
     await expect(
-      page.getByRole('list', { name: 'Notifications' }).getByText('Waiting for you'),
+      page.getByRole('region', { name: /Notifications/ }).getByText('Waiting for you'),
     ).toBeVisible();
 
     await page
@@ -189,7 +189,10 @@ test.describe('triggers', () => {
       .getByRole('link', { name: 'Chat' })
       .click();
     await expect(
-      page.getByRole('region', { name: 'Needs you' }).getByText('Bug e2e: deliver-work'),
+      // A run's thread is listed by its step, with the workflow on the second line.
+      page
+        .getByRole('region', { name: 'Needs you' })
+        .getByRole('link', { name: /^deliver-work Bug e2e · / }),
     ).toBeVisible();
 
     // Deleting the card asks whether to stop the run; the thread stays.

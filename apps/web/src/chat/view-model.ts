@@ -69,64 +69,14 @@ export function listTitle(thread: Pick<Thread, 'title'>, workflowName: string | 
 }
 
 const pad = (value: number) => String(value).padStart(2, '0');
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-function partsIn(instant: Date, zone: string) {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-US', {
-      timeZone: zone,
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      hourCycle: 'h23',
-    })
-      .formatToParts(instant)
-      .map((part) => [part.type, part.value]),
-  );
-  const year = Number(parts['year']);
-  const month = Number(parts['month']);
-  const day = Number(parts['day']);
-  return {
-    year,
-    month,
-    day,
-    key: year * 10_000 + month * 100 + day,
-    weekday: new Date(Date.UTC(year, month - 1, day)).getUTCDay(),
-    time: `${pad(Number(parts['hour']) % 24)}:${pad(Number(parts['minute']))}`,
-  };
-}
-
-// "14:25" today, "Yesterday 14:25", "Mon 2 Nov 14:25" otherwise; no seconds, no ISO dates.
-export function formatWhen(iso: string, now: Date, zone: string): string {
-  const at = partsIn(new Date(iso), zone);
-  const today = partsIn(now, zone);
-  const yesterday = partsIn(new Date(now.getTime() - 86_400_000), zone);
-  if (at.key === today.key) return at.time;
-  if (at.key === yesterday.key) return `Yesterday ${at.time}`;
-  const year = at.year === today.year ? '' : ` ${at.year}`;
-  return `${DAYS[at.weekday]} ${at.day} ${MONTHS[at.month - 1]}${year} ${at.time}`;
-}
-
-// "0:42", "12:05", "1:02:03".
+// A running turn's clock: "0:42", "12:05", "1:02:03".
 export function formatElapsed(milliseconds: number): string {
   const total = Math.max(0, Math.floor(milliseconds / 1000));
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const rest = total % 60;
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${minutes}:${pad(rest)}`;
-}
-
-// "45 s", "1 min 12 s", "2 h 5 min".
-export function formatDuration(milliseconds: number): string {
-  const total = Math.max(0, Math.round(milliseconds / 1000));
-  if (total < 60) return `${total} s`;
-  const minutes = Math.floor(total / 60);
-  if (minutes < 60) return total % 60 === 0 ? `${minutes} min` : `${minutes} min ${total % 60} s`;
-  const hours = Math.floor(minutes / 60);
-  return minutes % 60 === 0 ? `${hours} h` : `${hours} h ${minutes % 60} min`;
 }
 
 // One label map for effort values: Default, Low, Medium, High.

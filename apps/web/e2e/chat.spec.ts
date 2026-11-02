@@ -19,9 +19,11 @@ async function startThread(page: Page, message: string) {
   await page.goto('/chat');
   await page.keyboard.press('Control+Alt+N');
   await expect(page).toHaveURL(/\/chat\/new$/);
-  await choose(page.getByLabel('Project'), 'Demo');
-  await expect(page.getByLabel('Model')).toHaveText('Mock model');
   const composer = page.getByRole('combobox', { name: 'Message' });
+  // The work starts in the composer (audit A-11).
+  await expect(composer).toBeFocused();
+  await choose(page.getByLabel('Project'), 'Demo');
+  await expect(page.getByLabel('Model')).toContainText('Mock model');
   await composer.fill(message);
   await composer.press('Enter');
   await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
@@ -35,7 +37,8 @@ test.describe('chat', () => {
     await startThread(page, 'Hello there');
     const items = conversation(page);
     await expect(items.getByTestId('item-assistant_text')).toHaveText('You said: Hello there');
-    await expect(items.getByTestId('item-user')).toHaveText('Hello there');
+    // The message, then its time (shown on hover).
+    await expect(items.getByTestId('item-user')).toHaveText(/^Hello there\d{2}:\d{2}$/);
 
     const reasoning = items.getByTestId('item-reasoning');
     await expect(reasoning.getByText('The user said hello.')).toBeHidden();
@@ -101,7 +104,18 @@ test.describe('chat', () => {
     ).toBeVisible();
     await expect(page.getByTestId('thread-state')).toHaveText('Needs you');
 
-    await approval.getByRole('button', { name: 'Allow once' }).click();
+    // The request says where it runs, takes the focus, and the running tool waits for it.
+    await expect(approval.getByTestId('approval-context')).toContainText('Ask for permissions');
+    await expect(conversation(page).getByTestId('item-tool_call')).toContainText(
+      'waiting for approval',
+    );
+    await expect(page.getByRole('combobox', { name: 'Message' })).toHaveAttribute(
+      'placeholder',
+      'Answer the request above',
+    );
+    await expect(approval).toBeFocused();
+    // A answers "Allow once" (keybindings.approvalAllowOnce).
+    await page.keyboard.press('a');
     await expect(approval).toContainText('Allowed once');
     await expect(conversation(page).getByText('The command ran.')).toBeVisible();
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
@@ -158,28 +172,35 @@ test.describe('chat', () => {
 
   test('picks a skill with $ and sends its invocation', async ({ page }) => {
     await page.goto('/chat/new');
-    await page.getByLabel('Working directory').fill(e2eHome);
+    // A folder that is not a project: "Another folder…" asks for the path in the browser build.
+    await choose(page.getByLabel('Project'), 'Another folder…');
+    await page.getByLabel('Folder').fill(e2eHome);
+    await page.getByLabel('Folder').press('Enter');
+    await expect(page.getByTestId('new-thread-folder')).toContainText('wow-e2e-home');
     const composer = page.getByRole('combobox', { name: 'Message' });
+    await expect(composer).toBeFocused();
     await composer.pressSequentially('$deli');
     const skills = page.getByRole('listbox', { name: 'Skills' });
     // A name match ranks above a description match ("Review delivered work").
     await expect(skills.getByRole('option')).toHaveText([
-      /^deliver-work\/deliver-workDeliver one unit/,
+      /^deliver-work\/deliver-work.*Deliver one unit/,
       /^check-work/,
     ]);
+    // Grouped by where the skill comes from, with the source on each row.
+    await expect(skills.getByRole('group', { name: 'User' })).toBeVisible();
     await composer.press('Enter');
     await expect(skills).toBeHidden();
     await expect(composer).toHaveValue('/deliver-work ');
     await composer.pressSequentially('the login fix');
     await composer.press('Enter');
     await expect(conversation(page).getByTestId('item-user')).toHaveText(
-      '/deliver-work the login fix',
+      /^\/deliver-work the login fix\d{2}:\d{2}$/,
     );
   });
 
   test('inserts the Codex invocation form on a Codex instance', async ({ page }) => {
     await page.goto('/chat/new');
-    await choose(page.getByLabel('Provider instance'), 'Mock Codex (codex)');
+    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
     await choose(page.getByLabel('Project'), 'Demo');
     const composer = page.getByRole('combobox', { name: 'Message' });
     await composer.pressSequentially('$check');
@@ -189,7 +210,9 @@ test.describe('chat', () => {
     await expect(composer).toHaveValue('$check-work ');
     await composer.pressSequentially('the release');
     await composer.press('Enter');
-    await expect(conversation(page).getByTestId('item-user')).toHaveText('$check-work the release');
+    await expect(conversation(page).getByTestId('item-user')).toHaveText(
+      /^\$check-work the release\d{2}:\d{2}$/,
+    );
   });
 
   test('stops a running turn, keeps its output and resumes after a reload', async ({ page }) => {
@@ -211,6 +234,28 @@ test.describe('chat', () => {
     await expect(
       conversation(page).getByText(/^Resumed mock-session-[0-9a-f]{8}\. You said: Continue/),
     ).toBeVisible();
+  });
+
+  test('queues a message written during a turn and sends it with Send now', async ({ page }) => {
+    await startThread(page, 'Wait for me');
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await expect(page.getByTestId('turn-elapsed')).toBeVisible();
+    const composer = page.getByRole('combobox', { name: 'Message' });
+    await composer.fill('Then summarise it');
+    await composer.press('Enter');
+    const queued = page.getByTestId('queued-message');
+    await expect(queued).toContainText('Then summarise it');
+    await queued.getByRole('button', { name: 'Send now' }).click();
+    await expect(queued).toBeHidden();
+    await expect(conversation(page).getByText('You said: Then summarise it')).toBeVisible();
+  });
+
+  test('a new thread starts from the last one (owner decision F-5)', async ({ page }) => {
+    await startThread(page, 'Remember my settings');
+    await page.keyboard.press('Control+Alt+N');
+    await expect(page.getByLabel('Project')).toHaveText(/Demo/);
+    await expect(page.getByLabel('Model')).toContainText('Mock model');
+    await expect(page.getByRole('combobox', { name: 'Message' })).toBeFocused();
   });
 
   test('finds threads and actions in the palette', async ({ page }) => {

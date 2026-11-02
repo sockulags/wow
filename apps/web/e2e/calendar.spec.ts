@@ -44,6 +44,8 @@ async function runPaletteCommand(page: Page, title: string) {
   await page.keyboard.press('Control+k');
   await page.getByRole('dialog').getByRole('combobox').fill(title);
   await page.keyboard.press('Enter');
+  // Keys pressed while the palette still closes would go to its search box.
+  await expect(page.getByRole('dialog')).toBeHidden();
 }
 
 // A point in a day column at a wall-clock time, a few pixels below the line. The column is one

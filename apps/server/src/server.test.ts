@@ -271,6 +271,22 @@ describe('rpc', () => {
     });
   });
 
+  it('lists the files expected artifact globs match in a project, for the builder', async () => {
+    await mkdir(path.join(home, 'intents', 'demo'), { recursive: true });
+    await writeFile(path.join(home, 'intents', 'demo', 'spec.md'), '# Spec\n');
+    const command = { type: 'project.create', projectId: 'p1', name: 'wow', cwd: home };
+    await client.request('dispatch', { commandId: 'c1', command });
+    expect(
+      await client.request('workflows.matchArtifacts', {
+        projectId: 'p1',
+        globs: ['intents/*/spec.md', 'missing/*.md'],
+      }),
+    ).toMatchObject({ result: { files: ['intents/demo/spec.md'] } });
+    expect(
+      await client.request('workflows.matchArtifacts', { projectId: 'nope', globs: ['*.md'] }),
+    ).toMatchObject({ error: { code: 'not_found' } });
+  });
+
   it('reports an unknown run when asked to detect its artifacts', async () => {
     expect(await client.request('workflowRuns.detectArtifacts', { runId: 'nope' })).toMatchObject({
       error: { code: 'not_found' },

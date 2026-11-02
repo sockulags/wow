@@ -3,6 +3,7 @@ import {
   type ProviderInstance,
   type ProviderModel,
   type Skill,
+  type StepRun,
   type StepRunState,
   type Workflow,
   type WorkflowRun,
@@ -86,6 +87,29 @@ export function draftFromTemplate(
       gateAfter: step.gateAfter,
       artifactsText: step.expectedArtifacts.join('\n'),
     })),
+  };
+}
+
+// Whether the run waits for the user at a position of the chain: 0 is before the first step,
+// n after the last, p between step p and step p + 1 (one-based). A gate after one step and a
+// gate before the next wait at the same place.
+export function waitsAt(draft: Pick<WorkflowDraft, 'steps'>, position: number): boolean {
+  const before = draft.steps[position - 1];
+  const after = draft.steps[position];
+  return (before?.gateAfter ?? false) || (after?.gateBefore ?? false);
+}
+
+// Turns the gate at a position on or off. On, it is stored as a gate after the step before it
+// (before the first step, as that step's gate before); off clears both.
+export function setGate<D extends Pick<WorkflowDraft, 'steps'>>(draft: D, position: number): D {
+  const on = !waitsAt(draft, position);
+  return {
+    ...draft,
+    steps: draft.steps.map((step, index) => {
+      if (index === position - 1) return { ...step, gateAfter: on };
+      if (index === position) return { ...step, gateBefore: on && position === 0 };
+      return step;
+    }),
   };
 }
 
@@ -286,6 +310,37 @@ export function sameJson(a: unknown, b: unknown): boolean {
     left.length === right.size &&
     left.every(([key, value]) => right.has(key) && sameJson(value, right.get(key)))
   );
+}
+
+// The step whose output a gate asks the user to review: the step that just ended for a gate
+// after it, the one before for a gate before the next step.
+export function reviewedStep(run: WorkflowRun): StepRun | undefined {
+  const gate = gateOf(run);
+  if (!gate) return undefined;
+  return run.steps[gate.position === 'after' ? gate.stepIndex : gate.stepIndex - 1];
+}
+
+// The run a thread can answer: one waiting at a gate right after the thread's step (spec 9:
+// Continue and Stop in the thread as well as the run view).
+export function gateRunForThread(
+  thread: { readonly id: string; readonly runId: string | null },
+  runs: readonly WorkflowRun[],
+): WorkflowRun | undefined {
+  if (thread.runId === null) return undefined;
+  const run = runs.find((candidate) => candidate.id === thread.runId);
+  return run && reviewedStep(run)?.threadId === thread.id ? run : undefined;
+}
+
+// What a step row says. A step that finished and now waits at its gate is done; the gate marker
+// after it says that the run waits for you.
+export function stepDisplayState(stepRun: StepRun): StepRunState {
+  return stepRun.state === 'waiting' && stepRun.endedAt ? 'done' : stepRun.state;
+}
+
+// How long a step took; undefined while it has not ended.
+export function stepDurationMs(stepRun: StepRun): number | undefined {
+  if (!stepRun.startedAt || !stepRun.endedAt) return undefined;
+  return new Date(stepRun.endedAt).getTime() - new Date(stepRun.startedAt).getTime();
 }
 
 export function artifactPath(cwd: string, relative: string): string {

@@ -258,12 +258,12 @@ export const settingsRegistry = {
     default: 'Continue where you left off.',
     scope: 'provider',
   }),
-  'chat.starterSkills': defineSetting({
+  'chat.starterCount': defineSetting({
     schema: z.number().int().min(0).max(12),
     group: 'chat',
-    label: 'Skills offered on a new thread',
+    label: 'Starters on a new thread',
     description:
-      'How many skills the new-thread view offers as one-click starters below the composer, the project\'s own first. 0 hides them.',
+      "How many skills, and how many open backlog items, the new-thread view offers as one-click starters below the composer (the project's skills first). 0 hides them.",
     default: 4,
     scope: 'global',
   }),
@@ -643,15 +643,6 @@ export const settingsRegistry = {
     default: 'comfortable',
     scope: 'global',
   }),
-  'appearance.undoSeconds': defineSetting({
-    schema: z.number().int().min(2).max(60),
-    group: 'appearance',
-    label: 'Undo time (seconds)',
-    description:
-      'How long the Undo notice stays after you delete a workflow or a backlog item. The item is deleted at once; Undo puts it back.',
-    default: 8,
-    scope: 'global',
-  }),
   'appearance.paletteRecent': defineSetting({
     schema: z.number().int().min(0).max(20),
     group: 'appearance',
@@ -659,15 +650,6 @@ export const settingsRegistry = {
     description:
       'How many recent threads, runs and backlog items the command palette lists before you type.',
     default: 5,
-    scope: 'global',
-  }),
-  'appearance.paletteCardDays': defineSetting({
-    schema: z.number().int().min(0).max(365),
-    group: 'appearance',
-    label: 'Older cards in the palette (days)',
-    description:
-      'Cards that ended more than this many days ago are only listed in the command palette when you search for them.',
-    default: 7,
     scope: 'global',
   }),
   'keybindings.palette': keybinding('Command palette', 'Open the command palette.', 'Mod+K'),
@@ -732,7 +714,7 @@ export const settingsRegistry = {
   ),
   'keybindings.continueRun': keybinding(
     'Continue run',
-    'Continue the workflow run waiting at a gate, from its run view or the waiting step\'s thread.',
+    "Continue the workflow run waiting at a gate, from its run view or the waiting step's thread.",
     'Mod+Enter',
   ),
   'keybindings.stopRun': keybinding(

@@ -55,7 +55,8 @@ describe('shell', () => {
     await user.keyboard('{Enter}');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(router.state.location.pathname).toBe('/backlog');
-    expect(await screen.findByText('Backlog is empty')).toBeTruthy();
+    // Without a server the view says so rather than claiming an empty backlog.
+    expect(await screen.findByText('Not connected to the wow server')).toBeTruthy();
   });
 
   it('lists settings pages and actions in the palette', async () => {

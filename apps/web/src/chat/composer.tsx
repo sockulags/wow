@@ -12,11 +12,11 @@ import {
   type Ref,
 } from 'react';
 import { useSetting } from '@/app/runtime';
+import { WithTooltip } from '@/components/hint';
 import { Button } from '@/components/ui/button';
 import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command';
 import { cn } from '@/lib/utils';
 import { errorMessage, useTopic } from './data';
-import { LocalTooltip } from './local-ui';
 import { filterSkills, insertSkill, skillQuery, type SkillQuery } from './model';
 import { skillGroup, skillGroups, skillSourceLabel } from './view-model';
 
@@ -337,15 +337,15 @@ export function Composer({
         />
         <div className="absolute right-2 bottom-2 flex items-center gap-1">
           {running && onStop && (
-            <LocalTooltip label="Stop" binding={stopBinding}>
+            <WithTooltip label="Stop" binding={stopBinding}>
               <Button size="sm" variant="secondary" onClick={onStop} aria-label="Stop">
                 <SquareIcon className="size-3 fill-current" />
                 Stop
               </Button>
-            </LocalTooltip>
+            </WithTooltip>
           )}
           {blockedReason !== undefined && text.trim() !== '' ? (
-            <LocalTooltip label={blockedReason}>{sendButton}</LocalTooltip>
+            <WithTooltip label={blockedReason}>{sendButton}</WithTooltip>
           ) : (
             sendButton
           )}

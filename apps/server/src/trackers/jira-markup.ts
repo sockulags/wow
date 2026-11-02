@@ -28,7 +28,10 @@ export function inlineToJira(text: string): string {
     .replace(/(^|[^\w*])\*(?=\S)([^*]+?)(?<=\S)\*(?!\w)/g, '$1_$2_')
     .replace(/~~(?=\S)(.+?)(?<=\S)~~/g, '-$1-')
     .replaceAll('\uE001', '*');
-  return converted.replace(/\uE000(\d+)\uE000/g, (_, index: string) => `{{${codes[Number(index)]}}}`);
+  return converted.replace(
+    /\uE000(\d+)\uE000/g,
+    (_, index: string) => `{{${codes[Number(index)]}}}`,
+  );
 }
 
 const cells = (row: string): string[] =>

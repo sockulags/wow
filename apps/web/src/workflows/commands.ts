@@ -7,8 +7,10 @@ export interface WorkflowCommandData {
   readonly workflows: readonly Workflow[];
   readonly runs: readonly WorkflowRun[];
   readonly templates: readonly WorkflowTemplate[];
-  // The run open in the run view, if any.
+  // The run open in the run view, or the run waiting at a gate after the open thread's step.
   readonly openRun: WorkflowRun | undefined;
+  // "14:39" for a run's start, in the calendar's zone.
+  readonly formatWhen?: (iso: string) => string;
 }
 
 // Palette commands for workflows (spec 22): new workflow (blank or from a template), every
@@ -18,6 +20,7 @@ export function workflowCommands({
   runs,
   templates,
   openRun,
+  formatWhen = (iso) => iso,
 }: WorkflowCommandData): AppCommand[] {
   const commands: AppCommand[] = [
     {
@@ -55,6 +58,7 @@ export function workflowCommands({
         title: 'Continue run',
         group: 'Workflows',
         keywords: ['gate', 'next step', 'resume'],
+        keybinding: 'keybindings.continueRun',
         run: ({ connection }) => {
           if (connection) void dispatch(connection, { type: 'workflowRun.continue', runId });
         },
@@ -65,6 +69,7 @@ export function workflowCommands({
       title: 'Stop run',
       group: 'Workflows',
       keywords: ['cancel', 'abort', 'gate'],
+      keybinding: 'keybindings.stopRun',
       run: ({ connection }) => {
         if (connection) void dispatch(connection, { type: 'workflowRun.stop', runId });
       },
@@ -74,10 +79,12 @@ export function workflowCommands({
   for (const workflow of workflows) {
     commands.push({
       id: `workflow.${workflow.id}`,
-      title: `Workflow: ${workflow.name}`,
+      title: workflow.name,
       value: `Workflow ${workflow.name} ${workflow.id}`,
       group: 'Workflows',
       keywords: ['workflow', 'edit', 'run'],
+      detail: 'Workflow',
+      searchOnly: true,
       run: ({ navigate }) =>
         void navigate({ to: '/workflows/$workflowId', params: { workflowId: workflow.id } }),
     });
@@ -87,10 +94,13 @@ export function workflowCommands({
     const name = names.get(run.workflowId) ?? 'Workflow';
     commands.push({
       id: `workflowRun.${run.id}`,
-      title: `Run: ${name} (${runStateLabels[run.state].toLowerCase()})`,
+      title: name,
       value: `Run ${name} ${run.state} ${run.id}`,
       group: 'Workflows',
       keywords: ['run', 'workflow', run.state],
+      detail: `Run · ${runStateLabels[run.state]} · ${formatWhen(run.startedAt)}`,
+      needsYou: run.state === 'waiting',
+      recentAt: run.startedAt,
       run: ({ navigate }) =>
         void navigate({ to: '/workflows/runs/$runId', params: { runId: run.id } }),
     });
