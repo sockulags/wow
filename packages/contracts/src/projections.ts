@@ -182,6 +182,14 @@ export type Question = z.infer<typeof Question>;
 export const CalendarItemSource = z.enum(['outlook', 'local']);
 export type CalendarItemSource = z.infer<typeof CalendarItemSource>;
 
+// What a local card shows as its badge. The calendar creates cards `scheduled`; the scheduler
+// moves them through the others. Outlook items are `scheduled` or `cancelled`.
+export const CardState = z.enum(['scheduled', 'running', 'waiting', 'done', 'failed', 'missed']);
+export type CardState = z.infer<typeof CardState>;
+
+export const OutlookItemState = z.enum(['scheduled', 'cancelled']);
+export type OutlookItemState = z.infer<typeof OutlookItemState>;
+
 export const CalendarItem = z.object({
   id: Id,
   source: CalendarItemSource,
@@ -190,6 +198,8 @@ export const CalendarItem = z.object({
   start: Timestamp,
   end: Timestamp,
   zone: z.string().min(1),
+  // All-day Outlook items span whole days in `zone` and sit above the time grid.
+  allDay: z.boolean(),
   location: z.string().nullable(),
   joinUrl: z.string().nullable(),
   body: z.string().nullable(),
@@ -197,7 +207,7 @@ export const CalendarItem = z.object({
   backlogItemId: Id.nullable(),
   workflowId: Id.nullable(),
   runId: Id.nullable(),
-  // Card states are decided by the calendar and scheduler units.
+  // A CardState for local cards, an OutlookItemState for Outlook items.
   state: z.string().min(1),
   updatedAt: Timestamp,
 });
@@ -218,6 +228,10 @@ export type MailItem = z.infer<typeof MailItem>;
 export const OutlookStatus = z.object({
   lastSyncAt: Timestamp.nullable(),
   lastError: z.string().nullable(),
+  // The first failed poll since the last good one: "Outlook unavailable since <time>".
+  unavailableSince: Timestamp.nullable(),
+  // Unread mail in the configured folders, including messages beyond the rail's limit.
+  unreadCount: z.number().int().nonnegative(),
   bridgeVersion: z.string().nullable(),
 });
 export type OutlookStatus = z.infer<typeof OutlookStatus>;

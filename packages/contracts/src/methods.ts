@@ -122,6 +122,16 @@ export const rpcMethods = {
     params: NoParams,
     result: z.object({ protection: SecretProtection, names: z.array(z.string()) }),
   },
+  // Asks Outlook to show a mail or calendar item (spec 4). Nothing in Outlook changes.
+  'outlook.open': {
+    params: z.object({ entryId: z.string().min(1) }),
+    result: z.object({ opened: z.literal(true) }),
+  },
+  // Polls Outlook now instead of waiting for the next interval.
+  'outlook.refresh': {
+    params: NoParams,
+    result: z.object({ outcome: z.enum(['synced', 'failed']) }),
+  },
   // Scans the skill directories now (behavior 27: refresh) and answers with the skills found.
   'skills.refresh': {
     params: NoParams,

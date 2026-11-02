@@ -88,6 +88,9 @@ beforeEach(async () => {
       outlook: (mode) => {
         outlookModes.push(mode);
         return Promise.resolve({
+          mode,
+          open: () => Promise.resolve(),
+          refresh: () => Promise.resolve('synced' as const),
           stop: () => {
             stoppedServices.push('outlook');
             return Promise.resolve();

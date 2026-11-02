@@ -9,6 +9,9 @@ import type { DbOrTx } from '../db/database.js';
 import {
   approvals,
   backlogItems,
+  calendarItems,
+  mailItems,
+  outlookStatus,
   projects,
   providerInstances,
   questions,
@@ -231,7 +234,84 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(questions.id, event.payload.questionId))
         .run();
       return ['questions'];
+    case 'card.created':
+      tx.insert(calendarItems).values(event.payload).run();
+      return ['calendarItems'];
+    case 'card.updated':
+      tx.update(calendarItems)
+        .set({ ...event.payload.changes, updatedAt: event.payload.updatedAt })
+        .where(eq(calendarItems.id, event.payload.cardId))
+        .run();
+      return ['calendarItems'];
+    case 'card.deleted':
+      tx.delete(calendarItems).where(eq(calendarItems.id, event.payload.cardId)).run();
+      return ['calendarItems'];
+    case 'outlook.synced': {
+      const { calendarUpsert, calendarRemove, mailUpsert, mailRemove } = event.payload;
+      const topics: SubscriptionTopic[] = ['outlookStatus'];
+      for (const row of calendarUpsert) {
+        tx.insert(calendarItems)
+          .values(row)
+          .onConflictDoUpdate({ target: calendarItems.id, set: row })
+          .run();
+      }
+      if (calendarRemove.length > 0) {
+        tx.delete(calendarItems)
+          .where(
+            and(inArray(calendarItems.id, calendarRemove), eq(calendarItems.source, 'outlook')),
+          )
+          .run();
+      }
+      if (calendarUpsert.length > 0 || calendarRemove.length > 0) topics.push('calendarItems');
+      for (const row of mailUpsert) {
+        tx.insert(mailItems)
+          .values(row)
+          .onConflictDoUpdate({ target: mailItems.id, set: row })
+          .run();
+      }
+      if (mailRemove.length > 0)
+        tx.delete(mailItems).where(inArray(mailItems.id, mailRemove)).run();
+      if (mailUpsert.length > 0 || mailRemove.length > 0) topics.push('mailItems');
+      const status = {
+        lastSyncAt: event.payload.at,
+        lastError: null,
+        unavailableSince: null,
+        unreadCount: event.payload.unreadCount,
+        bridgeVersion: event.payload.bridgeVersion,
+      };
+      tx.insert(outlookStatus)
+        .values({ id: OUTLOOK_STATUS_ROW, ...status })
+        .onConflictDoUpdate({ target: outlookStatus.id, set: status })
+        .run();
+      return topics;
+    }
+    case 'outlook.failed': {
+      const status = {
+        lastError: event.payload.lastError,
+        unavailableSince: event.payload.unavailableSince,
+      };
+      tx.insert(outlookStatus)
+        .values({ id: OUTLOOK_STATUS_ROW, ...status })
+        .onConflictDoUpdate({ target: outlookStatus.id, set: status })
+        .run();
+      return ['outlookStatus'];
+    }
   }
+}
+
+// `outlook_status` holds a single row.
+const OUTLOOK_STATUS_ROW = 1;
+
+const outlookStatusColumns = {
+  lastSyncAt: outlookStatus.lastSyncAt,
+  lastError: outlookStatus.lastError,
+  unavailableSince: outlookStatus.unavailableSince,
+  unreadCount: outlookStatus.unreadCount,
+  bridgeVersion: outlookStatus.bridgeVersion,
+};
+
+export function readOutlookStatus(tx: DbOrTx) {
+  return tx.select(outlookStatusColumns).from(outlookStatus).all();
 }
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -313,5 +393,10 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(questions)
         .where(and(eq(questions.threadId, threadId), isNull(questions.answeredAt)))
         .get()?.n ?? 0),
+    calendarItem: (id) => tx.select().from(calendarItems).where(eq(calendarItems.id, id)).get(),
+    outlookCalendarItems: () =>
+      tx.select().from(calendarItems).where(eq(calendarItems.source, 'outlook')).all(),
+    mailItems: () => tx.select().from(mailItems).all(),
+    outlookStatus: () => readOutlookStatus(tx)[0],
   };
 }

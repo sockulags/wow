@@ -1,8 +1,15 @@
 import { createClaudeAdapter } from '@wow/provider-claude';
+import { startOutlookService } from './outlook/service.js';
 import { startServer } from './server.js';
 
-// Command-line entry: `pnpm --filter @wow/server start`. The desktop app calls startServer itself.
-const server = await startServer({ hooks: { providers: { claude: createClaudeAdapter } } });
+// Command-line entry: `pnpm --filter @wow/server start`, and the entry of the desktop app's server
+// bundle.
+const server = await startServer({
+  hooks: {
+    providers: { claude: createClaudeAdapter },
+    outlook: (mode, context) => startOutlookService(mode, context),
+  },
+});
 
 let stopping = false;
 const shutdown = (signal: NodeJS.Signals) => {

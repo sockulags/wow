@@ -14,8 +14,10 @@ import { formatBinding } from './keybindings';
 import { useLayout, useRuntime } from './runtime';
 
 const groupOrder: readonly Group[] = [
+  'Calendar',
   'Chat',
   'Threads',
+  'Cards',
   'Workflows',
   'Navigation',
   'Settings',

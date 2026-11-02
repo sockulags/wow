@@ -19,6 +19,7 @@ import {
 } from './hooks/index.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
 import { detectProviders } from './providers/detect.js';
+import type { OutlookService } from './outlook/service.js';
 import { ProviderService } from './providers/service.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
 import { route } from './rpc/router.js';
@@ -138,6 +139,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   });
   // The runner listens first, so a step whose turn recovery fails also fails its run.
   providerService.recover();
+  // Set once the Outlook hook has started, which happens after the socket listens.
+  let outlook: OutlookService | undefined;
   workflows.recover();
   const skills = new SkillsService({
     db: database.db,
@@ -157,6 +160,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     workflows,
     providers: providerService,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
+    outlook: () => outlook,
     info: { version, home },
   });
 
@@ -223,6 +227,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const context: ServiceContext = {
     home,
     settings,
+    logger,
     dispatch: (commandId, command) => engine.dispatch(commandId, command),
   };
   const services: BackgroundService[] = [workflows];
@@ -240,7 +245,10 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     // A folder that cannot be read must not keep the server from starting.
     await skills.start().catch((error: unknown) => logger.error('skill scan failed', error));
     const mode = outlookMode(options.platform ?? process.platform, env);
-    if (options.hooks?.outlook) services.push(await options.hooks.outlook(mode, context));
+    if (options.hooks?.outlook) {
+      outlook = await options.hooks.outlook(mode, context);
+      services.push(outlook);
+    }
     for (const start of options.hooks?.services ?? []) services.push(await start(context));
   } catch (error) {
     await stopServices();

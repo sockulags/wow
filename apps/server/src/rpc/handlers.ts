@@ -1,10 +1,12 @@
 import { WorkflowRun, type DetectedProvider } from '@wow/contracts';
+import { OutlookError } from '@wow/outlook-bridge';
 import type { SecretStore } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import type { Engine } from '../core/engine.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
 import { workflowRuns } from '../db/schema.js';
+import type { OutlookService } from '../outlook/service.js';
 import type { ProviderService } from '../providers/service.js';
 import type { SettingsService } from '../settings/service.js';
 import type { SkillsService } from '../skills/service.js';
@@ -27,7 +29,15 @@ export interface HandlerDeps {
   readonly workflows: WorkflowRunner;
   readonly providers: ProviderService;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
+  // Undefined until the Outlook service has started, or when the server runs without one.
+  readonly outlook: () => OutlookService | undefined;
   readonly info: { readonly version: string; readonly home: string };
+}
+
+function requireOutlook(deps: HandlerDeps): OutlookService {
+  const outlook = deps.outlook();
+  if (!outlook) throw new RpcFault('not_found', 'Outlook is not set up on this server');
+  return outlook;
 }
 
 export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
@@ -50,6 +60,17 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     'provider.detect': () => deps.detectProviders(),
     'secrets.set': ({ name, value }) => deps.secrets.set(name, value),
     'secrets.delete': async ({ name }) => ({ removed: await deps.secrets.delete(name) }),
+    'outlook.open': async ({ entryId }) => {
+      try {
+        await requireOutlook(deps).open(entryId);
+      } catch (error) {
+        // Outlook closed or not answering is the user's situation, not a server fault.
+        if (error instanceof OutlookError) throw new RpcFault('rejected', error.message);
+        throw error;
+      }
+      return { opened: true as const };
+    },
+    'outlook.refresh': async () => ({ outcome: await requireOutlook(deps).refresh() }),
     'secrets.status': async () => ({
       protection: deps.secrets.protection,
       names: await deps.secrets.names(),

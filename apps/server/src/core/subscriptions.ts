@@ -1,9 +1,10 @@
 import { subscriptionTopics, type SubscribeParams, type SubscriptionTopic } from '@wow/contracts';
-import { asc, eq } from 'drizzle-orm';
+import { asc, desc, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
 import type { Engine } from './engine.js';
+import { readOutlookStatus } from './projector.js';
 
 // Reads the current rows of a topic. Thread-scoped topics only read one thread.
 export function snapshot(db: Db, params: SubscribeParams): unknown[] {
@@ -37,16 +38,10 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
       case 'calendarItems':
         return db.select().from(t.calendarItems).orderBy(asc(t.calendarItems.start)).all();
       case 'mailItems':
-        return db.select().from(t.mailItems).orderBy(asc(t.mailItems.receivedAt)).all();
+        // Newest first, as the mail rail shows them (spec 4).
+        return db.select().from(t.mailItems).orderBy(desc(t.mailItems.receivedAt)).all();
       case 'outlookStatus':
-        return db
-          .select({
-            lastSyncAt: t.outlookStatus.lastSyncAt,
-            lastError: t.outlookStatus.lastError,
-            bridgeVersion: t.outlookStatus.bridgeVersion,
-          })
-          .from(t.outlookStatus)
-          .all();
+        return readOutlookStatus(db);
       case 'backlogItems':
         return db.select().from(t.backlogItems).orderBy(asc(t.backlogItems.createdAt)).all();
       case 'workflows':

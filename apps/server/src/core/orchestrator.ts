@@ -1,6 +1,9 @@
 import {
   SecretRef,
   type Approval,
+  type CalendarItem,
+  type MailItem,
+  type OutlookStatus,
   type BacklogItem,
   type DomainEvent,
   type Project,
@@ -18,6 +21,7 @@ import {
   type WorkflowRun,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
+import { decideCalendar, isCalendarCommand } from './calendar.js';
 import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
 import { decideThread, isThreadCommand } from './threads.js';
 import { decideWorkflow, isWorkflowCommand } from './workflows.js';
@@ -43,6 +47,11 @@ export interface ReadModel {
   question(id: string): Question | undefined;
   // Approvals and questions of the thread that are still waiting for an answer.
   openRequests(threadId: string): number;
+  calendarItem(id: string): CalendarItem | undefined;
+  // Every cached Outlook calendar row, and the cached unread mail.
+  outlookCalendarItems(): CalendarItem[];
+  mailItems(): MailItem[];
+  outlookStatus(): OutlookStatus | undefined;
   skills(): Skill[];
   workflow(id: string): Workflow | undefined;
   run(id: string): WorkflowRun | undefined;
@@ -74,6 +83,7 @@ export function decide(
 ): DomainEvent[] {
   if (isProviderInstanceCommand(command)) return decideProviderInstance(command, read);
   if (isThreadCommand(command)) return decideThread(command, read, context);
+  if (isCalendarCommand(command)) return decideCalendar(command, read, context);
   if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
   switch (command.type) {
     case 'project.create': {
