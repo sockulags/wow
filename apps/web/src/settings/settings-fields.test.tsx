@@ -156,7 +156,8 @@ describe('generated settings fields', () => {
 
   it('enum: picks an option', async () => {
     const { row, value, user } = setup();
-    await user.selectOptions(row('advanced.level').getByRole('combobox'), 'warn');
+    await user.click(row('advanced.level').getByRole('combobox'));
+    await user.click(await screen.findByRole('option', { name: 'warn' }));
     expect(value('advanced.level')).toBe('warn');
   });
 

@@ -3,6 +3,8 @@ import { useState, type FormEvent } from 'react';
 import { useSetting } from '@/app/runtime';
 import { resolveZone } from '@/calendar/time';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
+import { ChoiceSelect } from '@/components/choice-select';
+import { DateField, TimeField } from '@/components/date-time-fields';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -16,15 +18,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { nextHour, planRange } from './model';
 
-export const selectClass =
-  'h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30';
-
 function PlanForm({ item, onDone }: { item: BacklogItem; onDone: () => void }) {
   const dispatch = useDispatch();
   const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
   const zone = resolveZone(useSetting('calendar.zone'));
   const cardMinutes = useSetting('calendar.cardMinutes');
+  const firstDayOfWeek = useSetting('calendar.firstDayOfWeek');
+  const snapMinutes = useSetting('calendar.snapMinutes');
   const [initial] = useState(() => nextHour(new Date(), zone));
   const [workflowId, setWorkflowId] = useState('');
   const [projectId, setProjectId] = useState('');
@@ -68,54 +69,44 @@ function PlanForm({ item, onDone }: { item: BacklogItem; onDone: () => void }) {
       <div className="grid grid-cols-2 gap-2">
         <div className="grid gap-1.5">
           <Label htmlFor="plan-workflow">Workflow</Label>
-          <select
+          <ChoiceSelect
             id="plan-workflow"
-            className={selectClass}
             value={chosenWorkflow}
-            onChange={(event) => setWorkflowId(event.target.value)}
-          >
-            <option value="">Choose a workflow</option>
-            {workflows.map((workflow) => (
-              <option key={workflow.id} value={workflow.id}>
-                {workflow.name}
-              </option>
-            ))}
-          </select>
+            placeholder="Choose a workflow"
+            choices={workflows.map((workflow) => ({ value: workflow.id, label: workflow.name }))}
+            onValueChange={setWorkflowId}
+          />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="plan-project">Project</Label>
-          <select
+          <ChoiceSelect
             id="plan-project"
-            className={selectClass}
             value={chosenProject}
-            onChange={(event) => setProjectId(event.target.value)}
-          >
-            <option value="">Choose a project</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
+            placeholder="Choose a project"
+            choices={projects.map((project) => ({ value: project.id, label: project.name }))}
+            onValueChange={setProjectId}
+          />
         </div>
       </div>
       <div className="grid grid-cols-3 gap-2">
         <div className="grid gap-1.5">
           <Label htmlFor="plan-date">Date</Label>
-          <Input
+          <DateField
             id="plan-date"
-            type="date"
+            label="Date"
             value={date}
-            onChange={(event) => setDate(event.target.value)}
+            firstDayOfWeek={firstDayOfWeek}
+            onValueChange={setDate}
           />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="plan-start">Start</Label>
-          <Input
+          <TimeField
             id="plan-start"
-            type="time"
+            label="Start"
             value={start}
-            onChange={(event) => setStart(event.target.value)}
+            stepMinutes={snapMinutes}
+            onValueChange={setStart}
           />
         </div>
         <div className="grid gap-1.5">

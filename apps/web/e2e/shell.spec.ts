@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { choose } from './controls';
 
 // U3 ground truth: open every route, toggle the theme, change a setting.
 
@@ -34,7 +35,7 @@ test.describe('shell', () => {
 
     await page.goto('/settings/appearance');
     await expect(html).toHaveClass(/dark/);
-    await page.getByLabel('Theme').selectOption('light');
+    await choose(page.getByLabel('Theme'), 'light');
     await expect(html).not.toHaveClass(/dark/);
   });
 

@@ -3,14 +3,13 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useStore } from 'zustand';
 import { useRuntime } from '@/app/runtime';
+import { ChoiceSelect } from '@/components/choice-select';
+import { Combobox } from '@/components/combobox';
 import { Input } from '@/components/ui/input';
 import { Composer } from './composer';
 import { useDispatch, useModels, useTopic } from './data';
 import { effortOptions, titleFromMessage } from './model';
 import { ThreadSettings, type ThreadSettingsValue } from './thread-settings';
-
-const fieldClass =
-  'h-8 rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30';
 
 // What a new thread on this instance starts with: the instance defaults, else the first model
 // the provider lists and the first effort and permission mode offered for it.
@@ -84,36 +83,37 @@ export function NewThreadView() {
       <header className="flex shrink-0 flex-col gap-2 border-b border-border px-4 py-2">
         <h2 className="text-sm font-medium">New thread</h2>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <select
-            aria-label="Provider instance"
-            className={fieldClass}
+          <ChoiceSelect
+            label="Provider instance"
+            size="sm"
+            className="w-auto"
             value={instance?.id ?? ''}
-            onChange={(event) => draft.setState({ providerInstanceId: event.target.value })}
-          >
-            {(instances ?? []).map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>
-                {candidate.name} ({candidate.kind})
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Project"
-            className={fieldClass}
+            placeholder="Pick a provider"
+            choices={(instances ?? []).map((candidate) => ({
+              value: candidate.id,
+              label: `${candidate.name} (${candidate.kind})`,
+            }))}
+            onValueChange={(providerInstanceId) => draft.setState({ providerInstanceId })}
+          />
+          <Combobox
+            label="Project"
+            size="sm"
+            className="w-48"
             value={project?.id ?? ''}
-            onChange={(event) =>
+            placeholder="No project"
+            searchPlaceholder="Search projects…"
+            emptyText="No matching project."
+            choices={[
+              { value: '', label: 'No project' },
+              ...projects.map((candidate) => ({ value: candidate.id, label: candidate.name })),
+            ]}
+            onValueChange={(projectId) =>
               draft.setState({
-                projectId: event.target.value === '' ? undefined : event.target.value,
+                projectId: projectId === '' ? undefined : projectId,
                 cwd: undefined,
               })
             }
-          >
-            <option value="">No project</option>
-            {projects.map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>
-                {candidate.name}
-              </option>
-            ))}
-          </select>
+          />
           <Input
             aria-label="Working directory"
             placeholder="Working directory"

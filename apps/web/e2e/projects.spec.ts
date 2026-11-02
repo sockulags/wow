@@ -1,7 +1,8 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { e2eProjectsHome as home, e2eWorkflowId, e2eWorkspace } from './env';
+import { withOptions } from './controls';
 
 // Settings → Projects against its own copy of the e2e server: a project is created with a folder
 // that exists, every picker offers it, a rename reaches the pickers, and removing it takes it out
@@ -19,13 +20,13 @@ const projectList = (page: Page) => page.getByRole('region', { name: 'Projects' 
 
 async function expectInPickers(page: Page, name: string, present: boolean) {
   await page.goto('/chat/new');
-  const chatPicker = page.getByLabel('Project', { exact: true });
-  await expect(chatPicker.getByRole('option', { name: 'Demo' })).toHaveCount(1);
-  await expect(chatPicker.getByRole('option', { name, exact: true })).toHaveCount(present ? 1 : 0);
+  const check = async (options: Locator) => {
+    await expect(options.filter({ hasText: /^Demo$/ })).toHaveCount(1);
+    await expect(options.getByText(name, { exact: true })).toHaveCount(present ? 1 : 0);
+  };
+  await withOptions(page.getByLabel('Project', { exact: true }), check);
   await page.goto(`/workflows/${e2eWorkflowId}`);
-  const runPicker = page.getByLabel('Run in project');
-  await expect(runPicker.getByRole('option', { name: 'Demo' })).toHaveCount(1);
-  await expect(runPicker.getByRole('option', { name, exact: true })).toHaveCount(present ? 1 : 0);
+  await withOptions(page.getByLabel('Run in project'), check);
 }
 
 test.describe('projects', () => {

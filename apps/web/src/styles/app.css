@@ -61,4 +61,20 @@
   body {
     @apply bg-background font-sans text-sm text-foreground antialiased;
   }
+
+  /* Thin themed scrollbars everywhere instead of the platform's light ones. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar) transparent;
+  }
+
+  /* Number fields keep their arrow-key stepping but drop the browser's spin buttons. */
+  input[type='number'] {
+    appearance: textfield;
+  }
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    appearance: none;
+    margin: 0;
+  }
 }
