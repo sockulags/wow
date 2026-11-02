@@ -2,6 +2,7 @@ import { Outlet, useRouterState } from '@tanstack/react-router';
 import { PanelLeftIcon, PanelRightIcon, SearchIcon } from 'lucide-react';
 import { useLayoutEffect } from 'react';
 import { Button } from '@/components/ui/button';
+import { LocalUndoToaster } from '@/chat/local-undo';
 import { ProjectDialogs } from '@/projects/project-dialogs';
 import { ProviderDialogs } from '@/providers/provider-dialogs';
 import { formatBinding } from './keybindings';
@@ -111,6 +112,7 @@ export function Shell() {
       <ProviderDialogs />
       <ProjectDialogs />
       <Toaster />
+      <LocalUndoToaster />
     </div>
   );
 }

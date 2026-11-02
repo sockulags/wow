@@ -3,7 +3,10 @@
 
 export interface NewIssue {
   readonly title: string;
+  // Markdown, as written in the backlog item. Each client turns it into what its tracker renders.
   readonly body: string;
+  // Labels the user picked from the item's tags in the preview.
+  readonly labels?: readonly string[];
 }
 
 export interface CreatedIssue {

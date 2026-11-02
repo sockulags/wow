@@ -99,6 +99,14 @@ export type TrackerPreview = z.infer<typeof TrackerPreview>;
 
 const TrackerParams = z.object({ backlogItemId: z.string().min(1), service: TrackerService });
 
+// What the user changed in the preview before creating: the title, and the item's tags chosen as
+// labels (added to the GitHub labels setting; Jira labels cannot hold spaces, so they become
+// dashes there).
+const TrackerPublishParams = TrackerParams.extend({
+  title: z.string().trim().min(1).optional(),
+  labels: z.array(z.string().trim().min(1)).optional(),
+});
+
 // Every method the server answers. A request's params and the response's result are validated
 // against these on the server, and the client runtime can use the same schemas.
 export const rpcMethods = {
@@ -178,6 +186,12 @@ export const rpcMethods = {
     params: z.object({ runId: z.string().min(1) }),
     result: WorkflowRun,
   },
+  // Files in a project folder that expected artifact globs match, for the builder's "Matches 2
+  // files in Demo" line. Read only; nothing is stored.
+  'workflows.matchArtifacts': {
+    params: z.object({ projectId: z.string().min(1), globs: z.array(z.string().min(1)) }),
+    result: z.object({ files: z.array(z.string()) }),
+  },
   'trackers.preview': {
     params: TrackerParams,
     result: TrackerPreview,
@@ -185,7 +199,7 @@ export const rpcMethods = {
   // Creates the issue and stores its key and URL on the item. Refused when the item already has
   // one or the tracker is not configured.
   'trackers.publish': {
-    params: TrackerParams,
+    params: TrackerPublishParams,
     result: BacklogRemote,
   },
 } as const satisfies Record<string, { params: z.ZodType; result: z.ZodType }>;

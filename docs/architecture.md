@@ -427,7 +427,7 @@ A group marked with a unit (`(U12)`) belongs to a unit not delivered yet; its ke
 until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`
-- chat: `chat.contextMeter`, `chat.resumePrompt`
+- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.starterSkills`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`,
   `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`,
   `calendar.hourHeight`, `calendar.zoomStep`
@@ -442,7 +442,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.jira.issueType`, `trackers.github.baseUrl`, `trackers.github.token` (secret),
   `trackers.github.owner`, `trackers.github.repo`, `trackers.github.labels`,
   `trackers.requestTimeoutMs`
-- appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`
+- appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
+  `appearance.undoSeconds`, `appearance.paletteRecent`, `appearance.paletteCardDays`
 - keybindings: `keybindings.*`, one per command that has a shortcut
 - desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
 - updates: `updates.enabled`, `updates.checkIntervalMinutes`

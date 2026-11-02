@@ -17,11 +17,14 @@ export interface GitHubConfig {
   readonly labels: readonly string[];
 }
 
+// GitHub renders markdown, so the body goes as written. Labels are the configured ones plus the
+// tags picked in the preview.
 export function gitHubIssuePayload(config: GitHubConfig, issue: NewIssue) {
+  const labels = [...new Set([...config.labels, ...(issue.labels ?? [])])];
   return {
     title: issue.title,
     body: issue.body,
-    ...(config.labels.length > 0 ? { labels: [...config.labels] } : {}),
+    ...(labels.length > 0 ? { labels } : {}),
   };
 }
 

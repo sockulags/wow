@@ -12,13 +12,14 @@ import path from 'node:path';
 import type { Engine } from '../core/engine.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
-import { workflowRuns } from '../db/schema.js';
+import { projects, workflowRuns } from '../db/schema.js';
 import type { OutlookService } from '../outlook/service.js';
 import type { ProviderService } from '../providers/service.js';
 import type { SettingsService } from '../settings/service.js';
 import type { SkillsService } from '../skills/service.js';
 import { TrackerError } from '../trackers/http.js';
 import type { TrackerService } from '../trackers/service.js';
+import { detectArtifacts } from '../workflows/artifacts.js';
 import type { WorkflowRunner } from '../workflows/runner.js';
 import { RpcFault, type Handlers } from './router.js';
 
@@ -105,14 +106,19 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     'skills.refresh': async () => ({ skills: await deps.skills.refresh() }),
     'trackers.preview': ({ backlogItemId, service }) =>
       deps.trackers.preview(backlogItemId, service),
-    'trackers.publish': async ({ backlogItemId, service }) => {
+    'trackers.publish': async ({ backlogItemId, service, title, labels }) => {
       try {
-        return await deps.trackers.publish(backlogItemId, service);
+        return await deps.trackers.publish(backlogItemId, service, { title, labels });
       } catch (error) {
         // A tracker that refuses the issue or cannot be reached is the user's to fix.
         if (error instanceof TrackerError) throw new RpcFault('rejected', error.message);
         throw error;
       }
+    },
+    'workflows.matchArtifacts': async ({ projectId, globs }) => {
+      const project = deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
+      if (!project) throw new RpcFault('not_found', `No project ${projectId}`);
+      return { files: await detectArtifacts(project.cwd, globs) };
     },
     'workflowRuns.detectArtifacts': async ({ runId }) => {
       await deps.workflows.detectArtifacts(runId);
