@@ -20,7 +20,7 @@ packages/
   skills/        SKILL.md discovery.
   workflow-engine/   workflow definitions, runs, gates, step handover. Pure; the server wires it.
   secrets/       DPAPI (Windows) or 0600 file (elsewhere) secret store.
-docs/            architecture (this file), user guide, windows-smoke checklist.
+docs/            architecture (this file), user guide, windows-smoke checklist, releases/ notes.
 intents/         agent-os intent, spec and plan.
 .claude/workflows/build-wow.js   delivers the plan with at most three agents at a time.
 ```
@@ -492,6 +492,15 @@ toolchain the install deliberately avoids, and electron-builder's rebuild is off
 @wow/desktop smoke` proves the bundle under Electron's Node (SQLite opens, RPC answers, clean
 stop), and CI runs it before building the NSIS installer on `windows-latest`. No code signing, no
 auto-update.
+
+Releases: the version is `apps/desktop/package.json` (the installer name) and
+`apps/server/package.json` (what the server reports), kept equal. The owner runs
+`docs/windows-smoke.md` against the installer from the release candidate's CI run and fills in the
+checklist in `docs/releases/v<version>.md`. Pushing tag `v<version>` runs
+`.github/workflows/release.yml`: it refuses a tag that differs from the desktop version or whose
+notes still say "Smoke result: pending", then builds and smoke-tests the installer from the tagged
+commit and attaches it to the GitHub release for the tag, creating the release from the notes file
+if it does not exist.
 
 ## Chat view
 

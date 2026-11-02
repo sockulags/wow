@@ -1,0 +1,69 @@
+name: Release
+
+# Pushing a version tag (v0.1.0) builds the Windows installer from that exact commit and attaches it
+# to the GitHub release for the tag. The release notes come from docs/releases/<tag>.md, which must
+# carry the completed Windows smoke checklist (spec "Ground truth"), so a tag cannot be released
+# before the owner has run docs/windows-smoke.md.
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  installer:
+    name: installer (windows-latest)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ github.ref_name }}
+      NOTES: docs/releases/${{ github.ref_name }}.md
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag, version and release notes
+        run: |
+          version="v$(node -p "require('./apps/desktop/package.json').version")"
+          if [ "$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match apps/desktop version $version"
+            exit 1
+          fi
+          if [ ! -f "$NOTES" ]; then
+            echo "::error::$NOTES is missing"
+            exit 1
+          fi
+          if grep -q 'Smoke result: pending' "$NOTES"; then
+            echo "::error::$NOTES still says 'Smoke result: pending'; paste the completed docs/windows-smoke.md checklist first"
+            exit 1
+          fi
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @wow/desktop build
+      - run: pnpm --filter @wow/desktop exec install-electron
+      - run: pnpm --filter @wow/desktop smoke
+      - run: pnpm --filter @wow/desktop dist
+      - name: Attach the installer to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          installer="apps/desktop/release/wow-setup-${TAG#v}.exe"
+          if [ ! -f "$installer" ]; then
+            echo "::error::$installer was not built"
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$installer" --clobber
+          else
+            gh release create "$TAG" "$installer" --verify-tag --title "wow ${TAG#v}" --notes-file "$NOTES"
+          fi

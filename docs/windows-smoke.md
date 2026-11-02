@@ -5,7 +5,9 @@ appear, a real Claude and Codex turn stream, and a card trigger starts a thread 
 in the tray. CI cannot do this, because it has no Outlook profile and no logged-in CLIs.
 
 Run it for every release candidate. Copy the checklist into the pull request or release notes,
-tick what passed, and write down what did not with the build, the step and what you saw.
+tick what passed, and write down what did not with the build, the step and what you saw. For a
+release, fill in the copy in `docs/releases/v<version>.md` and change its "Smoke result" line; the
+release workflow will not publish a tag whose notes still say "pending".
 
 ## Machine
 
