@@ -4,6 +4,7 @@ import { useEffect, useMemo } from 'react';
 import { chatCommands } from '@/chat/commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
+import { providerCommands } from '@/providers/commands';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
 import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
 import { useRuntime } from './runtime';
@@ -28,6 +29,7 @@ export function useCommands(): {
         openThread: threads?.find((thread) => thread.id === openThreadId),
         running: runningTurn(turns ?? []) !== undefined,
       }),
+      ...providerCommands(instances ?? []),
       ...staticCommands,
     ],
     [staticCommands, threads, instances, turns, openThreadId],

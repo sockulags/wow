@@ -40,7 +40,7 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test` and `provider.listModels`
-  (`{providerInstanceId}`). Error codes are `RpcErrorCode`.
+  (`{providerInstanceId}`), `provider.detect`. Error codes are `RpcErrorCode`.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
@@ -196,6 +196,20 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
 - **Instances.** A provider instance is one binary + one config directory + env. Several instances
   of the same kind are allowed (work and personal accounts). A thread remembers its instance and
   can only resume on an instance with the same config directory.
+- **Onboarding** (`apps/web/src/providers`). Settings → Providers lists the instances with the
+  status, account and version of their last "Test" and adds, edits, tests and removes them; palette
+  commands do the same from anywhere. `provider.detect` looks for `claude` and `codex` on the
+  server's PATH (PATHEXT on Windows) and reports the config directory each would use
+  (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `~/.claude` / `~/.codex`); what the onboarding needs
+  per kind is `providerSetup` in contracts. With no instance at all the web app opens a first-run
+  wizard that creates and tests one instance per detected CLI. Secret environment values go to
+  `secrets.set` as `provider:<instanceId>:env:<NAME>` and the instance stores the reference.
+  `providerInstance.update` clears the last test when the binary, config directory, environment or
+  launch arguments change, and both it and `providerInstance.delete` are refused while a turn runs
+  on the instance; delete is also refused while threads use it. After commit the provider service
+  drops the instance's adapter (the next use builds one from the new row) and deletes secrets the
+  instance no longer references. Delete also removes provider-scoped settings and clears project
+  defaults that pointed at it.
 
 ## Outlook bridge
 
@@ -299,14 +313,41 @@ stored value that no longer passes the schema. Writes are `setting.set` / `setti
 commands, so they are events like everything else; the server reads SQLite on every `get`, so a
 change applies at once, and services holding derived state listen with `onChange`. The page picks the editor from the zod schema type; schemas that need a special editor
 carry `.meta({ widget: 'keybinding' | 'keyValue' })` (see `Keybinding` and `KeyValueList`). Objects
-render their fields; anything else falls back to a JSON editor. Until the settings RPC exists the
-web app uses the in-memory `SettingsSource` from `packages/client-runtime`. Initial groups: providers (testTimeoutMs), chat
-(contextMeter, resumePrompt), calendar (zone, firstDayOfWeek, workHours, lookaheadDays),
-outlook (pollSeconds, folders, requestTimeoutMs, mailRail), scheduler (tickSeconds, missedPolicy,
-notifications, paused), workflows (templates, handoverTemplate), skills (directories, includeClaudePlugins),
-trackers (jira: baseUrl, authMode `cloud-basic`|`pat`, projectKey, issueType, email; github:
-baseUrl, owner, repo, labels), appearance (theme, fonts, density), keybindings, desktop (autostart,
-closeToTray, startMinimized), advanced (WOW_HOME, port, log level, secret store timeout).
+render their fields; anything else falls back to a JSON editor. Connected to a server, the web app
+reads the `settings` topic and writes global values with `setting.set` / `setting.reset`
+(`apps/web/src/settings/server-source.ts`); without one it uses the in-memory `SettingsSource`
+from `packages/client-runtime`.
+
+The settings below are the registry. `apps/server/src/settings/coverage.test.ts` reads this list:
+a key named here and missing from the registry, or registered and missing here, fails the tests.
+A group marked with a unit (`(U7)`) belongs to a unit not delivered yet; its keys must not exist
+until that unit removes the mark. `group.*` covers every key of the group.
+
+- providers: `providers.testTimeoutMs`
+- chat: `chat.contextMeter`, `chat.resumePrompt`
+- calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`,
+  `calendar.lookaheadDays`
+- outlook: `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`,
+  `outlook.mailRail`, `outlook.mailLimit`
+- scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
+  `scheduler.paused`
+- workflows (U7): `workflows.templates`, `workflows.handoverTemplate`
+- skills (U7): `skills.directories`, `skills.includeClaudePlugins`
+- trackers (U12): `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
+  `trackers.jira.projectKey`, `trackers.jira.issueType`, `trackers.jira.email`,
+  `trackers.github.baseUrl`, `trackers.github.owner`, `trackers.github.repo`,
+  `trackers.github.labels`
+- appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`
+- keybindings: `keybindings.*`, one per command that has a shortcut
+- desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
+- advanced: `advanced.port`, `advanced.logLevel`, `advanced.secretsTimeoutMs` (`WOW_HOME` is an
+  environment variable, see "Server")
+
+The same test fails when `apps/server/src` or `apps/web/src` declares a tunable-looking constant
+(a `const`, `readonly` field or object property named like `*Ms`, `*Seconds`, `*Timeout`,
+`*Interval`, `*Limit`, `*Port` with a literal number other than 0 or 1, or a literal delay passed
+to `setTimeout` / `setInterval`) that has no registry entry. A value that is truly not a setting
+goes into the test's exemptions with the reason.
 
 ## Secrets
 
@@ -383,3 +424,6 @@ copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
   `apps/web/e2e/server.ts`: the server with a scripted `MockProviderAdapter` registered as the
   claude and codex factories (the prompt picks the scenario), one seeded instance and project,
   and skill rows written straight into the projection until skills discovery dispatches them.
+  Its PATH holds empty stand-in `claude` and `codex` files for `provider.detect`. The settings
+  tests start a second copy in its own home and port (`WOW_E2E_HOME`, `WOW_E2E_PORT`), because
+  they add and remove instances and change global settings.

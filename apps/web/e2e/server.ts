@@ -1,7 +1,20 @@
 import type { ProviderCommand, ProviderEvent } from '@wow/contracts';
 import { MockProviderAdapter, startServer, type MockScript } from '@wow/server';
-import { rm } from 'node:fs/promises';
-import { e2eHome, e2ePort, e2eProjectId, e2eProviderInstanceId } from './env';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import {
+  e2eBinDir,
+  e2eBinary,
+  e2eClaudeConfigDir,
+  e2eCodexHome,
+  e2eHome,
+  e2ePort,
+  e2eProjectId,
+  e2eProviderInstanceId,
+} from './env';
+
+// WOW_E2E_HOME and WOW_E2E_PORT start a second copy for the settings tests (playwright.config.ts).
+const home = process.env['WOW_E2E_HOME'] ?? e2eHome;
+const port = Number(process.env['WOW_E2E_PORT'] ?? e2ePort);
 
 // Starts the wow server for the chat tests with a scripted mock provider. The prompt picks the
 // scenario: "approve" asks for an approval, "question" asks a question, "wait" streams a little
@@ -119,11 +132,22 @@ const chatScript: MockScript = (command) => {
   }
 };
 
-await rm(e2eHome, { recursive: true, force: true });
+await rm(home, { recursive: true, force: true });
+// Provider detection looks at the server's PATH; the mock adapters never run these files.
+await mkdir(e2eBinDir(home), { recursive: true });
+for (const name of ['claude', 'codex']) {
+  await writeFile(e2eBinary(home, name), '', { mode: 0o755 });
+}
 const server = await startServer({
-  home: e2eHome,
-  port: e2ePort,
-  env: { ...process.env, WOW_PROVIDERS: '' },
+  home,
+  port,
+  env: {
+    ...process.env,
+    WOW_PROVIDERS: '',
+    PATH: e2eBinDir(home),
+    CLAUDE_CONFIG_DIR: e2eClaudeConfigDir(home),
+    CODEX_HOME: e2eCodexHome(home),
+  },
   hooks: {
     providers: {
       claude: () => new MockProviderAdapter('claude', chatScript),
@@ -147,7 +171,7 @@ server.engine.dispatch('seed-project', {
   type: 'project.create',
   projectId: e2eProjectId,
   name: 'Demo',
-  cwd: e2eHome,
+  cwd: home,
 });
 
 // No command writes skills yet (skills discovery lands separately), so the fixtures go straight
