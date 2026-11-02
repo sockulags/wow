@@ -279,9 +279,17 @@ Tokens are stored encrypted; clearing the field deletes the stored token.
 ## Projects
 
 Settings → Projects lists your projects with their folders. **New project** (also "New project"
-in the palette) asks for a name and the full path of a folder that exists on this computer; wow
-refuses a folder it cannot find and a name another project already has. Every project picker
-(new thread, card dialog, Run now, Plan on calendar) offers the new project at once.
+in the palette) asks for a name and a folder. In the desktop app **Choose folder…** opens the
+system folder dialog; only the browser build of the app (development) takes a typed path, and the
+server refuses a folder it cannot find. A name another project already has is refused too. Every
+project picker (new thread, card dialog, Run now, Plan on calendar) offers the new project at once.
+
+**Import from Claude and Codex** (also in the palette) looks through the session history of every
+provider instance in Settings → Providers: Claude Code's `projects` folder in the instance's config
+directory and Codex's `sessions` folder in its `CODEX_HOME`. It lists each folder they worked in
+that still exists and is not a project yet, with the instances that used it and when, all checked.
+Uncheck what you do not want and press **Import**; each folder becomes a project named after it
+(with a number when the name is taken). Nothing is changed in Claude's or Codex's files.
 
 **Rename** changes only the name; threads, cards and runs follow it. **Remove** asks first and
 leaves the folder and its files alone. Threads that used the project keep working in its folder

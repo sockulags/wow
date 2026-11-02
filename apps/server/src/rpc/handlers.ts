@@ -1,4 +1,9 @@
-import { WorkflowRun, type Command, type DetectedProvider } from '@wow/contracts';
+import {
+  WorkflowRun,
+  type Command,
+  type DetectedProvider,
+  type DiscoveredProject,
+} from '@wow/contracts';
 import { OutlookError } from '@wow/outlook-bridge';
 import type { SecretStore } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
@@ -34,6 +39,7 @@ export interface HandlerDeps {
   readonly providers: ProviderService;
   readonly trackers: TrackerService;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
+  readonly discoverProjects: () => Promise<DiscoveredProject[]>;
   // Undefined until the Outlook service has started, or when the server runs without one.
   readonly outlook: () => OutlookService | undefined;
   readonly info: { readonly version: string; readonly home: string };
@@ -78,6 +84,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     'provider.listModels': ({ providerInstanceId }) =>
       deps.providers.listModels(providerInstanceId),
     'provider.detect': () => deps.detectProviders(),
+    'projects.discover': async () => ({ projects: await deps.discoverProjects() }),
     'secrets.set': ({ name, value }) => deps.secrets.set(name, value),
     'secrets.delete': async ({ name }) => ({ removed: await deps.secrets.delete(name) }),
     'outlook.open': async ({ entryId }) => {

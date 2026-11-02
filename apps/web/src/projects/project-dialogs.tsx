@@ -1,4 +1,5 @@
 import type { Project } from '@wow/contracts';
+import { FolderOpenIcon } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,8 +14,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLayout, useRuntime } from '@/app/runtime';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
-
-export const newProjectId = () => `project-${globalThis.crypto.randomUUID().slice(0, 8)}`;
+import { ImportProjects } from './import-dialog';
+import { newProjectId } from './model';
 
 function Issue({ text }: { text: string | undefined }) {
   if (!text) return null;
@@ -64,6 +65,58 @@ function useSubmit(onDone: () => void) {
   return { busy, issue, setIssue, submit };
 }
 
+// In the desktop app the folder comes from the system dialog, so it is always one that exists;
+// the browser build has no such dialog and takes a typed path.
+function FolderField({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  onChange: (cwd: string) => void;
+}) {
+  const { pickFolder } = useRuntime();
+  if (!pickFolder) {
+    return (
+      <Row
+        label="Folder"
+        htmlFor={id}
+        hint="The full path of a folder on this computer, for example C:\Users\me\code\wow."
+      >
+        <Input
+          id={id}
+          className="font-mono"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </Row>
+    );
+  }
+  return (
+    <Row label="Folder" htmlFor={id}>
+      <div className="flex gap-1.5">
+        <Input
+          id={id}
+          readOnly
+          className="font-mono"
+          placeholder="No folder chosen"
+          value={value}
+          onClick={() => void pickFolder().then((picked) => picked && onChange(picked))}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void pickFolder().then((picked) => picked && onChange(picked))}
+        >
+          <FolderOpenIcon />
+          Choose folder…
+        </Button>
+      </div>
+    </Row>
+  );
+}
+
 function CreateProject({ onClose }: { onClose: () => void }) {
   const send = useDispatch();
   const id = useId();
@@ -106,18 +159,7 @@ function CreateProject({ onClose }: { onClose: () => void }) {
               onChange={(event) => setName(event.target.value)}
             />
           </Row>
-          <Row
-            label="Folder"
-            htmlFor={`${id}-folder`}
-            hint="The full path of a folder on this computer, for example C:\Users\me\code\wow."
-          >
-            <Input
-              id={`${id}-folder`}
-              className="font-mono"
-              value={cwd}
-              onChange={(event) => setCwd(event.target.value)}
-            />
-          </Row>
+          <FolderField id={`${id}-folder`} value={cwd} onChange={setCwd} />
           <Issue text={issue} />
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>
@@ -226,6 +268,7 @@ export function ProjectDialogs() {
   const close = () => layout.setState({ projectDialog: undefined });
   if (!dialog) return null;
   if (dialog.type === 'create') return <CreateProject onClose={close} />;
+  if (dialog.type === 'import') return <ImportProjects onClose={close} />;
   const project = projects?.find((candidate) => candidate.id === dialog.projectId);
   if (!project) return null;
   return dialog.type === 'rename' ? (

@@ -1,5 +1,5 @@
 import type { Project } from '@wow/contracts';
-import { PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import { DownloadIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useRuntime } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
@@ -53,16 +53,26 @@ export function ProjectsSection() {
         <p className="text-xs text-muted-foreground">
           A project is a name and a folder. Threads, cards and workflow runs work in its folder.
         </p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="ml-auto"
-          disabled={!connection}
-          onClick={() => layout.setState({ projectDialog: { type: 'create' } })}
-        >
-          <PlusIcon />
-          New project
-        </Button>
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!connection}
+            onClick={() => layout.setState({ projectDialog: { type: 'create' } })}
+          >
+            <PlusIcon />
+            New project
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!connection}
+            onClick={() => layout.setState({ projectDialog: { type: 'import' } })}
+          >
+            <DownloadIcon />
+            Import from Claude and Codex
+          </Button>
+        </div>
       </div>
       {!connection && (
         <p className="text-xs text-muted-foreground">
@@ -70,7 +80,9 @@ export function ProjectsSection() {
         </p>
       )}
       {connection && projects?.length === 0 && (
-        <p className="text-xs text-muted-foreground">No projects yet.</p>
+        <p className="text-xs text-muted-foreground">
+          No projects yet. Add one, or import the folders Claude and Codex already worked in.
+        </p>
       )}
       {projects && projects.length > 0 && (
         <ul className="flex flex-col">

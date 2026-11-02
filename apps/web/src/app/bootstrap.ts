@@ -34,9 +34,16 @@ export function createRuntime(): Runtime {
     ? createConnection({ url: endpoint })
     : undefined;
   const updatesBridge = window.wowDesktop?.updates;
+  const folderDialog = window.wowDesktop?.pickFolder;
   return {
     connection,
     updates: updatesBridge ? createUpdatesClient(updatesBridge) : undefined,
+    pickFolder: folderDialog
+      ? async () => {
+          const picked = await folderDialog();
+          return typeof picked === 'string' && picked !== '' ? picked : null;
+        }
+      : undefined,
     layout: createLayoutStore(),
     draft: createDraftStore(),
     // Without a server (development, the shell tests) settings live in memory.

@@ -9,7 +9,8 @@ const open =
     layout.setState({ projectDialog: dialog });
   };
 
-// Palette commands for Settings → Projects: the page, a new project, and rename or remove for each.
+// Palette commands for Settings → Projects: the page, a new project, the import, and rename or
+// remove for each project.
 export function projectCommands(projects: readonly Project[]): AppCommand[] {
   const commands: AppCommand[] = [
     {
@@ -25,6 +26,13 @@ export function projectCommands(projects: readonly Project[]): AppCommand[] {
       group: 'Settings',
       keywords: ['project', 'folder', 'add'],
       run: open({ type: 'create' }),
+    },
+    {
+      id: 'projects.import',
+      title: 'Import projects from Claude and Codex',
+      group: 'Settings',
+      keywords: ['project', 'folder', 'discover', 'claude', 'codex'],
+      run: open({ type: 'import' }),
     },
   ];
   for (const project of projects) {

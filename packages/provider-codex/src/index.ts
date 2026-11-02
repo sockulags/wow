@@ -11,6 +11,7 @@ export {
   type CodexModel,
   type CodexTestResult,
 } from './adapter.js';
+export { discoverCodexFolders } from './discover.js';
 export { CodexConnection, CodexError, systemTimers, type Timers } from './connection.js';
 export { codexPermissionModes, type CodexPermissionMode } from './permissions.js';
 export {

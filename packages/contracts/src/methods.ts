@@ -21,7 +21,12 @@ import {
   Workflow,
   WorkflowRun,
 } from './projections.js';
-import { DetectedProvider, ProviderModel, ProviderTestResult } from './provider.js';
+import {
+  DetectedProvider,
+  DiscoveredProject,
+  ProviderModel,
+  ProviderTestResult,
+} from './provider.js';
 import { SecretRef } from './settings.js';
 
 // Subscription topics: one per projection. Thread-scoped topics need a threadId so a client
@@ -141,6 +146,12 @@ export const rpcMethods = {
   'provider.detect': {
     params: NoParams,
     result: z.array(DetectedProvider),
+  },
+  // Folders the configured Claude and Codex instances have worked in that are not projects yet
+  // ("Import from Claude and Codex"), newest first.
+  'projects.discover': {
+    params: NoParams,
+    result: z.object({ projects: z.array(DiscoveredProject) }),
   },
   'secrets.status': {
     params: NoParams,

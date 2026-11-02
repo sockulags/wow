@@ -22,6 +22,7 @@ import {
   appOrigin,
   appScheme,
   encodeServerInfoArg,
+  folderChannels,
   hiddenFlag,
   productName,
   updateChannels,
@@ -256,6 +257,18 @@ ipcMain.handle(updateChannels.check, async (event) => {
 });
 ipcMain.handle(updateChannels.install, async (event) => {
   if (fromApp(event)) await controller.installUpdate();
+});
+ipcMain.handle(folderChannels.pick, async (event) => {
+  if (!fromApp(event)) return null;
+  const options: Electron.OpenDialogOptions = {
+    title: 'Choose the project folder',
+    properties: ['openDirectory', 'createDirectory'],
+  };
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const result = owner
+    ? await dialog.showOpenDialog(owner, options)
+    : await dialog.showOpenDialog(options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
 });
 
 if (!app.requestSingleInstanceLock()) {

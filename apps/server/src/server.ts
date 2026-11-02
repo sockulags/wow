@@ -1,4 +1,6 @@
 import type { ServerMessage } from '@wow/contracts';
+import { discoverClaudeFolders } from '@wow/provider-claude';
+import { discoverCodexFolders } from '@wow/provider-codex';
 import { SecretStore, defaultProtector, type Protector } from '@wow/secrets';
 import type { WatchFactory } from '@wow/skills';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -10,6 +12,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { Engine } from './core/engine.js';
 import { Subscriptions } from './core/subscriptions.js';
 import { openDatabase, type Database } from './db/database.js';
+import { projects, providerInstances } from './db/schema.js';
 import {
   ProviderAdapters,
   outlookMode,
@@ -18,8 +21,9 @@ import {
   type ServiceContext,
 } from './hooks/index.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
-import { detectProviders } from './providers/detect.js';
 import type { OutlookService } from './outlook/service.js';
+import { discoverProjects } from './projects/discover.js';
+import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
 import { route } from './rpc/router.js';
@@ -180,6 +184,14 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     providers: providerService,
     trackers,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
+    discoverProjects: () =>
+      discoverProjects({
+        instances: database.db.select().from(providerInstances).all(),
+        projects: database.db.select().from(projects).all(),
+        defaultConfigDir: (kind) => defaultConfigDir(kind, env),
+        discover: { claude: discoverClaudeFolders, codex: discoverCodexFolders },
+        platform: options.platform ?? process.platform,
+      }),
     outlook: () => outlook,
     info: { version, home },
   });

@@ -18,9 +18,11 @@ export type ProviderDialog =
   | { readonly type: 'edit'; readonly providerInstanceId: string }
   | { readonly type: 'wizard' };
 
-// The project dialog: a new project, or renaming or removing one. Palette commands open them.
+// The project dialog: a new project, importing folders Claude and Codex worked in, or renaming
+// or removing one. Palette commands open them.
 export type ProjectDialog =
   | { readonly type: 'create' }
+  | { readonly type: 'import' }
   | { readonly type: 'rename'; readonly projectId: string }
   | { readonly type: 'remove'; readonly projectId: string };
 
@@ -61,6 +63,9 @@ export interface Runtime {
   readonly connection: Connection | undefined;
   // Present only inside the desktop app, which owns the update state.
   readonly updates?: UpdatesClient | undefined;
+  // The desktop's native folder dialog: the chosen folder, or null when cancelled. Absent in the
+  // browser build, where a folder is typed instead.
+  readonly pickFolder?: (() => Promise<string | null>) | undefined;
 }
 
 const RuntimeContext = createContext<Runtime | undefined>(undefined);

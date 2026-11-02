@@ -20,9 +20,11 @@ import {
   e2eOutlookControlPort,
   e2ePort,
   e2eProjectId,
+  e2eProjectsHome,
   e2eProviderInstanceId,
   e2eTrackerPort,
   e2eWorkflowId,
+  e2eWorkspace,
 } from './env';
 
 // WOW_E2E_HOME and WOW_E2E_PORT start a second copy for the settings tests (playwright.config.ts).
@@ -251,6 +253,42 @@ if (home === e2eHome) {
     env: {},
     launchArgs: [],
   });
+}
+// The projects server: invented Claude and Codex session files in the config directories detection
+// reports, read by two instances that use those defaults. `alpha` appears in both, `beta` only in
+// Codex, and `gone` no longer exists, so the import offers alpha and beta.
+if (home === e2eProjectsHome) {
+  for (const name of ['alpha', 'beta']) await mkdir(e2eWorkspace(home, name), { recursive: true });
+  const claudeProjects = path.join(e2eClaudeConfigDir(home), 'projects');
+  for (const name of ['alpha', 'gone']) {
+    const cwd = e2eWorkspace(home, name);
+    const dir = path.join(claudeProjects, cwd.replaceAll(/[^A-Za-z0-9]/g, '-'));
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, 'session-1.jsonl'),
+      `${JSON.stringify({ type: 'user', cwd, sessionId: `invented-${name}` })}\n`,
+    );
+  }
+  const codexDay = path.join(e2eCodexHome(home), 'sessions', '2026', '11', '01');
+  await mkdir(codexDay, { recursive: true });
+  for (const name of ['alpha', 'beta']) {
+    await writeFile(
+      path.join(codexDay, `rollout-invented-${name}.jsonl`),
+      `${JSON.stringify({ type: 'session_meta', payload: { id: name, cwd: e2eWorkspace(home, name) } })}\n`,
+    );
+  }
+  for (const kind of ['claude', 'codex'] as const) {
+    server.engine.dispatch(`seed-discovery-${kind}`, {
+      type: 'providerInstance.create',
+      providerInstanceId: `discovery-${kind}`,
+      kind,
+      name: `Discovery ${kind === 'claude' ? 'Claude' : 'Codex'}`,
+      binaryPath: kind,
+      configDir: '',
+      env: {},
+      launchArgs: [],
+    });
+  }
 }
 server.engine.dispatch('seed-project', {
   type: 'project.create',

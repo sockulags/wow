@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import { decodeServerInfoArg, updateChannels } from '../app.js';
+import { decodeServerInfoArg, folderChannels, updateChannels } from '../app.js';
 
 // The web app reads `window.wowServerInfo` (see apps/web/src/app/bootstrap.ts) to find the server.
 contextBridge.exposeInMainWorld('wowServerInfo', decodeServerInfoArg(process.argv));
@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('wowServerInfo', decodeServerInfoArg(process.arg
 // Auto-update state and actions (behavior 35), read by apps/web/src/app/updates.ts. The main
 // process owns the state; the web app only renders what arrives here.
 contextBridge.exposeInMainWorld('wowDesktop', {
+  // Settings → Projects picks a project's folder with the system dialog instead of a typed path.
+  pickFolder: (): Promise<unknown> => ipcRenderer.invoke(folderChannels.pick),
   updates: {
     getState: (): Promise<unknown> => ipcRenderer.invoke(updateChannels.getState),
     check: (): Promise<unknown> => ipcRenderer.invoke(updateChannels.check),

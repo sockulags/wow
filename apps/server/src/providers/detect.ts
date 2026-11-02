@@ -44,18 +44,24 @@ export async function findOnPath(name: string, options: DetectOptions): Promise<
   return null;
 }
 
+// The config directory a CLI uses when the instance names none.
+export function defaultConfigDir(
+  kind: ProviderKind,
+  env: Record<string, string | undefined>,
+): string {
+  const setup = providerSetup[kind];
+  const home = env['USERPROFILE'] ?? env['HOME'] ?? homedir();
+  return env[setup.configDirEnv] || path.join(home, setup.defaultConfigDir);
+}
+
 // What the first-run wizard offers: each provider CLI found on PATH and the config directory it
 // would use without CLAUDE_CONFIG_DIR or CODEX_HOME given to it.
 export async function detectProviders(options: DetectOptions): Promise<DetectedProvider[]> {
-  const home = options.env['USERPROFILE'] ?? options.env['HOME'] ?? homedir();
   return Promise.all(
-    ProviderKind.options.map(async (kind) => {
-      const setup = providerSetup[kind];
-      return {
-        kind,
-        binaryPath: await findOnPath(setup.binaryName, options),
-        configDir: options.env[setup.configDirEnv] || path.join(home, setup.defaultConfigDir),
-      };
-    }),
+    ProviderKind.options.map(async (kind) => ({
+      kind,
+      binaryPath: await findOnPath(providerSetup[kind].binaryName, options),
+      configDir: defaultConfigDir(kind, options.env),
+    })),
   );
 }

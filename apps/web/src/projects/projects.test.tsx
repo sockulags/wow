@@ -12,6 +12,7 @@ import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
 import { renderApp } from '@/test/render';
+import { uniqueName } from './model';
 
 // Settings → Projects and its palette commands against a fake server connection.
 
@@ -25,6 +26,7 @@ interface FakeServer {
 function fakeServer(
   initial: Partial<Record<SubscriptionTopic, unknown[]>>,
   refuse: (command: { type: string; cwd?: string }) => string | undefined = () => undefined,
+  discovered: unknown[] = [],
 ): FakeServer {
   const rows = new Map<SubscriptionTopic, unknown[]>(
     Object.entries(initial) as [SubscriptionTopic, unknown[]][],
@@ -34,6 +36,7 @@ function fakeServer(
   const connection: Connection = {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
     request(method, params) {
+      if (method === 'projects.discover') return Promise.resolve({ projects: discovered });
       if (method !== 'dispatch') return Promise.resolve([]);
       const { command } = params as { command: { type: string; cwd?: string } };
       const refused = refuse(command);
@@ -62,8 +65,12 @@ function fakeServer(
   };
 }
 
-const runtimeFor = (connection: Connection): Runtime => ({
+const runtimeFor = (
+  connection: Connection,
+  pickFolder?: () => Promise<string | null>,
+): Runtime => ({
   connection,
+  pickFolder,
   layout: createLayoutStore(),
   draft: createDraftStore(),
   settings: createSettingsStore(createMemorySettingsSource()),
@@ -120,7 +127,7 @@ describe('Settings → Projects', () => {
         : undefined,
     );
     await renderApp('/settings/projects', runtimeFor(server.connection));
-    expect(await screen.findByText('No projects yet.')).toBeTruthy();
+    expect(await screen.findByText(/^No projects yet\./)).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: 'New project' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'New project' }));
@@ -169,7 +176,7 @@ describe('Settings → Projects', () => {
     await user.click(remove.getByRole('button', { name: 'Remove project' }));
     expect(server.commands.at(-1)).toEqual({ type: 'project.delete', projectId: 'p1' });
     server.publish('projects', []);
-    expect(await screen.findByText('No projects yet.')).toBeTruthy();
+    expect(await screen.findByText(/^No projects yet\./)).toBeTruthy();
   });
 });
 
@@ -202,5 +209,132 @@ describe('project palette commands', () => {
     );
     await user.keyboard('{Enter}');
     expect(await screen.findByRole('dialog', { name: 'Remove wow?' })).toBeTruthy();
+  });
+});
+
+describe('choosing the folder', () => {
+  it('uses the desktop folder dialog instead of a typed path', async () => {
+    const user = userEvent.setup();
+    const server = fakeServer({ projects: [], providerInstances: [instance] });
+    const answers: (string | null)[] = [null, '/home/me/picked'];
+    const pickFolder = () => Promise.resolve(answers.shift() ?? null);
+    await renderApp('/settings/projects', runtimeFor(server.connection, pickFolder));
+    await user.click(await screen.findByRole('button', { name: 'New project' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'New project' }));
+    const folder = dialog.getByLabelText('Folder');
+    expect(folder).toHaveProperty('readOnly', true);
+    await user.type(dialog.getByLabelText('Name'), 'Picked');
+    // Cancelling the system dialog leaves the field empty.
+    await user.click(dialog.getByRole('button', { name: 'Choose folder…' }));
+    expect(folder).toHaveProperty('value', '');
+    await user.click(dialog.getByRole('button', { name: 'Choose folder…' }));
+    expect(await dialog.findByDisplayValue('/home/me/picked')).toBeTruthy();
+    await user.click(dialog.getByRole('button', { name: 'Add project' }));
+    expect(server.commands).toEqual([
+      expect.objectContaining({ type: 'project.create', name: 'Picked', cwd: '/home/me/picked' }),
+    ]);
+  });
+});
+
+describe('Import from Claude and Codex', () => {
+  const found = [
+    {
+      cwd: '/home/me/code/wow',
+      name: 'wow',
+      lastUsedAt: '2026-11-01T08:00:00.000Z',
+      sources: [
+        { providerInstanceId: 'claude-work', providerInstanceName: 'Work', kind: 'claude' },
+        { providerInstanceId: 'codex', providerInstanceName: 'Codex', kind: 'codex' },
+      ],
+    },
+    {
+      cwd: '/home/me/code/site',
+      name: 'site',
+      lastUsedAt: null,
+      sources: [{ providerInstanceId: 'codex', providerInstanceName: 'Codex', kind: 'codex' }],
+    },
+    {
+      cwd: '/home/me/code/old',
+      name: 'old',
+      lastUsedAt: null,
+      sources: [{ providerInstanceId: 'codex', providerInstanceName: 'Codex', kind: 'codex' }],
+    },
+  ];
+  const elsewhere: Project = { ...wow, id: 'p0', cwd: '/elsewhere/wow' };
+
+  it('lists the discovered folders as a checklist and imports the checked ones', async () => {
+    const user = userEvent.setup();
+    const server = fakeServer(
+      { projects: [elsewhere], providerInstances: [instance] },
+      undefined,
+      found,
+    );
+    await renderApp('/settings/projects', runtimeFor(server.connection));
+    await user.click(await screen.findByRole('button', { name: 'Import from Claude and Codex' }));
+    const dialog = within(
+      await screen.findByRole('dialog', { name: 'Import from Claude and Codex' }),
+    );
+    const list = within(await dialog.findByRole('list', { name: 'Folders to import' }));
+    expect(list.getByText('/home/me/code/wow')).toBeTruthy();
+    expect(list.getByText('Claude: Work')).toBeTruthy();
+    expect(list.getAllByText('Codex: Codex')).toHaveLength(3);
+    expect(dialog.getByText('3 of 3 selected')).toBeTruthy();
+
+    await user.click(list.getByRole('checkbox', { name: 'old' }));
+    expect(dialog.getByText('2 of 3 selected')).toBeTruthy();
+    await user.click(dialog.getByRole('button', { name: 'Import 2 projects' }));
+
+    // "wow" is taken by the project in /elsewhere/wow, so the import gets a number.
+    expect(server.commands).toEqual([
+      expect.objectContaining({ type: 'project.create', name: 'wow 2', cwd: '/home/me/code/wow' }),
+      expect.objectContaining({ type: 'project.create', name: 'site', cwd: '/home/me/code/site' }),
+    ]);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('keeps the folders the server refused, with the reason', async () => {
+    const user = userEvent.setup();
+    const server = fakeServer(
+      { projects: [], providerInstances: [instance] },
+      (command) =>
+        command.cwd === '/home/me/code/site' ? 'No folder /home/me/code/site' : undefined,
+      found.slice(0, 2),
+    );
+    await renderApp('/calendar', runtimeFor(server.connection));
+    await user.keyboard('{Control>}k{/Control}');
+    await user.type(
+      within(await screen.findByRole('dialog')).getByRole('combobox'),
+      'import projects',
+    );
+    await user.keyboard('{Enter}');
+    const dialog = within(
+      await screen.findByRole('dialog', { name: 'Import from Claude and Codex' }),
+    );
+    await user.click(await dialog.findByRole('button', { name: 'Import 2 projects' }));
+    expect((await dialog.findByRole('alert')).textContent).toBe(
+      '/home/me/code/site: No folder /home/me/code/site',
+    );
+    const list = within(dialog.getByRole('list', { name: 'Folders to import' }));
+    expect(list.queryByText('/home/me/code/wow')).toBeNull();
+    expect(list.getByText('/home/me/code/site')).toBeTruthy();
+  });
+
+  it('says so when there is nothing new', async () => {
+    const user = userEvent.setup();
+    const server = fakeServer({ projects: [], providerInstances: [instance] });
+    await renderApp('/settings/projects', runtimeFor(server.connection));
+    await user.click(await screen.findByRole('button', { name: 'Import from Claude and Codex' }));
+    expect(await screen.findByText(/^Nothing new to import/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Import 0 projects' })).toHaveProperty(
+      'disabled',
+      true,
+    );
+  });
+});
+
+describe('uniqueName', () => {
+  it('numbers a name another project has, ignoring case', () => {
+    expect(uniqueName('site', ['wow'])).toBe('site');
+    expect(uniqueName('wow', ['WOW', 'wow 2'])).toBe('wow 3');
   });
 });

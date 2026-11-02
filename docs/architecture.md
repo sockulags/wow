@@ -40,8 +40,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test` and `provider.listModels`
-  (`{providerInstanceId}`), `provider.detect`, `skills.refresh`, `workflowRuns.detectArtifacts`
-  (`{runId}`), `outlook.open` (`{entryId}`), `outlook.refresh`, and `trackers.preview` and
+  (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`,
+  `workflowRuns.detectArtifacts` (`{runId}`), `outlook.open` (`{entryId}`), `outlook.refresh`, and `trackers.preview` and
   `trackers.publish` (`{backlogItemId, service}`). Error codes are `RpcErrorCode`.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
@@ -559,11 +559,33 @@ project and its `project:<id>` settings and unlinks what pointed at it rather th
 - finished workflow runs keep `projectId` as history; the run view shows no project name and finds
   no artifacts for them.
 
+**Discovery** ("Import from Claude and Codex", `projects.discover`). Each adapter package reads
+its own CLI's session files and answers `ProviderFolder[]` (`{cwd, lastUsedAt}`, in contracts):
+`discoverClaudeFolders(configDir)` in `packages/provider-claude` reads
+`<configDir>/projects/<encoded cwd>/*.jsonl`, taking the `cwd` of the newest session that has one
+and decoding the folder name only when none does (the encoding replaces every character that is
+not a letter or digit with `-`, so the name alone is ambiguous); `discoverCodexFolders(codexHome)`
+in `packages/provider-codex` reads the `session_meta` line of every
+`<codexHome>/sessions/**/rollout-*.jsonl` (older versions put `cwd` at the top level). Files are
+read line by line and closed at the first `cwd`. `apps/server/src/projects/discover.ts` only
+aggregates: every provider instance is asked with its config directory (or the one detection
+reports for an empty one), folders are merged by resolved path (ignoring case on Windows and
+macOS), relative paths, folders that no longer exist and folders that already are a project are
+left out, and the rest come back newest first with the instances that used them. Discovery never
+writes. The web app imports the checked rows as ordinary `project.create` commands, numbering a
+name that is taken, so the folder check and name rule above apply.
+
+**Folder picker.** The desktop preload exposes `window.wowDesktop.pickFolder`, which invokes
+`wow:pick-folder`; the main process answers only `wow://app` pages and shows Electron's
+`dialog.showOpenDialog` with `openDirectory`. The web bootstrap turns it into `Runtime.pickFolder`;
+with it the folder field is read-only and filled from the dialog, without it (the browser build)
+the folder is typed.
+
 `apps/web/src/projects`. Settings → Projects (`/settings/projects`, a page of its own next to the
 registry groups and listed after Providers) lists the projects with their folders and adds,
-renames and removes them in dialogs opened through the layout store's `projectDialog`, so palette
-commands open the same dialogs: Settings: Projects, New project, and Rename project and Remove
-project for each one. A refused command keeps its dialog open with the server's message.
+renames, removes and imports them in dialogs opened through the layout store's `projectDialog`,
+so palette commands open the same dialogs: Settings: Projects, New project, Import projects from
+Claude and Codex, and Rename project and Remove project for each one. A refused command keeps its dialog open with the server's message.
 
 ## Chat view
 
@@ -697,7 +719,11 @@ copied from T3 Code keeps its MIT notice in `THIRD_PARTY_NOTICES.md`.
   `SKILL.md` files in the server's own user home that skills discovery finds.
   Its PATH holds empty stand-in `claude` and `codex` files for `provider.detect`. The workflow
   tests use the same server: its fixture skills cover the Feature template's first steps, and an
-  invented `intents/demo/intent.md` in the project folder is the artifact step 1 finds. The settings
+  invented `intents/demo/intent.md` in the project folder is the artifact step 1 finds. The projects
+  tests use another copy from the Playwright config (`e2eProjectsHome`, `e2eProjectsPort`) whose
+  home holds invented Claude and Codex session files and two instances that read them; they stand
+  in for the desktop folder dialog by setting `window.wowDesktop.pickFolder` before the page loads.
+  The settings
   tests start a second copy in its own home and port (`WOW_E2E_HOME`, `WOW_E2E_PORT`), because
   they add and remove instances and change global settings. Both run with `WOW_OUTLOOK=mock` and
   the fixture-backed `MockOutlookSource`; the first answers on a small HTTP control port

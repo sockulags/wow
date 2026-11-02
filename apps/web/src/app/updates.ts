@@ -17,7 +17,11 @@ export interface DesktopUpdatesBridge {
 declare global {
   interface Window {
     // Set by the desktop preload.
-    wowDesktop?: { readonly updates?: DesktopUpdatesBridge };
+    wowDesktop?: {
+      readonly updates?: DesktopUpdatesBridge;
+      // The native folder dialog (apps/desktop/src/preload).
+      readonly pickFolder?: () => Promise<unknown>;
+    };
   }
 }
 
