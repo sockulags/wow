@@ -17,6 +17,7 @@ import {
   type ServiceContext,
 } from './hooks/index.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
+import { detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
 import { route } from './rpc/router.js';
@@ -125,6 +126,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     settings,
     secrets,
     providers: providerService,
+    detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     info: { version, home },
   });
 

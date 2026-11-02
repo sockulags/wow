@@ -66,6 +66,21 @@ export const Command = z.discriminatedUnion('type', [
     defaultEffort: z.string().min(1).nullable().optional(),
     defaultPermissionMode: z.string().min(1).nullable().optional(),
   }),
+  // Changes what is given. A change to how the CLI starts clears the last "Test" result.
+  z.object({
+    type: z.literal('providerInstance.update'),
+    providerInstanceId: Id,
+    name: z.string().min(1).optional(),
+    binaryPath: z.string().optional(),
+    configDir: z.string().optional(),
+    env: z.record(z.string(), z.union([z.string(), SecretRef])).optional(),
+    launchArgs: z.array(z.string()).optional(),
+    defaultModel: z.string().min(1).nullable().optional(),
+    defaultEffort: z.string().min(1).nullable().optional(),
+    defaultPermissionMode: z.string().min(1).nullable().optional(),
+  }),
+  // Refused while a thread uses the instance, so no thread loses the provider it resumes on.
+  z.object({ type: z.literal('providerInstance.delete'), providerInstanceId: Id }),
   z.object({
     type: z.literal('thread.create'),
     threadId: Id,
@@ -123,6 +138,22 @@ export const ProjectChanges = Project.pick({
 }).partial();
 export type ProjectChanges = z.infer<typeof ProjectChanges>;
 
+export const ProviderInstanceChanges = ProviderInstance.pick({
+  name: true,
+  binaryPath: true,
+  configDir: true,
+  env: true,
+  launchArgs: true,
+  defaultModel: true,
+  defaultEffort: true,
+  defaultPermissionMode: true,
+  status: true,
+  account: true,
+  version: true,
+  statusMessage: true,
+}).partial();
+export type ProviderInstanceChanges = z.infer<typeof ProviderInstanceChanges>;
+
 export const ThreadChanges = Thread.pick({
   model: true,
   effort: true,
@@ -158,6 +189,21 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('providerInstance.created'),
     aggregate: Id,
     payload: ProviderInstance,
+  }),
+  z.object({
+    kind: z.literal('providerInstance.updated'),
+    aggregate: Id,
+    payload: z.object({
+      providerInstanceId: Id,
+      changes: ProviderInstanceChanges,
+      // Secret store entries the instance no longer references; the server deletes them.
+      releasedSecrets: z.array(z.string().min(1)),
+    }),
+  }),
+  z.object({
+    kind: z.literal('providerInstance.deleted'),
+    aggregate: Id,
+    payload: z.object({ providerInstanceId: Id, releasedSecrets: z.array(z.string().min(1)) }),
   }),
   z.object({
     kind: z.literal('providerInstance.tested'),

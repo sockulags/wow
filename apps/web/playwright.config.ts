@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
-import { e2eHome, e2ePort } from './e2e/env';
+import { e2eHome, e2ePort, e2eSettingsHome, e2eSettingsPort } from './e2e/env';
 
 const port = 5173;
 // Lets a machine without Playwright's own Chromium download use an installed Chrome instead.
@@ -33,6 +33,14 @@ export default defineConfig({
       command: 'pnpm exec tsx e2e/server.ts',
       port: e2ePort,
       env: { WOW_HOME: e2eHome },
+      reuseExistingServer: false,
+    },
+    {
+      // The same server in its own home for the settings tests, which add and remove provider
+      // instances and change global settings.
+      command: 'pnpm exec tsx e2e/server.ts',
+      port: e2eSettingsPort,
+      env: { WOW_E2E_HOME: e2eSettingsHome, WOW_E2E_PORT: String(e2eSettingsPort) },
       reuseExistingServer: false,
     },
   ],

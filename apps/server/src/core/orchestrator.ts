@@ -4,6 +4,7 @@ import {
   type DomainEvent,
   type Project,
   type ProjectChanges,
+  type ProviderInstance,
   type Question,
   type RpcErrorCode,
   type ServerCommand,
@@ -13,6 +14,7 @@ import {
   type Turn,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
+import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
 import { decideThread, isThreadCommand } from './threads.js';
 
 // The orchestrator decides which events a command produces. It is a pure function of the command,
@@ -21,6 +23,9 @@ import { decideThread, isThreadCommand } from './threads.js';
 export interface ReadModel {
   project(id: string): Project | undefined;
   providerInstanceExists(id: string): boolean;
+  providerInstance(id: string): ProviderInstance | undefined;
+  // Threads that use the instance, and how many of them have a turn running.
+  instanceUsage(id: string): { readonly threads: number; readonly runningTurns: number };
   // Stored value at exactly this scope, or undefined when none is stored.
   setting(key: string, scope: SettingScopeRef): { value: unknown } | undefined;
   thread(id: string): Thread | undefined;
@@ -56,6 +61,7 @@ export function decide(
   read: ReadModel,
   context: DecideContext,
 ): DomainEvent[] {
+  if (isProviderInstanceCommand(command)) return decideProviderInstance(command, read);
   if (isThreadCommand(command)) return decideThread(command, read, context);
   switch (command.type) {
     case 'project.create': {

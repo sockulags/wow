@@ -1,3 +1,4 @@
+import type { DetectedProvider } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
 import type { Engine } from '../core/engine.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
@@ -17,6 +18,7 @@ export interface HandlerDeps {
   readonly settings: SettingsService;
   readonly secrets: SecretStore;
   readonly providers: ProviderService;
+  readonly detectProviders: () => Promise<DetectedProvider[]>;
   readonly info: { readonly version: string; readonly home: string };
 }
 
@@ -37,6 +39,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     'provider.test': ({ providerInstanceId }) => deps.providers.test(providerInstanceId),
     'provider.listModels': ({ providerInstanceId }) =>
       deps.providers.listModels(providerInstanceId),
+    'provider.detect': () => deps.detectProviders(),
     'secrets.set': ({ name, value }) => deps.secrets.set(name, value),
     'secrets.delete': async ({ name }) => ({ removed: await deps.secrets.delete(name) }),
     'secrets.status': async () => ({

@@ -2,6 +2,7 @@ import { Outlet, useRouterState } from '@tanstack/react-router';
 import { PanelLeftIcon, PanelRightIcon, SearchIcon } from 'lucide-react';
 import { useLayoutEffect } from 'react';
 import { Button } from '@/components/ui/button';
+import { ProviderDialogs } from '@/providers/provider-dialogs';
 import { formatBinding } from './keybindings';
 import { CommandPalette } from './palette';
 import { useLayout, useRuntime, useSetting } from './runtime';
@@ -16,6 +17,18 @@ function useApplyTheme() {
     root.classList.toggle('dark', theme === 'dark');
     root.style.colorScheme = theme;
   }, [theme]);
+}
+
+function useApplyAppearance() {
+  const uiFont = useSetting('appearance.uiFont');
+  const codeFont = useSetting('appearance.codeFont');
+  const density = useSetting('appearance.density');
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--app-font-ui', `"${uiFont}"`);
+    root.style.setProperty('--app-font-code', `"${codeFont}"`);
+    root.dataset['density'] = density;
+  }, [uiFont, codeFont, density]);
 }
 
 function RightPanel() {
@@ -44,6 +57,7 @@ export function Shell() {
   const { commands, context } = useCommands();
   useGlobalKeybindings(commands, context);
   useApplyTheme();
+  useApplyAppearance();
 
   return (
     <div className="flex h-full overflow-hidden bg-background text-foreground">
@@ -90,6 +104,7 @@ export function Shell() {
       </main>
       {rightPanelOpen && <RightPanel />}
       <CommandPalette commands={commands} context={context} />
+      <ProviderDialogs />
     </div>
   );
 }

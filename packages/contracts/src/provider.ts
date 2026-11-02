@@ -179,6 +179,39 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
   },
 };
 
+// What onboarding needs per provider kind: the executable looked for on PATH and the variable that
+// names its config directory (spec 31, 32). The server detects; the settings page labels.
+export interface ProviderSetup {
+  readonly label: string;
+  readonly binaryName: string;
+  readonly configDirEnv: string;
+  // Under the user's home directory, used when the variable is not set.
+  readonly defaultConfigDir: string;
+}
+
+export const providerSetup: Readonly<Record<ProviderKind, ProviderSetup>> = {
+  claude: {
+    label: 'Claude',
+    binaryName: 'claude',
+    configDirEnv: 'CLAUDE_CONFIG_DIR',
+    defaultConfigDir: '.claude',
+  },
+  codex: {
+    label: 'Codex',
+    binaryName: 'codex',
+    configDirEnv: 'CODEX_HOME',
+    defaultConfigDir: '.codex',
+  },
+};
+
+// One provider CLI as `provider.detect` found it: binaryPath is null when it is not on PATH.
+export const DetectedProvider = z.object({
+  kind: ProviderKind,
+  binaryPath: z.string().min(1).nullable(),
+  configDir: z.string().min(1),
+});
+export type DetectedProvider = z.infer<typeof DetectedProvider>;
+
 // What `listModels` answers: one row per model the installed provider offers.
 export const ProviderModel = z.object({
   id: z.string().min(1),

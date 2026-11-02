@@ -120,6 +120,16 @@ export type KeyValueList = z.infer<typeof KeyValueList>;
 export const Theme = z.enum(['dark', 'light']);
 export type Theme = z.infer<typeof Theme>;
 
+export const Density = z.enum(['comfortable', 'compact']);
+export type Density = z.infer<typeof Density>;
+
+// One installed font family name; it goes into a CSS font stack, so no quotes or separators.
+export const FontFamily = z
+  .string()
+  .trim()
+  .min(1)
+  .regex(/^[^"';,{}<>\\]+$/, 'Use one font family name without quotes or commas');
+
 const keybinding = (label: string, description: string, binding: string) =>
   defineSetting({
     schema: Keybinding,
@@ -306,6 +316,32 @@ export const settingsRegistry = {
     label: 'Theme',
     description: 'Dark or light colors.',
     default: 'dark',
+    scope: 'global',
+  }),
+  'appearance.uiFont': defineSetting({
+    schema: FontFamily,
+    group: 'appearance',
+    label: 'Interface font',
+    description:
+      'Font family for the interface. Falls back to the system font when it is not installed.',
+    default: 'Inter Variable',
+    scope: 'global',
+  }),
+  'appearance.codeFont': defineSetting({
+    schema: FontFamily,
+    group: 'appearance',
+    label: 'Code font',
+    description:
+      'Font family for code, tool output and keys. Falls back to the system monospace font.',
+    default: 'JetBrains Mono Variable',
+    scope: 'global',
+  }),
+  'appearance.density': defineSetting({
+    schema: Density,
+    group: 'appearance',
+    label: 'Density',
+    description: 'Compact makes text and spacing smaller so more fits on screen.',
+    default: 'comfortable',
     scope: 'global',
   }),
   'keybindings.palette': keybinding('Command palette', 'Open the command palette.', 'Mod+K'),
