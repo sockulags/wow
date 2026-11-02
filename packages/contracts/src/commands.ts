@@ -5,11 +5,14 @@ import {
   ProviderInstance,
   ProviderInstanceStatus,
   Question,
+  Skill,
   Thread,
   ThreadItem,
   Turn,
   TurnState,
   Usage,
+  Workflow,
+  WorkflowRun,
 } from './projections.js';
 import {
   ApprovalDecision,
@@ -19,11 +22,18 @@ import {
   ThreadState,
 } from './provider.js';
 import { SecretRef, SettingScopeRef } from './settings.js';
+import { RunEffect, WorkflowStep } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
 // add their own members to both unions.
 
 const Id = z.string().min(1);
+
+const WorkflowSteps = z
+  .array(WorkflowStep)
+  .refine((steps) => new Set(steps.map((step) => step.id)).size === steps.length, {
+    message: 'Step ids must be unique',
+  });
 
 export const CommandId = z.string().min(1).max(200);
 export type CommandId = z.infer<typeof CommandId>;
@@ -108,6 +118,32 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('thread.setPinned'), threadId: Id, pinned: z.boolean() }),
   z.object({ type: z.literal('approval.answer'), approvalId: Id, decision: ApprovalDecision }),
   z.object({ type: z.literal('question.answer'), questionId: Id, answer: z.string() }),
+  z.object({
+    type: z.literal('workflow.create'),
+    workflowId: Id,
+    name: z.string().min(1),
+    templateKind: z.string().min(1).optional(),
+    steps: WorkflowSteps,
+  }),
+  z.object({
+    type: z.literal('workflow.update'),
+    workflowId: Id,
+    name: z.string().min(1).optional(),
+    templateKind: z.string().min(1).nullable().optional(),
+    steps: WorkflowSteps.optional(),
+  }),
+  z.object({ type: z.literal('workflow.delete'), workflowId: Id }),
+  z.object({
+    type: z.literal('workflowRun.start'),
+    runId: Id,
+    workflowId: Id,
+    projectId: Id,
+    calendarItemId: Id.optional(),
+    backlogItemId: Id.optional(),
+  }),
+  // The user's answer at a gate (behaviors 9 to 11).
+  z.object({ type: z.literal('workflowRun.continue'), runId: Id }),
+  z.object({ type: z.literal('workflowRun.stop'), runId: Id }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command['type'];
@@ -124,6 +160,27 @@ export const InternalCommand = z.discriminatedUnion('type', [
     type: z.literal('providerInstance.recordTest'),
     providerInstanceId: Id,
     result: ProviderTestResult,
+  }),
+  // Replaces the skills projection with a fresh scan; the server's skills watcher sends it.
+  z.object({ type: z.literal('skills.sync'), skills: z.array(Skill) }),
+  // What the workflow runner reports after a step's turn ended.
+  z.object({
+    type: z.literal('workflowRun.stepCompleted'),
+    runId: Id,
+    stepId: Id,
+    finalMessage: z.string(),
+    artifactsFound: z.array(z.string()),
+  }),
+  z.object({
+    type: z.literal('workflowRun.stepFailed'),
+    runId: Id,
+    stepId: Id,
+    error: z.string(),
+  }),
+  z.object({
+    type: z.literal('workflowRun.artifactsFound'),
+    runId: Id,
+    found: z.array(z.object({ stepId: Id, paths: z.array(z.string()) })),
   }),
 ]);
 export type InternalCommand = z.infer<typeof InternalCommand>;
@@ -160,6 +217,11 @@ export const ThreadChanges = Thread.pick({
   permissionMode: true,
 }).partial();
 export type ThreadChanges = z.infer<typeof ThreadChanges>;
+
+export const WorkflowChanges = Workflow.pick({ name: true, templateKind: true, steps: true })
+  .partial()
+  .extend({ updatedAt: Workflow.shape.updatedAt });
+export type WorkflowChanges = z.infer<typeof WorkflowChanges>;
 
 const Timestamp = z.iso.datetime({ offset: true });
 
@@ -215,6 +277,29 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       version: z.string().nullable(),
       statusMessage: z.string().nullable(),
     }),
+  }),
+  z.object({
+    kind: z.literal('skills.synced'),
+    aggregate: z.literal('skills'),
+    payload: z.object({ upserted: z.array(Skill), removed: z.array(Id) }),
+  }),
+  z.object({ kind: z.literal('workflow.created'), aggregate: Id, payload: Workflow }),
+  z.object({
+    kind: z.literal('workflow.updated'),
+    aggregate: Id,
+    payload: z.object({ workflowId: Id, changes: WorkflowChanges }),
+  }),
+  z.object({
+    kind: z.literal('workflow.deleted'),
+    aggregate: Id,
+    payload: z.object({ workflowId: Id }),
+  }),
+  // One per run transition: the run as it now is, what caused it, and the effects the server
+  // performs after commit.
+  z.object({
+    kind: z.literal('workflowRun.changed'),
+    aggregate: Id,
+    payload: z.object({ cause: z.string().min(1), run: WorkflowRun, effects: z.array(RunEffect) }),
   }),
   z.object({ kind: z.literal('thread.created'), aggregate: Id, payload: Thread }),
   z.object({

@@ -1,15 +1,24 @@
-import type { DomainEvent, Project, SubscriptionTopic } from '@wow/contracts';
-import { and, count, eq, isNull, max } from 'drizzle-orm';
+import {
+  isLiveRunState,
+  type DomainEvent,
+  type Project,
+  type SubscriptionTopic,
+} from '@wow/contracts';
+import { and, count, eq, inArray, isNull, max } from 'drizzle-orm';
 import type { DbOrTx } from '../db/database.js';
 import {
   approvals,
+  backlogItems,
   projects,
   providerInstances,
   questions,
   settings,
+  skills,
   threadItems,
   threads,
   turns,
+  workflowRuns,
+  workflows,
 } from '../db/schema.js';
 import type { ReadModel } from './orchestrator.js';
 
@@ -46,6 +55,34 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(and(eq(settings.key, event.payload.key), eq(settings.scope, event.payload.scope)))
         .run();
       return ['settings'];
+    case 'skills.synced':
+      for (const skill of event.payload.upserted) {
+        tx.insert(skills).values(skill).onConflictDoUpdate({ target: skills.id, set: skill }).run();
+      }
+      if (event.payload.removed.length > 0) {
+        tx.delete(skills).where(inArray(skills.id, event.payload.removed)).run();
+      }
+      return ['skills'];
+    case 'workflow.created':
+      tx.insert(workflows).values(event.payload).run();
+      return ['workflows'];
+    case 'workflow.updated':
+      tx.update(workflows)
+        .set(event.payload.changes)
+        .where(eq(workflows.id, event.payload.workflowId))
+        .run();
+      return ['workflows'];
+    case 'workflow.deleted':
+      tx.delete(workflows).where(eq(workflows.id, event.payload.workflowId)).run();
+      return ['workflows'];
+    case 'workflowRun.changed': {
+      const { run } = event.payload;
+      tx.insert(workflowRuns)
+        .values(run)
+        .onConflictDoUpdate({ target: workflowRuns.id, set: run })
+        .run();
+      return ['workflowRuns'];
+    }
     case 'providerInstance.created':
       tx.insert(providerInstances).values(event.payload).run();
       return ['providerInstances'];
@@ -232,6 +269,17 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(settings)
         .where(and(eq(settings.key, key), eq(settings.scope, scope)))
         .get(),
+    skills: () => tx.select().from(skills).all(),
+    workflow: (id) => tx.select().from(workflows).where(eq(workflows.id, id)).get(),
+    run: (id) => tx.select().from(workflowRuns).where(eq(workflowRuns.id, id)).get(),
+    hasLiveRun: (workflowId) =>
+      tx
+        .select({ state: workflowRuns.state })
+        .from(workflowRuns)
+        .where(eq(workflowRuns.workflowId, workflowId))
+        .all()
+        .some((row) => isLiveRunState(row.state)),
+    backlogItem: (id) => tx.select().from(backlogItems).where(eq(backlogItems.id, id)).get(),
     thread: (id) => tx.select().from(threads).where(eq(threads.id, id)).get(),
     runningTurn: (threadId) =>
       tx

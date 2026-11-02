@@ -1,4 +1,4 @@
-import type { Skill, Thread, ThreadItem } from '@wow/contracts';
+import type { Skill, Thread, ThreadItem, WorkflowRun } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   effortOptions,
@@ -80,7 +80,7 @@ describe('thread groups', () => {
         ],
       },
     ];
-    const runs = [
+    const runs: WorkflowRun[] = [
       {
         id: 'r1',
         workflowId: 'w1',

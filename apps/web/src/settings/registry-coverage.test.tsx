@@ -9,8 +9,14 @@ import { fieldKind } from './field-kind';
 // Spec 33: every setting in the registry renders on its group's page with its description,
 // default and current value, from the registry alone.
 
+// Testing Library collapses whitespace in the page text, so a multi-line default is matched the same
+// way.
 const formatDefault = (value: unknown): string =>
-  typeof value === 'string' ? (value === '' ? '(none)' : value) : JSON.stringify(value);
+  typeof value === 'string'
+    ? value === ''
+      ? '(none)'
+      : value.replace(/\s+/g, ' ').trim()
+    : JSON.stringify(value);
 
 describe('settings registry coverage', () => {
   it('gives every setting a group page, a label, a description and an editor', () => {
