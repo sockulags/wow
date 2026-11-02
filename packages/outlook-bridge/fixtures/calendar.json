@@ -55,6 +55,50 @@
       "dayOffset": 0,
       "time": "12:00",
       "minutes": 60
+    },
+    {
+      "entryId": "mock-release-planning",
+      "subject": "Release planning for lantern-web 2.4",
+      "location": "Room Ferrite",
+      "organizer": "Ada Lindqvist",
+      "dayOffset": 4,
+      "time": "10:00",
+      "minutes": 90
+    },
+    {
+      "entryId": "mock-hiring-sync",
+      "subject": "Hiring sync",
+      "location": "Microsoft Teams Meeting",
+      "organizer": "Bo Strand",
+      "dayOffset": 4,
+      "time": "10:00",
+      "minutes": 30
+    },
+    {
+      "entryId": "mock-customer-demo",
+      "subject": "Customer demo: offline mode",
+      "location": "Room Basalt",
+      "organizer": "Cleo Marsh",
+      "dayOffset": 4,
+      "time": "10:15",
+      "minutes": 60
+    },
+    {
+      "entryId": "mock-vendor-call",
+      "subject": "Vendor call",
+      "organizer": "Dag Holm",
+      "dayOffset": 4,
+      "time": "10:30",
+      "minutes": 30
+    },
+    {
+      "entryId": "mock-incident-review",
+      "subject": "Incident review: search outage",
+      "location": "Room Ferrite",
+      "organizer": "Ada Lindqvist",
+      "dayOffset": 4,
+      "time": "11:00",
+      "minutes": 60
     }
   ]
 }

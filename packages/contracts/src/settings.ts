@@ -315,8 +315,18 @@ export const settingsRegistry = {
     schema: z.number().int().min(24).max(160),
     group: 'calendar',
     label: 'Hour height (pixels)',
-    description: 'Height of one hour in the day and week views. Larger values zoom in.',
+    description:
+      'Height of one hour in the day and week views, which is the calendar zoom. Ctrl+mouse wheel, pinch and the zoom commands change it.',
     default: 48,
+    scope: 'global',
+  }),
+  'calendar.zoomStep': defineSetting({
+    schema: z.number().int().min(5).max(100),
+    group: 'calendar',
+    label: 'Zoom step (percent)',
+    description:
+      'How much one zoom command, key press or mouse-wheel notch changes the hour height.',
+    default: 20,
     scope: 'global',
   }),
   'outlook.pollSeconds': defineSetting({
@@ -658,6 +668,21 @@ export const settingsRegistry = {
   ),
   'keybindings.calendarDayView': keybinding('Calendar: day view', 'Show one day.', 'D'),
   'keybindings.calendarWeekView': keybinding('Calendar: week view', 'Show one week.', 'W'),
+  'keybindings.calendarZoomIn': keybinding(
+    'Zoom in calendar',
+    'Make hours taller in the day and week views (while the calendar is open).',
+    'Mod+=',
+  ),
+  'keybindings.calendarZoomOut': keybinding(
+    'Zoom out calendar',
+    'Make hours shorter in the day and week views (while the calendar is open).',
+    'Mod+-',
+  ),
+  'keybindings.calendarZoomReset': keybinding(
+    'Reset calendar zoom',
+    'Go back to the default hour height (while the calendar is open).',
+    'Mod+0',
+  ),
   'keybindings.newCard': keybinding(
     'New card',
     'Open the form for a new card on the day the calendar shows (while the calendar is open).',

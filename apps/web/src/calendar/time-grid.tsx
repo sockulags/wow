@@ -16,13 +16,40 @@ import {
   formatDayHeading,
   formatTime,
   isoDate,
+  localDate,
+  minuteOfDay,
   MINUTES_PER_DAY,
   parseClockTime,
   sameDate,
   type LocalDate,
 } from './time';
+import { wheelSteps } from './zoom';
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+
+// The shortest a block is drawn, so a 5-minute meeting stays readable when zoomed out; the
+// layout gives short items this much room so their blocks sit beside the next item.
+const MIN_BLOCK_PX = 18;
+
+// The current instant, moved on at every whole minute for the now-line.
+function useNow(): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(
+        () => {
+          setNow(new Date());
+          schedule();
+        },
+        60_000 - (Date.now() % 60_000),
+      );
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, []);
+  return now;
+}
 
 type Range = { readonly start: string; readonly end: string };
 
@@ -91,17 +118,26 @@ export function StateBadge({ state }: { state: CardState }) {
 const timeRange = (item: CalendarItem, zone: string) =>
   `${formatTime(new Date(item.start), zone)}–${formatTime(new Date(item.end), zone)}`;
 
+// The hover text: everything a narrow block may cut off.
+const fullText = (title: string, item: CalendarItem, zone: string) =>
+  [title, timeRange(item, zone), item.location].filter(Boolean).join('\n');
+
 function OutlookBlock({ item, zone }: { item: CalendarItem; zone: string }) {
   const cancelled = item.state === 'cancelled';
   return (
     <div
       role="group"
+      tabIndex={0}
       data-item="outlook"
       aria-label={`${item.title}, ${timeRange(item, zone)}${cancelled ? ', cancelled' : ''}, read-only`}
-      className="flex h-full flex-col overflow-hidden rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs"
+      title={fullText(item.title, item, zone)}
+      className="flex h-full flex-col overflow-hidden rounded-md border border-border bg-muted px-1.5 py-0.5 @max-[4rem]:px-0.5 text-xs focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
     >
       <span className="flex min-w-0 items-center gap-1">
-        <LockIcon aria-label="Read-only" className="size-3 shrink-0 text-muted-foreground" />
+        <LockIcon
+          aria-label="Read-only"
+          className="size-3 shrink-0 text-muted-foreground @max-[4rem]:hidden"
+        />
         <span className={cn('truncate font-medium', cancelled && 'line-through opacity-60')}>
           {item.title}
         </span>
@@ -153,16 +189,19 @@ function CardBlock({
       tabIndex={0}
       data-item="card"
       aria-label={`${cardTitle(item)}, ${timeRange(item, zone)}, ${state}`}
+      title={fullText(cardTitle(item), item, zone)}
       onKeyDown={onKeyDown}
       className={cn(
-        'relative flex h-full cursor-grab touch-none flex-col overflow-hidden rounded-md border border-l-[3px] border-border bg-card px-1.5 py-0.5 text-xs shadow-sm select-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
+        'relative flex h-full cursor-grab touch-none flex-col overflow-hidden rounded-md border border-l-[3px] border-border bg-card px-1.5 py-0.5 @max-[4rem]:px-0.5 text-xs shadow-sm select-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
         stateStyles[state],
         dragging && 'cursor-grabbing opacity-80 shadow-md',
       )}
     >
       <span className="flex min-w-0 items-center gap-1">
         <span className="min-w-0 flex-1 truncate font-medium">{cardTitle(item)}</span>
-        <StateBadge state={state} />
+        <span className="shrink-0 @max-[7rem]:hidden">
+          <StateBadge state={state} />
+        </span>
       </span>
       <span className="truncate text-[11px] text-muted-foreground">{timeRange(item, zone)}</span>
       {onRunNow && (
@@ -199,8 +238,11 @@ export interface TimeGridProps {
   readonly workHours: WorkHours;
   readonly snap: number;
   readonly cardMinutes: number;
-  // Pixel height of one hour (the calendar.hourHeight setting).
+  // Pixel height of one hour: the calendar.hourHeight setting, or a zoom on its way there.
   readonly hourHeight: number;
+  // Zooms by a number of steps (fractional for a pinch); returns whether the height changed. The
+  // grid keeps the time under the pointer in place, or the middle of the view for other changes.
+  onZoom(steps: number): boolean;
   onCreate(range: Range): void;
   onEdit(cardId: string): void;
   // Cards that offer a one-click "Run now", and what it does.
@@ -219,6 +261,7 @@ export function TimeGrid({
   snap,
   cardMinutes,
   hourHeight,
+  onZoom,
   onCreate,
   onEdit,
   runNowIds,
@@ -232,12 +275,68 @@ export function TimeGrid({
   const workStart = parseClockTime(workHours.start) ?? 0;
   const daysKey = days.map(isoDate).join(',');
   const px = (minutes: number) => (minutes / 60) * hourHeight;
+  const now = useNow();
+  const nowDay = localDate(now, zone);
+  const nowMinute = minuteOfDay(now, zone);
+  const showsToday = days.some((day) => sameDate(day, nowDay));
 
-  // Start the day at work hours instead of midnight.
+  // The height the grid is laid out with, and where the next zoom should pivot.
+  const shownHeight = useRef(hourHeight);
+  const zoomAnchor = useRef<{ readonly minute: number; readonly offset: number }>(undefined);
+  const wheelCarry = useRef(0);
+  const zoomRef = useRef(onZoom);
+  zoomRef.current = onZoom;
+  const nowRef = useRef(nowMinute);
+  nowRef.current = nowMinute;
+
+  // Opening a range starts at work hours; when today is in it and now is outside that window, it
+  // starts with now in the middle instead. Zooming does not move it back there.
   useLayoutEffect(() => {
-    if (scrollRef.current)
-      scrollRef.current.scrollTop = Math.max(0, ((workStart - 30) / 60) * hourHeight);
-  }, [daysKey, workStart, hourHeight]);
+    const element = scrollRef.current;
+    if (!element) return;
+    const height = shownHeight.current;
+    const workTop = Math.max(0, ((workStart - 30) / 60) * height);
+    const nowTop = (nowRef.current / 60) * height;
+    const nowVisible = nowTop >= workTop && nowTop <= workTop + element.clientHeight;
+    element.scrollTop = showsToday && !nowVisible ? nowTop - element.clientHeight / 2 : workTop;
+  }, [daysKey, workStart, showsToday]);
+
+  // A new hour height keeps the anchored time at the same place on screen.
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    const before = shownHeight.current;
+    shownHeight.current = hourHeight;
+    if (!element || before === hourHeight) return;
+    const anchor = zoomAnchor.current ?? {
+      offset: element.clientHeight / 2,
+      minute: ((element.scrollTop + element.clientHeight / 2) / before) * 60,
+    };
+    zoomAnchor.current = undefined;
+    element.scrollTop = (anchor.minute / 60) * hourHeight - anchor.offset;
+  }, [hourHeight]);
+
+  // Ctrl+wheel and pinch (which Chromium reports as a wheel with ctrlKey) zoom the grid instead of
+  // the page. React's wheel handler is passive, so this one is added by hand.
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      const offset = event.clientY - element.getBoundingClientRect().top;
+      zoomAnchor.current = {
+        offset,
+        minute: ((element.scrollTop + offset) / shownHeight.current) * 60,
+      };
+      // A pinch sends many small deltas; they add up until they make a whole pixel.
+      const steps = wheelCarry.current + wheelSteps(event);
+      const changed = zoomRef.current(steps);
+      wheelCarry.current = changed ? 0 : steps;
+      if (!changed) zoomAnchor.current = undefined;
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => element.removeEventListener('wheel', onWheel);
+  }, []);
 
   // A stored move replaces the pending one once the server's row shows it.
   useEffect(() => {
@@ -426,7 +525,11 @@ export function TimeGrid({
           );
         })}
       </div>
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+      <div
+        ref={scrollRef}
+        data-testid="calendar-scroll"
+        className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+      >
         <div className="grid" style={columns}>
           <div className="relative" style={{ height: px(MINUTES_PER_DAY) }} aria-hidden>
             {HOURS.slice(1).map((hour) => (
@@ -473,40 +576,57 @@ export function TimeGrid({
                       style={{ top: px(work.top), height: px(work.bottom - work.top) }}
                     />
                   )}
-                  {placeTimedItems(shown, day, zone).map((placed) => (
+                  {sameDate(day, nowDay) && (
                     <div
-                      key={placed.item.id}
-                      className="absolute px-px"
-                      style={{
-                        top: px(placed.top),
-                        height: Math.max(px(placed.bottom - placed.top), 18),
-                        left: `${(placed.lane / placed.lanes) * 100}%`,
-                        width: `${100 / placed.lanes}%`,
-                        zIndex: draggingId === placed.item.id ? 20 : 10,
-                      }}
-                      onPointerDown={(event) =>
-                        placed.item.source === 'local'
-                          ? startCard(event, placed, dayIndex)
-                          : event.stopPropagation()
-                      }
+                      aria-hidden
+                      data-testid="now-line"
+                      className="pointer-events-none absolute inset-x-0 z-[15] h-0.5 bg-state-failed"
+                      style={{ top: px(nowMinute) - 1 }}
                     >
-                      {placed.item.source === 'local' ? (
-                        <CardBlock
-                          item={placed.item}
-                          zone={zone}
-                          dragging={draggingId === placed.item.id}
-                          onEdit={() => onEdit(placed.item.id)}
-                          onRunNow={
-                            onRunNow && runNowIds?.has(placed.item.id)
-                              ? () => onRunNow(placed.item.id)
-                              : undefined
-                          }
-                        />
-                      ) : (
-                        <OutlookBlock item={placed.item} zone={zone} />
-                      )}
+                      <span className="absolute -top-[3px] -left-1 size-2 rounded-full bg-state-failed" />
                     </div>
-                  ))}
+                  )}
+                  {/* Items leave a strip on the right free, so a slot next to a meeting can still
+                      be clicked for a new card. */}
+                  <div className="pointer-events-none absolute inset-y-0 right-2 left-0">
+                    {placeTimedItems(shown, day, zone, (MIN_BLOCK_PX / hourHeight) * 60).map(
+                      (placed) => (
+                        <div
+                          key={placed.item.id}
+                          data-placed={placed.item.id}
+                          className="@container pointer-events-auto absolute px-px has-focus-visible:left-0! has-focus-visible:w-full! has-focus-visible:z-30!"
+                          style={{
+                            top: px(placed.top),
+                            height: Math.max(px(placed.bottom - placed.top), MIN_BLOCK_PX),
+                            left: `${(placed.column / placed.columns) * 100}%`,
+                            width: `${(placed.span / placed.columns) * 100}%`,
+                            zIndex: draggingId === placed.item.id ? 20 : 10,
+                          }}
+                          onPointerDown={(event) =>
+                            placed.item.source === 'local'
+                              ? startCard(event, placed, dayIndex)
+                              : event.stopPropagation()
+                          }
+                        >
+                          {placed.item.source === 'local' ? (
+                            <CardBlock
+                              item={placed.item}
+                              zone={zone}
+                              dragging={draggingId === placed.item.id}
+                              onEdit={() => onEdit(placed.item.id)}
+                              onRunNow={
+                                onRunNow && runNowIds?.has(placed.item.id)
+                                  ? () => onRunNow(placed.item.id)
+                                  : undefined
+                              }
+                            />
+                          ) : (
+                            <OutlookBlock item={placed.item} zone={zone} />
+                          )}
+                        </div>
+                      ),
+                    )}
+                  </div>
                   {createPreview?.dayIndex === dayIndex && (
                     <div
                       aria-hidden

@@ -67,8 +67,12 @@ Default keys (all changeable in Settings → Keybindings):
 | T, N, P      | Calendar: today, next, previous          |
 | D, W         | Calendar: day view, week view            |
 | C            | Calendar: new card on the day you are on |
+| Ctrl+= / -   | Calendar: zoom in, zoom out              |
+| Ctrl+0       | Calendar: reset zoom                     |
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
+The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
+the whole window.
 
 ### Tray and autostart
 
@@ -114,7 +118,25 @@ removed while threads use it.
 ## Calendar
 
 The calendar shows a day or a week (`D` and `W`), starting on `calendar.firstDayOfWeek` in
-`calendar.zone`, with your work hours shaded. The URL keeps the view and the date.
+`calendar.zone`, with your work hours shaded and a red line at the current time. When today is in
+view and now is outside your work hours, the grid opens on now; otherwise on the start of your
+work hours. The URL keeps the view and the date.
+
+### Zoom
+
+Zoom changes how tall an hour is, so you see more of the day or more detail. Hold Ctrl and turn
+the mouse wheel over the grid, or pinch on a touchpad; the time under the pointer stays where it
+is. **Ctrl+=** and **Ctrl+-**, the − and + buttons in the toolbar, and "Zoom in calendar" and "Zoom
+out calendar" in the palette zoom around the middle of the view. **Ctrl+0**, a click on the
+percentage, or "Reset calendar zoom" go back to 100 %. Each step is `calendar.zoomStep` percent.
+The zoom is the `calendar.hourHeight` setting, so it stays after a restart.
+
+### Meetings and cards at the same time
+
+Items that overlap in time sit side by side: each group of overlapping items splits the day's
+width into columns, and an item takes the full width of the columns next to it that stay free. A
+narrow block cuts its title short; hover it to see the full title, time and place, or Tab to it
+and it widens over the day until it loses focus. Tab moves through the items in time order.
 
 ### Outlook
 

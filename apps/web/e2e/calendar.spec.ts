@@ -54,6 +54,53 @@ async function pointAt(column: Locator, minute: number, nudge = 2) {
   return { x: box.x + box.width / 2, y: box.y + (minute / (24 * 60)) * box.height + nudge };
 }
 
+// Scrolls the grid so `minute` is at the top. Where the grid opens depends on the time of day the
+// test runs (it shows now when today is in view), so tests that point at times scroll first.
+async function reveal(page: Page, minute: number) {
+  await page.getByTestId('calendar-scroll').evaluate((element, at) => {
+    const grid = element.firstElementChild;
+    if (grid) element.scrollTop = (at / (24 * 60)) * grid.getBoundingClientRect().height;
+  }, minute);
+}
+
+// Keeps the Ctrl key presses and Ctrl+wheel events the page receives from now on. Whether the
+// app kept one from the browser (which would zoom the page) is read once dispatch has finished,
+// so it does not depend on the order of listeners on the window.
+async function watchZoomEvents(page: Page) {
+  await page.evaluate(() => {
+    type Seen = { type: string; ctrlKey: boolean; code?: string; defaultPrevented: boolean };
+    const seen: Seen[] = [];
+    (globalThis as { zoomEvents?: Seen[] }).zoomEvents = seen;
+    const target = globalThis as unknown as {
+      addEventListener(
+        type: 'keydown' | 'wheel',
+        listener: (event: Seen) => void,
+        options?: { capture: boolean; passive: boolean },
+      ): void;
+    };
+    const keep = (event: Seen) => {
+      if (event.ctrlKey && !event.code?.startsWith('Control')) seen.push(event);
+    };
+    target.addEventListener('keydown', keep, { capture: true, passive: true });
+    target.addEventListener('wheel', keep, { capture: true, passive: true });
+  });
+}
+
+const zoomEvents = (page: Page) =>
+  page.evaluate(() =>
+    (
+      (
+        globalThis as {
+          zoomEvents?: { type: string; code?: string; defaultPrevented: boolean }[];
+        }
+      ).zoomEvents ?? []
+    ).map((event) =>
+      event.type === 'wheel'
+        ? `wheel ${event.defaultPrevented}`
+        : `key ${event.code} ${event.defaultPrevented}`,
+    ),
+  );
+
 async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
@@ -129,6 +176,7 @@ test.describe('calendar', () => {
     const today = localDay();
     await page.goto(`/calendar?view=day&date=${today}`);
     const column = page.getByTestId(`day-${today}`);
+    await reveal(page, 14 * 60);
 
     // Drag 16:00 → 17:00 to create.
     await drag(page, await pointAt(column, 16 * 60), await pointAt(column, 17 * 60));
@@ -193,5 +241,137 @@ test.describe('calendar', () => {
     await page.keyboard.press('t');
     await expect(page).not.toHaveURL(/date=/);
     await expect(page.locator('[aria-current="date"]')).toHaveCount(1);
+  });
+
+  test('zooms with the keys, the toolbar and Ctrl+wheel, and keeps the zoom after a reload', async ({
+    page,
+  }) => {
+    const day = localDay(4);
+    await page.goto(`/calendar?view=day&date=${day}`);
+    const column = page.getByTestId(`day-${day}`);
+    const level = page.getByTestId('calendar-zoom');
+    const dayHeight = async () => (await column.boundingBox())?.height ?? 0;
+    await expect(level).toHaveText('100%');
+    expect(await dayHeight()).toBe(24 * 48);
+    await reveal(page, 9 * 60);
+
+    await watchZoomEvents(page);
+    await page.keyboard.press('Control+Equal');
+    await expect(level).toHaveText('121%');
+    expect(await dayHeight()).toBe(24 * 58);
+    await page.keyboard.press('Control+Minus');
+    await expect(level).toHaveText('100%');
+    // The app claims the keys, so the browser does not zoom the page as well.
+    expect(await zoomEvents(page)).toEqual(['key Equal true', 'key Minus true']);
+    await page.getByRole('button', { name: 'Zoom in calendar' }).click();
+    await page.getByRole('button', { name: 'Zoom in calendar' }).click();
+    await expect(level).toHaveText('146%');
+    expect(await dayHeight()).toBe(24 * 70);
+
+    await page.reload();
+    await expect(level).toHaveText('146%');
+    expect(await dayHeight()).toBe(24 * 70);
+
+    await runPaletteCommand(page, 'Reset calendar zoom');
+    await expect(level).toHaveText('100%');
+    await runPaletteCommand(page, 'Zoom out calendar');
+    await expect(level).toHaveText('83%');
+    await page.keyboard.press('Control+0');
+    await expect(level).toHaveText('100%');
+
+    // Ctrl+wheel zooms around the pointer: the time under it stays where it is.
+    await reveal(page, 9 * 60);
+    await watchZoomEvents(page);
+    const before = await column.boundingBox();
+    if (!before) throw new Error('day column is not on screen');
+    const pointer = { x: before.x + before.width / 2, y: before.y + (10.5 / 24) * before.height };
+    await page.mouse.move(pointer.x, pointer.y);
+    await page.keyboard.down('Control');
+    await page.mouse.wheel(0, -100);
+    await page.keyboard.up('Control');
+    await expect(level).toHaveText('121%');
+    const after = await column.boundingBox();
+    if (!after) throw new Error('day column is not on screen');
+    expect(after.height).toBe(24 * 58);
+    const minuteUnder = ((pointer.y - after.y) / after.height) * 24 * 60;
+    expect(Math.abs(minuteUnder - 10.5 * 60)).toBeLessThan(2);
+
+    await page.keyboard.press('Control+0');
+    await expect(level).toHaveText('100%');
+    expect(await zoomEvents(page)).toEqual(['wheel true', 'key Digit0 true']);
+  });
+
+  test('puts overlapping meetings and cards side by side', async ({ page }) => {
+    const day = localDay(4);
+    await page.goto(`/calendar?view=day&date=${day}`);
+    const view = calendar(page);
+    const column = page.getByTestId(`day-${day}`);
+    await reveal(page, 9 * 60);
+
+    // A local card in the middle of the invented overlapping meetings.
+    await view.getByRole('button', { name: 'New card' }).click();
+    const dialog = page.getByRole('dialog', { name: 'New card' });
+    await dialog.getByLabel('Title').fill('Write the release notes for lantern-web');
+    await dialog.getByLabel('Start').fill('10:45');
+    await dialog.getByLabel('End').fill('11:45');
+    await dialog.getByRole('button', { name: 'Create card' }).click();
+    await expect(dialog).toBeHidden();
+    const card = view.getByRole('button', { name: /^Write the release notes for lantern-web, / });
+    await expect(card).toHaveAccessibleName(
+      'Write the release notes for lantern-web, 10:45–11:45, scheduled',
+    );
+
+    // The invented meetings from 10:00 to 12:00 and the card; the standup on weekdays sits apart.
+    const blocks = view.locator('[data-item]').filter({
+      hasNotText: 'Team standup',
+    });
+    await expect(blocks).toHaveCount(6);
+    const columnBox = await column.boundingBox();
+    if (!columnBox) throw new Error('day column is not on screen');
+    const boxes = await blocks.evaluateAll((elements) =>
+      elements.map((element) => {
+        const { x, y, width, height } = element.getBoundingClientRect();
+        return { name: element.getAttribute('aria-label') ?? '', x, y, width, height };
+      }),
+    );
+    for (const [index, a] of boxes.entries()) {
+      // Every block is narrower than the day but still wide enough to show something.
+      expect(a.width, a.name).toBeLessThan(columnBox.width / 2);
+      expect(a.width, a.name).toBeGreaterThan(40);
+      for (const b of boxes.slice(index + 1)) {
+        const across = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+        const down = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+        expect(across > 0 && down > 0, `${a.name} covers ${b.name}`).toBe(false);
+      }
+    }
+
+    // The full title is on hover even when the block cuts it off.
+    await expect(card).toHaveAttribute(
+      'title',
+      'Write the release notes for lantern-web\n10:45–11:45',
+    );
+    await expect(
+      view.getByRole('group', { name: /^Release planning for lantern-web 2\.4, / }),
+    ).toHaveAttribute('title', 'Release planning for lantern-web 2.4\n10:00–11:30\nRoom Ferrite');
+
+    // A narrow card still moves by mouse; then it is gone again for the other tests.
+    const box = await card.boundingBox();
+    if (!box) throw new Error('card is not on screen');
+    const hour = columnBox.height / 24;
+    await drag(
+      page,
+      { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+      { x: box.x + box.width / 2, y: box.y + box.height / 2 + 2 * hour },
+    );
+    await expect(card).toHaveAccessibleName(
+      'Write the release notes for lantern-web, 12:45–13:45, scheduled',
+    );
+    await card.focus();
+    await page.keyboard.press('Enter');
+    await page
+      .getByRole('dialog', { name: 'Edit card' })
+      .getByRole('button', { name: 'Delete' })
+      .click();
+    await expect(card).toHaveCount(0);
   });
 });

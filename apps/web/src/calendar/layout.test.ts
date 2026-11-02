@@ -105,7 +105,7 @@ describe('placing items', () => {
       day,
       zone,
     );
-    expect(placed.map(({ item: { id }, lane, lanes }) => [id, lane, lanes])).toEqual([
+    expect(placed.map(({ item: { id }, column, columns }) => [id, column, columns])).toEqual([
       ['a', 0, 2],
       ['b', 1, 2],
       ['c', 0, 1],
