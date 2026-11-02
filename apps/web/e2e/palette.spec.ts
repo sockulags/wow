@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { e2eHome } from './env';
 
-// Behavior 22 against the chat server (e2e/server.ts): one palette searches threads, cards,
-// backlog items, workflows, settings pages and actions, and the keyboard picks the result.
+// Behavior 22 against the chat server (e2e/server.ts): one palette searches cards, backlog items,
+// workflows and settings pages, and the keyboard picks the result (threads and actions are in
+// chat.spec.ts). Other tests share this server, so every query names something only this test has.
 
 test.beforeEach(async ({ page }) => {
   // What the desktop preload injects: the contents of `~/.wow/server.json`.
@@ -62,13 +63,11 @@ test.describe('palette', () => {
     await pick(page, 'backlog quarterly', 'Backlog: Quarterly cleanup');
     await expect(page).toHaveURL(itemUrl);
 
-    await pick(page, 'workflow backlog e2e', 'Workflow: Backlog e2e');
+    // Its id keeps the runs of this workflow, which other tests start, out of the way.
+    await pick(page, 'workflow backlog-e2e', 'Workflow: Backlog e2e');
     await expect(page).toHaveURL(/\/workflows\/backlog-e2e$/);
 
     await pick(page, 'settings calendar', 'Settings: Calendar');
     await expect(page).toHaveURL(/\/settings\/calendar$/);
-
-    await pick(page, 'go to backlog', 'Go to Backlog');
-    await expect(page).toHaveURL(/\/backlog$/);
   });
 });
