@@ -92,6 +92,20 @@ describe('shell', () => {
     expect(screen.getByRole('complementary', { name: 'Details' })).toBeTruthy();
   });
 
+  it('runs shortcuts with Ctrl while the palette has focus (cmdk would claim Ctrl+J and Ctrl+K)', async () => {
+    const user = userEvent.setup();
+    await renderApp('/calendar');
+    await user.keyboard('{Control>}k{/Control}');
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByRole('combobox'), 'zoom');
+    // Ctrl+K again keeps the palette open; Ctrl+J reaches the app and closes the palette.
+    await user.keyboard('{Control>}k{/Control}');
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    await user.keyboard('{Control>}j{/Control}');
+    expect(await screen.findByRole('complementary', { name: 'Details' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('toggles the sidebar with its keybinding', async () => {
     const user = userEvent.setup();
     await renderApp('/chat');

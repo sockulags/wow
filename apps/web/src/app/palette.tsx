@@ -1,6 +1,6 @@
 import { settingValue, type SettingsState } from '@wow/client-runtime';
 import { useRouterState } from '@tanstack/react-router';
-import { useState, type ReactNode } from 'react';
+import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useStore } from 'zustand';
 import { KeyHint } from '@/components/hint';
 import {
@@ -13,6 +13,7 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import type { AppCommand, CommandContext, CommandGroup as Group } from './commands';
+import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
 import { paletteScore, startList, displayTitle } from './palette-model';
 import { useLayout, useRuntime, useSetting } from './runtime';
 import { sections } from './sections';
@@ -59,6 +60,27 @@ export function CommandPalette({
           (group) => [group, shown.filter((command) => command.group === group)] as const,
         );
 
+  // cmdk claims Ctrl+J/K/N/P for moving through the list and stops the event there, so the app's
+  // shortcuts with a modifier would not work while the palette has focus, including while it fades
+  // out after Escape (Ctrl+K pressed then was lost). They run here instead, like everywhere else.
+  const onKeyDown = (event: KeyboardEvent) => {
+    const pressed = eventToBinding(event);
+    if (!pressed || !hasCommandModifier(pressed)) return;
+    const command = shown
+      .concat(commands.filter((candidate) => candidate.id === 'palette.open'))
+      .find((candidate) => {
+        const binding = candidate.keybinding ? settingValue(values, candidate.keybinding) : '';
+        return (
+          typeof binding === 'string' && binding !== '' && normalizeBinding(binding) === pressed
+        );
+      });
+    if (!command) return;
+    event.preventDefault();
+    if (event.repeat && !command.repeatable) return;
+    if (command.id !== 'palette.open') setOpen(false);
+    command.run(context);
+  };
+
   const item = (command: AppCommand) => {
     const binding = command.keybinding ? settingValue(values, command.keybinding) : undefined;
     return (
@@ -88,7 +110,7 @@ export function CommandPalette({
       description="Search threads, views, settings and actions"
       showCloseButton={false}
     >
-      <CommandFilter byId={byId}>
+      <CommandFilter byId={byId} onKeyDown={onKeyDown}>
         <CommandInput
           placeholder="Type a command or search…"
           value={search}
@@ -113,14 +135,17 @@ export function CommandPalette({
 // whose filter knows each command.
 function CommandFilter({
   byId,
+  onKeyDown,
   children,
 }: {
   byId: ReadonlyMap<string, AppCommand>;
+  onKeyDown: (event: KeyboardEvent) => void;
   children: ReactNode;
 }) {
   return (
     <Command
       loop
+      onKeyDown={onKeyDown}
       filter={(value, query) => {
         const command = byId.get(value);
         return command ? paletteScore(command, query) : 0;

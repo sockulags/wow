@@ -653,7 +653,9 @@ The palette (`app/palette.tsx`, `app/palette-model.ts`) lists, before anything i
 commands marked `needsYou`, the newest by `recentAt` (`appearance.paletteRecent`) and the open
 view's actions; typing searches every command with `paletteScore`, which ranks title matches above
 group, detail and keyword matches and needs every typed word. A title's group prefix ("Calendar:
-today") is dropped where the group heading says it, and `detail` says what a row is.
+today") is dropped where the group heading says it, and `detail` says what a row is. cmdk claims Ctrl+J/K/N/P for list movement and stops the event, so the palette
+runs the app's shortcuts with a modifier itself; otherwise Ctrl+K pressed while the palette fades
+out after Escape was lost.
 
 ## Workflow builder and run view
 
