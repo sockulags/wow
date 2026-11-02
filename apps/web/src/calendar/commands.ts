@@ -15,6 +15,7 @@ import {
   sameDate,
   type LocalDate,
 } from './time';
+import { calendarZoom } from './zoom';
 
 // Where a card made without a pointer goes: the next snap from now when the day is today, else the
 // start of work hours.
@@ -127,6 +128,33 @@ export function calendarCommands({
         keybinding: 'keybindings.calendarWeekView',
         run: ({ navigate }) =>
           void navigate({ to: '/calendar', search: { ...search, view: 'week' } }),
+      },
+      // The grid keeps the time at the middle of the view in place.
+      {
+        id: 'calendar.zoomIn',
+        title: 'Zoom in calendar',
+        group: 'Calendar',
+        keywords: ['zoom', 'larger', 'hour height', 'calendar'],
+        keybinding: 'keybindings.calendarZoomIn',
+        repeatable: true,
+        run: ({ settings }) => void calendarZoom(settings).step(1),
+      },
+      {
+        id: 'calendar.zoomOut',
+        title: 'Zoom out calendar',
+        group: 'Calendar',
+        keywords: ['zoom', 'smaller', 'hour height', 'calendar'],
+        keybinding: 'keybindings.calendarZoomOut',
+        repeatable: true,
+        run: ({ settings }) => void calendarZoom(settings).step(-1),
+      },
+      {
+        id: 'calendar.zoomReset',
+        title: 'Reset calendar zoom',
+        group: 'Calendar',
+        keywords: ['zoom', 'default', 'hour height', 'calendar'],
+        keybinding: 'keybindings.calendarZoomReset',
+        run: ({ settings }) => void calendarZoom(settings).reset(),
       },
     );
   }

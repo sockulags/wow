@@ -430,7 +430,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - chat: `chat.contextMeter`, `chat.resumePrompt`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`,
   `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`,
-  `calendar.hourHeight`
+  `calendar.hourHeight`, `calendar.zoomStep`
 - outlook: `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`,
   `outlook.mailRail`, `outlook.mailLimit`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
@@ -633,8 +633,31 @@ one week starting on `calendar.firstDayOfWeek`, in `calendar.zone`, with `calend
 shaded; the URL holds the view, so a reload shows the same range. Days are counted in local dates
 and an instant's place in a day is its wall-clock time in the zone, so a week that crosses a DST
 change still has seven columns and a 09:15 meeting sits at 09:15 on both sides of it
-(`time.ts`, `layout.ts`). All-day Outlook items sit in a row above the grid; overlapping items share
-the column side by side. Outlook items are read-only (a lock marker, the Teams join link when there
+(`time.ts`, `layout.ts`). All-day Outlook items sit in a row above the grid. Timed Outlook items
+and local cards that overlap are laid out side by side by `layoutColumns` (`overlap.ts`, a pure
+function): items that overlap directly or through a chain form a cluster, each takes the first
+column free at its start, every item of a cluster is 1/columns wide and stretches right over
+neighbouring columns that stay free for its whole length. Items shorter than the drawn minimum
+block height (18 px) take that much time in the layout, so zero-length and very short items get a
+column of their own instead of being covered; that minimum depends on the zoom. Blocks leave a
+strip on the right of each day free for clicking a new card, carry their full title, time and
+place as a `title` for hover, and widen over the day while focused by keyboard. Outlook items are
+focusable like cards, so Tab walks the day's items in time order.
+
+The hour height is `calendar.hourHeight` and is the zoom. Ctrl+wheel and pinch on the grid (a
+non-passive `wheel` listener that calls `preventDefault`, so neither the browser nor Electron
+zooms the page), the `keybindings.calendarZoomIn` / `calendarZoomOut` / `calendarZoomReset` keys,
+the matching palette commands ("Zoom in calendar", "Zoom out calendar", "Reset calendar zoom",
+calendar only) and the toolbar's − / % / + controls all go through `calendarZoom` (`zoom.ts`): it
+multiplies the height by `calendar.zoomStep` percent per step (fractional steps for a pinch),
+clamps to the setting's schema bounds, shows the newest requested height at once as a pending
+value and writes it with `setting.set`, one write in flight and the last request winning, until
+the stored setting reaches it. The grid keeps the minute under the pointer (wheel) or at the
+middle of the view (keys, buttons, a change from elsewhere) at the same place on screen. Zoom
+keys are `repeatable` commands: the global key handler claims held keys and runs repeatable ones
+again on auto-repeat. A range opens at the start of work hours, or centred on now when today is
+in view and now is outside that window; a now-line follows the clock minute by minute in today's
+column. Outlook items are read-only (a lock marker, the Teams join link when there
 is one, struck through when cancelled). Local cards are created by clicking (a
 `calendar.cardMinutes` card) or dragging a range, then named in the card dialog; dragging a card
 moves it (also to another day), dragging its lower edge resizes it, both snapped to
@@ -649,8 +672,8 @@ run and delete" before deleting a card whose run is live. While `scheduler.pause
 toolbar shows "Scheduler paused", which resumes it. The mail rail lists `mailItems` newest first with the `unreadCount` from
 `outlook_status`; clicking an entry calls `outlook.open`. A banner shows "Outlook unavailable since
 <time>" while `outlook_status.lastError` is set. Palette commands: today, next, previous, day view,
-week view (on the calendar only, with the `keybindings.calendar*` keys), New card, Refresh
-Outlook, and one "Edit card" entry per card.
+week view, zoom in, zoom out, reset zoom (on the calendar only, with the `keybindings.calendar*`
+keys), New card, Refresh Outlook, and one "Edit card" entry per card.
 
 ## Backlog and trackers
 

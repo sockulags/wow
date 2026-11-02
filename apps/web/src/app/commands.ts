@@ -37,6 +37,8 @@ export interface AppCommand {
   readonly group: CommandGroup;
   readonly keywords?: readonly string[];
   readonly keybinding?: SettingKey;
+  // Runs again while its key is held down (zoom); other commands run once per press.
+  readonly repeatable?: boolean;
   run(context: CommandContext): void;
 }
 

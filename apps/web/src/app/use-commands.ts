@@ -111,7 +111,7 @@ export function useGlobalKeybindings(
 ): void {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) return;
+      if (event.defaultPrevented) return;
       const pressed = eventToBinding(event);
       if (!pressed) return;
       const { values } = context.settings.getState();
@@ -125,7 +125,10 @@ export function useGlobalKeybindings(
       if (!command) return;
       // Plain keys stay with text fields; shortcuts with Ctrl, Alt or Cmd work everywhere.
       if (isEditable(event.target) && !hasCommandModifier(pressed)) return;
+      // A held key is still claimed (Ctrl+= must not fall through to the browser's page zoom),
+      // but only repeatable commands run again.
       event.preventDefault();
+      if (event.repeat && !command.repeatable) return;
       command.run(context);
     };
     window.addEventListener('keydown', onKeyDown);

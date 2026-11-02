@@ -5,11 +5,13 @@ import {
   CalendarDaysIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  MinusIcon,
   PauseIcon,
   PlusIcon,
   RefreshCwIcon,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useStore } from 'zustand';
 import { formatBinding } from '@/app/keybindings';
 import { useConnectionState, useRuntime, useSetting } from '@/app/runtime';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
@@ -32,6 +34,7 @@ import {
   sameDate,
 } from './time';
 import { TimeGrid } from './time-grid';
+import { calendarZoom, zoomBounds } from './zoom';
 
 const noItems: readonly CalendarItem[] = [];
 
@@ -73,14 +76,20 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const firstDay = useSetting('calendar.firstDayOfWeek');
   const workHours = useSetting('calendar.workHours');
   const snap = useSetting('calendar.snapMinutes');
-  const hourHeight = useSetting('calendar.hourHeight');
+  const storedHourHeight = useSetting('calendar.hourHeight');
   const cardMinutes = useSetting('calendar.cardMinutes');
   const mailRail = useSetting('outlook.mailRail');
   const todayKey = useSetting('keybindings.calendarToday');
   const nextKey = useSetting('keybindings.calendarNext');
   const previousKey = useSetting('keybindings.calendarPrevious');
   const newCardKey = useSetting('keybindings.newCard');
+  const zoomInKey = useSetting('keybindings.calendarZoomIn');
+  const zoomOutKey = useSetting('keybindings.calendarZoomOut');
+  const zoomResetKey = useSetting('keybindings.calendarZoomReset');
   const { settings } = useRuntime();
+  const zoom = calendarZoom(settings);
+  const hourHeight = useStore(zoom.store, (state) => state.pending) ?? storedHourHeight;
+  const zoomPercent = Math.round((hourHeight / zoomBounds.default) * 100);
   const items = useTopic('calendarItems') ?? noItems;
   const status = useTopic('outlookStatus')?.[0];
   const mail = useTopic('mailItems') ?? [];
@@ -155,6 +164,44 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
                 Scheduler paused
               </Button>
             )}
+            <div
+              role="group"
+              aria-label="Zoom"
+              className="flex items-center rounded-md border border-border"
+            >
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="rounded-r-none"
+                aria-label="Zoom out calendar"
+                title={zoomOutKey === '' ? undefined : formatBinding(zoomOutKey)}
+                disabled={hourHeight <= zoomBounds.min}
+                onClick={() => zoom.step(-1)}
+              >
+                <MinusIcon />
+              </Button>
+              <button
+                type="button"
+                aria-label="Reset calendar zoom"
+                title={`Reset to 100%${zoomResetKey === '' ? '' : ` (${formatBinding(zoomResetKey)})`}`}
+                data-testid="calendar-zoom"
+                onClick={() => zoom.reset()}
+                className="min-w-11 px-1 text-center text-xs text-muted-foreground tabular-nums hover:text-foreground"
+              >
+                {zoomPercent}%
+              </button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="rounded-l-none"
+                aria-label="Zoom in calendar"
+                title={zoomInKey === '' ? undefined : formatBinding(zoomInKey)}
+                disabled={hourHeight >= zoomBounds.max}
+                onClick={() => zoom.step(1)}
+              >
+                <PlusIcon />
+              </Button>
+            </div>
             <div role="group" aria-label="View" className="flex rounded-md border border-border">
               {(['day', 'week'] as const).map((kind) => (
                 <button
@@ -215,6 +262,7 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           snap={snap}
           cardMinutes={cardMinutes}
           hourHeight={hourHeight}
+          onZoom={(steps) => zoom.step(steps)}
           onCreate={(range) => layout.setState({ cardDialog: { type: 'create', ...range } })}
           onEdit={(cardId) => layout.setState({ cardDialog: { type: 'edit', cardId } })}
           runNowIds={runNowIds}

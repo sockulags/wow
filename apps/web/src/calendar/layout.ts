@@ -9,6 +9,7 @@ import {
   weekdayOf,
   type LocalDate,
 } from './time';
+import { layoutColumns, type ColumnPlacement } from './overlap';
 
 export type CalendarViewKind = 'day' | 'week';
 
@@ -25,59 +26,25 @@ export function visibleDays(
 // Where "next" and "previous" go: one day in day view, one week in week view.
 export const stepDays = (view: CalendarViewKind): number => (view === 'day' ? 1 : 7);
 
-export interface PlacedItem {
+export interface PlacedItem extends ColumnPlacement {
   readonly item: CalendarItem;
   // Minutes from local midnight, clipped to the day; `bottom` is 1440 for an item running past it.
   readonly top: number;
   readonly bottom: number;
-  // Side-by-side placement among overlapping items: this item's lane out of `lanes`.
-  readonly lane: number;
-  readonly lanes: number;
 }
 
-interface Span {
-  readonly item: CalendarItem;
-  readonly top: number;
-  readonly bottom: number;
-}
-
-function assignLanes(spans: readonly Span[]): PlacedItem[] {
-  const sorted = spans.toSorted((a, b) => a.top - b.top || b.bottom - a.bottom);
-  const placed: PlacedItem[] = [];
-  // A cluster is a run of items that overlap each other transitively; they share a lane count.
-  let cluster: { span: Span; lane: number }[] = [];
-  let clusterEnd = -1;
-  const flush = () => {
-    const lanes = Math.max(0, ...cluster.map((entry) => entry.lane)) + 1;
-    for (const { span, lane } of cluster) placed.push({ ...span, lane, lanes });
-    cluster = [];
-  };
-  for (const span of sorted) {
-    if (span.top >= clusterEnd) {
-      flush();
-      clusterEnd = -1;
-    }
-    const taken = new Set(
-      cluster.filter((entry) => entry.span.bottom > span.top).map((entry) => entry.lane),
-    );
-    let lane = 0;
-    while (taken.has(lane)) lane += 1;
-    cluster.push({ span, lane });
-    clusterEnd = Math.max(clusterEnd, span.bottom);
-  }
-  flush();
-  return placed;
-}
-
-// Timed items that overlap the local day, placed by their wall-clock times in `zone`.
+// Timed items that overlap the local day, placed by their wall-clock times in `zone` and side by
+// side where they overlap (`layoutColumns`). `minMinutes` is the shortest length a block is drawn
+// with at the current zoom.
 export function placeTimedItems(
   items: readonly CalendarItem[],
   day: LocalDate,
   zone: string,
+  minMinutes = 0,
 ): PlacedItem[] {
   const dayStart = startOfDay(day, zone).getTime();
   const dayEnd = startOfDay(addDays(day, 1), zone).getTime();
-  const spans: Span[] = [];
+  const spans: { item: CalendarItem; top: number; bottom: number }[] = [];
   for (const item of items) {
     if (item.allDay) continue;
     const start = Date.parse(item.start);
@@ -91,7 +58,7 @@ export function placeTimedItems(
       wallBottom > top ? wallBottom : Math.min(MINUTES_PER_DAY, top + (end - start) / 60_000);
     spans.push({ item, top, bottom });
   }
-  return assignLanes(spans);
+  return layoutColumns(spans, minMinutes);
 }
 
 export function allDayItemsOn(
