@@ -26,11 +26,12 @@ const UNITS = [
   { key: 'U13', title: 'Provider onboarding and settings coverage', deps: ['U8'] },
   { key: 'U14', title: 'Electron desktop: server lifecycle, tray, autostart, installer', deps: ['U2', 'U3'] },
   { key: 'U15', title: 'End-to-end tests and user guide', deps: ['U8', 'U11', 'U12', 'U13', 'U14'] },
-  { key: 'U16', title: 'Windows smoke and release candidate', deps: ['U15'] },
+  { key: 'U16', title: 'Windows smoke and release candidate', deps: ['U15', 'U17'] },
+  { key: 'U17', title: 'Auto-update from GitHub Releases', deps: ['U14'] },
 ]
 
 // Order inside a ready set: lower index first, so U8/U9/U10 (the views) win over U14 (packaging).
-const PRIORITY = ['U1', 'U2', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8', 'U9', 'U10', 'U11', 'U14', 'U12', 'U13', 'U15', 'U16']
+const PRIORITY = ['U1', 'U2', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8', 'U9', 'U10', 'U11', 'U14', 'U12', 'U13', 'U17', 'U15', 'U16']
 
 const MAX_AGENTS = 3
 const BASE = (args && args.base) || 'main'
