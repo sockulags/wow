@@ -41,9 +41,11 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test` and `provider.listModels`
   (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`,
-  `workflowRuns.detectArtifacts` (`{runId}`), `outlook.open` (`{entryId}`), `outlook.refresh`, `trackers.test` (`{service}`,
-  signs in with the stored tracker settings and answers `{ok, account, message, missing}`), and
-  `trackers.preview` and `trackers.publish` (`{backlogItemId, service}`). Error codes are `RpcErrorCode`.
+  `workflowRuns.detectArtifacts` (`{runId}`), `workflows.matchArtifacts` (`{projectId, globs}`),
+  `outlook.open` (`{entryId}`), `outlook.refresh`, `trackers.test` (`{service}`, signs in with the
+  stored tracker settings and answers `{ok, account, message, missing}`), and `trackers.preview`
+  (`{backlogItemId, service}`) and `trackers.publish` (`{backlogItemId, service, title?,
+labels?}`). Error codes are `RpcErrorCode`.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
@@ -479,7 +481,7 @@ A group marked with a unit (`(U12)`) belongs to a unit not delivered yet; its ke
 until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.offerSetup`
-- chat: `chat.contextMeter`, `chat.resumePrompt`
+- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.starterCount`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`,
@@ -495,7 +497,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.jira.issueType`, `trackers.github.baseUrl`, `trackers.github.token` (secret),
   `trackers.github.owner`, `trackers.github.repo`, `trackers.github.labels`,
   `trackers.requestTimeoutMs`
-- appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`
+- appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
+  `appearance.paletteRecent`
 - keybindings: `keybindings.*`, one per command that has a shortcut
 - desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
 - updates: `updates.enabled`, `updates.checkIntervalMinutes`
@@ -669,25 +672,63 @@ while the thread is `working` or `needs_you`, and `turn.started` makes a done th
 again, so a new message reopens it. A workflow step's thread becomes `done` through the engine's
 `setThreadState` effect when the step completes (after Continue when the step has a gate after).
 
+The draft's defaults come from server rows, not browser storage (owner decision F-5): the newest
+thread that no run started gives the instance, and on that instance its model, effort and
+permission mode, and its project or folder; then the instance defaults. Folders used without a
+project (`recentFolders` over `threads`) and "Another folder…" (`Runtime.pickFolder`, a typed path
+in the browser build) replace a separate working-directory field. Starters under the composer come
+from `skills`, open `backlogItems` and the last active thread (`chat.starterCount`). The composer
+focuses on `/chat/new` and on opening a thread; its `$` picker is a cmdk `Command` with
+`shouldFilter={false}` whose selection the text box moves (focus stays in the text box), grouped by
+`skillGroup` (Project, User, Plugins). A message written while a turn runs is held in the composer
+and sent when `turns` says the turn ended; while a question waits, the composer sends
+`question.answer`. The working clock reads the running turn's `startedAt` and redraws each second;
+it is display only, the state still comes from `turns`. A pending approval takes the focus, and
+the palette's approval commands (`keybindings.approvalAllowOnce|approvalAllowSession|approvalDeny`,
+plain keys, so they do nothing in text fields) answer it. A thread whose step a waiting run asks
+to review (`gateRunForThread`: the gate after this step, or before the next) shows the run view's
+`GateBar` above the composer, and the palette's Continue run and Stop run apply to that run.
+
+The palette (`app/palette.tsx`, `app/palette-model.ts`) lists, before anything is typed, the
+commands marked `needsYou`, the newest by `recentAt` (`appearance.paletteRecent`) and the open
+view's actions; typing searches every command with `paletteScore`, which ranks title matches above
+group, detail and keyword matches and needs every typed word. A title's group prefix ("Calendar:
+today") is dropped where the group heading says it, and `detail` says what a row is. cmdk claims Ctrl+J/K/N/P for list movement and stops the event, so the palette
+runs the app's shortcuts with a modifier itself; otherwise Ctrl+K pressed while the palette fades
+out after Escape was lost.
+
 ## Workflow builder and run view
 
 `apps/web/src/workflows`. `/workflows` lists the workflows and their runs (live runs first) next
 to `/workflows/new` (`?template=<kind>` starts from that entry of `workflows.templates`),
-`/workflows/$workflowId` (the builder for a saved workflow plus Run now in a chosen project and
-its runs) or `/workflows/runs/$runId`. The builder edits a local draft: name, template kind, and
-ordered steps reordered by dragging a step's handle or with its move buttons. A step picks a skill
+`/workflows/$workflowId` (the builder for a saved workflow, Run now in a chosen project next to
+Save, and its runs) or `/workflows/runs/$runId`. The builder edits a local draft: name, template
+kind, and ordered steps reordered by dragging a step's handle or with its move buttons. Steps are
+one line each and open to edit. Gates are drawn at the positions between steps (`waitsAt`,
+`setGate`: on stores a gate after the step before, or a gate before the first step; off clears
+both), so the engine's `gateBefore` and `gateAfter` stay as they are. A step picks a skill
 from the `skills` topic (stored as its name, or `plugin:name` for a Claude plugin's skill), a
 provider instance, and model, effort and permission mode with the chat's pickers; empty ones are
 filled with the instance defaults, else the first listed model. Expected artifact globs are typed
 one per line. Validation needs a name, a step, and per step a skill, an instance, a model, an
 effort and a permission mode; a skill missing from the scan is only a warning, because the server
-invokes unknown skills by name. "Start from" a template replaces the steps; Refresh skills calls
-`skills.refresh`. Run now is offered only for the saved steps. The run view asks
+invokes unknown skills by name. "Start from" (Blank or a template) is offered for a new workflow;
+an existing one shows "Based on <template>" and replaces its steps only through "Replace steps
+with template…", which still needs Save. "Save as template…" writes the draft's skills, gates and artifact globs into
+`workflows.templates` (`saveAsTemplate`: replaced by name, else a new kind from the name); the
+settings page's editor stays for everything else. Refresh skills calls `skills.refresh`. Run now is offered
+only for the saved steps. With a project to run in, each step's expected globs are checked with
+`workflows.matchArtifacts {projectId, globs}` (read only, the same `fast-glob` match the run uses)
+for a "Matches N files" line. Delete dispatches `workflow.delete` at once and offers Undo, which
+sends `workflow.restore {workflow}` with the row the client held (refused if the id exists again). The run view asks
 `workflowRuns.detectArtifacts` when it opens and renders the run row: each step's state, its
-thread link, the expected globs and the found files as `file://` links into the project folder
-with a copy-path button. The gate bar reads the gate the way `pendingGate` does (the current step
-has ended: after it; not started: before it) and offers Continue and Stop; Stop alone while a step
-runs. Palette commands: New workflow, New workflow from each template, Refresh skills, every
+thread link, how long it took, the expected globs and the found files as `file://` links into the
+project folder with a copy-path button. A step that ended and waits at its gate reads Done with a
+"Waiting for you" marker after it. The header links to the run's card and backlog item. The gate
+bar (`gate-bar.tsx`, also in the step's thread) reads the gate the way `pendingGate` does (the
+current step has ended: after it; not started: before it), shows the reviewed step's
+`finalMessage` and found artifacts, and offers Continue (`keybindings.continueRun`) and Stop; Stop
+alone while a step runs. Stop asks first, since a stopped run cannot go on. Palette commands: New workflow, New workflow from each template, Refresh skills, every
 workflow and run, and Continue run and Stop run for the open run.
 
 ## Calendar view
@@ -810,8 +851,10 @@ New card, Refresh Outlook, and one "Edit card" entry per card.
 
 ## Backlog and trackers
 
-`apps/server/src/core/backlog.ts` decides `backlog.create|update|delete|plan` and the internal
-`backlog.published`. Tags are stored trimmed and unique. `backlog.plan` ("Plan on calendar") is one
+`apps/server/src/core/backlog.ts` decides `backlog.create|update|delete|restore|plan` and the
+internal `backlog.published`. `backlog.restore {item}` is Undo for a delete: it stores the row the
+client held as `backlog.created`, refused when the id exists; links the delete removed from cards
+stay removed. Tags are stored trimmed and unique. `backlog.plan` ("Plan on calendar") is one
 command for the card and the item: it builds the `card.create` the calendar would accept (title from
 the item, the chosen workflow, project and time, linked to the item) and moves the item to
 `planned`, so a refused card leaves the item as it was. Delete and plan are refused while a run of
@@ -821,18 +864,24 @@ means: running or waiting is `running`, done is `done`, failed or stopped is `pl
 keeps the `runId`, so the backlog shows the failed step's error from the run (behavior 29).
 
 `apps/server/src/trackers` publishes (behavior 30). `TrackerService.preview` returns the issue it
-would create (the item's title and markdown body as written), the target, the settings still empty
+would create (the item's title and markdown body as written; the client renders the markdown), the
+target, the settings still empty
 (`missing`, as keys) and the issue the item already has (`existing`). `publish` refuses an item that
-has one and a tracker that is not set up, creates the issue, and dispatches `backlog.published`
+has one and a tracker that is not set up, creates the issue (with the title edited in the preview
+and the item tags picked as labels, `trackers.publish {title?, labels?}`), and dispatches
+`backlog.published`
 with `{service, key, url}`; one publish per item runs at a time, so a double click creates one
 issue. Nothing is read back from the tracker afterwards. The payload is deliberately minimal:
 
 - **Jira**: `POST <baseUrl>/rest/api/2/issue` with `{fields: {project: {key}, issuetype: {name},
-summary, description}}`. v2 because Cloud, Server and Data Center accept the same field names
-  there and take the description as a plain string (v3 is Cloud only and wants an Atlassian
-  Document). `cloud-basic` sends `Basic base64(email:token)`, `pat` sends `Bearer <token>`. The key
+summary, description, labels?}}`. v2 because Cloud, Server and Data Center accept the same field
+  names there and take the description as a wiki-markup string (v3 is Cloud only and wants an
+  Atlassian Document). The markdown body is converted by `jira-markup.ts` (headings `h2.`, `*bold*`,
+  `_italic_`, `{{code}}`, `{code}` blocks, `*`/`#` lists by depth, `bq.`, `[text|url]`, tables);
+  labels lose their spaces (`needs review` → `needs-review`). `cloud-basic` sends `Basic base64(email:token)`, `pat` sends `Bearer <token>`. The key
   comes from the answer and the URL is `<baseUrl>/browse/<key>`.
-- **GitHub**: `POST <baseUrl>/repos/<owner>/<repo>/issues` with `{title, body, labels?}`,
+- **GitHub**: `POST <baseUrl>/repos/<owner>/<repo>/issues` with `{title, body, labels?}` (the
+  markdown as written; labels are `trackers.github.labels` plus the picked tags),
   `Bearer <token>`, `X-GitHub-Api-Version: 2022-11-28`; Enterprise Server is the same under
   `https://<host>/api/v3`. The key is `owner/repo#<number>` and the URL the answer's `html_url`.
 
@@ -841,13 +890,21 @@ tracker said (Jira's `errorMessages` and `errors`, GitHub's `message` and `error
 secret settings: the settings page stores the value with `secrets.set` as `setting:<key>` and saves
 the reference; clearing the field resets the setting and deletes the secret.
 
-`apps/web/src/backlog`. `/backlog` lists the items (filter by text, state and tag) next to
-`/backlog/$itemId` (title, markdown body, tags, state; the body is edited as text and shown as
-written) or `/backlog/new`. "Plan on calendar" opens a dialog for workflow, project, date and time
-(`calendar.cardMinutes` long, in `calendar.zone`) and dispatches `backlog.plan`. "Publish to Jira"
-and "Publish to GitHub" ask `trackers.preview`: an item that already has an issue gets "Open
-<key>", a tracker that is not set up names the settings and links to Settings → Trackers, otherwise
-the preview shows the issue and "Create issue" calls `trackers.publish`. Palette commands: New
+`apps/web/src/backlog`. `/backlog` lists the items (filter by text, state and tag; "Open", the
+default, hides done and dropped) next to `/backlog/$itemId` (title edited in the heading, markdown
+body with Write and Preview through `markdown.tsx`, which builds React elements and links only
+http(s) and mailto, tags as chips, state; Ctrl+S saves) or `/backlog/new`. The user sets only Idea
+and Dropped (owner decision F-12); Planned, Running and Done show read-only. Delete dispatches at
+once and offers Undo with `backlog.restore`. "Plan on calendar" opens a dialog for workflow,
+project, date, start and end in `calendar.zone`: it suggests `nextFreeSlot` (the first
+`calendar.cardMinutes` gap on a `calendar.snapMinutes` boundary inside `calendar.workHours`,
+around non-cancelled, timed `calendarItems`, up to `calendar.lookaheadDays` ahead), warns about
+overlaps, preselects the workflow of the newest card made from a backlog item, and dispatches
+`backlog.plan`. "Publish to Jira" and "Publish to GitHub" ask `trackers.preview`: an item that
+already has an issue gets "Open <key>"; a tracker that is not set up asks for the missing settings
+in the dialog (secret ones through `secrets.set`, like the settings page) and asks again; otherwise
+the preview shows the target, an editable title, the tags to add as labels and the rendered body,
+and "Publish issue" calls `trackers.publish`. Palette commands: New
 backlog item, every item, and for the open item Plan on calendar, Publish to Jira and Publish to
 GitHub.
 

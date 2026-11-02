@@ -36,16 +36,28 @@ test.beforeEach(async ({ page }) => {
   }, info);
 });
 
-async function addItem(page: Page, title: string, body: string, tags = ''): Promise<string> {
+async function addItem(
+  page: Page,
+  title: string,
+  body: string,
+  tags: readonly string[] = [],
+): Promise<string> {
   await page.goto('/backlog');
   await page.getByRole('navigation', { name: 'Backlog' }).getByText('New item').click();
   const form = page.getByRole('form', { name: 'New backlog item' });
+  // The form opens with the cursor in Title (audit A-11).
+  await expect(form.getByLabel('Title')).toBeFocused();
   await form.getByLabel('Title').fill(title);
   await form.getByLabel('Body (markdown)').fill(body);
-  await form.getByLabel('Tags (comma separated)').fill(tags);
+  for (const tag of tags) {
+    await form.getByLabel('Add a tag').fill(tag);
+    await form.getByLabel('Add a tag').press('Enter');
+  }
   await form.getByRole('button', { name: 'Add item' }).click();
   await expect(page).toHaveURL(/\/backlog\/[0-9a-f-]{36}$/);
-  await expect(page.getByRole('heading', { name: title })).toBeVisible();
+  await expect(
+    page.getByRole('form', { name: 'Backlog item' }).getByLabel('Title', { exact: true }),
+  ).toHaveValue(title);
   return new URL(page.url()).pathname.split('/').at(-1) ?? '';
 }
 
@@ -56,6 +68,7 @@ async function plan(page: Page, date: string): Promise<void> {
   await choose(dialog.getByLabel('Project'), 'Demo');
   await dialog.getByLabel('Date').fill(date);
   await dialog.getByLabel('Start').fill('09:00');
+  await dialog.getByLabel('End').fill('09:30');
   await dialog.getByRole('button', { name: 'Plan' }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByTestId('backlog-state')).toHaveText('Planned');
@@ -66,14 +79,14 @@ test.describe('backlog', () => {
     page,
   }) => {
     const sentBefore = (await received()).length;
-    const itemId = await addItem(
-      page,
-      'Fix the login e2e',
-      'The **login** fails on Mondays.',
-      'auth, bug, auth',
-    );
+    const itemId = await addItem(page, 'Fix the login e2e', 'The **login** fails on Mondays.', [
+      'auth',
+      'bug',
+      'auth',
+    ]);
     await expect(page.getByTestId('backlog-state')).toHaveText('Idea');
-    await expect(page.getByLabel('Tags (comma separated)')).toHaveValue('auth, bug');
+    const editorTags = page.getByRole('form', { name: 'Backlog item' }).getByTestId('tag-chip');
+    await expect(editorTags).toHaveText(['auth', 'bug']);
 
     const list = page.getByRole('list', { name: 'Backlog items' });
     const entry = list.getByRole('link', { name: /Fix the login e2e/ });
@@ -82,7 +95,7 @@ test.describe('backlog', () => {
     await expect(entry).toBeVisible();
     await choose(page.getByLabel('Filter by state'), 'Done');
     await expect(entry).toBeHidden();
-    await choose(page.getByLabel('Filter by state'), 'All states');
+    await choose(page.getByLabel('Filter by state'), 'Open');
     await choose(page.getByLabel('Filter by tag'), 'bug');
     await expect(entry).toBeVisible();
     await page.getByLabel('Search backlog').fill('');
@@ -90,14 +103,23 @@ test.describe('backlog', () => {
     // Editing keeps the item local.
     const editor = page.getByRole('form', { name: 'Backlog item' });
     await editor.getByLabel('Body (markdown)').fill('The **login** fails on Mondays.\n\n- step 1');
-    await editor.getByRole('button', { name: 'Save' }).click();
+    // Preview renders the markdown; Ctrl+S saves.
+    await editor.getByRole('tab', { name: 'Preview' }).click();
+    await expect(editor.getByTestId('markdown-preview').locator('strong')).toHaveText('login');
+    await editor.getByRole('tab', { name: 'Write' }).click();
+    await editor.getByLabel('Body (markdown)').press('Control+s');
     await expect(editor.getByRole('button', { name: 'Save' })).toBeDisabled();
+    // Only Idea and Dropped are set by hand (owner decision F-12).
+    await editor.getByLabel('State').click();
+    await expect(page.getByRole('option')).toHaveText(['Idea', 'Dropped']);
+    await page.keyboard.press('Escape');
 
     await plan(page, '2027-03-02');
     const card = page.getByTestId('backlog-card');
-    await expect(card).toContainText('2027-03-02 09:00');
+    await expect(card).toContainText('Tue 2 Mar 2027 09:00');
     await expect(card).toContainText('with Backlog e2e');
     await expect(entry).toContainText('Planned');
+    await expect(editor.getByTestId('backlog-state-readonly')).toHaveText('Planned');
 
     // The card is on the calendar with the item and the workflow.
     await card.getByRole('link').click();
@@ -133,17 +155,26 @@ test.describe('backlog', () => {
   test('publishes to Jira after a preview and offers the existing issue next time', async ({
     page,
   }) => {
-    await addItem(page, 'Publish me e2e', 'Body for the tracker.');
+    await addItem(page, 'Publish me e2e', '## Why\n\nBody for the **tracker**.\n\n- one', [
+      'needs review',
+    ]);
     const before = (await received()).length;
     await page.getByRole('toolbar', { name: 'Item actions' }).getByText('Publish to Jira').click();
     const dialog = page.getByRole('dialog', { name: 'Publish to Jira' });
     await expect(dialog.getByTestId('preview-target')).toHaveText('DEMO');
-    await expect(dialog.getByTestId('preview-title')).toHaveText('Publish me e2e');
-    await expect(dialog.getByTestId('preview-body')).toHaveText('Body for the tracker.');
+    await expect(dialog.getByTestId('preview-title')).toHaveValue('Publish me e2e');
+    // The markdown body is shown rendered; Jira gets it as wiki markup.
+    await expect(
+      dialog.getByTestId('preview-body').getByRole('heading', { name: 'Why' }),
+    ).toBeVisible();
+    await expect(dialog.getByTestId('preview-body').locator('strong')).toHaveText('tracker');
+    // The title can change before creating, and the item's tags can go along as labels.
+    await dialog.getByTestId('preview-title').fill('Publish me e2e, edited');
+    await dialog.getByRole('checkbox', { name: 'needs review' }).check();
     // The preview sends nothing.
     expect(await received()).toHaveLength(before);
 
-    await dialog.getByRole('button', { name: 'Create issue' }).click();
+    await dialog.getByRole('button', { name: 'Publish issue' }).click();
     await expect(dialog.getByTestId('publish-created')).toContainText(/Created DEMO-\d+/);
     const sent = (await received()).slice(before);
     expect(sent).toHaveLength(1);
@@ -154,12 +185,13 @@ test.describe('backlog', () => {
         fields: {
           project: { key: 'DEMO' },
           issuetype: { name: 'Task' },
-          summary: 'Publish me e2e',
-          description: 'Body for the tracker.',
+          summary: 'Publish me e2e, edited',
+          description: 'h2. Why\n\nBody for the *tracker*.\n\n* one',
+          labels: ['needs-review'],
         },
       },
     });
-    await dialog.getByRole('button', { name: 'Done' }).click();
+    await dialog.getByRole('button', { name: 'Close' }).first().click();
 
     const remote = page.getByTestId('backlog-remote');
     await expect(remote).toContainText(/Published to Jira as DEMO-\d+/);
@@ -176,7 +208,7 @@ test.describe('backlog', () => {
       /Already published as DEMO-/,
     );
     await expect(dialog.getByRole('link', { name: /Open DEMO-/ })).toBeVisible();
-    await dialog.getByRole('button', { name: 'Done' }).click();
+    await dialog.getByRole('button', { name: 'Close' }).first().click();
     expect((await received()).slice(before)).toHaveLength(1);
   });
 
@@ -185,21 +217,26 @@ test.describe('backlog', () => {
     const toolbar = page.getByRole('toolbar', { name: 'Item actions' });
     await toolbar.getByText('Publish to GitHub').click();
     const dialog = page.getByRole('dialog', { name: 'Publish to GitHub' });
-    await expect(dialog.getByRole('alert')).toContainText('GitHub is not set up yet');
-    await expect(dialog.getByRole('alert')).toContainText('GitHub token');
-    await dialog.getByRole('link', { name: 'Open tracker settings' }).click();
+    // The missing setting is asked for right here, then the preview follows (audit D-09).
+    const setUp = dialog.getByRole('form', { name: 'Set up GitHub' });
+    await expect(setUp).toContainText('GitHub needs one more setting');
+    await expect(setUp.getByLabel('GitHub token')).toBeFocused();
+    await setUp.getByLabel('GitHub token').fill('github-e2e-token');
+    await setUp.getByRole('button', { name: 'Set up GitHub' }).click();
+    await expect(dialog.getByTestId('preview-target')).toHaveText('acme/demo');
 
-    await expect(page).toHaveURL(/\/settings\/trackers$/);
-    const row = page.getByTestId('setting-trackers.github.token');
-    await row.getByLabel('GitHub token').fill('github-e2e-token');
-    await row.getByRole('button', { name: 'Save' }).click();
-    await expect(row.getByTestId('setting-trackers.github.token-status')).toHaveText('Saved');
-    await expect(row.getByLabel('GitHub token')).toHaveValue('');
+    // The token is stored like the settings page stores it.
+    await page.goto('/settings/trackers');
+    await expect(
+      page
+        .getByTestId('setting-trackers.github.token')
+        .getByTestId('setting-trackers.github.token-status'),
+    ).toHaveText('Saved');
 
     await page.goto(`/backlog/${itemId}?dialog=github`);
     await expect(dialog.getByTestId('preview-target')).toHaveText('acme/demo');
     const before = (await received()).length;
-    await dialog.getByRole('button', { name: 'Create issue' }).click();
+    await dialog.getByRole('button', { name: 'Publish issue' }).click();
     await expect(dialog.getByTestId('publish-created')).toContainText(/Created acme\/demo#\d+/);
     const [sent] = (await received()).slice(before);
     expect(sent).toMatchObject({
@@ -207,9 +244,24 @@ test.describe('backlog', () => {
       authorization: 'Bearer github-e2e-token',
       body: { title: 'Ship dark mode e2e', body: 'Respect the system theme.' },
     });
-    await dialog.getByRole('button', { name: 'Done' }).click();
+    await dialog.getByRole('button', { name: 'Close' }).first().click();
     await expect(page.getByTestId('backlog-remote')).toContainText(
       /Published to GitHub as acme\/demo#\d+/,
     );
+  });
+
+  test('deletes an item at once and Undo puts it back (owner decision F-9)', async ({ page }) => {
+    const itemId = await addItem(page, 'Undo me e2e', 'Still here.', ['undo']);
+    await page.getByRole('toolbar', { name: 'Item actions' }).getByText('Delete').click();
+    await expect(page).toHaveURL(/\/backlog$/);
+    const list = page.getByRole('list', { name: 'Backlog items' });
+    await expect(list.getByRole('link', { name: /Undo me e2e/ })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Undo' }).click();
+    await expect(list.getByRole('link', { name: /Undo me e2e/ })).toBeVisible();
+    await list.getByRole('link', { name: /Undo me e2e/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/backlog/${itemId}$`));
+    await expect(
+      page.getByRole('form', { name: 'Backlog item' }).getByTestId('tag-chip'),
+    ).toHaveText(['undo']);
   });
 });

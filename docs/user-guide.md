@@ -250,9 +250,17 @@ gates"), warns when it will not run, and links to its run once it has one.
 
 ### Starting a thread
 
-**Ctrl+Alt+N** or "New thread" opens a draft. Pick the provider instance, a project (or type a
-folder), model, effort and permission mode, write the first message and press Enter. The first
-line becomes the thread's title.
+**Ctrl+Alt+N** or "New thread" opens a draft with the cursor in the composer. It starts with what
+your last thread used: the same provider instance, model, effort, permission mode and project. The
+dot before the provider says whether its last test passed. The project picker also lists folders
+you used without a project, and **Another folder…** (the folder dialog in the desktop app, a path
+box in the browser). The chosen folder shows under the picker; hover it for the full path. Write
+the first message and press Enter; the first line becomes the thread's title. Until a project or
+folder is chosen, Send stays disabled and says why.
+
+Below the composer, the new-thread view offers starters: a few skills (the project's own first),
+open backlog items to start from, and the thread you worked in last. `chat.starterCount` sets how
+many; 0 hides them.
 
 The reply streams as it is written. Reasoning is folded; click it to read. Every tool call is a
 row you can open to see its input and output. A turn ends with its usage: input, output and cached
@@ -262,24 +270,39 @@ how much of the context window the thread uses, with a Compact action for Claude
 ### When the agent needs you
 
 - **Approvals**: when the agent wants to run a command, change files or use a tool, the thread
-  shows the request with **Allow once**, **Allow for this session** and **Deny**.
+  shows the request with the folder it runs in, the permission mode, and **Allow once** (**A**),
+  **Allow for this session** (**S**) and **Deny** (**D**). The request takes the focus, so the keys
+  work at once; they are in Settings → Keybindings and in the palette. The tool row reads "waiting
+  for approval" meanwhile.
 - **Questions**: when the agent asks (Claude's `AskUserQuestion`, Codex's user input request), the
-  options show as buttons, and you can type your own answer instead. The answer continues the same
-  turn.
+  options show as buttons. To answer in your own words, type in the composer (or the answer box
+  under the options). The answer continues the same turn.
 
 Either way, the thread moves to "Needs you" in the sidebar until you answer.
 
+While a turn runs, the thread shows how long it has been working. You can write the next message
+meanwhile: Enter queues it, and it is sent when the turn ends. **Send now** stops the turn and
+sends it; the cross puts it back in the composer. A failed turn shows **Retry** (sends your last
+message again) and **Resume** (sends `chat.resumePrompt`) in the error row.
+
 ### Skills
 
-Type `$` in the composer to list installed skills with their descriptions; keep typing to filter,
-and press Enter or click to insert one. wow inserts the form the thread's provider understands:
-`/name` for Claude and `$name` for Codex.
+Type `$` in the composer to list installed skills with their descriptions, grouped by where they
+come from (Project, User, Plugins) with the source on the right. Keep typing to filter, move with
+the arrow keys, and press Enter or Tab (or click) to insert one; Escape closes the list. wow inserts
+the form the thread's provider understands: `/name` for Claude and `$name` for Codex.
 
 ### Managing threads
 
 The sidebar groups threads under **Needs you**, **Working**, **Idle** and **Done**, with pinned
-threads first (pin from the thread header). A thread whose turn failed sits under Idle with a
-marker. A thread started by a workflow shows the workflow and step name.
+threads first (pin from the thread header). Each row's second line says the project and when the
+thread was last active. A thread whose turn failed sits under Idle with a marker. A thread started
+by a workflow is titled by its step, with the workflow on the second line.
+
+The thread header shows the project (hover it for the folder), the provider instance, and the
+model, effort and permission selects. When a workflow run waits at a gate after the thread's step,
+the thread shows the gate with **Continue** (**Ctrl+Enter**) and **Stop**, the same as the run
+view.
 
 **Mark thread done** in the thread header (or in the palette) moves a thread you have finished
 with to **Done**. It is available while the agent neither works nor waits for you. **Reopen
@@ -291,6 +314,15 @@ Change model, effort or permission mode in the thread header; the next turn uses
 or the stop button interrupts a running turn and keeps what it produced. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
 
+### The palette
+
+**Ctrl+K** opens the palette. Before you type it lists what needs you (threads waiting for an
+answer, runs at a gate), your most recent threads, runs and backlog items
+(`appearance.paletteRecent` sets how many), and the open view's actions. Typing searches
+everything: threads, cards, workflows, runs, backlog items, settings pages and actions, with
+matches in the title ranked first. The right side of each row says what it is ("Run · Waiting for
+you · 14:39").
+
 ## Workflows
 
 A workflow is an ordered list of skills. Each step runs as its own agent thread, and a gate is a
@@ -298,16 +330,27 @@ stop where nothing continues until you say so.
 
 ### Building one
 
-Workflows → New workflow (or "New workflow from template" in the palette). Give it a name, then
-add steps. Each step has:
+Workflows → New workflow (or "New workflow from template" in the palette). Give it a name and start
+from **Blank** or a template, then add steps. Each step is one line (number, skill, provider,
+model); open it to edit:
 
 - a skill from the installed list (Refresh skills re-reads the skill folders),
 - a provider instance, model, effort and permission mode,
-- **gate before** and **gate after**,
 - an optional extra prompt,
-- optional expected artifacts: globs, one per line, such as `intents/*/spec.md`.
+- optional expected artifacts: paths or globs, one per line, such as `intents/*/spec.md`. With a
+  project chosen to run in, the help line says how many files match there now.
 
-Reorder steps by dragging the handle or with the move buttons. The templates (editable in
+Between steps (and before the first and after the last) the builder shows where the run waits:
+**Waits for you** marks a gate; **Add a gate** adds one there. Reorder steps by dragging the handle
+or with the move buttons. **Create workflow** stays disabled, with the reason in its tooltip, until
+the workflow has a name and a step.
+
+Templates are offered only for a new workflow. An existing one says which template it was based on;
+**Replace steps with template…** swaps its steps after you confirm, and nothing changes until you
+save. **Save as template…** stores the steps' skills, gates and expected artifacts as a template
+under the name you give (a template with that name is replaced), so new workflows can start from
+it; Settings → Workflows still has the full template list. **Delete** removes the workflow at once
+and offers **Undo**. The templates (editable in
 `workflows.templates`):
 
 - **Bug**: deliver-work → check-work
@@ -322,14 +365,17 @@ each project's `.claude/skills` and `.agents/skills` by default) and, with
 
 ### Running one
 
-Open a workflow, pick a project and press **Run now**, or put it on a card. The run view shows each
-step as not started, running, waiting, done or failed, with a link to its thread and links to the
-expected artifacts that exist in the project.
+Open a workflow, pick the project next to **Run now** and press it (save changes first), or put it
+on a card. The run view's header names the workflow, the project and when the run started, and
+links to its card and backlog item. Each step shows not started, running, done or failed, how
+long it took, a link to its thread and links to the expected artifacts that exist in the project.
 
 When a run reaches a gate it waits: the run, its card and the step's thread show "waiting for
-you", and a desktop notification is sent (`scheduler.notifications`). Read the step's thread,
-then press **Continue** in the run view to start the next step, or **Stop** to end the run. The
-next step's prompt is its skill invocation, its extra prompt, and the handover from
+you", the step reads Done followed by a "Waiting for you" marker, and a desktop notification is
+sent (`scheduler.notifications`). The gate shows what to review: the step's last message (folded)
+and the artifacts it produced. Press **Continue** (**Ctrl+Enter**, `keybindings.continueRun`) in
+the run view or the step's thread to start the next step, or **Stop** to end the run; Stop asks
+first, because a stopped run cannot be continued. The next step's prompt is its skill invocation, its extra prompt, and the handover from
 `workflows.handoverTemplate` (by default the previous step's final message and the expected
 artifact paths). Stopping a run keeps all its threads.
 
@@ -354,14 +400,26 @@ either way.
 
 The backlog holds ideas that are not tickets yet. An item has a title, a markdown body, tags and a
 state: idea, planned, running, done or dropped. Adding and editing items sends nothing anywhere.
+The list shows open items (not done, not dropped) by default; the state filter shows the rest.
 
-- **Plan on calendar** picks a workflow, a project, a date and a time, creates a card for the item
-  and makes the item "planned". The item follows the run: "running" while it runs, "done" when it
-  finishes, back to "planned" with the failure shown if it fails or is stopped.
-- **Publish to Jira** and **Publish to GitHub** show the issue they will create first. **Create
-  issue** creates it and stores its key and link on the item. Pressing publish again offers to open
-  the existing issue instead. If the tracker is not set up, the dialog names the missing settings
-  and links to Settings → Trackers. wow does not read the issue back afterwards.
+Edit the title in the heading, the body with **Write** and **Preview**, and tags as chips (Enter or
+a comma adds one; tags other items use are suggested). **Ctrl+S** saves. You set an item to Idea or
+Dropped yourself; Planned, Running and Done follow its card and run and show read-only with the
+reason. **Delete** removes the item at once and offers **Undo** (a card that pointed at it keeps
+its time and workflow but loses the link).
+
+- **Plan on calendar** suggests the next free slot in your work hours, around Outlook meetings and
+  other cards, with Start and End like the card dialog, and the workflow you planned with last. It
+  warns when the time overlaps something. It creates a card for the item and makes the item
+  "planned". The item follows the run: "running" while it runs, "done" when it finishes, back to
+  "planned" with the failure shown if it fails or is stopped.
+- **Publish to Jira** and **Publish to GitHub** show the issue first: the target, an editable
+  title, the item's tags to add as labels, and the description rendered. **Publish issue** creates
+  it and stores its key and link on the item. Jira gets the description converted from markdown to
+  its wiki markup, so headings, lists, emphasis, code and links show as in the preview; GitHub gets
+  the markdown as written. Pressing publish again offers to open the existing issue instead. If the
+  tracker is not set up, the dialog asks for the missing settings right there and then shows the
+  preview. wow does not read the issue back afterwards.
 
 Tracker settings (Settings → Trackers):
 

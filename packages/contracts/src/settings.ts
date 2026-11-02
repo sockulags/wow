@@ -311,6 +311,15 @@ export const settingsRegistry = {
     default: 'Continue where you left off.',
     scope: 'provider',
   }),
+  'chat.starterCount': defineSetting({
+    schema: z.number().int().min(0).max(12),
+    group: 'chat',
+    label: 'Starters on a new thread',
+    description:
+      "How many skills, and how many open backlog items, the new-thread view offers as one-click starters below the composer (the project's skills first). 0 hides them.",
+    default: 4,
+    scope: 'global',
+  }),
   'calendar.zone': defineSetting({
     schema: TimeZoneSetting,
     group: 'calendar',
@@ -761,6 +770,15 @@ export const settingsRegistry = {
     scope: 'global',
     options: { comfortable: { label: 'Comfortable' }, compact: { label: 'Compact' } },
   }),
+  'appearance.paletteRecent': defineSetting({
+    schema: z.number().int().min(0).max(20),
+    group: 'appearance',
+    label: 'Recent items in the palette',
+    description:
+      'How many recent threads, runs and backlog items the command palette lists before you type.',
+    default: 5,
+    scope: 'global',
+  }),
   'keybindings.palette': keybinding('Command palette', 'Open the command palette.', 'Mod+K'),
   'keybindings.toggleSidebar': keybinding(
     'Toggle sidebar',
@@ -825,6 +843,31 @@ export const settingsRegistry = {
     'Stop turn',
     'Interrupt the running turn of the open thread. What it produced so far stays.',
     'Mod+.',
+  ),
+  'keybindings.continueRun': keybinding(
+    'Continue run',
+    "Continue the workflow run waiting at a gate, from its run view or the waiting step's thread.",
+    'Mod+Enter',
+  ),
+  'keybindings.stopRun': keybinding(
+    'Stop run',
+    'Stop the open workflow run. Empty by default, because a stopped run cannot be continued.',
+    '',
+  ),
+  'keybindings.approvalAllowOnce': keybinding(
+    'Approval: allow once',
+    'Allow the request the open thread waits for, this time only (while the approval has focus or nothing else does).',
+    'A',
+  ),
+  'keybindings.approvalAllowSession': keybinding(
+    'Approval: allow for this session',
+    'Allow the request the open thread waits for, and the same kind for the rest of the session.',
+    'S',
+  ),
+  'keybindings.approvalDeny': keybinding(
+    'Approval: deny',
+    'Deny the request the open thread waits for.',
+    'D',
   ),
   'advanced.port': defineSetting({
     schema: z.number().int().min(0).max(65535),

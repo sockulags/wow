@@ -20,6 +20,7 @@ import {
   threads,
   turns,
   workflowRuns,
+  workflows,
 } from '../db/schema.js';
 import { MockProviderAdapter, type MockScript } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
@@ -407,6 +408,19 @@ describe('workflow runs', () => {
     );
     dispatch({ type: 'workflow.update', workflowId: 'wf1', name: 'Renamed' });
     await server.workflows.settled();
+  });
+
+  it('restores a deleted workflow as it was (Undo)', () => {
+    const before = server.database.db.select().from(workflows).where(eq(workflows.id, 'wf1')).get();
+    if (!before) throw new Error('no workflow');
+    dispatch({ type: 'workflow.delete', workflowId: 'wf1' });
+    dispatch({ type: 'workflow.restore', workflow: before });
+    expect(
+      server.database.db.select().from(workflows).where(eq(workflows.id, 'wf1')).get(),
+    ).toEqual(before);
+    expect(() => dispatch({ type: 'workflow.restore', workflow: before })).toThrow(
+      /already exists/,
+    );
   });
 
   it('sends the step prompt as the first turn of the step thread', async () => {

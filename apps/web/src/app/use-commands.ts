@@ -9,7 +9,11 @@ import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
 import { providerCommands } from '@/providers/commands';
+import { formatWhen } from '@/lib/format';
+import { useCalendarPrefs } from '@/calendar/prefs';
+import { pendingApproval } from '@/chat/view-model';
 import { workflowCommands } from '@/workflows/commands';
+import { gateRunForThread } from '@/workflows/model';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
 import { updateCommands } from './updates';
 import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
@@ -29,6 +33,9 @@ export function useCommands(): {
   const instances = useTopic('providerInstances');
   const projects = useTopic('projects');
   const turns = useTopic('turns', openThreadId);
+  const approvals = useTopic('approvals', openThreadId);
+  // The calendar's zone with "outlook" resolved (F-8), for the cards' "when".
+  const { zone: calendarZone } = useCalendarPrefs();
   const openRunId = /^\/workflows\/runs\/([^/]+)$/.exec(pathname)?.[1];
   const workflows = useTopic('workflows');
   const runs = useTopic('workflowRuns');
@@ -46,28 +53,46 @@ export function useCommands(): {
     [pathname, locationSearch],
   );
   const staticCommands = useMemo(() => buildCommands(), []);
-  const commands = useMemo(
-    () => [
+  const commands = useMemo(() => {
+    const zone = calendarZone;
+    const when = (iso: string) => formatWhen(iso, zone);
+    const cards = (calendarItems ?? []).filter((item) => item.source === 'local');
+    const cardStart = new Map(cards.map((card) => [card.id, card.start]));
+    const openThread = threads?.find((thread) => thread.id === openThreadId);
+    // The run view's run, or the run waiting at a gate after the open thread's step (spec 9).
+    const openRun =
+      runs?.find((run) => run.id === openRunId) ??
+      (openThread ? gateRunForThread(openThread, runs ?? []) : undefined);
+    return [
+      // Cards say when they are ("Card · Tomorrow 10:00").
       ...calendarCommands({
         search: calendarSearch,
-        cards: (calendarItems ?? []).filter((item) => item.source === 'local'),
+        cards,
         triggers: triggers ?? [],
         schedulerPaused,
         profile: outlookProfile,
         showWeekends,
         mailRailCollapsed,
+      }).map((command) => {
+        const start = command.id.startsWith('card.')
+          ? cardStart.get(command.id.slice(5))
+          : undefined;
+        return start ? { ...command, detail: `Card · ${when(start)}` } : command;
       }),
       ...chatCommands({
         threads: threads ?? [],
         instances: instances ?? [],
-        openThread: threads?.find((thread) => thread.id === openThreadId),
+        openThread,
         running: runningTurn(turns ?? []) !== undefined,
+        approval: pendingApproval(approvals ?? []),
+        inChat: pathname.startsWith('/chat'),
       }),
       ...workflowCommands({
         workflows: workflows ?? [],
         runs: runs ?? [],
         templates,
-        openRun: runs?.find((run) => run.id === openRunId),
+        openRun,
+        formatWhen: when,
       }),
       ...backlogCommands({
         items: backlogItems ?? [],
@@ -77,30 +102,32 @@ export function useCommands(): {
       ...projectCommands(projects ?? []),
       ...updateCommands(updateState),
       ...staticCommands,
-    ],
-    [
-      outlookProfile,
-      showWeekends,
-      mailRailCollapsed,
-      updateState,
-      staticCommands,
-      threads,
-      instances,
-      projects,
-      turns,
-      openThreadId,
-      workflows,
-      runs,
-      templates,
-      openRunId,
-      calendarItems,
-      calendarSearch,
-      triggers,
-      schedulerPaused,
-      backlogItems,
-      openBacklogItemId,
-    ],
-  );
+    ];
+  }, [
+    calendarZone,
+    outlookProfile,
+    showWeekends,
+    mailRailCollapsed,
+    approvals,
+    pathname,
+    updateState,
+    staticCommands,
+    threads,
+    instances,
+    projects,
+    turns,
+    openThreadId,
+    workflows,
+    runs,
+    templates,
+    openRunId,
+    calendarItems,
+    calendarSearch,
+    triggers,
+    schedulerPaused,
+    backlogItems,
+    openBacklogItemId,
+  ]);
   const context = useMemo(
     () => ({ navigate, settings, layout, draft, connection, updates }),
     [navigate, settings, layout, draft, connection, updates],

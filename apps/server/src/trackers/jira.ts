@@ -8,6 +8,7 @@ import {
   type NewIssue,
   type RequestOptions,
 } from './http.js';
+import { jiraLabel, markdownToJira } from './jira-markup.js';
 
 export interface JiraConfig {
   readonly baseUrl: string;
@@ -20,16 +21,19 @@ export interface JiraConfig {
 }
 
 // REST API v2 on purpose: Jira Cloud, Server and Data Center all accept it with the same field
-// names, and its description is a plain string. v3 is Cloud only and wants the description as
-// an Atlassian Document. The payload stays minimal (project, type, summary, description), so a
-// project with extra required fields answers 400 with the field named in the message.
+// names, and its description is a wiki-markup string, so the markdown body is converted
+// (jira-markup.ts). v3 is Cloud only and wants the description as an Atlassian Document. The
+// payload stays minimal (project, type, summary, description, labels when picked), so a project
+// with extra required fields answers 400 with the field named in the message.
 export function jiraIssuePayload(config: JiraConfig, issue: NewIssue) {
+  const labels = [...new Set((issue.labels ?? []).map(jiraLabel).filter((label) => label !== ''))];
   return {
     fields: {
       project: { key: config.projectKey },
       issuetype: { name: config.issueType },
       summary: issue.title,
-      description: issue.body,
+      description: markdownToJira(issue.body),
+      ...(labels.length > 0 ? { labels } : {}),
     },
   };
 }

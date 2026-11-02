@@ -150,6 +150,15 @@ describe('backlog items', () => {
     expect(cards()[0]).toMatchObject({ id: 'card-1', backlogItemId: null, workflowId: 'w1' });
   });
 
+  it('restores a deleted item as it was (Undo)', () => {
+    const before = item();
+    if (!before) throw new Error('no item');
+    run({ type: 'backlog.delete', backlogItemId: 'b1' });
+    run({ type: 'backlog.restore', item: before });
+    expect(items()).toEqual([before]);
+    expect(rejection({ type: 'backlog.restore', item: before })).toBe('conflict');
+  });
+
   it('stores the published issue once', () => {
     const remote = { service: 'jira', key: 'WOW-7', url: 'https://acme.example/browse/WOW-7' };
     run({ type: 'backlog.published', backlogItemId: 'b1', remote } as ServerCommand);

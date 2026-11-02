@@ -46,7 +46,9 @@ async function runPaletteCommand(page: Page, title: string) {
   const palette = page.getByRole('dialog');
   await palette.getByRole('combobox').fill(title);
   // Enter runs the highlighted command, so wait until the filter has put this one first.
-  await expect(palette.getByRole('option').first()).toHaveText(new RegExp(`^${title}`));
+  // The palette shows a command without its group prefix ("Calendar: ").
+  const shown = title.replace(/^\w+: /, '');
+  await expect(palette.getByRole('option').first()).toHaveText(new RegExp(`^${shown}`, 'i'));
   await page.keyboard.press('Enter');
   await expect(palette).toBeHidden();
 }

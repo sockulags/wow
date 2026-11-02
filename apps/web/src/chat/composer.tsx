@@ -1,22 +1,38 @@
 import type { ProviderKind, Skill } from '@wow/contracts';
-import { ArrowUpIcon, SquareIcon } from 'lucide-react';
+import { ArrowUpIcon, ClockIcon, SquareIcon, XIcon } from 'lucide-react';
 import {
+  useEffect,
   useId,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
+  type Ref,
 } from 'react';
+import { useSetting } from '@/app/runtime';
+import { WithTooltip } from '@/components/hint';
 import { Button } from '@/components/ui/button';
+import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command';
 import { cn } from '@/lib/utils';
 import { errorMessage, useTopic } from './data';
 import { filterSkills, insertSkill, skillQuery, type SkillQuery } from './model';
+import { skillGroup, skillGroups, skillSourceLabel } from './view-model';
+
+export interface ComposerHandle {
+  focus(): void;
+  // Puts text in the box (a starter) and the caret after it.
+  setText(text: string): void;
+}
 
 export interface ComposerProps {
+  readonly ref?: Ref<ComposerHandle>;
   readonly providerKind: ProviderKind | undefined;
   readonly running: boolean;
   readonly disabled?: boolean;
+  // Why Send cannot work yet ("Pick a project or a folder first"). Send stays disabled and says so.
+  readonly blockedReason?: string | undefined;
   readonly placeholder: string;
   onSend(text: string): Promise<unknown>;
   onStop?(): void;
@@ -24,6 +40,8 @@ export interface ComposerProps {
   readonly footer?: ReactNode;
 }
 
+// The `$` picker (spec 18): a cmdk list grouped by where each skill comes from. The focus stays
+// in the text box, so the composer moves the selection itself and cmdk only renders it.
 function SkillPicker({
   id,
   skills,
@@ -34,55 +52,72 @@ function SkillPicker({
 }: {
   id: string;
   skills: readonly Skill[];
-  active: number;
+  active: Skill | undefined;
   kind: ProviderKind;
   onPick(skill: Skill): void;
-  onHover(index: number): void;
+  onHover(skill: Skill): void;
 }) {
   return (
-    <ul
-      id={id}
-      role="listbox"
-      aria-label="Skills"
-      className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-full overflow-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
-    >
-      {skills.length === 0 && (
-        <li className="px-2 py-1.5 text-xs text-muted-foreground">No matching skills.</li>
-      )}
-      {skills.map((skill, index) => (
-        <li
-          key={skill.id}
-          id={`${id}-${index}`}
-          role="option"
-          aria-selected={index === active}
-          // Keep the focus in the text box.
-          onMouseDown={(event) => event.preventDefault()}
-          onMouseEnter={() => onHover(index)}
-          onClick={() => onPick(skill)}
-          className={cn(
-            'flex cursor-pointer flex-col rounded-sm px-2 py-1.5',
-            index === active && 'bg-accent text-accent-foreground',
+    <div className="absolute bottom-full left-0 z-10 mb-1 w-full overflow-hidden rounded-md border border-border shadow-md">
+      <Command
+        shouldFilter={false}
+        value={active?.id ?? ''}
+        className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-2xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground"
+      >
+        <CommandList id={id} label="Skills" className="max-h-72">
+          {skills.length === 0 && (
+            <p className="px-3 py-2 text-xs text-muted-foreground">No matching skills.</p>
           )}
-        >
-          <span className="flex items-baseline gap-2 text-sm">
-            <span className="font-medium">{skill.name}</span>
-            <span className="font-mono text-[11px] text-muted-foreground">
-              {skill.invocations[kind]}
-            </span>
-          </span>
-          {skill.description !== '' && (
-            <span className="line-clamp-2 text-xs text-muted-foreground">{skill.description}</span>
-          )}
-        </li>
-      ))}
-    </ul>
+          {skillGroups.map((group) => {
+            const members = skills.filter((skill) => skillGroup(skill) === group);
+            if (members.length === 0) return null;
+            return (
+              <CommandGroup key={group} heading={group}>
+                {members.map((skill) => (
+                  <CommandItem
+                    key={skill.id}
+                    value={skill.id}
+                    // Keep the focus in the text box.
+                    onMouseDown={(event) => event.preventDefault()}
+                    onPointerMove={() => onHover(skill)}
+                    onSelect={() => onPick(skill)}
+                    className="flex-col items-start gap-0.5"
+                  >
+                    <span className="flex w-full items-baseline gap-2">
+                      <span className="font-medium">{skill.name}</span>
+                      <span className="font-mono text-2xs text-muted-foreground">
+                        {skill.invocations[kind]}
+                      </span>
+                      <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
+                        {skillSourceLabel(skill)}
+                      </span>
+                    </span>
+                    {skill.description !== '' && (
+                      <span className="line-clamp-2 text-xs text-muted-foreground">
+                        {skill.description}
+                      </span>
+                    )}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            );
+          })}
+        </CommandList>
+      </Command>
+    </div>
   );
 }
 
+// Picker order: grouped like the list shows them, each group ranked by the filter.
+const inPickerOrder = (skills: readonly Skill[]): Skill[] =>
+  skillGroups.flatMap((group) => skills.filter((skill) => skillGroup(skill) === group));
+
 export function Composer({
+  ref,
   providerKind,
   running,
   disabled = false,
+  blockedReason,
   placeholder,
   onSend,
   onStop,
@@ -96,14 +131,34 @@ export function Composer({
   const [dismissedAt, setDismissedAt] = useState<number>();
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
+  // A message written while a turn runs; it goes when the turn ends (C-09).
+  const [queued, setQueued] = useState<string>();
+  const [activeDescendant, setActiveDescendant] = useState<string>();
   const pendingCaret = useRef<number>(undefined);
   const skills = useTopic('skills');
+  const stopBinding = useSetting('keybindings.stopTurn');
 
   const query: SkillQuery | undefined =
     providerKind && dismissedAt !== caret ? skillQuery(text, caret) : undefined;
-  const matches = query ? filterSkills(skills ?? [], query.query) : [];
+  const matches = query ? inPickerOrder(filterSkills(skills ?? [], query.query)) : [];
   const pickerOpen = query !== undefined && providerKind !== undefined;
   const activeIndex = Math.min(active, Math.max(0, matches.length - 1));
+  const activeSkill = matches[activeIndex];
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: () => textarea.current?.focus(),
+      setText: (value: string) => {
+        pendingCaret.current = value.length;
+        setText(value);
+        setCaret(value.length);
+        setError(undefined);
+        textarea.current?.focus();
+      },
+    }),
+    [],
+  );
 
   useLayoutEffect(() => {
     const at = pendingCaret.current;
@@ -112,10 +167,45 @@ export function Composer({
     textarea.current.setSelectionRange(at, at);
   }, [text]);
 
+  // cmdk names its options itself; the text box points at the selected one.
+  useLayoutEffect(() => {
+    if (!pickerOpen) return setActiveDescendant(undefined);
+    const selected = document
+      .getElementById(pickerId)
+      ?.querySelector('[cmdk-item][aria-selected="true"]');
+    setActiveDescendant(selected?.id || undefined);
+  }, [pickerOpen, pickerId, activeSkill?.id, matches.length]);
+
+  const deliver = (message: string, onDone?: () => void) => {
+    setSending(true);
+    setError(undefined);
+    onSend(message).then(
+      () => {
+        setSending(false);
+        onDone?.();
+      },
+      (reason: unknown) => {
+        setSending(false);
+        setError(errorMessage(reason));
+      },
+    );
+  };
+
+  // The turn ended: what was queued goes now.
+  useEffect(() => {
+    if (running || queued === undefined || sending) return;
+    const message = queued;
+    setQueued(undefined);
+    deliver(message);
+    // deliver only reads props that change with `running`.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, queued, sending]);
+
   const update = (value: string, at: number) => {
     setText(value);
     setCaret(at);
     setActive(0);
+    setError(undefined);
   };
 
   const pick = (skill: Skill) => {
@@ -128,19 +218,17 @@ export function Composer({
 
   const send = () => {
     const message = text.trim();
-    if (message === '' || running || disabled || sending) return;
-    setSending(true);
-    setError(undefined);
-    onSend(message).then(
-      () => {
-        setSending(false);
-        update('', 0);
-      },
-      (reason: unknown) => {
-        setSending(false);
-        setError(errorMessage(reason));
-      },
-    );
+    if (message === '' || disabled || sending) return;
+    if (blockedReason) {
+      setError(blockedReason);
+      return;
+    }
+    if (running) {
+      setQueued(queued === undefined ? message : `${queued}\n\n${message}`);
+      update('', 0);
+      return;
+    }
+    deliver(message, () => update('', 0));
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -153,10 +241,9 @@ export function Composer({
         return;
       }
       if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
-        const skill = matches[activeIndex];
-        if (skill) {
+        if (activeSkill) {
           event.preventDefault();
-          pick(skill);
+          pick(activeSkill);
           return;
         }
       }
@@ -172,17 +259,61 @@ export function Composer({
     }
   };
 
+  const sendBlocked = disabled || sending || text.trim() === '' || blockedReason !== undefined;
+  const sendButton = (
+    <Button
+      size="icon-sm"
+      aria-label={running ? 'Queue message' : 'Send'}
+      aria-disabled={sendBlocked || undefined}
+      disabled={disabled || sending || text.trim() === ''}
+      className={cn(blockedReason !== undefined && 'opacity-50')}
+      onClick={send}
+    >
+      <ArrowUpIcon />
+    </Button>
+  );
+
   return (
     <div className="flex flex-col gap-1.5">
+      {queued !== undefined && (
+        <div
+          data-testid="queued-message"
+          className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-1.5 text-xs"
+        >
+          <ClockIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">
+            <span className="text-muted-foreground">Sent when the turn ends: </span>
+            {queued}
+          </span>
+          {onStop && (
+            <Button size="xs" variant="outline" onClick={onStop}>
+              Send now
+            </Button>
+          )}
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Cancel queued message"
+            onClick={() => {
+              update(queued, queued.length);
+              pendingCaret.current = queued.length;
+              setQueued(undefined);
+              textarea.current?.focus();
+            }}
+          >
+            <XIcon />
+          </Button>
+        </div>
+      )}
       <div className="relative rounded-lg border border-input bg-background focus-within:border-ring dark:bg-input/30">
         {pickerOpen && (
           <SkillPicker
             id={pickerId}
             skills={matches}
-            active={activeIndex}
+            active={activeSkill}
             kind={providerKind}
             onPick={pick}
-            onHover={setActive}
+            onHover={(skill) => setActive(Math.max(0, matches.indexOf(skill)))}
           />
         )}
         <textarea
@@ -192,9 +323,7 @@ export function Composer({
           aria-expanded={pickerOpen}
           aria-controls={pickerOpen ? pickerId : undefined}
           aria-autocomplete="list"
-          aria-activedescendant={
-            pickerOpen && matches.length > 0 ? `${pickerId}-${activeIndex}` : undefined
-          }
+          aria-activedescendant={activeDescendant}
           rows={3}
           value={text}
           disabled={disabled}
@@ -207,20 +336,18 @@ export function Composer({
           className="block max-h-64 min-h-20 w-full resize-none bg-transparent px-3 pt-2.5 pb-10 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
         />
         <div className="absolute right-2 bottom-2 flex items-center gap-1">
-          {running && onStop ? (
-            <Button size="sm" variant="secondary" onClick={onStop} aria-label="Stop">
-              <SquareIcon className="size-3 fill-current" />
-              Stop
-            </Button>
+          {running && onStop && (
+            <WithTooltip label="Stop" binding={stopBinding}>
+              <Button size="sm" variant="secondary" onClick={onStop} aria-label="Stop">
+                <SquareIcon className="size-3 fill-current" />
+                Stop
+              </Button>
+            </WithTooltip>
+          )}
+          {blockedReason !== undefined && text.trim() !== '' ? (
+            <WithTooltip label={blockedReason}>{sendButton}</WithTooltip>
           ) : (
-            <Button
-              size="icon-sm"
-              aria-label="Send"
-              disabled={disabled || sending || text.trim() === ''}
-              onClick={send}
-            >
-              <ArrowUpIcon />
-            </Button>
+            sendButton
           )}
         </div>
       </div>

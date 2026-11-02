@@ -185,6 +185,8 @@ export const Command = z.discriminatedUnion('type', [
     steps: WorkflowSteps.optional(),
   }),
   z.object({ type: z.literal('workflow.delete'), workflowId: Id }),
+  // Undo of a delete: puts the row the client still holds back as it was.
+  z.object({ type: z.literal('workflow.restore'), workflow: Workflow }),
   z.object({
     type: z.literal('workflowRun.start'),
     runId: Id,
@@ -214,6 +216,9 @@ export const Command = z.discriminatedUnion('type', [
   }),
   // Refused while a run of the item is live; cards that pointed at it lose the link.
   z.object({ type: z.literal('backlog.delete'), backlogItemId: Id }),
+  // Undo of a delete: puts the row the client still holds back as it was. Card links the delete
+  // removed stay removed.
+  z.object({ type: z.literal('backlog.restore'), item: BacklogItem }),
   // "Plan on calendar" (behavior 29): a card with the item, a workflow, a project and a time, and
   // the item becomes planned, in one step.
   z.object({

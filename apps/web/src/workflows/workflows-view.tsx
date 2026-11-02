@@ -1,17 +1,22 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import { PlusIcon, WorkflowIcon } from 'lucide-react';
 import { useConnectionState, useSetting } from '@/app/runtime';
+import { DisconnectedState, EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { useTopic } from '@/chat/data';
+import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import type { ReactNode } from 'react';
 import { runStateDotClass, runStateLabels, sortRuns } from './model';
 
 function WorkflowList() {
   const workflows = useTopic('workflows') ?? [];
   const runs = useTopic('workflowRuns') ?? [];
+  const projects = useTopic('projects') ?? [];
+  const { when } = useDateFormat();
   const names = new Map(workflows.map((workflow) => [workflow.id, workflow.name]));
-  const linkClass = 'flex flex-col rounded-md px-2 py-1.5 text-sm hover:bg-sidebar-accent';
+  const projectNames = new Map(projects.map((project) => [project.id, project.name]));
+  const linkClass =
+    'flex flex-col rounded-md px-2 py-1.5 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring';
   const active = { className: 'bg-sidebar-accent', 'aria-current': 'page' as const };
   return (
     <nav
@@ -28,7 +33,7 @@ function WorkflowList() {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         <section aria-label="Workflow definitions" className="mt-2">
-          <h3 className="px-2 pb-1 text-[11px] font-medium text-muted-foreground">
+          <h3 className="px-2 pb-1 text-2xs font-medium text-muted-foreground">
             Workflows<span className="ml-1 opacity-70">{workflows.length}</span>
           </h3>
           <ul className="flex flex-col gap-0.5">
@@ -43,7 +48,7 @@ function WorkflowList() {
                     activeProps={active}
                   >
                     <span className="truncate">{workflow.name}</span>
-                    <span className="truncate text-[11px] text-muted-foreground">
+                    <span className="truncate text-2xs text-muted-foreground">
                       {workflow.steps.map((step) => step.skillName).join(' → ')}
                     </span>
                   </Link>
@@ -53,7 +58,7 @@ function WorkflowList() {
         </section>
         {runs.length > 0 && (
           <section aria-label="Runs" className="mt-3">
-            <h3 className="px-2 pb-1 text-[11px] font-medium text-muted-foreground">
+            <h3 className="px-2 pb-1 text-2xs font-medium text-muted-foreground">
               Runs<span className="ml-1 opacity-70">{runs.length}</span>
             </h3>
             <ul className="flex flex-col gap-0.5">
@@ -76,9 +81,15 @@ function WorkflowList() {
                       <span className="min-w-0 flex-1 truncate">
                         {names.get(run.workflowId) ?? 'Workflow'}
                       </span>
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                      <span className="shrink-0 text-2xs text-muted-foreground">
                         {runStateLabels[run.state]}
                       </span>
+                    </span>
+                    <span
+                      data-testid="run-row-detail"
+                      className="truncate pl-3.5 text-2xs text-muted-foreground tabular-nums"
+                    >
+                      {projectNames.get(run.projectId) ?? run.projectId} · {when(run.startedAt)}
                     </span>
                   </Link>
                 </li>
@@ -91,26 +102,9 @@ function WorkflowList() {
   );
 }
 
-function Empty({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
-      <WorkflowIcon className="size-6 text-muted-foreground" aria-hidden />
-      <h2 className="text-sm font-medium">{title}</h2>
-      <div className="max-w-sm text-xs text-muted-foreground">{children}</div>
-    </section>
-  );
-}
-
 export function WorkflowsLayout() {
   const { configured } = useConnectionState();
-  if (!configured) {
-    return (
-      <Empty title="No workflows yet">
-        Chains of skills with gates between steps will appear here once the app is connected to the
-        wow server.
-      </Empty>
-    );
-  }
+  if (!configured) return <DisconnectedState offline />;
   return (
     <div className="flex h-full min-h-0">
       <WorkflowList />
@@ -124,24 +118,31 @@ export function WorkflowsLayout() {
 export function WorkflowsHome() {
   const workflows = useTopic('workflows');
   const templates = useSetting('workflows.templates');
+  const any = workflows !== undefined && workflows.length > 0;
   return (
-    <Empty title={workflows && workflows.length > 0 ? 'Pick a workflow' : 'No workflows yet'}>
-      <p>A workflow is an ordered list of skills with gates where it waits for you.</p>
-      <div className="mt-3 flex flex-wrap justify-center gap-2">
-        <Button asChild size="sm" variant="outline">
+    <EmptyState
+      icon={WorkflowIcon}
+      title={any ? 'Pick a workflow' : 'No workflows yet'}
+      description="A workflow is an ordered list of skills with gates where it waits for you."
+      action={
+        <Button asChild size="sm">
           <Link to="/workflows/new">
             <PlusIcon />
             New workflow
           </Link>
         </Button>
-        {templates.map((template) => (
-          <Button key={template.kind} asChild size="sm" variant="ghost">
-            <Link to="/workflows/new" search={{ template: template.kind }}>
-              From {template.name}
-            </Link>
-          </Button>
-        ))}
-      </div>
-    </Empty>
+      }
+      secondary={templates.map((template) => (
+        <Button key={template.kind} asChild size="sm" variant="outline">
+          <Link
+            to="/workflows/new"
+            search={{ template: template.kind }}
+            className="whitespace-nowrap"
+          >
+            From {template.name}
+          </Link>
+        </Button>
+      ))}
+    />
   );
 }

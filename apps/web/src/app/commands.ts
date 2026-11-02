@@ -39,6 +39,14 @@ export interface AppCommand {
   readonly keybinding?: SettingKey;
   // Runs again while its key is held down (zoom); other commands run once per press.
   readonly repeatable?: boolean;
+  // What kind of thing it opens, shown muted on the right ("Thread · Needs you").
+  readonly detail?: string;
+  // Listed under "Needs you" before the user types.
+  readonly needsYou?: boolean;
+  // When the thing was last active, for the palette's "Recent" list before the user types.
+  readonly recentAt?: string;
+  // Only listed once the user types (old cards, every settings page).
+  readonly searchOnly?: boolean;
   run(context: CommandContext): void;
 }
 

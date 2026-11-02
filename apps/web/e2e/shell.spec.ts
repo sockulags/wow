@@ -9,9 +9,10 @@ test.describe('shell', () => {
     const nav = page.getByRole('navigation', { name: 'Sections' });
     const routes = [
       ['Calendar', /\/calendar$/, 'Not connected to the wow server'],
-      ['Chat', /\/chat$/, 'No threads yet'],
-      ['Workflows', /\/workflows$/, 'No workflows yet'],
-      ['Backlog', /\/backlog$/, 'Backlog is empty'],
+      // Without a server the views say so instead of claiming to be empty (audit A-08).
+      ['Chat', /\/chat$/, 'Not connected to the wow server'],
+      ['Workflows', /\/workflows$/, 'Not connected to the wow server'],
+      ['Backlog', /\/backlog$/, 'Not connected to the wow server'],
       ['Settings', /\/settings\/providers$/, 'Test timeout'],
     ] as const;
     for (const [name, url, text] of routes) {

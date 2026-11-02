@@ -1,68 +1,151 @@
-import { providerChatOptions, type ProviderInstance } from '@wow/contracts';
+import {
+  providerChatOptions,
+  type ProviderInstance,
+  type ProviderModel,
+  type Thread,
+} from '@wow/contracts';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { useState } from 'react';
+import {
+  FolderOpenIcon,
+  ListTodoIcon,
+  MessagesSquareIcon,
+  PlugIcon,
+  SparklesIcon,
+} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
-import { useRuntime } from '@/app/runtime';
+import { useRuntime, useSetting } from '@/app/runtime';
 import { ChoiceSelect } from '@/components/choice-select';
 import { Combobox } from '@/components/combobox';
+import { WithTooltip } from '@/components/hint';
+import { PathText } from '@/components/path-text';
+import { EmptyState } from '@/components/states';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Composer } from './composer';
+import { cn } from '@/lib/utils';
+import { lastUsedInstanceId } from '@/providers/model';
+import { Composer, type ComposerHandle } from './composer';
 import { useDispatch, useModels, useTopic } from './data';
-import { effortOptions, titleFromMessage } from './model';
+import { effortOptions, threadTitle, titleFromMessage } from './model';
 import { ThreadSettings, type ThreadSettingsValue } from './thread-settings';
+import { lastUsedThread, providerLabel, recentFolders, starterSkills } from './view-model';
 
-// What a new thread on this instance starts with: the instance defaults, else the first model
-// the provider lists and the first effort and permission mode offered for it.
-function useDefaults(instance: ProviderInstance | undefined): ThreadSettingsValue | undefined {
-  const { models } = useModels(instance?.id);
-  if (!instance) return undefined;
-  const model = instance.defaultModel ?? models[0]?.id ?? '';
+// What a new thread on this instance starts with: what the last thread on it used (owner
+// decision F-5), else the instance defaults, else the first model the provider lists and the
+// first effort and permission mode offered for it.
+export function threadDefaults(
+  instance: ProviderInstance,
+  models: readonly ProviderModel[],
+  last: Pick<Thread, 'providerInstanceId' | 'model' | 'effort' | 'permissionMode'> | undefined,
+): ThreadSettingsValue {
+  const fromLast = last?.providerInstanceId === instance.id ? last : undefined;
+  const model = fromLast?.model || instance.defaultModel || models[0]?.id || '';
   const effort =
-    instance.defaultEffort ?? effortOptions(instance.kind, models, model, '')[0] ?? 'default';
+    fromLast?.effort ||
+    instance.defaultEffort ||
+    effortOptions(instance.kind, models, model, '')[0] ||
+    'default';
   const permissionMode =
-    instance.defaultPermissionMode ?? providerChatOptions[instance.kind].permissionModes[0]?.id;
-  return { model, effort, permissionMode: permissionMode ?? 'default' };
+    fromLast?.permissionMode ||
+    instance.defaultPermissionMode ||
+    providerChatOptions[instance.kind].permissionModes[0]?.id ||
+    'default';
+  return { model, effort, permissionMode };
 }
 
+const statusDot: Readonly<Record<ProviderInstance['status'], string>> = {
+  ready: 'bg-state-done',
+  error: 'bg-state-failed',
+  unknown: 'bg-muted-foreground/50',
+};
+
+const statusText = (instance: ProviderInstance): string =>
+  instance.status === 'ready'
+    ? `Ready${instance.account ? ` · ${instance.account}` : ''}`
+    : instance.status === 'error'
+      ? `Last test failed${instance.statusMessage ? `: ${instance.statusMessage}` : ''}`
+      : 'Not tested yet';
+
+// Picker values: a project, a folder used before, or "Another folder…".
+const OTHER = 'other';
+const projectValue = (id: string) => `project:${id}`;
+const folderValue = (path: string) => `folder:${path}`;
+const baseName = (path: string) =>
+  path
+    .replace(/[\\/]+$/, '')
+    .split(/[\\/]/)
+    .at(-1) || path;
+
 export function NewThreadView() {
-  const { draft } = useRuntime();
+  const { draft, pickFolder } = useRuntime();
   const send = useDispatch();
   const navigate = useNavigate();
   const instances = useTopic('providerInstances');
   const projects = useTopic('projects') ?? [];
+  const threads = useTopic('threads') ?? [];
+  const skills = useTopic('skills') ?? [];
+  const backlog = useTopic('backlogItems') ?? [];
+  const starterCount = useSetting('chat.starterCount');
   const picked = useStore(draft);
+  const composer = useRef<ComposerHandle>(null);
+  const [typingFolder, setTypingFolder] = useState(false);
   const [overrides, setOverrides] = useState<
     Partial<ThreadSettingsValue> & { readonly for?: string }
   >({});
 
+  const last = lastUsedThread(threads);
+  const lastInstanceId = lastUsedInstanceId(threads, instances);
   const instance =
-    instances?.find((candidate) => candidate.id === picked.providerInstanceId) ?? instances?.[0];
-  const defaults = useDefaults(instance);
-  const project = projects.find((candidate) => candidate.id === picked.projectId);
-  const cwd = picked.cwd ?? project?.cwd ?? '';
+    instances?.find((candidate) => candidate.id === picked.providerInstanceId) ??
+    instances?.find((candidate) => candidate.id === lastInstanceId) ??
+    instances?.find((candidate) => candidate.status === 'ready') ??
+    instances?.[0];
+  const { models } = useModels(instance?.id);
+  const defaults = instance && threadDefaults(instance, models, last);
+
+  // Nothing picked yet: the last thread's project, or its folder when it had none.
+  const untouched = picked.projectId === undefined && picked.cwd === undefined;
+  const projectId = untouched ? (last?.projectId ?? undefined) : picked.projectId;
+  const project = projects.find((candidate) => candidate.id === projectId);
+  const cwd = (untouched && !project ? last?.cwd : picked.cwd) ?? project?.cwd ?? '';
+  const folders = recentFolders(threads, projects);
   const { for: overridesFor, ...picks } = overrides;
   const settings: ThreadSettingsValue | undefined =
     defaults && (overridesFor === instance?.id ? { ...defaults, ...picks } : defaults);
 
+  // The work starts in the composer (audit A-11).
+  const ready = instances !== undefined && instances.length > 0;
+  useEffect(() => {
+    if (ready) composer.current?.focus();
+  }, [ready]);
+
   if (instances && instances.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
-        <h2 className="text-sm font-medium">No provider instances yet</h2>
-        <p className="max-w-sm text-xs text-muted-foreground">
-          Add a Claude or Codex instance in{' '}
-          <Link to="/settings/$group" params={{ group: 'providers' }} className="underline">
-            Settings → Providers
-          </Link>{' '}
-          to start a thread.
-        </p>
-      </div>
+      <EmptyState
+        icon={PlugIcon}
+        title="Set up a provider to start a thread"
+        description="wow runs Claude Code and Codex on your machine. Add an instance and test it, then come back here."
+        action={
+          <Button asChild size="sm">
+            <Link to="/settings/$group" params={{ group: 'providers' }}>
+              Set up a provider
+            </Link>
+          </Button>
+        }
+      />
     );
   }
 
+  const blockedReason = !instance
+    ? 'Pick a provider first'
+    : cwd.trim() === ''
+      ? 'Pick a project or a folder first'
+      : settings?.model === ''
+        ? 'Pick a model first'
+        : undefined;
+
   const start = async (text: string) => {
-    if (!instance || !settings) throw new Error('Pick a provider instance first');
-    if (cwd.trim() === '') throw new Error('Pick a project or enter a working directory');
-    if (settings.model === '') throw new Error('Pick a model first');
+    if (!instance || !settings || blockedReason) throw new Error(blockedReason);
     const threadId = globalThis.crypto.randomUUID();
     await send({
       type: 'thread.create',
@@ -74,78 +157,196 @@ export function NewThreadView() {
       ...settings,
     });
     await send({ type: 'thread.sendMessage', threadId, text });
-    draft.setState({ projectId: undefined, cwd: undefined });
+    draft.setState({ projectId: undefined, cwd: undefined, providerInstanceId: undefined });
     await navigate({ to: '/chat/$threadId', params: { threadId } });
   };
 
+  const choose = async (value: string) => {
+    setTypingFolder(false);
+    if (value.startsWith('project:')) {
+      draft.setState({ projectId: value.slice('project:'.length), cwd: undefined });
+    } else if (value.startsWith('folder:')) {
+      draft.setState({ projectId: undefined, cwd: value.slice('folder:'.length) });
+    } else if (value === OTHER) {
+      if (!pickFolder) {
+        setTypingFolder(true);
+        return;
+      }
+      const folder = await pickFolder();
+      if (folder) draft.setState({ projectId: undefined, cwd: folder });
+    }
+    composer.current?.focus();
+  };
+
+  const pickerValue = project
+    ? projectValue(project.id)
+    : cwd !== ''
+      ? folderValue(cwd)
+      : typingFolder
+        ? OTHER
+        : '';
+  const folderChoices = [
+    ...folders,
+    ...(cwd !== '' && !project && !folders.includes(cwd) ? [cwd] : []),
+  ];
+  const recentThread = threads
+    .filter((thread) => thread.state !== 'done')
+    .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  const openItems = backlog.filter((item) => item.state === 'idea').slice(0, starterCount);
+  const starters = starterSkills(skills, starterCount);
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 flex-col gap-2 border-b border-border px-4 py-2">
-        <h2 className="text-sm font-medium">New thread</h2>
-        <div className="flex flex-wrap items-center gap-2 text-xs">
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-3 px-4 py-6">
+        <h2 className="text-base font-medium">New thread</h2>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {instance && (
+            <WithTooltip label={statusText(instance)}>
+              <span
+                tabIndex={0}
+                aria-label={`Provider status: ${statusText(instance)}`}
+                data-testid="provider-status"
+                className={cn('size-2 shrink-0 rounded-full', statusDot[instance.status])}
+              />
+            </WithTooltip>
+          )}
           <ChoiceSelect
             label="Provider instance"
             size="sm"
-            className="w-auto"
+            className="w-auto data-[size=sm]:h-7"
             value={instance?.id ?? ''}
             placeholder="Pick a provider"
             choices={(instances ?? []).map((candidate) => ({
               value: candidate.id,
-              label: `${candidate.name} (${candidate.kind})`,
+              label: providerLabel(candidate, instances ?? []),
             }))}
             onValueChange={(providerInstanceId) => draft.setState({ providerInstanceId })}
           />
           <Combobox
             label="Project"
             size="sm"
-            className="w-48"
-            value={project?.id ?? ''}
-            placeholder="No project"
-            searchPlaceholder="Search projects…"
-            emptyText="No matching project."
+            className="h-7 w-48"
+            value={pickerValue}
+            placeholder="Pick a project"
+            searchPlaceholder="Search projects and folders…"
+            emptyText="No matching project or folder."
             choices={[
-              { value: '', label: 'No project' },
-              ...projects.map((candidate) => ({ value: candidate.id, label: candidate.name })),
+              ...projects.map((candidate) => ({
+                value: projectValue(candidate.id),
+                label: candidate.name,
+              })),
+              ...folderChoices.map((folder) => ({
+                value: folderValue(folder),
+                label: baseName(folder),
+                detail: 'Folder',
+              })),
+              { value: OTHER, label: 'Another folder…' },
             ]}
-            onValueChange={(projectId) =>
-              draft.setState({
-                projectId: projectId === '' ? undefined : projectId,
-                cwd: undefined,
-              })
-            }
+            onValueChange={(value) => void choose(value)}
           />
-          <Input
-            aria-label="Working directory"
-            placeholder="Working directory"
-            value={cwd}
-            onChange={(event) => draft.setState({ cwd: event.target.value })}
-            className="h-8 w-72 font-mono text-xs"
-          />
+          {instance && settings && (
+            <ThreadSettings
+              providerInstanceId={instance.id}
+              kind={instance.kind}
+              value={settings}
+              onChange={(changes) =>
+                setOverrides((current) => ({
+                  ...(current.for === instance.id ? current : {}),
+                  ...changes,
+                  for: instance.id,
+                }))
+              }
+            />
+          )}
         </div>
-        {instance && settings && (
-          <ThreadSettings
-            providerInstanceId={instance.id}
-            kind={instance.kind}
-            value={settings}
-            onChange={(changes) =>
-              setOverrides((current) => ({
-                ...(current.for === instance.id ? current : {}),
-                ...changes,
-                for: instance.id,
-              }))
-            }
+        {typingFolder ? (
+          <Input
+            aria-label="Folder"
+            autoFocus
+            placeholder="Full path of the folder the agent works in"
+            value={picked.cwd ?? ''}
+            onChange={(event) => draft.setState({ projectId: undefined, cwd: event.target.value })}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                setTypingFolder(false);
+                composer.current?.focus();
+              }
+            }}
+            className="h-8 max-w-xl font-mono text-xs placeholder:font-sans"
           />
+        ) : (
+          cwd !== '' && (
+            <div
+              data-testid="new-thread-folder"
+              className="flex min-w-0 items-center gap-1.5 text-muted-foreground"
+            >
+              <FolderOpenIcon aria-hidden className="size-3.5 shrink-0" />
+              <PathText path={cwd} />
+            </div>
+          )
         )}
-      </header>
-      <div className="flex-1" />
-      <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-4">
         <Composer
+          ref={composer}
           providerKind={instance?.kind}
           running={false}
           disabled={!instance}
+          blockedReason={blockedReason}
           placeholder="What should the agent do? Type $ to pick a skill."
           onSend={start}
         />
+        {(starters.length > 0 || recentThread || openItems.length > 0) && (
+          <section aria-label="Starters" className="flex flex-col gap-2 pt-1">
+            {starters.length > 0 && instance && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <SparklesIcon aria-hidden className="size-3.5 text-muted-foreground" />
+                {starters.map((skill) => (
+                  <WithTooltip key={skill.id} label={skill.description || skill.name}>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        composer.current?.setText(`${skill.invocations[instance.kind]} `)
+                      }
+                    >
+                      {skill.name}
+                    </Button>
+                  </WithTooltip>
+                ))}
+              </div>
+            )}
+            {openItems.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <ListTodoIcon aria-hidden className="size-3.5 text-muted-foreground" />
+                {openItems.map((item) => (
+                  <Button
+                    key={item.id}
+                    size="xs"
+                    variant="ghost"
+                    className="max-w-64"
+                    onClick={() =>
+                      composer.current?.setText(
+                        item.body.trim() === '' ? item.title : `${item.title}\n\n${item.body}`,
+                      )
+                    }
+                  >
+                    <span className="truncate">{item.title}</span>
+                  </Button>
+                ))}
+              </div>
+            )}
+            {recentThread && (
+              <div className="flex items-center gap-1.5">
+                <MessagesSquareIcon aria-hidden className="size-3.5 text-muted-foreground" />
+                <Button asChild size="xs" variant="ghost" className="max-w-full">
+                  <Link to="/chat/$threadId" params={{ threadId: recentThread.id }}>
+                    <span className="truncate">Continue “{threadTitle(recentThread)}”</span>
+                  </Link>
+                </Button>
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </div>
   );
