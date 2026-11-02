@@ -212,6 +212,32 @@ export const DetectedProvider = z.object({
 });
 export type DetectedProvider = z.infer<typeof DetectedProvider>;
 
+// A folder a provider CLI has worked in, as its adapter read it from the CLI's own session files.
+// `lastUsedAt` is the newest session's time, when known.
+export const ProviderFolder = z.object({
+  cwd: z.string().min(1),
+  lastUsedAt: z.iso.datetime({ offset: true }).nullable(),
+});
+export type ProviderFolder = z.infer<typeof ProviderFolder>;
+
+// What `projects.discover` answers: one row per existing folder that is not a project yet, with
+// the provider instances that worked in it.
+export const DiscoveredProject = z.object({
+  cwd: z.string().min(1),
+  name: z.string().min(1),
+  lastUsedAt: z.iso.datetime({ offset: true }).nullable(),
+  sources: z
+    .array(
+      z.object({
+        providerInstanceId: z.string().min(1),
+        providerInstanceName: z.string(),
+        kind: ProviderKind,
+      }),
+    )
+    .min(1),
+});
+export type DiscoveredProject = z.infer<typeof DiscoveredProject>;
+
 // What `listModels` answers: one row per model the installed provider offers.
 export const ProviderModel = z.object({
   id: z.string().min(1),

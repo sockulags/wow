@@ -28,6 +28,15 @@ export const e2eTriggersPort = 4531;
 export const e2eTriggersOutlookControlPort = 4532;
 export const e2eTriggersTrackerPort = 4533;
 
+// A fourth server for the projects tests (e2e/projects.spec.ts): they add and remove projects,
+// and import folders from invented Claude and Codex session files seeded in its home.
+export const e2eProjectsHome = path.join(tmpdir(), 'wow-e2e-projects-home');
+export const e2eProjectsPort = 4541;
+export const e2eProjectsOutlookControlPort = 4542;
+export const e2eProjectsTrackerPort = 4543;
+// The folders those session files point at: two exist, one is gone.
+export const e2eWorkspace = (home: string, name: string) => path.join(home, 'workspaces', name);
+
 // What provider detection finds: stand-in CLIs on the server's PATH and their config directories,
 // all inside the server's home.
 export const e2eBinDir = (home: string) => path.join(home, 'bin');

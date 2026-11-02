@@ -40,12 +40,16 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(projects.id, event.payload.projectId))
         .run();
       return ['projects'];
-    case 'project.deleted':
-      tx.delete(projects).where(eq(projects.id, event.payload.projectId)).run();
+    case 'project.deleted': {
+      const id = event.payload.projectId;
+      tx.delete(projects).where(eq(projects.id, id)).run();
       tx.delete(settings)
-        .where(eq(settings.scope, `project:${event.payload.projectId}`))
+        .where(eq(settings.scope, `project:${id}`))
         .run();
-      return ['projects', 'settings'];
+      // A thread keeps its folder and becomes a folder thread; its history stays readable.
+      tx.update(threads).set({ projectId: null }).where(eq(threads.projectId, id)).run();
+      return ['projects', 'settings', 'threads'];
+    }
     case 'setting.changed':
       tx.insert(settings)
         .values(event.payload)
@@ -366,6 +370,20 @@ export function readModel(tx: DbOrTx): ReadModel {
   return {
     project: (id): Project | undefined =>
       tx.select().from(projects).where(eq(projects.id, id)).get(),
+    projects: () => tx.select().from(projects).all(),
+    projectCards: (id) =>
+      tx
+        .select()
+        .from(calendarItems)
+        .where(and(eq(calendarItems.source, 'local'), eq(calendarItems.projectId, id)))
+        .all(),
+    projectHasLiveRun: (id) =>
+      tx
+        .select({ state: workflowRuns.state })
+        .from(workflowRuns)
+        .where(eq(workflowRuns.projectId, id))
+        .all()
+        .some((row) => isLiveRunState(row.state)),
     providerInstanceExists: (id) =>
       tx
         .select({ id: providerInstances.id })

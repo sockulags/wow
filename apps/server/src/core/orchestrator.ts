@@ -7,7 +7,6 @@ import {
   type BacklogItem,
   type DomainEvent,
   type Project,
-  type ProjectChanges,
   type ProviderInstance,
   type Question,
   type RpcErrorCode,
@@ -24,6 +23,7 @@ import {
 import { isDeepStrictEqual } from 'node:util';
 import { decideBacklog, isBacklogCommand } from './backlog.js';
 import { decideCalendar, isCalendarCommand } from './calendar.js';
+import { decideProject, isProjectCommand } from './projects.js';
 import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
 import { decideThread, isThreadCommand } from './threads.js';
 import { decideTrigger, isTriggerCommand } from './triggers.js';
@@ -34,6 +34,10 @@ import { decideWorkflow, isWorkflowCommand } from './workflows.js';
 
 export interface ReadModel {
   project(id: string): Project | undefined;
+  projects(): Project[];
+  // Local cards linked to the project, and whether one of its runs is running or waiting.
+  projectCards(id: string): CalendarItem[];
+  projectHasLiveRun(id: string): boolean;
   providerInstanceExists(id: string): boolean;
   providerInstance(id: string): ProviderInstance | undefined;
   // Threads that use the instance, and how many of them have a turn running.
@@ -89,6 +93,7 @@ export function decide(
   read: ReadModel,
   context: DecideContext,
 ): DomainEvent[] {
+  if (isProjectCommand(command)) return decideProject(command, read, context);
   if (isProviderInstanceCommand(command)) return decideProviderInstance(command, read);
   if (isThreadCommand(command)) return decideThread(command, read, context);
   if (isTriggerCommand(command)) return decideTrigger(command, read, context);
@@ -96,61 +101,6 @@ export function decide(
   if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
   if (isBacklogCommand(command)) return decideBacklog(command, read, context);
   switch (command.type) {
-    case 'project.create': {
-      if (read.project(command.projectId)) {
-        throw new CommandRejected('conflict', `Project ${command.projectId} already exists`);
-      }
-      return [
-        {
-          kind: 'project.created',
-          aggregate: command.projectId,
-          payload: {
-            id: command.projectId,
-            name: command.name,
-            cwd: command.cwd,
-            defaultProviderInstanceId: command.defaultProviderInstanceId ?? null,
-            defaultModel: command.defaultModel ?? null,
-            createdAt: context.now,
-          },
-        },
-      ];
-    }
-    case 'project.update': {
-      const project = read.project(command.projectId);
-      if (!project) throw new CommandRejected('not_found', `No project ${command.projectId}`);
-      const changes: ProjectChanges = {};
-      if (command.name !== undefined && command.name !== project.name) changes.name = command.name;
-      if (command.cwd !== undefined && command.cwd !== project.cwd) changes.cwd = command.cwd;
-      if (
-        command.defaultProviderInstanceId !== undefined &&
-        command.defaultProviderInstanceId !== project.defaultProviderInstanceId
-      ) {
-        changes.defaultProviderInstanceId = command.defaultProviderInstanceId;
-      }
-      if (command.defaultModel !== undefined && command.defaultModel !== project.defaultModel) {
-        changes.defaultModel = command.defaultModel;
-      }
-      if (Object.keys(changes).length === 0) return [];
-      return [
-        {
-          kind: 'project.updated',
-          aggregate: command.projectId,
-          payload: { projectId: command.projectId, changes },
-        },
-      ];
-    }
-    case 'project.delete': {
-      if (!read.project(command.projectId)) {
-        throw new CommandRejected('not_found', `No project ${command.projectId}`);
-      }
-      return [
-        {
-          kind: 'project.deleted',
-          aggregate: command.projectId,
-          payload: { projectId: command.projectId },
-        },
-      ];
-    }
     case 'setting.set': {
       const definition = settingDefinition(command.key, context);
       checkScope(command.key, definition, command.scope, read);

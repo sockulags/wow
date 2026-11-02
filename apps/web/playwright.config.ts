@@ -2,6 +2,10 @@ import { defineConfig, devices } from '@playwright/test';
 import {
   e2eHome,
   e2ePort,
+  e2eProjectsHome,
+  e2eProjectsOutlookControlPort,
+  e2eProjectsPort,
+  e2eProjectsTrackerPort,
   e2eSettingsHome,
   e2eSettingsOutlookControlPort,
   e2eSettingsPort,
@@ -53,6 +57,19 @@ export default defineConfig({
         WOW_E2E_PORT: String(e2eSettingsPort),
         WOW_E2E_OUTLOOK_CONTROL_PORT: String(e2eSettingsOutlookControlPort),
         WOW_E2E_TRACKER_PORT: String(e2eSettingsTrackerPort),
+        WOW_OUTLOOK: 'mock',
+      },
+      reuseExistingServer: false,
+    },
+    {
+      // A copy for the projects tests, with invented Claude and Codex sessions to import.
+      command: 'pnpm exec tsx e2e/server.ts',
+      port: e2eProjectsPort,
+      env: {
+        WOW_E2E_HOME: e2eProjectsHome,
+        WOW_E2E_PORT: String(e2eProjectsPort),
+        WOW_E2E_OUTLOOK_CONTROL_PORT: String(e2eProjectsOutlookControlPort),
+        WOW_E2E_TRACKER_PORT: String(e2eProjectsTrackerPort),
         WOW_OUTLOOK: 'mock',
       },
       reuseExistingServer: false,

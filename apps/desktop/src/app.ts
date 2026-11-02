@@ -30,6 +30,9 @@ export function decodeServerInfoArg(argv: readonly string[]): unknown {
 }
 
 // IPC between the preload's `window.wowDesktop.updates` and the main process (behavior 35).
+// renderer → main (invoke): the native folder dialog; answers the chosen path or null.
+export const folderChannels = { pick: 'wow:pick-folder' } as const;
+
 export const updateChannels = {
   // main → renderer: the update state, on every change.
   state: 'wow:update-state',

@@ -100,7 +100,7 @@ describe('shell', () => {
     expect(screen.getByRole('navigation', { name: 'Sections' })).toBeTruthy();
   });
 
-  it('renders every setting group from the registry', async () => {
+  it('renders every setting group from the registry, with Projects after Providers', async () => {
     await renderApp('/settings');
     const groups = screen.getByRole('navigation', { name: 'Settings groups' });
     expect(
@@ -109,6 +109,7 @@ describe('shell', () => {
         .map((link) => link.textContent),
     ).toEqual([
       'Providers',
+      'Projects',
       'Chat',
       'Calendar',
       'Outlook',

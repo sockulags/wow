@@ -112,6 +112,7 @@ describe('Outlook service', () => {
       providers: undefined as never,
       trackers: undefined as never,
       detectProviders: () => Promise.resolve([]),
+      discoverProjects: () => Promise.resolve([]),
       outlook: () => service,
       info: { version: '0.0.0', home: '/nowhere' },
     });

@@ -1,12 +1,13 @@
 import type { SettingDefinition, SettingGroup } from '@wow/contracts';
 import { resolveSetting, validateSetting, type SettingsState } from '@wow/client-runtime';
 import { Link, useParams } from '@tanstack/react-router';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { useStore } from 'zustand';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useRuntime } from '@/app/runtime';
+import { ProjectsSection } from '@/projects/projects-section';
 import { ProvidersSection } from '@/providers/providers-section';
 import { isSettingGroup, settingGroupTitles, settingsByGroup } from '@/app/sections';
 import { UpdateStatusPanel } from '@/app/update-banner';
@@ -111,6 +112,59 @@ export function SettingsForm({
   );
 }
 
+const navLinkClass =
+  'flex h-7 items-center rounded-md px-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground';
+const activeNavLink = {
+  className: 'bg-accent text-accent-foreground font-medium',
+  'aria-current': 'page',
+} as const;
+
+// The settings pages: one per registry group, plus Projects (server rows, not settings) after
+// Providers.
+function SettingsLayout({ title, children }: { title: string; children: ReactNode }) {
+  const { settings } = useRuntime();
+  const groups = useMemo(() => settingsByGroup(settings.definitions), [settings.definitions]);
+  return (
+    <div className="flex h-full">
+      <nav aria-label="Settings groups" className="w-48 shrink-0 border-r border-border p-2">
+        <ul className="flex flex-col gap-0.5">
+          {[...groups.keys()].map((name) => (
+            <Fragment key={name}>
+              <li>
+                <Link
+                  to="/settings/$group"
+                  params={{ group: name }}
+                  className={navLinkClass}
+                  activeProps={activeNavLink}
+                >
+                  {settingGroupTitles[name]}
+                </Link>
+              </li>
+              {name === 'providers' && (
+                <li>
+                  <Link
+                    to="/settings/projects"
+                    className={navLinkClass}
+                    activeProps={activeNavLink}
+                  >
+                    Projects
+                  </Link>
+                </li>
+              )}
+            </Fragment>
+          ))}
+        </ul>
+      </nav>
+      <section aria-labelledby="settings-title" className="min-w-0 flex-1 overflow-auto px-6 py-4">
+        <h2 id="settings-title" className="text-base font-semibold">
+          {title}
+        </h2>
+        {children}
+      </section>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { group } = useParams({ from: '/settings/$group' });
   const { settings } = useRuntime();
@@ -119,35 +173,19 @@ export function SettingsPage() {
   const entries = current ? (groups.get(current) ?? []) : [];
 
   return (
-    <div className="flex h-full">
-      <nav aria-label="Settings groups" className="w-48 shrink-0 border-r border-border p-2">
-        <ul className="flex flex-col gap-0.5">
-          {[...groups.keys()].map((name) => (
-            <li key={name}>
-              <Link
-                to="/settings/$group"
-                params={{ group: name }}
-                className="flex h-7 items-center rounded-md px-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                activeProps={{
-                  className: 'bg-accent text-accent-foreground font-medium',
-                  'aria-current': 'page',
-                }}
-              >
-                {settingGroupTitles[name]}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </nav>
-      <section aria-labelledby="settings-title" className="min-w-0 flex-1 overflow-auto px-6 py-4">
-        <h2 id="settings-title" className="text-base font-semibold">
-          {current ? settingGroupTitles[current] : 'Settings'}
-        </h2>
-        {current === 'providers' && <ProvidersSection />}
-        {current === 'updates' && <UpdateStatusPanel />}
-        {/* Remount per group so drafts never leak between pages. */}
-        <SettingsForm key={group} entries={entries} />
-      </section>
-    </div>
+    <SettingsLayout title={current ? settingGroupTitles[current] : 'Settings'}>
+      {current === 'providers' && <ProvidersSection />}
+      {current === 'updates' && <UpdateStatusPanel />}
+      {/* Remount per group so drafts never leak between pages. */}
+      <SettingsForm key={group} entries={entries} />
+    </SettingsLayout>
+  );
+}
+
+export function ProjectsSettingsPage() {
+  return (
+    <SettingsLayout title="Projects">
+      <ProjectsSection />
+    </SettingsLayout>
   );
 }

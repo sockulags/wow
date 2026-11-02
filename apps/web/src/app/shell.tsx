@@ -2,6 +2,7 @@ import { Outlet, useRouterState } from '@tanstack/react-router';
 import { PanelLeftIcon, PanelRightIcon, SearchIcon } from 'lucide-react';
 import { useLayoutEffect } from 'react';
 import { Button } from '@/components/ui/button';
+import { ProjectDialogs } from '@/projects/project-dialogs';
 import { ProviderDialogs } from '@/providers/provider-dialogs';
 import { formatBinding } from './keybindings';
 import { Toaster } from './notifications';
@@ -108,6 +109,7 @@ export function Shell() {
       {rightPanelOpen && <RightPanel />}
       <CommandPalette commands={commands} context={context} />
       <ProviderDialogs />
+      <ProjectDialogs />
       <Toaster />
     </div>
   );

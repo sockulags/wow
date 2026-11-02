@@ -42,9 +42,9 @@ up yet, the **Set up providers** dialog lists the `claude` and `codex` CLIs it f
 tests each instance and shows the logged-in account or the error. You can skip it and add
 instances later in Settings → Providers.
 
-A project is a name and a folder; threads, cards and workflow runs work in that folder. A thread
-can also use any folder you type instead of a project. Cards with a trigger and workflow runs need
-a project (see "Known gaps" below).
+A project is a name and a folder; threads, cards and workflow runs work in that folder. Add your
+projects in Settings → Projects (see "Projects" below). A thread can also use any folder you type
+instead of a project; cards with a trigger and workflow runs need a project.
 
 ### Finding your way
 
@@ -276,9 +276,31 @@ Tracker settings (Settings → Trackers):
 
 Tokens are stored encrypted; clearing the field deletes the stored token.
 
+## Projects
+
+Settings → Projects lists your projects with their folders. **New project** (also "New project"
+in the palette) asks for a name and a folder. In the desktop app **Choose folder…** opens the
+system folder dialog; only the browser build of the app (development) takes a typed path, and the
+server refuses a folder it cannot find. A name another project already has is refused too. Every
+project picker (new thread, card dialog, Run now, Plan on calendar) offers the new project at once.
+
+**Import from Claude and Codex** (also in the palette) looks through the session history of every
+provider instance in Settings → Providers: Claude Code's `projects` folder in the instance's config
+directory and Codex's `sessions` folder in its `CODEX_HOME`. It lists each folder they worked in
+that still exists and is not a project yet, with the instances that used it and when, all checked.
+Uncheck what you do not want and press **Import**; each folder becomes a project named after it
+(with a number when the name is taken). Nothing is changed in Claude's or Codex's files.
+
+**Rename** changes only the name; threads, cards and runs follow it. **Remove** asks first and
+leaves the folder and its files alone. Threads that used the project keep working in its folder
+without a project. Cards lose the project, so their triggers will not fire until you pick another
+one. Finished workflow runs keep their history. A project with a workflow run in progress cannot be
+removed: stop the run or let it finish first. The palette has "Rename project …" and "Remove
+project …" for every project.
+
 ## Settings
 
-Settings are grouped: Providers, Chat, Calendar, Outlook, Scheduler, Workflows, Skills, Trackers,
+Settings are grouped: Providers, Projects, Chat, Calendar, Outlook, Scheduler, Workflows, Skills, Trackers,
 Appearance, Keybindings, Desktop, Updates and Advanced. Every setting shows its description, its default
 and its current value. A change applies at once, except settings marked **Restart required**
 (the server port), which apply after quitting and starting wow again. A value that does not pass
@@ -312,11 +334,7 @@ cannot be read on another machine or account.
 
 ## Known gaps in this version
 
-These are known; the rest of this guide describes the intended behavior.
-
-- **No screen to add projects.** The server stores projects and every view picks from them, but
-  the app has no form to create, rename or remove one yet. Until it does, threads can use a typed
-  folder; triggers and workflow runs need a project.
+None are known right now; the rest of this guide describes the intended behavior.
 
 ## Troubleshooting
 
