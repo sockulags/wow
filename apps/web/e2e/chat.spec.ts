@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { e2eHome } from './env';
+import { choose } from './controls';
 
 // U8 ground truth against the scripted mock provider (e2e/server.ts): stream, approve, answer a
 // question, pick a skill, stop, resume after reload.
@@ -18,8 +19,8 @@ async function startThread(page: Page, message: string) {
   await page.goto('/chat');
   await page.keyboard.press('Control+Alt+N');
   await expect(page).toHaveURL(/\/chat\/new$/);
-  await page.getByLabel('Project').selectOption({ label: 'Demo' });
-  await expect(page.getByLabel('Model')).toHaveValue('mock-model');
+  await choose(page.getByLabel('Project'), 'Demo');
+  await expect(page.getByLabel('Model')).toHaveText('Mock model');
   const composer = page.getByRole('combobox', { name: 'Message' });
   await composer.fill(message);
   await composer.press('Enter');
@@ -178,8 +179,8 @@ test.describe('chat', () => {
 
   test('inserts the Codex invocation form on a Codex instance', async ({ page }) => {
     await page.goto('/chat/new');
-    await page.getByLabel('Provider instance').selectOption({ label: 'Mock Codex (codex)' });
-    await page.getByLabel('Project').selectOption({ label: 'Demo' });
+    await choose(page.getByLabel('Provider instance'), 'Mock Codex (codex)');
+    await choose(page.getByLabel('Project'), 'Demo');
     const composer = page.getByRole('combobox', { name: 'Message' });
     await composer.pressSequentially('$check');
     const skills = page.getByRole('listbox', { name: 'Skills' });

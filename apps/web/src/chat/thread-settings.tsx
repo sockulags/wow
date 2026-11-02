@@ -1,4 +1,5 @@
 import type { ProviderKind } from '@wow/contracts';
+import { ChoiceSelect } from '@/components/choice-select';
 import { cn } from '@/lib/utils';
 import { useModels } from './data';
 import { effortOptions, modelOptions, permissionOptions } from './model';
@@ -8,9 +9,6 @@ export interface ThreadSettingsValue {
   readonly effort: string;
   readonly permissionMode: string;
 }
-
-const selectClass =
-  'h-7 max-w-44 rounded-md border border-input bg-transparent px-1.5 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30';
 
 function Select({
   label,
@@ -26,20 +24,16 @@ function Select({
   onChange(value: string): void;
 }) {
   return (
-    <select
-      aria-label={label}
+    <ChoiceSelect
+      label={label}
       title={label}
+      size="sm"
+      className="w-auto max-w-44 data-[size=sm]:h-7"
       value={value}
       disabled={disabled}
-      onChange={(event) => onChange(event.target.value)}
-      className={selectClass}
-    >
-      {options.map((option) => (
-        <option key={option.id} value={option.id}>
-          {option.label}
-        </option>
-      ))}
-    </select>
+      choices={options.map((option) => ({ value: option.id, label: option.label }))}
+      onValueChange={onChange}
+    />
   );
 }
 

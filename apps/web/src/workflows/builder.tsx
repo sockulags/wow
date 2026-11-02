@@ -13,6 +13,8 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
 import { errorMessage, useDispatch, useModels, useTopic } from '@/chat/data';
 import { ThreadSettings } from '@/chat/thread-settings';
+import { ChoiceSelect } from '@/components/choice-select';
+import { Combobox } from '@/components/combobox';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -37,9 +39,6 @@ import {
   type DraftStep,
   type WorkflowDraft,
 } from './model';
-
-const fieldClass =
-  'h-8 rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30';
 
 const textareaClass =
   'w-full resize-y rounded-md border border-input bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30';
@@ -177,23 +176,25 @@ function StepEditor({
           <GripVerticalIcon className="size-4" />
         </span>
         <span className="text-xs font-medium">{label}</span>
-        <select
-          aria-label={`${label} skill`}
-          className={cn(fieldClass, 'min-w-48')}
+        <Combobox
+          label={`${label} skill`}
+          size="sm"
+          className="min-w-48"
           value={step.skillName}
-          onChange={(event) => change({ skillName: event.target.value })}
-        >
-          <option value="">Pick a skill…</option>
-          {step.skillName !== '' && !known && (
-            <option value={step.skillName}>{step.skillName} (not found)</option>
-          )}
-          {choices.map((skill) => (
-            <option key={skill.id} value={skillValue(skill)}>
-              {skillValue(skill)}
-              {skill.manualOnly ? ' (manual only)' : ''}
-            </option>
-          ))}
-        </select>
+          placeholder="Pick a skill…"
+          searchPlaceholder="Search skills…"
+          emptyText="No matching skill."
+          choices={[
+            ...(step.skillName !== '' && !known
+              ? [{ value: step.skillName, label: `${step.skillName} (not found)` }]
+              : []),
+            ...choices.map((skill) => ({
+              value: skillValue(skill),
+              label: `${skillValue(skill)}${skill.manualOnly ? ' (manual only)' : ''}`,
+            })),
+          ]}
+          onValueChange={(skillName) => change({ skillName })}
+        />
         <div className="ml-auto flex items-center gap-1">
           <Button
             type="button"
@@ -233,19 +234,18 @@ function StepEditor({
         <p className="pl-6 text-xs text-muted-foreground">{selected.description}</p>
       )}
       <div className="flex flex-wrap items-center gap-1.5 pl-6">
-        <select
-          aria-label={`${label} provider instance`}
-          className={cn(fieldClass, 'h-7 text-xs')}
+        <ChoiceSelect
+          label={`${label} provider instance`}
+          size="sm"
+          className="w-auto data-[size=sm]:h-7"
           value={step.providerInstanceId}
-          onChange={(event) => change({ providerInstanceId: event.target.value })}
-        >
-          {!instance && <option value={step.providerInstanceId}>Pick a provider…</option>}
-          {instances.map((candidate) => (
-            <option key={candidate.id} value={candidate.id}>
-              {candidate.name} ({candidate.kind})
-            </option>
-          ))}
-        </select>
+          placeholder="Pick a provider…"
+          choices={instances.map((candidate) => ({
+            value: candidate.id,
+            label: `${candidate.name} (${candidate.kind})`,
+          }))}
+          onValueChange={(providerInstanceId) => change({ providerInstanceId })}
+        />
         {instance && (
           <ThreadSettings
             providerInstanceId={instance.id}
@@ -338,19 +338,16 @@ function RunPanel({ workflow, runnable }: { workflow: Workflow; runnable: boolea
     <section aria-label="Run" className="flex flex-col gap-2 border-t border-border px-4 py-3">
       <h3 className="text-xs font-medium">Run</h3>
       <div className="flex flex-wrap items-center gap-2">
-        <select
-          aria-label="Run in project"
-          className={fieldClass}
+        <ChoiceSelect
+          label="Run in project"
+          size="sm"
+          className="w-auto min-w-40"
           value={project?.id ?? ''}
-          onChange={(event) => setProjectId(event.target.value)}
-        >
-          {projects.length === 0 && <option value="">No projects</option>}
-          {projects.map((candidate) => (
-            <option key={candidate.id} value={candidate.id}>
-              {candidate.name}
-            </option>
-          ))}
-        </select>
+          placeholder="No projects"
+          disabled={projects.length === 0}
+          choices={projects.map((candidate) => ({ value: candidate.id, label: candidate.name }))}
+          onValueChange={setProjectId}
+        />
         <Button size="sm" disabled={!project || !runnable} onClick={() => void start()}>
           <PlayIcon />
           Run now
@@ -553,28 +550,23 @@ function Builder({
               />
             </Field>
             <Field label="Template kind">
-              <select
-                aria-label="Template kind"
-                className={fieldClass}
+              <ChoiceSelect
+                label="Template kind"
+                size="sm"
+                className="w-auto min-w-32"
                 value={draft.templateKind ?? ''}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    templateKind: event.target.value === '' ? null : event.target.value,
-                  })
+                choices={[
+                  { value: '', label: 'None' },
+                  ...(draft.templateKind !== null &&
+                  !templates.some((template) => template.kind === draft.templateKind)
+                    ? [{ value: draft.templateKind, label: draft.templateKind }]
+                    : []),
+                  ...templates.map((template) => ({ value: template.kind, label: template.name })),
+                ]}
+                onValueChange={(kind) =>
+                  setDraft({ ...draft, templateKind: kind === '' ? null : kind })
                 }
-              >
-                <option value="">None</option>
-                {draft.templateKind !== null &&
-                  !templates.some((template) => template.kind === draft.templateKind) && (
-                    <option value={draft.templateKind}>{draft.templateKind}</option>
-                  )}
-                {templates.map((template) => (
-                  <option key={template.kind} value={template.kind}>
-                    {template.name}
-                  </option>
-                ))}
-              </select>
+              />
             </Field>
             <div
               role="group"

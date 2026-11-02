@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { e2eHome } from './env';
+import { choose } from './controls';
 
 // Behavior 22 against the chat server (e2e/server.ts): one palette searches cards, backlog items,
 // workflows and settings pages, and the keyboard picks the result (threads and actions are in
@@ -46,8 +47,8 @@ test.describe('palette', () => {
     const itemUrl = page.url();
     await page.getByRole('toolbar', { name: 'Item actions' }).getByText('Plan on calendar').click();
     const plan = page.getByRole('dialog', { name: 'Plan on calendar' });
-    await plan.getByLabel('Workflow').selectOption({ label: 'Backlog e2e' });
-    await plan.getByLabel('Project').selectOption({ label: 'Demo' });
+    await choose(plan.getByLabel('Workflow'), 'Backlog e2e');
+    await choose(plan.getByLabel('Project'), 'Demo');
     await plan.getByLabel('Date').fill(localDay(30));
     await plan.getByLabel('Start').fill('10:00');
     await plan.getByRole('button', { name: 'Plan' }).click();

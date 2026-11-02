@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent } from 'react';
 import { PlusIcon, XIcon } from 'lucide-react';
+import { ChoiceSelect } from '@/components/choice-select';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -30,39 +31,6 @@ const asRecord = (value: unknown): Readonly<Record<string, unknown>> =>
 
 const humanize = (name: string): string =>
   name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (first) => first.toUpperCase());
-
-function NativeSelect({
-  id,
-  label,
-  value,
-  options,
-  invalid,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  options: readonly string[];
-  invalid: boolean;
-  onChange: (next: string) => void;
-}) {
-  return (
-    <select
-      id={id}
-      aria-label={label}
-      aria-invalid={invalid || undefined}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      className="h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive dark:bg-input/30"
-    >
-      {options.map((option) => (
-        <option key={option} value={option} className="bg-popover text-popover-foreground">
-          {option}
-        </option>
-      ))}
-    </select>
-  );
-}
 
 function ListField({
   id,
@@ -300,13 +268,14 @@ export function Field(props: FieldProps) {
       );
     case 'enum':
       return (
-        <NativeSelect
+        <ChoiceSelect
           id={id}
           label={label}
           value={asString(value)}
-          options={kind.options}
+          choices={kind.options.map((option) => ({ value: option, label: option }))}
           invalid={invalid}
-          onChange={onChange}
+          className="max-w-xs"
+          onValueChange={onChange}
         />
       );
     case 'list':

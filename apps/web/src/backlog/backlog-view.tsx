@@ -5,6 +5,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { useConnectionState, useSetting } from '@/app/runtime';
 import { isoDate, localDate, formatTime, resolveZone } from '@/calendar/time';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
+import { ChoiceSelect } from '@/components/choice-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,7 +24,7 @@ import {
   sortItems,
   type BacklogFilter,
 } from './model';
-import { PlanDialog, selectClass } from './plan-dialog';
+import { PlanDialog } from './plan-dialog';
 import { PublishDialog, RemoteLink } from './publish-dialog';
 
 // Which dialog the item view shows; the URL holds it so palette commands can open one.
@@ -67,34 +68,26 @@ function Filters({
         onChange={(event) => onChange({ ...filter, text: event.target.value })}
       />
       <div className="grid grid-cols-2 gap-1.5">
-        <select
-          aria-label="Filter by state"
-          className={cn(selectClass, 'h-8 text-xs')}
+        <ChoiceSelect
+          label="Filter by state"
+          size="sm"
           value={filter.state}
-          onChange={(event) =>
-            onChange({ ...filter, state: event.target.value as BacklogFilter['state'] })
-          }
-        >
-          <option value="">All states</option>
-          {backlogStates.map((state) => (
-            <option key={state} value={state}>
-              {backlogStateLabels[state]}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="Filter by tag"
-          className={cn(selectClass, 'h-8 text-xs')}
+          choices={[
+            { value: '', label: 'All states' },
+            ...backlogStates.map((state) => ({ value: state, label: backlogStateLabels[state] })),
+          ]}
+          onValueChange={(state) => onChange({ ...filter, state: state as BacklogFilter['state'] })}
+        />
+        <ChoiceSelect
+          label="Filter by tag"
+          size="sm"
           value={filter.tag}
-          onChange={(event) => onChange({ ...filter, tag: event.target.value })}
-        >
-          <option value="">All tags</option>
-          {tags.map((tag) => (
-            <option key={tag} value={tag}>
-              {tag}
-            </option>
-          ))}
-        </select>
+          choices={[
+            { value: '', label: 'All tags' },
+            ...tags.map((tag) => ({ value: tag, label: tag })),
+          ]}
+          onValueChange={(tag) => onChange({ ...filter, tag })}
+        />
       </div>
     </div>
   );
@@ -252,18 +245,15 @@ function ItemFields({
         {withState && (
           <div className="grid gap-1.5">
             <Label htmlFor="backlog-state">State</Label>
-            <select
+            <ChoiceSelect
               id="backlog-state"
-              className={selectClass}
               value={fields.state}
-              onChange={(event) => onChange({ state: event.target.value as BacklogState })}
-            >
-              {backlogStates.map((state) => (
-                <option key={state} value={state}>
-                  {backlogStateLabels[state]}
-                </option>
-              ))}
-            </select>
+              choices={backlogStates.map((state) => ({
+                value: state,
+                label: backlogStateLabels[state],
+              }))}
+              onValueChange={(state) => onChange({ state: state as BacklogState })}
+            />
           </div>
         )}
       </div>

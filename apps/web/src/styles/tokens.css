@@ -4,6 +4,8 @@
  */
 
 :root {
+  /* Native parts that remain (scrollbars, autofill, caret) follow the theme. */
+  color-scheme: light;
   --radius: 0.5rem;
 
   --background: oklch(0.99 0 0);
@@ -24,6 +26,7 @@
   --border: oklch(0.91 0 0);
   --input: oklch(0.91 0 0);
   --ring: oklch(0.7 0 0);
+  --scrollbar: oklch(0.8 0 0);
 
   --sidebar: oklch(0.975 0 0);
   --sidebar-foreground: oklch(0.3 0 0);
@@ -39,6 +42,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.16 0 0);
   --foreground: oklch(0.93 0 0);
   --card: oklch(0.19 0 0);
@@ -57,6 +61,7 @@
   --border: oklch(1 0 0 / 9%);
   --input: oklch(1 0 0 / 13%);
   --ring: oklch(0.55 0 0);
+  --scrollbar: oklch(1 0 0 / 18%);
 
   --sidebar: oklch(0.14 0 0);
   --sidebar-foreground: oklch(0.82 0 0);
