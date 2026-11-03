@@ -1,12 +1,20 @@
-import type { CalendarItem, ProviderCommand, ProviderEvent } from '@wow/contracts';
+import type {
+  CalendarItem,
+  ProviderCommand,
+  ProviderEvent,
+  ProviderInstance,
+  ProviderTestResult,
+} from '@wow/contracts';
 import { MockOutlookSource, loadFixtures } from '@wow/outlook-bridge';
 import {
   MockProviderAdapter,
+  createNpmRunner,
   snapshot,
   startOutlookService,
   startServer,
   type MockScript,
 } from '@wow/server';
+import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage } from 'node:http';
 import path from 'node:path';
@@ -162,6 +170,40 @@ const chatScript: MockScript = (command) => {
   }
 };
 
+// "Update Codex" (settings tests): a Codex instance named "... differs" tests as a compatible
+// other version, one named "... incompatible" as incompatible with an npm update until the fake
+// npm below has "installed" the tested version (a marker file in the server home).
+const codexInstalled = () => path.join(home, 'codex-installed');
+const fakeNpm = path.join(home, 'fake-npm.cjs');
+function codexTest(instance: ProviderInstance): () => ProviderTestResult {
+  return () => {
+    if (/differs/i.test(instance.name))
+      return {
+        ok: true,
+        account: 'mock',
+        version: '0.164.0',
+        message: 'codex 0.164.0 differs from the tested 0.166.0; compatible.',
+        update: null,
+      };
+    if (/incompatible/i.test(instance.name) && !existsSync(codexInstalled()))
+      return {
+        ok: false,
+        account: null,
+        version: '0.100.0',
+        message:
+          'codex 0.100.0 is not compatible with wow, which is tested with codex 0.166.0: model/list result.data[].hidden is missing. Update codex to 0.166.0.',
+        update: {
+          method: 'npm',
+          targetVersion: '0.166.0',
+          reason: 'incompatible',
+          packageSpec: '@openai/codex@0.166.0',
+          prefix: null,
+        },
+      };
+    return { ok: true, account: 'mock', version: 'mock', message: null };
+  };
+}
+
 // The invented Outlook fixtures, placed relative to today. The calendar tests make it fail and
 // come back through the control port below.
 const outlook = new MockOutlookSource({ fixtures: await loadFixtures() });
@@ -190,6 +232,14 @@ for (const [name, description] of [
 }
 // The seeded project's folder is the server home; an intent there is what the Feature template's
 // first step expects, so the workflow tests see a found artifact.
+await writeFile(
+  fakeNpm,
+  [
+    "const fs = require('node:fs');",
+    "process.stdout.write('added 1 package in 1s (invented)\\n');",
+    `fs.writeFileSync(${JSON.stringify(codexInstalled())}, process.argv.slice(2).join(' '));`,
+  ].join('\n'),
+);
 await mkdir(path.join(home, 'intents', 'demo'), { recursive: true });
 await writeFile(path.join(home, 'intents', 'demo', 'intent.md'), '# Demo intent\n');
 const server = await startServer({
@@ -197,6 +247,7 @@ const server = await startServer({
   port,
   userHome,
   ...(clockOffsetMs === 0 ? {} : { clock: () => new Date(Date.now() + clockOffsetMs) }),
+  runNpm: createNpmRunner({ file: process.execPath, prefixArgs: [fakeNpm] }),
   env: {
     ...process.env,
     WOW_PROVIDERS: '',
@@ -207,7 +258,7 @@ const server = await startServer({
   hooks: {
     providers: {
       claude: () => new MockProviderAdapter('claude', chatScript),
-      codex: () => new MockProviderAdapter('codex', chatScript),
+      codex: (instance) => new MockProviderAdapter('codex', chatScript, codexTest(instance)),
     },
     outlook: (mode, context) => {
       if (mode !== 'mock') throw new Error('The e2e server runs with WOW_OUTLOOK=mock');

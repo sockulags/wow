@@ -247,13 +247,75 @@ export const ProviderModel = z.object({
 });
 export type ProviderModel = z.infer<typeof ProviderModel>;
 
+// An npm package at an exact version, the only thing `provider.update` installs.
+export const NpmPackageSpec = z
+  .string()
+  .regex(/^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*@\d+\.\d+\.\d+[\w.+-]*$/);
+
+const UpdateReason = z.enum([
+  // The installed CLI does not speak the protocol the adapter needs.
+  'incompatible',
+  // It works, but it is older than the version the adapter is tested with.
+  'older',
+]);
+
+// How the installed CLI can be brought to the version the adapter is tested with, from the last
+// "Test". wow runs the npm install itself (`provider.update`); anything else is an instruction.
+export const ProviderUpdate = z.discriminatedUnion('method', [
+  z.object({
+    method: z.literal('npm'),
+    targetVersion: z.string().min(1),
+    reason: UpdateReason,
+    packageSpec: NpmPackageSpec,
+    // The npm prefix the CLI is installed under, when it is not the one `npm` on the server's
+    // PATH installs to.
+    prefix: z.string().min(1).nullable(),
+  }),
+  z.object({
+    method: z.literal('manual'),
+    targetVersion: z.string().min(1),
+    reason: UpdateReason,
+    instruction: z.string().min(1),
+  }),
+]);
+export type ProviderUpdate = z.infer<typeof ProviderUpdate>;
+export type NpmProviderUpdate = Extract<ProviderUpdate, { method: 'npm' }>;
+
+// The arguments of the npm command an update runs, after `npm`.
+export const npmInstallArgs = (update: NpmProviderUpdate): string[] => [
+  'install',
+  '-g',
+  update.packageSpec,
+  ...(update.prefix ? ['--prefix', update.prefix] : []),
+];
+
+// The command as the confirm dialog names it and a terminal takes it.
+export const npmInstallCommand = (update: NpmProviderUpdate): string =>
+  ['npm', ...npmInstallArgs(update)]
+    .map((arg) => (/^[\w@./:=+-]+$/.test(arg) ? arg : `"${arg}"`))
+    .join(' ');
+
+// The last update wow ran for an instance. Output is npm's stdout and stderr as they arrived.
+export const ProviderUpdateRun = z.object({
+  state: z.enum(['running', 'succeeded', 'failed']),
+  command: z.string().min(1),
+  targetVersion: z.string().min(1),
+  output: z.string(),
+  message: z.string().nullable(),
+  startedAt: z.iso.datetime({ offset: true }),
+  endedAt: z.iso.datetime({ offset: true }).nullable(),
+});
+export type ProviderUpdateRun = z.infer<typeof ProviderUpdateRun>;
+
 // What `test` answers. A failed test is a result with ok false and a message, not an exception,
-// so the settings page can show why.
+// so the settings page can show why. A passed test may carry a message too: a notice such as a
+// version that differs from the tested one.
 export const ProviderTestResult = z.object({
   ok: z.boolean(),
   account: z.string().nullable(),
   version: z.string().nullable(),
   message: z.string().nullable(),
+  update: ProviderUpdate.nullable().optional(),
 });
 export type ProviderTestResult = z.infer<typeof ProviderTestResult>;
 

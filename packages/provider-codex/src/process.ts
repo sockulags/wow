@@ -24,10 +24,70 @@ const stderrLines = 20;
 const quoteForCmd = (value: string): string =>
   /^[\w./:=-]+$/.test(value) ? value : `"${value.replaceAll('"', '""')}"`;
 
+// Node refuses to start .cmd and .bat files without a shell since the 2024 security releases.
+const needsShell = (file: string): boolean =>
+  process.platform === 'win32' && /\.(cmd|bat)$/i.test(file);
+
+export interface CommandRun {
+  // Null when the process did not exit by itself (it could not start, or was stopped).
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly timedOut: boolean;
+  // Why it could not start, such as ENOENT.
+  readonly startError: string | null;
+}
+
+export interface CommandLaunch {
+  readonly file: string;
+  readonly args: readonly string[];
+  readonly env: Record<string, string>;
+  readonly timeoutMs: number;
+}
+
+export type RunCommand = (launch: CommandLaunch) => Promise<CommandRun>;
+
+// Runs a short command (`codex app-server generate-json-schema`, `npm prefix -g`) to its end, or
+// stops it after timeoutMs.
+export const runCommand: RunCommand = (launch) =>
+  new Promise((resolve) => {
+    const viaShell = needsShell(launch.file);
+    const child = viaShell
+      ? spawn([launch.file, ...launch.args].map(quoteForCmd).join(' '), {
+          env: launch.env,
+          shell: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true,
+        })
+      : spawn(launch.file, launch.args, {
+          env: launch.env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true,
+        });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let done = false;
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, launch.timeoutMs);
+    timer.unref();
+    const finish = (code: number | null, startError: string | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ code: timedOut ? null : code, stdout, stderr, timedOut, startError });
+    };
+    child.on('error', (error) => finish(null, error.message));
+    child.on('close', (code) => finish(code, null));
+  });
+
 export const spawnCodexAppServer: SpawnCodex = (launch) => {
   const args = ['app-server', ...launch.launchArgs];
-  // Node refuses to start .cmd and .bat files without a shell since the 2024 security releases.
-  const viaShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(launch.binaryPath);
+  const viaShell = needsShell(launch.binaryPath);
   const child = viaShell
     ? spawn([launch.binaryPath, ...args].map(quoteForCmd).join(' '), {
         env: launch.env,

@@ -26,6 +26,8 @@ const instance = (id: string, kind: 'claude' | 'codex', configDir: string): Prov
   account: null,
   version: null,
   statusMessage: null,
+  update: null,
+  updateRun: null,
 });
 
 const project = (cwd: string): Project => ({

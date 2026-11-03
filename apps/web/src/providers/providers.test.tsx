@@ -84,6 +84,8 @@ const work: ProviderInstance = {
   account: null,
   version: null,
   statusMessage: 'Not logged in',
+  update: null,
+  updateRun: null,
 };
 
 const dispatched = (server: FakeServer) =>
@@ -256,5 +258,99 @@ describe('Settings → Providers', () => {
       { type: 'providerInstance.delete', providerInstanceId: 'claude-work' },
     ]);
     expect((await row.findByRole('alert')).textContent).toBe('Work is used by 2 threads');
+  });
+
+  it('offers the Codex update, names the command, and shows the run the server stores', async () => {
+    const user = userEvent.setup();
+    const codex: ProviderInstance = {
+      ...work,
+      id: 'codex-work',
+      kind: 'codex',
+      name: 'Codex',
+      env: {},
+      status: 'error',
+      version: '0.150.0',
+      statusMessage: 'codex 0.150.0 is not compatible with wow. Update codex to 0.166.0.',
+      update: {
+        method: 'npm',
+        targetVersion: '0.166.0',
+        reason: 'incompatible',
+        packageSpec: '@openai/codex@0.166.0',
+        prefix: null,
+      },
+    };
+    const server = fakeServer(
+      (method) => (method === 'provider.update' ? { command: 'npm install -g x' } : []),
+      { providerInstances: [codex] },
+    );
+    await renderApp('/settings/providers', runtimeFor(server.connection));
+    const row = within(await screen.findByRole('listitem', { name: 'Codex' }));
+    await user.click(row.getByRole('button', { name: 'Update Codex to 0.166.0' }));
+    const confirm = within(
+      await screen.findByRole('alertdialog', { name: 'Update Codex to 0.166.0?' }),
+    );
+    expect(confirm.getByTestId('provider-update-command').textContent).toBe(
+      'npm install -g @openai/codex@0.166.0',
+    );
+    await user.click(confirm.getByRole('button', { name: 'Update' }));
+    expect(server.requests.filter((request) => request.method === 'provider.update')).toEqual([
+      { method: 'provider.update', params: { providerInstanceId: 'codex-work' } },
+    ]);
+
+    const run = {
+      state: 'running' as const,
+      command: 'npm install -g @openai/codex@0.166.0',
+      targetVersion: '0.166.0',
+      output: 'added 1 package',
+      message: null,
+      startedAt: '2026-11-03T10:00:00.000Z',
+      endedAt: null,
+    };
+    server.publish('providerInstances', [{ ...codex, updateRun: run }]);
+    expect(row.getByTestId('provider-update-run').textContent).toBe('Updating Codex to 0.166.0…');
+    expect(row.getByText(/added 1 package/)).toBeTruthy();
+    expect(row.queryByRole('button', { name: 'Update Codex to 0.166.0' })).toBeNull();
+    server.publish('providerInstances', [
+      {
+        ...codex,
+        status: 'ready',
+        version: '0.166.0',
+        statusMessage: null,
+        update: null,
+        updateRun: { ...run, state: 'succeeded', endedAt: '2026-11-03T10:01:00.000Z' },
+      },
+    ]);
+    expect(row.getByTestId('provider-status').textContent).toBe('Ready');
+    expect(row.getByTestId('provider-update-run').textContent).toBe(
+      'Codex 0.166.0 installed. wow tested it again.',
+    );
+  });
+
+  it('shows a different but compatible version as ready with a notice, and a manual update', async () => {
+    const codex: ProviderInstance = {
+      ...work,
+      id: 'codex-brew',
+      kind: 'codex',
+      name: 'Codex',
+      env: {},
+      status: 'ready',
+      version: '0.164.0',
+      statusMessage: 'codex 0.164.0 differs from the tested 0.166.0; compatible.',
+      update: {
+        method: 'manual',
+        targetVersion: '0.166.0',
+        reason: 'older',
+        instruction: 'codex was installed with Homebrew. Run "brew upgrade codex".',
+      },
+    };
+    const server = fakeServer(() => [], { providerInstances: [codex] });
+    await renderApp('/settings/providers', runtimeFor(server.connection));
+    const row = within(await screen.findByRole('listitem', { name: 'Codex' }));
+    expect(row.getByTestId('provider-status').textContent).toBe('Ready');
+    expect(row.getByTestId('provider-notice').textContent).toBe(
+      'codex 0.164.0 differs from the tested 0.166.0; compatible.',
+    );
+    expect(row.getByTestId('provider-update-instruction').textContent).toContain('brew upgrade');
+    expect(row.queryByRole('button', { name: /Update Codex/ })).toBeNull();
   });
 });

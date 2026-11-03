@@ -15,6 +15,7 @@ import type { Db } from '../db/database.js';
 import { projects, workflowRuns } from '../db/schema.js';
 import type { OutlookService } from '../outlook/service.js';
 import type { ProviderService } from '../providers/service.js';
+import type { ProviderUpdates } from '../providers/update.js';
 import type { SettingsService } from '../settings/service.js';
 import type { SkillsService } from '../skills/service.js';
 import { TrackerError } from '../trackers/http.js';
@@ -38,6 +39,7 @@ export interface HandlerDeps {
   readonly skills: SkillsService;
   readonly workflows: WorkflowRunner;
   readonly providers: ProviderService;
+  readonly providerUpdates: ProviderUpdates;
   readonly trackers: TrackerService;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
   readonly discoverProjects: () => Promise<DiscoveredProject[]>;
@@ -82,6 +84,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     },
     'settings.resolve': (context) => deps.settings.resolveAll(context),
     'provider.test': ({ providerInstanceId }) => deps.providers.test(providerInstanceId),
+    'provider.update': ({ providerInstanceId }) => deps.providerUpdates.start(providerInstanceId),
     'provider.listModels': ({ providerInstanceId }) =>
       deps.providers.listModels(providerInstanceId),
     'provider.detect': () => deps.detectProviders(),

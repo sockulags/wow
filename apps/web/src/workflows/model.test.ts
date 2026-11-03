@@ -47,6 +47,8 @@ const instance: ProviderInstance = {
   account: null,
   version: null,
   statusMessage: null,
+  update: null,
+  updateRun: null,
 };
 
 const skill = (name: string, plugin?: string): Skill => ({

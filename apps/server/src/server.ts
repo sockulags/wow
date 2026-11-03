@@ -25,6 +25,7 @@ import type { OutlookService } from './outlook/service.js';
 import { discoverProjects } from './projects/discover.js';
 import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
+import { ProviderUpdates, createNpmRunner, type RunNpm } from './providers/update.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
 import { route } from './rpc/router.js';
 import { Scheduler, type SchedulerTimers } from './scheduler/service.js';
@@ -73,6 +74,8 @@ export interface StartOptions {
   readonly schedulerTimers?: SchedulerTimers;
   // Replaces the global fetch the tracker clients use, for tests.
   readonly fetch?: typeof fetch;
+  // Runs npm for "Update Codex" (`provider.update`); tests and the e2e server pass a fake one.
+  readonly runNpm?: RunNpm;
 }
 
 export interface RunningServer {
@@ -89,6 +92,7 @@ export interface RunningServer {
   readonly skills: SkillsService;
   readonly workflows: WorkflowRunner;
   readonly providerService: ProviderService;
+  readonly providerUpdates: ProviderUpdates;
   readonly scheduler: Scheduler;
   readonly trackers: TrackerService;
   readonly logger: Logger;
@@ -152,6 +156,16 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     detectArtifacts: options.detectArtifacts ?? detectArtifacts,
     logger,
   });
+  const providerUpdates = new ProviderUpdates({
+    db: database.db,
+    engine,
+    providers: providerService,
+    settings,
+    logger,
+    env,
+    runNpm: options.runNpm ?? createNpmRunner({ platform: options.platform ?? process.platform }),
+  });
+  providerUpdates.recover();
   // The runner listens first, so a step whose turn recovery fails also fails its run.
   providerService.recover();
   // Set once the Outlook hook has started, which happens after the socket listens.
@@ -182,6 +196,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     skills,
     workflows,
     providers: providerService,
+    providerUpdates,
     trackers,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     discoverProjects: () =>
@@ -308,6 +323,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const stop = () =>
     (stopped ??= (async () => {
       await stopServices();
+      await providerUpdates.stop();
       await providerService.stop();
       await trackers.idle();
       for (const client of wss.clients) client.terminate();
@@ -332,6 +348,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     skills,
     workflows,
     providerService,
+    providerUpdates,
     scheduler,
     trackers,
     logger,

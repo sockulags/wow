@@ -3,6 +3,8 @@ import {
   ApprovalDecision,
   ApprovalKind,
   ProviderKind,
+  ProviderUpdate,
+  ProviderUpdateRun,
   QuestionOption,
   TaskStatus,
   ThreadState,
@@ -46,6 +48,9 @@ export const ProviderInstance = z.object({
   // Provider version and error text from the last "Test", shown with the status badge.
   version: z.string().nullable(),
   statusMessage: z.string().nullable(),
+  // How to bring the CLI to the tested version, from the last "Test", and the last update wow ran.
+  update: ProviderUpdate.nullable(),
+  updateRun: ProviderUpdateRun.nullable(),
 });
 export type ProviderInstance = z.infer<typeof ProviderInstance>;
 

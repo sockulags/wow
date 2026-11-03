@@ -5,7 +5,19 @@ import type {
   ProviderCommand,
   ProviderEvent,
   ProviderInstance,
+  ProviderTestResult,
+  ProviderUpdate,
+  TaskStatus,
 } from '@wow/contracts';
+import {
+  CompatibilityCache,
+  checkInstalledCodex,
+  generateJsonSchema,
+  type GenerateSchema,
+  type SchemaLaunch,
+} from './compat/check.js';
+import type { ProtocolFingerprint } from './compat/schema.js';
+import { compareCodexVersions } from './compat/version.js';
 import {
   CodexConnection,
   CodexError,
@@ -14,10 +26,16 @@ import {
   type ServerRequest,
   type Timers,
 } from './connection.js';
-import { permissionMode, sandboxPolicy } from './permissions.js';
-import { spawnCodexAppServer, type SpawnCodex } from './process.js';
 import {
-  codexProtocolVersion,
+  codexUpdateOffer,
+  detectCodexInstall,
+  systemInstallIo,
+  type InstallIo,
+} from './install.js';
+import { permissionMode, sandboxPolicy } from './permissions.js';
+import { runCommand, spawnCodexAppServer, type RunCommand, type SpawnCodex } from './process.js';
+import { codexProtocolFingerprint } from './protocol/generated/fingerprint.js';
+import {
   type GetAccountResponse,
   type ModelListResponse,
   type RequestId,
@@ -43,10 +61,15 @@ export interface CodexModel {
   readonly isDefault: boolean;
 }
 
-export interface CodexTestResult {
-  readonly codexVersion: string;
-  readonly account: string;
+export interface CodexTestResult extends ProviderTestResult {
   readonly models: readonly CodexModel[];
+}
+
+// What "Test" concludes about an installed codex version other than the tested one.
+export interface CodexVersionVerdict {
+  readonly ok: boolean;
+  readonly message: string;
+  readonly update: ProviderUpdate | null;
 }
 
 export interface CodexAdapterOptions {
@@ -61,7 +84,19 @@ export interface CodexAdapterOptions {
   readonly timers?: Timers;
   readonly newId?: () => string;
   readonly clientVersion?: string;
+  // providers.testTimeoutMs: bounds each command the version check runs.
+  readonly testTimeoutMs?: () => number;
+  // Shared by the adapters of one factory, so the check runs once per binary and version.
+  readonly compatibility?: CompatibilityCache<CodexVersionVerdict>;
+  readonly generateSchema?: GenerateSchema;
+  // Runs `npm prefix -g` to tell where `npm install -g` would install.
+  readonly runCommand?: RunCommand;
+  readonly installIo?: InstallIo;
+  readonly fingerprint?: ProtocolFingerprint;
 }
+
+// The providers.testTimeoutMs default, for an adapter made without the server's context.
+const defaultTestTimeoutMs = 120_000;
 
 interface ThreadState {
   readonly wowId: string;
@@ -109,8 +144,17 @@ const accountLabel = (account: NonNullable<GetAccountResponse['account']>): stri
       return 'Amazon Bedrock';
     case 'gcp':
       return 'Google Cloud';
+    default:
+      // An account kind a later codex added.
+      return 'Signed in';
   }
 };
+
+const taskStatus = (status: string): TaskStatus =>
+  status === 'inProgress' ? 'in_progress' : status === 'completed' ? 'completed' : 'pending';
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 // "<originator>/<version> (<os>) ..." is the only place initialize reports the codex version.
 export const codexVersionFromUserAgent = (userAgent: string): string | null =>
@@ -216,6 +260,8 @@ export class CodexAdapter implements ProviderAdapter {
   readonly #byCodexId = new Map<string, ThreadState>();
   readonly #approvals = new Map<string, OpenApproval>();
   readonly #inputs = new Map<string, OpenInput>();
+  readonly #fingerprint: ProtocolFingerprint;
+  readonly #compatibility: CompatibilityCache<CodexVersionVerdict>;
   #connection: CodexConnection | null = null;
   #ready: Promise<CodexConnection> | null = null;
   #serverVersion: string | null = null;
@@ -226,6 +272,8 @@ export class CodexAdapter implements ProviderAdapter {
     this.#options = options;
     this.#spawn = options.spawn ?? spawnCodexAppServer;
     this.#newId = options.newId ?? randomUUID;
+    this.#fingerprint = options.fingerprint ?? codexProtocolFingerprint;
+    this.#compatibility = options.compatibility ?? new CompatibilityCache();
   }
 
   // How many app-server processes were started; a restart shows up as a second start.
@@ -517,11 +565,22 @@ export class CodexAdapter implements ProviderAdapter {
   async #test(): Promise<CodexTestResult> {
     const connection = await this.#connect();
     const version = this.#serverVersion;
-    if (version !== codexProtocolVersion)
+    const tested = this.#fingerprint.codexVersion;
+    if (!version)
       throw new CodexError(
         'unsupported',
-        `${version ? `codex ${version}` : 'This codex'} is not supported: wow speaks the app-server protocol of codex ${codexProtocolVersion}. Install codex ${codexProtocolVersion}, or regenerate packages/provider-codex for the installed version.`,
+        `This codex does not report its version, so wow cannot check it against the tested codex ${tested}. Install codex ${tested}.`,
       );
+    const verdict = version === tested ? null : await this.#verdict(version);
+    if (verdict && !verdict.ok)
+      return {
+        ok: false,
+        account: null,
+        version,
+        message: verdict.message,
+        update: verdict.update,
+        models: [],
+      };
     const { account, requiresOpenaiAuth } = await connection.request('account/read', {
       refreshToken: false,
     });
@@ -533,14 +592,84 @@ export class CodexAdapter implements ProviderAdapter {
       );
     }
     return {
-      codexVersion: version,
+      ok: true,
       account: account ? accountLabel(account) : 'No login required',
+      version,
+      message: verdict?.message ?? null,
+      update: verdict?.update ?? null,
       models: await this.#listModels(connection),
     };
   }
 
+  // Whether an installed codex other than the tested one speaks what the adapter needs, from the
+  // schema that codex generates, and how to get the tested version. Kept per binary and version.
+  #verdict(version: string): Promise<CodexVersionVerdict> {
+    const binaryPath = this.#options.instance.binaryPath || 'codex';
+    return this.#compatibility.get(binaryPath, version, async () => {
+      const tested = this.#fingerprint.codexVersion;
+      const launch: SchemaLaunch = {
+        binaryPath,
+        env: await this.#environment(),
+        timeoutMs: (this.#options.testTimeoutMs ?? (() => defaultTestTimeoutMs))(),
+      };
+      const check = await checkInstalledCodex(
+        this.#fingerprint,
+        this.#options.generateSchema ?? generateJsonSchema,
+        launch,
+      );
+      const older = (compareCodexVersions(version, tested) ?? 0) < 0;
+      if (check.state === 'compatible') {
+        const without =
+          check.doesWithout.length > 0 ? ` (wow does without ${check.doesWithout.join(', ')})` : '';
+        return {
+          ok: true,
+          message: `codex ${version} differs from the tested ${tested}; compatible${without}.`,
+          update: older ? await this.#updateOffer('older', launch) : null,
+        };
+      }
+      const reason =
+        check.state === 'incompatible'
+          ? `codex ${version} is not compatible with wow, which is tested with codex ${tested}: ${check.problems.join('; ')}.`
+          : `codex ${version} cannot describe its app-server protocol ("codex app-server generate-json-schema" failed: ${check.detail}), so wow cannot check it against the tested codex ${tested}.`;
+      return {
+        ok: false,
+        message: `${reason} Update codex to ${tested}.`,
+        update: await this.#updateOffer('incompatible', launch),
+      };
+    });
+  }
+
+  async #updateOffer(
+    reason: ProviderUpdate['reason'],
+    launch: SchemaLaunch,
+  ): Promise<ProviderUpdate> {
+    const io: InstallIo = { ...(this.#options.installIo ?? systemInstallIo), env: launch.env };
+    const install = detectCodexInstall(launch.binaryPath, io);
+    let npmGlobalPrefix: string | null = null;
+    if (install.method === 'npm') {
+      const run = await (this.#options.runCommand ?? runCommand)({
+        file: io.platform === 'win32' ? 'npm.cmd' : 'npm',
+        args: ['prefix', '-g'],
+        env: launch.env,
+        timeoutMs: launch.timeoutMs,
+      });
+      const printed = run.stdout.trim().split(/\r?\n/).at(-1)?.trim() ?? '';
+      npmGlobalPrefix = run.code === 0 && printed !== '' ? printed : null;
+    }
+    return codexUpdateOffer({
+      install,
+      targetVersion: this.#fingerprint.codexVersion,
+      reason,
+      npmGlobalPrefix,
+      platform: io.platform,
+    });
+  }
+
   #request(connection: CodexConnection, message: ServerRequest): void {
-    const thread = this.#byCodexId.get(message.params.threadId);
+    const params: unknown = message.params;
+    const codexThreadId = isRecord(params) ? params['threadId'] : undefined;
+    const thread =
+      typeof codexThreadId === 'string' ? this.#byCodexId.get(codexThreadId) : undefined;
     if (!thread) {
       connection.respondError(message.id, -32602, 'wow does not know this thread');
       return;
@@ -639,14 +768,18 @@ export class CodexAdapter implements ProviderAdapter {
     }
   }
 
+  // Notifications of methods the adapter does not know, or without params, are dropped here: a
+  // newer codex may send more than the tested one.
   #notification(message: ServerNotification): void {
+    const params: unknown = message.params;
+    if (!isRecord(params)) return;
     if (message.method === 'serverRequest/resolved') {
       this.#forgetRequest(message.params.requestId);
       return;
     }
-    const params: { threadId?: unknown } = message.params;
-    if (typeof params.threadId !== 'string') return;
-    const thread = this.#byCodexId.get(params.threadId);
+    const codexThreadId = params['threadId'];
+    if (typeof codexThreadId !== 'string') return;
+    const thread = this.#byCodexId.get(codexThreadId);
     if (!thread) return;
     const threadId = thread.wowId;
     switch (message.method) {
@@ -682,7 +815,7 @@ export class CodexAdapter implements ProviderAdapter {
           tasks: message.params.plan.map((step, index) => ({
             id: `${message.params.turnId}-${index}`,
             content: step.step,
-            status: step.status === 'inProgress' ? 'in_progress' : step.status,
+            status: taskStatus(step.status),
           })),
         });
         return;

@@ -39,8 +39,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   `packages/contracts` schemas: `rpcMethods` maps each method to its params and result schema.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
-  `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test` and `provider.listModels`
-  (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`,
+  `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test`, `provider.listModels` and
+  `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`,
   `workflowRuns.detectArtifacts` (`{runId}`), `workflows.matchArtifacts` (`{projectId, globs}`),
   `outlook.open` (`{entryId}`), `outlook.refresh`, `projects.git` (every project folder's git
   status and remotes), `trackers.project` (`{projectId}`, one project's tracker settings with their
@@ -99,7 +99,8 @@ projectId?, title?, labels?}`). Error codes are `RpcErrorCode`.
 projects         id, name, cwd, defaultProviderInstanceId, defaultModel, createdAt
 provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env(json, secret keys by ref),
                  launchArgs, defaultModel, defaultEffort, defaultPermissionMode, status, account,
-                 version?, statusMessage?   -- from the last "Test"
+                 version?, statusMessage?, update(json)?   -- from the last "Test"
+                 updateRun(json)?   -- the last "Update Codex": state, command, output, times
 threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessionId?, title, model,
                  effort, permissionMode, state ('idle'|'working'|'needs_you'|'done'|'failed'),
                  pinned, runId?, stepId?, createdAt, updatedAt
@@ -167,9 +168,23 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   one `questionAsked` per question; `model/list` feeds the picker and `account/read` the "Test"
   action. Method names and types are generated, not written from memory:
   `scripts/generate-protocol.mjs` runs `codex app-server generate-ts` for the installed codex and
-  keeps the methods the adapter uses (currently codex 0.166.0). `initialize` reports the codex
-  version only inside `userAgent`; the adapter reads it there and "Test" fails with a clear message
-  when it is not the generated version. Permission modes (`read-only`, `auto`, `untrusted`,
+  keeps the methods the adapter uses (currently codex 0.166.0). It also writes a protocol
+  fingerprint (`src/protocol/generated/fingerprint.ts`): for each method, the fields the adapter
+  sends and reads (`FIELDS` in the script) with their types, read from
+  `codex app-server generate-json-schema`. `initialize` reports the codex version only inside
+  `userAgent`. When it is not the generated version, "Test" runs `generate-json-schema` of the
+  installed codex into a temporary folder (no network or login; bounded by
+  `providers.testTimeoutMs`) and compares it with the fingerprint (`src/compat/schema.ts`): a
+  compatible version passes with a notice in `statusMessage` ("codex 0.164.0 differs from the
+  tested 0.166.0; compatible"), an incompatible one fails listing each missing or changed method
+  and field, and a codex without the generator fails saying so. Read fields may go missing when the
+  adapter copes (marked in `FIELDS`) or the tested release already allowed null; sent fields only
+  when the adapter copes; new fields, values, variants and methods never matter, and the adapter
+  drops notifications it does not know. The answer is cached per binary path and version by the
+  adapter factory, for the life of the server process. An incompatible or older version also
+  answers `update` (`ProviderUpdate`): `npm` when the binary is an npm global install (detected
+  from the path and `npm prefix -g`), else `manual` with the Homebrew or download instruction.
+  Permission modes (`read-only`, `auto`, `untrusted`,
   `full-access`) are an approval policy plus a sandbox; model, effort and permission mode travel
   with every `turn/start`. Every request waits at most `providers.requestTimeoutMs` (read per
   request); a timeout fails the request and restarts the app-server. Details in
@@ -233,6 +248,16 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   drops the instance's adapter (the next use builds one from the new row) and deletes secrets the
   instance no longer references. Delete also removes provider-scoped settings and clears project
   defaults that pointed at it.
+- **Provider updates** (`apps/server/src/providers/update.ts`). The last test's `update` is stored
+  on the instance. `provider.update` runs its npm update (`npm install -g <package>@<version>`,
+  `npm.cmd` through the shell on Windows, `--prefix` when the test named one) as a server
+  subprocess: it is refused without an npm offer, while one runs, or while a turn runs on an
+  instance with the same kind and binary; it stops those instances' adapters first (Windows keeps a
+  running binary locked), answers with the command, and records `providerInstance.recordUpdate`
+  progress (started, output batched per tick, finished) into the instance's `updateRun`. A good
+  install tests every instance on that binary again. `providers.updateTimeoutMs` stops npm; a run
+  still `running` at startup failed with the previous server process. The UI only renders
+  `update` and `updateRun` and sends the RPC after a confirm dialog that names the command.
 
 ## Outlook bridge
 
@@ -482,7 +507,8 @@ a key named here and missing from the registry, or registered and missing here, 
 A group marked with a unit (`(U12)`) belongs to a unit not delivered yet; its keys must not exist
 until that unit removes the mark. `group.*` covers every key of the group.
 
-- providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.offerSetup`
+- providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
+  `providers.offerSetup`
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.starterCount`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,

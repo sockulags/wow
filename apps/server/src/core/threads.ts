@@ -20,6 +20,7 @@ type ThreadCommand = Extract<
     type:
       | 'providerInstance.create'
       | 'providerInstance.recordTest'
+      | 'providerInstance.recordUpdate'
       | 'thread.create'
       | 'thread.sendMessage'
       | 'thread.interrupt'
@@ -84,6 +85,8 @@ export function decideThread(
             account: null,
             version: null,
             statusMessage: null,
+            update: null,
+            updateRun: null,
           },
         },
       ];
@@ -106,7 +109,33 @@ export function decideThread(
             account: result.account,
             version: result.version,
             statusMessage: result.message,
+            update: result.update ?? null,
           },
+        },
+      ];
+    }
+    case 'providerInstance.recordUpdate': {
+      const instance = read.providerInstance(command.providerInstanceId);
+      if (!instance) {
+        throw new CommandRejected(
+          'not_found',
+          `No provider instance ${command.providerInstanceId}`,
+        );
+      }
+      const running = instance.updateRun?.state === 'running';
+      if (command.progress.phase === 'started' ? running : !running) {
+        throw new CommandRejected(
+          'conflict',
+          running
+            ? `An update of ${instance.name} is already running`
+            : `No update of ${instance.name} is running`,
+        );
+      }
+      return [
+        {
+          kind: 'providerInstance.updateProgressed',
+          aggregate: command.providerInstanceId,
+          payload: { providerInstanceId: command.providerInstanceId, progress: command.progress },
         },
       ];
     }

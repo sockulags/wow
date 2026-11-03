@@ -48,6 +48,8 @@ const instance = (id: string, name: string, kind: ProviderInstance['kind']): Pro
   account: null,
   version: null,
   statusMessage: null,
+  update: null,
+  updateRun: null,
 });
 
 const skill = (name: string, source: Skill['source'], claude = `/${name}`): Skill => ({
