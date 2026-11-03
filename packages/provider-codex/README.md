@@ -31,9 +31,51 @@ they reach, and writes typed method maps (`ClientRequests`, `ServerNotifications
 `ServerRequests`) plus `codexProtocolVersion`. A method that release no longer defines fails the
 script, and the adapter stops compiling where a type changed. Re-record the fixtures afterwards.
 
+The script also runs `codex app-server generate-json-schema` and writes
+`src/protocol/generated/fingerprint.ts` (`codexProtocolFingerprint`): for every method in
+`METHODS`, the params fields the adapter sends and the result or notification fields it reads,
+each with its type, whether it is required and nullable, and its enum values or union tags. Which
+fields those are is `FIELDS` in the script, with flags: `?` the adapter copes without the field
+(or, on a method, without the notification or request), `~` it leaves a sent field out on some
+requests, `=null` it may send null, `=a|b` the values it sends. A field `FIELDS` names that the
+release lacks fails the script. When the adapter starts to read or send another field, add it to
+`FIELDS` and regenerate. The script needs Node 22.18 or newer, which imports
+`src/compat/schema.ts` as TypeScript.
+
+### Other codex versions
+
 initialize reports no protocol version, only a user agent (`wow/0.166.0 (...)`); the adapter reads
-the version from it. The `test` command fails with a clear message when it differs from
-`codexProtocolVersion`.
+the version from it. When it differs from `codexProtocolVersion`, `test` runs
+`<binaryPath> app-server generate-json-schema --out <temp dir>` (no network, no login; bounded by
+`providers.testTimeoutMs`) and compares that schema with the fingerprint (`src/compat`):
+
+- Read fields (codex → wow): missing is fine when `FIELDS` says the adapter copes, when the tested
+  release already allowed null, or when the whole union variant on the path is gone (wow never
+  sees such an item). A changed type, or a field that was always there becoming optional or
+  nullable, is a problem. New enum values, variants, fields and methods are fine: the adapter
+  ignores what it does not know, including notifications without params.
+- Sent fields (wow → codex): missing is fine only when the adapter copes. A changed type, an enum
+  value or variant the adapter sends that codex no longer accepts, null no longer accepted where
+  the adapter sends null, a field it leaves out sometimes becoming required, and a new required
+  property in an object it builds are problems.
+- A string that became an enum (or back) is no type change.
+- Methods: a missing request, client notification or handled server request is a problem (renamed
+  or removed); a missing notification the adapter copes without is not.
+
+Compatible: `test` passes with the message "codex 0.164.0 differs from the tested 0.166.0;
+compatible" (naming what wow does without, if anything). Incompatible: `test` fails with every
+problem listed. A codex whose schema generator fails (older releases) fails with that reason. The
+answer is kept per binary path and version by the factory (`CompatibilityCache`), for the life of
+the server process; a timeout is not kept. Checked by hand against real codex 0.100.0
+(incompatible: `model/list` `includeHidden` and `hidden`, `sandboxPolicy<readOnly>.networkAccess`),
+0.130.0 and 0.164.0 (compatible) and 0.166.0.
+
+When the version is incompatible or older than tested, `test` also answers `update`
+(`ProviderUpdate` in contracts, `src/install.ts`): `npm` when the binary is an npm global install
+(`<prefix>\codex.cmd` next to `<prefix>\node_modules\@openai\codex` on Windows, a link into
+`<prefix>/lib/node_modules/@openai/codex` or `<prefix>/bin/codex` with that package on POSIX),
+with `--prefix` when `npm prefix -g` names another prefix; otherwise `manual` with the Homebrew or
+download instruction. The server runs the npm update (`provider.update`); the adapter never does.
 
 ### New codex releases
 
@@ -45,15 +87,17 @@ runs `generate:protocol` with it, names the version in this file and `docs/archi
 (`scripts/codex-release.mjs docs`), runs the repository checks on Linux and opens or updates a pull
 request on `agent/codex-protocol-<version>`. The body lists the added, removed and changed
 generated files, the method-map lines that changed and each check's result. A pull request is a
-draft when a check fails, or when generation fails (for example a method in `METHODS` is gone), in
-which case the body carries the error instead of a diff.
+draft when a check fails, or when generation fails (for example a method in `METHODS` or a field
+in `FIELDS` is gone), in which case the body carries the error instead of a diff. The generated
+`fingerprint.ts` changes with the release too.
 
 One branch per version: a later run updates the open pull request, leaves a branch alone once
 anyone else has pushed to it, and does not reopen a closed pull request on its schedule. The
 workflow token cannot start `ci.yml`, so close and reopen the pull request to run CI on Linux and
-Windows. The fixtures still come from the old codex and `test` refuses a different version, so
-expect the adapter tests to fail until the fixtures are re-recorded with the new codex (see
-"Tests"); that work is pushed to the same branch.
+Windows. The fixtures still come from the old codex. The adapter tests pass anyway: their fake
+user agent follows `codexProtocolVersion`, and `test` on a recording of the older version checks
+it against an invented schema made from the new fingerprint (see "Other codex versions"). Re-record
+the fixtures with the new codex on the same branch (see "Tests") so they show what it sends.
 
 ## Mapping
 
@@ -79,7 +123,7 @@ expect the adapter tests to fail until the fixtures are re-recorded with the new
 | `turnCompleted` / `Interrupted`    | `turn/completed` with status `completed` / `interrupted`                        |
 | `turnFailed`                       | `turn/completed` failed, an `error` without retry, a timeout, or process exit   |
 | `listModels`                       | `model/list`, all pages, hidden models left out                                 |
-| `test`                             | initialize, version check, `account/read`, `model/list`                         |
+| `test`                             | initialize, version or schema check, `account/read`, `model/list`               |
 
 Permission modes are `read-only`, `auto` (default), `untrusted` and `full-access`
 (`codexPermissionModes`); each is an approval policy plus a sandbox. Model, effort and permission
@@ -93,9 +137,14 @@ starts a new process; threads are resumed with `thread/resume`.
 
 ## Tests
 
+- `src/compat/compat.test.ts` checks the comparison against invented schemas made from the
+  fingerprint (`src/compat/synthesize.ts`), and `adapter.test.ts` runs `test` against a fake codex
+  of another version with a compatible or incompatible invented schema. The fake user agent follows
+  `codexProtocolVersion`, so regenerating for a new codex does not break these tests.
 - `pnpm --filter @wow/provider-codex test` replays JSON-RPC fixtures through a fake stdio process
   (`ReplayCodexProcess`). `fixtures/turn-interrupt.jsonl` and `fixtures/test-not-logged-in.jsonl`
   are recorded from codex 0.166.0 with invented paths and ids; `fixtures/turn-tools.jsonl` is an
   invented turn written against the generated types.
 - `WOW_REAL_PROVIDERS=1` runs `src/real.smoke.test.ts` against the installed codex (`CODEX_BIN`,
-  `WOW_CODEX_HOME`); the turn needs a logged-in codex home.
+  `WOW_CODEX_HOME`); the turn needs a logged-in codex home. Its schema check needs neither login
+  nor network (`WOW_CODEX_EXPECT=incompatible` for a release that is not compatible).

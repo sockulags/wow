@@ -29,6 +29,7 @@ import {
   ProviderEvent,
   ProviderKind,
   ProviderTestResult,
+  ProviderUpdate,
   ThreadState,
 } from './provider.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
@@ -250,6 +251,23 @@ export const OutlookCalendarRow = CalendarItem.pick({
 }).extend({ externalId: z.string().min(1), state: OutlookItemState });
 export type OutlookCalendarRow = z.infer<typeof OutlookCalendarRow>;
 
+export const ProviderUpdateProgress = z.discriminatedUnion('phase', [
+  z.object({
+    phase: z.literal('started'),
+    command: z.string().min(1),
+    targetVersion: z.string().min(1),
+    at: Timestamp,
+  }),
+  z.object({ phase: z.literal('output'), text: z.string().min(1) }),
+  z.object({
+    phase: z.literal('finished'),
+    ok: z.boolean(),
+    message: z.string().nullable(),
+    at: Timestamp,
+  }),
+]);
+export type ProviderUpdateProgress = z.infer<typeof ProviderUpdateProgress>;
+
 // Commands only the server issues: what provider adapters report, and test results. They go
 // through the same pipeline as client commands but are not accepted over RPC.
 export const InternalCommand = z.discriminatedUnion('type', [
@@ -262,6 +280,12 @@ export const InternalCommand = z.discriminatedUnion('type', [
     type: z.literal('providerInstance.recordTest'),
     providerInstanceId: Id,
     result: ProviderTestResult,
+  }),
+  // What a running `provider.update` reports: its start, output as it arrives, and its end.
+  z.object({
+    type: z.literal('providerInstance.recordUpdate'),
+    providerInstanceId: Id,
+    progress: ProviderUpdateProgress,
   }),
   // A good Outlook poll: everything Outlook returned for the window. The orchestrator compares it
   // with the stored rows, so only changes become events.
@@ -348,6 +372,7 @@ export const ProviderInstanceChanges = ProviderInstance.pick({
   account: true,
   version: true,
   statusMessage: true,
+  update: true,
 }).partial();
 export type ProviderInstanceChanges = z.infer<typeof ProviderInstanceChanges>;
 
@@ -435,7 +460,13 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       account: z.string().nullable(),
       version: z.string().nullable(),
       statusMessage: z.string().nullable(),
+      update: ProviderUpdate.nullable(),
     }),
+  }),
+  z.object({
+    kind: z.literal('providerInstance.updateProgressed'),
+    aggregate: Id,
+    payload: z.object({ providerInstanceId: Id, progress: ProviderUpdateProgress }),
   }),
   z.object({
     kind: z.literal('skills.synced'),

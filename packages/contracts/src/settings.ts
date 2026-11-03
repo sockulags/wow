@@ -272,7 +272,7 @@ export const settingsRegistry = {
     group: 'providers',
     label: 'Test timeout',
     description:
-      'How long the "Test" action of a provider instance may take, including its trivial turn, before it is reported as failed.',
+      'How long the "Test" action of a provider instance may take, including its trivial turn, before it is reported as failed. It also bounds the protocol check of a Codex version other than the tested one.',
     default: 120_000,
     scope: 'provider',
     unit: 'ms',
@@ -284,6 +284,16 @@ export const settingsRegistry = {
     description:
       'How long a provider app-server (Codex) may take to answer one request, such as starting a thread or a turn, before the request fails and the app-server is restarted. Streamed turn output is not limited by it.',
     default: 60_000,
+    scope: 'provider',
+    unit: 'ms',
+  }),
+  'providers.updateTimeoutMs': defineSetting({
+    schema: z.number().int().min(30_000).max(3_600_000),
+    group: 'providers',
+    label: 'Update timeout',
+    description:
+      'How long "Update Codex" may run npm to install the tested Codex version before it is stopped and reported as failed.',
+    default: 600_000,
     scope: 'provider',
     unit: 'ms',
   }),

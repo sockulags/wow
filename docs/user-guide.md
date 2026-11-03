@@ -172,6 +172,32 @@ clears the last test result. An instance cannot be edited or removed while a tur
 cannot be removed while threads use it. **Remove** removes at once and offers **Undo**; an instance
 with secret variables asks first, because its stored secrets are deleted and cannot come back.
 
+### Codex versions
+
+wow is tested with one Codex version, which the messages below name. When the installed `codex`
+reports another version, **Test** asks that `codex` to describe its app-server protocol
+(`codex app-server generate-json-schema`, which needs no network and no login) and compares it
+with the methods and fields wow uses. This runs once per binary and version while wow runs.
+
+- **Compatible**: the instance is **Ready** with a note such as "codex 0.164.0 differs from the
+  tested 0.166.0; compatible". If wow does without a field the other version lacks (an optional
+  detail), the note names it. Threads work as usual.
+- **Not compatible**: the instance shows **Error** with each method or field that is missing or
+  changed, for example "turn/start result.turn.id changed from string to number".
+- **Cannot tell**: a Codex too old to describe its protocol shows **Error** with that reason.
+
+When the version is not compatible, or older than the tested one, the instance offers the tested
+version:
+
+- Installed with npm (`npm install -g @openai/codex`, on Windows the `codex.cmd` in your npm
+  folder): **Update Codex to <version>**. The confirmation names the exact command, usually
+  `npm install -g @openai/codex@<version>` (with `--prefix` when codex lives under another npm folder
+  than the `npm` wow finds). wow runs it, shows npm's output under the instance, and tests every
+  instance that uses that `codex` again. It stops the Codex app-server first and refuses while a
+  turn runs. `providers.updateTimeoutMs` (10 minutes by default) limits how long npm may take.
+- Installed another way (Homebrew, a downloaded binary): the instance says what to run or
+  download instead, then test again.
+
 ## Calendar
 
 The calendar shows a day or a week (`D` and `W`, or the Day and Week buttons) with your work hours
@@ -542,7 +568,8 @@ key that two commands share; click a key and press the new combination.
 Useful ones to know:
 
 - `providers.testTimeoutMs`, `providers.requestTimeoutMs` (how long Codex may take to answer one
-  request; can be set per provider instance)
+  request; can be set per provider instance), `providers.updateTimeoutMs` (how long "Update Codex"
+  may run npm)
 - `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`, `calendar.lookaheadDays`
 - `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`
 - `scheduler.missedPolicy`, `scheduler.notifications`, `scheduler.paused`
@@ -586,8 +613,15 @@ None are known right now; the rest of this guide describes the intended behavior
   terminal with the same `CLAUDE_CONFIG_DIR` or `CODEX_HOME` and log in there.
 - A slow first start can exceed `providers.testTimeoutMs`; raise it and test again. For Codex,
   "codex did not answer … within … ms" means one request exceeded `providers.requestTimeoutMs`.
-- Codex: wow is generated against one app-server protocol version. A test that reports a version
-  mismatch means the installed `codex` is newer or older than the one wow knows.
+- Codex "is not compatible with wow": the installed `codex` lacks or changed a method or field wow
+  needs (the message lists them). Use **Update Codex to …** or install the tested version as the
+  instance says, then test again (see "Codex versions").
+- Codex "cannot describe its app-server protocol": that `codex` is older than its schema
+  generator. Install the tested version.
+- **Update Codex** fails with "Could not start npm": the server cannot find `npm` (`npm.cmd` on
+  Windows) on its `PATH`. Run the command from the confirmation in a terminal instead. With
+  "EBUSY" or "EPERM" on Windows, close other programs that run `codex` (a terminal session, an
+  editor extension) and try again.
 
 **A card did not start its run**
 

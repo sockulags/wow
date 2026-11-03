@@ -2,6 +2,7 @@ import {
   isLiveRunState,
   type DomainEvent,
   type Project,
+  type ProviderUpdateRun,
   type SubscriptionTopic,
 } from '@wow/contracts';
 import { and, count, desc, eq, inArray, isNull, max } from 'drizzle-orm';
@@ -117,6 +118,41 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       const { providerInstanceId, ...status } = event.payload;
       tx.update(providerInstances)
         .set(status)
+        .where(eq(providerInstances.id, providerInstanceId))
+        .run();
+      return ['providerInstances'];
+    }
+    case 'providerInstance.updateProgressed': {
+      const { providerInstanceId, progress } = event.payload;
+      const row = tx
+        .select({ updateRun: providerInstances.updateRun })
+        .from(providerInstances)
+        .where(eq(providerInstances.id, providerInstanceId))
+        .get();
+      const run = row?.updateRun ?? null;
+      let next: ProviderUpdateRun | null = run;
+      if (progress.phase === 'started') {
+        next = {
+          state: 'running',
+          command: progress.command,
+          targetVersion: progress.targetVersion,
+          output: '',
+          message: null,
+          startedAt: progress.at,
+          endedAt: null,
+        };
+      } else if (run && progress.phase === 'output') {
+        next = { ...run, output: run.output + progress.text };
+      } else if (run && progress.phase === 'finished') {
+        next = {
+          ...run,
+          state: progress.ok ? 'succeeded' : 'failed',
+          message: progress.message,
+          endedAt: progress.at,
+        };
+      }
+      tx.update(providerInstances)
+        .set({ updateRun: next })
         .where(eq(providerInstances.id, providerInstanceId))
         .run();
       return ['providerInstances'];

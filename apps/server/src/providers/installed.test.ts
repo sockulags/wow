@@ -20,6 +20,8 @@ const instance = (kind: ProviderKind): ProviderInstance => ({
   account: null,
   version: null,
   statusMessage: null,
+  update: null,
+  updateRun: null,
 });
 
 const context = {

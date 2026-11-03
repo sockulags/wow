@@ -1,8 +1,19 @@
 import type { ProviderEvent, ProviderInstance } from '@wow/contracts';
 import { ProviderEvent as ProviderEventSchema } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
-import { CodexAdapter, codexVersionFromUserAgent, type CodexAdapterOptions } from './adapter.js';
-import type { CodexLaunch } from './process.js';
+import {
+  CodexAdapter,
+  codexVersionFromUserAgent,
+  type CodexAdapterOptions,
+  type CodexVersionVerdict,
+} from './adapter.js';
+import { CompatibilityCache, type GenerateSchema } from './compat/check.js';
+import type { ProtocolFingerprint } from './compat/schema.js';
+import { synthesizeSchema, writeSchema } from './compat/synthesize.js';
+import type { InstallIo } from './install.js';
+import type { CodexLaunch, CommandLaunch, RunCommand } from './process.js';
+import { codexProtocolFingerprint } from './protocol/generated/fingerprint.js';
+import { codexProtocolVersion } from './protocol/generated/index.js';
 import {
   FakeCodexProcess,
   ManualTimers,
@@ -26,9 +37,49 @@ const instance: ProviderInstance = {
   account: null,
   version: null,
   statusMessage: null,
+  update: null,
+  updateRun: null,
 };
 
-const userAgent = 'wow/0.166.0 (Demo OS; x86_64) linux (wow; 0.0.0)';
+// Follows the generated version, so regenerating for a new codex keeps these tests meaningful.
+const agentOf = (version: string) => `wow/${version} (Demo OS; x86_64) linux (wow; 0.0.0)`;
+const userAgent = agentOf(codexProtocolVersion);
+
+// An invented codex install for the update offer: npm put it under /opt/codex, which is also
+// where `npm prefix -g` points.
+const npmInstall: InstallIo = {
+  platform: 'linux',
+  env: {},
+  exists: (file) => file === '/opt/codex/lib/node_modules/@openai/codex/package.json',
+  realpath: (file) => file,
+};
+
+// The generate-json-schema of a fake codex: writes an invented schema made from a fingerprint
+// (the tested one unless a test says otherwise) and counts the runs.
+function fakeSchema(fingerprint: ProtocolFingerprint | Error = codexProtocolFingerprint) {
+  const runs: string[] = [];
+  const generate: GenerateSchema = async (launch, outDir) => {
+    runs.push(launch.binaryPath);
+    if (fingerprint instanceof Error) throw fingerprint;
+    await writeSchema(synthesizeSchema(fingerprint), outDir);
+  };
+  return { generate, runs };
+}
+
+function fakeNpm(prefix = '/opt/codex') {
+  const launches: CommandLaunch[] = [];
+  const run: RunCommand = (launch) => {
+    launches.push(launch);
+    return Promise.resolve({
+      code: 0,
+      stdout: `${prefix}\n`,
+      stderr: '',
+      timedOut: false,
+      startError: null,
+    });
+  };
+  return { run, launches };
+}
 
 type Answer = (params: Record<string, unknown>) => unknown;
 
@@ -68,6 +119,9 @@ function setup(makeProcess: () => FakeCodexProcess, options: Partial<CodexAdapte
       processes.push(child);
       return child;
     },
+    generateSchema: fakeSchema().generate,
+    runCommand: fakeNpm().run,
+    installIo: npmInstall,
     ...options,
   });
   const events: ProviderEvent[] = [];
@@ -279,6 +333,7 @@ describe('CodexAdapter with recorded sessions', () => {
   });
 
   it('fails Test with a login hint when codex has no account (recorded from codex 0.166.0)', async () => {
+    // Once the protocol moves to a newer codex, the recording is a compatible older version.
     const fixture = readFixture('test-not-logged-in.jsonl');
     const { adapter, current } = setup(() => new ReplayCodexProcess(fixture));
     await expect(adapter.send({ type: 'test' })).rejects.toMatchObject({
@@ -324,6 +379,13 @@ const baseAnswers: Record<string, Answer> = {
   'turn/start': () => ({ turn: { id: 'turn-1', status: 'inProgress' } }),
 };
 
+const testAnswers = (version: string): Record<string, Answer> => ({
+  ...baseAnswers,
+  initialize: () => ({ userAgent: agentOf(version) }),
+  'account/read': () => ({ account: { type: 'apiKey' }, requiresOpenaiAuth: true }),
+  'model/list': () => ({ data: [model('a')], nextCursor: null }),
+});
+
 describe('CodexAdapter', () => {
   it('passes Test with the account, version and paged models', async () => {
     const { adapter } = setup(
@@ -341,8 +403,11 @@ describe('CodexAdapter', () => {
         }),
     );
     await expect(adapter.send({ type: 'test' })).resolves.toEqual({
-      codexVersion: '0.166.0',
+      ok: true,
       account: 'demo@example.invalid',
+      version: codexProtocolVersion,
+      message: null,
+      update: null,
       models: [
         {
           id: 'a',
@@ -357,18 +422,135 @@ describe('CodexAdapter', () => {
     });
   });
 
-  it('fails Test when the installed codex speaks a protocol it was not generated from', async () => {
-    const { adapter, current } = setup(
-      () =>
-        new ScriptedCodex({
-          initialize: () => ({ userAgent: 'wow/0.150.2 (Demo OS; x86_64) linux (wow; 0.0.0)' }),
-        }),
-    );
-    await expect(adapter.send({ type: 'test' })).rejects.toMatchObject({
-      code: 'unsupported',
-      message: expect.stringMatching(/codex 0\.150\.2 is not supported.*codex 0\.166\.0/),
+  it('passes Test on an older codex whose schema is compatible, once per version', async () => {
+    const schema = fakeSchema({ ...codexProtocolFingerprint, codexVersion: '0.0.1' });
+    const npm = fakeNpm();
+    const compatibility = new CompatibilityCache<CodexVersionVerdict>();
+    const options = { generateSchema: schema.generate, runCommand: npm.run, compatibility };
+    const { adapter } = setup(() => new ScriptedCodex(testAnswers('0.0.1')), options);
+    const result = await adapter.send({ type: 'test' });
+    expect(result).toMatchObject({
+      ok: true,
+      account: 'API key',
+      version: '0.0.1',
+      message: `codex 0.0.1 differs from the tested ${codexProtocolVersion}; compatible.`,
+      update: {
+        method: 'npm',
+        reason: 'older',
+        targetVersion: codexProtocolVersion,
+        packageSpec: `@openai/codex@${codexProtocolVersion}`,
+        prefix: null,
+      },
+    });
+    expect(schema.runs).toEqual(['/opt/codex/bin/codex']);
+    expect(npm.launches.map((launch) => [launch.file, ...launch.args])).toEqual([
+      ['npm', 'prefix', '-g'],
+    ]);
+
+    // A second adapter for the same binary and version (after an edit) reuses the answer.
+    const again = setup(() => new ScriptedCodex(testAnswers('0.0.1')), options);
+    await expect(again.adapter.send({ type: 'test' })).resolves.toMatchObject({ ok: true });
+    expect(schema.runs).toHaveLength(1);
+  });
+
+  it('turns keep working on a compatible version and drop notifications they do not know', async () => {
+    const { adapter, take, current } = setup(() => new ScriptedCodex(testAnswers('0.0.1')));
+    await adapter.send(startTurn);
+    take();
+    current().emit({ method: 'thread/goal/updated' });
+    current().emit({ method: 'item/started', params: null });
+    current().emit({ method: 'thread/goal/updated', params: { threadId: 'codex-thread' } });
+    current().emit({
+      method: 'turn/plan/updated',
+      params: {
+        threadId: 'codex-thread',
+        turnId: 'turn-1',
+        plan: [{ step: 'Read', status: 'blocked' }],
+      },
+    });
+    current().emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'codex-thread',
+        turn: { id: 'turn-1', status: 'completed', error: null },
+      },
+    });
+    expect(take()).toEqual([
+      {
+        type: 'taskListUpdated',
+        threadId: 'thread-1',
+        tasks: [{ id: 'turn-1-0', content: 'Read', status: 'pending' }],
+      },
+      { type: 'turnCompleted', threadId: 'thread-1' },
+    ]);
+  });
+
+  it('fails Test on a codex whose schema is incompatible, with what changed and an update', async () => {
+    const methods = { ...codexProtocolFingerprint.methods };
+    delete methods['turn/interrupt'];
+    const turnStart = methods['turn/start'];
+    if (!turnStart) throw new Error('turn/start is not in the fingerprint');
+    methods['turn/start'] = {
+      ...turnStart,
+      result: turnStart.result.map((field) =>
+        field.path === 'turn.id' ? { ...field, shape: { ...field.shape, type: 'number' } } : field,
+      ),
+    };
+    const schema = fakeSchema({ codexVersion: '0.0.1', methods });
+    const npm = fakeNpm('/usr/local');
+    const { adapter, current } = setup(() => new ScriptedCodex(testAnswers('0.0.1')), {
+      generateSchema: schema.generate,
+      runCommand: npm.run,
+    });
+    await expect(adapter.send({ type: 'test' })).resolves.toEqual({
+      ok: false,
+      account: null,
+      version: '0.0.1',
+      message: `codex 0.0.1 is not compatible with wow, which is tested with codex ${codexProtocolVersion}: turn/start result.turn.id changed from string to number; turn/interrupt is missing (renamed or removed). Update codex to ${codexProtocolVersion}.`,
+      update: {
+        method: 'npm',
+        reason: 'incompatible',
+        targetVersion: codexProtocolVersion,
+        packageSpec: `@openai/codex@${codexProtocolVersion}`,
+        // npm on PATH installs elsewhere, so the update names this install's prefix.
+        prefix: '/opt/codex',
+      },
+      models: [],
     });
     expect(written(current(), 'account/read')).toBeUndefined();
+  });
+
+  it('fails Test with a clear message when codex cannot describe its protocol', async () => {
+    const { CodexError } = await import('./connection.js');
+    const schema = fakeSchema(
+      new CodexError('unsupported', "error: unrecognized subcommand 'generate-json-schema'"),
+    );
+    const { adapter } = setup(() => new ScriptedCodex(testAnswers('0.0.1')), {
+      generateSchema: schema.generate,
+      installIo: { ...npmInstall, exists: () => false },
+    });
+    const result = await adapter.send({ type: 'test' });
+    expect(result).toMatchObject({
+      ok: false,
+      version: '0.0.1',
+      message: expect.stringContaining(
+        `codex 0.0.1 cannot describe its app-server protocol ("codex app-server generate-json-schema" failed: error: unrecognized subcommand 'generate-json-schema')`,
+      ),
+      update: {
+        method: 'manual',
+        instruction: expect.stringContaining('/opt/codex/bin/codex'),
+      },
+    });
+  });
+
+  it('passes Test on a newer compatible codex without offering an update', async () => {
+    const { adapter } = setup(() => new ScriptedCodex(testAnswers('999.0.0')));
+    await expect(adapter.send({ type: 'test' })).resolves.toMatchObject({
+      ok: true,
+      version: '999.0.0',
+      message: `codex 999.0.0 differs from the tested ${codexProtocolVersion}; compatible.`,
+      update: null,
+    });
   });
 
   it('fails the running turn when the app-server exits and resumes the thread in a new one', async () => {
@@ -592,7 +774,7 @@ describe('CodexAdapter', () => {
 
 describe('codexVersionFromUserAgent', () => {
   it('reads the version after the originator', () => {
-    expect(codexVersionFromUserAgent(userAgent)).toBe('0.166.0');
+    expect(codexVersionFromUserAgent(userAgent)).toBe(codexProtocolVersion);
     expect(codexVersionFromUserAgent('codex_cli_rs/0.167.0-alpha.1 (Windows 11)')).toBe(
       '0.167.0-alpha.1',
     );

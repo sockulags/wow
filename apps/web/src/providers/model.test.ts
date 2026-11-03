@@ -24,6 +24,8 @@ const instance: ProviderInstance = {
   account: 'me@example.com',
   version: '2.1.316',
   statusMessage: null,
+  update: null,
+  updateRun: null,
 };
 
 describe('provider instance drafts', () => {

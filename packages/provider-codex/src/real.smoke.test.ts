@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import type { ProviderEvent, ProviderInstance } from '@wow/contracts';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CodexAdapter, type CodexTestResult } from './adapter.js';
+import { checkInstalledCodex, generateJsonSchema } from './compat/check.js';
+import { codexProtocolFingerprint } from './protocol/generated/fingerprint.js';
 import { codexProtocolVersion } from './protocol/generated/index.js';
 
 // Runs the installed codex for real. Off by default; turn it on with WOW_REAL_PROVIDERS=1.
@@ -27,7 +29,30 @@ const instance: ProviderInstance = {
   account: null,
   version: null,
   statusMessage: null,
+  update: null,
+  updateRun: null,
 };
+
+// Needs no login and no network: compares the installed codex's schema with the fingerprint.
+// WOW_CODEX_EXPECT=incompatible turns the expectation around, for a release that is not.
+describe.skipIf(!enabled)('codex schema (real)', () => {
+  it(
+    'describes its protocol and is compatible with the fingerprint',
+    async () => {
+      const check = await checkInstalledCodex(codexProtocolFingerprint, generateJsonSchema, {
+        binaryPath: instance.binaryPath,
+        env: Object.fromEntries(
+          Object.entries(process.env).flatMap(([key, value]) =>
+            value === undefined ? [] : [[key, value]],
+          ),
+        ),
+        timeoutMs: 60_000,
+      });
+      expect(check.state).toBe(process.env['WOW_CODEX_EXPECT'] ?? 'compatible');
+    },
+    timeoutMs,
+  );
+});
 
 describe.skipIf(!enabled)('codex app-server (real)', () => {
   let adapter: CodexAdapter | null = null;

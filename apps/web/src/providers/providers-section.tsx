@@ -19,6 +19,7 @@ import { errorMessage, useTopic } from '@/chat/data';
 import { notify, offerUndo } from '@/lib/feedback';
 import { lastUsedInstanceId, newInstanceId, testInstance } from './model';
 import { StatusBadge } from './status-badge';
+import { UpdateOffer } from './update-offer';
 
 const hasSecrets = (instance: ProviderInstance) =>
   Object.values(instance.env).some((value) => SecretRef.safeParse(value).success);
@@ -186,6 +187,12 @@ function InstanceRow({
       {instance.status === 'error' && instance.statusMessage && (
         <p className="text-xs text-destructive">{instance.statusMessage}</p>
       )}
+      {instance.status === 'ready' && instance.statusMessage && (
+        <p className="text-xs text-muted-foreground" data-testid="provider-notice">
+          {instance.statusMessage}
+        </p>
+      )}
+      {(instance.update || instance.updateRun) && <UpdateOffer instance={instance} />}
       {error && (
         <p role="alert" className="text-xs text-destructive">
           {error}

@@ -102,6 +102,8 @@ const instance = {
   account: null,
   version: null,
   statusMessage: null,
+  update: null,
+  updateRun: null,
 };
 
 describe('Settings → Projects', () => {

@@ -72,6 +72,7 @@ export function decideProviderInstance(
           account: null,
           version: null,
           statusMessage: null,
+          update: null,
         });
       }
       const kept = new Set(secretNames(command.env ?? instance.env));

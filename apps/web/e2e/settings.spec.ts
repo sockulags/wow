@@ -105,6 +105,53 @@ test.describe('settings', () => {
     await remove(back);
   });
 
+  test('a different Codex version: compatible is Ready with a notice, incompatible offers the update', async ({
+    page,
+  }) => {
+    await page.goto('/settings/providers');
+    const add = async (name: string) => {
+      await instances(page).getByRole('button', { name: 'Add Codex' }).click();
+      const editor = page.getByRole('dialog', { name: 'Add Codex instance' });
+      await editor.getByLabel('Name').fill(name);
+      await editor.getByRole('button', { name: 'Add instance' }).click();
+      await expect(editor).toBeHidden();
+      return instances(page).getByRole('listitem', { name });
+    };
+
+    const differs = await add('Codex differs');
+    await expect(differs.getByTestId('provider-status')).toHaveText('Ready');
+    await expect(differs.getByTestId('provider-version')).toHaveText('0.164.0');
+    await expect(differs.getByTestId('provider-notice')).toHaveText(
+      'codex 0.164.0 differs from the tested 0.166.0; compatible.',
+    );
+    await expect(differs.getByRole('button', { name: /Update Codex/ })).toHaveCount(0);
+
+    const old = await add('Codex incompatible');
+    await expect(old.getByTestId('provider-status')).toHaveText('Error');
+    await expect(old).toContainText('model/list result.data[].hidden is missing');
+    await old.getByRole('button', { name: 'Update Codex to 0.166.0' }).click();
+    const confirm = page.getByRole('alertdialog', { name: 'Update Codex to 0.166.0?' });
+    await expect(confirm.getByTestId('provider-update-command')).toHaveText(
+      'npm install -g @openai/codex@0.166.0',
+    );
+    // Cancel first: nothing runs.
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toBeHidden();
+    await expect(old.getByTestId('provider-update-run')).toHaveCount(0);
+
+    await old.getByRole('button', { name: 'Update Codex to 0.166.0' }).click();
+    await confirm.getByRole('button', { name: 'Update' }).click();
+    await expect(old.getByTestId('provider-update-run')).toHaveText(
+      'Codex 0.166.0 installed. wow tested it again.',
+    );
+    await expect(old).toContainText('added 1 package in 1s (invented)');
+    await expect(old.getByTestId('provider-status')).toHaveText('Ready');
+    await expect(old.getByRole('button', { name: /Update Codex/ })).toHaveCount(0);
+
+    await remove(differs);
+    await remove(old);
+  });
+
   test('the wizard creates the detected CLIs from the palette', async ({ page }) => {
     await page.goto('/calendar');
     await page.keyboard.press('Control+k');

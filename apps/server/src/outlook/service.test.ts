@@ -110,6 +110,7 @@ describe('Outlook service', () => {
       skills: undefined as never,
       workflows: undefined as never,
       providers: undefined as never,
+      providerUpdates: undefined as never,
       trackers: undefined as never,
       detectProviders: () => Promise.resolve([]),
       discoverProjects: () => Promise.resolve([]),

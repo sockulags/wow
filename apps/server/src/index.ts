@@ -17,6 +17,12 @@ export {
   type OutlookServiceOptions,
 } from './outlook/service.js';
 export { ProviderService, type ProviderServiceDeps } from './providers/service.js';
+export {
+  ProviderUpdates,
+  createNpmRunner,
+  type NpmRunnerOptions,
+  type RunNpm,
+} from './providers/update.js';
 export { Scheduler, type SchedulerDeps, type SchedulerTimers } from './scheduler/service.js';
 export { SettingsService, type SettingContext } from './settings/service.js';
 export { TrackerService, type TrackerServiceDeps } from './trackers/service.js';

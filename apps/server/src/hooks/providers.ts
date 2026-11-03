@@ -5,6 +5,7 @@ import type {
   ProviderEvent,
   ProviderInstance,
   ProviderKind,
+  ProviderTestResult,
 } from '@wow/contracts';
 
 export type ProviderAdapterFactory = (
@@ -32,11 +33,23 @@ export class MockProviderAdapter implements ProviderAdapter {
   readonly kind: ProviderKind;
   readonly sent: ProviderCommand[] = [];
   readonly #script: MockScript;
+  readonly #testResult: () => ProviderTestResult;
   readonly #listeners = new Set<(event: ProviderEvent) => void>();
 
-  constructor(kind: ProviderKind, script: MockScript = echo) {
+  // testResult answers "test"; the default is a ready instance.
+  constructor(
+    kind: ProviderKind,
+    script: MockScript = echo,
+    testResult: () => ProviderTestResult = () => ({
+      ok: true,
+      account: 'mock',
+      version: 'mock',
+      message: null,
+    }),
+  ) {
     this.kind = kind;
     this.#script = script;
+    this.#testResult = testResult;
   }
 
   send(command: ProviderCommand): Promise<unknown> {
@@ -51,7 +64,7 @@ export class MockProviderAdapter implements ProviderAdapter {
       ]);
     }
     if (command.type === 'test') {
-      return Promise.resolve({ ok: true, account: 'mock', version: 'mock', message: null });
+      return Promise.resolve(this.#testResult());
     }
     return Promise.resolve({ ok: true });
   }

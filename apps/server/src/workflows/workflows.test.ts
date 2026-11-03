@@ -71,6 +71,8 @@ const instance = (
   account: null,
   version: null,
   statusMessage: null,
+  update: null,
+  updateRun: null,
 });
 
 let commandCount = 0;

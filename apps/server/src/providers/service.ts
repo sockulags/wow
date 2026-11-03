@@ -83,6 +83,11 @@ export class ProviderService {
     return ProviderModel.array().parse(await adapter.send({ type: 'listModels' }));
   }
 
+  // Stops the instance's adapter (and its app-server process); the next use starts a new one.
+  release(providerInstanceId: string): void {
+    this.#release(providerInstanceId, []);
+  }
+
   async stop(): Promise<void> {
     this.#stopped = true;
     this.#unsubscribe();

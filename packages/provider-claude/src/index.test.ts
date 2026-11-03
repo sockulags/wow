@@ -29,6 +29,8 @@ const instance: ProviderInstance = {
   status: 'unknown',
   version: null,
   statusMessage: null,
+  update: null,
+  updateRun: null,
   account: null,
 };
 

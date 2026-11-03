@@ -174,6 +174,13 @@ export const rpcMethods = {
     params: z.object({ providerInstanceId: z.string().min(1) }),
     result: ProviderTestResult,
   },
+  // Runs the npm update the instance's last test offered (`update`, method npm) as a server
+  // subprocess and answers once it started with the command it runs. Progress and output arrive
+  // as the instance's `updateRun`; after a good install the server tests the instance again.
+  'provider.update': {
+    params: z.object({ providerInstanceId: z.string().min(1) }),
+    result: z.object({ command: z.string().min(1) }),
+  },
   'provider.listModels': {
     params: z.object({ providerInstanceId: z.string().min(1) }),
     result: z.array(ProviderModel),

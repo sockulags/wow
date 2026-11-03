@@ -8,6 +8,8 @@ import type {
   OutlookProfile,
   ProviderInstanceStatus,
   ProviderKind,
+  ProviderUpdate,
+  ProviderUpdateRun,
   SecretRef,
   SkillSource,
   StepRun,
@@ -51,6 +53,8 @@ export const providerInstances = sqliteTable('provider_instances', {
   account: text(),
   version: text(),
   statusMessage: text(),
+  update: json<ProviderUpdate>(),
+  updateRun: json<ProviderUpdateRun>(),
 });
 
 export const threads = sqliteTable(
