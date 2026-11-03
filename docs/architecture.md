@@ -637,6 +637,18 @@ notes still say "Smoke result: pending", then builds and smoke-tests the install
 commit and attaches it to the GitHub release for the tag, creating the release from the notes file
 if it does not exist.
 
+New codex releases reach users the same way. `.github/workflows/codex-protocol.yml` runs daily and
+by hand: when npm's newest stable `@openai/codex` is newer than `codexProtocolVersion`
+(`packages/provider-codex/scripts/codex-release.mjs`, tested with the package), it installs that
+codex into a temporary prefix, runs `generate:protocol`, names the version in the docs, runs the
+repository checks on Linux and opens or updates a pull request on `agent/codex-protocol-<version>`
+with the generated-file and method-map changes and the check results (a draft when generation or
+a check fails, with the error). It never pushes to `main` and never touches a branch someone else
+has pushed to. Pull requests opened with the workflow's `GITHUB_TOKEN` start no other workflow, so
+`ci.yml` runs only after the owner closes and reopens the pull request; a GitHub App or
+fine-grained token in place of `GITHUB_TOKEN` would remove that step. The owner re-records the
+fixtures against the new codex on that branch, merges, and releases as above.
+
 ## Projects
 
 A project is a name and a folder (`projects` row). `apps/server/src/core/projects.ts` decides
