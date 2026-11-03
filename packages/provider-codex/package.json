@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "vitest run --dir src",
+    "test": "vitest run --dir src && vitest run --dir scripts",
     "generate:protocol": "node scripts/generate-protocol.mjs"
   },
   "dependencies": {

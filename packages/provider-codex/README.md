@@ -35,6 +35,26 @@ initialize reports no protocol version, only a user agent (`wow/0.166.0 (...)`);
 the version from it. The `test` command fails with a clear message when it differs from
 `codexProtocolVersion`.
 
+### New codex releases
+
+`.github/workflows/codex-protocol.yml` runs every day at 03:23 UTC and by hand (Actions, "Codex
+protocol", with an optional `version`). It compares `npm view @openai/codex version` with
+`codexProtocolVersion` through `scripts/codex-release.mjs check` (prereleases and platform builds
+never count). When npm has a newer stable release it installs that codex into a temporary prefix,
+runs `generate:protocol` with it, names the version in this file and `docs/architecture.md`
+(`scripts/codex-release.mjs docs`), runs the repository checks on Linux and opens or updates a pull
+request on `agent/codex-protocol-<version>`. The body lists the added, removed and changed
+generated files, the method-map lines that changed and each check's result. A pull request is a
+draft when a check fails, or when generation fails (for example a method in `METHODS` is gone), in
+which case the body carries the error instead of a diff.
+
+One branch per version: a later run updates the open pull request, leaves a branch alone once
+anyone else has pushed to it, and does not reopen a closed pull request on its schedule. The
+workflow token cannot start `ci.yml`, so close and reopen the pull request to run CI on Linux and
+Windows. The fixtures still come from the old codex and `test` refuses a different version, so
+expect the adapter tests to fail until the fixtures are re-recorded with the new codex (see
+"Tests"); that work is pushed to the same branch.
+
 ## Mapping
 
 | wow                                | codex                                                                           |
