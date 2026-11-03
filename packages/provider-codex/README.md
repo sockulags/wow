@@ -87,15 +87,17 @@ runs `generate:protocol` with it, names the version in this file and `docs/archi
 (`scripts/codex-release.mjs docs`), runs the repository checks on Linux and opens or updates a pull
 request on `agent/codex-protocol-<version>`. The body lists the added, removed and changed
 generated files, the method-map lines that changed and each check's result. A pull request is a
-draft when a check fails, or when generation fails (for example a method in `METHODS` is gone), in
-which case the body carries the error instead of a diff.
+draft when a check fails, or when generation fails (for example a method in `METHODS` or a field
+in `FIELDS` is gone), in which case the body carries the error instead of a diff. The generated
+`fingerprint.ts` changes with the release too.
 
 One branch per version: a later run updates the open pull request, leaves a branch alone once
 anyone else has pushed to it, and does not reopen a closed pull request on its schedule. The
 workflow token cannot start `ci.yml`, so close and reopen the pull request to run CI on Linux and
-Windows. The fixtures still come from the old codex and `test` refuses a different version, so
-expect the adapter tests to fail until the fixtures are re-recorded with the new codex (see
-"Tests"); that work is pushed to the same branch.
+Windows. The fixtures still come from the old codex. The adapter tests pass anyway: their fake
+user agent follows `codexProtocolVersion`, and `test` on a recording of the older version checks
+it against an invented schema made from the new fingerprint (see "Other codex versions"). Re-record
+the fixtures with the new codex on the same branch (see "Tests") so they show what it sends.
 
 ## Mapping
 
