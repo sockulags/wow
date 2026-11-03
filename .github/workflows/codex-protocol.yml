@@ -1,0 +1,262 @@
+name: Codex protocol
+
+# Once a day, looks for a newer stable @openai/codex on npm than the one packages/provider-codex was
+# generated from. If there is one, it regenerates the protocol with that codex, names the version in
+# the docs, runs the repository checks here and opens (or updates) a pull request on
+# agent/codex-protocol-<version>. A failed generation still opens a draft pull request with the
+# error. Nothing is pushed to main. See packages/provider-codex/README.md, "Protocol version".
+#
+# Pull requests opened with GITHUB_TOKEN do not start other workflows, so ci.yml does not run on
+# them by itself. The checks below are the ones ci.yml runs (Linux only); the pull request says so
+# and tells the owner to close and reopen it, which starts CI on both platforms.
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: codex version to move to (empty means the newest stable on npm)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: codex-protocol
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: update provider-codex
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SCRIPT: packages/provider-codex/scripts/codex-release.mjs
+      GENERATED: packages/provider-codex/src/protocol/generated
+    steps:
+      # Always main, also when started by hand from another branch, so the pull request carries
+      # only the regenerated protocol. Full history to inspect an earlier run's branch.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Compare with the newest codex release
+        id: check
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            printf '%s\n' "$INPUT_VERSION" | node "$SCRIPT" check --exact | tee -a "$GITHUB_OUTPUT"
+          else
+            npm view @openai/codex version | node "$SCRIPT" check | tee -a "$GITHUB_OUTPUT"
+          fi
+
+      - name: Look for an earlier pull request or branch
+        id: existing
+        if: steps.check.outputs.update == 'true'
+        env:
+          VERSION: ${{ steps.check.outputs.latest }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          branch="agent/codex-protocol-$VERSION"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          prs=$(gh pr list --head "$branch" --base main --state all --json number,state)
+          open=$(jq -r '[.[] | select(.state == "OPEN")][0].number // empty' <<< "$prs")
+          closed=$(jq -r '[.[] | select(.state != "OPEN")][0].number // empty' <<< "$prs")
+          echo "pr=$open" >> "$GITHUB_OUTPUT"
+          remote=$(git ls-remote origin "refs/heads/$branch" | cut -f1)
+          echo "remote=$remote" >> "$GITHUB_OUTPUT"
+          skip=false
+          if [ -z "$open" ] && [ -n "$closed" ] && [ "$EVENT" = schedule ]; then
+            echo "::notice::#$closed for codex $VERSION was closed; run this workflow by hand to try again"
+            skip=true
+          elif [ -n "$remote" ]; then
+            git fetch --no-tags origin "$branch" main
+            # A commit someone else added (re-recorded fixtures, adapter fixes) is never overwritten.
+            others=$(git log --format=%ae "origin/main..$remote" | grep -vc '^41898282+github-actions\[bot\]@users.noreply.github.com$' || true)
+            if [ "$others" != 0 ]; then
+              echo "::notice::$branch has commits from someone else; leaving it alone"
+              skip=true
+            fi
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        if: steps.existing.outputs.skip == 'false'
+        run: pnpm install --frozen-lockfile
+
+      # codex goes into a temporary prefix, not the global one, and only for this run.
+      - name: Install codex and regenerate the protocol
+        id: generate
+        if: steps.existing.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.check.outputs.latest }}
+        run: |
+          set +e
+          log="$RUNNER_TEMP/generate.log"
+          prefix="$RUNNER_TEMP/codex"
+          {
+            npm install --prefix "$prefix" --no-save --no-audit --no-fund "@openai/codex@$VERSION" &&
+              "$prefix/node_modules/.bin/codex" --version &&
+              pnpm --filter @wow/provider-codex generate:protocol "$prefix/node_modules/.bin/codex" &&
+              node "$SCRIPT" docs "$VERSION" &&
+              echo 0.0.0 | node "$SCRIPT" check | grep -qx "current=$VERSION"
+          } > "$log" 2>&1
+          status=$?
+          cat "$log"
+          if [ "$status" = 0 ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            git add -A
+          else
+            echo "::error::Generating the protocol from codex $VERSION failed"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            git reset --hard HEAD
+            git clean -fdq -- "$GENERATED"
+          fi
+
+      - name: Run the repository checks
+        id: checks
+        if: steps.generate.outputs.ok == 'true'
+        run: |
+          status=passed
+          table="$RUNNER_TEMP/checks.md"
+          logs="$RUNNER_TEMP/check-logs.md"
+          : > "$logs"
+          printf '| Command | Result |\n| --- | --- |\n' > "$table"
+          for cmd in 'pnpm install --frozen-lockfile' 'pnpm typecheck' 'pnpm lint' 'pnpm test' \
+            'pnpm --filter @wow/provider-codex test' 'git diff --cached --check'; do
+            echo "::group::$cmd"
+            # The commands are fixed words without quoting, so plain word splitting runs them.
+            if $cmd > "$RUNNER_TEMP/out.log" 2>&1; then
+              result=passed
+            else
+              result=failed
+              status=failed
+              printf '<details><summary><code>%s</code> (last 60 lines)</summary>\n\n```text\n' "$cmd" >> "$logs"
+              tail -n 60 "$RUNNER_TEMP/out.log" >> "$logs"
+              printf '```\n\n</details>\n\n' >> "$logs"
+            fi
+            cat "$RUNNER_TEMP/out.log"
+            echo "::endgroup::"
+            printf '| `%s` | %s |\n' "$cmd" "$result" >> "$table"
+          done
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push the branch
+        id: push
+        if: steps.existing.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.check.outputs.latest }}
+          BRANCH: ${{ steps.existing.outputs.branch }}
+          REMOTE: ${{ steps.existing.outputs.remote }}
+          OK: ${{ steps.generate.outputs.ok }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$BRANCH"
+          if [ "$OK" = true ]; then
+            git commit -q -m "Move provider-codex to codex $VERSION" \
+              -m "Regenerated $GENERATED with packages/provider-codex/scripts/generate-protocol.mjs."
+          else
+            git commit -q --allow-empty -m "codex $VERSION: protocol generation failed" \
+              -m "The pull request body has the error."
+          fi
+          summary="$RUNNER_TEMP/generated.md"
+          git diff --name-status HEAD^ HEAD -- "$GENERATED" |
+            sed -E "s#^A\t$GENERATED/(.*)#- added \`\1\`#; s#^D\t$GENERATED/(.*)#- removed \`\1\`#; s#^M\t$GENERATED/(.*)#- changed \`\1\`#; s#^R[0-9]*\t$GENERATED/(.*)\t$GENERATED/(.*)#- renamed \`\1\` to \`\2\`#" > "$summary"
+          git diff HEAD^ HEAD -- "$GENERATED/index.ts" | grep -E "^[+-] +'|^[+-]export const" > "$RUNNER_TEMP/methods.diff" || true
+          # Same content on the same main as last time: keep the branch and only refresh the body.
+          if [ -n "$REMOTE" ] && [ "$(git rev-parse "$REMOTE^{tree}")" = "$(git rev-parse 'HEAD^{tree}')" ] &&
+            [ "$(git rev-parse "$REMOTE^")" = "$(git rev-parse HEAD^)" ]; then
+            echo "::notice::$BRANCH already has this change"
+          else
+            git push --force-with-lease="refs/heads/$BRANCH:$REMOTE" origin "HEAD:refs/heads/$BRANCH"
+          fi
+
+      - name: Open or update the pull request
+        if: steps.existing.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.check.outputs.latest }}
+          CURRENT: ${{ steps.check.outputs.current }}
+          BRANCH: ${{ steps.existing.outputs.branch }}
+          PR: ${{ steps.existing.outputs.pr }}
+          OK: ${{ steps.generate.outputs.ok }}
+          CHECKS: ${{ steps.checks.outputs.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body="$RUNNER_TEMP/body.md"
+          {
+            echo 'Intent-Unit: 2026-11-wow-app/U6'
+            echo
+            echo "codex $VERSION is the newest stable \`@openai/codex\` on npm; \`packages/provider-codex\` was generated from codex $CURRENT. Opened by \`.github/workflows/codex-protocol.yml\` ([run]($RUN_URL)). When this is merged and released, installed copies of wow get it through auto-update."
+            echo
+            if [ "$OK" != true ]; then
+              echo '## Generation failed'
+              echo
+              echo "Installing codex $VERSION or \`pnpm --filter @wow/provider-codex generate:protocol\` with it failed, so nothing is regenerated and this pull request is a draft. A method listed in \`METHODS\` in \`scripts/generate-protocol.mjs\` that this release no longer defines shows up here; the adapter needs a change by hand. Last lines of the log:"
+              echo
+              echo '```text'
+              tail -n 80 "$RUNNER_TEMP/generate.log"
+              echo '```'
+            else
+              echo "## Generated protocol ($GENERATED)"
+              echo
+              if [ -s "$RUNNER_TEMP/generated.md" ]; then cat "$RUNNER_TEMP/generated.md"; else echo 'No type file changed; only the recorded version.'; fi
+              echo
+              if [ -s "$RUNNER_TEMP/methods.diff" ]; then
+                echo 'Method maps and version in `index.ts`:'
+                echo
+                echo '```diff'
+                head -n 200 "$RUNNER_TEMP/methods.diff"
+                echo '```'
+                echo
+              fi
+              echo "The version is also updated in \`packages/provider-codex/README.md\` and \`docs/architecture.md\`."
+              echo
+              echo "## Checks (ubuntu-latest, in the workflow run): $CHECKS"
+              echo
+              cat "$RUNNER_TEMP/checks.md"
+              echo
+              cat "$RUNNER_TEMP/check-logs.md"
+              if [ "$CHECKS" != passed ]; then
+                echo 'A check failed, so this pull request is a draft.'
+                echo
+              fi
+            fi
+            echo '## Before merging'
+            echo
+            echo '- This pull request was opened with the workflow token, which does not start `ci.yml`. The checks above ran on Linux only. Close and reopen this pull request to run CI on Linux and Windows.'
+            echo "- The recorded fixtures and the adapter tests name codex $CURRENT, and \`test\` refuses a codex that differs from \`codexProtocolVersion\`. Re-record the fixtures with codex $VERSION (README, \"Tests\") and run the real smoke (\`WOW_REAL_PROVIDERS=1\`) before merging."
+            echo "- Commits pushed to \`$BRANCH\` by anyone else stop this workflow from touching the branch again."
+          } > "$body"
+
+          if [ "$OK" = true ]; then title="Move provider-codex to codex $VERSION"; else title="codex $VERSION: protocol generation failed"; fi
+          draft=false
+          if [ "$OK" != true ] || [ "$CHECKS" != passed ]; then draft=true; fi
+          if [ -n "$PR" ]; then
+            gh pr edit "$PR" --title "$title" --body-file "$body"
+            if [ "$draft" = true ]; then gh pr ready "$PR" --undo || true; else gh pr ready "$PR" || true; fi
+          else
+            args=(--base main --head "$BRANCH" --title "$title" --body-file "$body")
+            if [ "$draft" = true ]; then args+=(--draft); fi
+            gh pr create "${args[@]}"
+          fi
+
+      - name: Fail the run when generation or a check failed
+        if: steps.generate.outputs.ok == 'false' || steps.checks.outputs.status == 'failed'
+        run: |
+          echo "::error::codex ${{ steps.check.outputs.latest }} needs work by hand; see the pull request"
+          exit 1
