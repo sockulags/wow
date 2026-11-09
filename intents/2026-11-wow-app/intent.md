@@ -1,7 +1,7 @@
 ---
 id: 2026-11-wow-app
 status: accepted
-rev: 1
+rev: 2
 supersedes: null
 ---
 
@@ -23,7 +23,7 @@ waiting for. Scheduling an agent run for a free slot in the day is not possible 
 
 When this is done, one app shows:
 
-- A day and week calendar with Outlook meetings and unread mail, and local cards that only exist
+- A day and week calendar with Outlook meetings, and local cards that only exist
   in the app. Putting a card with a workflow on the calendar schedules that workflow to start at
   that time, and the card shows whether it ran, is waiting for Lucas, or failed.
 - A chat view with threads run by Codex or Claude Code, connected and configured from inside the
@@ -48,6 +48,10 @@ skill directories, theme and keybindings.
   agent-os workflows to run.
 - Two-way status sync with Jira or GitHub. Publishing creates the issue and stores the link; the
   app does not poll the tracker.
+- Mail. Outlook is read for meetings only; unread mail is not shown.
 - Mobile, remote access, multi-user.
 
 ## Decision log
+
+rev 2 (2026-11-09): unread mail removed from the desired outcome and put out of scope. Lucas sees
+no purpose in it; the calendar is for meetings and agent work.
