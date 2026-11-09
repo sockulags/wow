@@ -59,7 +59,9 @@ When this is done:
   the gates at plan and spec always stop.
 - Pull requests, issues and pages are read from the hosts his projects actually use: Jira,
   Confluence, GitHub Enterprise and GitLab, all self-hosted. Each is reached through its standard
-  API at the host's own address, signed in with a personal access token Lucas creates.
+  API at the host's own address, signed in with a personal access token Lucas creates. wow reads
+  them itself, so status never depends on an agent. They arrive in this order: GitHub Enterprise,
+  where most of his pull requests are, then Jira, then GitLab, then Confluence.
 
 ## Out of scope
 
@@ -78,10 +80,5 @@ When this is done:
 - Merging without Lucas. A gate that passes by itself lets the next step start; it never merges a
   pull request.
 - Writing to Outlook, mobile, remote access and multi-user, as in the first intent.
-
-## Open questions
-
-- Which of the four hosts comes first, and which versions do they run? The agents already reach
-  them through MCP servers; wow reads them itself so that status never depends on an agent.
 
 ## Decision log
