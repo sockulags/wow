@@ -39,6 +39,9 @@ When this is done:
 - A fresh install starts with one short fixed step: connect Claude Code or Codex. The assistant
   runs on that provider and takes over from there, so a colleague gets from first start to a
   working first run by answering its questions.
+- Lucas can save his settings as a YAML file and send it to a colleague: host addresses, defaults
+  and workflows, never a secret. A colleague's install starts from that file, and the assistant
+  then only asks for what is personal, such as tokens and work hours.
 - The assistant can answer "why does this not work" for setup problems: a failed connection test,
   a provider that is not signed in, a skill that is not found.
 
@@ -48,16 +51,15 @@ When this is done:
   general questions; the chat view is for that.
 - Changing anything outside wow: it does not create the token on the host, install a provider or
   edit its config files. It tells Lucas how.
-- Shared settings between people. Each colleague has their own install and their own secrets;
-  multi-user stays out, as in the first intent.
+- Settings kept in step between people. The file is a starting point that is sent once; each
+  colleague has their own install and their own secrets, and multi-user stays out, as in the
+  first intent.
 - A model or API key of its own for the assistant. It uses a provider the user has connected,
   so there is no extra secret to handle.
 - Replacing the settings page. Everything the assistant can set stays reachable by hand.
 
 ## Open questions
 
-- Is handing wow to colleagues a goal now? If so, should an install be able to start from a
-  prepared set of the company's hosts and defaults, without any secrets in it?
 - May the assistant read anything besides settings to help, such as the project's git remote or
   the provider's sign-in state?
 
