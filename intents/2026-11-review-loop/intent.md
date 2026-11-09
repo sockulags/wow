@@ -37,6 +37,8 @@ When this is done:
   changed as a diff, the artifacts it wrote, and the pull request and ticket it belongs to with
   their current state. From there he approves, or sends the work back with a note that the agent
   acts on. Both are one action from the keyboard.
+- Approve and send back act inside wow only. Approve passes the gate; send back runs the step
+  again with the note. Lucas still approves and merges the pull request on the host himself.
 - Chat messages render the way the agent wrote them: headings, lists, tables, code and diagrams.
   A side panel opens a markdown file, an image or an HTML page that a step produced, next to the
   conversation.
@@ -62,16 +64,15 @@ When this is done:
   belong to a run or a unit and nothing else.
 - Running several units at the same time. One at a time first; `batch-work` stays a choice Lucas
   makes outside a workflow.
+- Writing review results to the hosts, for now: no approval or "request changes" on a pull
+  request and no comment on a ticket from wow. wow reads from the hosts, so read-only tokens are
+  enough for the review loop. Publishing a backlog item as an issue stays as it is.
 - Merging without Lucas. A gate that passes by itself lets the next step start; it never merges a
   pull request.
 - Writing to Outlook, mobile, remote access and multi-user, as in the first intent.
 
 ## Open questions
 
-- What does "send back" reach? Only the agent (the step runs again with the note), or also the
-  host (request changes on the pull request, a comment on the ticket)?
-- May "approve" in wow also approve the pull request on GitHub or GitLab, or does it only pass the
-  gate?
 - Which of the four hosts comes first, and which versions do they run? The agents already reach
   them through MCP servers; wow reads them itself so that status never depends on an agent.
 - What is Confluence for here: pages shown next to a run, pages given to the agent as background,
