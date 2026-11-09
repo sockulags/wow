@@ -32,8 +32,9 @@ When this is done:
   field where Lucas enters it himself. It can see whether the field is filled and whether the
   connection test passes. It cannot read the value, and a secret typed into the chat by mistake is
   not kept.
-- A colleague with a fresh install gets from first start to a working first run by answering the
-  assistant's questions.
+- A fresh install starts with one short fixed step: connect Claude Code or Codex. The assistant
+  runs on that provider and takes over from there, so a colleague gets from first start to a
+  working first run by answering its questions.
 - The assistant can answer "why does this not work" for setup problems: a failed connection test,
   a provider that is not signed in, a skill that is not found.
 
@@ -45,13 +46,12 @@ When this is done:
   edit its config files. It tells Lucas how.
 - Shared settings between people. Each colleague has their own install and their own secrets;
   multi-user stays out, as in the first intent.
+- A model or API key of its own for the assistant. It uses a provider the user has connected,
+  so there is no extra secret to handle.
 - Replacing the settings page. Everything the assistant can set stays reachable by hand.
 
 ## Open questions
 
-- The assistant needs an agent to run on, but connecting a provider is the first thing a new
-  install needs help with. Is a short fixed first step (connect one provider) acceptable before
-  the assistant takes over, or must it help from the very first screen?
 - Does the assistant apply a change at once and offer undo, or show it and wait for a yes? Should
   that differ for changes that make the app do more on its own, such as permission modes and gates
   that pass by themselves?
