@@ -48,6 +48,10 @@ When this is done:
   copy, so runs do not disturb each other or the folder Lucas works in.
 - A run can start from something that happened, not only from a time: a pull request merged, CI
   failed, a review comment arrived.
+- wow notices these things by asking the hosts on a timer, because self-hosted hosts cannot reach
+  a desktop app. It asks only about the pull requests and tickets that belong to a live run or to
+  a unit of a plan Lucas has open, never a whole project. How often is a setting, asking stops
+  while the app is paused, and the view shows when a status was last fetched.
 - A gate can pass by itself when its condition holds (for example the review found nothing and CI
   is green) and stops for Lucas otherwise. Which gates may do this is his choice per workflow;
   the gates at plan and spec always stop.
@@ -77,7 +81,5 @@ When this is done:
   them through MCP servers; wow reads them itself so that status never depends on an agent.
 - What is Confluence for here: pages shown next to a run, pages given to the agent as background,
   or both?
-- Which events are worth starting a run for first, and may wow ask the hosts on a timer to notice
-  them? Self-hosted hosts often cannot reach a desktop app with webhooks.
 
 ## Decision log
