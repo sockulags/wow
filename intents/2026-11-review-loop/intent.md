@@ -49,8 +49,9 @@ When this is done:
 - A gate can pass by itself when its condition holds (for example the review found nothing and CI
   is green) and stops for Lucas otherwise. Which gates may do this is his choice per workflow;
   the gates at plan and spec always stop.
-- Pull requests, issues and pages are read from the hosts his projects actually use, including
-  self-hosted ones: Jira, Confluence, GitHub Enterprise and GitLab.
+- Pull requests, issues and pages are read from the hosts his projects actually use: Jira,
+  Confluence, GitHub Enterprise and GitLab, all self-hosted. Each is reached through its standard
+  API at the host's own address, signed in with a personal access token Lucas creates.
 
 ## Out of scope
 
@@ -71,8 +72,8 @@ When this is done:
   host (request changes on the pull request, a comment on the ticket)?
 - May "approve" in wow also approve the pull request on GitHub or GitLab, or does it only pass the
   gate?
-- Which products and versions are the self-hosted ones: Jira and Confluence Server or Data Center,
-  GitHub Enterprise Server, GitLab self-managed? Which of them comes first?
+- Which of the four hosts comes first, and which versions do they run? The agents already reach
+  them through MCP servers; wow reads them itself so that status never depends on an agent.
 - What is Confluence for here: pages shown next to a run, pages given to the agent as background,
   or both?
 - Which events are worth starting a run for first, and may wow ask the hosts on a timer to notice
