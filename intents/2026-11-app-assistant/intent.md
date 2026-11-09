@@ -33,6 +33,12 @@ When this is done:
   app do more on its own waits for a yes first: what an agent is permitted to do, gates that pass
   by themselves, and runs that start from events. What an agent is permitted to do is decided by
   the workflow, so these changes are changes to a workflow.
+- The assistant starts a run now when Lucas asks for exactly that. It never answers a gate: to
+  approve or send back is his judgement of the agent's work. What may pass without him is a gate
+  with a stated condition, as the review loop describes.
+- To do this the assistant reads the calendar, workflows, backlog and run states, and what says
+  how the setup is doing: a project's git remote, whether a provider is signed in, connection
+  test results and the skills found. It does not read chat threads or project files.
 - When a value is secret, the assistant does not ask for it in the chat. It says which secret is
   needed, where to create it on that host and with which rights, step by step, and points at the
   field where Lucas enters it himself. It can see whether the field is filled and whether the
@@ -59,13 +65,5 @@ When this is done:
 - A model or API key of its own for the assistant. It uses a provider the user has connected,
   so there is no extra secret to handle.
 - Replacing the views. Everything the assistant can do stays reachable by hand.
-
-## Open questions
-
-- May the assistant start a run now and answer a gate (approve or send back) for Lucas, or does it
-  only prepare and schedule, leaving those two to him?
-- What may the assistant read to do its job? The calendar, workflows, backlog and run states are
-  needed to operate the app. Beyond that: the project's git remote, the provider's sign-in state,
-  connection test results? Chat threads and project files?
 
 ## Decision log
