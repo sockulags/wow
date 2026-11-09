@@ -1,38 +1,24 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { MarkdownPreview, parseMarkdown } from './markdown';
+import { MarkdownPreview } from './markdown';
 
-describe('markdown preview (D-12)', () => {
-  it('splits a body into blocks', () => {
-    expect(
-      parseMarkdown('## Why\n\nNeeds **keys**.\n\n- one\n  - nested\n- two\n\n```\ncode\n```'),
-    ).toEqual([
-      { type: 'heading', level: 2, text: 'Why' },
-      { type: 'paragraph', text: 'Needs **keys**.' },
-      {
-        type: 'list',
-        ordered: false,
-        items: [
-          { text: 'one', depth: 0 },
-          { text: 'nested', depth: 1 },
-          { text: 'two', depth: 0 },
-        ],
-      },
-      { type: 'code', language: '', text: 'code' },
-    ]);
-  });
-
-  it('renders emphasis and links as elements, and refuses script links', () => {
+describe('backlog body (review loop spec 5)', () => {
+  it('renders a backlog item body through the shared renderer', async () => {
     render(
       <MarkdownPreview
-        markdown={'A **bold** and *soft* [link](https://x.test) [bad](javascript:alert(1)) `c`'}
+        markdown={
+          '## Why\n\nNeeds **keys** and a [link](https://x.test) [bad](javascript:alert(1)).\n\n| Step | Owner |\n| --- | --- |\n| Login | Kim |'
+        }
       />,
     );
-    expect(screen.getByText('bold').tagName).toBe('STRONG');
-    expect(screen.getByText('soft').tagName).toBe('EM');
-    expect(screen.getByRole('link', { name: 'link' }).getAttribute('href')).toBe('https://x.test');
-    expect(screen.queryByRole('link', { name: 'bad' })).toBeNull();
-    expect(screen.getByText('c').tagName).toBe('CODE');
+    const preview = within(screen.getByTestId('markdown-preview'));
+    // The shared component marks its root; the table shows the GFM renderer is the one in use.
+    expect(preview.getByTestId('markdown')).toBeTruthy();
+    expect(await preview.findByRole('heading', { name: 'Why' })).toBeTruthy();
+    expect(preview.getByText('keys').tagName).toBe('STRONG');
+    expect(preview.getByRole('table')).toBeTruthy();
+    expect(preview.getByRole('link', { name: 'link' }).getAttribute('href')).toBe('https://x.test');
+    expect(preview.queryByRole('link', { name: 'bad' })).toBeNull();
   });
 
   it('says when nothing is written', () => {

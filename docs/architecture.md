@@ -1036,8 +1036,8 @@ the reference; clearing the field resets the setting and deletes the secret.
 
 `apps/web/src/backlog`. `/backlog` lists the items (filter by text, state and tag; "Open", the
 default, hides done and dropped) next to `/backlog/$itemId` (title edited in the heading, markdown
-body with Write and Preview through `markdown.tsx`, which builds React elements and links only
-http(s) and mailto, tags as chips, state; Ctrl+S saves) or `/backlog/new`. The user sets only Idea
+body with Write and Preview through `markdown.tsx`, a thin wrapper over the shared `Markdown`
+renderer (see "Shared pieces"), tags as chips, state; Ctrl+S saves) or `/backlog/new`. The user sets only Idea
 and Dropped (owner decision F-12); Planned, Running and Done show read-only. Delete dispatches at
 once and offers Undo with `backlog.restore`. "Plan on calendar" opens a dialog for workflow,
 project, date, start and end in `calendar.zone`: it suggests `nextFreeSlot` (the first
@@ -1101,6 +1101,20 @@ Shared pieces in `apps/web/src/components` (views compose them; none restyles `c
   `confirm-dialog.tsx` (`ConfirmDialog`, only for actions that cannot be undone),
   `path-text.tsx` (`PathText`, one line, ellipsis in the middle, full path in a tooltip) and
   `code-block.tsx` (`CodeBlock`, Shiki loaded on first use with its JavaScript regex engine).
+- `markdown.tsx` (`Markdown`): the one markdown renderer, used by assistant messages
+  (`chat/items.tsx`), backlog bodies and publish previews. `markdown-body.tsx` holds the
+  `react-markdown` and `remark-gfm` part and loads on first use; until then the text shows as
+  written. It builds React elements and has no raw HTML plugin, so HTML in a message shows as
+  text. Links open in a new window only for http, https and mailto (`safeHref`); any other link
+  shows as its text, and a picture shows as a link so nothing is fetched. Headings render two
+  levels down (`#` is an `h3`). Fenced code goes to `CodeBlock`. With `streaming`, `splitUnfinished`
+  holds back a fence without its closing line, or a table at the very end of the text, and shows
+  it as plain text until it is complete.
+- `mermaid-diagram.tsx` (`MermaidDiagram`) draws a `mermaid` fence in place with a "Source"
+  switch. `mermaid.ts` loads the library on first use, runs it at its `strict` security level in
+  the app's theme, and returns the SVG or a one-line reason; while drawing and on failure the
+  source shows as code, with the reason below it on failure. The palette command "Toggle diagram
+  source" switches every diagram at once (`diagramView`); it is view state and is not persisted.
 - `lib/feedback.ts`: `notify.success|error|info|warning` and `offerUndo({message, undo})`.
   Destructive actions delete at once and offer Undo; only irreversible ones (stored secrets, a
   project whose cards and threads lose their link) confirm first.
