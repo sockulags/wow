@@ -4,17 +4,18 @@
 
 ## Sources of truth
 
-- `intents/2026-11-wow-app/intent.md`: who needs what and why.
-- `intents/2026-11-wow-app/spec.md`: behavior, boundaries, decisions, ground truth.
-- `intents/2026-11-wow-app/plan.md`: delivery units and dependencies. A unit's contract is its
-  `###` section. Unit keys never change.
+- `intents/<id>/intent.md`: who needs what and why. One folder per intent: `2026-11-wow-app` (the
+  app), `2026-11-review-loop`, `2026-11-app-assistant`.
+- `intents/<id>/spec.md`: behavior, boundaries, decisions, ground truth.
+- `intents/<id>/plan.md`: delivery units and dependencies. A unit's contract is its `###` section.
+  Unit keys never change.
 - `docs/architecture.md`: package layout, data model, protocols, and the reasons behind them. When
   code and this file disagree, fix one of them in the same pull request.
 
 ## Delivery
 
 - One unit per branch `agent/<unit-key>-<slug>`, one pull request into `main`, body carries
-  `Intent-Unit: 2026-11-wow-app/<unit-key>`. Keep the change inside the unit's boundaries; put
+  `Intent-Unit: <intent-id>/<unit-key>`. Keep the change inside the unit's boundaries; put
   anything else in a note in the pull request, not in the diff.
 - Before claiming a unit done, run its ground truth and the repository checks and paste the exact
   commands and results in the pull request.
