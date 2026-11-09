@@ -53,7 +53,7 @@ const clockOffsetMs = Number(process.env['WOW_E2E_CLOCK_OFFSET_SECONDS'] ?? '0')
 
 // Starts the wow server for the chat tests with a scripted mock provider. The prompt picks the
 // scenario: "approve" asks for an approval, "question" asks a question, "wait" streams a little
-// and then waits for stop; anything else streams an answer with reasoning, tasks and usage.
+// and then waits for stop; "table and a diagram" answers in markdown; anything else streams an answer with reasoning, tasks and usage.
 // Approval and question ids carry the thread id, because the answer only carries the id.
 
 const separator = '|';
@@ -80,6 +80,41 @@ function finish(threadId: string, text: string, prefix = 'reply'): ProviderEvent
     { type: 'turnCompleted', threadId },
   ];
 }
+
+// An invented answer with every kind of markdown the chat renders (review loop spec 1, 2).
+const markdownAnswer = [
+  '## Review of the login change',
+  '',
+  'The change touches `login.ts` and is **ready**:',
+  '',
+  '- Checks',
+  '  - unit tests pass',
+  '  - lint is clean',
+  '- One open question',
+  '',
+  '| File | Added | Removed |',
+  '| --- | ---: | ---: |',
+  '| src/login.ts | 12 | 3 |',
+  '| src/login.test.ts | 40 | 0 |',
+  '',
+  'Read more in [the guide](https://docs.example.test/login) or [here](javascript:alert(1)).',
+  '',
+  '```ts',
+  'export const retries = 3;',
+  '```',
+  '',
+  '```mermaid',
+  'flowchart LR',
+  '  Plan --> Build',
+  '  Build --> Review',
+  '  Review -->|send back| Build',
+  '```',
+  '',
+  '```mermaid',
+  'flowchart LR',
+  '  Plan -->',
+  '```',
+].join('\n');
 
 function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): ProviderEvent[] {
   const { threadId, prompt } = command;
@@ -127,6 +162,9 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   }
   if (/break the build/i.test(prompt)) {
     return [session, { type: 'turnFailed', threadId, error: 'The build broke' }];
+  }
+  if (/table and a diagram/i.test(prompt)) {
+    return [session, ...finish(threadId, markdownAnswer)];
   }
   if (/wait/i.test(prompt)) {
     return [session, { type: 'textDelta', threadId, itemId: 'partial', delta: 'Working on it' }];

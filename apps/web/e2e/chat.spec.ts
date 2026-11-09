@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { e2eHome } from './env';
 import { choose } from './controls';
+import { sketchPath, sketching, sketchUse } from './sketch';
 
 // U8 ground truth against the scripted mock provider (e2e/server.ts): stream, approve, answer a
 // question, pick a skill, stop, resume after reload.
@@ -58,6 +59,44 @@ test.describe('chat', () => {
       idle.getByRole('link', { name: /Hello there/ }).getByLabel('Pinned'),
     ).toBeVisible();
     await expect(idle.getByRole('link').first()).toContainText('Hello there');
+  });
+
+  test('chat renders a table and a diagram', async ({ page }) => {
+    await startThread(page, 'Show a table and a diagram');
+    const answer = conversation(page).getByTestId('item-assistant_text');
+    await expect(answer.getByRole('heading', { name: 'Review of the login change' })).toBeVisible();
+    await expect(
+      answer.getByRole('listitem').filter({ hasText: /^unit tests pass$/ }),
+    ).toBeVisible();
+    await expect(answer.getByRole('columnheader')).toHaveText(['File', 'Added', 'Removed']);
+    await expect(answer.getByRole('cell', { name: 'src/login.test.ts' })).toBeVisible();
+    await expect(answer.locator('.wow-code .shiki')).toContainText('export const retries = 3;');
+
+    // Only the https link is a link; it opens outside the app.
+    await expect(answer.getByRole('link')).toHaveCount(1);
+    const guide = answer.getByRole('link', { name: 'the guide' });
+    await expect(guide).toHaveAttribute('href', 'https://docs.example.test/login');
+    await expect(guide).toHaveAttribute('target', '_blank');
+
+    // The valid block is drawn by the real library; the invalid one shows its source and why.
+    const diagram = answer.getByRole('img', { name: 'Diagram' });
+    await expect(diagram.locator('svg')).toBeVisible();
+    await expect(diagram).toContainText('Review');
+    await expect(answer.getByRole('note')).toHaveText(/^Diagram not drawn: \S.*$/);
+    await expect(answer.getByRole('img', { name: 'Diagram' })).toHaveCount(1);
+
+    const source = answer.getByRole('button', { name: 'Source' });
+    await source.click();
+    await expect(diagram).toBeHidden();
+    await expect(answer.getByText('Review -->|send back| Build')).toBeVisible();
+    await source.click();
+    await expect(diagram.locator('svg')).toBeVisible();
+
+    // The palette switches every diagram to its source and back.
+    await page.keyboard.press('Control+k');
+    await page.getByRole('dialog').getByRole('combobox').fill('toggle diagram source');
+    await page.keyboard.press('Enter');
+    await expect(source).toHaveAttribute('aria-pressed', 'true');
   });
 
   test('marks a thread done, reopens it, and a new message reopens it too', async ({ page }) => {
@@ -270,5 +309,20 @@ test.describe('chat', () => {
     await page.keyboard.press('Control+k');
     await palette.getByRole('combobox').fill('new thread');
     await expect(palette.getByRole('option', { name: /New thread/ })).toBeVisible();
+  });
+});
+
+test.describe('sketch', () => {
+  test.skip(!sketching, 'Set WOW_E2E_SKETCHES to write the screenshots');
+  test.use(sketchUse);
+
+  test('chat-markdown', async ({ page }) => {
+    await startThread(page, 'Show a table and a diagram');
+    const answer = conversation(page).getByTestId('item-assistant_text');
+    await expect(answer.getByRole('img', { name: 'Diagram' }).locator('svg')).toBeVisible();
+    await expect(answer.getByRole('note')).toBeVisible();
+    await expect(answer.locator('.wow-code .shiki')).toBeVisible();
+    await answer.getByRole('heading').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: sketchPath('2026-11-review-loop', 'chat-markdown') });
   });
 });
