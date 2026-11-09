@@ -26,7 +26,11 @@ When this is done:
   projects are on our GitLab", "do not start runs after 16", "use the bigger model for review
   steps") and the assistant asks what it needs to know, changes the settings, and says what it
   changed and where that setting lives.
-- Every change the assistant makes is visible and can be undone.
+- Every change the assistant makes is visible and can be undone. Ordinary settings (work hours,
+  models, host addresses, theme) change at once. A change that lets the app do more on its own
+  waits for a yes first: what an agent is permitted to do, gates that pass by themselves, and
+  runs that start from events. What an agent is permitted to do is decided by the workflow, so
+  these changes are changes to a workflow.
 - When a value is secret, the assistant does not ask for it in the chat. It says which secret is
   needed, where to create it on that host and with which rights, step by step, and points at the
   field where Lucas enters it himself. It can see whether the field is filled and whether the
@@ -52,9 +56,6 @@ When this is done:
 
 ## Open questions
 
-- Does the assistant apply a change at once and offer undo, or show it and wait for a yes? Should
-  that differ for changes that make the app do more on its own, such as permission modes and gates
-  that pass by themselves?
 - Is handing wow to colleagues a goal now? If so, should an install be able to start from a
   prepared set of the company's hosts and defaults, without any secrets in it?
 - May the assistant read anything besides settings to help, such as the project's git remote or
