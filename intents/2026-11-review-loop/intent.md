@@ -42,6 +42,8 @@ When this is done:
 - Chat messages render the way the agent wrote them: headings, lists, tables, code and diagrams.
   A side panel opens a markdown file, an image or an HTML page that a step produced, next to the
   conversation.
+- A Confluence page linked from the ticket or the intent opens in the same side panel, so Lucas
+  can hold the agent's work against the requirement. wow reads only pages something links to.
 - wow shows the intents and units of a project and each unit's status (ready, claimed, delivered,
   blocked), read from the plan files and the pull requests, by the same rule `dispatch-next` uses.
 - A workflow can run over every ready unit of a plan, one after another, each in its own working
@@ -71,6 +73,8 @@ When this is done:
 - Writing review results to the hosts, for now: no approval or "request changes" on a pull
   request and no comment on a ticket from wow. wow reads from the hosts, so read-only tokens are
   enough for the review loop. Publishing a backlog item as an issue stays as it is.
+- Giving Confluence pages or tickets to the agent as background. The agents already reach the
+  hosts through their own MCP servers.
 - Merging without Lucas. A gate that passes by itself lets the next step start; it never merges a
   pull request.
 - Writing to Outlook, mobile, remote access and multi-user, as in the first intent.
@@ -79,7 +83,5 @@ When this is done:
 
 - Which of the four hosts comes first, and which versions do they run? The agents already reach
   them through MCP servers; wow reads them itself so that status never depends on an agent.
-- What is Confluence for here: pages shown next to a run, pages given to the agent as background,
-  or both?
 
 ## Decision log
