@@ -39,16 +39,26 @@ const missingEndpoint = new Set([404, 410, 501]);
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 const textOrNull = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+const validTime = (ms: number): boolean => !Number.isNaN(new Date(ms).getTime());
 const time = (value: unknown): string | null => {
   const parsed = typeof value === 'string' ? Date.parse(value) : Number.NaN;
   return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+};
+// A link from the host is kept only when it is a web address; the app puts it in a link, and
+// anything else (javascript:, file:, an empty string) must never get that far.
+const link = (value: unknown): string | null => {
+  if (typeof value !== 'string' || !URL.canParse(value)) return null;
+  const { protocol } = new URL(value);
+  return protocol === 'https:' || protocol === 'http:' ? value : null;
 };
 
 // One item of a search (an issue with `pull_request`) or of the pull request list.
 function found(item: unknown): FoundChangeRequest | undefined {
   const number = field(item, 'number');
-  const url = field(item, 'html_url');
-  if (typeof number !== 'number' || typeof url !== 'string') return undefined;
+  const url = link(field(item, 'html_url'));
+  if (typeof number !== 'number' || !Number.isSafeInteger(number) || number <= 0 || url === null) {
+    return undefined;
+  }
   const mergedAt = time(
     field(item, 'merged_at') ?? field(field(item, 'pull_request'), 'merged_at'),
   );
@@ -86,7 +96,7 @@ function checkRun(run: unknown): HostCheck | undefined {
       : typeof conclusion === 'string' && failedConclusions.has(conclusion)
         ? 'failure'
         : 'success';
-  return { name, state, url: textOrNull(field(run, 'html_url')) };
+  return { name, state, url: link(field(run, 'html_url')) };
 }
 
 function commitStatus(status: unknown): HostCheck | undefined {
@@ -94,7 +104,7 @@ function commitStatus(status: unknown): HostCheck | undefined {
   if (name === '') return undefined;
   const reported = field(status, 'state');
   const state = reported === 'success' ? 'success' : reported === 'pending' ? 'pending' : 'failure';
-  return { name, state, url: textOrNull(field(status, 'target_url')) };
+  return { name, state, url: link(field(status, 'target_url')) };
 }
 
 export function checkStateOf(checks: readonly HostCheck[]): HostChangeRequest['checkState'] {
@@ -105,8 +115,8 @@ export function checkStateOf(checks: readonly HostCheck[]): HostChangeRequest['c
 
 function reviewComment(comment: unknown): ReviewComment | undefined {
   const id = field(comment, 'id');
-  const url = field(comment, 'html_url');
-  if ((typeof id !== 'number' && typeof id !== 'string') || typeof url !== 'string') {
+  const url = link(field(comment, 'html_url'));
+  if ((typeof id !== 'number' && typeof id !== 'string') || String(id) === '' || url === null) {
     return undefined;
   }
   return {
@@ -152,15 +162,18 @@ export function createGitHubHost(
     const remaining = Number(answer.get('x-ratelimit-remaining') ?? Number.NaN);
     const reset = Number(answer.get('x-ratelimit-reset') ?? Number.NaN);
     const retryAfter = Number(answer.get('retry-after') ?? Number.NaN);
-    if (Number.isFinite(remaining) && Number.isFinite(reset) && reset > 0) {
+    if (Number.isFinite(remaining) && validTime(reset * 1000) && reset > 0) {
       left = { remaining, resetAt: new Date(reset * 1000) };
     }
-    const until = Number.isFinite(retryAfter)
-      ? clock().getTime() + retryAfter * 1000
-      : left?.remaining === 0
-        ? left.resetAt.getTime()
-        : undefined;
-    if (until === undefined) return false;
+    const until =
+      Number.isFinite(retryAfter) && retryAfter >= 0
+        ? clock().getTime() + retryAfter * 1000
+        : left?.remaining === 0
+          ? left.resetAt.getTime()
+          : undefined;
+    // A wait that is no date (a number far out of range) says nothing; the refusal is shown as
+    // it came.
+    if (until === undefined || !validTime(until)) return false;
     waitUntil = new Date(Math.max(until, waitUntil?.getTime() ?? 0));
     return true;
   };

@@ -1,6 +1,7 @@
 import type { ChangeRequest, PlanIntent, Project } from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
+import { safeHref } from '@/components/markdown';
 import { revisionLabel } from './model';
 
 export interface PlanCommandData {
@@ -61,14 +62,15 @@ export function planCommands({
     }
     for (const unit of openIntent.units) {
       const request = changeRequests.find((candidate) => candidate.id === unit.changeRequestId);
-      if (!request) continue;
+      const url = safeHref(request?.url);
+      if (!request || url === undefined) continue;
       commands.push({
         id: `plans.unit.${unit.key}.changeRequest`,
         title: `Open pull request #${request.number} of ${unit.key} on the host`,
         group: 'Plans',
         keywords: ['pull request', 'host', 'github', unit.key],
         detail: 'Unit',
-        run: () => void window.open(request.url, '_blank', 'noreferrer'),
+        run: () => void window.open(url, '_blank', 'noreferrer'),
       });
     }
     for (const unit of openIntent.units) {

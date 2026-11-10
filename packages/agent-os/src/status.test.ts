@@ -94,7 +94,9 @@ describe('unit status from pull requests', () => {
     expect(statuses[1]?.reason).toBe(
       'Not ready: plan.md is stale (built on spec@1, spec.md is at rev 2)',
     );
-    expect(statuses[3]?.reason).toBe('Waits for U2');
+    expect(statuses[3]?.reason).toBe(
+      'Waits for U2; plan.md is stale (built on spec@1, spec.md is at rev 2)',
+    );
   });
 
   it('makes no unit ready when the spec is stale and names it', () => {
@@ -141,5 +143,26 @@ describe('Intent-Unit lines', () => {
       { intentId: '2026-01-tea-timer', unitKey: 'U1' },
       { intentId: '2026-01-tea-timer', unitKey: 'U2' },
     ]);
+  });
+
+  it('reads a line written as a list item, in backticks or with punctuation after it', () => {
+    const body = [
+      'Intent-Unit: 2026-01-tea-timer/U1.',
+      '- Intent-Unit: 2026-01-tea-timer/U2,',
+      '`Intent-Unit: 2026-01-tea-timer/U3`',
+      '* Intent-Unit: `2026-01-tea-timer/U4`.',
+      'Intent-Unit: 2026-01-tea-timer/U5.1',
+      'Intent-Unit: 2026-01-tea-timer/.',
+    ].join('\n');
+    expect(intentUnitLines(body).map((line) => line.unitKey)).toEqual([
+      'U1',
+      'U2',
+      'U3',
+      'U4',
+      'U5.1',
+    ]);
+    expect(new Set(intentUnitLines(body).map((line) => line.intentId))).toEqual(
+      new Set(['2026-01-tea-timer']),
+    );
   });
 });

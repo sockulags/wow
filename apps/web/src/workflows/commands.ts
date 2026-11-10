@@ -8,6 +8,7 @@ import type {
 } from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
+import { safeHref } from '@/components/markdown';
 import { openFile } from '@/panel/viewer';
 import {
   fileStatusLabels,
@@ -82,13 +83,14 @@ function pullRequestCommands({
       run: ({ connection }) => void connection?.request('hosts.refresh', { runId }).catch(() => {}),
     },
   ];
-  if (pullRequest) {
+  const url = safeHref(pullRequest?.url);
+  if (pullRequest && url !== undefined) {
     commands.push({
       id: 'workflowRun.pullRequest.open',
       title: `Run: open pull request #${pullRequest.number} on the host`,
       group: 'Workflows',
       keywords: ['host', 'github', 'browser', 'review'],
-      run: () => void window.open(pullRequest.url, '_blank', 'noreferrer'),
+      run: () => void window.open(url, '_blank', 'noreferrer'),
     });
   }
   return commands;

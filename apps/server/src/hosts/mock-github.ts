@@ -10,10 +10,12 @@ export interface MockCheckRun {
 }
 
 export interface MockReviewComment {
-  readonly id: number;
+  readonly id: number | string;
   readonly user: string;
   readonly body: string;
   readonly path: string;
+  // Answered as the comment's link instead of the one the mock makes up.
+  readonly url?: string;
 }
 
 export interface MockPullRequest {
@@ -29,6 +31,8 @@ export interface MockPullRequest {
   // Commit statuses by context: success, pending, failure or error.
   readonly statuses?: Readonly<Record<string, string>>;
   readonly comments?: readonly MockReviewComment[];
+  // Answered as the pull request's link instead of the one the mock makes up.
+  readonly url?: string;
 }
 
 export interface MockRequest {
@@ -60,6 +64,8 @@ export class MockGitHub {
   token: string | undefined;
   // Sent as the request limit headers when set.
   limit: { remaining: number; reset: number } | undefined;
+  // Sent as the Retry-After header when set.
+  retryAfter: string | undefined;
   readonly requests: MockRequest[] = [];
 
   constructor(options: { owner: string; repo: string; webUrl: string }) {
@@ -80,7 +86,7 @@ export class MockGitHub {
       state: pull.state,
       draft: pull.draft ?? false,
       merged_at: pull.mergedAt ?? null,
-      html_url: this.#pullUrl(pull.number),
+      html_url: pull.url ?? this.#pullUrl(pull.number),
       head: { ref: pull.branch, sha: pull.sha },
     };
   }
@@ -93,6 +99,7 @@ export class MockGitHub {
           'x-ratelimit-reset': String(this.limit.reset),
         }
       : {};
+    if (this.retryAfter !== undefined) headers['retry-after'] = this.retryAfter;
     const json = (status: number, body: unknown): MockAnswer => ({ status, body, headers });
     if (method !== 'GET') return json(405, { message: 'This mock only reads' });
     if (this.failure) return json(this.failure.status, { message: this.failure.message });
@@ -114,7 +121,7 @@ export class MockGitHub {
           body: pull.body,
           state: pull.state,
           draft: pull.draft ?? false,
-          html_url: this.#pullUrl(pull.number),
+          html_url: pull.url ?? this.#pullUrl(pull.number),
           pull_request: { merged_at: pull.mergedAt ?? null },
         }));
       return json(200, { total_count: items.length, items });
@@ -143,7 +150,7 @@ export class MockGitHub {
           user: { login: comment.user },
           body: comment.body,
           path: comment.path,
-          html_url: `${this.#pullUrl(pull.number)}#discussion_r${comment.id}`,
+          html_url: comment.url ?? `${this.#pullUrl(pull.number)}#discussion_r${comment.id}`,
           created_at: '2026-11-03T08:15:00Z',
         })),
       );

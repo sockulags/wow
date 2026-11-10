@@ -4,7 +4,7 @@ import {
   hostReadId,
   isLiveRunState,
   settingsRegistry,
-  type ChangeRequest,
+  ChangeRequest,
   type HostError,
   type HostRead,
   type HostReadOutcome,
@@ -41,6 +41,8 @@ export interface HostPollerDeps {
   readonly clock?: () => Date;
   readonly timers?: SchedulerTimers;
   readonly fetch?: typeof fetch;
+  // Builds the host adapter; GitHub's unless a test gives its own.
+  readonly adapter?: typeof createGitHubHost;
 }
 
 // What one round asks about: the followed plans and the runs of one project.
@@ -50,6 +52,10 @@ interface Targets {
 }
 
 type ErrorNow = Omit<HostError, 'at'>;
+
+// One pull request came back in a form the contract does not allow. Only the plan or run that
+// names it fails; the host itself answered, so the rest of the round goes on.
+class UnusableAnswer extends HostFailure {}
 
 const labelOf = (key: string) =>
   Object.hasOwn(settingsRegistry, key)
@@ -266,12 +272,16 @@ export class HostPoller implements BackgroundService {
     const until = this.#leaveAlone.get(host.name);
     if (!asked && until && until > this.#clock()) return;
 
-    const adapter: HostAdapter = createGitHubHost(host.github.config, host.name, {
-      timeoutMs: settings.get('trackers.requestTimeoutMs'),
-      listFallbackCount: settings.get('hosts.listFallbackCount'),
-      clock: this.#clock,
-      ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
-    });
+    const adapter: HostAdapter = (this.#deps.adapter ?? createGitHubHost)(
+      host.github.config,
+      host.name,
+      {
+        timeoutMs: settings.get('trackers.requestTimeoutMs'),
+        listFallbackCount: settings.get('hosts.listFallbackCount'),
+        clock: this.#clock,
+        ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
+      },
+    );
     const stored = new Map(
       db
         .select()
@@ -287,11 +297,21 @@ export class HostPoller implements BackgroundService {
       const known = stored.get(found.number);
       // A merged pull request does not change any more, so its checks and comments are not
       // asked for again.
-      const row: ChangeRequest =
+      const row = ChangeRequest.safeParse(
         known?.state === 'merged' && found.state === 'merged'
           ? { ...known, title: found.title, url: found.url, units: [...found.units] }
-          : { ...(await adapter.read(found)), id, projectId };
-      read.set(found.number, row);
+          : { ...(await adapter.read(found)), id, projectId },
+      );
+      // A row the contract turns down would break the changeRequests topic for every client,
+      // so it is never stored.
+      if (!row.success) {
+        const where = row.error.issues[0]?.path.join('.') ?? '';
+        throw new UnusableAnswer(
+          'failed',
+          `${host.name} answered pull request #${found.number} in a form wow cannot read (${where === '' ? 'the whole answer' : where})`,
+        );
+      }
+      read.set(found.number, row.data);
       return id;
     };
     // After the first failure the host is not asked again this round: a refused token or a
@@ -309,7 +329,7 @@ export class HostPoller implements BackgroundService {
         for (const found of await find()) ids.push(await detail(found));
         outcomes.push({ id, scope, branch, result: { ok: true, changeRequestIds: ids } });
       } catch (error) {
-        failure =
+        const reason: ErrorNow =
           error instanceof HostFailure
             ? { kind: error.kind, message: error.message, setting: error.setting }
             : {
@@ -317,8 +337,9 @@ export class HostPoller implements BackgroundService {
                 message: error instanceof Error ? error.message : String(error),
                 setting: null,
               };
-        this.#deps.logger.warn('host read failed', { projectId, host: host.name, ...failure });
-        failed(id, scope, failure);
+        if (!(error instanceof UnusableAnswer)) failure = reason;
+        this.#deps.logger.warn('host read failed', { projectId, host: host.name, ...reason });
+        failed(id, scope, reason);
       }
       return undefined;
     };

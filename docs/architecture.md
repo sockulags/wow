@@ -939,7 +939,8 @@ as `trackers/resolve.ts` resolves them, so Enterprise Server is the same code un
 `https://<host>/api/v3`. A plan's pull requests are found with one search
 (`GET /search/issues?q="Intent-Unit: <intent-id>/" in:body is:pr repo:<owner>/<repo>`), and only
 a body that really has an `Intent-Unit: <intent-id>/<unit-key>` line counts (every such line is
-taken; `intentUnitLines` in `packages/agent-os`). A host whose search is missing or refuses the
+taken, also as a list item, in backticks or with punctuation after the key; `intentUnitLines`
+in `packages/agent-os`). A host whose search is missing or refuses the
 query (404, 405, 410, 422, 501) gets its newest pull requests read instead, as many as the
 fallback count setting says; the whole repository is never listed. A run's pull request is the
 newest one whose head is the branch the run's folder is on
@@ -951,7 +952,10 @@ action-required check runs and failed or errored statuses are failing; anything 
 is pending. 401 and 403 are `refused` and name the GitHub token setting, as does 404 on the
 repository (a token without rights gets that); a used-up request limit, any other status and a
 timeout are `failed`. The token goes into the `Authorization` header and nowhere else: not into
-an error, a row or a log line.
+an error, a row or a log line. What the host answers is not trusted: a link is kept only when
+it is an http or https address (a pull request without one is left out, as is a comment; a
+check keeps its name and loses the link), a pull request number must be a positive integer and
+a comment must have an id. A `Retry-After` or reset that gives no valid date is ignored.
 
 **Poller** (`apps/server/src/hosts/poller.ts`, started with the scheduler and stopped right
 after it). A round asks only about followed plans and live runs (running or waiting), grouped by
@@ -963,7 +967,10 @@ folder's branch (`TrackerService.githubHost`; without a token nothing is asked a
 say which setting is missing), finds the plan's and the run's pull requests, and reads each pull
 request once a round; a pull request already stored as merged is not read again. The first
 failure ends the project's round, since a refused token or a host that is down fails the rest
-the same way. GitHub's `x-ratelimit-remaining`, `x-ratelimit-reset` and `retry-after` headers
+the same way. Each pull request read is parsed with the `ChangeRequest` schema before it is
+stored; one the schema turns down is not stored, and only the plan or run that names it gets a
+`failed` read saying which pull request and field, so a bad answer can never break the
+`changeRequests` topic. GitHub's `x-ratelimit-remaining`, `x-ratelimit-reset` and `retry-after` headers
 stretch the interval: a host with fewer requests left than the round took, or that refused for
 the limit, is left alone until the limit starts again. Rounds run one after another.
 `startServer({hostTimers, clock, fetch})` lets tests fire the timer, move the clock and answer

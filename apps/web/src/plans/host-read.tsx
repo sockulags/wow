@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useRuntime } from '@/app/runtime';
 import { errorMessage } from '@/chat/data';
 import { Badge } from '@/components/ui/badge';
+import { safeHref } from '@/components/markdown';
 import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
 import { changeRequestStateLabel, checksLabel, lastFetchedLabel, settingLabel } from './model';
@@ -48,6 +49,7 @@ export function ChecksBadge({ request }: { readonly request: ChangeRequest }) {
 }
 
 // A link out to the host. The desktop shell opens http and https links in the system browser.
+// The address came from the host, so one that is not a web or mail address shows as text.
 export function HostLink({
   href,
   children,
@@ -57,9 +59,11 @@ export function HostLink({
   readonly children: React.ReactNode;
   readonly className?: string;
 }) {
+  const safe = safeHref(href);
+  if (safe === undefined) return <span className={className}>{children}</span>;
   return (
     <a
-      href={href}
+      href={safe}
       target="_blank"
       rel="noreferrer"
       className={
@@ -108,6 +112,7 @@ export function HostReadLine({
 }) {
   const { when } = useDateFormat();
   const failure = read?.error;
+  const open = safeHref(openUrl);
   return (
     <div data-testid="host-read" className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -121,9 +126,9 @@ export function HostReadLine({
           <RefreshCwIcon />
           Refresh now
         </Button>
-        {openUrl && (
+        {open && (
           <Button asChild variant="ghost" size="xs">
-            <a href={openUrl} target="_blank" rel="noreferrer">
+            <a href={open} target="_blank" rel="noreferrer">
               <ExternalLinkIcon />
               Open on host
             </a>

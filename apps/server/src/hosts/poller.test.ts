@@ -15,7 +15,9 @@ import { CommandRejected } from '../core/orchestrator.js';
 import { snapshot } from '../core/subscriptions.js';
 import { providerInstances } from '../db/schema.js';
 import { startServer, type RunningServer } from '../server.js';
+import { createGitHubHost } from './github.js';
 import { MockGitHub, type MockPullRequest } from './mock-github.js';
+import { HostPoller } from './poller.js';
 
 // U6 ground truth: unit status from pull requests, the run's pull request, and what the poller
 // asks and when, against an invented GitHub Enterprise host. Nothing sleeps: a round runs when
@@ -617,6 +619,22 @@ describe('a host that fails (spec 31, 32)', () => {
     ).not.toContain(TOKEN);
   });
 
+  it('shows the refusal itself when the host names a wait that is no date', async () => {
+    await follow();
+    host.failure = { status: 403, message: 'Slow down' };
+    host.retryAfter = '1e30';
+    await server.hosts.poll();
+    expect(read()?.error).toMatchObject({
+      kind: 'refused',
+      message: expect.stringContaining('ghe.example.invalid refused the GitHub token (403'),
+    });
+    // Nothing was learned about a wait, so the next round asks again.
+    host.failure = undefined;
+    host.retryAfter = undefined;
+    await server.hosts.poll();
+    expect(read()?.error).toBeNull();
+  });
+
   it('says the repository cannot be seen when the host answers 404 for it', async () => {
     host.search = false;
     set('trackers.github.repo', 'private-tea');
@@ -628,5 +646,97 @@ describe('a host that fails (spec 31, 32)', () => {
       ),
       setting: 'trackers.github.token',
     });
+  });
+});
+
+describe('a host that answers what it should not', () => {
+  const hostile = 'javascript:alert(document.domain)';
+
+  it('leaves out a pull request whose link is not a web address', async () => {
+    host.pulls = [merged, { ...open, url: hostile }];
+    onBranch('agent/U2-bell');
+    startRun();
+    await follow();
+    expect(requests().map((request) => request.number)).toEqual([12]);
+    expect(read()).toMatchObject({ changeRequestIds: ['tea:12'], error: null });
+    expect(read('run:r1')).toMatchObject({ changeRequestIds: [], error: null });
+    expect(statuses()).toMatchObject({ U1: 'delivered', U2: 'ready' });
+    expect(JSON.stringify(rows('changeRequests'))).not.toContain('javascript:');
+  });
+
+  it('leaves out a comment whose link is not a web address, is empty, or whose id is empty', async () => {
+    const comment = { user: 'mira', body: 'Invented.', path: 'bell/ring.ts' };
+    host.pulls = [
+      merged,
+      {
+        ...open,
+        comments: [
+          { ...comment, id: 9001 },
+          { ...comment, id: 9002, url: 'file:///C:/Windows/System32/calc.exe' },
+          { ...comment, id: 9003, url: '' },
+          { ...comment, id: '' },
+          { ...comment, id: 9005, url: hostile },
+        ],
+      },
+    ];
+    await follow();
+    const request = requests().find((row) => row.number === 14);
+    expect(request?.comments.map((row) => row.id)).toEqual(['9001']);
+    expect(request?.newestCommentId).toBe('9001');
+    expect(read()?.error).toBeNull();
+  });
+
+  it('never stores a pull request the contract turns down, and says so for its plan only', async () => {
+    onBranch('agent/U1-count-down');
+    startRun();
+    await follow();
+    const github = createGitHubHost(
+      { baseUrl: api, owner: 'acme', repo: 'tea', token: TOKEN, labels: [] },
+      'ghe.example.invalid',
+      { timeoutMs: 1000, listFallbackCount: 30, fetch: host.fetch(api) },
+    );
+    // An adapter that lets through what the contract does not allow: a comment without a link.
+    const careless = new HostPoller({
+      db: server.database.db,
+      engine: server.engine,
+      settings: server.settings,
+      logger: server.logger,
+      resolve: (projectId) => server.trackers.githubHost(projectId),
+      clock: () => now,
+      adapter: () => ({
+        ...github,
+        requests: 0,
+        waitUntil: undefined,
+        read: async (found) => {
+          const row = await github.read(found);
+          return {
+            ...row,
+            comments: row.comments.map((comment) => ({ ...comment, url: '' })),
+          };
+        },
+      }),
+    });
+    now = new Date('2026-11-03T09:05:00.000Z');
+    await careless.refresh();
+    expect(requests().find((row) => row.number === 14)?.comments[0]?.url).toBe(
+      'https://ghe.example.invalid/acme/tea/pull/14#discussion_r9001',
+    );
+    expect(read()).toMatchObject({
+      changeRequestIds: ['tea:12', 'tea:14'],
+      fetchedAt: '2026-11-03T09:00:00.000Z',
+      error: {
+        kind: 'failed',
+        message:
+          'ghe.example.invalid answered pull request #14 in a form wow cannot read (comments.0.url)',
+        at: '2026-11-03T09:05:00.000Z',
+      },
+    });
+    // The run's own pull request is fine and is read in the same round.
+    expect(read('run:r1')).toMatchObject({
+      changeRequestIds: ['tea:12'],
+      fetchedAt: '2026-11-03T09:05:00.000Z',
+      error: null,
+    });
+    expect(logged.some((line) => line.includes('cannot read'))).toBe(true);
   });
 });

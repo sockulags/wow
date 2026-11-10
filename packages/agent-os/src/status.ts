@@ -14,13 +14,16 @@ export interface UnitReference {
 }
 
 // Every `Intent-Unit: <intent-id>/<unit-key>` line of a pull request body. A pull request that
-// delivers several units carries one line each.
+// delivers several units carries one line each. People write the line as a list item, in
+// backticks or with a full stop after it; a claim that is missed shows the unit as ready, so
+// those still count.
 export function intentUnitLines(body: string): UnitReference[] {
   const found: UnitReference[] = [];
   for (const line of body.split(/\r?\n/)) {
-    const match = /^\s*Intent-Unit:\s*([^\s/]+)\/(\S+)\s*$/i.exec(line);
-    if (!match?.[1] || !match[2]) continue;
-    const reference = { intentId: match[1], unitKey: match[2] };
+    const match = /^\s*(?:[-*+]\s+)?`?Intent-Unit:\s*`?([^\s/`]+)\/(\S+)\s*$/i.exec(line);
+    const unitKey = match?.[2]?.replace(/[`.,;:!?)\]]+$/, '');
+    if (!match?.[1] || !unitKey) continue;
+    const reference = { intentId: match[1], unitKey };
     if (
       !found.some(
         (other) => other.intentId === reference.intentId && other.unitKey === reference.unitKey,
@@ -116,7 +119,8 @@ export function unitStatuses(input: UnitStatusInput): DerivedUnitStatus[] {
     }
     const missing = unit.dependsOn.filter((key) => !delivered.has(key));
     if (missing.length > 0) {
-      return { ...rest, status: 'waiting', reason: `Waits for ${missing.join(', ')}` };
+      const waits = `Waits for ${missing.join(', ')}`;
+      return { ...rest, status: 'waiting', reason: stale ? `${waits}; ${stale}` : waits };
     }
     if (stale) return { ...rest, status: 'waiting', reason: `Not ready: ${stale}` };
     return {
