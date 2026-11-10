@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -30,6 +30,54 @@ describe('SecretStore', () => {
     const store = new SecretStore({ dir, protector: plainProtector });
     await Promise.all(['a', 'b', 'c', 'd'].map((name) => store.set(name, name)));
     expect(await store.names()).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('keeps trying to replace a store that is held open, within the time it is given', async () => {
+    const held = Object.assign(new Error('EPERM: invented'), { code: 'EPERM' });
+    let refusals = 2;
+    const waits: number[] = [];
+    const store = new SecretStore({
+      dir,
+      protector: plainProtector,
+      replaceWaitMs: () => 100,
+      rename: async (from, to) => {
+        if (refusals > 0) {
+          refusals -= 1;
+          throw held;
+        }
+        await rename(from, to);
+      },
+      wait: (ms) => {
+        waits.push(ms);
+        return Promise.resolve();
+      },
+    });
+    await store.set('a', 'x');
+    expect(await store.get('a')).toBe('x');
+    expect(waits).toEqual([25, 50]);
+
+    // Held open for longer than the time given: the write fails and leaves no temporary file.
+    refusals = 10;
+    await expect(store.set('b', 'y')).rejects.toThrow('EPERM');
+    expect(await store.names()).toEqual(['a']);
+    expect((await readdir(dir)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('does not try again for another kind of failure', async () => {
+    const waits: number[] = [];
+    const store = new SecretStore({
+      dir,
+      protector: plainProtector,
+      replaceWaitMs: () => 1000,
+      rename: () =>
+        Promise.reject(Object.assign(new Error('ENOSPC: invented'), { code: 'ENOSPC' })),
+      wait: (ms) => {
+        waits.push(ms);
+        return Promise.resolve();
+      },
+    });
+    await expect(store.set('a', 'x')).rejects.toThrow('ENOSPC');
+    expect(waits).toEqual([]);
   });
 
   it('refuses to mix protections in one file', async () => {

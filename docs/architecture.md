@@ -1035,7 +1035,9 @@ goes into the test's exemptions with the reason.
 PowerShell call (`-EncodedCommand` script, value on stdin, so the secret never appears on a
 command line); elsewhere the file is plain with mode `0600` and the UI shows a warning
 (`secrets.status` reports the protection). Writes go to a `0600` temporary file that is renamed
-over the store. Settings marked `secret` store a reference `{secretRef}`, never the value; the
+over the store. On Windows the rename is refused while another program has the store open (a
+virus scanner, or a wow server that is still closing during a restart), so the write tries again
+with growing pauses for up to `advanced.secretsTimeoutMs` before it fails. Settings marked `secret` store a reference `{secretRef}`, never the value; the
 orchestrator rejects anything else. The settings page names the entry `setting:<key>` for a global
 value and `setting:project:<projectId>:<key>` for a project's own; the tracker service deletes the
 latter when `project.deleted` commits, since the project's settings rows go with the project.

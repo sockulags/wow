@@ -157,6 +157,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       defaultProtector(options.platform ?? process.platform, {
         timeoutMs: () => settings.get('advanced.secretsTimeoutMs'),
       }),
+    replaceWaitMs: () => settings.get('advanced.secretsTimeoutMs'),
   });
   const providers = new ProviderAdapters(options.hooks?.providers ?? {}, env);
   const providerService = new ProviderService({

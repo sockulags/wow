@@ -1400,7 +1400,7 @@ export const settingsRegistry = {
     group: 'advanced',
     label: 'Secret store timeout',
     description:
-      'How long one DPAPI protect or unprotect call may take on Windows before it is stopped and reported as failed.',
+      'How long one DPAPI protect or unprotect call may take on Windows before it is stopped and reported as failed, and how long a write keeps trying to replace the secrets file while another program has it open.',
     default: 30_000,
     scope: 'global',
     unit: 'ms',

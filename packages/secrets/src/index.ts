@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { SecretProtection, SecretRef } from '@wow/contracts';
 
 export const secretsFileName = 'secrets.json';
@@ -115,7 +116,19 @@ export interface SecretStoreOptions {
   // The wow home directory; the store lives in `<dir>/secrets.json`.
   readonly dir: string;
   readonly protector: Protector;
+  // How long a write keeps trying to put the new file in place of the old one. On Windows the
+  // old file cannot be replaced while another program has it open (a virus scanner, a backup, or
+  // a wow server that is still closing), and that passes in a moment. Without it a write is
+  // tried once.
+  readonly replaceWaitMs?: () => number;
+  // Stand-ins for the disk and the clock in tests.
+  readonly rename?: typeof rename;
+  readonly wait?: (ms: number) => Promise<unknown>;
 }
+
+// What Windows answers when the file to replace is open elsewhere.
+const heldOpen = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const firstWaitMs = 25;
 
 export class SecretStore {
   readonly file: string;
@@ -123,9 +136,16 @@ export class SecretStore {
   // Writes are read-modify-write on one file, so they run one after another.
   #queue: Promise<unknown> = Promise.resolve();
 
+  readonly #replaceWaitMs: () => number;
+  readonly #rename: typeof rename;
+  readonly #wait: (ms: number) => Promise<unknown>;
+
   constructor(options: SecretStoreOptions) {
     this.file = path.join(options.dir, secretsFileName);
     this.protector = options.protector;
+    this.#replaceWaitMs = options.replaceWaitMs ?? (() => 0);
+    this.#rename = options.rename ?? rename;
+    this.#wait = options.wait ?? ((ms) => delay(ms));
   }
 
   get protection(): SecretProtection {
@@ -198,6 +218,24 @@ export class SecretStore {
     return parsed;
   }
 
+  // Put the new file in place of the old one, trying again for a while when the old one is held
+  // open: each wait is twice the one before, and together they stay within `replaceWaitMs`.
+  async #replace(temporary: string): Promise<void> {
+    const budget = this.#replaceWaitMs();
+    let waited = 0;
+    for (let pause = firstWaitMs; ; pause *= 2) {
+      try {
+        await this.#rename(temporary, this.file);
+        return;
+      } catch (error) {
+        const code = error instanceof Error && 'code' in error ? String(error.code) : '';
+        if (!heldOpen.has(code) || waited + pause > budget) throw error;
+        await this.#wait(pause);
+        waited += pause;
+      }
+    }
+  }
+
   // Write a sibling file with mode 0600 and rename it over the old one, so a crash never leaves a
   // half-written store and the file is never readable by others, not even briefly.
   async #write(file: SecretsFile): Promise<void> {
@@ -206,7 +244,7 @@ export class SecretStore {
     try {
       await writeFile(temporary, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
       await chmod(temporary, 0o600);
-      await rename(temporary, this.file);
+      await this.#replace(temporary);
     } catch (error) {
       await rm(temporary, { force: true });
       throw error;
