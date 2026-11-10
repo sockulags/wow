@@ -43,6 +43,10 @@ const waitingFor = (page: Page) => planRun(page).getByTestId('plan-run-waiting')
 const refresh = (page: Page) =>
   page.getByRole('article').getByRole('button', { name: 'Refresh now' }).click();
 
+// A unit run makes its own working copy (a git worktree and a fetch) before its step starts,
+// which takes several seconds on Windows: longer than an assertion waits by default.
+const unitRun = { timeout: 15_000 };
+
 test('a plan run works through ready units', async ({ page }) => {
   await page.goto(planPath);
   await expect(
@@ -59,8 +63,8 @@ test('a plan run works through ready units', async ({ page }) => {
 
   // U1 and then U3 run, one after the other, each as an ordinary run (spec 40, 41).
   await page.getByRole('button', { name: 'Run ready units' }).click();
-  await expect(planRun(page).getByTestId('plan-run-unit-U1')).toContainText('Done');
-  await expect(planRun(page).getByTestId('plan-run-unit-U3')).toContainText('Done');
+  await expect(planRun(page).getByTestId('plan-run-unit-U1')).toContainText('Done', unitRun);
+  await expect(planRun(page).getByTestId('plan-run-unit-U3')).toContainText('Done', unitRun);
   await expect(planRun(page).getByTestId('plan-run-unit-U2')).toHaveCount(0);
 
   // Only U2 remains and U1 is not merged: the plan run waits and says for what (spec 41).
@@ -99,7 +103,7 @@ test('a plan run works through ready units', async ({ page }) => {
   await merge('U1');
   await refresh(page);
   await expect(status(page, 'U1')).toHaveText('Delivered');
-  await expect(planRun(page).getByTestId('plan-run-unit-U2')).toContainText('Done');
+  await expect(planRun(page).getByTestId('plan-run-unit-U2')).toContainText('Done', unitRun);
   await expect(waitingFor(page)).toHaveText([
     'U2 waits for its pull request to merge',
     'U3 waits for its pull request to merge',
