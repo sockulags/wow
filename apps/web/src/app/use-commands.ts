@@ -14,7 +14,8 @@ import { formatWhen } from '@/lib/format';
 import { panelCommands, viewerCommands } from '@/panel/commands';
 import { panelSelection } from '@/panel/model';
 import { planCommands } from '@/plans/commands';
-import { openPlan } from '@/plans/model';
+import { openPlan, runRead } from '@/plans/model';
+import { runPullRequest } from '@/workflows/pull-request-tab';
 import { useCalendarPrefs } from '@/calendar/prefs';
 import { pendingApproval } from '@/chat/view-model';
 import { changesStore } from '@/workflows/changes';
@@ -55,6 +56,8 @@ export function useCommands(): {
   const mailRailCollapsed = useSetting('outlook.mailRailCollapsed');
   const backlogItems = useTopic('backlogItems');
   const planIntents = useTopic('planIntents');
+  const changeRequests = useTopic('changeRequests');
+  const hostReads = useTopic('hostReads');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
@@ -112,6 +115,10 @@ export function useCommands(): {
                 search: locationSearch,
                 changedFiles: changedFiles ?? [],
                 project: projects?.find((project) => project.id === openRun.projectId),
+                pullRequest: runPullRequest(
+                  runRead(hostReads ?? [], openRunId),
+                  changeRequests ?? [],
+                ),
               }
             : undefined,
         sendBackRunId,
@@ -121,6 +128,7 @@ export function useCommands(): {
         intents: planIntents ?? [],
         projects: projects ?? [],
         openIntent: openPlan(pathname, planIntents ?? []),
+        changeRequests,
       }),
       ...backlogCommands({
         items: backlogItems ?? [],
@@ -160,6 +168,8 @@ export function useCommands(): {
     openBacklogItemId,
     viewer,
     planIntents,
+    changeRequests,
+    hostReads,
     changedFiles,
     sendBackRunId,
   ]);

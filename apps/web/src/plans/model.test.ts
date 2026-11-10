@@ -1,8 +1,13 @@
-import type { PlanIntent, PlanUnit, Project } from '@wow/contracts';
+import type { ChangeRequest, HostRead, PlanIntent, PlanUnit, Project } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import { planCommands } from './commands';
 import {
+  changeRequestStateLabel,
+  checksLabel,
+  failingChecks,
+  lastFetchedLabel,
   openPlan,
+  planRead,
   plansByProject,
   problemLabel,
   revisionLabel,
@@ -27,7 +32,8 @@ const unit = (key: string, title: string): PlanUnit => ({
   blocked: null,
   contract: null,
   status: 'unknown',
-  statusReason: 'No host is set up for this project',
+  statusReason: 'This plan is not followed, so only its files are read',
+  changeRequestId: null,
 });
 
 const intent = (
@@ -47,6 +53,7 @@ const intent = (
   source: null,
   units: [],
   problems: [],
+  followed: false,
   ...changes,
 });
 
@@ -99,6 +106,78 @@ describe('plans model', () => {
   });
 });
 
+const request = (changes: Partial<ChangeRequest> = {}): ChangeRequest => ({
+  id: 'b:14',
+  projectId: 'b',
+  host: 'github',
+  number: 14,
+  title: 'Ring the bell at zero',
+  url: 'https://ghe.example.invalid/acme/tea/pull/14',
+  state: 'open',
+  draft: false,
+  mergedAt: null,
+  headBranch: 'agent/U2-bell',
+  headSha: 'b2b2b2b',
+  units: [{ intentId: '2026-01-timer', unitKey: 'U2' }],
+  checkState: 'none',
+  checks: [],
+  comments: [],
+  newestCommentId: null,
+  ...changes,
+});
+
+const check = (name: string, state: 'success' | 'failure' | 'pending') => ({
+  name,
+  state,
+  url: null,
+});
+const when = (iso: string) => `<${iso.slice(11, 16)}>`;
+
+describe('what the host said, in words', () => {
+  it('names a pull request state, with Draft for an open draft', () => {
+    expect(changeRequestStateLabel(request())).toBe('Open');
+    expect(changeRequestStateLabel(request({ draft: true }))).toBe('Draft');
+    expect(changeRequestStateLabel(request({ state: 'merged', draft: true }))).toBe('Merged');
+    expect(changeRequestStateLabel(request({ state: 'closed' }))).toBe('Closed');
+  });
+
+  it('sums the checks up and lists the failing ones', () => {
+    expect(checksLabel(request())).toBe('No checks');
+    expect(
+      checksLabel(request({ checkState: 'success', checks: [check('test', 'success')] })),
+    ).toBe('1 check passed');
+    const mixed = request({
+      checkState: 'failure',
+      checks: [check('test', 'failure'), check('lint', 'pending'), check('build', 'success')],
+    });
+    expect(checksLabel(mixed)).toBe('1 of 3 checks failed');
+    expect(checksLabel({ ...mixed, checkState: 'pending' })).toBe('1 of 3 checks still running');
+    expect(failingChecks(mixed).map((failing) => failing.name)).toEqual(['test']);
+  });
+
+  it('says when a plan was last fetched and from where, with the time it is given', () => {
+    const read: HostRead = {
+      id: 'plan:b:2026-01-timer',
+      projectId: 'b',
+      scope: 'plan',
+      host: 'github',
+      hostName: 'ghe.example.invalid',
+      branch: null,
+      changeRequestIds: [],
+      fetchedAt: '2026-11-03T09:00:00.000Z',
+      error: null,
+    };
+    expect(planRead([read], { id: 'b:2026-01-timer' })).toBe(read);
+    expect(planRead([read], { id: 'b:2026-02-kettle' })).toBeUndefined();
+    expect(lastFetchedLabel(read, when)).toBe('Last fetched <09:00> from ghe.example.invalid');
+    expect(lastFetchedLabel({ ...read, hostName: '' }, when)).toBe(
+      'Last fetched <09:00> from GitHub',
+    );
+    expect(lastFetchedLabel({ ...read, fetchedAt: null }, when)).toBe('Not fetched yet');
+    expect(lastFetchedLabel(undefined, when)).toBe('Not fetched yet');
+  });
+});
+
 describe('plan palette commands', () => {
   const tea = intent('b', '2026-01-timer', {
     title: 'A tea timer',
@@ -125,9 +204,27 @@ describe('plan palette commands', () => {
 
   it('offers the units of the open plan', () => {
     const commands = planCommands({ ...data, openIntent: tea });
-    expect(commands.slice(1, 3).map((command) => command.title)).toEqual([
+    expect(commands.slice(1, 4).map((command) => command.title)).toEqual([
+      'Plan: follow',
       'Unit U1: Count down',
       'Unit U2: Ring the bell',
+    ]);
+  });
+
+  it('offers Follow, and for a followed plan Refresh and each unit’s pull request', () => {
+    const followed = {
+      ...tea,
+      followed: true,
+      units: [
+        unit('U1', 'Count down'),
+        { ...unit('U2', 'Ring the bell'), changeRequestId: 'b:14' },
+      ],
+    };
+    const commands = planCommands({ ...data, openIntent: followed, changeRequests: [request()] });
+    expect(commands.slice(1, 4).map((command) => command.title)).toEqual([
+      'Plan: stop following',
+      'Plan: refresh pull requests now',
+      'Open pull request #14 of U2 on the host',
     ]);
   });
 });

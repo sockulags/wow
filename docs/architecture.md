@@ -19,7 +19,8 @@ packages/
   outlook-bridge/    PowerShell COM bridge + mock adapter + fixtures.
   skills/        SKILL.md discovery.
   workflow-engine/   workflow definitions, runs, gates, step handover. Pure; the server wires it.
-  agent-os/      reads agent-os intent, spec and plan files from their text. Pure; no I/O.
+  agent-os/      reads agent-os intent, spec and plan files from their text, and unit status
+                 from pull requests. Pure; no I/O.
   secrets/       DPAPI (Windows) or 0600 file (elsewhere) secret store.
 docs/            architecture (this file), user guide, windows-smoke checklist, releases/ notes.
 intents/         agent-os intent, spec and plan.
@@ -42,7 +43,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test`, `provider.listModels` and
   `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`, `plans.refresh` (reads every project's
-  intents folder now, see "Plans"),
+  intents folder now, see "Plans"), `hosts.refresh` (`{planId?, runId?}`, asks the host once
+  about one followed plan, one run or everything wow follows, see "Hosts"),
   `workflowRuns.detectArtifacts` (`{runId}`), `workflowRuns.diff` (`{runId, path?}`, what the run
   changed since its base, see "Run base and changes"), `workflows.matchArtifacts` (`{projectId, globs}`),
   `files.read` (`{runId, path}`, one file of a run for the viewer, see "Files"), `outlook.open`
@@ -154,7 +156,15 @@ skills           id, name, description, dir, source ('user-claude'|'user-codex'|
                  'project-agents'|'custom'), manualOnly, invocations(json: {claude, codex})
 plan_intents     id ('<projectId>:<intentId>'), projectId, intentId, title, hasIntent, status?, rev?,
                  spec(json: PlanFile)?, plan(json: PlanFile)?, source ('files'|'issues')?,
-                 units(json: PlanUnit[]), problems(json: PlanProblem[])   -- what the files say
+                 units(json: PlanUnit[]), problems(json: PlanProblem[]), followed
+                 -- what the files say; unit status also from the host while followed
+host_reads       id ('plan:<planIntentId>'|'run:<runId>'), projectId, scope ('plan'|'run'), host
+                 ('github'), hostName, branch?, changeRequestIds(json), fetchedAt?,
+                 error(json: HostError)?   -- what was last read for a followed plan or a run
+change_requests  id ('<projectId>:<number>'), projectId, host, number, title, url, state ('open'|
+                 'merged'|'closed'), draft, mergedAt?, headBranch, headSha, units(json: UnitRef[]),
+                 checkState ('none'|'pending'|'success'|'failure'), checks(json: HostCheck[]),
+                 comments(json: ReviewComment[]), newestCommentId?   -- pull requests as last read
 settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
 events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
@@ -609,6 +619,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.github.owner`, `trackers.github.repo`, `trackers.github.labels`,
   `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs`, `trackers.jira.keyScanCommits` (the
   `trackers.jira.*` and `trackers.github.*` ones are project-scoped, see "Backlog and trackers")
+- hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount` (see "Hosts")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
 - diff: `diff.maxFileBytes`, `diff.maxFiles` (the "Changes" page, see "Run base and changes")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
@@ -876,19 +887,106 @@ plans are read, and an intents folder refused as a link; both are looked at agai
 **Rows.** `PlanIntent` (topic `planIntents`) is one intent folder: `hasIntent`, `status` and
 `rev` of the intent, `spec` and `plan` as `PlanFile` (`{rev, status, stale: {builtOn, current}?}`,
 null when the file is missing), `source`, `units` and `problems`. A `PlanUnit` is `{key, title,
-line, dependsOn, blocked, contract, status, statusReason}`; `contract` lists all nine fields with
-null for one the section lacks, and is null for `source: issues`. The server decides `status`.
-Without a host it is what the files alone say: `blocked` when the unit's line has a `blocked:`
-note (the note is the reason), otherwise `unknown` with the reason that no host is set up. Status
-from pull requests belongs to the host reading that comes after this.
+line, dependsOn, blocked, contract, status, statusReason, changeRequestId}`; `contract` lists all nine fields with
+null for one the section lacks, and is null for `source: issues`. The server decides `status`, `statusReason` and
+`changeRequestId` (the pull request that delivered or claims the unit) in the orchestrator
+(`core/hosts.ts`, `withUnitStatus`), so the plans service only says what the files say. A plan
+that is not followed, or whose host has never been read, shows what the files alone say:
+`blocked` when the unit's line has a `blocked:` note (the note is the reason), otherwise
+`unknown` with the reason (not followed, not read yet, GitHub not set up, or what the host
+answered). A followed plan with a read shows `delivered`, `claimed`, `blocked`, `ready` or
+`waiting` from its pull requests, see "Hosts". `followed` is the plan's Follow switch; it is kept
+when the files are read again and goes with the row when the intent folder does.
 
 **View** (`apps/web/src/plans`, section "Plans" after Workflows, `keybindings.goPlans`). `/plans`
 lists every project with its intents: title, status and revision, spec and plan presence, "stale"
 and the number of problems. `/plans/$projectId/$intentId` shows the three files with a stale
 badge that names both revisions, the problems as `plan.md line 11: …`, and the units with key,
 title, dependencies, blocked note and status; the reason units share shows once above the list.
-`?unit=<key>` opens that unit's contract, rendered with the shared markdown renderer. Palette:
-"Plans: Refresh now", every intent (when searching) and each unit of the open plan.
+`?unit=<key>` opens that unit's contract, rendered with the shared markdown renderer. The header
+has the Follow switch (`plan.follow`); a followed plan shows "Last fetched <time> from <host>",
+the host's error when the last read failed (with a link to the setting it names) and its own
+"Refresh now" (`hosts.refresh {planId}`). A unit with a pull request links to it on the host and
+shows its state (Open, Draft, Merged, Closed) and checks; a waiting unit shows what it waits for,
+which names the stale file when that is the reason. "Refresh now" in the list reads the files and
+then asks the hosts about everything followed. Palette: "Plans: Refresh now", every intent (when
+searching), and for the open plan "Plan: follow" / "Plan: stop following", "Plan: refresh pull
+requests now", each unit and each unit's pull request.
+
+## Hosts
+
+wow reads pull requests from a project's code host to show unit status and a run's pull request
+(review loop spec 23 and 26 to 32). It only reads: every request is a GET, and nothing is merged,
+approved or commented on. GitHub and GitHub Enterprise Server are the first host; the others
+join behind the same interface.
+
+**Types** (`packages/contracts/src/hosts.ts`). `ChangeRequest` is a pull request as last read:
+number, title, link, `state`, `draft`, `mergedAt`, head branch and commit, the `Intent-Unit`
+lines of its body as `units`, `checkState` with every check (`HostCheck`: name, state, link),
+the review comments (`ReviewComment`: author, text, file, link) and `newestCommentId`. Event
+triggers and plan runs compare the next read with this row, which is why it keeps the state,
+head commit, check result and newest comment. `HostRead` is what was last read for one scope, a
+followed plan (`plan:<planIntentId>`) or a run (`run:<runId>`): the host, the change requests
+that are the scope's own, `fetchedAt` and `error` (`HostError`: `notSetUp`, `refused` or
+`failed`, a sentence, the setting to look at, and when it was first seen). Topics `changeRequests`
+and `hostReads`. Orchestration and the UI see only these; what a host calls things stays in its
+adapter.
+
+**Adapter** (`apps/server/src/hosts/adapter.ts`, `github.ts`). `HostAdapter` has three reads:
+`findForIntent(intentId)`, `findForBranch(branch)` and `read(found)`. The GitHub adapter uses
+the tracker client's HTTP helper (`trackers/http.ts`) and the project's GitHub tracker settings
+as `trackers/resolve.ts` resolves them, so Enterprise Server is the same code under
+`https://<host>/api/v3`. A plan's pull requests are found with one search
+(`GET /search/issues?q="Intent-Unit: <intent-id>/" in:body is:pr repo:<owner>/<repo>`), and only
+a body that really has an `Intent-Unit: <intent-id>/<unit-key>` line counts (every such line is
+taken; `intentUnitLines` in `packages/agent-os`). A host whose search is missing or refuses the
+query (404, 405, 410, 422, 501) gets its newest pull requests read instead, as many as the
+fallback count setting says; the whole repository is never listed. A run's pull request is the
+newest one whose head is the branch the run's folder is on
+(`GET …/pulls?head=<owner>:<branch>&state=all`). For each pull request it then reads the pull
+request itself when the search did not say where its head is, check runs and commit statuses of
+the head commit (both, because Enterprise Server versions differ; an endpoint that answers 404,
+410 or 501 means no checks from it), and the review comments. Failed, timed out, cancelled and
+action-required check runs and failed or errored statuses are failing; anything not completed
+is pending. 401 and 403 are `refused` and name the GitHub token setting, as does 404 on the
+repository (a token without rights gets that); a used-up request limit, any other status and a
+timeout are `failed`. The token goes into the `Authorization` header and nowhere else: not into
+an error, a row or a log line.
+
+**Poller** (`apps/server/src/hosts/poller.ts`, started with the scheduler and stopped right
+after it). A round asks only about followed plans and live runs (running or waiting), grouped by
+project; a project with neither is not asked about and its git is not read. It runs at every
+poll interval while polling is on and the scheduler is not paused, once when a plan is followed
+or a run starts under the same conditions, and once for `hosts.refresh` whatever those settings
+and the host's request limit say (spec 30). Per project it resolves the GitHub settings and the
+folder's branch (`TrackerService.githubHost`; without a token nothing is asked and the reads
+say which setting is missing), finds the plan's and the run's pull requests, and reads each pull
+request once a round; a pull request already stored as merged is not read again. The first
+failure ends the project's round, since a refused token or a host that is down fails the rest
+the same way. GitHub's `x-ratelimit-remaining`, `x-ratelimit-reset` and `retry-after` headers
+stretch the interval: a host with fewer requests left than the round took, or that refused for
+the limit, is left alone until the limit starts again. Rounds run one after another.
+`startServer({hostTimers, clock, fetch})` lets tests fire the timer, move the clock and answer
+for the host; `hosts/mock-github.ts` is the invented host the server tests and the e2e server
+share.
+
+**Storing** (`core/hosts.ts`). A round ends in one internal `hosts.sync` command per project
+with each scope's outcome and the change requests read. The orchestrator turns it into
+`hosts.synced` (rows that changed, and rows that went) and, when unit statuses change,
+`plans.synced`. A failed scope keeps its change requests and `fetchedAt` and gets the error
+(spec 31); an error that repeats keeps the time it was first seen, so a host that stays down
+stores nothing new. A change request no read names any more is removed, as is everything read
+for a plan when it is unfollowed or its folder goes, and a project's rows with the project. A
+finished run keeps its last read; it is just not asked about again.
+
+**Unit status** (`unitStatuses` in `packages/agent-os`, pure). The rule is agent-os's
+`dispatch-next`, in this order: `delivered` when a merged pull request carries the unit's line,
+`claimed` when an open one does, `blocked` when the unit's line has a `blocked:` note, `ready`
+when every dependency is delivered, and `waiting` otherwise (wow's own word, with what it waits
+for as the reason). A unit of a stale plan, or of a plan whose spec is stale, is never ready: it
+waits, and the reason names the file and both revisions. A closed pull request that was not
+merged counts for nothing. With `source: issues` the dependencies are in the tracker, so a unit
+without a pull request and without a `blocked:` note stays `unknown` and says why.
 
 ## Chat view
 
@@ -972,8 +1070,15 @@ workflow and run, and Run: approve, Run: send back and Stop run for the open run
 **Review at a gate** (`gate.ts`, `gate-bar.tsx`, `review-tabs.tsx`; review loop spec 14 to 18).
 The run view's tabs are Steps, Changes, Artifacts, Pull request, Ticket and Pages (`runTabs`;
 `?tab=artifacts|pullRequest|ticket|pages` beside `changes`). Artifacts lists the found files of
-every step, each opening in the panel's viewer; Pull request, Ticket and Pages have no source yet
-and say "Nothing to show yet", as does Artifacts for a run without found files. While the run on
+every step, each opening in the panel's viewer; Ticket and Pages have no source yet
+and say "Nothing to show yet", as does Artifacts for a run without found files. Pull request
+(`pull-request-tab.tsx`, review loop spec 28) shows the run's `hostReads` row and the pull
+request it names: number and title linked to the host, state, checks, head branch and commit,
+the failing checks by name and the review comments (author, file, the text as plain text), each
+with its own link, above them "Last fetched <time> from <host>", the host's error when the last
+read failed, "Refresh now" (`hosts.refresh {runId}`) and "Open on host". Without a pull request
+it says why: not asked yet, the folder is on no branch, or no pull request has that branch as its
+head. See "Hosts". While the run on
 screen waits at a gate, a wide window shows the context panel with the step's conversation and
 the gate bar without changing `appearance.contextPanel` (the layout store's `contextPanelPeek`,
 see "Context panel"); it stays for that run until the user closes it or leaves the view. The run
@@ -988,7 +1093,7 @@ the Approve command is not offered, so its key cannot approve by accident. Send 
 offered before the first step. A step that was sent back shows "Attempt N" in its row, in the
 Artifacts tab and in the panel's step header. Palette commands: Run: show artifacts / pull
 request / ticket / pages / steps, Run: send back (Run: send back with this note and Run: cancel
-send back while the field is open).
+send back while the field is open), Run: refresh pull request now and Run: open pull request #<n> on the host.
 
 **Changes tab** (`changes.ts`, `changes-tab.tsx`; review loop spec 11 to 13). The run view has two
 tabs under its header, Steps and Changes; the address carries the choice

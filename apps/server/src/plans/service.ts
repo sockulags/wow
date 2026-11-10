@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { Engine } from '../core/engine.js';
+import { notFollowedReason } from '../core/hosts.js';
 import type { Db } from '../db/database.js';
 import { projects } from '../db/schema.js';
 import type { Logger } from '../logger.js';
@@ -28,9 +29,6 @@ export interface PlansServiceDeps {
   readonly logger: Logger;
   readonly watch?: PlansWatchFactory;
 }
-
-// Shown on every unit that is not blocked while no host can say more (spec 24).
-export const noHostReason = 'No host is set up for this project, so only the plan files are read';
 
 // The project's intents folder, or undefined when the setting would leave the project folder.
 export function intentsDirectory(
@@ -106,6 +104,7 @@ export function presentable(intent: PlanIntent): PlanIntent | undefined {
     plan: null,
     source: null,
     units: [],
+    followed: false,
     problems: [
       {
         file: intent.hasIntent ? 'intent' : intent.spec ? 'spec' : 'plan',
@@ -166,10 +165,12 @@ export async function readProjectIntents(
               }))
             : null,
           status,
-          statusReason: status === 'blocked' ? (unit.blocked ?? '') : noHostReason,
+          statusReason: status === 'blocked' ? (unit.blocked ?? '') : notFollowedReason,
+          changeRequestId: null,
         };
       }),
       problems: [...document.problems],
+      followed: false,
     });
     if (intent) intents.push(intent);
   }

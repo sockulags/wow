@@ -1,5 +1,5 @@
 import type { Project, Workflow, WorkflowRun } from '@wow/contracts';
-import { FileTextIcon, GitPullRequestIcon, LibraryIcon, TicketIcon } from 'lucide-react';
+import { FileTextIcon, LibraryIcon, TicketIcon } from 'lucide-react';
 import { EmptyState } from '@/components/states';
 import { Artifact } from './artifact-link';
 import type { ReviewTab } from './changes';
@@ -56,10 +56,6 @@ export function ArtifactsTab({
 }
 
 const hostTabs = {
-  pullRequest: {
-    icon: GitPullRequestIcon,
-    description: 'wow does not read pull requests yet, so this run has none to show.',
-  },
   ticket: {
     icon: TicketIcon,
     description: 'wow does not read tickets yet, so this run has none to show.',
@@ -70,8 +66,12 @@ const hostTabs = {
   },
 } as const;
 
-// Pull request, Ticket and Pages have no source yet: each says so.
-export function HostTab({ tab }: { readonly tab: Exclude<ReviewTab, 'changes' | 'artifacts'> }) {
+// Ticket and Pages have no source yet: each says so.
+export function HostTab({
+  tab,
+}: {
+  readonly tab: Exclude<ReviewTab, 'changes' | 'artifacts' | 'pullRequest'>;
+}) {
   const { icon, description } = hostTabs[tab];
   return <EmptyState icon={icon} title="Nothing to show yet" description={description} />;
 }

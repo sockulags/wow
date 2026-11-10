@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ChangeRequest,
   Command,
+  PlanIntent,
   Keybinding,
   KeyValueList,
   ProviderCommand,
@@ -97,6 +99,7 @@ describe('settings registry', () => {
         'skills',
         'plans',
         'trackers',
+        'hosts',
         'viewer',
         'diff',
         'appearance',
@@ -234,5 +237,69 @@ describe('server contracts', () => {
       }).success,
     ).toBe(true);
     expect(Command.safeParse({ type: 'project.explode', projectId: 'p1' }).success).toBe(false);
+  });
+});
+
+describe('hosts', () => {
+  it('reads a plan row stored before plans could be followed', () => {
+    const stored = {
+      id: 'tea:2026-01-tea-timer',
+      projectId: 'tea',
+      intentId: '2026-01-tea-timer',
+      title: 'A tea timer',
+      hasIntent: true,
+      status: 'accepted',
+      rev: 1,
+      spec: null,
+      plan: null,
+      source: 'files',
+      units: [
+        {
+          key: 'U1',
+          title: 'Count down',
+          line: 12,
+          dependsOn: [],
+          blocked: null,
+          contract: null,
+          status: 'unknown',
+          statusReason: 'No host is set up',
+        },
+      ],
+      problems: [],
+    };
+    const row = PlanIntent.parse(stored);
+    expect(row.followed).toBe(false);
+    expect(row.units[0]?.changeRequestId).toBeNull();
+  });
+
+  it('accepts a plan.follow command and a change request with checks and comments', () => {
+    expect(
+      Command.safeParse({ type: 'plan.follow', planId: 'tea:2026-01-tea-timer', followed: true })
+        .success,
+    ).toBe(true);
+    const request = {
+      id: 'tea:14',
+      projectId: 'tea',
+      host: 'github',
+      number: 14,
+      title: 'Ring the bell',
+      url: 'https://ghe.example.invalid/acme/tea/pull/14',
+      state: 'open',
+      draft: true,
+      mergedAt: null,
+      headBranch: 'agent/U2-bell',
+      headSha: 'b2b2b2b',
+      units: [{ intentId: '2026-01-tea-timer', unitKey: 'U2' }],
+      checkState: 'failure',
+      checks: [{ name: 'test', state: 'failure', url: null }],
+      comments: [],
+      newestCommentId: null,
+    };
+    expect(ChangeRequest.safeParse(request).success).toBe(true);
+    expect(ChangeRequest.safeParse({ ...request, host: 'gitlab' }).success).toBe(false);
+    expect(
+      ChangeRequest.safeParse({ ...request, checks: [{ name: 'test', state: 'none', url: null }] })
+        .success,
+    ).toBe(false);
   });
 });

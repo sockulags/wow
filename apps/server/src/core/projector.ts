@@ -11,6 +11,8 @@ import {
   approvals,
   backlogItems,
   calendarItems,
+  changeRequests,
+  hostReads,
   mailItems,
   notifications,
   outlookStatus,
@@ -50,7 +52,9 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .run();
       // A thread keeps its folder and becomes a folder thread; its history stays readable.
       tx.update(threads).set({ projectId: null }).where(eq(threads.projectId, id)).run();
-      return ['projects', 'settings', 'threads'];
+      tx.delete(hostReads).where(eq(hostReads.projectId, id)).run();
+      tx.delete(changeRequests).where(eq(changeRequests.projectId, id)).run();
+      return ['projects', 'settings', 'threads', 'hostReads', 'changeRequests'];
     }
     case 'setting.changed':
       tx.insert(settings)
@@ -85,6 +89,30 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         tx.delete(planIntents).where(inArray(planIntents.id, event.payload.removed)).run();
       }
       return ['planIntents'];
+    case 'hosts.synced': {
+      const { payload } = event;
+      for (const read of payload.reads) {
+        tx.insert(hostReads)
+          .values(read)
+          .onConflictDoUpdate({ target: hostReads.id, set: read })
+          .run();
+      }
+      if (payload.removedReads.length > 0) {
+        tx.delete(hostReads).where(inArray(hostReads.id, payload.removedReads)).run();
+      }
+      for (const request of payload.changeRequests) {
+        tx.insert(changeRequests)
+          .values(request)
+          .onConflictDoUpdate({ target: changeRequests.id, set: request })
+          .run();
+      }
+      if (payload.removedChangeRequests.length > 0) {
+        tx.delete(changeRequests)
+          .where(inArray(changeRequests.id, payload.removedChangeRequests))
+          .run();
+      }
+      return ['hostReads', 'changeRequests'];
+    }
     case 'workflow.created':
       tx.insert(workflows).values(event.payload).run();
       return ['workflows'];
@@ -463,6 +491,10 @@ export function readModel(tx: DbOrTx): ReadModel {
         .get(),
     skills: () => tx.select().from(skills).all(),
     planIntents: () => tx.select().from(planIntents).all(),
+    hostReads: (projectId) =>
+      tx.select().from(hostReads).where(eq(hostReads.projectId, projectId)).all(),
+    changeRequests: (projectId) =>
+      tx.select().from(changeRequests).where(eq(changeRequests.projectId, projectId)).all(),
     workflow: (id) => tx.select().from(workflows).where(eq(workflows.id, id)).get(),
     run: (id) => tx.select().from(workflowRuns).where(eq(workflowRuns.id, id)).get(),
     hasLiveRun: (workflowId) =>

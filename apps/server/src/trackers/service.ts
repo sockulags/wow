@@ -68,9 +68,16 @@ export interface TrackerServiceDeps {
   readonly git?: GitReader;
 }
 
-type Configured<T> =
+export type Configured<T> =
   | { readonly config: T; readonly missing: readonly [] }
   | { readonly config: undefined; readonly missing: readonly string[] };
+
+export interface ProjectGitHubHost {
+  readonly github: Configured<GitHubConfig>;
+  // github.com or the Enterprise host; empty while the API URL is not set.
+  readonly name: string;
+  readonly branch: string | null;
+}
 
 const serviceNames: Readonly<Record<TrackerKind, string>> = { jira: 'Jira', github: 'GitHub' };
 
@@ -219,6 +226,30 @@ export class TrackerService {
         otherSites,
         jiraKeys: guessJiraKeys(git.branch ? [git.branch, ...texts] : texts),
       }),
+    };
+  }
+
+  // The project's GitHub host as the poller reads it: the same settings a publish uses, the
+  // host's name and the branch the project folder is on. Without a token nothing is set up, and
+  // the folder's git is not asked.
+  async githubHost(projectId: string): Promise<ProjectGitHubHost | undefined> {
+    const project = this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
+    if (!project) return undefined;
+    const token = this.#deps.settings.resolve('trackers.github.token', { projectId }).value;
+    if (!SecretRef.safeParse(token).success) {
+      return {
+        github: { config: undefined, missing: ['trackers.github.token'] },
+        name: '',
+        branch: null,
+      };
+    }
+    const git = await this.#folderGit(project.id, project.cwd);
+    const values = new Map(this.#resolve(project.id, git).map((entry) => [entry.key, entry]));
+    const github = await this.#github(values);
+    return {
+      github,
+      name: hostOf(String(values.get('trackers.github.baseUrl')?.value ?? '')) ?? '',
+      branch: git.branch,
     };
   }
 

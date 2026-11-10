@@ -30,24 +30,39 @@ export class TrackerError extends Error {
   }
 }
 
+// The headers of the answer a TrackerError came from, for a caller that reads the host's request
+// limit from them. Kept beside the error, so the error stays a message and a status.
+const answerHeaders = new WeakMap<TrackerError, Headers>();
+export const headersOf = (error: TrackerError): Headers | undefined => answerHeaders.get(error);
+
 export const trimBase = (url: string) => url.trim().replace(/\/+$/, '');
 
-export function postJson(
+export async function postJson(
   service: string,
   url: string,
   headers: Record<string, string>,
   body: unknown,
   options: RequestOptions,
 ): Promise<unknown> {
-  return requestJson(service, 'POST', url, headers, body, options);
+  return (await requestJson(service, 'POST', url, headers, body, options)).body;
 }
 
-export function getJson(
+export async function getJson(
   service: string,
   url: string,
   headers: Record<string, string>,
   options: RequestOptions,
 ): Promise<unknown> {
+  return (await requestJson(service, 'GET', url, headers, undefined, options)).body;
+}
+
+// A GET that also hands back the answer's headers (request limits, for the host poller).
+export function getJsonAnswer(
+  service: string,
+  url: string,
+  headers: Record<string, string>,
+  options: RequestOptions,
+): Promise<{ body: unknown; headers: Headers }> {
   return requestJson(service, 'GET', url, headers, undefined, options);
 }
 
@@ -58,7 +73,7 @@ async function requestJson(
   headers: Record<string, string>,
   body: unknown,
   options: RequestOptions,
-): Promise<unknown> {
+): Promise<{ body: unknown; headers: Headers }> {
   const send = options.fetch ?? globalThis.fetch;
   let response: Response;
   try {
@@ -85,12 +100,14 @@ async function requestJson(
   const parsed = parseJson(text);
   if (!response.ok) {
     const detail = errorDetail(parsed) ?? (text.trim().slice(0, 300) || response.statusText);
-    throw new TrackerError(
+    const refused = new TrackerError(
       `${service} answered ${response.status}${detail ? `: ${detail}` : ''}`,
       response.status,
     );
+    answerHeaders.set(refused, response.headers);
+    throw refused;
   }
-  return parsed;
+  return { body: parsed, headers: response.headers };
 }
 
 function parseJson(text: string): unknown {

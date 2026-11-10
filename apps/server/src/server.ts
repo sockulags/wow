@@ -20,6 +20,7 @@ import {
   type ServerHooks,
   type ServiceContext,
 } from './hooks/index.js';
+import { HostPoller } from './hosts/poller.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
 import type { OutlookService } from './outlook/service.js';
 import { discoverProjects } from './projects/discover.js';
@@ -77,7 +78,9 @@ export interface StartOptions {
   readonly clock?: () => Date;
   // Replaces the scheduler's timer, for tests that call `scheduler.tick()` themselves.
   readonly schedulerTimers?: SchedulerTimers;
-  // Replaces the global fetch the tracker clients use, for tests.
+  // Replaces the host poller's timer, for tests that call `hosts.poll()` themselves.
+  readonly hostTimers?: SchedulerTimers;
+  // Replaces the global fetch the tracker clients and the host poller use, for tests.
   readonly fetch?: typeof fetch;
   // Runs npm for "Update Codex" (`provider.update`); tests and the e2e server pass a fake one.
   readonly runNpm?: RunNpm;
@@ -101,6 +104,7 @@ export interface RunningServer {
   readonly providerUpdates: ProviderUpdates;
   readonly scheduler: Scheduler;
   readonly trackers: TrackerService;
+  readonly hosts: HostPoller;
   readonly logger: Logger;
   stop(): Promise<void>;
 }
@@ -204,6 +208,16 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
+  const hosts = new HostPoller({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    resolve: (projectId) => trackers.githubHost(projectId),
+    ...(options.clock ? { clock: options.clock } : {}),
+    ...(options.hostTimers ? { timers: options.hostTimers } : {}),
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
   const handlers = createHandlers({
     engine,
     subscriptions,
@@ -216,6 +230,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     providers: providerService,
     providerUpdates,
     trackers,
+    hosts,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     discoverProjects: () =>
       discoverProjects({
@@ -325,6 +340,9 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       services.push(outlook);
     }
     for (const start of options.hooks?.services ?? []) services.push(await start(context));
+    // The host poller runs beside the scheduler and stops right after it.
+    services.push(hosts);
+    hosts.start();
     // Last, so it stops first: no trigger fires into services that are already gone.
     services.push(scheduler);
     scheduler.start();
@@ -372,6 +390,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     providerUpdates,
     scheduler,
     trackers,
+    hosts,
     logger,
     stop,
   };

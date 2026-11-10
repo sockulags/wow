@@ -10,6 +10,19 @@ export { Subscriptions, snapshot } from './core/subscriptions.js';
 export { openDatabase, migrationsFolder, type Database, type Db } from './db/database.js';
 export * from './hooks/index.js';
 export {
+  HostFailure,
+  type FoundChangeRequest,
+  type HostAdapter,
+  type HostChangeRequest,
+} from './hosts/adapter.js';
+export {
+  MockGitHub,
+  type MockCheckRun,
+  type MockPullRequest,
+  type MockReviewComment,
+} from './hosts/mock-github.js';
+export { HostPoller, type HostPollerDeps } from './hosts/poller.js';
+export {
   failureCommand,
   snapshotCommand,
   startOutlookService,

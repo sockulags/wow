@@ -124,7 +124,10 @@ export function findTunables(source: string): TunableConstant[] {
 
 // `<file>:<name>` → why it is not a setting. Keep reasons concrete; an entry that no longer matches
 // anything fails the test so the list does not rot.
-const exemptions: Readonly<Record<string, string>> = {};
+const exemptions: Readonly<Record<string, string>> = {
+  'apps/server/src/hosts/github.ts:pageSize':
+    "GitHub's largest page (per_page=100): a limit of the host's API, not a preference",
+};
 
 async function sourceFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true, recursive: true });

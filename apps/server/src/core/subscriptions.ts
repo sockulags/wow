@@ -61,6 +61,14 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
           .from(t.planIntents)
           .orderBy(asc(t.planIntents.projectId), asc(t.planIntents.intentId))
           .all();
+      case 'changeRequests':
+        return db
+          .select()
+          .from(t.changeRequests)
+          .orderBy(asc(t.changeRequests.projectId), asc(t.changeRequests.number))
+          .all();
+      case 'hostReads':
+        return db.select().from(t.hostReads).orderBy(asc(t.hostReads.id)).all();
       case 'settings':
         return db
           .select()

@@ -22,6 +22,7 @@ import { Artifact } from './artifact-link';
 import { runTabs, type RunSearch } from './changes';
 import { ChangesTab } from './changes-tab';
 import { GateBar } from './gate-bar';
+import { PullRequestTab } from './pull-request-tab';
 import { ArtifactsTab, HostTab } from './review-tabs';
 import {
   attemptLabel,
@@ -293,6 +294,10 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
       ) : tab === 'artifacts' ? (
         <div role="tabpanel" aria-label="Artifacts" className="min-h-0 flex-1">
           <ArtifactsTab run={run} workflow={workflow} project={project} />
+        </div>
+      ) : tab === 'pullRequest' ? (
+        <div role="tabpanel" aria-label="Pull request" className="min-h-0 flex-1">
+          <PullRequestTab run={run} />
         </div>
       ) : tab !== 'steps' ? (
         <div

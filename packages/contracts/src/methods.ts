@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RunDiff, RunDiffParams } from './diff.js';
 import { FileReadParams, FileReadResult } from './files.js';
+import { ChangeRequest, HostRead, HostRefreshParams } from './hosts.js';
 import {
   Approval,
   BacklogItem,
@@ -53,6 +54,8 @@ export const subscriptionTopics = {
   notifications: { row: AppNotification, threadScoped: false },
   skills: { row: Skill, threadScoped: false },
   planIntents: { row: PlanIntent, threadScoped: false },
+  changeRequests: { row: ChangeRequest, threadScoped: false },
+  hostReads: { row: HostRead, threadScoped: false },
   settings: { row: SettingRow, threadScoped: false },
 } as const;
 
@@ -224,6 +227,13 @@ export const rpcMethods = {
   'plans.refresh': {
     params: NoParams,
     result: z.object({ intents: z.array(PlanIntent) }),
+  },
+  // "Refresh now" (review loop spec 30): asks the host once about one followed plan, one run, or
+  // everything wow follows, whatever the polling settings say, and answers with what is stored
+  // for them afterwards. A host that fails is an answer (the read's `error`), not an RPC error.
+  'hosts.refresh': {
+    params: HostRefreshParams,
+    result: z.object({ reads: z.array(HostRead) }),
   },
   // Looks for each started step's expected artifacts in the project folder (behavior 26, run
   // view open) and stores what it finds.

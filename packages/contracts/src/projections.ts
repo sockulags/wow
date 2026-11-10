@@ -381,7 +381,8 @@ export const Skill = z.object({
 export type Skill = z.infer<typeof Skill>;
 
 // Plans: what the files of one intent folder say (intents/<id>/{intent,spec,plan}.md), read by
-// the server's plans service. Nothing here comes from a host.
+// the server's plans service. Only a unit's status and the change request it links to can come
+// from a host, and only for a followed plan.
 export const PlanFileKind = z.enum(['intent', 'spec', 'plan']);
 export type PlanFileKind = z.infer<typeof PlanFileKind>;
 
@@ -406,8 +407,16 @@ export type PlanFile = z.infer<typeof PlanFile>;
 export const PlanSource = z.enum(['files', 'issues']);
 export type PlanSource = z.infer<typeof PlanSource>;
 
-// What is known about a unit without a host: blocked by its own line, or unknown.
-export const PlanUnitStatus = z.enum(['blocked', 'unknown']);
+// A unit's status (review loop spec 23 and 24). From the pull requests of a followed plan:
+// delivered, claimed, blocked, ready or waiting. From the files alone: blocked or unknown.
+export const PlanUnitStatus = z.enum([
+  'delivered',
+  'claimed',
+  'blocked',
+  'ready',
+  'waiting',
+  'unknown',
+]);
 export type PlanUnitStatus = z.infer<typeof PlanUnitStatus>;
 
 export const PlanUnit = z.object({
@@ -423,6 +432,8 @@ export const PlanUnit = z.object({
   status: PlanUnitStatus,
   // Why the status is what it is, in words the view shows as they are.
   statusReason: z.string(),
+  // The change request that delivered or claims the unit (a `changeRequests` row), if any.
+  changeRequestId: Id.nullable().default(null),
 });
 export type PlanUnit = z.infer<typeof PlanUnit>;
 
@@ -440,6 +451,8 @@ export const PlanIntent = z.object({
   source: PlanSource.nullable(),
   units: z.array(PlanUnit),
   problems: z.array(PlanProblem),
+  // The user follows this plan: wow asks the host about its pull requests (spec 27 and 29).
+  followed: z.boolean().default(false),
 });
 export type PlanIntent = z.infer<typeof PlanIntent>;
 

@@ -2,6 +2,8 @@ import {
   SecretRef,
   type Approval,
   type CalendarItem,
+  type ChangeRequest,
+  type HostRead,
   type MailItem,
   type OutlookStatus,
   type BacklogItem,
@@ -24,6 +26,7 @@ import {
 import { isDeepStrictEqual } from 'node:util';
 import { decideBacklog, isBacklogCommand } from './backlog.js';
 import { decideCalendar, isCalendarCommand } from './calendar.js';
+import { decideHosts, decidePlansSync, isHostCommand } from './hosts.js';
 import { decideProject, isProjectCommand } from './projects.js';
 import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
 import { decideThread, isThreadCommand } from './threads.js';
@@ -64,6 +67,9 @@ export interface ReadModel {
   outlookStatus(): OutlookStatus | undefined;
   skills(): Skill[];
   planIntents(): PlanIntent[];
+  // What was last read from the project's host, and the change requests those reads name.
+  hostReads(projectId: string): HostRead[];
+  changeRequests(projectId: string): ChangeRequest[];
   workflow(id: string): Workflow | undefined;
   run(id: string): WorkflowRun | undefined;
   // True while a run of this workflow is running or waiting at a gate.
@@ -102,6 +108,7 @@ export function decide(
   if (isCalendarCommand(command)) return decideCalendar(command, read, context);
   if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
   if (isBacklogCommand(command)) return decideBacklog(command, read, context);
+  if (isHostCommand(command)) return decideHosts(command, read);
   switch (command.type) {
     case 'setting.set': {
       const definition = settingDefinition(command.key, context);
@@ -154,19 +161,8 @@ export function decide(
       if (upserted.length === 0 && removed.length === 0) return [];
       return [{ kind: 'skills.synced', aggregate: 'skills', payload: { upserted, removed } }];
     }
-    case 'plans.sync': {
-      const current = new Map(read.planIntents().map((intent) => [intent.id, intent]));
-      const next = new Set(command.intents.map((intent) => intent.id));
-      if (next.size !== command.intents.length) {
-        throw new CommandRejected('rejected', 'Plan intent ids must be unique');
-      }
-      const upserted = command.intents.filter(
-        (intent) => !isDeepStrictEqual(current.get(intent.id), intent),
-      );
-      const removed = [...current.keys()].filter((id) => !next.has(id));
-      if (upserted.length === 0 && removed.length === 0) return [];
-      return [{ kind: 'plans.synced', aggregate: 'plans', payload: { upserted, removed } }];
-    }
+    case 'plans.sync':
+      return decidePlansSync(command.intents, read);
   }
 }
 

@@ -1,4 +1,5 @@
-import type { PlanFile, PlanIntent, PlanUnit } from '@wow/contracts';
+import type { ChangeRequest, PlanFile, PlanIntent, PlanUnit } from '@wow/contracts';
+import { dispatch } from '@wow/client-runtime';
 import { Link, Outlet, useNavigate } from '@tanstack/react-router';
 import {
   ChevronDownIcon,
@@ -15,19 +16,32 @@ import { Markdown } from '@/components/markdown';
 import { DisconnectedState, EmptyState, Stale, TopicPlaceholder } from '@/components/states';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 
 import { cn } from '@/lib/utils';
 import {
+  ChangeRequestState,
+  ChecksBadge,
+  HostLink,
+  HostReadLine,
+  useHostRefresh,
+} from './host-read';
+import {
   fileNames,
+  planRead,
   plansByProject,
   problemLabel,
   revisionLabel,
   staleLabel,
   unitStatusLabels,
+  unitStatusVariants,
 } from './model';
 
-// Reads the plan files again (`plans.refresh`). The watcher normally keeps the view current; this
-// is for what it cannot see, such as a project folder that did not exist when the plans were read.
+// Reads the plan files again (`plans.refresh`) and asks the hosts once about everything wow
+// follows (`hosts.refresh`). The watcher and the poller normally keep the view current; this is
+// for what they cannot see, such as a project folder that did not exist when the plans were
+// read, and for when polling is off.
 function RefreshButton() {
   const { connection } = useRuntime();
   const [busy, setBusy] = useState(false);
@@ -38,6 +52,7 @@ function RefreshButton() {
     setError(undefined);
     try {
       await connection.request('plans.refresh', {});
+      await connection.request('hosts.refresh', {});
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -208,10 +223,13 @@ const derivedRow = (kind: 'spec' | 'plan', file: PlanFile | null, extra?: string
 
 function UnitRow({
   unit,
+  request,
   open,
   onToggle,
 }: {
   unit: PlanUnit;
+  // The pull request that delivered or claims the unit.
+  request: ChangeRequest | undefined;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -253,10 +271,27 @@ function UnitRow({
               Blocked: {unit.blocked}
             </p>
           )}
+          {unit.status === 'waiting' && (
+            <p data-testid="unit-reason" className="text-2xs text-muted-foreground">
+              {unit.statusReason}
+            </p>
+          )}
+          {request && (
+            <p
+              data-testid="unit-change-request"
+              className="flex flex-wrap items-center gap-1.5 text-2xs text-muted-foreground"
+            >
+              <HostLink href={request.url}>
+                #{request.number} {request.title}
+              </HostLink>
+              <ChangeRequestState request={request} />
+              <ChecksBadge request={request} />
+            </p>
+          )}
         </div>
         <Badge
           data-testid="unit-status"
-          variant={unit.status === 'blocked' ? 'warning' : 'outline'}
+          variant={unitStatusVariants[unit.status]}
           className="mt-1"
           title={unit.statusReason}
         >
@@ -294,7 +329,13 @@ export function PlanView({
 }) {
   const { rows: intents, status } = useTopicState('planIntents');
   const projects = useTopic('projects');
+  const reads = useTopic('hostReads');
+  const requests = useTopic('changeRequests');
   const navigate = useNavigate();
+  const { connection } = useRuntime();
+  const planId = `${projectId}:${intentId}`;
+  const refresh = useHostRefresh({ planId });
+  const [followError, setFollowError] = useState<string>();
   if (intents === undefined) return <TopicPlaceholder status={status} />;
   const intent = intents.find(
     (candidate) => candidate.projectId === projectId && candidate.intentId === intentId,
@@ -314,6 +355,14 @@ export function PlanView({
     );
   }
   const project = projects?.find((candidate) => candidate.id === projectId);
+  const read = planRead(reads ?? [], intent);
+  const follow = (followed: boolean) => {
+    if (!connection) return;
+    setFollowError(undefined);
+    dispatch(connection, { type: 'plan.follow', planId: intent.id, followed }).catch(
+      (caught: unknown) => setFollowError(errorMessage(caught)),
+    );
+  };
   const toggle = (key: string) =>
     void navigate({
       to: '/plans/$projectId/$intentId',
@@ -336,6 +385,27 @@ export function PlanView({
             <span className="font-mono">{intent.intentId}</span>
             {project && <span> · {project.name}</span>}
           </p>
+          <div className="flex items-center gap-2 pt-1">
+            <Switch
+              id="plan-follow"
+              checked={intent.followed}
+              onCheckedChange={(checked) => follow(checked)}
+            />
+            <Label htmlFor="plan-follow" className="text-xs">
+              Follow
+            </Label>
+            <span className="text-xs text-muted-foreground">
+              {intent.followed
+                ? 'wow reads this plan’s pull requests from the host.'
+                : 'Off: only the files are read and no host is asked about this plan.'}
+            </span>
+          </div>
+          {followError && (
+            <p role="alert" className="text-xs text-destructive">
+              {followError}
+            </p>
+          )}
+          {intent.followed && <HostReadLine read={read} refresh={refresh} />}
         </header>
 
         <section aria-label="Files">
@@ -399,6 +469,7 @@ export function PlanView({
                     // A plan with a duplicate key still lists both lines.
                     key={`${unit.key}:${index}`}
                     unit={unit}
+                    request={requests?.find((request) => request.id === unit.changeRequestId)}
                     open={openUnit === unit.key}
                     onToggle={() => toggle(unit.key)}
                   />

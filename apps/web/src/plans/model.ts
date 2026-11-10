@@ -1,12 +1,95 @@
-import type { PlanFile, PlanIntent, PlanProblem, PlanUnit, Project } from '@wow/contracts';
+import {
+  hostKindLabels,
+  hostReadId,
+  settingsRegistry,
+  type ChangeRequest,
+  type HostCheck,
+  type HostRead,
+  type PlanFile,
+  type PlanIntent,
+  type PlanProblem,
+  type PlanUnit,
+  type Project,
+} from '@wow/contracts';
 
 // What the Plans view says about the rows it gets. The server reads the files and decides every
 // status; these are only the words.
 
 export const unitStatusLabels: Readonly<Record<PlanUnit['status'], string>> = {
+  delivered: 'Delivered',
+  claimed: 'Claimed',
+  ready: 'Ready',
+  waiting: 'Waiting',
   blocked: 'Blocked',
   unknown: 'Status unknown',
 };
+
+// The badge each status gets: what needs nothing from the user is quiet, what is in the way
+// stands out.
+export const unitStatusVariants: Readonly<
+  Record<PlanUnit['status'], 'default' | 'secondary' | 'info' | 'warning' | 'outline'>
+> = {
+  delivered: 'secondary',
+  claimed: 'info',
+  ready: 'default',
+  waiting: 'outline',
+  blocked: 'warning',
+  unknown: 'outline',
+};
+
+// What was last read from the host for a plan or a run, if anything.
+export const planRead = (
+  reads: readonly HostRead[],
+  intent: Pick<PlanIntent, 'id'>,
+): HostRead | undefined => reads.find((read) => read.id === hostReadId('plan', intent.id));
+export const runRead = (reads: readonly HostRead[], runId: string): HostRead | undefined =>
+  reads.find((read) => read.id === hostReadId('run', runId));
+
+// "Open", "Draft", "Merged" or "Closed".
+export const changeRequestStateLabel = (request: Pick<ChangeRequest, 'state' | 'draft'>): string =>
+  request.state === 'merged'
+    ? 'Merged'
+    : request.state === 'closed'
+      ? 'Closed'
+      : request.draft
+        ? 'Draft'
+        : 'Open';
+
+export const failingChecks = (request: Pick<ChangeRequest, 'checks'>): HostCheck[] =>
+  request.checks.filter((check) => check.state === 'failure');
+
+// "No checks", "3 checks passed", "1 of 3 checks still running" or "2 of 5 checks failed".
+export function checksLabel(request: Pick<ChangeRequest, 'checkState' | 'checks'>): string {
+  const total = request.checks.length;
+  const count = (state: HostCheck['state']) =>
+    request.checks.filter((check) => check.state === state).length;
+  const checks = total === 1 ? 'check' : 'checks';
+  switch (request.checkState) {
+    case 'none':
+      return 'No checks';
+    case 'success':
+      return `${total} ${checks} passed`;
+    case 'pending':
+      return `${count('pending')} of ${total} ${checks} still running`;
+    case 'failure':
+      return `${count('failure')} of ${total} ${checks} failed`;
+  }
+}
+
+// "Last fetched 09:02 from github.com", or that nothing was fetched yet.
+export function lastFetchedLabel(
+  read: Pick<HostRead, 'fetchedAt' | 'host' | 'hostName'> | undefined,
+  when: (iso: string) => string,
+): string {
+  if (!read?.fetchedAt) return 'Not fetched yet';
+  return `Last fetched ${when(read.fetchedAt)} from ${read.hostName || hostKindLabels[read.host]}`;
+}
+
+// The label of the setting a host error points at, for the link to it.
+export const settingLabel = (key: string): string =>
+  Object.hasOwn(settingsRegistry, key)
+    ? settingsRegistry[key as keyof typeof settingsRegistry].label
+    : key;
 
 export const fileNames = { intent: 'intent.md', spec: 'spec.md', plan: 'plan.md' } as const;
 

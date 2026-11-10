@@ -133,6 +133,7 @@ describe('shell', () => {
       'Skills',
       'Plans',
       'Trackers',
+      'Hosts',
       'Viewer',
       'Changes',
       'Appearance',

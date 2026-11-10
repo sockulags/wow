@@ -1,4 +1,11 @@
-import type { Project, RunDiffFile, Workflow, WorkflowRun, WorkflowTemplate } from '@wow/contracts';
+import type {
+  ChangeRequest,
+  Project,
+  RunDiffFile,
+  Workflow,
+  WorkflowRun,
+  WorkflowTemplate,
+} from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
 import { openFile } from '@/panel/viewer';
@@ -26,6 +33,8 @@ export interface WorkflowCommandData {
         readonly search: Record<string, unknown>;
         readonly changedFiles: readonly RunDiffFile[];
         readonly project: Project | undefined;
+        // The run's pull request as the host last showed it, if it has one.
+        readonly pullRequest?: ChangeRequest | undefined;
       }
     | undefined;
   // The run whose send back note is being written, if any (from the gate store).
@@ -54,6 +63,32 @@ function tabCommands(runId: string, current: RunSearch): AppCommand[] {
           search: id === 'steps' ? {} : { tab: id },
           replace: true,
         }),
+    });
+  }
+  return commands;
+}
+
+// The run's pull request (review loop spec 28 and 30): ask the host once, and open it there.
+function pullRequestCommands({
+  runId,
+  pullRequest,
+}: NonNullable<WorkflowCommandData['runView']>): AppCommand[] {
+  const commands: AppCommand[] = [
+    {
+      id: 'workflowRun.pullRequest.refresh',
+      title: 'Run: refresh pull request now',
+      group: 'Workflows',
+      keywords: ['host', 'github', 'checks', 'review', 'fetch', 'poll'],
+      run: ({ connection }) => void connection?.request('hosts.refresh', { runId }).catch(() => {}),
+    },
+  ];
+  if (pullRequest) {
+    commands.push({
+      id: 'workflowRun.pullRequest.open',
+      title: `Run: open pull request #${pullRequest.number} on the host`,
+      group: 'Workflows',
+      keywords: ['host', 'github', 'browser', 'review'],
+      run: () => void window.open(pullRequest.url, '_blank', 'noreferrer'),
     });
   }
   return commands;
@@ -249,7 +284,7 @@ export function workflowCommands({
     });
   }
 
-  if (runView) commands.push(...changesCommands(runView));
+  if (runView) commands.push(...changesCommands(runView), ...pullRequestCommands(runView));
 
   for (const workflow of workflows) {
     commands.push({

@@ -25,6 +25,7 @@ import {
   Workflow,
   WorkflowRun,
 } from './projections.js';
+import { ChangeRequest, HostKind, HostRead, HostReadOutcome } from './hosts.js';
 import {
   ApprovalDecision,
   ProviderEvent,
@@ -237,6 +238,9 @@ export const Command = z.discriminatedUnion('type', [
     end: Timestamp,
     zone: z.string().min(1),
   }),
+  // Follow or stop following a plan (`<projectId>:<intentId>`). A followed plan's pull requests
+  // are read from the project's host; unfollowing forgets what was read for it.
+  z.object({ type: z.literal('plan.follow'), planId: Id, followed: z.boolean() }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command['type'];
@@ -318,6 +322,18 @@ export const InternalCommand = z.discriminatedUnion('type', [
   // Replaces the plans projection with a fresh read of every project's intents folder; the
   // server's plans service sends it.
   z.object({ type: z.literal('plans.sync'), intents: z.array(PlanIntent) }),
+  // What the host poller read for one project: every scope it asked about (a followed plan or a
+  // run) with its outcome, and the change requests it read. The orchestrator stores what
+  // changed and works out the unit statuses of the project's followed plans again.
+  z.object({
+    type: z.literal('hosts.sync'),
+    projectId: Id,
+    at: Timestamp,
+    host: HostKind,
+    hostName: z.string(),
+    reads: z.array(HostReadOutcome),
+    changeRequests: z.array(ChangeRequest),
+  }),
   // What the workflow runner reports after a step's turn ended.
   z.object({
     type: z.literal('workflowRun.stepCompleted'),
@@ -493,6 +509,19 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('plans.synced'),
     aggregate: z.literal('plans'),
     payload: z.object({ upserted: z.array(PlanIntent), removed: z.array(Id) }),
+  }),
+  // Host rows as they now are, and the ones that went (an unfollowed plan, a change request no
+  // read names any more).
+  z.object({
+    kind: z.literal('hosts.synced'),
+    aggregate: Id,
+    payload: z.object({
+      projectId: Id,
+      reads: z.array(HostRead),
+      removedReads: z.array(Id),
+      changeRequests: z.array(ChangeRequest),
+      removedChangeRequests: z.array(Id),
+    }),
   }),
   z.object({ kind: z.literal('workflow.created'), aggregate: Id, payload: Workflow }),
   z.object({

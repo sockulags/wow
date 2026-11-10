@@ -7,7 +7,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { snapshot } from '../core/subscriptions.js';
 import { startServer, type RunningServer } from '../server.js';
-import { intentsDirectory, noHostReason, presentable } from './service.js';
+import { notFollowedReason } from '../core/hosts.js';
+import { intentsDirectory, presentable } from './service.js';
 import type { PlansWatchTarget } from './watch.js';
 
 // The nine agent-os contract fields with only Outcome written.
@@ -161,7 +162,8 @@ describe('plans service', () => {
         blocked: null,
         contract: outcomeOnly('the timer counts down.'),
         status: 'unknown',
-        statusReason: noHostReason,
+        statusReason: notFollowedReason,
+        changeRequestId: null,
       },
       {
         key: 'U2',
@@ -172,6 +174,7 @@ describe('plans service', () => {
         contract: outcomeOnly('a bell rings.'),
         status: 'blocked',
         statusReason: 'the bell is on order',
+        changeRequestId: null,
       },
     ]);
   });
@@ -198,7 +201,8 @@ describe('plans service', () => {
         blocked: null,
         contract: null,
         status: 'unknown',
-        statusReason: noHostReason,
+        statusReason: notFollowedReason,
+        changeRequestId: null,
       },
       {
         key: 'K-2',
@@ -209,6 +213,7 @@ describe('plans service', () => {
         contract: null,
         status: 'blocked',
         statusReason: 'no thermostat',
+        changeRequestId: null,
       },
     ]);
   });
@@ -449,6 +454,7 @@ describe('plans service', () => {
       source: 'files',
       units: [],
       problems: [],
+      followed: false,
     };
     expect(presentable({ ...intent, plan: null })).toEqual({ ...intent, plan: null });
     expect(presentable(intent)).toMatchObject({

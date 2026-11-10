@@ -17,6 +17,7 @@ export const SettingGroup = z.enum([
   'skills',
   'plans',
   'trackers',
+  'hosts',
   'viewer',
   'diff',
   'appearance',
@@ -828,6 +829,34 @@ export const settingsRegistry = {
     description:
       'How many recent commits of a project wow reads to suggest its Jira project key from references such as ABC-123. 0 turns the suggestion off.',
     default: 200,
+    scope: 'global',
+  }),
+  'hosts.polling': defineSetting({
+    schema: z.boolean(),
+    group: 'hosts',
+    label: 'Ask the hosts on a timer',
+    description:
+      'Read pull requests of followed plans and live runs from their host at every interval. Off: nothing is asked until you press Refresh now. A paused scheduler also stops it.',
+    default: true,
+    scope: 'global',
+  }),
+  'hosts.pollSeconds': defineSetting({
+    schema: z.number().int().min(10).max(86_400),
+    group: 'hosts',
+    label: 'Interval',
+    description:
+      'How often wow asks the hosts. A host that says its request limit is used up is left alone until the limit resets, however short this is.',
+    default: 60,
+    scope: 'global',
+    unit: 'seconds',
+  }),
+  'hosts.listFallbackCount': defineSetting({
+    schema: z.number().int().min(1).max(100),
+    group: 'hosts',
+    label: 'Pull requests read without search',
+    description:
+      "On a host without search, how many of the repository's newest pull requests are read to find a plan's own.",
+    default: 30,
     scope: 'global',
   }),
   'viewer.maxFileBytes': defineSetting({

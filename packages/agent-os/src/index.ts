@@ -27,3 +27,13 @@ export {
   type PlanUnit,
   type Staleness,
 } from './intent.js';
+export {
+  intentUnitLines,
+  staleReason,
+  unitStatuses,
+  type DerivedUnitStatus,
+  type UnitPullRequest,
+  type UnitReference,
+  type UnitStatus,
+  type UnitStatusInput,
+} from './status.js';

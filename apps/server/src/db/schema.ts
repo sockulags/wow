@@ -4,7 +4,13 @@ import type {
   BacklogRemote,
   BacklogState,
   CalendarItemSource,
+  ChangeRequestState,
+  CheckState,
   FileHash,
+  HostCheck,
+  HostError,
+  HostKind,
+  HostReadScope,
   NotificationKind,
   OutlookProfile,
   PlanFile,
@@ -15,6 +21,7 @@ import type {
   ProviderKind,
   ProviderUpdate,
   ProviderUpdateRun,
+  ReviewComment,
   SecretRef,
   SkillSource,
   StepRun,
@@ -22,6 +29,7 @@ import type {
   ThreadState,
   TriggerState,
   TurnState,
+  UnitRef,
   Usage,
   WorkflowRunState,
   WorkflowStep,
@@ -275,6 +283,40 @@ export const planIntents = sqliteTable('plan_intents', {
   source: text().$type<PlanSource>(),
   units: json<PlanUnit[]>().notNull(),
   problems: json<PlanProblem[]>().notNull(),
+  followed: bool().notNull().default(false),
+});
+
+// What was last read from a host for one followed plan (`plan:<id>`) or one run (`run:<id>`).
+export const hostReads = sqliteTable('host_reads', {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  scope: text().$type<HostReadScope>().notNull(),
+  host: text().$type<HostKind>().notNull(),
+  hostName: text().notNull(),
+  branch: text(),
+  changeRequestIds: json<string[]>().notNull(),
+  fetchedAt: text(),
+  error: json<HostError>(),
+});
+
+// Pull requests as last read, one row per project and number.
+export const changeRequests = sqliteTable('change_requests', {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  host: text().$type<HostKind>().notNull(),
+  number: integer().notNull(),
+  title: text().notNull(),
+  url: text().notNull(),
+  state: text().$type<ChangeRequestState>().notNull(),
+  draft: bool().notNull(),
+  mergedAt: text(),
+  headBranch: text().notNull(),
+  headSha: text().notNull(),
+  units: json<UnitRef[]>().notNull(),
+  checkState: text().$type<CheckState>().notNull(),
+  checks: json<HostCheck[]>().notNull(),
+  comments: json<ReviewComment[]>().notNull(),
+  newestCommentId: text(),
 });
 
 export const settings = sqliteTable(
