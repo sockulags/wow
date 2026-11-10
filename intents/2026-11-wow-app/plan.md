@@ -1,7 +1,7 @@
 ---
 intent: 2026-11-wow-app
-rev: 1
-built_on: spec@1
+rev: 2
+built_on: spec@2
 status: accepted
 source: files
 ---
@@ -31,6 +31,7 @@ agents at a time (worker, reviewer and integrator share the three slots). Every 
 - [U15] End-to-end tests and user guide — depends on U8, U11, U12, U13, U14
 - [U16] Windows smoke and release candidate — depends on U15, U17
 - [U17] Auto-update from GitHub Releases — depends on U14
+- [U18] Remove mail from the app — depends on U9
 
 ### U1 Monorepo scaffold, contracts skeleton, CI
 
@@ -298,12 +299,50 @@ Delivery target: pull request
 Open risks: an update installed while a turn or workflow step is running; the restart action must
 say so and the user decides.
 
+### U18 Remove mail from the app
+
+Outcome: the app shows and reads no mail. The calendar has no mail rail, Outlook is asked for
+meetings only, no mail is stored, and the mail settings are gone.
+Boundaries: meetings, the Outlook banner, meeting details and "Open in Outlook" for a meeting
+stay exactly as they are. No other calendar change. The plan sections of U4 and U9 describe what
+was built in revision 1 and are not rewritten.
+Change surface: `apps/web/src/calendar` (`mail-rail.tsx`, `calendar-view.tsx`, `commands.ts`),
+`packages/contracts` (`MailItem`, `OutlookStatus.unreadCount`, the `mailItems` topic, the
+`outlook.mailRail`, `outlook.mailRailCollapsed` and `outlook.mailLimit` settings),
+`apps/server` (Outlook service, calendar core, projector, subscriptions, `mailItems` table and a
+migration that drops it), `packages/outlook-bridge` (protocol, sync, sources, mock, fixtures),
+`apps/web/e2e`, `docs/architecture.md`, `docs/user-guide.md`, `docs/windows-smoke.md`.
+Acceptance:
+
+- Given the mock Outlook holds unread mail, when the calendar is shown in day and week view, then
+  no mail rail, count or mail command exists and the time grid spans the width (spec 4).
+- Given an Outlook sync, then the bridge is asked for calendar items only, in the mock and in the
+  PowerShell script (spec 4).
+- Given a store from before this change with mail rows and stored mail settings, when the server
+  starts, then the migration drops the table, the stored settings are ignored without an error,
+  and meetings still show.
+- Given the settings page, then no mail setting is listed and the settings coverage test passes.
+- Given the user guide and the Windows smoke list, then neither mentions mail.
+- Given meetings, the Outlook banner and meeting details, then their existing tests pass
+  unchanged.
+
+Ground truth: `pnpm --filter @wow/outlook-bridge test`, `pnpm --filter @wow/server test` with a
+migration case from the previous schema, `pnpm --filter @wow/web test`, the calendar e2e cases,
+and `grep -ri mail apps packages docs --include=*.ts --include=*.tsx --include=*.md --include=*.ps1`
+showing only `mailto`, e-mail addresses of accounts and the trackers' email setting; repository
+checks.
+Dependencies: U9 built the rail and the sync this unit removes.
+Evidence and settled decisions: removed outright, not hidden behind a setting (spec Interface).
+Delivery target: commit on the delivery branch.
+Open risks: the PowerShell bridge cannot be run here; change the script and the protocol test
+together and add a line to the Windows smoke list to confirm the calendar still loads.
+
 ## Epic contract
 
 Epic outcome: a morning with the app open covers the day without Outlook, two terminals and a
 notes file side by side.
 Acceptance: spec "Behavior" sections, all.
-Children or delivery units: U1 to U17 as above; the split follows package boundaries (one adapter,
+Children or delivery units: U1 to U18 as above; the split follows package boundaries (one adapter,
 one view, one engine per unit) so three agents can work without touching the same files.
 Aggregate verification: `pnpm typecheck && pnpm lint && pnpm test && pnpm e2e` on `main` after
 every integration, Windows installer artifact, `docs/windows-smoke.md`.
