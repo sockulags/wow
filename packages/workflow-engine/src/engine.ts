@@ -265,7 +265,7 @@ function completeStep(
     state,
     parts: results,
     since: context.now,
-    headSha: input.headSha ?? null,
+    ...(input.headSha === undefined ? {} : { headSha: input.headSha }),
     at: context.now,
   });
   if (parts.some((part) => part.state === 'failed')) {
