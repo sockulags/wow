@@ -48,6 +48,9 @@ const refresh = (page: Page) =>
 const unitRun = { timeout: 15_000 };
 
 test('a plan run works through ready units @review-loop-40 @review-loop-41', async ({ page }) => {
+  // Three unit runs, each with its own working copy: on Windows they alone use most of the
+  // default time for one test.
+  test.slow();
   await page.goto(planPath);
   await expect(
     page.getByRole('heading', { name: /A tea pot that pours without dripping/ }),
