@@ -86,13 +86,29 @@ export interface ReadFileRequest {
   readonly roots: readonly string[];
   readonly path: string;
   readonly maxBytes: number;
+  // Stands in for the disk in tests of a file that cannot be opened.
+  readonly fs?: { readonly stat: typeof stat; readonly readFile: typeof readFile };
+}
+
+// A path that is not there, as opposed to one that is there and cannot be opened.
+const absent = new Set(['ENOENT', 'ENOTDIR']);
+
+function errorCode(error: unknown): string {
+  return error instanceof Error && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : 'unknown error';
 }
 
 export async function readViewerFile({
   roots,
   path: requested,
   maxBytes,
+  fs = { stat, readFile },
 }: ReadFileRequest): Promise<FileReadResult> {
+  // A locked file (common on Windows) or one without read permission is an answer for the
+  // panel, not a failed request.
+  const unreadable = (error: unknown) =>
+    refused('unreadable', `${requested} could not be opened (${errorCode(error)}).`);
   const realRoots: string[] = [];
   for (const root of roots) {
     const real = await realpath(root).catch(() => undefined);
@@ -114,8 +130,13 @@ export async function readViewerFile({
         `${requested} is a link to a place outside the run's working folder and the project folder, so it was not read.`,
       );
     }
-    const found = await stat(real).catch(() => undefined);
-    if (found === undefined) continue;
+    let found;
+    try {
+      found = await fs.stat(real);
+    } catch (error) {
+      if (absent.has(errorCode(error))) continue;
+      return unreadable(error);
+    }
     if (!found.isFile()) {
       return refused(
         'not_a_file',
@@ -130,7 +151,12 @@ export async function readViewerFile({
         `${requested} is ${readableSize(found.size)}, more than the ${readableSize(maxBytes)} the viewer reads. The "Largest file shown" setting changes that.`,
       );
     }
-    const bytes = await readFile(real);
+    let bytes;
+    try {
+      bytes = await fs.readFile(real);
+    } catch (error) {
+      return unreadable(error);
+    }
     // The file may have grown between the size check and the read.
     if (bytes.byteLength > maxBytes) {
       return refused(

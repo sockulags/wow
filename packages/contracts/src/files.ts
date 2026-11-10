@@ -12,7 +12,14 @@ export const FileReadParams = z.object({
 export type FileReadParams = z.infer<typeof FileReadParams>;
 
 // Why a file was not read. The server reads nothing in these cases; `message` says it in words.
-export const FileRefusal = z.enum(['outside', 'missing', 'not_a_file', 'binary', 'too_large']);
+export const FileRefusal = z.enum([
+  'outside',
+  'missing',
+  'not_a_file',
+  'unreadable',
+  'binary',
+  'too_large',
+]);
 export type FileRefusal = z.infer<typeof FileRefusal>;
 
 export const FileTextKind = z.enum(['markdown', 'html', 'text']);

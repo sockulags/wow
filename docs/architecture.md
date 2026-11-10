@@ -107,7 +107,7 @@ projectId?, title?, labels?}`). Error codes are `RpcErrorCode`.
   write) without a NUL, or it is binary. The answer (`FileReadResult` in
   `packages/contracts/src/files.ts`) is `markdown`, `html` or `text` with the text, `image` with
   a media type and base64, or `refused` with a reason (`outside`, `missing`, `not_a_file`,
-  `binary`, `too_large`) and a sentence for the panel. A refusal is an answer, not an RPC error;
+  `unreadable`, `binary`, `too_large`) and a sentence for the panel. A refusal is an answer, not an RPC error;
   only an unknown run is `not_found`. `isInside` and `candidatePaths` take the path module, so
   the Windows rules (case, both separators, drives, UNC) are tested on every platform, and one
   test reads real files on `windows-latest`.

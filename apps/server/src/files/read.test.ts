@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -43,6 +43,10 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(base, { recursive: true, force: true });
 });
+
+// A file another program holds locked, or one without read permission.
+const failing = (code: string) => () =>
+  Promise.reject(Object.assign(new Error(`${code}: invented`), { code }));
 
 const read = (requested: string, maxBytes = 10_000, roots = [project]) =>
   readViewerFile({ roots, path: requested, maxBytes });
@@ -179,6 +183,23 @@ describe('refusing to read', () => {
       expect(JSON.stringify(refusal)).not.toContain('invented secret');
     },
   );
+
+  it('refuses a file that cannot be opened, and says why', async () => {
+    await writeFile(path.join(project, 'review', 'locked.md'), '# Locked\n');
+    const request = { roots: [project], path: 'review/locked.md', maxBytes: 10_000 };
+    expect(await readViewerFile({ ...request, fs: { stat, readFile: failing('EBUSY') } })).toEqual({
+      kind: 'refused',
+      reason: 'unreadable',
+      message: 'review/locked.md could not be opened (EBUSY).',
+    });
+    expect(await readViewerFile({ ...request, fs: { stat: failing('EACCES'), readFile } })).toEqual(
+      {
+        kind: 'refused',
+        reason: 'unreadable',
+        message: 'review/locked.md could not be opened (EACCES).',
+      },
+    );
+  });
 
   it('refuses a missing file', async () => {
     expect(await read('review/nothing.md')).toEqual({

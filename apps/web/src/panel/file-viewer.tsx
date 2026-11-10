@@ -120,6 +120,7 @@ const refusalTitles: Readonly<Record<FileRefusal, string>> = {
   outside: 'Outside the run’s folders',
   missing: 'File not found',
   not_a_file: 'Not a file',
+  unreadable: 'File could not be opened',
   binary: 'Not shown: binary file',
   too_large: 'Not shown: file too large',
 };

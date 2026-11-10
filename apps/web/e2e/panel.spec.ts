@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { e2ePanelCardId, e2ePanelHome, e2ePanelTrackerPort, e2eViewerWorkflowId } from './env';
 import { sketchPath, sketching, sketchUse } from './sketch';
@@ -222,8 +222,10 @@ test.describe('file viewer', () => {
     await expect(viewer).toContainText('Markdown');
     await expect(step).toBeVisible();
     await viewer.getByRole('button', { name: 'Copy path' }).click();
+    // The server answers with the resolved path, which differs from the temp folder as written
+    // where that is a link or, on Windows, a short name.
     expect(await page.evaluate('navigator.clipboard.readText()')).toBe(
-      path.join(e2ePanelHome, 'review', 'notes.md'),
+      await realpath(path.join(e2ePanelHome, 'review', 'notes.md')),
     );
 
     // Back to conversation: the step's thread with its gate is there again.

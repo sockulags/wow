@@ -73,7 +73,7 @@ const framePolicy = (scriptSources?: string): string =>
   ].join('; ');
 
 const frameHead = (policy: string): string =>
-  `<meta http-equiv="Content-Security-Policy" content="${policy}"><base target="_blank">`;
+  `<meta http-equiv="Content-Security-Policy" content="${policy}"><meta http-equiv="x-dns-prefetch-control" content="off"><base target="_blank">`;
 
 // The whole page an HTML file is shown as while its scripts stay off, inside a frame without an
 // origin (spec 7). The policy comes first, so it holds for everything the file brings. Links open
