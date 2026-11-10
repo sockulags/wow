@@ -24,6 +24,12 @@ const port = 5173;
 // Lets a machine without Playwright's own Chromium download use an installed Chrome instead.
 const executablePath = process.env['WOW_E2E_CHROMIUM'];
 
+const browser = {
+  ...devices['Desktop Chrome'],
+  ...(executablePath ? { launchOptions: { executablePath } } : {}),
+};
+const sharedHosts = /[\\/](?:hosts|gitlab|tickets|pages)\.spec\.ts$/;
+
 export default defineConfig({
   testDir: './e2e',
   forbidOnly: !!process.env['CI'],
@@ -35,10 +41,18 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: {
-        ...devices['Desktop Chrome'],
-        ...(executablePath ? { launchOptions: { executablePath } } : {}),
-      },
+      testIgnore: sharedHosts,
+      use: browser,
+    },
+    {
+      // These files share the mock GitHub, GitLab, Jira and Confluence of one server and change
+      // what they answer (a failure, a refused token). Run side by side, one file's failure
+      // reached another file's run. One worker keeps them after each other; the rest of the
+      // suite still runs beside them.
+      name: 'hosts',
+      testMatch: sharedHosts,
+      workers: 1,
+      use: browser,
     },
   ],
   webServer: [
