@@ -61,8 +61,14 @@ export const ProviderInstance = z.object({
 });
 export type ProviderInstance = z.infer<typeof ProviderInstance>;
 
+// The assistant thread is the one conversation that operates wow itself (app assistant spec 1).
+// Absent means an ordinary chat thread, as every thread stored before the assistant is.
+export const ThreadKind = z.enum(['chat', 'assistant']);
+export type ThreadKind = z.infer<typeof ThreadKind>;
+
 export const Thread = z.object({
   id: Id,
+  kind: ThreadKind.optional(),
   projectId: Id.nullable(),
   cwd: z.string().min(1),
   branch: z.string().nullable(),

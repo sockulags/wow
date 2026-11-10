@@ -46,7 +46,10 @@ import {
 export const subscriptionTopics = {
   projects: { row: Project, threadScoped: false },
   providerInstances: { row: ProviderInstance, threadScoped: false },
+  // Chat threads and the threads of workflow steps; never the assistant thread.
   threads: { row: Thread, threadScoped: false },
+  // The assistant thread: no row before it was first opened, one row after.
+  assistantThread: { row: Thread, threadScoped: false },
   turns: { row: Turn, threadScoped: true },
   threadItems: { row: ThreadItem, threadScoped: true },
   approvals: { row: Approval, threadScoped: true },
@@ -204,6 +207,14 @@ export const rpcMethods = {
   'provider.listModels': {
     params: z.object({ providerInstanceId: z.string().min(1) }),
     result: z.array(ProviderModel),
+  },
+  // Asks for the assistant thread (app assistant spec 1, 27): makes it when it is not there yet,
+  // moves it when the settings name another provider instance, model or effort, and answers the
+  // thread as it is now. When no connected instance can run it, `problem` says why in words and
+  // nothing was changed; a thread made earlier is still answered, so its conversation shows.
+  'assistant.open': {
+    params: NoParams,
+    result: z.object({ thread: Thread.nullable(), problem: z.string().nullable() }),
   },
   // Looks for each provider's CLI on the server's PATH and its config directory (first run).
   'provider.detect': {

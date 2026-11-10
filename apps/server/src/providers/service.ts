@@ -1,4 +1,5 @@
 import {
+  assistantToolsetName,
   ProviderEvent,
   ProviderModel,
   ProviderTestResult,
@@ -10,6 +11,7 @@ import {
 import type { SecretStore } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { prepareAssistantFolder } from '../assistant/thread.js';
 import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
@@ -25,7 +27,14 @@ export interface ProviderServiceDeps {
   readonly settings: SettingsService;
   readonly secrets: SecretStore;
   readonly logger: Logger;
+  // wow's own folder, where the assistant's empty folder lives.
+  readonly home: string;
+  // Where the assistant's tools answer and the token that opens them; undefined until the
+  // server listens. Kept in memory only and handed to the adapter with the turn.
+  readonly assistant: () => { readonly url: string; readonly token: string } | undefined;
 }
+
+type StartTurn = Extract<ProviderCommand, { type: 'startTurn' }>;
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -148,7 +157,7 @@ export class ProviderService {
       switch (event.kind) {
         case 'turn.started': {
           const { turn, providerInstanceId, start } = event.payload;
-          this.#send(providerInstanceId, turn.threadId, true, {
+          const command: StartTurn = {
             type: 'startTurn',
             threadId: turn.threadId,
             cwd: start.cwd,
@@ -157,7 +166,13 @@ export class ProviderService {
             effort: start.effort,
             permissionMode: start.permissionMode,
             ...(start.resumeId === null ? {} : { resumeId: start.resumeId }),
-          });
+          };
+          this.#send(
+            providerInstanceId,
+            turn.threadId,
+            true,
+            start.kind === 'assistant' ? () => this.#assistantTurn(command) : command,
+          );
           break;
         }
         case 'turn.interruptRequested':
@@ -224,20 +239,36 @@ export class ProviderService {
     }
   }
 
+  // The assistant's turn (app assistant spec 2): wow's tools and no others, the instruction
+  // text, and the app's empty folder whatever the thread row says.
+  async #assistantTurn(command: StartTurn): Promise<StartTurn> {
+    const access = this.#deps.assistant();
+    if (!access) throw new Error("The assistant's tools are not running yet");
+    return {
+      ...command,
+      cwd: await prepareAssistantFolder(this.#deps.home),
+      toolset: { name: assistantToolsetName, url: access.url, token: access.token },
+      instructions: this.#deps.settings.get('assistant.instructions'),
+    };
+  }
+
   // Effects run after commit. When one that drives a turn fails, the turn fails with the reason,
-  // so the thread never stays "working" without a provider behind it.
+  // so the thread never stays "working" without a provider behind it. A command that has to be
+  // prepared first is given as a function; failing to prepare it fails the same way.
   #send(
     providerInstanceId: string,
     threadId: string,
     failsTurn: boolean,
-    command: ProviderCommand,
+    command: ProviderCommand | (() => Promise<StartTurn>),
   ): void {
+    const type = typeof command === 'function' ? 'startTurn' : command.type;
     const fail = (error: unknown) => {
-      this.#deps.logger.warn(`provider ${command.type} failed`, describeError(error));
+      this.#deps.logger.warn(`provider ${type} failed`, describeError(error));
       if (failsTurn) this.#enqueue({ type: 'turnFailed', threadId, error: describeError(error) });
     };
+    const send = (ready: ProviderCommand) => this.#adapter(providerInstanceId).send(ready);
     try {
-      this.#adapter(providerInstanceId).send(command).catch(fail);
+      (typeof command === 'function' ? command().then(send) : send(command)).catch(fail);
     } catch (error) {
       fail(error);
     }

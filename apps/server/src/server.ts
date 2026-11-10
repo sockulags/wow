@@ -165,6 +165,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     replaceWaitMs: () => settings.get('advanced.secretsTimeoutMs'),
   });
   const providers = new ProviderAdapters(options.hooks?.providers ?? {}, env);
+  // Known once the server listens; the assistant's turn asks for it when it starts.
+  let assistantAccess: { url: string; token: string } | undefined;
   const providerService = new ProviderService({
     db: database.db,
     engine,
@@ -172,6 +174,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     settings,
     secrets,
     logger,
+    home,
+    assistant: () => assistantAccess,
   });
   const workspaces = new Workspaces({ db: database.db, engine, settings, logger });
   const workflows = new WorkflowRunner({
@@ -335,6 +339,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   if (typeof address !== 'object' || address === null)
     throw new Error('WebSocket server has no TCP address');
   const port = address.port;
+  assistantAccess = { url: `http://127.0.0.1:${port}${assistantMcpPath}`, token: assistantToken };
 
   wss.on('connection', (socket: WebSocket) => {
     const send = (message: ServerMessage) => {
@@ -463,11 +468,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     scheduler,
     trackers,
     hosts,
-    assistant: {
-      url: `http://127.0.0.1:${port}${assistantMcpPath}`,
-      token: assistantToken,
-      tools: assistantTools,
-    },
+    assistant: { ...assistantAccess, tools: assistantTools },
     logger,
     stop,
   };

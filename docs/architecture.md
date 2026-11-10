@@ -222,7 +222,8 @@ migration.
 Both adapters implement one interface from `packages/contracts`:
 
 ```text
-ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode, resumeId?}
+ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode, resumeId?,
+                            toolset? {name, url, token}, instructions?}
                  interrupt {threadId} | answerApproval {approvalId, decision} |
                  answerQuestion {questionId, answer} | setModel | setPermissionMode | listModels | test
 ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | toolCallStarted |
@@ -325,7 +326,8 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | tool
   `secrets.set` as `provider:<instanceId>:env:<NAME>` and the instance stores the reference.
   `providerInstance.update` clears the last test when the binary, config directory, environment or
   launch arguments change, and both it and `providerInstance.delete` are refused while a turn runs
-  on the instance; delete is also refused while threads use it. After commit the provider service
+  on the instance; delete is also refused while chat or step threads use it (the assistant thread
+  moves instead). After commit the provider service
   drops the instance's adapter (the next use builds one from the new row) and deletes secrets the
   instance no longer references. Delete also removes provider-scoped settings and clears project
   defaults that pointed at it.
@@ -1025,7 +1027,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
 - assistant: `assistant.providerInstanceId`, `assistant.model`, `assistant.effort`,
-  `assistant.startSoonMinutes`, `assistant.secretPatterns` (see "Assistant")
+  `assistant.instructions`, `assistant.startSoonMinutes`, `assistant.secretPatterns` (see
+  "Assistant")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -1528,8 +1531,8 @@ without a pull request and without a `blocked:` note stays `unknown` and says wh
 ## Assistant
 
 Behavior lives in `intents/2026-11-app-assistant/spec.md`. The assistant is a chat whose agent
-can only use wow's own tools. This section covers the server side of those tools; the thread
-and the view come with their own units.
+can only use wow's own tools. This section covers the server side of those tools and the
+assistant thread; the view comes with its own unit.
 
 **One MCP server on the wow port.** `apps/server/src/assistant/mcp.ts` answers
 `POST http://127.0.0.1:<port>/assistant/mcp` with MCP's Streamable HTTP transport, without
@@ -1542,6 +1545,70 @@ every server start, is not the WebSocket token, is never written to `server.json
 before anything of the request is read; without it every method gets 401. The assistant's
 token does not open the WebSocket either. `RunningServer.assistant` (`{url, token, tools}`) is
 what a provider adapter is handed for the assistant's turn.
+
+**The assistant thread** (`assistant/thread.ts`). It is a row of `threads` with `kind`
+`assistant` (migration `0018_thread_kind`; every other thread is `chat`) and the fixed id
+`assistant`, so there is one per install and it is found again after a restart. Its turns,
+items and provider session are stored like any thread's. The `threads` topic leaves it out, so
+no list of the chat view has it; the `assistantThread` topic has that one row, or none before
+it was first opened.
+
+- `assistant.open` (RPC) asks for it and answers `{thread, problem}`. It sends the command
+  `thread.openAssistant`, which makes the thread or brings it in line with the settings. When
+  nothing names a model or an effort, the handler first asks the provider for its models and
+  passes the first one as a fallback, because a decision cannot ask a provider.
+- Who runs it is decided by `chooseAssistantProvider` in `packages/contracts`: the instance
+  `assistant.providerInstanceId` names; left empty, the instance the thread already runs on
+  while it is connected, otherwise the first connected one in the order they were made.
+  "Connected" means the instance's last test passed (`status: ready`). The model is
+  `assistant.model`, then the instance's default model, then what the thread already uses on
+  that instance; the effort likewise with `assistant.effort`. The permission mode is
+  `providerChatOptions[kind].assistantPermissionMode` (`dontAsk` on Claude, `read-only` on
+  Codex) and cannot be changed: `thread.configure` is refused for this thread.
+- When no instance can run it (none connected, the chosen one removed, its test failed),
+  `assistant.open` answers the sentence in `problem` with the thread as it was, and
+  `thread.sendMessage` is rejected with the same sentence, so no turn starts (spec 27). The
+  check runs again with every message: a message sent after the settings changed already goes
+  to the instance named now. Moving to another instance is the event `thread.providerChanged`;
+  the provider's session id is kept only when the new instance is of the same kind on the same
+  config folder. The assistant thread does not keep an instance from being deleted.
+- The turn. `turn.started` carries `start.kind: 'assistant'` and nothing else about the
+  tools. After commit the provider service (`#assistantTurn`) builds the `startTurn` command
+  with `toolset {name: 'wow', url, token}` (the endpoint above), `instructions` from the
+  setting `assistant.instructions`, and `cwd` set to `<wow home>/assistant` whatever the row
+  says. The token is read from memory at that moment; it is in no event, row or log line. The
+  folder's name is not a setting, so it cannot be pointed at a project. It is made before the
+  turn and must be empty: if it holds anything the turn fails with a sentence that names what
+  was found, since a provider would read an instruction file left there.
+- What "these tools and no others" means is each adapter's business (see below). An ordinary
+  thread and a workflow step carry no toolset and their options are unchanged.
+
+**Tools-only turns in the adapters.** A `startTurn` with a `toolset` is handled inside each
+adapter, and a session started with one never becomes an ordinary session or the other way
+round (the adapter refuses the turn).
+
+- Claude (`ClaudeAdapter#toolsOnly`): `mcpServers: {wow: {type: 'http', url, headers:
+{Authorization}}}` with `strictMcpConfig`, `tools: []` (no built-in tool, so nothing that
+  reads or writes files, runs commands or fetches), `allowedTools: ['mcp__wow__*']`,
+  `settingSources: []` (no user or project settings, so none of their permission rules, hooks,
+  plugins, skills, MCP servers or CLAUDE.md), no launch arguments of the instance,
+  `permissionMode: 'dontAsk'`, `systemPrompt` set to the instruction text, and a `canUseTool`
+  that allows only `mcp__wow__` tools and never asks the user. The instance's environment
+  (config folder, API key) is kept, since the agent signs in with it.
+- Codex (`packages/provider-codex/src/toolset.ts`): `thread/start` and `thread/resume` get
+  `config: {mcp_servers: {wow: {url, http_headers: {Authorization}}}, web_search: 'disabled'}`
+  and `developerInstructions`, with `approvalPolicy: 'never'` and `sandbox: 'read-only'`;
+  every `turn/start` sends `sandboxPolicy: {type: 'readOnly', networkAccess: false}`. Codex has
+  no switch that takes its shell tool away, so the sandbox is what holds: a command cannot
+  write or reach a host, and every approval request of such a thread is declined without
+  asking the user. A read-only sandbox can still read files on the machine; that is the limit
+  of what Codex offers and the reason the instruction text is not the mechanism. `config` and
+  `developerInstructions` are in the generated protocol types of the tested codex. For any
+  other version the adapter asks that codex for its schema once (`installedCodexLacks`) and
+  fails the turn with one sentence naming the missing fields and the version to update to. An
+  ordinary thread never sends them, so such a codex stays usable for everything else.
+- The mock adapter records the command it was sent (`sent`), toolset included, and a script
+  can read it; it enforces nothing.
 
 **Tools** (`assistant/tools.ts`, `AssistantTools`: `list()` and `call(name, args)`). There are
 two kinds and nothing else.

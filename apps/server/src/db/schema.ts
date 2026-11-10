@@ -38,6 +38,7 @@ import type {
   PathVisit,
   StepRun,
   ThreadItemKind,
+  ThreadKind,
   ThreadState,
   Ticket,
   TicketSource,
@@ -91,6 +92,7 @@ export const threads = sqliteTable(
   'threads',
   {
     id: text().primaryKey(),
+    kind: text().$type<ThreadKind>().notNull().default('chat'),
     projectId: text(),
     cwd: text().notNull(),
     branch: text(),

@@ -19,6 +19,7 @@ import {
   Skill,
   Thread,
   ThreadItem,
+  ThreadKind,
   Trigger,
   TriggerEvent,
   Turn,
@@ -133,6 +134,15 @@ export const Command = z.discriminatedUnion('type', [
     model: z.string().min(1),
     effort: z.string().min(1),
     permissionMode: z.string().min(1),
+  }),
+  // Makes the one assistant thread, or brings it in line with the provider instance, model and
+  // effort the settings name now (app assistant spec 1). Refused with the reason when no
+  // connected instance can run it (spec 27). The fallbacks are what the instance itself offers,
+  // used only when neither the settings nor the instance name a model or an effort.
+  z.object({
+    type: z.literal('thread.openAssistant'),
+    fallbackModel: z.string().min(1).optional(),
+    fallbackEffort: z.string().min(1).optional(),
   }),
   // Starts a turn with the thread's current model, effort and permission mode (spec 14, 17).
   z.object({ type: z.literal('thread.sendMessage'), threadId: Id, text: z.string().min(1) }),
@@ -690,6 +700,21 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       updatedAt: Timestamp,
     }),
   }),
+  // The assistant thread moved to another provider instance. The provider's own session stays
+  // behind with the old instance unless the new one reads the same config folder.
+  z.object({
+    kind: z.literal('thread.providerChanged'),
+    aggregate: Id,
+    payload: z.object({
+      threadId: Id,
+      providerInstanceId: Id,
+      providerSessionId: z.string().min(1).nullable(),
+      model: z.string().min(1),
+      effort: z.string().min(1),
+      permissionMode: z.string().min(1),
+      updatedAt: Timestamp,
+    }),
+  }),
   z.object({
     kind: z.literal('thread.sessionStarted'),
     aggregate: Id,
@@ -720,6 +745,9 @@ export const DomainEvent = z.discriminatedUnion('kind', [
         effort: z.string().min(1),
         permissionMode: z.string().min(1),
         resumeId: z.string().min(1).nullable(),
+        // Set for the assistant thread: the provider service then hands the turn wow's tools,
+        // the instruction text and the app's empty folder. The token is never stored here.
+        kind: ThreadKind.optional(),
       }),
     }),
   }),

@@ -205,6 +205,9 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'providerInstance.update': providersByHand,
   'providerInstance.delete': providersByHand,
   'thread.create': chatOnly,
+  'thread.openAssistant': refused(
+    'The assistant thread is opened by the user, in the Assistant view.',
+  ),
   'thread.sendMessage': chatOnly,
   'thread.interrupt': chatOnly,
   'thread.configure': chatOnly,

@@ -53,7 +53,10 @@ export interface ReadModel {
   projectHasLiveRun(id: string): boolean;
   providerInstanceExists(id: string): boolean;
   providerInstance(id: string): ProviderInstance | undefined;
-  // Threads that use the instance, and how many of them have a turn running.
+  // Every instance, in the order they were made.
+  providerInstances(): ProviderInstance[];
+  // Chat and step threads that use the instance, and how many turns run on it (the assistant's
+  // turn included).
   instanceUsage(id: string): { readonly threads: number; readonly runningTurns: number };
   // Stored value at exactly this scope, or undefined when none is stored.
   setting(key: string, scope: SettingScopeRef): { value: unknown } | undefined;

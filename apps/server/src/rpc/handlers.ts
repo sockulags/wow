@@ -1,6 +1,7 @@
 import {
   WorkflowRun,
   runFolder,
+  settingsRegistry,
   type Command,
   type DetectedProvider,
   type DiscoveredProject,
@@ -10,6 +11,7 @@ import type { SecretStore } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
+import { openAssistantThread } from '../assistant/thread.js';
 import type { Engine } from '../core/engine.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
@@ -97,6 +99,13 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     'provider.listModels': ({ providerInstanceId }) =>
       deps.providers.listModels(providerInstanceId),
     'provider.detect': () => deps.detectProviders(),
+    'assistant.open': () =>
+      openAssistantThread({
+        db: deps.db,
+        engine: deps.engine,
+        registry: settingsRegistry,
+        listModels: (providerInstanceId) => deps.providers.listModels(providerInstanceId),
+      }),
     'projects.discover': async () => ({ projects: await deps.discoverProjects() }),
     'secrets.set': ({ name, value }) => deps.secrets.set(name, value),
     'secrets.delete': async ({ name }) => ({ removed: await deps.secrets.delete(name) }),

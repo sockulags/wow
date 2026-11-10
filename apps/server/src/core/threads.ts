@@ -8,6 +8,8 @@ import type {
   ThreadState,
   Turn,
 } from '@wow/contracts';
+import { assistantThreadId } from '@wow/contracts';
+import { assistantThreadEvents } from '../assistant/thread.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 
 // Decisions for provider instances, threads, turns, approvals and questions. Provider events
@@ -22,6 +24,7 @@ type ThreadCommand = Extract<
       | 'providerInstance.recordTest'
       | 'providerInstance.recordUpdate'
       | 'thread.create'
+      | 'thread.openAssistant'
       | 'thread.sendMessage'
       | 'thread.interrupt'
       | 'thread.configure'
@@ -143,6 +146,9 @@ export function decideThread(
       if (read.thread(command.threadId)) {
         throw new CommandRejected('conflict', `Thread ${command.threadId} already exists`);
       }
+      if (command.threadId === assistantThreadId) {
+        throw new CommandRejected('rejected', `The id ${assistantThreadId} is the assistant's`);
+      }
       if (!read.providerInstanceExists(command.providerInstanceId)) {
         throw new CommandRejected(
           'not_found',
@@ -177,14 +183,28 @@ export function decideThread(
         },
       ];
     }
+    case 'thread.openAssistant': {
+      // A running turn goes on as it started; the thread is brought in line before the next one.
+      if (read.runningTurn(assistantThreadId)) return [];
+      return assistantThreadEvents(read, context, {
+        model: command.fallbackModel,
+        effort: command.fallbackEffort,
+      }).events;
+    }
     case 'thread.sendMessage': {
-      const thread = requireThread(read, command.threadId);
-      if (read.runningTurn(thread.id)) {
-        throw new CommandRejected('rejected', `Thread ${thread.id} already has a running turn`);
+      const stored = requireThread(read, command.threadId);
+      if (read.runningTurn(stored.id)) {
+        throw new CommandRejected('rejected', `Thread ${stored.id} already has a running turn`);
       }
+      // The assistant's turn starts on the instance the settings name now, or not at all with
+      // the reason (app assistant spec 27).
+      const assistant =
+        stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
+      const thread = assistant?.thread ?? stored;
       const index = read.turnCount(thread.id);
       const id = turnId(thread.id, index);
       return [
+        ...(assistant?.events ?? []),
         {
           kind: 'turn.started',
           aggregate: thread.id,
@@ -215,6 +235,7 @@ export function decideThread(
               effort: thread.effort,
               permissionMode: thread.permissionMode,
               resumeId: thread.providerSessionId,
+              ...(assistant ? { kind: 'assistant' as const } : {}),
             },
           },
         },
@@ -238,6 +259,12 @@ export function decideThread(
     }
     case 'thread.configure': {
       const thread = requireThread(read, command.threadId);
+      if (thread.kind === 'assistant') {
+        throw new CommandRejected(
+          'rejected',
+          "The assistant's model and effort are set in Settings → Assistant",
+        );
+      }
       const changes: ThreadChanges = {};
       if (command.model !== undefined && command.model !== thread.model)
         changes.model = command.model;

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { SecretPattern, defaultSecretPatterns } from './assistant.js';
+import { SecretPattern, defaultAssistantInstructions, defaultSecretPatterns } from './assistant.js';
 import {
   alwaysStopSkillDefaults,
   WorkflowTemplate,
@@ -1191,6 +1191,15 @@ export const settingsRegistry = {
     label: 'Effort',
     description: "How hard the assistant thinks. Empty: the provider instance's default effort.",
     default: '',
+    scope: 'global',
+  }),
+  'assistant.instructions': defineSetting({
+    schema: z.string().trim().min(1).meta({ widget: 'template', placeholders: [] }),
+    group: 'assistant',
+    label: 'Instructions',
+    description:
+      "What the assistant's agent is told it is for, in place of the provider's own instructions for coding: it operates wow only, never asks for a secret, and sends other work to the chat view. What it can do is decided by the tools it is given, not by this text.",
+    default: defaultAssistantInstructions,
     scope: 'global',
   }),
   'assistant.startSoonMinutes': defineSetting({

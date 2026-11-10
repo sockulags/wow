@@ -1,5 +1,5 @@
 import { subscriptionTopics, type SubscribeParams, type SubscriptionTopic } from '@wow/contracts';
-import { asc, desc, eq, getTableColumns, sql } from 'drizzle-orm';
+import { asc, desc, eq, getTableColumns, ne, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
@@ -16,7 +16,14 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
       case 'providerInstances':
         return db.select().from(t.providerInstances).orderBy(asc(t.providerInstances.name)).all();
       case 'threads':
-        return db.select().from(t.threads).orderBy(asc(t.threads.createdAt)).all();
+        return db
+          .select()
+          .from(t.threads)
+          .where(ne(t.threads.kind, 'assistant'))
+          .orderBy(asc(t.threads.createdAt))
+          .all();
+      case 'assistantThread':
+        return db.select().from(t.threads).where(eq(t.threads.kind, 'assistant')).all();
       case 'turns':
         return db
           .select()

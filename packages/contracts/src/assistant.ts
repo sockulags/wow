@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ProviderInstance } from './projections.js';
 
 // The app assistant (intent 2026-11-app-assistant): what it changed, what it proposed, and the
 // net that hides secret-looking text. The assistant's commands are the ones the views send; these
@@ -153,3 +154,80 @@ export function hideSecretsDeep(value: unknown, patterns: readonly RegExp[]): un
   }
   return value;
 }
+
+// The assistant thread: one per install, with a fixed id, so it is found again after a restart.
+export const assistantThreadId = 'assistant';
+// The name its agent knows wow's tools by.
+export const assistantToolsetName = 'wow';
+
+// Which provider instance runs the assistant, or the sentence that says why none can (spec 1,
+// 27). The setting names an instance; left empty, the instance the thread already runs on is
+// kept while it is connected, and otherwise the first connected one is taken. The server decides
+// with this; a view can call it with the same rows to say the same thing.
+export type AssistantProvider =
+  | { readonly instance: ProviderInstance; readonly problem: null }
+  | { readonly instance: null; readonly problem: string };
+
+const connectFirst = 'Connect Claude Code or Codex in Settings → Providers.';
+
+export function chooseAssistantProvider(
+  instances: readonly ProviderInstance[],
+  configuredId: string,
+  currentId?: string,
+): AssistantProvider {
+  const wanted = configuredId.trim();
+  if (wanted !== '') {
+    const instance = instances.find((entry) => entry.id === wanted);
+    if (!instance) {
+      return {
+        instance: null,
+        problem: `The provider instance chosen for the assistant was removed. Choose another in Settings → Assistant, or leave it empty. ${connectFirst}`,
+      };
+    }
+    return instance.status === 'ready' ? { instance, problem: null } : notConnected(instance);
+  }
+  const connected = instances.filter((entry) => entry.status === 'ready');
+  const instance = connected.find((entry) => entry.id === currentId) ?? connected[0];
+  if (instance) return { instance, problem: null };
+  const current = instances.find((entry) => entry.id === currentId);
+  if (current) return notConnected(current);
+  return {
+    instance: null,
+    problem:
+      currentId === undefined
+        ? `No provider is connected, so the assistant cannot run. ${connectFirst}`
+        : `The provider instance the assistant ran on was removed and no other is connected. ${connectFirst}`,
+  };
+}
+
+function notConnected(instance: ProviderInstance): AssistantProvider {
+  const why =
+    instance.status === 'error'
+      ? `its last test failed${instance.statusMessage ? ` (${instance.statusMessage})` : ''}`
+      : 'it has not passed a test yet';
+  return {
+    instance: null,
+    problem: `The assistant runs on ${instance.name}, and ${why}. Test it in Settings → Providers.`,
+  };
+}
+
+export const defaultAssistantInstructions = `You are the assistant inside wow, a desktop app that runs coding agents on a calendar. Your only job is to operate wow itself for the person you are talking to: its settings, projects, trackers and hosts, workflows, calendar cards, backlog, plans, triggers and runs.
+
+What you can do
+- You have wow's own tools and nothing else. You cannot read or write files, run commands or reach the network, and you never see a project's files or a chat thread's messages.
+- Read the state you need with the read tools before you change anything, and ask when something only the person can know is missing.
+- Make a change with the tool for it. An everyday change is applied at once and the conversation shows it with Undo. A change that lets wow do more on its own, and starting a run, is shown to the person as a proposal and happens only when they press Yes. You cannot answer a proposal yourself; say that it is waiting for them.
+- When wow refuses something, tell the person the reason wow gave.
+- After a change, say what changed and where it lives in wow (for example Settings → Calendar, the workflow, the card).
+
+What is not yours
+- You operate wow only. When someone asks for other work (write this code, explain this error in my project, review this file), say that the chat view is for that and offer to open a new thread there with their text. Do not attempt the work.
+- You never approve, send back or stop a run that waits at a gate, and you never merge. Only the person does that; give them the link to the run.
+- You change nothing outside wow: you create no token on a host, install no provider and edit no provider configuration file.
+
+Secrets
+- Never ask for a token, password, key or any other secret, and never ask the person to paste one into this conversation. If they offer one, tell them not to send it here.
+- When a secret is needed, say where the person creates it and which rights it needs, and point them to the field in wow where it goes. You only ever learn whether a secret is set and whether the connection test passed.
+- Never repeat anything that looks like a secret.
+
+Write plainly and briefly.`;

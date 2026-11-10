@@ -1,0 +1,1 @@
+ALTER TABLE `threads` ADD `kind` text DEFAULT 'chat' NOT NULL;

@@ -7,7 +7,7 @@ import {
   type ProviderUpdateRun,
   type SubscriptionTopic,
 } from '@wow/contracts';
-import { and, asc, count, desc, eq, inArray, isNull, max } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, max, ne, sql } from 'drizzle-orm';
 import type { DbOrTx } from '../db/database.js';
 import {
   approvals,
@@ -37,6 +37,9 @@ import {
   workflows,
 } from '../db/schema.js';
 import type { ReadModel } from './orchestrator.js';
+
+// The assistant thread is a row of the same table, shown through a topic of its own.
+const threadTopics: SubscriptionTopic[] = ['threads', 'assistantThread'];
 
 // Applies one event to the projection tables inside the caller's transaction and says which
 // subscription topics changed.
@@ -253,13 +256,18 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
     }
     case 'thread.created':
       tx.insert(threads).values(event.payload).run();
-      return ['threads'];
+      return threadTopics;
     case 'thread.configured':
       tx.update(threads)
         .set({ ...event.payload.changes, updatedAt: event.payload.updatedAt })
         .where(eq(threads.id, event.payload.threadId))
         .run();
-      return ['threads'];
+      return threadTopics;
+    case 'thread.providerChanged': {
+      const { threadId, ...changes } = event.payload;
+      tx.update(threads).set(changes).where(eq(threads.id, threadId)).run();
+      return threadTopics;
+    }
     case 'thread.sessionStarted':
       tx.update(threads)
         .set({
@@ -268,19 +276,19 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         })
         .where(eq(threads.id, event.payload.threadId))
         .run();
-      return ['threads'];
+      return threadTopics;
     case 'thread.pinned':
       tx.update(threads)
         .set({ pinned: event.payload.pinned })
         .where(eq(threads.id, event.payload.threadId))
         .run();
-      return ['threads'];
+      return threadTopics;
     case 'thread.stateChanged':
       tx.update(threads)
         .set({ state: event.payload.state, updatedAt: event.payload.updatedAt })
         .where(eq(threads.id, event.payload.threadId))
         .run();
-      return ['threads'];
+      return threadTopics;
     case 'turn.started': {
       const { turn, item } = event.payload;
       tx.insert(turns).values(turn).run();
@@ -289,7 +297,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .set({ state: 'working', updatedAt: turn.startedAt })
         .where(eq(threads.id, turn.threadId))
         .run();
-      return ['turns', 'threadItems', 'threads'];
+      return ['turns', 'threadItems', ...threadTopics];
     }
     case 'turn.interruptRequested':
       return [];
@@ -310,7 +318,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .set({ state: threadState, updatedAt: endedAt })
         .where(eq(threads.id, threadId))
         .run();
-      return ['turns', 'threadItems', 'threads'];
+      return ['turns', 'threadItems', ...threadTopics];
     }
     case 'threadItem.added':
       tx.insert(threadItems).values(event.payload).run();
@@ -546,10 +554,20 @@ export function readModel(tx: DbOrTx): ReadModel {
         .get() !== undefined,
     providerInstance: (id) =>
       tx.select().from(providerInstances).where(eq(providerInstances.id, id)).get(),
+    providerInstances: () =>
+      tx
+        .select()
+        .from(providerInstances)
+        .orderBy(sql`rowid`)
+        .all(),
     instanceUsage: (id) => ({
+      // The assistant thread does not hold an instance: it moves to another one (spec 27).
       threads:
-        tx.select({ n: count() }).from(threads).where(eq(threads.providerInstanceId, id)).get()
-          ?.n ?? 0,
+        tx
+          .select({ n: count() })
+          .from(threads)
+          .where(and(eq(threads.providerInstanceId, id), ne(threads.kind, 'assistant')))
+          .get()?.n ?? 0,
       runningTurns:
         tx
           .select({ n: count() })

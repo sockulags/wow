@@ -116,6 +116,8 @@ beforeEach(async () => {
     adapters,
     settings,
     secrets,
+    home: dir,
+    assistant: () => undefined,
     logger: createLogger(
       () => 'error',
       () => undefined,
