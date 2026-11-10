@@ -10,6 +10,7 @@ import {
   MailItem,
   OutlookItemState,
   OutlookProfile,
+  PlanIntent,
   Project,
   ProviderInstance,
   ProviderInstanceStatus,
@@ -310,6 +311,9 @@ export const InternalCommand = z.discriminatedUnion('type', [
   }),
   // Replaces the skills projection with a fresh scan; the server's skills watcher sends it.
   z.object({ type: z.literal('skills.sync'), skills: z.array(Skill) }),
+  // Replaces the plans projection with a fresh read of every project's intents folder; the
+  // server's plans service sends it.
+  z.object({ type: z.literal('plans.sync'), intents: z.array(PlanIntent) }),
   // What the workflow runner reports after a step's turn ended.
   z.object({
     type: z.literal('workflowRun.stepCompleted'),
@@ -472,6 +476,11 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('skills.synced'),
     aggregate: z.literal('skills'),
     payload: z.object({ upserted: z.array(Skill), removed: z.array(Id) }),
+  }),
+  z.object({
+    kind: z.literal('plans.synced'),
+    aggregate: z.literal('plans'),
+    payload: z.object({ upserted: z.array(PlanIntent), removed: z.array(Id) }),
   }),
   z.object({ kind: z.literal('workflow.created'), aggregate: Id, payload: Workflow }),
   z.object({

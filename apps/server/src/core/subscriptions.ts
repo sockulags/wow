@@ -55,6 +55,12 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
         return db.select().from(t.notifications).orderBy(desc(t.notifications.at)).all();
       case 'skills':
         return db.select().from(t.skills).orderBy(asc(t.skills.name)).all();
+      case 'planIntents':
+        return db
+          .select()
+          .from(t.planIntents)
+          .orderBy(asc(t.planIntents.projectId), asc(t.planIntents.intentId))
+          .all();
       case 'settings':
         return db
           .select()

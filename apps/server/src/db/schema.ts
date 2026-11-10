@@ -6,6 +6,10 @@ import type {
   CalendarItemSource,
   NotificationKind,
   OutlookProfile,
+  PlanFile,
+  PlanProblem,
+  PlanSource,
+  PlanUnit,
   ProviderInstanceStatus,
   ProviderKind,
   ProviderUpdate,
@@ -252,6 +256,22 @@ export const skills = sqliteTable('skills', {
   source: text().$type<SkillSource>().notNull(),
   manualOnly: bool().notNull(),
   invocations: json<{ claude: string; codex: string }>().notNull(),
+});
+
+// One row per intent folder of a project, as its files read (packages/agent-os).
+export const planIntents = sqliteTable('plan_intents', {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  intentId: text().notNull(),
+  title: text().notNull(),
+  hasIntent: bool().notNull(),
+  status: text(),
+  rev: integer(),
+  spec: json<PlanFile>(),
+  plan: json<PlanFile>(),
+  source: text().$type<PlanSource>(),
+  units: json<PlanUnit[]>().notNull(),
+  problems: json<PlanProblem[]>().notNull(),
 });
 
 export const settings = sqliteTable(

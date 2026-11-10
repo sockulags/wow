@@ -95,6 +95,7 @@ describe('settings registry', () => {
         'scheduler',
         'workflows',
         'skills',
+        'plans',
         'trackers',
         'viewer',
         'appearance',
@@ -207,6 +208,14 @@ describe('server contracts', () => {
     expect(SettingScopeRef.safeParse('provider:claude-work').success).toBe(true);
     expect(SettingScopeRef.safeParse('project:').success).toBe(false);
     expect(SettingScopeRef.safeParse('team:x').success).toBe(false);
+  });
+
+  it('keeps the intents folder inside the project', () => {
+    const { schema } = settingsRegistry['plans.intentsDirectory'];
+    expect(schema.parse(' docs/intents ')).toBe('docs/intents');
+    const outside = ['', '../intents', 'docs/../../x', '/etc', 'C:\\plans', '~/intents', '.', './'];
+    expect(schema.parse('..drafts')).toBe('..drafts');
+    expect(outside.filter((value) => schema.safeParse(value).success)).toEqual([]);
   });
 
   it('needs a threadId for thread-scoped topics', () => {

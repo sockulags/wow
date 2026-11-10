@@ -17,6 +17,7 @@ export type CommandGroup =
   | 'Threads'
   | 'Chat'
   | 'Workflows'
+  | 'Plans'
   | 'Backlog'
   | 'Navigation'
   | 'Settings'

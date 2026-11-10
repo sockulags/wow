@@ -2,6 +2,7 @@ import { SettingGroup, settingsRegistry, type SettingDefinition } from '@wow/con
 import {
   CalendarDaysIcon,
   ListTodoIcon,
+  MapIcon,
   MessagesSquareIcon,
   SettingsIcon,
   WorkflowIcon,
@@ -9,14 +10,15 @@ import {
 } from 'lucide-react';
 
 export interface Section {
-  readonly id: 'calendar' | 'chat' | 'workflows' | 'backlog' | 'settings';
+  readonly id: 'calendar' | 'chat' | 'workflows' | 'plans' | 'backlog' | 'settings';
   readonly title: string;
-  readonly path: '/calendar' | '/chat' | '/workflows' | '/backlog' | '/settings';
+  readonly path: '/calendar' | '/chat' | '/workflows' | '/plans' | '/backlog' | '/settings';
   readonly icon: LucideIcon;
   readonly keybinding:
     | 'keybindings.goCalendar'
     | 'keybindings.goChat'
     | 'keybindings.goWorkflows'
+    | 'keybindings.goPlans'
     | 'keybindings.goBacklog'
     | 'keybindings.goSettings';
 }
@@ -45,6 +47,13 @@ export const sections: readonly Section[] = [
     keybinding: 'keybindings.goWorkflows',
   },
   {
+    id: 'plans',
+    title: 'Plans',
+    path: '/plans',
+    icon: MapIcon,
+    keybinding: 'keybindings.goPlans',
+  },
+  {
     id: 'backlog',
     title: 'Backlog',
     path: '/backlog',
@@ -68,6 +77,7 @@ export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
   scheduler: 'Scheduler',
   workflows: 'Workflows',
   skills: 'Skills',
+  plans: 'Plans',
   trackers: 'Trackers',
   viewer: 'Viewer',
   appearance: 'Appearance',

@@ -374,6 +374,69 @@ export const Skill = z.object({
 });
 export type Skill = z.infer<typeof Skill>;
 
+// Plans: what the files of one intent folder say (intents/<id>/{intent,spec,plan}.md), read by
+// the server's plans service. Nothing here comes from a host.
+export const PlanFileKind = z.enum(['intent', 'spec', 'plan']);
+export type PlanFileKind = z.infer<typeof PlanFileKind>;
+
+export const PlanProblem = z.object({
+  file: PlanFileKind,
+  line: z.number().int().positive(),
+  message: z.string().min(1),
+});
+export type PlanProblem = z.infer<typeof PlanProblem>;
+
+// A spec or plan file. `stale` is set when it was built on an older revision than its source
+// file (the intent for a spec, the spec for a plan) is at now.
+export const PlanFile = z.object({
+  rev: z.number().int().positive().nullable(),
+  status: z.string().nullable(),
+  stale: z
+    .object({ builtOn: z.number().int().positive(), current: z.number().int().positive() })
+    .nullable(),
+});
+export type PlanFile = z.infer<typeof PlanFile>;
+
+export const PlanSource = z.enum(['files', 'issues']);
+export type PlanSource = z.infer<typeof PlanSource>;
+
+// What is known about a unit without a host: blocked by its own line, or unknown.
+export const PlanUnitStatus = z.enum(['blocked', 'unknown']);
+export type PlanUnitStatus = z.infer<typeof PlanUnitStatus>;
+
+export const PlanUnit = z.object({
+  key: z.string().min(1),
+  title: z.string(),
+  line: z.number().int().positive(),
+  dependsOn: z.array(z.string().min(1)),
+  blocked: z.string().nullable(),
+  // Every agent-os contract field with what the unit's `### KEY` section says for it, null for a
+  // field the section does not have. The whole list is null for `source: issues` and for a unit
+  // without a section.
+  contract: z.array(z.object({ name: z.string().min(1), value: z.string().nullable() })).nullable(),
+  status: PlanUnitStatus,
+  // Why the status is what it is, in words the view shows as they are.
+  statusReason: z.string(),
+});
+export type PlanUnit = z.infer<typeof PlanUnit>;
+
+export const PlanIntent = z.object({
+  // `<projectId>:<intentId>`.
+  id: Id,
+  projectId: Id,
+  intentId: z.string().min(1),
+  title: z.string().min(1),
+  hasIntent: z.boolean(),
+  status: z.string().nullable(),
+  rev: z.number().int().positive().nullable(),
+  spec: PlanFile.nullable(),
+  plan: PlanFile.nullable(),
+  source: PlanSource.nullable(),
+  units: z.array(PlanUnit),
+  problems: z.array(PlanProblem),
+});
+export type PlanIntent = z.infer<typeof PlanIntent>;
+
 export const SettingRow = z.object({
   key: z.string().min(1),
   scope: z.string().min(1),

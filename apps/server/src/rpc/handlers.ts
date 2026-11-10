@@ -18,6 +18,7 @@ import type { OutlookService } from '../outlook/service.js';
 import type { ProviderService } from '../providers/service.js';
 import type { ProviderUpdates } from '../providers/update.js';
 import type { SettingsService } from '../settings/service.js';
+import type { PlansService } from '../plans/service.js';
 import type { SkillsService } from '../skills/service.js';
 import { TrackerError } from '../trackers/http.js';
 import type { TrackerService } from '../trackers/service.js';
@@ -38,6 +39,7 @@ export interface HandlerDeps {
   readonly secrets: SecretStore;
   readonly db: Db;
   readonly skills: SkillsService;
+  readonly plans: PlansService;
   readonly workflows: WorkflowRunner;
   readonly providers: ProviderService;
   readonly providerUpdates: ProviderUpdates;
@@ -108,6 +110,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       names: await deps.secrets.names(),
     }),
     'skills.refresh': async () => ({ skills: await deps.skills.refresh() }),
+    'plans.refresh': async () => ({ intents: await deps.plans.refresh() }),
     'projects.git': async () => ({ projects: await deps.trackers.projectsGit() }),
     'trackers.project': ({ projectId }) => deps.trackers.projectTrackers(projectId),
     'trackers.preview': ({ backlogItemId, service, projectId }) =>

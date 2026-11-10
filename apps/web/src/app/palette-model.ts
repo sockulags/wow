@@ -44,6 +44,7 @@ const viewGroups: Readonly<Record<string, readonly CommandGroup[]>> = {
   Calendar: ['Calendar'],
   Chat: ['Chat'],
   Workflows: ['Workflows'],
+  Plans: ['Plans'],
   Backlog: ['Backlog'],
   Settings: ['Settings'],
 };

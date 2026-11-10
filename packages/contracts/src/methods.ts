@@ -9,6 +9,7 @@ import {
   MailItem,
   AppNotification,
   OutlookStatus,
+  PlanIntent,
   Project,
   ProviderInstance,
   Question,
@@ -50,6 +51,7 @@ export const subscriptionTopics = {
   triggers: { row: Trigger, threadScoped: false },
   notifications: { row: AppNotification, threadScoped: false },
   skills: { row: Skill, threadScoped: false },
+  planIntents: { row: PlanIntent, threadScoped: false },
   settings: { row: SettingRow, threadScoped: false },
 } as const;
 
@@ -215,6 +217,12 @@ export const rpcMethods = {
   'skills.refresh': {
     params: NoParams,
     result: z.object({ skills: z.array(Skill) }),
+  },
+  // Reads every project's intents folder now and answers with the intents found. Files only; no
+  // host is asked.
+  'plans.refresh': {
+    params: NoParams,
+    result: z.object({ intents: z.array(PlanIntent) }),
   },
   // Looks for each started step's expected artifacts in the project folder (behavior 26, run
   // view open) and stores what it finds.

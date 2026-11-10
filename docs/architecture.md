@@ -19,6 +19,7 @@ packages/
   outlook-bridge/    PowerShell COM bridge + mock adapter + fixtures.
   skills/        SKILL.md discovery.
   workflow-engine/   workflow definitions, runs, gates, step handover. Pure; the server wires it.
+  agent-os/      reads agent-os intent, spec and plan files from their text. Pure; no I/O.
   secrets/       DPAPI (Windows) or 0600 file (elsewhere) secret store.
 docs/            architecture (this file), user guide, windows-smoke checklist, releases/ notes.
 intents/         agent-os intent, spec and plan.
@@ -40,7 +41,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test`, `provider.listModels` and
-  `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`,
+  `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`, `plans.refresh` (reads every project's
+  intents folder now, see "Plans"),
   `workflowRuns.detectArtifacts` (`{runId}`), `workflows.matchArtifacts` (`{projectId, globs}`),
   `files.read` (`{runId, path}`, one file of a run for the viewer, see "Files"), `outlook.open`
   (`{entryId}`), `outlook.refresh`, `projects.git` (every project folder's git
@@ -148,6 +150,9 @@ notifications    id, at, kind ('started'|'waiting'|'failed'), title, body, path,
                  calendarItemId?
 skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
                  'project-agents'|'custom'), manualOnly, invocations(json: {claude, codex})
+plan_intents     id ('<projectId>:<intentId>'), projectId, intentId, title, hasIntent, status?, rev?,
+                 spec(json: PlanFile)?, plan(json: PlanFile)?, source ('files'|'issues')?,
+                 units(json: PlanUnit[]), problems(json: PlanProblem[])   -- what the files say
 settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
 events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
@@ -541,6 +546,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `scheduler.paused`, `scheduler.toastSeconds`
 - workflows: `workflows.templates`, `workflows.handoverTemplate`
 - skills: `skills.directories`, `skills.includeClaudePlugins`
+- plans: `plans.intentsDirectory` (project-scoped), `plans.writeSettleMs` (see "Plans")
 - trackers: `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
   `trackers.jira.email`, `trackers.jira.token` (secret), `trackers.jira.projectKey`,
   `trackers.jira.issueType`, `trackers.github.baseUrl`, `trackers.github.token` (secret),
@@ -740,6 +746,77 @@ project's id or folder changes), or "No git repository", "No git remote", "Git n
 "Folder missing" warning. **Trackers** expands `projects/project-trackers.tsx` in the row (the
 palette's "Trackers for project …" opens it through `#trackers-<id>`), described under
 "Backlog and trackers".
+
+## Plans
+
+wow reads agent-os plans; it never writes an intent, spec or plan file and never runs an agent-os
+script (review loop spec 21 to 25).
+
+**Parser** (`packages/agent-os`). `readIntent({id, intent?, spec?, plan?})` takes the text of one
+intent folder's files and answers title (the first `# ` heading), status and revision from the
+frontmatter, whether the spec and the plan are stale, the plan's units and the problems found. It
+follows agent-os's own parser (`quality-ratchet/scripts/intent-files.mjs`) rule for rule, because
+calling that script would mean running repository code and it is not always installed:
+frontmatter is a flat `key: value` block between `---` lines; `built_on` is `<kind>@<n>` and a
+file is stale when that number is lower than its source file's `rev` (the intent for a spec, the
+spec for a plan); a unit is a `- [KEY] title` line under `## Units`, with notes split on an em
+dash or `--` with spaces around, `depends on A, B` and `blocked: reason` read without regard to
+case; a unit's contract is its `### KEY` section, read into the nine agent-os fields. With
+`source: issues` the tracker holds dependencies and contracts, so units carry key and title only
+(spec 22); a `blocked:` note on such a line is still kept, because it decides the unit's status
+(spec 23 and 24) and a blocked unit must not read as unknown. A `rev` or `built_on` number too
+long to be held exactly is a bad one.
+The package has no dependencies and does no I/O. Nothing throws: a file without frontmatter, a
+bad `rev`, `built_on` or `source`, a plan without `## Units` lines, a key that appears twice, an
+unknown dependency, a unit without its section and a folder name that is not an intent id each
+become a problem `{file, line, message}`, and everything that can be read is still returned. A
+contract field a section does not have is absent, not a problem, because older plans predate
+some fields.
+
+**Service** (`apps/server/src/plans/service.ts`). For every project it resolves
+`plans.intentsDirectory` (default `intents`, project-scoped, a relative path that may not leave
+the project folder and may not be the project folder itself) against the project folder, lists the folders in it and reads each one's
+`intent.md`, `spec.md` and `plan.md`. Links are not followed: an intent folder or file that is a
+link is skipped, and the intents folder is only read when its real location (`fs.realpath`, so
+links and Windows junctions anywhere on the path are resolved) is inside the project's real
+folder; one that leads out is refused with a warning in the server log. A folder with none of the
+three files is not an intent. Every intent is checked against the `PlanIntent` contract before it
+is stored; one that does not fit becomes a row with the single problem "Cannot be shown: …",
+because a row the contract rejects would fail the topic's snapshot for every project. The result
+goes through the engine as the internal `plans.sync` command; the orchestrator compares it with
+the stored rows, so `plans.synced` carries only what changed and an unchanged read stores nothing.
+It reads at start, when the project list or a plans setting changes, when the watcher reports a
+change, and on `plans.refresh`. Reads that arrive while one is waiting share it.
+
+**Watcher** (`apps/server/src/plans/watch.ts`, chokidar, the plans service's own). The intents
+folders are watched one level deep, which covers `<id>/{intent,spec,plan}.md`. A save in place
+empties a file before writing it, and a read in between would store an empty plan with no later
+event to correct it, so a change is reported only once the file has kept its size for
+`plans.writeSettleMs` (default 200 ms, chokidar's `awaitWriteFinish`; 0 turns the wait off). An
+intents folder that does not exist yet is waited for: the nearest existing folder above it, never
+above the project folder, is watched for the next part of the path only, and each time that
+appears or goes the read works out again what to watch, so a folder created or removed later is
+followed without a restart. The watcher is ready before the files are read, so a change made
+during a read is reported after it. Not followed: a project folder that does not exist when the
+plans are read, and an intents folder refused as a link; both are looked at again on the next read
+("Refresh now", a project or setting change, a restart).
+
+**Rows.** `PlanIntent` (topic `planIntents`) is one intent folder: `hasIntent`, `status` and
+`rev` of the intent, `spec` and `plan` as `PlanFile` (`{rev, status, stale: {builtOn, current}?}`,
+null when the file is missing), `source`, `units` and `problems`. A `PlanUnit` is `{key, title,
+line, dependsOn, blocked, contract, status, statusReason}`; `contract` lists all nine fields with
+null for one the section lacks, and is null for `source: issues`. The server decides `status`.
+Without a host it is what the files alone say: `blocked` when the unit's line has a `blocked:`
+note (the note is the reason), otherwise `unknown` with the reason that no host is set up. Status
+from pull requests belongs to the host reading that comes after this.
+
+**View** (`apps/web/src/plans`, section "Plans" after Workflows, `keybindings.goPlans`). `/plans`
+lists every project with its intents: title, status and revision, spec and plan presence, "stale"
+and the number of problems. `/plans/$projectId/$intentId` shows the three files with a stale
+badge that names both revisions, the problems as `plan.md line 11: …`, and the units with key,
+title, dependencies, blocked note and status; the reason units share shows once above the list.
+`?unit=<key>` opens that unit's contract, rendered with the shared markdown renderer. Palette:
+"Plans: Refresh now", every intent (when searching) and each unit of the open plan.
 
 ## Chat view
 
@@ -1240,6 +1317,9 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   `wow e2e server ready` once it is seeded. The backlog tests publish to a mock Jira and GitHub on
   `e2eTrackerPort`, which the server's tracker settings point at (GitHub without its token, which
   the test enters on the settings page); the same port lists what the trackers received and starts
-  a backlog item's card run the way the scheduler will (`POST /fire`). CI runs `pnpm e2e` on
+  a backlog item's card run the way the scheduler will (`POST /fire`). The plans tests read invented intent
+  folders that `e2e/plans-seed.ts` writes to the seeded project's `plan-files` folder, which the
+  project's `plans.intentsDirectory` points at so the workflow tests' `intents/*` artifacts stay
+  as they are; one test rewrites a plan file and waits for the view to follow. CI runs `pnpm e2e` on
   `ubuntu-latest` and `windows-latest` (the `e2e` job) and keeps the traces of a failed run.
   Tests wait for what the page shows, never for time: no sleeps, polls or retries.

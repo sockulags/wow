@@ -368,6 +368,7 @@ describe('rpc', () => {
 
   it.each([
     { type: 'skills.sync', skills: [] },
+    { type: 'plans.sync', intents: [] },
     {
       type: 'workflowRun.stepCompleted',
       runId: 'r1',
