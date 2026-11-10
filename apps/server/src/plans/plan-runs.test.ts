@@ -456,6 +456,9 @@ describe('a plan run while the hosts are not polled (spec 30, 41)', () => {
     ]);
     expect(runs().map((row) => row.id)).toEqual(['pr1.U1', 'pr1.U3']);
 
+    // The one read a unit run's end asks for may still be on its way; let it finish, so the
+    // merge below is seen by the interval or by nothing.
+    await server.hosts.idle();
     // The interval still asks nothing while polling is off.
     merge('U1');
     await poll();
