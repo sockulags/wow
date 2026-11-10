@@ -47,6 +47,7 @@ test.describe('gate', () => {
     // side panel, which opens for the gate (spec 14).
     await expect(page.getByRole('tablist', { name: 'Run' }).getByRole('tab')).toHaveText([
       'Steps',
+      'Path',
       'Changes',
       'Artifacts',
       'Pull request',
