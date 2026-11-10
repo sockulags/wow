@@ -226,7 +226,9 @@ test.describe('triggers', () => {
       const card = cardBlock(page, title);
       const runNow = card.getByRole('button', { name: `Run now: ${title}` });
       if (policy === 'run') {
-        await expect(card.getByTestId('card-state')).toHaveText('Needs you');
+        // The restarted server starts the run and its first turn before the card has a state,
+        // which takes longer than an assertion waits by default on a slow machine.
+        await expect(card.getByTestId('card-state')).toHaveText('Needs you', { timeout: 15_000 });
         await expect(runNow).toHaveCount(0);
       } else if (policy === 'mark') {
         await expect(card.getByTestId('card-state')).toHaveText('Missed');
