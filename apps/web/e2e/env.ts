@@ -63,6 +63,17 @@ export const e2eChangesProjectId = 'tea-timer';
 // of theirs reseeds only their own copy.
 export const e2eGateWorkflowId = 'gate-e2e';
 export const e2eGateProjectId = 'tea-kettle';
+// The same server holds a third repository as project `tea-garden` for the host tests
+// (e2e/hosts.spec.ts): it is on a branch with an invented pull request, its `intents` folder
+// holds a plan whose units have pull requests on the mock GitHub under /github on the tracker
+// port, and only this project has a GitHub token. The workflow waits before its only step, so a
+// run of it is live without the mock agent. On the tracker port, PUT /github-host/failure?status=…
+// makes the mock host fail, DELETE brings it back, GET /github-host/requests lists what it was
+// asked.
+export const e2eHostProjectId = 'tea-garden';
+export const e2eHostWorkflowId = 'host-e2e';
+export const e2eHostIntentId = '2026-06-tea-garden';
+export const e2eHostBranch = 'agent/U2-water-the-beds';
 
 // The folders those session files point at: two exist, one is gone.
 export const e2eWorkspace = (home: string, name: string) => path.join(home, 'workspaces', name);

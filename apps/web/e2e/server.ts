@@ -7,6 +7,7 @@ import type {
 } from '@wow/contracts';
 import { MockOutlookSource, loadFixtures } from '@wow/outlook-bridge';
 import {
+  MockGitHub,
   MockProviderAdapter,
   createNpmRunner,
   snapshot,
@@ -33,6 +34,10 @@ import {
   e2eCodexHome,
   e2eCodexInstanceId,
   e2eHome,
+  e2eHostBranch,
+  e2eHostIntentId,
+  e2eHostProjectId,
+  e2eHostWorkflowId,
   e2eOutlookControlPort,
   e2ePanelCardId,
   e2ePanelHome,
@@ -46,7 +51,7 @@ import {
   e2eWorkflowId,
   e2eWorkspace,
 } from './env';
-import { e2ePlansDirectory, seedPlanFiles } from './plans-seed';
+import { e2eIntentMd, e2ePlanMd, e2ePlansDirectory, e2eSpecMd, seedPlanFiles } from './plans-seed';
 
 // WOW_E2E_HOME and WOW_E2E_PORT start a second copy for the settings tests (playwright.config.ts).
 const home = process.env['WOW_E2E_HOME'] ?? e2eHome;
@@ -164,6 +169,17 @@ const changesRepo = path.join(home, 'tea-timer');
 // reseed the folder the Changes tests are reading.
 const gateRepo = path.join(home, 'tea-kettle');
 const teaRepos = new Set([changesRepo, gateRepo]);
+// The host tests (review loop spec 23, 28, 31) read a third copy; nothing edits it.
+const hostRepo = path.join(home, 'tea-garden');
+const gardenUnits = `## Units
+
+- [U1] Plant the tea
+- [U2] Water the beds -- depends on U1
+- [U3] Pick the leaves -- depends on U1
+- [U4] Dry the leaves -- depends on U2
+- [U5] Sell the tea -- blocked: the stall is not built
+
+${['U1', 'U2', 'U3', 'U4', 'U5'].map((key) => `### ${key} Invented\n\nOutcome: invented for the tests.\n`).join('\n')}`;
 const git = (repo: string, ...args: string[]) =>
   execFileSync(
     'git',
@@ -577,6 +593,17 @@ if (home === e2ePanelHome) {
 if (home === e2eChangesHome) {
   seedTeaRepo(changesRepo);
   seedTeaRepo(gateRepo);
+  // The host tests: a repository on a branch that has a pull request, with a plan in it.
+  seedTeaRepo(hostRepo);
+  git(hostRepo, 'checkout', '-q', '-b', e2eHostBranch);
+  const garden = 'A tea garden that waters itself';
+  for (const [name, text] of Object.entries({
+    'intent.md': e2eIntentMd(e2eHostIntentId, garden),
+    'spec.md': e2eSpecMd(e2eHostIntentId, garden),
+    'plan.md': e2ePlanMd(e2eHostIntentId, garden, gardenUnits),
+  })) {
+    writeInRepo(hostRepo, `intents/${e2eHostIntentId}/${name}`, text);
+  }
 }
 await seedPlanFiles(home);
 const server = await startServer({
@@ -839,6 +866,81 @@ if (home === e2eChangesHome) {
   });
 }
 
+// The host tests' project: its own GitHub repository and token, a plan, and a workflow that waits
+// before its only step.
+const gitHubHost = new MockGitHub({
+  owner: 'acme',
+  repo: 'tea-garden',
+  webUrl: `${trackerUrl}/web`,
+});
+const unitLine = (key: string) => `Invented.\n\nIntent-Unit: ${e2eHostIntentId}/${key}`;
+gitHubHost.token = 'github-host-e2e-token';
+gitHubHost.pulls = [
+  {
+    number: 12,
+    title: 'Plant the tea',
+    body: unitLine('U1'),
+    state: 'closed',
+    mergedAt: '2026-11-01T10:00:00Z',
+    branch: 'agent/U1-plant-the-tea',
+    sha: 'a1a1a1a1a1a1',
+    checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }],
+  },
+  {
+    number: 14,
+    title: 'Water the beds every morning',
+    body: unitLine('U2'),
+    state: 'open',
+    draft: true,
+    branch: e2eHostBranch,
+    sha: 'b2b2b2b2b2b2',
+    checkRuns: [
+      { name: 'test (ubuntu-latest)', status: 'completed', conclusion: 'success' },
+      { name: 'test (windows-latest)', status: 'completed', conclusion: 'failure' },
+      { name: 'lint', status: 'completed', conclusion: 'success' },
+    ],
+    statuses: { 'deploy/preview': 'failure' },
+    comments: [
+      { id: 9001, user: 'mira', body: 'The beds flood when it rains.', path: 'src/water.ts' },
+      { id: 9004, user: 'jon', body: 'Say which valve this opens.', path: 'docs/howto.md' },
+    ],
+  },
+];
+if (home === e2eChangesHome) {
+  server.engine.dispatch('seed-host-project', {
+    type: 'project.create',
+    projectId: e2eHostProjectId,
+    name: 'Tea garden',
+    cwd: hostRepo,
+  });
+  const scope = `project:${e2eHostProjectId}`;
+  const hostSettings: Record<string, unknown> = {
+    'trackers.github.repo': 'tea-garden',
+    'trackers.github.token': await server.secrets.set(
+      `setting:${scope}:trackers.github.token`,
+      'github-host-e2e-token',
+    ),
+  };
+  for (const [key, value] of Object.entries(hostSettings)) {
+    server.engine.dispatch(`seed-host-${key}`, { type: 'setting.set', key, scope, value });
+  }
+  // A round a day: the tests see the reads a followed plan, a new run and Refresh now start,
+  // and no round of the timer falls between two of their steps.
+  server.engine.dispatch('seed-host-interval', {
+    type: 'setting.set',
+    key: 'hosts.pollSeconds',
+    scope: 'global',
+    value: 86_400,
+  });
+  server.engine.dispatch('seed-host-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eHostWorkflowId,
+    name: 'Water the beds',
+    steps: [{ ...teaStep('water', 'deliver-work', 'Water the beds.'), gateBefore: true }],
+  });
+  await server.plans.refresh();
+}
+
 const received: { path: string; authorization: string | undefined; body: unknown }[] = [];
 const readBody = async (request: IncomingMessage): Promise<unknown> => {
   const chunks: Buffer[] = [];
@@ -897,6 +999,25 @@ const trackers = createServer((request, response) => {
       projectId,
     });
     return json(200, { runId });
+  }
+  // The mock GitHub the host tests' project reads, and its controls.
+  if (url.pathname === '/github-host/requests' && request.method === 'GET') {
+    return json(200, gitHubHost.requests);
+  }
+  if (url.pathname === '/github-host/failure') {
+    const status = Number(url.searchParams.get('status') ?? '500');
+    gitHubHost.failure =
+      request.method === 'PUT' ? { status, message: 'Invented server error' } : undefined;
+    return json(200, {});
+  }
+  if (request.method === 'GET' && url.pathname.startsWith('/github/')) {
+    const answer = gitHubHost.answer(
+      'GET',
+      `${url.pathname.slice('/github'.length)}${url.search}`,
+      request.headers.authorization ?? null,
+    );
+    for (const [name, value] of Object.entries(answer.headers)) response.setHeader(name, value);
+    return json(answer.status, answer.body);
   }
   // Anything the viewer's HTML page manages to fetch lands here and fails its test.
   if (url.pathname.startsWith('/leak')) {

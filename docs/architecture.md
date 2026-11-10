@@ -1548,6 +1548,13 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   repository in its home with `git` (which the e2e machines therefore need on the PATH) and
   registers it as a second project; a two-step workflow's prompts make the mock agent commit one
   change and leave others uncommitted, then add review notes. `POST /run?…&projectId=…` puts the
-  repository back to its first commit before each run. CI runs `pnpm e2e` on
+  repository back to its first commit before each run. The host tests (`e2e/hosts.spec.ts`) use
+  the same copy: a third repository, project `tea-garden`, is on a branch with an invented pull
+  request and holds a plan; `MockGitHub` (`apps/server/src/hosts/mock-github.ts`, the host the
+  server tests use too) answers under `/github` on the tracker port, only this project has a
+  GitHub token, and its workflow waits before its only step, so a run is live without the mock
+  agent. `PUT` and `DELETE /github-host/failure` make the host fail and answer again, and
+  `GET /github-host/requests` lists what it was asked. That copy polls once a day, so the tests
+  see only the reads that following a plan, starting a run and "Refresh now" start. CI runs `pnpm e2e` on
   `ubuntu-latest` and `windows-latest` (the `e2e` job) and keeps the traces of a failed run.
   Tests wait for what the page shows, never for time: no sleeps, polls or retries.

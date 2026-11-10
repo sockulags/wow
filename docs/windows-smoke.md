@@ -106,6 +106,17 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       icon.
 - [ ] Turn off `desktop.closeToTray`: closing the window quits wow.
 
-## 9. Uninstall
+## 9. Hosts
+
+- [ ] With a GitHub Enterprise personal access token in Settings → Trackers, open a plan of a
+      project whose remote is on that host and turn Follow on: units with pull requests show
+      Delivered or Claimed with a link, the others Ready, Waiting or Blocked, and "Last fetched"
+      names the host.
+- [ ] Start a run in a project folder that is on a branch with a pull request: the Pull request
+      tab shows it with its checks and review comments.
+- [ ] Turn `hosts.polling` off: "Last fetched" stops moving; Refresh now moves it once.
+- [ ] Put a wrong token in: the plan names the host and links to the GitHub token setting.
+
+## 10. Uninstall
 
 - [ ] Uninstall from Settings → Apps. `%USERPROFILE%\.wow` stays (your data).

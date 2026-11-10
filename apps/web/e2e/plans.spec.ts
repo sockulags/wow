@@ -6,8 +6,8 @@ import { e2eLiveIntentId, e2eLivePlan, e2ePlansDir } from './plans-seed';
 import { sketchPath, sketching, sketchUse } from './sketch';
 
 // U5 ground truth (review loop spec 21, 22, 24, 25) against invented plan files in the seeded
-// project's `plan-files` folder (e2e/plans-seed.ts). No host is set up, so every status is what
-// the files alone say.
+// project's `plan-files` folder (e2e/plans-seed.ts). No plan is followed here, so every status is
+// what the files alone say; e2e/hosts.spec.ts follows one.
 
 test.beforeEach(async ({ page }) => {
   // What the desktop preload injects: the contents of `~/.wow/server.json`.
@@ -69,12 +69,12 @@ test.describe('plans', () => {
     await expect(unit(page, 'U3').getByTestId('unit-depends')).toHaveText('Depends on U1, U2');
     await expect(unit(page, 'U1').getByTestId('unit-depends')).toHaveCount(0);
 
-    // Without a host: blocked, or status unknown with the reason (spec 24).
+    // Not followed, so no host is asked: blocked, or status unknown with the reason (spec 24).
     await expect(unit(page, 'U2').getByTestId('unit-status')).toHaveText('Blocked');
     await expect(unit(page, 'U1').getByTestId('unit-status')).toHaveText('Status unknown');
     await expect(unit(page, 'U3').getByTestId('unit-status')).toHaveText('Status unknown');
     await expect(units.getByTestId('unit-status-reason')).toHaveText(
-      'Status unknown: No host is set up for this project, so only the plan files are read.',
+      'Status unknown: This plan is not followed, so only its files are read.',
     );
   });
 
