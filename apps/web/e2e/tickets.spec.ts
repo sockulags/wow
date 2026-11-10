@@ -42,6 +42,9 @@ async function startRun(runId: string, backlogItemId?: string): Promise<void> {
   expect(response.ok).toBe(true);
 }
 
+// A read of one issue, as the mock Jira records it.
+const issue = (key: string) => `GET /rest/api/2/issue/${key}`;
+
 test.describe('tickets', () => {
   test('a Jira ticket beside a run', async ({ page }) => {
     await startRun('ticket-e2e-run', e2eTicketBacklogItemId);
@@ -104,7 +107,6 @@ test.describe('tickets', () => {
     const kinds = new Set(
       asked.map((request) => `${request.method} ${request.path.split('?')[0]}`),
     );
-    const issue = (key: string) => `GET /rest/api/2/issue/${key}`;
     expect(kinds).toContain(issue(e2eTicketKey));
     expect(
       [...kinds].filter(
