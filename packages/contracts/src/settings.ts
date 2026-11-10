@@ -912,6 +912,52 @@ export const settingsRegistry = {
     scope: 'project',
     secret: true,
   }),
+  'trackers.confluence.baseUrl': defineSetting({
+    schema: TrackerUrl,
+    group: 'trackers',
+    label: 'Confluence URL',
+    description:
+      'Address of your Confluence site, such as https://acme.atlassian.net/wiki for Confluence Cloud or https://confluence.example.com for Server or Data Center. Only pages on this site that a ticket, pull request or intent links to are read; its token goes nowhere else.',
+    default: '',
+    scope: 'project',
+  }),
+  'trackers.confluence.authMode': defineSetting({
+    schema: JiraAuthMode,
+    group: 'trackers',
+    label: 'Confluence sign-in',
+    description: 'How wow signs in to Confluence.',
+    default: 'pat',
+    scope: 'project',
+    radio: true,
+    options: {
+      'cloud-basic': {
+        label: 'Confluence Cloud',
+        description: 'Your Atlassian email and an API token.',
+      },
+      pat: {
+        label: 'Confluence Server or Data Center',
+        description: 'A personal access token, sent as a bearer token.',
+      },
+    },
+  }),
+  'trackers.confluence.email': defineSetting({
+    schema: z.string().trim(),
+    group: 'trackers',
+    label: 'Confluence email',
+    description: 'Your Atlassian account email. Only used for Confluence Cloud.',
+    default: '',
+    scope: 'project',
+  }),
+  'trackers.confluence.token': defineSetting({
+    schema: SecretSetting,
+    group: 'trackers',
+    label: 'Confluence token',
+    description:
+      'An API token for Confluence Cloud, or a personal access token for Confluence Server or Data Center, allowed to read the linked pages. Stored in the wow secret store and never shown again.',
+    default: null,
+    scope: 'project',
+    secret: true,
+  }),
   'trackers.requestTimeoutMs': defineSetting({
     schema: z.number().int().min(1000).max(300_000),
     group: 'trackers',

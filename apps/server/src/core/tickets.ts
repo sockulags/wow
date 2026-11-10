@@ -16,7 +16,7 @@ type TicketsSync = Extract<ServerCommand, { type: 'tickets.sync' }>;
 
 // An error that repeats keeps the time it was first seen, so a host that stays down or is not
 // set up does not store a new row at every round.
-const sameError = (
+export const sameError = (
   last: HostError | null | undefined,
   next: Omit<HostError, 'at'>,
 ): last is HostError =>

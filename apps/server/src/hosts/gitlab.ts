@@ -18,6 +18,7 @@ import {
   hostLink,
   hostTime,
   validTime,
+  webLinksIn,
   type FoundChangeRequest,
   type HostAdapter,
 } from './adapter.js';
@@ -63,6 +64,7 @@ function found(item: unknown): FoundChangeRequest | undefined {
     draft: field(item, 'draft') === true || field(item, 'work_in_progress') === true,
     mergedAt: hostTime(field(item, 'merged_at')),
     units: intentUnitLines(text(field(item, 'description'))),
+    links: webLinksIn(text(field(item, 'description'))),
     ...(typeof branch === 'string' && typeof sha === 'string' && sha !== ''
       ? { head: { branch, sha } }
       : {}),
@@ -307,6 +309,7 @@ export function createGitLabHost(
         headBranch: current.head.branch,
         headSha: current.head.sha,
         units: [...request.units],
+        links: [...(current.links ?? request.links ?? [])],
         checkState: checkStateOf(all),
         checks: all,
         comments,

@@ -16,6 +16,7 @@ import {
   changeRequests,
   hostReads,
   ticketReads,
+  pageReads,
   mailItems,
   notifications,
   outlookStatus,
@@ -60,6 +61,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       tx.delete(hostReads).where(eq(hostReads.projectId, id)).run();
       tx.delete(changeRequests).where(eq(changeRequests.projectId, id)).run();
       tx.delete(ticketReads).where(eq(ticketReads.projectId, id)).run();
+      tx.delete(pageReads).where(eq(pageReads.projectId, id)).run();
       // Its event triggers have nothing left to listen to. Card triggers have no project here;
       // the calendar cancels those.
       const gone = tx
@@ -79,6 +81,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         'hostReads',
         'changeRequests',
         'ticketReads',
+        'pageReads',
         'triggers',
       ];
     }
@@ -147,6 +150,14 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           .run();
       }
       return ['ticketReads'];
+    case 'pages.synced':
+      for (const read of event.payload.reads) {
+        tx.insert(pageReads)
+          .values(read)
+          .onConflictDoUpdate({ target: pageReads.id, set: read })
+          .run();
+      }
+      return ['pageReads'];
     case 'planRun.changed': {
       const { planRun } = event.payload;
       tx.insert(planRuns)
@@ -557,6 +568,8 @@ export function readModel(tx: DbOrTx): ReadModel {
       tx.select().from(hostReads).where(eq(hostReads.projectId, projectId)).all(),
     ticketReads: (projectId) =>
       tx.select().from(ticketReads).where(eq(ticketReads.projectId, projectId)).all(),
+    pageReads: (projectId) =>
+      tx.select().from(pageReads).where(eq(pageReads.projectId, projectId)).all(),
     changeRequests: (projectId) =>
       tx.select().from(changeRequests).where(eq(changeRequests.projectId, projectId)).all(),
     workflow: (id) => tx.select().from(workflows).where(eq(workflows.id, id)).get(),

@@ -8,14 +8,16 @@ const Id = z.string().min(1);
 const Timestamp = z.iso.datetime({ offset: true });
 
 // GitHub and GitHub Enterprise Server for pull requests, GitLab for merge requests (spec 34), Jira
-// (Cloud, Server and Data Center) for tickets; the other hosts join this list with their adapter.
-export const HostKind = z.enum(['github', 'jira', 'gitlab']);
+// (Cloud, Server and Data Center) for tickets, Confluence (Cloud, Server and Data Center) for the
+// pages they link to (spec 35).
+export const HostKind = z.enum(['github', 'jira', 'gitlab', 'confluence']);
 export type HostKind = z.infer<typeof HostKind>;
 
 export const hostKindLabels: Readonly<Record<HostKind, string>> = {
   github: 'GitHub',
   jira: 'Jira',
   gitlab: 'GitLab',
+  confluence: 'Confluence',
 };
 
 export const ChangeRequestState = z.enum(['open', 'merged', 'closed']);
@@ -68,6 +70,9 @@ export const ChangeRequest = z.object({
   checks: z.array(HostCheck),
   comments: z.array(ReviewComment),
   newestCommentId: Id.nullable(),
+  // The web addresses its body links to, so the pages it names can be read (spec 35). Absent on
+  // rows read before wow looked for them.
+  links: z.array(z.string().min(1)).optional(),
 });
 export type ChangeRequest = z.infer<typeof ChangeRequest>;
 
@@ -187,6 +192,85 @@ export const TicketReadOutcome = z.object({
   ]),
 });
 export type TicketReadOutcome = z.infer<typeof TicketReadOutcome>;
+
+// A Confluence page as last read (review loop spec 35): what the Pages tab lists and the viewer
+// shows. Read only.
+export const Page = z.object({
+  // The page's content id on the host.
+  id: Id,
+  title: z.string(),
+  // The key of the space it is in; empty when the answer did not say.
+  space: z.string(),
+  // The page's version number when it was read; null when the answer did not say.
+  version: z.number().int().positive().nullable(),
+  // The rendered body as the host answers it (`body.view`). Written by someone else and HTML: it
+  // is only ever shown inside a sandboxed frame where nothing runs and nothing is fetched, and
+  // never put into a prompt.
+  body: z.string(),
+  // The page on the host; null when the host's address is not a web address.
+  url: z.string().min(1).nullable(),
+});
+export type Page = z.infer<typeof Page>;
+
+// Where a link to a page was found: the run's ticket description, its pull request body or its
+// intent's files.
+export const PageSource = z.enum(['ticket', 'pullRequest', 'intent']);
+export type PageSource = z.infer<typeof PageSource>;
+
+export const pageSourceLabels: Readonly<Record<PageSource, string>> = {
+  ticket: 'the ticket description',
+  pullRequest: 'the pull request body',
+  intent: 'the intent',
+};
+
+// One linked page of a run. `ref` is how the link names the page, `id:<contentId>` or
+// `title:<spaceKey>/<title>`, which is also its key in the list. A failed read keeps the last page
+// of the same link and its time beside the error (spec 31).
+export const PageLink = z.object({
+  ref: z.string().min(1),
+  // The address as the link has it.
+  link: z.string().min(1),
+  source: PageSource,
+  page: Page.nullable(),
+  fetchedAt: Timestamp.nullable(),
+  error: HostError.nullable(),
+});
+export type PageLink = z.infer<typeof PageLink>;
+
+// What was last read about the pages one run's texts link to. `error` is what kept wow from
+// asking at all, or the first refusal or failure of the last round; `fetchedAt` the last round in
+// which the host answered.
+export const PageRead = z.object({
+  // `run:<runId>`.
+  id: Id,
+  projectId: Id,
+  runId: Id,
+  host: HostKind,
+  // The Confluence site as the user knows it. Empty while not set up.
+  hostName: z.string(),
+  pages: z.array(PageLink),
+  fetchedAt: Timestamp.nullable(),
+  error: HostError.nullable(),
+});
+export type PageRead = z.infer<typeof PageRead>;
+
+// One run's linked pages as one poll found them.
+export const PageReadOutcome = z.object({
+  runId: Id,
+  links: z.array(
+    z.object({
+      ref: z.string().min(1),
+      link: z.string().min(1),
+      source: PageSource,
+      result: z.discriminatedUnion('ok', [
+        z.object({ ok: z.literal(true), page: Page }),
+        z.object({ ok: z.literal(false), error: HostError.omit({ at: true }) }),
+      ]),
+    }),
+  ),
+  error: HostError.omit({ at: true }).nullable(),
+});
+export type PageReadOutcome = z.infer<typeof PageReadOutcome>;
 
 // "Refresh now": one plan, one run, or everything wow follows.
 export const HostRefreshParams = z.object({ planId: Id.optional(), runId: Id.optional() });

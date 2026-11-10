@@ -13,6 +13,8 @@ import {
   type HostRead,
   type HostReadOutcome,
   type HostRefreshParams,
+  type PageReadOutcome,
+  type PageSource,
   type PlanIntent,
   type TicketReadOutcome,
   type TicketSource,
@@ -29,14 +31,27 @@ import {
   hostReads,
   planIntents,
   planRuns,
+  ticketReads,
   workflowRuns,
 } from '../db/schema.js';
 import type { BackgroundService } from '../hooks/index.js';
 import type { Logger } from '../logger.js';
 import type { SchedulerTimers } from '../scheduler/service.js';
 import type { SettingsService } from '../settings/service.js';
-import type { ProjectGitHubHost, ProjectGitLabHost, ProjectJiraHost } from '../trackers/service.js';
-import { HostFailure, type FoundChangeRequest, type HostAdapter } from './adapter.js';
+import type {
+  ProjectConfluenceHost,
+  ProjectGitHubHost,
+  ProjectGitLabHost,
+  ProjectJiraHost,
+} from '../trackers/service.js';
+import {
+  HostFailure,
+  type FoundChangeRequest,
+  type HostAdapter,
+  type PageAdapter,
+  type PageRef,
+} from './adapter.js';
+import { confluenceLinksIn, createConfluenceHost, MissingPage } from './confluence.js';
 import { createGitHubHost } from './github.js';
 import { createGitLabHost } from './gitlab.js';
 import { createJiraHost, jiraKeyIn, MissingTicket } from './jira.js';
@@ -71,6 +86,14 @@ export interface HostPollerDeps {
   readonly resolveJira?: (projectId: string) => Promise<ProjectJiraHost | undefined>;
   // Builds the Jira adapter; the real one unless a test gives its own.
   readonly jiraAdapter?: typeof createJiraHost;
+  // The project's Confluence settings as they apply (TrackerService.confluenceHost). Without it
+  // no page is read.
+  readonly resolveConfluence?: (projectId: string) => Promise<ProjectConfluenceHost | undefined>;
+  // Builds the Confluence adapter; the real one unless a test gives its own.
+  readonly confluenceAdapter?: typeof createConfluenceHost;
+  // The texts of one of the project's intents (its intent, spec and plan files), for the pages
+  // they link to. Empty when the intent has none.
+  readonly intentTexts?: (projectId: string, intentId: string) => Promise<string[]>;
 }
 
 // Where one run's ticket key was found, if anywhere.
@@ -103,6 +126,12 @@ const labelOf = (key: string) =>
   Object.hasOwn(settingsRegistry, key)
     ? settingsRegistry[key as keyof typeof settingsRegistry].label
     : key;
+
+const confluenceNotSetUp = (missing: readonly string[]): ErrorNow => ({
+  kind: 'notSetUp',
+  message: `${hostKindLabels.confluence} is not set up for this project: fill in ${missing.map(labelOf).join(', ')} in Settings → Trackers or in the project's own trackers`,
+  setting: missing[0] ?? null,
+});
 
 // Asks the hosts about what wow follows (review loop spec 27 to 32): the pull requests of
 // followed plans and of plans a plan run is live on, found with one search per plan, and the
@@ -430,6 +459,15 @@ export class HostPoller implements BackgroundService {
           error: error instanceof Error ? error.message : String(error),
         });
       }
+      // After the tickets, whose descriptions can link to pages.
+      try {
+        await this.#readPages(projectId, own.runs, asked);
+      } catch (error) {
+        this.#deps.logger.error('page read failed', {
+          projectId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
@@ -524,7 +562,13 @@ export class HostPoller implements BackgroundService {
       // asked for again.
       const row = ChangeRequest.safeParse(
         known?.state === 'merged' && found.state === 'merged'
-          ? { ...known, title: found.title, url: found.url, units: [...found.units] }
+          ? {
+              ...known,
+              title: found.title,
+              url: found.url,
+              units: [...found.units],
+              links: [...(found.links ?? known.links)],
+            }
           : { ...(await adapter.read(found)), id, projectId },
       );
       // A row the contract turns down would break the changeRequests topic for every client,
@@ -723,6 +767,153 @@ export class HostPoller implements BackgroundService {
     } catch (error) {
       if (error instanceof CommandRejected) {
         this.#deps.logger.debug('ticket read dropped', { projectId, reason: error.message });
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  // The texts of a run that can link to pages, by where they come from: the description of its
+  // ticket, the body of its pull request, and the files of its intent (the plan unit it delivers,
+  // or an intent its pull request's `Intent-Unit` lines name). All as last read; nothing here
+  // asks a host.
+  async #pageTexts(run: WorkflowRun): Promise<[PageSource, string][]> {
+    const { db } = this.#deps;
+    const texts: [PageSource, string][] = [];
+    const ticket = db
+      .select()
+      .from(ticketReads)
+      .where(eq(ticketReads.id, hostReadId('run', run.id)))
+      .get()?.ticket;
+    if (ticket) texts.push(['ticket', ticket.description]);
+    const read = db
+      .select()
+      .from(hostReads)
+      .where(eq(hostReads.id, hostReadId('run', run.id)))
+      .get();
+    const requests =
+      read && read.changeRequestIds.length > 0
+        ? db
+            .select()
+            .from(changeRequests)
+            .where(inArray(changeRequests.id, read.changeRequestIds))
+            .all()
+        : [];
+    for (const request of requests) texts.push(['pullRequest', request.links.join('\n')]);
+    const intents = new Set<string>();
+    if (run.unit) intents.add(run.unit.intentId);
+    for (const request of requests) for (const unit of request.units) intents.add(unit.intentId);
+    for (const intentId of intents) {
+      const files = (await this.#deps.intentTexts?.(run.projectId, intentId).catch(() => [])) ?? [];
+      for (const file of files) texts.push(['intent', file]);
+    }
+    return texts;
+  }
+
+  // The pages each run's texts link to on the project's Confluence site (review loop spec 35).
+  // Only linked pages are read, each once a round however many runs link to it; a run with no
+  // links costs no request. After a failure other than a missing page the site is not asked again
+  // this round.
+  async #readPages(projectId: string, runs: WorkflowRun[], asked: boolean): Promise<void> {
+    const { settings } = this.#deps;
+    const host = await this.#deps.resolveConfluence?.(projectId);
+    if (!host) return;
+    const outcomes: PageReadOutcome[] = [];
+    if (host.baseUrl === '') {
+      for (const run of runs) {
+        outcomes.push({
+          runId: run.id,
+          links: [],
+          error: confluenceNotSetUp(['trackers.confluence.baseUrl']),
+        });
+      }
+      this.#storePages(projectId, host.name, outcomes);
+      return;
+    }
+    const leaveAlone = `confluence:${host.name}`;
+    const until = this.#leaveAlone.get(leaveAlone);
+    const waiting = !asked && until !== undefined && until > this.#clock();
+    const config = host.confluence.config;
+    const adapter: PageAdapter | undefined = config
+      ? (this.#deps.confluenceAdapter ?? createConfluenceHost)(config, host.name, {
+          timeoutMs: settings.get('trackers.requestTimeoutMs'),
+          clock: this.#clock,
+          ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
+        })
+      : undefined;
+    type Result = PageReadOutcome['links'][number]['result'];
+    const pages = new Map<string, Promise<Result>>();
+    let failure: ErrorNow | undefined;
+    for (const run of runs) {
+      const links: PageReadOutcome['links'] = [];
+      const found: { ref: string; link: string; source: PageSource; page: PageRef }[] = [];
+      for (const [source, text] of await this.#pageTexts(run)) {
+        for (const link of confluenceLinksIn(text, host.baseUrl)) {
+          if (!found.some((known) => known.ref === link.ref)) found.push({ ...link, source });
+        }
+      }
+      if (found.length === 0) {
+        outcomes.push({ runId: run.id, links: [], error: null });
+        continue;
+      }
+      if (!adapter) {
+        outcomes.push({
+          runId: run.id,
+          links: [],
+          error: confluenceNotSetUp(host.confluence.missing),
+        });
+        continue;
+      }
+      // The host asked to be left alone: this run keeps what it had until the next round.
+      if (waiting) continue;
+      let first: ErrorNow | null = null;
+      for (const { ref, link, source, page } of found) {
+        const asking =
+          pages.get(ref) ??
+          (async (): Promise<Result> => {
+            if (failure) return { ok: false, error: failure };
+            try {
+              return { ok: true, page: await adapter.read(page) };
+            } catch (error) {
+              const reason: ErrorNow =
+                error instanceof HostFailure
+                  ? { kind: error.kind, message: error.message, setting: error.setting }
+                  : {
+                      kind: 'failed',
+                      message: error instanceof Error ? error.message : String(error),
+                      setting: null,
+                    };
+              if (!(error instanceof MissingPage)) failure = reason;
+              this.#deps.logger.warn('page read failed', { projectId, host: host.name, ...reason });
+              return { ok: false, error: reason };
+            }
+          })();
+        pages.set(ref, asking);
+        const result = await asking;
+        if (!result.ok && first === null && result.error === failure) first = result.error;
+        links.push({ ref, link, source, result });
+      }
+      outcomes.push({ runId: run.id, links, error: first });
+    }
+    const wait = adapter?.waitUntil;
+    if (wait) this.#leaveAlone.set(leaveAlone, wait);
+    else if (!waiting) this.#leaveAlone.delete(leaveAlone);
+    this.#storePages(projectId, host.name, outcomes);
+  }
+
+  #storePages(projectId: string, hostName: string, reads: PageReadOutcome[]): void {
+    if (reads.length === 0) return;
+    try {
+      this.#deps.engine.dispatch(`pages.sync:${randomUUID()}`, {
+        type: 'pages.sync',
+        projectId,
+        at: this.#clock().toISOString(),
+        hostName,
+        reads,
+      });
+    } catch (error) {
+      if (error instanceof CommandRejected) {
+        this.#deps.logger.debug('page read dropped', { projectId, reason: error.message });
       } else {
         throw error;
       }

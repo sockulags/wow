@@ -1,4 +1,4 @@
-import type { ChangeRequest, HostErrorKind, HostKind, Ticket, UnitRef } from '@wow/contracts';
+import type { ChangeRequest, HostErrorKind, HostKind, Page, Ticket, UnitRef } from '@wow/contracts';
 
 // What the poller needs from a code host. One adapter per host kind; everything the host calls
 // its own way (pull or merge request, check run or pipeline, review comment or note) is
@@ -15,6 +15,8 @@ export interface FoundChangeRequest {
   readonly mergedAt: string | null;
   // The `Intent-Unit` lines of its body.
   readonly units: readonly UnitRef[];
+  // The web addresses its body links to.
+  readonly links?: readonly string[];
   // Present when the answer that found it already said where its head is.
   readonly head?: { readonly branch: string; readonly sha: string } | undefined;
 }
@@ -50,6 +52,22 @@ export interface TicketAdapter {
   readonly waitUntil: Date | undefined;
 }
 
+// How a link names a Confluence page: by its content id, or by space key and title (a
+// `/display/<space>/<title>` address).
+export type PageRef =
+  | { readonly kind: 'id'; readonly id: string }
+  | { readonly kind: 'title'; readonly space: string; readonly title: string };
+
+// What the poller needs from a page host (Confluence): one page by the way a link names it. Read
+// only; the body comes back as the host renders it, for the sandboxed frame.
+export interface PageAdapter {
+  readonly kind: HostKind;
+  readonly name: string;
+  read(ref: PageRef): Promise<Page>;
+  readonly requests: number;
+  readonly waitUntil: Date | undefined;
+}
+
 // A read that did not work, in words for the view. `refused` names the setting to look at.
 export class HostFailure extends Error {
   constructor(
@@ -77,3 +95,14 @@ export const hostLink = (value: unknown): string | null => {
   const { protocol } = new URL(value);
   return protocol === 'https:' || protocol === 'http:' ? value : null;
 };
+
+// Every web address written in a text (markdown, wiki markup or plain), in order and once each.
+// Only http and https addresses; the end of a sentence or of a markdown link is not part of one.
+export function webLinksIn(text: string): string[] {
+  const found = new Set<string>();
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"'`()[\]{}|\\^]+/gi)) {
+    const link = hostLink(match[0].replace(/[.,;:!?*_~]+$/, ''));
+    if (link !== null) found.add(link);
+  }
+  return [...found];
+}

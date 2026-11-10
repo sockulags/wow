@@ -107,17 +107,22 @@ export const trackerAccountKeys: ReadonlySet<string> = new Set([
   'trackers.github.token',
   'trackers.gitlab.baseUrl',
   'trackers.gitlab.token',
+  'trackers.confluence.baseUrl',
+  'trackers.confluence.authMode',
+  'trackers.confluence.email',
+  'trackers.confluence.token',
 ]);
 
-// The accounts "Test connection" signs in to. GitLab is read only (merge requests), so it is not
-// a publish target.
-export const TrackerConnection = z.enum(['jira', 'github', 'gitlab']);
+// The accounts "Test connection" signs in to. GitLab (merge requests) and Confluence (linked
+// pages) are read only, so they are not publish targets.
+export const TrackerConnection = z.enum(['jira', 'github', 'gitlab', 'confluence']);
 export type TrackerConnection = z.infer<typeof TrackerConnection>;
 
 export const trackerConnectionLabels: Readonly<Record<TrackerConnection, string>> = {
   jira: 'Jira',
   github: 'GitHub',
   gitlab: 'GitLab',
+  confluence: 'Confluence',
 };
 
 // How a publish found its project: chosen in the dialog, or from the item's card or run.

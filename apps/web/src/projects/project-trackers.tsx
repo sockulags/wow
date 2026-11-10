@@ -69,12 +69,20 @@ const fields: Readonly<Record<TrackerConnection, readonly FieldSpec[]>> = {
       placeholder: 'https://gitlab.example.com',
     },
   ],
+  confluence: [
+    {
+      key: 'trackers.confluence.baseUrl',
+      label: 'Site URL',
+      placeholder: 'https://confluence.example.com',
+    },
+  ],
 };
 
 const tokenKeys: Readonly<Record<TrackerConnection, RegistryKey>> = {
   github: 'trackers.github.token',
   jira: 'trackers.jira.token',
   gitlab: 'trackers.gitlab.token',
+  confluence: 'trackers.confluence.token',
 };
 
 // Which GitLab project the project reads merge requests from: the one its git remote names on
@@ -256,8 +264,13 @@ function SignIn({
   const own = token?.source === 'project';
   const shared = token?.source === 'global' && SecretRef.safeParse(token.value).success;
   const [overriding, setOverriding] = useState(own);
-  const email = resolved.get('trackers.jira.email');
-  const cloud = resolved.get('trackers.jira.authMode')?.value !== 'pat';
+  const email = resolved.get(
+    service === 'confluence' ? 'trackers.confluence.email' : 'trackers.jira.email',
+  );
+  const cloud =
+    resolved.get(
+      service === 'confluence' ? 'trackers.confluence.authMode' : 'trackers.jira.authMode',
+    )?.value === 'cloud-basic';
   const id = `project-${projectId}-${key}`;
   return (
     <div className="flex flex-col gap-1.5">
@@ -269,7 +282,7 @@ function SignIn({
             : shared
               ? `Signs in with the shared ${titles[service]} token.`
               : `No ${titles[service]} token yet. Save the shared one in Settings → Trackers, or one for this project.`}
-          {service === 'jira' && cloud && email && email.value !== ''
+          {(service === 'jira' || service === 'confluence') && cloud && email && email.value !== ''
             ? ` Email: ${String(email.value)}${email.source === 'outlook' ? ' (from Outlook)' : ''}.`
             : ''}
         </span>
@@ -303,7 +316,7 @@ function SignIn({
 
 // Settings → Projects → a project's Trackers (owner decision F-4): the GitHub repository read from
 // the project's git remote, the Jira site and project key, the GitLab site and the project the
-// remote names on it, each with where it came from, and the
+// remote names on it, the Confluence site, each with where it came from, and the
 // suggestions wow does not use until confirmed. Asked again whenever a setting changes.
 export function ProjectTrackersPanel({ project }: { project: Project }) {
   const { connection } = useRuntime();
@@ -347,7 +360,7 @@ export function ProjectTrackersPanel({ project }: { project: Project }) {
 
   return (
     <div className="flex flex-col gap-6" data-testid={`project-trackers-${project.id}`}>
-      {(['github', 'jira', 'gitlab'] as const).map((service) => (
+      {(['github', 'jira', 'gitlab', 'confluence'] as const).map((service) => (
         <section
           key={service}
           aria-labelledby={`project-${project.id}-tracker-${service}`}

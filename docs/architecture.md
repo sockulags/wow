@@ -172,15 +172,19 @@ plan_intents     id ('<projectId>:<intentId>'), projectId, intentId, title, hasI
                  units(json: PlanUnit[]), problems(json: PlanProblem[]), followed
                  -- what the files say; unit status also from the host while followed
 host_reads       id ('plan:<planIntentId>'|'run:<runId>'), projectId, scope ('plan'|'run'), host
-                 ('github'|'jira'), hostName, branch?, changeRequestIds(json), fetchedAt?,
+                 ('github'|'gitlab'), hostName, branch?, changeRequestIds(json), fetchedAt?,
                  error(json: HostError)?   -- what was last read for a followed plan or a run
 change_requests  id ('<projectId>:<number>'), projectId, host, number, title, url, state ('open'|
                  'merged'|'closed'), draft, mergedAt?, headBranch, headSha, units(json: UnitRef[]),
                  checkState ('none'|'pending'|'success'|'failure'), checks(json: HostCheck[]),
-                 comments(json: ReviewComment[]), newestCommentId?   -- pull requests as last read
+                 comments(json: ReviewComment[]), newestCommentId?, links(json: string[])
+                 -- pull requests as last read; `links` are the web addresses of the body
 ticket_reads     id ('run:<runId>'), projectId, runId, host ('jira'), hostName, key?, source
                  ('backlog'|'pullRequest'|'branch')?, ticket(json: Ticket)?, fetchedAt?,
                  error(json: HostError)?   -- a run's Jira ticket as last read
+page_reads       id ('run:<runId>'), projectId, runId, host ('confluence'), hostName,
+                 pages(json: PageLink[]), fetchedAt?, error(json: HostError)?
+                 -- the Confluence pages a run's texts link to, with the pages as last read
 settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
 events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
@@ -898,9 +902,11 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.jira.issueType`, `trackers.github.baseUrl`, `trackers.github.token` (secret),
   `trackers.github.owner`, `trackers.github.repo`, `trackers.github.labels`,
   `trackers.gitlab.baseUrl`, `trackers.gitlab.token` (secret; see "Hosts", GitLab),
+  `trackers.confluence.baseUrl`, `trackers.confluence.authMode` (`cloud-basic` or `pat`),
+  `trackers.confluence.email`, `trackers.confluence.token` (secret; see "Hosts", Pages),
   `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs`, `trackers.jira.keyScanCommits` (the
-  `trackers.jira.*`, `trackers.github.*` and `trackers.gitlab.*` ones are project-scoped, see
-  "Backlog and trackers")
+  `trackers.jira.*`, `trackers.github.*`, `trackers.gitlab.*` and `trackers.confluence.*` ones
+  are project-scoped, see "Backlog and trackers")
 - hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount` (see "Hosts")
 - triggers: `triggers.eventsEnabled`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
@@ -1360,6 +1366,41 @@ the key stays the same, and the time an error was first seen while it repeats. A
 key gets a row with `key: null` and no error, which the Ticket tab shows as "no ticket found".
 The rows go with their project.
 
+**Pages** (review loop spec 35; `hosts/confluence.ts`, `hosts/intent-texts.ts`, `core/pages.ts`).
+Confluence (Cloud, Server and Data Center) is the page host, and only pages something links to
+are read: no search, no spaces, no attachments, and pages are never given to agents. After a
+round has read a project's tickets, the poller collects each live run's texts as last stored:
+the description of its ticket (`ticket_reads`), the web addresses of its pull request's body
+(`change_requests.links`, which the GitHub and GitLab adapters fill from the body with
+`webLinksIn`), and the `intent.md`, `spec.md` and `plan.md` of its intent (the plan unit it
+delivers, `run.unit.intentId`, and every intent its pull request's `Intent-Unit` lines name),
+read from the project's `plans.intentsDirectory` with links left out (`readIntentTexts`).
+`confluenceLinksIn(text, baseUrl)` keeps an address only when it has the stored
+`trackers.confluence.baseUrl`'s scheme, host, port and path, and names a page:
+`/pages/viewpage.action?pageId=<id>` and `/spaces/<space>/pages/<id>/…` by id (`ref`
+`id:<id>`), `/display/<space>/<title>` by title (`title:<space>/<title>`, `+` read as a
+space). Links to another site are dropped before anything is asked, so the Confluence token never
+goes anywhere but the stored site. A run with no links gets a row with no pages and no error,
+and costs no request. Each linked page is asked for once a round,
+`GET <base>/rest/api/content/<id>?expand=body.view,version,space` or
+`GET <base>/rest/api/content?spaceKey=<space>&title=<title>&expand=body.view,version,space`
+(the first result; none is a missing page), signed in with a bearer token (`pat`) or email and
+API token (`cloud-basic`, `jiraAuthorization`), with redirects turned down. The adapter
+(`PageAdapter`, `createConfluenceHost`) answers a `Page`: content id, title, space key, version
+and the body as Confluence renders it (`body.view`, HTML), and the page's address made from the
+stored site and the answer's `webui` path. The HTML is never rendered in the app: only the
+viewer's sandboxed frame shows it. 401 and 403 are `refused` and name
+`trackers.confluence.token`, as is 404 ("shows no page <id> to the Confluence token"), which fails
+only that page; a 429 with `Retry-After` leaves the site alone until then; anything else and a
+timeout are `failed`, and after such a failure the site is not asked again that round. A project
+without the site gets a `notSetUp` read naming `trackers.confluence.baseUrl` for every live run;
+one without the token (or the email on Cloud) names that setting only for runs that link to a
+page. The round ends in one internal `pages.sync` command per project; `core/pages.ts` stores
+`page_reads` rows through `pages.synced` (topic `pageReads`). Each `PageLink` keeps its last page
+and time beside its own error; the row's `error` is what kept wow from asking or the round's
+first refusal or failure (a missing page is only the page's), and its `fetchedAt` the last round
+without one. The rows go with their project.
+
 **Unit status** (`unitStatuses` in `packages/agent-os`, pure). The rule is agent-os's
 `dispatch-next`, in this order: `delivered` when a merged pull request carries the unit's line,
 `claimed` when an open one does, `blocked` when the unit's line has a `blocked:` note, `ready`
@@ -1498,8 +1539,12 @@ itself: <parts>" with each part's sentence in its row (`passedByItself`).
 **Review at a gate** (`gate.ts`, `gate-bar.tsx`, `review-tabs.tsx`; review loop spec 14 to 18).
 The run view's tabs are Steps, Changes, Artifacts, Pull request, Ticket and Pages (`runTabs`;
 `?tab=artifacts|pullRequest|ticket|pages` beside `changes`). Artifacts lists the found files of
-every step, each opening in the panel's viewer; Pages has no source yet and says "Nothing to
-show yet", as does Artifacts for a run without found files. Ticket (`ticket-tab.tsx`, review loop
+every step, each opening in the panel's viewer; Artifacts says "Nothing to show yet" for a run
+without found files. Pages (`pages-tab.tsx`, review loop spec 35) shows the run's `pageReads`
+row under the same "Last fetched" line, error and "Refresh now": each linked page with its
+title (a button that opens it in the panel's page viewer), space, where it was linked from, its
+own "Last fetched" time and error, and "Open on host". Without pages it says why: not asked yet,
+nothing links to a page (and nothing was read), or Confluence could not be read. Ticket (`ticket-tab.tsx`, review loop
 spec 33) shows the run's `ticketReads` row: key and summary linked to Jira, type, status,
 assignee, where the key was found, and the description through the shared `Markdown` renderer,
 under the same "Last fetched" line, error, "Refresh now" and "Open on host" as Pull request
@@ -1735,6 +1780,18 @@ topics the views read.
   outside or Tab brings the app's shortcuts back. Palette commands (`viewerCommands`): "Open
   artifact: <path>" for every found file of the open run, and Back to conversation, Copy file
   path while a file shows, and the picture's size switch once it is read as a picture.
+- Page viewer (`page-viewer.tsx`; review loop spec 35): the same place for a linked Confluence
+  page. `openPage` stores `{runId, ref, from}` as the layout store's `page` (opening a file
+  clears it and the other way round) and `shownPage` keeps it to the route it was opened on. The
+  body is the server's last read from `pageReads`; nothing is asked of the host here. The header
+  has Back to conversation (also Escape), "Open on host", the title and space, version, where it
+  was linked from and when it was fetched. The body is shown in an `iframe` with `sandbox=""`
+  from `pageDocument(body)`, which wraps the fragment in a page with a light reading style and
+  goes through `frameDocument`, so no script runs and nothing is fetched. Pictures and
+  attachments need the user's Confluence session and therefore do not load; a line above the
+  frame says so and points to "Open on host". Palette commands: "Open page: <title>" for every
+  read page of the open run, and Back to conversation and "Open page on host: <title>" while a
+  page shows.
 
 State (`panel-state.ts`). `appearance.contextPanel` stores whether it is open and
 `appearance.contextPanelWidth` its width (pixels, bounds `contextPanelWidthBounds` in
@@ -1787,10 +1844,13 @@ differs from the current value and the project has not set one. `trackers.projec
 answers `ProjectTrackers` (`{projectId, git, gitlab, settings, suggestions}`; `gitlab` is the
 GitLab project the remote names on the stored GitLab site, or null). The GitLab site is never
 taken from a remote, so its token goes only where the user said. "Test connection" takes
-`TrackerConnection` (`jira`, `github`, `gitlab`; GitLab is no publish target) and answers
+`TrackerConnection` (`jira`, `github`, `gitlab`, `confluence`; GitLab and Confluence are no
+publish targets) and answers
 `TrackerTestResult` with `version`: for GitLab it asks `/user`, `/version` and, for a project
 whose remote is on the site, the project itself, and says "Signed in as <name> @<user> on GitLab
-<version>"; a refused token shows the host's message.
+<version>"; for Confluence it asks `/rest/api/user/current` and says "Signed in as <name> ·
+<user>" (an anonymous answer counts as a refused token); a refused token shows the host's
+message.
 
 **Publish target.** `publishTarget` picks whose settings a preview or publish uses: the
 `projectId` the dialog sends (`null` means none: the defaults), else the project of the item's
@@ -1849,8 +1909,8 @@ chosen project, and asks again; otherwise the preview says "Publishes to <target
 <project>", shows the target with its source marker, an editable title, the tags to add as labels
 and the rendered body, and "Publish issue" calls `trackers.publish` with the same `projectId`.
 
-Settings → Trackers has one section per host (Jira, GitHub, GitLab), each with Test connection,
-and "Every tracker" for the shared request settings.
+Settings → Trackers has one section per host (Jira, GitHub, GitLab, Confluence), each with Test
+connection, and "Every tracker" for the shared request settings.
 
 Settings → Projects → Trackers (`projects/project-trackers.tsx`) renders `trackers.project` and
 asks again on every `settings` push. GitHub owner, repository and API URL and Jira site, project
@@ -1861,7 +1921,8 @@ its field with "Use <value>". Sign-in is one line ("Signs in with the shared Git
 "Use a different token", which opens a `SecretField` for the project's own token. Each tracker
 has the same Test connection as Settings → Trackers, with the `projectId`. The GitLab section
 has the site URL, a line naming the GitLab project the remote points at (or saying the remote is
-not on that site, so GitHub applies) and the same sign-in line. Palette commands: New
+not on that site, so GitHub applies) and the same sign-in line. The Confluence section has the
+site URL and the sign-in line. Palette commands: New
 backlog item, every item, and for the open item Plan on calendar, Publish to Jira and Publish to
 GitHub.
 
@@ -2007,7 +2068,13 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   `MockJira` (`apps/server/src/hosts/mock-jira.ts`) answers `GET /jira/rest/api/2/issue/<key>` on
   the tracker port with the seeded global Jira sign-in, `PUT` and `DELETE /jira-host/failure` make
   it refuse and answer again, `GET /jira-host/requests` lists what it was asked, and
-  `POST /run?…&backlogItemId=…` starts a run for an item. The working copy tests
+  `POST /run?…&backlogItemId=…` starts a run for an item. The page tests (`e2e/pages.spec.ts`)
+  run the same way for a second published item whose Jira description links to a page by id,
+  in project `tea-garden`, whose seeded intent links to a page by space and title; `MockConfluence`
+  (`apps/server/src/hosts/mock-confluence.ts`) answers under `/confluence` on the tracker port
+  with the seeded global Confluence sign-in, `PUT` and `DELETE /confluence-host/failure` make it
+  refuse and answer again, and `GET /confluence-host/requests` lists what it was asked. The
+  working copy tests
   (`e2e/working-copy.spec.ts`) use the same copy too: a fourth repository, project `tea-cup`,
   and a workflow whose "Own working copy" switch the test turns on in the builder. The mock
   agent edits whatever folder its turn starts in when that is a tea repository or a folder

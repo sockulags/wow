@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PageRead,
   ChangeRequest,
   changeRequestName,
   Command,
@@ -253,6 +254,39 @@ describe('server contracts', () => {
 });
 
 describe('hosts', () => {
+  it('reads a page read of linked Confluence pages, each with its own error', () => {
+    const row = {
+      id: 'run:r1',
+      projectId: 'tea',
+      runId: 'r1',
+      host: 'confluence',
+      hostName: 'wiki.example.invalid',
+      pages: [
+        {
+          ref: 'id:123',
+          link: 'https://wiki.example.invalid/pages/viewpage.action?pageId=123',
+          source: 'ticket',
+          page: {
+            id: '123',
+            title: 'Design',
+            space: 'ENG',
+            version: 2,
+            body: '<p>x</p>',
+            url: null,
+          },
+          fetchedAt: '2026-11-03T09:00:00.000Z',
+          error: null,
+        },
+      ],
+      fetchedAt: '2026-11-03T09:00:00.000Z',
+      error: null,
+    };
+    expect(PageRead.safeParse(row).success).toBe(true);
+    expect(
+      PageRead.safeParse({ ...row, pages: [{ ...row.pages[0], source: 'search' }] }).success,
+    ).toBe(false);
+  });
+
   it('reads a plan row stored before plans could be followed', () => {
     const stored = {
       id: 'tea:2026-01-tea-timer',

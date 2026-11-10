@@ -14,6 +14,7 @@ import {
   hostLink as link,
   hostTime as time,
   validTime,
+  webLinksIn,
   type FoundChangeRequest,
   type HostAdapter,
   type HostChangeRequest,
@@ -64,6 +65,7 @@ function found(item: unknown): FoundChangeRequest | undefined {
     draft: field(item, 'draft') === true,
     mergedAt,
     units: intentUnitLines(text(field(item, 'body'))),
+    links: webLinksIn(text(field(item, 'body'))),
     ...(typeof branch === 'string' && typeof sha === 'string' ? { head: { branch, sha } } : {}),
   };
 }
@@ -319,6 +321,7 @@ export function createGitHubHost(
         // The single pull request answer has the body too, but the lines were read when it was
         // found, from the same body.
         units: [...request.units],
+        links: [...(current.links ?? request.links ?? [])],
         checkState: checkStateOf(all),
         checks: all,
         comments,

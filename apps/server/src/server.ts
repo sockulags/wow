@@ -13,6 +13,7 @@ import { Engine } from './core/engine.js';
 import { Subscriptions } from './core/subscriptions.js';
 import { openDatabase, type Database } from './db/database.js';
 import { projects, providerInstances } from './db/schema.js';
+import { eq } from 'drizzle-orm';
 import {
   ProviderAdapters,
   outlookMode,
@@ -33,6 +34,7 @@ import { route } from './rpc/router.js';
 import { Scheduler, type SchedulerTimers } from './scheduler/service.js';
 import { SettingsService } from './settings/service.js';
 import { PlansService } from './plans/service.js';
+import { readIntentTexts } from './hosts/intent-texts.js';
 import { PlanRuns } from './plans/plan-runs.js';
 import type { PlansWatchFactory } from './plans/watch.js';
 import { SkillsService } from './skills/service.js';
@@ -229,6 +231,13 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     resolve: (projectId) => trackers.githubHost(projectId),
     resolveGitLab: (projectId) => trackers.gitlabHost(projectId),
     resolveJira: (projectId) => trackers.jiraHost(projectId),
+    resolveConfluence: (projectId) => trackers.confluenceHost(projectId),
+    intentTexts: async (projectId, intentId) => {
+      const project = database.db.select().from(projects).where(eq(projects.id, projectId)).get();
+      if (!project) return [];
+      const setting = settings.get('plans.intentsDirectory', { projectId });
+      return readIntentTexts(project, setting, intentId);
+    },
     workingCopyBranch: (folder) =>
       readCurrentBranch(folder, { timeoutMs: settings.get('trackers.gitTimeoutMs') }),
     ...(options.clock ? { clock: options.clock } : {}),

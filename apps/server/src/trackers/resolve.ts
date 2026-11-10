@@ -23,7 +23,8 @@ export const trackerKeys: readonly string[] = Object.entries(settingsRegistry)
     ([key, definition]) =>
       (key.startsWith('trackers.jira.') ||
         key.startsWith('trackers.github.') ||
-        key.startsWith('trackers.gitlab.')) &&
+        key.startsWith('trackers.gitlab.') ||
+        key.startsWith('trackers.confluence.')) &&
       definition.scope === 'project',
   )
   .map(([key]) => key)

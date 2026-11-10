@@ -74,18 +74,21 @@ export function TrackersSection({ entries }: { entries: readonly SettingEntry[] 
     ([key]) =>
       key.startsWith('trackers.jira.') && !(key === 'trackers.jira.email' && authMode === 'pat'),
   );
+  const confluence = entries.filter(([key]) => key.startsWith('trackers.confluence.'));
   const github = entries.filter(([key]) => key.startsWith('trackers.github.'));
   const gitlab = entries.filter(([key]) => key.startsWith('trackers.gitlab.'));
   const other = entries.filter(
     ([key]) =>
       !key.startsWith('trackers.jira.') &&
       !key.startsWith('trackers.github.') &&
-      !key.startsWith('trackers.gitlab.'),
+      !key.startsWith('trackers.gitlab.') &&
+      !key.startsWith('trackers.confluence.'),
   );
   const sections: [TrackerConnection, readonly SettingEntry[]][] = [
     ['jira', jira],
     ['github', github],
     ['gitlab', gitlab],
+    ['confluence', confluence],
   ];
   const outlook = useTopic('outlookStatus')?.[0];
   const email = useSetting('trackers.jira.email');

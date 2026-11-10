@@ -28,6 +28,7 @@ import type {
   RunUnit,
   SecretRef,
   SkillSource,
+  PageLink,
   StepRun,
   ThreadItemKind,
   ThreadState,
@@ -366,6 +367,18 @@ export const ticketReads = sqliteTable('ticket_reads', {
   error: json<HostError>(),
 });
 
+// What was last read about the pages one run's texts link to (`run:<id>`), with the pages.
+export const pageReads = sqliteTable('page_reads', {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  runId: text().notNull(),
+  host: text().$type<HostKind>().notNull(),
+  hostName: text().notNull(),
+  pages: json<PageLink[]>().notNull(),
+  fetchedAt: text(),
+  error: json<HostError>(),
+});
+
 // Pull requests as last read, one row per project and number.
 export const changeRequests = sqliteTable('change_requests', {
   id: text().primaryKey(),
@@ -384,6 +397,7 @@ export const changeRequests = sqliteTable('change_requests', {
   checks: json<HostCheck[]>().notNull(),
   comments: json<ReviewComment[]>().notNull(),
   newestCommentId: text(),
+  links: json<string[]>().notNull().default([]),
 });
 
 export const settings = sqliteTable(

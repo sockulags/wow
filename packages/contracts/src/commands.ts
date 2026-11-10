@@ -32,6 +32,8 @@ import {
   HostKind,
   HostRead,
   HostReadOutcome,
+  PageRead,
+  PageReadOutcome,
   TicketRead,
   TicketReadOutcome,
 } from './hosts.js';
@@ -372,6 +374,15 @@ export const InternalCommand = z.discriminatedUnion('type', [
     hostName: z.string(),
     reads: z.array(TicketReadOutcome),
   }),
+  // What the host poller read about the pages the texts of one project's runs link to (review
+  // loop spec 35).
+  z.object({
+    type: z.literal('pages.sync'),
+    projectId: Id,
+    at: Timestamp,
+    hostName: z.string(),
+    reads: z.array(PageReadOutcome),
+  }),
   // Something a plan run depends on changed (its unit's run ended, or the plan's unit statuses
   // did): decide again what it does next. The plan runs service sends it.
   z.object({ type: z.literal('planRun.advance'), planRunId: Id }),
@@ -602,6 +613,12 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('tickets.synced'),
     aggregate: Id,
     payload: z.object({ projectId: Id, reads: z.array(TicketRead) }),
+  }),
+  // Page reads as they now are.
+  z.object({
+    kind: z.literal('pages.synced'),
+    aggregate: Id,
+    payload: z.object({ projectId: Id, reads: z.array(PageRead) }),
   }),
   z.object({
     kind: z.literal('planRun.changed'),

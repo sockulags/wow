@@ -1,7 +1,8 @@
-import { field, getJson, trimBase, type RequestOptions } from './http.js';
+import { TrackerError, field, getJson, trimBase, type RequestOptions } from './http.js';
 import type { GitHubConfig } from './github.js';
 import { gitLabApi, gitLabHeaders, gitLabProjectId, type GitLabConfig } from './gitlab.js';
 import { jiraAuthorization, type JiraConfig } from './jira.js';
+import type { ConfluenceSignIn } from '../hosts/confluence.js';
 
 // "Test connection" (audit E-08): who the stored credentials sign in as. Throws TrackerError with
 // the tracker's own message when they do not work.
@@ -73,4 +74,30 @@ export async function gitLabWhoAmI(
     account: parts.length > 0 ? parts.join(' ') : 'Signed in',
     version: typeof version === 'string' && version !== '' ? version : null,
   };
+}
+
+// Confluence answers who the token belongs to; a redirect (to a sign-in page) is turned down
+// rather than followed with the token.
+export async function confluenceWhoAmI(
+  config: ConfluenceSignIn,
+  options: RequestOptions,
+): Promise<string> {
+  const answer = await getJson(
+    'Confluence',
+    `${trimBase(config.baseUrl)}/rest/api/user/current`,
+    { authorization: jiraAuthorization(config) },
+    { ...options, redirect: 'manual' },
+  );
+  // Without a valid token Server and Data Center answer an anonymous user instead of refusing.
+  if (field(answer, 'type') === 'anonymous') {
+    throw new TrackerError(
+      'Confluence answered as an anonymous user: the token was not accepted. Check the Confluence token.',
+    );
+  }
+  const name = field(answer, 'displayName');
+  const user = field(answer, 'username') ?? field(answer, 'email');
+  const parts = [name, user].filter(
+    (part): part is string => typeof part === 'string' && part !== '',
+  );
+  return parts.length > 0 ? parts.join(' · ') : 'Signed in';
 }
