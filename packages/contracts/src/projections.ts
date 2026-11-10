@@ -303,10 +303,25 @@ export const Workflow = z.object({
   // "Own working copy": each run works in a Git worktree of its own instead of the project
   // folder (review loop spec 36, 39). Absent means off.
   ownWorkingCopy: z.boolean().optional(),
+  // "For units": a plan run may run this workflow once per unit of a plan (review loop spec 40).
+  // Absent means off.
+  forUnits: z.boolean().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
 export type Workflow = z.infer<typeof Workflow>;
+
+// The unit a run delivers, for a run that a plan run started (review loop spec 40). Every step's
+// prompt names it, and the plan run is told when the run ends.
+export const RunUnit = z.object({
+  planRunId: Id,
+  // `<projectId>:<intentId>`, the plan's row.
+  planId: Id,
+  intentId: z.string().min(1),
+  unitKey: z.string().min(1),
+  title: z.string(),
+});
+export type RunUnit = z.infer<typeof RunUnit>;
 
 export const WorkflowRun = z.object({
   id: Id,
@@ -327,6 +342,8 @@ export const WorkflowRun = z.object({
   baseFiles: z.array(FileHash).nullable().optional(),
   // The run's own working copy; absent or null for a run that works in the project folder.
   workingCopy: WorkingCopy.nullable().optional(),
+  // Absent or null for a run nobody started for a unit.
+  unit: RunUnit.nullable().optional(),
 });
 export type WorkflowRun = z.infer<typeof WorkflowRun>;
 
@@ -464,6 +481,45 @@ export const PlanIntent = z.object({
   followed: z.boolean().default(false),
 });
 export type PlanIntent = z.infer<typeof PlanIntent>;
+
+// A plan run works through a plan's ready units, one ordinary run per unit and one at a time
+// (review loop spec 40 to 47). `running` while a unit's run is live, `waiting` while units remain
+// and none is ready, `done` when every unit is delivered, `failed` when a unit's run failed or
+// was stopped and `workflows.planRunOnFailure` is `stop`, `stopped` by the user.
+export const PlanRunState = z.enum(['running', 'waiting', 'done', 'failed', 'stopped']);
+export type PlanRunState = z.infer<typeof PlanRunState>;
+
+export const isLivePlanRunState = (state: PlanRunState): boolean =>
+  state === 'running' || state === 'waiting';
+
+// One unit the plan run started a run for, in the order they started. A unit is started at most
+// once in a plan run, whatever became of its run.
+export const PlanRunUnit = z.object({
+  unitKey: z.string().min(1),
+  title: z.string(),
+  runId: Id,
+  outcome: z.enum(['running', 'done', 'failed', 'stopped']),
+});
+export type PlanRunUnit = z.infer<typeof PlanRunUnit>;
+
+export const PlanRun = z.object({
+  id: Id,
+  // `<projectId>:<intentId>`, the plan's row.
+  planId: Id,
+  projectId: Id,
+  intentId: z.string().min(1),
+  workflowId: Id,
+  state: PlanRunState,
+  units: z.array(PlanRunUnit),
+  // While waiting: one sentence per unit that is not delivered, such as "U2 waits for U1 to
+  // merge" (spec 41). Empty otherwise.
+  waitingFor: z.array(z.string()),
+  // Why it ended as failed, or what a start that could not happen said.
+  message: z.string().nullable(),
+  startedAt: Timestamp,
+  endedAt: Timestamp.nullable(),
+});
+export type PlanRun = z.infer<typeof PlanRun>;
 
 export const SettingRow = z.object({
   key: z.string().min(1),

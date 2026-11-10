@@ -57,6 +57,7 @@ export function useCommands(): {
   const mailRailCollapsed = useSetting('outlook.mailRailCollapsed');
   const backlogItems = useTopic('backlogItems');
   const planIntents = useTopic('planIntents');
+  const planRuns = useTopic('planRuns');
   const changeRequests = useTopic('changeRequests');
   const hostReads = useTopic('hostReads');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
@@ -132,6 +133,8 @@ export function useCommands(): {
         projects: projects ?? [],
         openIntent: openPlan(pathname, planIntents ?? []),
         changeRequests,
+        planRuns,
+        workflows,
       }),
       ...backlogCommands({
         items: backlogItems ?? [],
@@ -171,6 +174,7 @@ export function useCommands(): {
     openBacklogItemId,
     viewer,
     planIntents,
+    planRuns,
     changeRequests,
     hostReads,
     changedFiles,

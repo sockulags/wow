@@ -2,13 +2,20 @@ import type {
   FileHash,
   MissedTriggerPolicy,
   RunEffect,
+  RunUnit,
   StepRun,
   TriggerState,
   Workflow,
   WorkflowRun,
   WorkflowStep,
 } from '@wow/contracts';
-import { bulletList, renderHandover, renderSendBack, stepPrompt } from './handover.js';
+import {
+  bulletList,
+  renderHandover,
+  renderSendBack,
+  renderUnitPrompt,
+  stepPrompt,
+} from './handover.js';
 
 // The workflow run state machine. Pure: every function takes the workflow, the run and an input
 // and returns the next run plus the effects the server performs after committing it.
@@ -51,6 +58,8 @@ export interface EngineContext {
   readonly handoverTemplate: string;
   // The `workflows.sendBackTemplate` setting for the run's project.
   readonly sendBackTemplate: string;
+  // The `workflows.unitPromptTemplate` setting for the run's project; used by a unit's run only.
+  readonly unitPromptTemplate: string;
   // The step's skill as its provider invokes it: `/name` for Claude, `$name` for Codex.
   readonly invocationFor: (step: WorkflowStep) => string;
   readonly backlogBody?: string | null | undefined;
@@ -66,6 +75,8 @@ export interface NewRun {
   readonly projectId: string;
   readonly calendarItemId?: string | null | undefined;
   readonly backlogItemId?: string | null | undefined;
+  // The unit the run delivers, when a plan run starts it.
+  readonly unit?: RunUnit | null | undefined;
 }
 
 export class RunRejected extends Error {
@@ -120,6 +131,7 @@ export function startRun(workflow: Workflow, input: NewRun, context: EngineConte
     endedAt: null,
     baseSha: null,
     baseFiles: null,
+    ...(input.unit ? { unit: input.unit } : {}),
   };
   if (first.gateBefore) return waitBefore(run, 0, []);
   return beginStep(workflow, run, 0, context, []);
@@ -435,7 +447,15 @@ export function renderStepPrompt(
     previousArtifacts: bulletList([...new Set(earlierArtifacts)]),
     expectedArtifacts: bulletList(step.expectedArtifacts),
   });
-  return stepPrompt(context.invocationFor(step), step.extraPrompt, handover);
+  // Every step of a unit's run is told which unit it works on (review loop spec 40).
+  const unit = run.unit
+    ? renderUnitPrompt(context.unitPromptTemplate, {
+        intentId: run.unit.intentId,
+        unitKey: run.unit.unitKey,
+        unitTitle: run.unit.title,
+      })
+    : '';
+  return stepPrompt(context.invocationFor(step), step.extraPrompt, handover, unit);
 }
 
 function runningStepIndex(run: WorkflowRun, stepId: string): number {

@@ -37,15 +37,21 @@ const fromFiles = (units: readonly PlanUnit[], reason: string): PlanUnit[] =>
     };
   });
 
+// Whether the plan is read from the host: while the user follows it, and while a plan run is
+// live on it (review loop spec, Decisions).
+export const planIsOpen = (intent: PlanIntent, read: ReadModel): boolean =>
+  intent.followed || read.livePlanRun(intent.id) !== undefined;
+
 // An intent with the status of each unit decided: from the pull requests last read for it when
-// it is followed and a read has worked, otherwise from its files with the reason nothing more
+// it is open and a read has worked, otherwise from its files with the reason nothing more
 // is known. A read that fails later keeps the statuses of the last one that worked.
 export function withUnitStatus(
   intent: PlanIntent,
   read: HostRead | undefined,
   changeRequests: readonly ChangeRequest[],
+  open: boolean = intent.followed,
 ): PlanIntent {
-  if (!intent.followed) return { ...intent, units: fromFiles(intent.units, notFollowedReason) };
+  if (!open) return { ...intent, units: fromFiles(intent.units, notFollowedReason) };
   if (!read || read.fetchedAt === null) {
     return {
       ...intent,
@@ -144,12 +150,18 @@ function planEvents(
   stored: readonly PlanIntent[],
   intents: readonly PlanIntent[],
   after: HostState,
+  open: (intent: PlanIntent) => boolean,
 ): DomainEvent[] {
   const current = new Map(stored.map((intent) => [intent.id, intent]));
   const requests = [...after.changeRequests.values()];
   const upserted = intents
     .map((intent) =>
-      withUnitStatus(intent, after.reads.get(hostReadId('plan', intent.id)), requests),
+      withUnitStatus(
+        intent,
+        after.reads.get(hostReadId('plan', intent.id)),
+        requests,
+        open(intent),
+      ),
     )
     .filter((intent) => !isDeepStrictEqual(current.get(intent.id), intent));
   return upserted.length > 0
@@ -166,12 +178,14 @@ export function decideHosts(command: HostCommand, read: ReadModel): DomainEvent[
       if (intent.followed === command.followed) return [];
       const before = hostState(read, intent.projectId);
       const reads = new Map(before.reads);
+      const next = { ...intent, followed: command.followed };
       // What was read for a plan is forgotten with the follow, so following again starts fresh.
-      if (!command.followed) reads.delete(hostReadId('plan', intent.id));
+      // A plan run that is live keeps the plan open until it ends.
+      if (!planIsOpen(next, read)) reads.delete(hostReadId('plan', intent.id));
       const after = { reads, changeRequests: before.changeRequests };
       return [
         ...hostEvents(intent.projectId, before, after),
-        ...planEvents(stored, [{ ...intent, followed: command.followed }], after),
+        ...planEvents(stored, [next], after, (plan) => planIsOpen(plan, read)),
       ];
     }
     case 'hosts.sync': {
@@ -180,7 +194,9 @@ export function decideHosts(command: HostCommand, read: ReadModel): DomainEvent[
         throw new CommandRejected('not_found', `No project ${projectId}`);
       const stored = read.planIntents().filter((intent) => intent.projectId === projectId);
       const followed = new Set(
-        stored.filter((intent) => intent.followed).map((intent) => hostReadId('plan', intent.id)),
+        stored
+          .filter((intent) => planIsOpen(intent, read))
+          .map((intent) => hostReadId('plan', intent.id)),
       );
       const before = hostState(read, projectId);
       const reads = new Map(before.reads);
@@ -226,9 +242,28 @@ export function decideHosts(command: HostCommand, read: ReadModel): DomainEvent[
         if (request.projectId === projectId) changeRequests.set(request.id, request);
       }
       const after = { reads, changeRequests };
-      return [...hostEvents(projectId, before, after), ...planEvents(stored, stored, after)];
+      return [
+        ...hostEvents(projectId, before, after),
+        ...planEvents(stored, stored, after, (plan) => planIsOpen(plan, read)),
+      ];
     }
   }
+}
+
+// A plan run ended on a plan the user does not follow: the plan is no longer open, so what was
+// read for it is forgotten and its units show what the files say, as after an unfollow.
+export function closePlanEvents(planId: string, read: ReadModel): DomainEvent[] {
+  const stored = read.planIntents();
+  const intent = stored.find((candidate) => candidate.id === planId);
+  if (!intent || intent.followed) return [];
+  const before = hostState(read, intent.projectId);
+  const reads = new Map(before.reads);
+  reads.delete(hostReadId('plan', intent.id));
+  const after = { reads, changeRequests: before.changeRequests };
+  return [
+    ...hostEvents(intent.projectId, before, after),
+    ...planEvents(stored, [intent], after, () => false),
+  ];
 }
 
 // `plans.sync`: the plans service read the files again. Each intent keeps its Follow switch and
@@ -249,10 +284,12 @@ export function decidePlansSync(incoming: readonly PlanIntent[], read: ReadModel
   const upserted = incoming
     .map((intent) => {
       const state = stateOf(intent.projectId);
+      const kept = { ...intent, followed: current.get(intent.id)?.followed ?? false };
       return withUnitStatus(
-        { ...intent, followed: current.get(intent.id)?.followed ?? false },
+        kept,
         state.reads.get(hostReadId('plan', intent.id)),
         [...state.changeRequests.values()],
+        planIsOpen(kept, read),
       );
     })
     .filter((intent) => !isDeepStrictEqual(current.get(intent.id), intent));

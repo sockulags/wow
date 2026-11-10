@@ -7,6 +7,9 @@ import {
   runFolder,
   workingCopyOnDisk,
   PlanIntent,
+  PlanRun,
+  isLivePlanRunState,
+  subscriptionTopics,
   Keybinding,
   KeyValueList,
   ProviderCommand,
@@ -363,5 +366,64 @@ describe('working copies', () => {
       }).success,
     ).toBe(false);
     expect(Object.keys(rpcMethods)).toContain('workflowRuns.removeWorkingCopy');
+  });
+});
+
+describe('plan runs', () => {
+  const planRun = {
+    id: 'pr1',
+    planId: 'tea:2026-01-tea-timer',
+    projectId: 'tea',
+    intentId: '2026-01-tea-timer',
+    workflowId: 'deliver',
+    state: 'waiting',
+    units: [{ unitKey: 'U1', title: 'Count down', runId: 'pr1.U1', outcome: 'done' }],
+    waitingFor: ['U2 waits for U1 to merge'],
+    message: null,
+    startedAt: '2026-11-03T09:00:00.000Z',
+    endedAt: null,
+  };
+
+  it('accepts a plan run in every state and only those, on its own topic', () => {
+    for (const state of ['running', 'waiting', 'done', 'failed', 'stopped']) {
+      expect(PlanRun.safeParse({ ...planRun, state }).success).toBe(true);
+    }
+    expect(PlanRun.safeParse({ ...planRun, state: 'paused' }).success).toBe(false);
+    expect(
+      PlanRun.safeParse({ ...planRun, units: [{ ...planRun.units[0], outcome: 'merged' }] })
+        .success,
+    ).toBe(false);
+    expect(isLivePlanRunState('waiting')).toBe(true);
+    expect(isLivePlanRunState('failed')).toBe(false);
+    expect(subscriptionTopics.planRuns.row).toBe(PlanRun);
+  });
+
+  it('takes start, stop and the For units switch from clients, and advance only from the server', () => {
+    expect(
+      Command.safeParse({
+        type: 'planRun.start',
+        planRunId: 'pr1',
+        planId: 'tea:2026-01-tea-timer',
+        workflowId: 'deliver',
+      }).success,
+    ).toBe(true);
+    expect(Command.safeParse({ type: 'planRun.stop', planRunId: 'pr1' }).success).toBe(true);
+    expect(
+      Command.safeParse({ type: 'workflow.update', workflowId: 'w', forUnits: true }).success,
+    ).toBe(true);
+    expect(Command.safeParse({ type: 'planRun.advance', planRunId: 'pr1' }).success).toBe(false);
+    expect(InternalCommand.safeParse({ type: 'planRun.advance', planRunId: 'pr1' }).success).toBe(
+      true,
+    );
+  });
+
+  it('has the unit text and the failure choice as project settings', () => {
+    const template = settingsRegistry['workflows.unitPromptTemplate'];
+    expect(template.scope).toBe('project');
+    expect(template.default).toContain('Intent-Unit: {{intentId}}/{{unitKey}}');
+    const onFailure = settingsRegistry['workflows.planRunOnFailure'];
+    expect(onFailure.default).toBe('stop');
+    expect(onFailure.schema.safeParse('skip').success).toBe(true);
+    expect(onFailure.schema.safeParse('retry').success).toBe(false);
   });
 });

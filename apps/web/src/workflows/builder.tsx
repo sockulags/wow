@@ -484,11 +484,17 @@ function Builder({
   useEffect(() => {
     setDraft((current) => ({ ...current, ownWorkingCopy: storedOwnCopy }));
   }, [storedOwnCopy]);
+  const forUnits = draft.forUnits ?? false;
+  const storedForUnits = workflow?.forUnits ?? false;
+  useEffect(() => {
+    setDraft((current) => ({ ...current, forUnits: storedForUnits }));
+  }, [storedForUnits]);
   const dirty =
     !workflow ||
     workflow.name !== draft.name.trim() ||
     workflow.templateKind !== draft.templateKind ||
     (workflow.ownWorkingCopy ?? false) !== ownWorkingCopy ||
+    (workflow.forUnits ?? false) !== forUnits ||
     !sameJson(workflow.steps, steps);
   const firstInstance = preferredInstance(instances);
   const runProject = projects.find((candidate) => candidate.id === projectId) ?? projects[0];
@@ -532,6 +538,7 @@ function Builder({
         ? draftFromTemplate(chosen, firstInstance, draft.name)
         : { ...emptyDraft, name: draft.name }),
       ownWorkingCopy,
+      forUnits,
     };
     edit(() => next);
     setExpanded(new Set(workflow ? [] : next.steps.map((step) => step.id)));
@@ -564,6 +571,7 @@ function Builder({
           templateKind: draft.templateKind,
           steps,
           ownWorkingCopy,
+          forUnits,
         });
         setSaved(true);
       } else {
@@ -575,6 +583,7 @@ function Builder({
           ...(draft.templateKind === null ? {} : { templateKind: draft.templateKind }),
           steps,
           ...(ownWorkingCopy ? { ownWorkingCopy } : {}),
+          ...(forUnits ? { forUnits } : {}),
         });
         notify.success(`Workflow ${draft.name.trim()} created`);
         await navigate({ to: '/workflows/$workflowId', params: { workflowId } });
@@ -796,6 +805,20 @@ function Builder({
                 />
                 <Label htmlFor="workflow-own-copy" className="text-xs font-normal">
                   Own working copy
+                </Label>
+              </div>
+            </WithTooltip>
+            <WithTooltip label="A plan run may use this workflow: “Run ready units” in the Plans view runs it once for each ready unit, always in an own working copy, and tells every step which unit it works on.">
+              <div className="flex h-8 items-center gap-2">
+                <Switch
+                  id="workflow-for-units"
+                  checked={forUnits}
+                  onCheckedChange={(checked) =>
+                    edit((current) => ({ ...current, forUnits: checked }))
+                  }
+                />
+                <Label htmlFor="workflow-for-units" className="text-xs font-normal">
+                  For units
                 </Label>
               </div>
             </WithTooltip>

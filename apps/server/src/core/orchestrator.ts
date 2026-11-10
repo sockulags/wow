@@ -16,6 +16,7 @@ import {
   type SettingDefinition,
   type SettingScopeRef,
   type PlanIntent,
+  type PlanRun,
   type Skill,
   type Thread,
   type Trigger,
@@ -27,6 +28,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { decideBacklog, isBacklogCommand } from './backlog.js';
 import { decideCalendar, isCalendarCommand } from './calendar.js';
 import { decideHosts, decidePlansSync, isHostCommand } from './hosts.js';
+import { decidePlanRun, isPlanRunCommand } from './plan-runs.js';
 import { decideProject, isProjectCommand } from './projects.js';
 import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
 import { decideThread, isThreadCommand } from './threads.js';
@@ -67,6 +69,9 @@ export interface ReadModel {
   outlookStatus(): OutlookStatus | undefined;
   skills(): Skill[];
   planIntents(): PlanIntent[];
+  planRun(id: string): PlanRun | undefined;
+  // The plan run that is running or waiting on this plan (`<projectId>:<intentId>`), if any.
+  livePlanRun(planId: string): PlanRun | undefined;
   // What was last read from the project's host, and the change requests those reads name.
   hostReads(projectId: string): HostRead[];
   changeRequests(projectId: string): ChangeRequest[];
@@ -111,6 +116,7 @@ export function decide(
   if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
   if (isBacklogCommand(command)) return decideBacklog(command, read, context);
   if (isHostCommand(command)) return decideHosts(command, read);
+  if (isPlanRunCommand(command)) return decidePlanRun(command, read, context);
   switch (command.type) {
     case 'setting.set': {
       const definition = settingDefinition(command.key, context);

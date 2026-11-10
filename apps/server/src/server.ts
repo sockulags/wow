@@ -33,6 +33,7 @@ import { route } from './rpc/router.js';
 import { Scheduler, type SchedulerTimers } from './scheduler/service.js';
 import { SettingsService } from './settings/service.js';
 import { PlansService } from './plans/service.js';
+import { PlanRuns } from './plans/plan-runs.js';
 import type { PlansWatchFactory } from './plans/watch.js';
 import { SkillsService } from './skills/service.js';
 import { TrackerService } from './trackers/service.js';
@@ -208,6 +209,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     ...(options.watchPlans ? { watch: options.watchPlans } : {}),
   });
+  const planRuns = new PlanRuns({ db: database.db, engine, logger });
   const trackers = new TrackerService({
     db: database.db,
     engine,
@@ -346,6 +348,9 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     await skills.start().catch((error: unknown) => logger.error('skill scan failed', error));
     services.push(plans);
     await plans.start().catch((error: unknown) => logger.error('plan read failed', error));
+    // After the plans are read and the runs recovered, so a plan run sees both as they are now.
+    services.push(planRuns);
+    planRuns.recover();
     const mode = outlookMode(options.platform ?? process.platform, env);
     if (options.hooks?.outlook) {
       outlook = await options.hooks.outlook(mode, context);

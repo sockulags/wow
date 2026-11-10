@@ -1,8 +1,9 @@
-import type { ChangeRequest, PlanIntent, Project } from '@wow/contracts';
+import type { ChangeRequest, PlanIntent, PlanRun, Project, Workflow } from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
 import { safeHref } from '@/components/markdown';
-import { revisionLabel } from './model';
+import { livePlanRun, revisionLabel, runReadyUnitsBlocked, unitWorkflows } from './model';
+import { askStopPlanRun, startPlanRun } from './plan-run';
 
 export interface PlanCommandData {
   readonly intents: readonly PlanIntent[];
@@ -11,15 +12,21 @@ export interface PlanCommandData {
   readonly openIntent: PlanIntent | undefined;
   // What the host said, for the pull request links of the open plan's units.
   readonly changeRequests?: readonly ChangeRequest[] | undefined;
+  // For "Run ready units" and Stop on the open plan.
+  readonly planRuns?: readonly PlanRun[] | undefined;
+  readonly workflows?: readonly Workflow[] | undefined;
 }
 
 // Palette commands for plans: read the files again and ask the hosts, every intent, and for the
-// open plan Follow, each unit's contract and each unit's pull request.
+// open plan Follow, "Run ready units" with each workflow for units, Stop for its plan run, the
+// runs of its units, each unit's contract and each unit's pull request.
 export function planCommands({
   intents,
   projects,
   openIntent,
   changeRequests = [],
+  planRuns = [],
+  workflows = [],
 }: PlanCommandData): AppCommand[] {
   const commands: AppCommand[] = [
     {
@@ -59,6 +66,44 @@ export function planCommands({
         run: ({ connection }) =>
           void connection?.request('hosts.refresh', { planId: openIntent.id }).catch(() => {}),
       });
+    }
+    const planRun = livePlanRun(planRuns, openIntent.id);
+    if (planRun) {
+      commands.push({
+        id: 'plans.planRun.stop',
+        title: 'Plan: stop the plan run',
+        group: 'Plans',
+        keywords: ['plan run', 'stop', 'units', 'cancel'],
+        run: () => askStopPlanRun(planRun.id),
+      });
+      for (const unit of planRun.units) {
+        commands.push({
+          id: `plans.planRun.unit.${unit.unitKey}`,
+          title: `Open the run for ${unit.unitKey}: ${unit.title}`,
+          group: 'Plans',
+          keywords: ['plan run', 'unit', 'run', unit.unitKey],
+          detail: 'Plan run',
+          run: ({ navigate }) =>
+            void navigate({ to: '/workflows/runs/$runId', params: { runId: unit.runId } }),
+        });
+      }
+    } else if (runReadyUnitsBlocked(openIntent, planRuns, workflows) === undefined) {
+      for (const workflow of unitWorkflows(workflows)) {
+        commands.push({
+          id: `plans.planRun.start.${workflow.id}`,
+          title: `Plan: run ready units with ${workflow.name}`,
+          group: 'Plans',
+          keywords: ['plan run', 'ready', 'units', 'start', 'run', workflow.name],
+          run: ({ connection }) => {
+            if (!connection) return;
+            void startPlanRun(
+              (command) => dispatch(connection, command),
+              openIntent.id,
+              workflow.id,
+            );
+          },
+        });
+      }
     }
     for (const unit of openIntent.units) {
       const request = changeRequests.find((candidate) => candidate.id === unit.changeRequestId);

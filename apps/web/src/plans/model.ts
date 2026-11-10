@@ -1,6 +1,7 @@
 import {
   hostKindLabels,
   hostReadId,
+  isLivePlanRunState,
   settingsRegistry,
   type ChangeRequest,
   type HostCheck,
@@ -8,8 +9,12 @@ import {
   type PlanFile,
   type PlanIntent,
   type PlanProblem,
+  type PlanRun,
+  type PlanRunUnit,
   type PlanUnit,
   type Project,
+  type Workflow,
+  type WorkflowRun,
 } from '@wow/contracts';
 
 // What the Plans view says about the rows it gets. The server reads the files and decides every
@@ -149,4 +154,66 @@ export function openPlan(pathname: string, intents: readonly PlanIntent[]): Plan
   const [, projectId, intentId] = match.map(decodeSegment);
   if (projectId === undefined || intentId === undefined) return undefined;
   return intents.find((intent) => intent.projectId === projectId && intent.intentId === intentId);
+}
+
+// Plan runs (review loop spec 40 to 47). The server decides everything about one; these are the
+// words and which row the view shows.
+
+export const planRunStateLabels: Readonly<Record<PlanRun['state'], string>> = {
+  running: 'Running',
+  waiting: 'Waiting',
+  done: 'Done',
+  failed: 'Stopped after a failure',
+  stopped: 'Stopped',
+};
+
+export const planRunStateVariants: Readonly<
+  Record<PlanRun['state'], 'default' | 'secondary' | 'info' | 'warning' | 'outline'>
+> = {
+  running: 'info',
+  waiting: 'outline',
+  done: 'secondary',
+  failed: 'warning',
+  stopped: 'outline',
+};
+
+export const livePlanRun = (planRuns: readonly PlanRun[], planId: string): PlanRun | undefined =>
+  planRuns.find((planRun) => planRun.planId === planId && isLivePlanRunState(planRun.state));
+
+// The plan run the plan's view shows: the live one, else the one that started last.
+export const shownPlanRun = (planRuns: readonly PlanRun[], planId: string): PlanRun | undefined =>
+  livePlanRun(planRuns, planId) ??
+  planRuns
+    .filter((planRun) => planRun.planId === planId)
+    .toSorted((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+
+// The workflows "Run ready units" can use, by name.
+export const unitWorkflows = (workflows: readonly Workflow[]): Workflow[] =>
+  workflows
+    .filter((workflow) => workflow.forUnits === true)
+    .toSorted((a, b) => a.name.localeCompare(b.name));
+
+// Why "Run ready units" is not offered right now, or undefined when it is. The server decides
+// whether a plan run starts; this only says what the view already knows.
+export function runReadyUnitsBlocked(
+  intent: Pick<PlanIntent, 'id' | 'followed' | 'plan'>,
+  planRuns: readonly PlanRun[],
+  workflows: readonly Workflow[],
+): string | undefined {
+  if (livePlanRun(planRuns, intent.id)) return 'A plan run is going on this plan';
+  if (intent.plan === null) return 'This intent has no plan.md';
+  if (!intent.followed) return 'Follow the plan first, so wow knows which units are ready';
+  if (unitWorkflows(workflows).length === 0) {
+    return 'Turn on “For units” in a workflow first';
+  }
+  return undefined;
+}
+
+// How a unit of a plan run stands: its run's own state while that is live (so a run waiting at
+// a gate says so), else what the plan run recorded.
+export function planRunUnitLabel(unit: PlanRunUnit, run: WorkflowRun | undefined): string {
+  if (unit.outcome === 'running') {
+    return run?.state === 'waiting' ? 'Waiting for you' : 'Running';
+  }
+  return { done: 'Done', failed: 'Failed', stopped: 'Stopped' }[unit.outcome];
 }

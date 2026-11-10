@@ -296,6 +296,20 @@ export const defaultSendBackTemplate = [
   'Do the step ({{skill}}) again in this conversation with the note taken into account, and end with your result as before.',
 ].join('\n');
 
+// What a plan run tells every step of a unit's run (review loop spec 40). The last line is how
+// wow finds the unit's pull request afterwards.
+export const defaultUnitPromptTemplate = [
+  'This run delivers one unit of a plan.',
+  '',
+  'Intent: {{intentId}}',
+  'Unit: {{unitKey}} {{unitTitle}}',
+  '',
+  'When you open a pull request for it, put this line in its body: Intent-Unit: {{intentId}}/{{unitKey}}',
+].join('\n');
+
+export const PlanRunOnFailure = z.enum(['stop', 'skip']);
+export type PlanRunOnFailure = z.infer<typeof PlanRunOnFailure>;
+
 export const defaultSkillDirectories = [
   '~/.claude/skills',
   '~/.codex/skills',
@@ -659,6 +673,36 @@ export const settingsRegistry = {
       "The message a step gets in its own thread when you send it back at a gate. {{note}} is what you wrote, {{skill}} the step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
     default: defaultSendBackTemplate,
     scope: 'project',
+  }),
+  'workflows.unitPromptTemplate': defineSetting({
+    schema: z
+      .string()
+      .meta({ widget: 'template', placeholders: ['intentId', 'unitKey', 'unitTitle'] }),
+    group: 'workflows',
+    label: 'Unit text',
+    description:
+      "What every step is told about its unit when a plan run starts the workflow for one. It goes after the step's skill and before the handover. {{intentId}} is the intent's folder name, {{unitKey}} the unit's key and {{unitTitle}} its title; a {{#name}}…{{/name}} section is left out when that value is empty.",
+    default: defaultUnitPromptTemplate,
+    scope: 'project',
+  }),
+  'workflows.planRunOnFailure': defineSetting({
+    schema: PlanRunOnFailure,
+    group: 'workflows',
+    label: "When a unit's run fails",
+    description: 'What a plan run does when the run of one of its units fails or is stopped.',
+    default: 'stop',
+    scope: 'project',
+    radio: true,
+    options: {
+      stop: {
+        label: 'Stop the plan run',
+        description: 'No further unit starts until you start a plan run again.',
+      },
+      skip: {
+        label: 'Leave the unit and go on',
+        description: 'The next ready unit starts. Units that depend on the one left stay waiting.',
+      },
+    },
   }),
   'skills.directories': defineSetting({
     schema: z.array(z.string().min(1)),

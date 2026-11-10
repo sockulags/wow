@@ -4,6 +4,7 @@ import {
   type CardState,
   type DomainEvent,
   type RunEffect,
+  type RunUnit,
   type ServerCommand,
   type Thread,
   type Workflow,
@@ -40,6 +41,15 @@ type WorkflowCommand = Extract<
   { type: `workflow.${string}` } | { type: `workflowRun.${string}` }
 >;
 
+export const engineCall = <T>(call: () => T): T => {
+  try {
+    return call();
+  } catch (error) {
+    if (error instanceof RunRejected) throw new CommandRejected('rejected', error.message);
+    throw error;
+  }
+};
+
 export const isWorkflowCommand = (command: ServerCommand): command is WorkflowCommand =>
   command.type.startsWith('workflow.') || command.type.startsWith('workflowRun.');
 
@@ -63,6 +73,7 @@ export function decideWorkflow(
             templateKind: command.templateKind ?? null,
             steps: command.steps,
             ...(command.ownWorkingCopy ? { ownWorkingCopy: true } : {}),
+            ...(command.forUnits ? { forUnits: true } : {}),
             createdAt: context.now,
             updatedAt: context.now,
           },
@@ -92,6 +103,10 @@ export function decideWorkflow(
         command.ownWorkingCopy !== (workflow.ownWorkingCopy ?? false)
       ) {
         changes.ownWorkingCopy = command.ownWorkingCopy;
+      }
+      // A plan run that is going keeps its workflow; the switch is read when one starts.
+      if (command.forUnits !== undefined && command.forUnits !== (workflow.forUnits ?? false)) {
+        changes.forUnits = command.forUnits;
       }
       if (Object.keys(changes).length === 0) return [];
       return [
@@ -266,9 +281,12 @@ export interface RunStart {
   readonly projectId: string;
   readonly calendarItemId?: string | null | undefined;
   readonly backlogItemId?: string | null | undefined;
+  // The unit the run delivers, when a plan run starts it.
+  readonly unit?: RunUnit | undefined;
 }
 
-// A new run of the workflow: a client's Run now, a card's Run now or a firing trigger.
+// A new run of the workflow: a client's Run now, a card's Run now, a firing trigger or a plan
+// run's next unit.
 export function startRunEvents(
   cause: string,
   start: RunStart,
@@ -299,11 +317,13 @@ export function startRunEvents(
         projectId: start.projectId,
         calendarItemId: start.calendarItemId ?? null,
         backlogItemId: start.backlogItemId ?? null,
+        unit: start.unit,
       },
       engineContext,
     ),
   );
-  if (!workflow.ownWorkingCopy) {
+  // A unit's run always works in its own working copy (review loop spec 40).
+  if (!workflow.ownWorkingCopy && !start.unit) {
     return transitionEvents(cause, workflow, undefined, transition, read, context);
   }
   // The folder is only named here. The workspaces service makes it before the first step gets
@@ -551,6 +571,7 @@ function runContext(
     now: context.now,
     handoverTemplate: resolvedTemplate(HANDOVER_KEY, read, context, projectId),
     sendBackTemplate: resolvedTemplate(SEND_BACK_KEY, read, context, projectId),
+    unitPromptTemplate: resolvedTemplate(UNIT_PROMPT_KEY, read, context, projectId),
     invocationFor: (step) => invocationFor(read, step),
     backlogBody,
   };
@@ -558,6 +579,7 @@ function runContext(
 
 const HANDOVER_KEY = 'workflows.handoverTemplate';
 const SEND_BACK_KEY = 'workflows.sendBackTemplate';
+const UNIT_PROMPT_KEY = 'workflows.unitPromptTemplate';
 
 function resolvedTemplate(key: string, read: ReadModel, context: DecideContext, projectId: string) {
   const definition = context.registry[key];
@@ -599,13 +621,4 @@ function requireWorkflow(read: ReadModel, workflowId: string): Workflow {
   const workflow = read.workflow(workflowId);
   if (!workflow) throw new CommandRejected('not_found', `No workflow ${workflowId}`);
   return workflow;
-}
-
-function engineCall(call: () => Transition): Transition {
-  try {
-    return call();
-  } catch (error) {
-    if (error instanceof RunRejected) throw new CommandRejected('rejected', error.message);
-    throw error;
-  }
 }

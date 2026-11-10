@@ -325,6 +325,27 @@ export function workflowCommands({
         });
       },
     });
+    // The builder's "For units" switch (review loop spec 40).
+    const forUnits = workflow.forUnits ?? false;
+    commands.push({
+      id: `workflow.forUnits.${workflow.id}`,
+      title: forUnits
+        ? `${workflow.name}: no longer for plan units`
+        : `${workflow.name}: use for plan units`,
+      value: `Workflow ${workflow.name} for units ${forUnits ? 'off' : 'on'} ${workflow.id}`,
+      group: 'Workflows',
+      keywords: ['workflow', 'for units', 'plan run', 'units', 'switch'],
+      detail: forUnits ? 'For units is on' : 'For units is off',
+      searchOnly: true,
+      run: ({ connection }) => {
+        if (!connection) return;
+        void dispatch(connection, {
+          type: 'workflow.update',
+          workflowId: workflow.id,
+          forUnits: !forUnits,
+        });
+      },
+    });
   }
   const names = new Map(workflows.map((workflow) => [workflow.id, workflow.name]));
   for (const run of sortRuns(runs)) {

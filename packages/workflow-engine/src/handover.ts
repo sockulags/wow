@@ -32,6 +32,16 @@ export interface SendBackValues {
 export const renderSendBack = (template: string, values: SendBackValues): string =>
   renderTemplate(template, { ...values });
 
+// What `workflows.unitPromptTemplate` can name: the unit a plan run started the run for.
+export interface UnitPromptValues {
+  readonly intentId: string;
+  readonly unitKey: string;
+  readonly unitTitle: string;
+}
+
+export const renderUnitPrompt = (template: string, values: UnitPromptValues): string =>
+  renderTemplate(template, { ...values });
+
 function renderTemplate(template: string, values: TemplateValues): string {
   const sections = template.replace(SECTION, (_match, name: string, body: string) =>
     valueOf(values, name).trim() === '' ? '' : body,
@@ -45,9 +55,14 @@ function renderTemplate(template: string, values: TemplateValues): string {
 export const bulletList = (lines: readonly string[]): string =>
   lines.map((line) => `- ${line}`).join('\n');
 
-// The step prompt: the skill invocation for the step's provider, the step's extra prompt, then
-// the rendered handover after a blank line.
-export function stepPrompt(invocation: string, extraPrompt: string | undefined, handover: string) {
+// The step prompt: the skill invocation for the step's provider and the step's extra prompt,
+// then the unit text of a unit's run, then the rendered handover, each after a blank line.
+export function stepPrompt(
+  invocation: string,
+  extraPrompt: string | undefined,
+  handover: string,
+  unit = '',
+) {
   const head = [invocation, extraPrompt?.trim() ?? ''].filter((part) => part !== '').join(' ');
-  return handover === '' ? head : `${head}\n\n${handover}`;
+  return [head, unit, handover].filter((part) => part !== '').join('\n\n');
 }

@@ -1,6 +1,7 @@
 import {
   defaultHandoverTemplate,
   defaultSendBackTemplate,
+  defaultUnitPromptTemplate,
   type MissedTriggerPolicy,
   type Workflow,
   type WorkflowRun,
@@ -46,6 +47,7 @@ const context = (overrides: Partial<EngineContext> = {}): EngineContext => ({
   now: T1,
   handoverTemplate: defaultHandoverTemplate,
   sendBackTemplate: defaultSendBackTemplate,
+  unitPromptTemplate: defaultUnitPromptTemplate,
   invocationFor: (s) =>
     s.providerInstanceId.startsWith('codex') ? `$${s.skillName}` : `/${s.skillName}`,
   ...overrides,

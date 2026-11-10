@@ -11,6 +11,7 @@ import {
   OutlookItemState,
   OutlookProfile,
   PlanIntent,
+  PlanRun,
   Project,
   ProviderInstance,
   ProviderInstanceStatus,
@@ -180,6 +181,7 @@ export const Command = z.discriminatedUnion('type', [
     templateKind: z.string().min(1).optional(),
     steps: WorkflowSteps,
     ownWorkingCopy: z.boolean().optional(),
+    forUnits: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('workflow.update'),
@@ -188,6 +190,7 @@ export const Command = z.discriminatedUnion('type', [
     templateKind: z.string().min(1).nullable().optional(),
     steps: WorkflowSteps.optional(),
     ownWorkingCopy: z.boolean().optional(),
+    forUnits: z.boolean().optional(),
   }),
   z.object({ type: z.literal('workflow.delete'), workflowId: Id }),
   // Undo of a delete: puts the row the client still holds back as it was.
@@ -243,6 +246,11 @@ export const Command = z.discriminatedUnion('type', [
   // Follow or stop following a plan (`<projectId>:<intentId>`). A followed plan's pull requests
   // are read from the project's host; unfollowing forgets what was read for it.
   z.object({ type: z.literal('plan.follow'), planId: Id, followed: z.boolean() }),
+  // "Run ready units": works through the plan's ready units with a workflow marked "For units",
+  // one run per unit and one at a time (review loop spec 40 to 47).
+  z.object({ type: z.literal('planRun.start'), planRunId: Id, planId: Id, workflowId: Id }),
+  // Stops the live unit run and starts no further unit (spec 45).
+  z.object({ type: z.literal('planRun.stop'), planRunId: Id }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command['type'];
@@ -336,6 +344,9 @@ export const InternalCommand = z.discriminatedUnion('type', [
     reads: z.array(HostReadOutcome),
     changeRequests: z.array(ChangeRequest),
   }),
+  // Something a plan run depends on changed (its unit's run ended, or the plan's unit statuses
+  // did): decide again what it does next. The plan runs service sends it.
+  z.object({ type: z.literal('planRun.advance'), planRunId: Id }),
   // What the workflow runner reports after a step's turn ended.
   z.object({
     type: z.literal('workflowRun.stepCompleted'),
@@ -463,6 +474,7 @@ export const WorkflowChanges = Workflow.pick({
   templateKind: true,
   steps: true,
   ownWorkingCopy: true,
+  forUnits: true,
 })
   .partial()
   .extend({ updatedAt: Workflow.shape.updatedAt });
@@ -549,6 +561,11 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       changeRequests: z.array(ChangeRequest),
       removedChangeRequests: z.array(Id),
     }),
+  }),
+  z.object({
+    kind: z.literal('planRun.changed'),
+    aggregate: Id,
+    payload: z.object({ cause: z.string().min(1), planRun: PlanRun }),
   }),
   z.object({ kind: z.literal('workflow.created'), aggregate: Id, payload: Workflow }),
   z.object({

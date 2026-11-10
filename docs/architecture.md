@@ -145,12 +145,16 @@ mail_items       id, externalId, folder, from, subject, receivedAt, unread, snip
 outlook_status   singleton: lastSyncAt, lastError?, unavailableSince?, unreadCount, bridgeVersion,
                  profile(json: OutlookProfile)?
 backlog_items    id, title, body, tags(json), state, runId?, remote(json: service,key,url)?, createdAt
-workflows        id, name, templateKind?, steps(json: WorkflowStep[]), ownWorkingCopy, createdAt,
-                 updatedAt
+workflows        id, name, templateKind?, steps(json: WorkflowStep[]), ownWorkingCopy, forUnits,
+                 createdAt, updatedAt
 workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, state ('running'|
                  'waiting'|'done'|'failed'|'stopped'), currentStep, steps(json: StepRun[]),
                  startedAt, endedAt, baseSha?, baseFiles(json: FileHash[])?,
-                 workingCopy(json: WorkingCopy)?   -- null for a run in the project folder
+                 workingCopy(json: WorkingCopy)?,   -- null for a run in the project folder
+                 unit(json: RunUnit)?   -- the unit a plan run started the run for
+plan_runs        id, planId ('<projectId>:<intentId>'), projectId, intentId, workflowId, state
+                 ('running'|'waiting'|'done'|'failed'|'stopped'), units(json: PlanRunUnit[]),
+                 waitingFor(json: string[]), message?, startedAt, endedAt?
 triggers         id, calendarItemId, workflowId, runAt, zone, state ('scheduled'|'fired'|'missed'|
                  'cancelled'), runId?, offerRunNow
 notifications    id, at, kind ('started'|'waiting'|'failed'), title, body, path, runId?,
@@ -441,6 +445,9 @@ with prompt, notify, finish). The server performs them. The step prompt is:
 ```text
 <skill invocation for the step's provider>  <extraPrompt>
 
+<unit text: workflows.unitPromptTemplate rendered with the run's unit; only in a run that a
+ plan run started for a unit, see "Plan runs">
+
 <handover: workflows.handoverTemplate rendered with previous step's final assistant message,
  the backlog item body if any, and the expected artifact paths>
 ```
@@ -477,7 +484,8 @@ turn is. That is how the runner tells a send-back turn from a message the user t
 (spec 20): an ordinary message finds the step `waiting` and is ignored as before, and a send back
 while such a message is still being answered is refused instead of queued.
 
-Commands: `workflow.create|update|delete`, `workflowRun.start|continue|sendBack|stop` from clients, and
+Commands: `workflow.create|update|delete`, `workflowRun.start|continue|sendBack|stop` and
+`planRun.start|stop` (see "Plan runs") from clients, and
 `skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded` and
 `workflowRun.workingCopyReady|workingCopyFailed|workingCopySettled` as `InternalCommand`s from
 the server. The orchestrator calls `startRun`/`advance` and stores one `workflowRun.changed` event
@@ -605,6 +613,71 @@ whole repository as its working copy, with the copy's root as `cwd`; a kept copy
 at again after someone pushes from it by hand; a step thread of an ended run keeps the removed
 folder as its `cwd`.
 
+### Plan runs
+
+A plan run works through a plan's ready units by itself (review loop spec 40 to 47). It starts
+ordinary runs, one per unit and one at a time, so gates, review, notifications and working
+copies work for a unit's run as for any other. Nothing is merged: a unit counts as delivered
+only when the host shows its pull request merged.
+
+- **Rows.** `Workflow.forUnits` is the builder's "For units" switch. `PlanRun` (topic
+  `planRuns`, table `plan_runs`) is `{id, planId, projectId, intentId, workflowId, state, units,
+waitingFor, message, startedAt, endedAt}`. `state` is `running` while a unit's run is live
+  (also while that run waits at a gate), `waiting` while units remain and none is ready, `done`
+  when every unit is delivered, `failed` when a unit's run failed or was stopped and the failure
+  setting says stop, and `stopped` by the user. `units` lists the units it started a run for,
+  in order, as `PlanRunUnit {unitKey, title, runId, outcome}` (`running`, `done`, `failed`,
+  `stopped`); `waitingFor` holds one sentence per unit that is not delivered while it waits;
+  `message` says why it failed. A unit's run carries `WorkflowRun.unit` (`RunUnit {planRunId,
+planId, intentId, unitKey, title}`) and has the id `<planRunId>.<unitKey>`.
+- **Decisions** (`packages/workflow-engine/src/plan-run.ts`, pure). `planRunRefusal` says why a
+  plan run cannot start: the workflow is not for units, a plan run is already live on the plan
+  (one unit at a time), the intent has no plan, the plan has `source: issues`, the plan or its
+  spec is stale (the reason names the file and both revisions), the plan is not followed (only
+  a followed plan has ready units), or it has no units or every unit is delivered.
+  `advancePlanRun` takes the plan run, the plan's units as the host last showed them and the
+  state of the unit's run that is going, and answers the next plan run and the unit to start.
+  While that run is live nothing changes. When it has ended its outcome is recorded; a failed
+  or stopped run ends the plan run as `failed` when `workflows.planRunOnFailure` is `stop`, and
+  with `skip` the unit is left. Then the first unit in plan order that is `ready` and that this
+  plan run has not started yet is started. A unit is never started twice in one plan run: one
+  whose run ended without a pull request stays `ready` on the host and is named as "No pull
+  request found for U1". A unit someone else's pull request claims is not `ready`, so it is
+  skipped, and a unit that depends on one that was left is not `ready` either. With nothing to
+  start, the plan run is `done` when every unit is delivered and `waiting` otherwise, with
+  `waitingSentences`: "U2 waits for U1 to merge", "U1 waits for its pull request to merge", "U5
+  is blocked: …", "The run for U1 failed", or the unit's status reason. `stopPlanRun` ends it
+  as `stopped`.
+- **Server** (`core/plan-runs.ts`). `planRun.start {planRunId, planId, workflowId}` refuses with
+  the reason or stores the plan run and, in the same commit, starts the first unit's run
+  through `startRunEvents` with the unit; a first unit whose run cannot start refuses the
+  start. A unit's run always gets its own working copy, whatever the workflow's "Own working
+  copy" switch says (spec 40). `planRun.stop {planRunId}` stops the live unit run with the
+  engine's `stop` input in the same commit, so its turn is interrupted and its threads and
+  working copy stay as for any stopped run (spec 45). `planRun.advance {planRunId}` is an
+  `InternalCommand` that decides again; a decision that changes nothing stores nothing, and a
+  later unit whose run cannot start ends the plan run as `failed` with the reason. Each change
+  is one `planRun.changed` event with the whole row.
+- **What moves it** (`plans/plan-runs.ts`, `PlanRuns`). The service listens to commits and
+  sends `planRun.advance` when a run with a `unit` has ended and when `plans.synced` touches
+  the plan of a live plan run. That second one is how a host poll reaches a plan run: the
+  poller's `hosts.sync` changes unit statuses, the orchestrator stores them as `plans.synced`,
+  and the waiting plan run starts the unit that became ready (spec 41). A plan whose folder is
+  gone fails its plan run. At startup `recover()` sends it for every live plan run, after the
+  plans were read and the runs recovered.
+- **Open plans.** A plan is read from the host while it is followed or a plan run is live on
+  it (`planIsOpen` in `core/hosts.ts`, and the poller's `#openPlans`). Unfollowing during a
+  plan run keeps the read and the unit statuses; when the plan run ends on a plan that is not
+  followed, the read is forgotten and the units show what the files say, in the same commit
+  (`closePlanEvents`). The poller also asks about the plan once when a unit's run ends, under
+  the same conditions as its timer, because that run has most likely just opened its pull
+  request.
+- **Prompt.** `renderStepPrompt` adds the unit text to every step of a unit's run:
+  `workflows.unitPromptTemplate` (project scope) rendered with `intentId`, `unitKey` and
+  `unitTitle`. The default also asks for the `Intent-Unit: <intent-id>/<unit-key>` line in the
+  pull request body, which is how wow finds the pull request afterwards. A send back message
+  does not repeat it; the thread already has it.
+
 ## Scheduler and triggers
 
 A local card with a workflow and a project has one trigger, id `<cardId>:trigger`, at its start
@@ -660,7 +733,7 @@ commands, so they are events like everything else; the server reads SQLite on ev
 change applies at once, and services holding derived state listen with `onChange`. The page picks the editor from the zod schema type; schemas that need a special editor
 carry `.meta({ widget: 'keybinding' | 'keyValue' | 'secret' | 'workHours' | 'template' })` (see
 `Keybinding`, `KeyValueList`, `SecretSetting`, a password field for a secret setting's reference,
-`WorkHours`, two time fields and a Mon–Sun toggle group, and the handover and send back templates,
+`WorkHours`, two time fields and a Mon–Sun toggle group, and the handover, send back and unit templates,
 a text area whose `placeholders` meta lists the `{{name}}` chips it can insert). Objects
 render their fields; anything else falls back to a JSON editor. Connected to a server, the web app
 reads the `settings` topic and writes global values with `setting.set` / `setting.reset`
@@ -683,7 +756,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `outlook.mailRail`, `outlook.mailRailCollapsed`, `outlook.mailLimit`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
   `scheduler.paused`, `scheduler.toastSeconds`
-- workflows: `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`
+- workflows: `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`,
+  `workflows.unitPromptTemplate`, `workflows.planRunOnFailure` (the last two are project-scoped,
+  see "Plan runs")
 - skills: `skills.directories`, `skills.includeClaudePlugins`
 - plans: `plans.intentsDirectory` (project-scoped), `plans.writeSettleMs` (see "Plans")
 - trackers: `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
@@ -969,7 +1044,8 @@ null for one the section lacks, and is null for `source: issues`. The server dec
 that is not followed, or whose host has never been read, shows what the files alone say:
 `blocked` when the unit's line has a `blocked:` note (the note is the reason), otherwise
 `unknown` with the reason (not followed, not read yet, GitHub not set up, or what the host
-answered). A followed plan with a read shows `delivered`, `claimed`, `blocked`, `ready` or
+answered). A plan with a live plan run counts as followed here until that plan run ends (see
+"Plan runs"). A followed plan with a read shows `delivered`, `claimed`, `blocked`, `ready` or
 `waiting` from its pull requests, see "Hosts". `followed` is the plan's Follow switch; it is kept
 when the files are read again and goes with the row when the intent folder does.
 
@@ -987,6 +1063,20 @@ which names the stale file when that is the reason. "Refresh now" in the list re
 then asks the hosts about everything followed. Palette: "Plans: Refresh now", every intent (when
 searching), and for the open plan "Plan: follow" / "Plan: stop following", "Plan: refresh pull
 requests now", each unit and each unit's pull request.
+
+**Plan run in the view** (`plan-run-section.tsx`, `plan-run.ts`; review loop spec 40, 41, 45).
+Above the units a plan with a `plan.md` has "Run ready units" and, when more than one workflow
+is marked "For units", a select for the workflow (`unitWorkflows`, by name). The button is off
+with the reason beside it while a plan run is live on the plan, the plan is not followed or no
+workflow is for units (`runReadyUnitsBlocked`); whether a plan run really starts is the
+server's decision, and its refusal shows as an alert under the button. Below it is the plan's
+plan run (`shownPlanRun`: the live one, else the one started last) as a region "Plan run": its
+state, the workflow and times, why it failed, the sentences it waits for, the units it started
+with a link to each run and that run's state ("Waiting for you" while it is at a gate), and
+Stop while it is live. Stop asks first (`planRunStore`, a `ConfirmDialog`), like stopping a
+run. Palette, for the open plan: "Plan: run ready units with <workflow>" for each workflow for
+units, "Plan: stop the plan run" (opens the same question) and "Open the run for <unit>". The
+run view of a unit's run names its unit with a link back to the plan.
 
 ## Hosts
 
@@ -1033,8 +1123,8 @@ check keeps its name and loses the link), a pull request number must be a positi
 a comment must have an id. A `Retry-After` or reset that gives no valid date is ignored.
 
 **Poller** (`apps/server/src/hosts/poller.ts`, started with the scheduler and stopped right
-after it). A round asks only about followed plans and live runs (running or waiting), grouped by
-project; a project with neither is not asked about and its git is not read. It runs at every
+after it). A round asks only about open plans (followed, or with a live plan run, see "Plan
+runs") and live runs (running or waiting), grouped by project; a project with neither is not asked about and its git is not read. It runs at every
 poll interval while polling is on and the scheduler is not paused, once when a plan is followed
 or a run starts under the same conditions, and once for `hosts.refresh` whatever those settings
 and the host's request limit say (spec 30). Per project it resolves the GitHub settings and the
@@ -1169,6 +1259,11 @@ line's button open the same question (`workingCopyStore`, a `ConfirmDialog` in t
 which the command navigates to); Remove calls `workflowRuns.removeWorkingCopy` and a refusal
 stays on the line. A live run's copy has no button. Artifact links, the Changes tab's "Open
 file" and the viewer's paths use `runFolder`, so they name files in the working copy.
+
+**For units.** The builder has a "For units" switch beside "Own working copy", stored with
+Save as `Workflow.forUnits`; the palette switches it on the stored workflow ("<workflow>: use
+for plan units" / "…: no longer for plan units"). Only such a workflow is offered for a plan
+run (see "Plan runs").
 
 **Review at a gate** (`gate.ts`, `gate-bar.tsx`, `review-tabs.tsx`; review loop spec 14 to 18).
 The run view's tabs are Steps, Changes, Artifacts, Pull request, Ticket and Pages (`runTabs`;

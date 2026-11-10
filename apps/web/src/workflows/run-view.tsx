@@ -259,6 +259,18 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
             </Link>
           )}
         </div>
+        {run.unit && (
+          <p data-testid="run-unit" className="text-xs text-muted-foreground">
+            Unit <span className="font-mono">{run.unit.unitKey}</span> {run.unit.title} of{' '}
+            <Link
+              to="/plans/$projectId/$intentId"
+              params={{ projectId: run.projectId, intentId: run.unit.intentId }}
+              className={linkClass}
+            >
+              {run.unit.intentId}
+            </Link>
+          </p>
+        )}
         <WorkingCopyLine run={run} />
         {!gateInPanel && (
           <GateBar run={run} workflow={workflow} project={project} onError={setError} />

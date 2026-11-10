@@ -1,4 +1,5 @@
 import {
+  isLivePlanRunState,
   isLiveRunState,
   type DomainEvent,
   type Project,
@@ -17,6 +18,7 @@ import {
   notifications,
   outlookStatus,
   planIntents,
+  planRuns,
   projects,
   providerInstances,
   questions,
@@ -112,6 +114,14 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           .run();
       }
       return ['hostReads', 'changeRequests'];
+    }
+    case 'planRun.changed': {
+      const { planRun } = event.payload;
+      tx.insert(planRuns)
+        .values(planRun)
+        .onConflictDoUpdate({ target: planRuns.id, set: planRun })
+        .run();
+      return ['planRuns'];
     }
     case 'workflow.created':
       tx.insert(workflows).values(event.payload).run();
@@ -491,6 +501,14 @@ export function readModel(tx: DbOrTx): ReadModel {
         .get(),
     skills: () => tx.select().from(skills).all(),
     planIntents: () => tx.select().from(planIntents).all(),
+    planRun: (id) => tx.select().from(planRuns).where(eq(planRuns.id, id)).get(),
+    livePlanRun: (planId) =>
+      tx
+        .select()
+        .from(planRuns)
+        .where(eq(planRuns.planId, planId))
+        .all()
+        .find((row) => isLivePlanRunState(row.state)),
     hostReads: (projectId) =>
       tx.select().from(hostReads).where(eq(hostReads.projectId, projectId)).all(),
     changeRequests: (projectId) =>

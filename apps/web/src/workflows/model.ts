@@ -28,6 +28,8 @@ export interface WorkflowDraft {
   readonly steps: readonly DraftStep[];
   // "Own working copy"; absent means off.
   readonly ownWorkingCopy?: boolean;
+  // "For units": a plan run may run the workflow once per unit; absent means off.
+  readonly forUnits?: boolean;
 }
 
 export const newStepId = (): string => `step-${globalThis.crypto.randomUUID().slice(0, 8)}`;
@@ -56,6 +58,7 @@ export function draftOf(workflow: Workflow): WorkflowDraft {
     name: workflow.name,
     templateKind: workflow.templateKind,
     ownWorkingCopy: workflow.ownWorkingCopy ?? false,
+    forUnits: workflow.forUnits ?? false,
     steps: workflow.steps.map(({ expectedArtifacts, ...step }) => ({
       ...step,
       artifactsText: expectedArtifacts.join('\n'),

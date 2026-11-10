@@ -29,6 +29,7 @@ import {
 } from './host-read';
 import {
   fileNames,
+  livePlanRun,
   planRead,
   plansByProject,
   problemLabel,
@@ -37,6 +38,7 @@ import {
   unitStatusLabels,
   unitStatusVariants,
 } from './model';
+import { PlanRunSection } from './plan-run-section';
 
 // Reads the plan files again (`plans.refresh`) and asks the hosts once about everything wow
 // follows (`hosts.refresh`). The watcher and the poller normally keep the view current; this is
@@ -331,6 +333,7 @@ export function PlanView({
   const projects = useTopic('projects');
   const reads = useTopic('hostReads');
   const requests = useTopic('changeRequests');
+  const planRuns = useTopic('planRuns');
   const navigate = useNavigate();
   const { connection } = useRuntime();
   const planId = `${projectId}:${intentId}`;
@@ -356,6 +359,8 @@ export function PlanView({
   }
   const project = projects?.find((candidate) => candidate.id === projectId);
   const read = planRead(reads ?? [], intent);
+  // A plan run keeps its plan read from the host until it ends, followed or not.
+  const running = livePlanRun(planRuns ?? [], intent.id) !== undefined;
   const follow = (followed: boolean) => {
     if (!connection) return;
     setFollowError(undefined);
@@ -397,7 +402,9 @@ export function PlanView({
             <span className="text-xs text-muted-foreground">
               {intent.followed
                 ? 'wow reads this plan’s pull requests from the host.'
-                : 'Off: only the files are read and no host is asked about this plan.'}
+                : running
+                  ? 'Off, but the host is still asked about this plan until its plan run ends.'
+                  : 'Off: only the files are read and no host is asked about this plan.'}
             </span>
           </div>
           {followError && (
@@ -405,7 +412,7 @@ export function PlanView({
               {followError}
             </p>
           )}
-          {intent.followed && <HostReadLine read={read} refresh={refresh} />}
+          {(intent.followed || running) && <HostReadLine read={read} refresh={refresh} />}
         </header>
 
         <section aria-label="Files">
@@ -441,6 +448,8 @@ export function PlanView({
             </ul>
           </section>
         )}
+
+        {intent.plan && <PlanRunSection intent={intent} />}
 
         {intent.plan && (
           <section aria-label="Units" className="flex flex-col gap-1">

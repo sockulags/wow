@@ -15,6 +15,8 @@ import type {
   OutlookProfile,
   PlanFile,
   PlanProblem,
+  PlanRunState,
+  PlanRunUnit,
   PlanSource,
   PlanUnit,
   ProviderInstanceStatus,
@@ -22,6 +24,7 @@ import type {
   ProviderUpdate,
   ProviderUpdateRun,
   ReviewComment,
+  RunUnit,
   SecretRef,
   SkillSource,
   StepRun,
@@ -213,6 +216,7 @@ export const workflows = sqliteTable('workflows', {
   templateKind: text(),
   steps: json<WorkflowStep[]>().notNull(),
   ownWorkingCopy: bool().notNull().default(false),
+  forUnits: bool().notNull().default(false),
   createdAt: text().notNull(),
   updatedAt: text().notNull(),
 });
@@ -231,7 +235,27 @@ export const workflowRuns = sqliteTable('workflow_runs', {
   baseSha: text(),
   baseFiles: json<FileHash[]>(),
   workingCopy: json<WorkingCopy>(),
+  unit: json<RunUnit>(),
 });
+
+// Plan runs: one row per "Run ready units", kept after it ended.
+export const planRuns = sqliteTable(
+  'plan_runs',
+  {
+    id: text().primaryKey(),
+    planId: text().notNull(),
+    projectId: text().notNull(),
+    intentId: text().notNull(),
+    workflowId: text().notNull(),
+    state: text().$type<PlanRunState>().notNull(),
+    units: json<PlanRunUnit[]>().notNull(),
+    waitingFor: json<string[]>().notNull(),
+    message: text(),
+    startedAt: text().notNull(),
+    endedAt: text(),
+  },
+  (table) => [index('plan_runs_plan_idx').on(table.planId)],
+);
 
 export const triggers = sqliteTable(
   'triggers',
