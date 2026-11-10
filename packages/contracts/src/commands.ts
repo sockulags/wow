@@ -200,6 +200,10 @@ export const Command = z.discriminatedUnion('type', [
   // The user's answer at a gate (behaviors 9 to 11).
   z.object({ type: z.literal('workflowRun.continue'), runId: Id }),
   z.object({ type: z.literal('workflowRun.stop'), runId: Id }),
+  // The other answer at a gate (review loop spec 16 to 18): the reviewed step runs again in its
+  // thread with the note. The server refuses an empty note with a reason, so it is not a schema
+  // error.
+  z.object({ type: z.literal('workflowRun.sendBack'), runId: Id, note: z.string() }),
   // Backlog items stay in wow until the user publishes one (behavior 28).
   z.object({
     type: z.literal('backlog.create'),

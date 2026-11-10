@@ -6,6 +6,9 @@ import { isBelow, useBelow } from '@/lib/use-breakpoint';
 // Whether the context panel is on screen (owner decision F-1). A wide window follows the
 // appearance.contextPanel setting; a narrow one never gives the panel room, and opening it there
 // lays it over the view until it is closed again (contextPanelPeek), without changing the setting.
+// A run view at a gate also shows the panel in a wide window through contextPanelPeek, so the
+// conversation and the gate bar are there without the setting being touched (review loop spec
+// 14); closing the panel puts it away as usual.
 
 export const CONTEXT_PANEL_ID = 'context-panel';
 export const MAIN_VIEW_ID = 'main-view';
@@ -19,13 +22,14 @@ export function useContextPanelShown(): boolean {
   const open = useSetting('appearance.contextPanel');
   const narrow = useBelow('narrow');
   const peek = useStore(useRuntime().layout, (state) => state.contextPanelPeek);
-  return narrow ? peek : open;
+  return narrow ? peek : open || peek;
 }
 
 export function isContextPanelShown({ settings, layout }: PanelContext): boolean {
+  const peek = layout.getState().contextPanelPeek;
   return isBelow('narrow')
-    ? layout.getState().contextPanelPeek
-    : settingValue(settings.getState().values, 'appearance.contextPanel');
+    ? peek
+    : peek || settingValue(settings.getState().values, 'appearance.contextPanel');
 }
 
 export function setContextPanelShown({ settings, layout }: PanelContext, shown: boolean): void {

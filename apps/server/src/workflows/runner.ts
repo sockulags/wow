@@ -158,7 +158,9 @@ export class WorkflowRunner {
         for (const listener of this.#listeners) listener(effect);
         return;
       case 'setThreadState':
-        // Stored by the transition itself; nothing to perform.
+      case 'sendBack':
+        // Stored by the transition itself (a send back starts its turn in the same commit);
+        // nothing to perform.
         return;
     }
   }
@@ -234,6 +236,8 @@ export class WorkflowRunner {
     const run = this.#run(runId);
     const stepRun = run?.steps.find((entry) => entry.stepId === stepId);
     // A stopped run, or a later turn the user sent in the step's thread: not the step's outcome.
+    // A send-back turn is the step's outcome again: it starts in the commit that sets the step
+    // running, and no other turn can run in the thread beside it.
     if (!run || stepRun?.state !== 'running' || stepRun.threadId !== threadId) return;
     const commandId = `workflow:${turn.id}:ended`;
     if (turn.state !== 'completed') {

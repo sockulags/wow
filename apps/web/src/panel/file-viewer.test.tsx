@@ -165,7 +165,10 @@ describe('file viewer', () => {
     const { container } = await renderApp(route, server.runtime);
     const artifacts = await screen.findByRole('list', { name: 'Artifacts of check-work' });
     expect(container.querySelector('a[href^="file:"]')).toBeNull();
-    expect(screen.queryByRole('complementary', { name: 'Context panel' })).toBeNull();
+    // The run waits at a gate, so the panel shows its conversation although the setting is off.
+    expect(
+      within(screen.getByRole('complementary', { name: 'Context panel' })).getByTestId('panel-run'),
+    ).toBeTruthy();
 
     await user.click(within(artifacts).getByRole('button', { name: 'Open review/notes.md' }));
     const shown = await viewer();

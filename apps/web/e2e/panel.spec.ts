@@ -67,8 +67,8 @@ test.describe('context panel', () => {
     await expect(details.getByTestId('fact-State')).toHaveText('Needs you');
     await expect(thread.getByRole('combobox', { name: 'Message' })).toBeVisible();
     const gate = thread.getByRole('region', { name: 'Gate' });
-    await expect(gate).toContainText('check-work finished. Continue ends the run.');
-    await gate.getByRole('button', { name: 'Continue' }).click();
+    await expect(gate).toContainText('check-work finished. Approve ends the run.');
+    await gate.getByRole('button', { name: 'Approve' }).click();
     await expect(gate).toBeHidden();
     await expect(details.getByTestId('fact-State')).toHaveText('Done');
     await expect(card).toHaveAccessibleName(/, done$/);
@@ -211,7 +211,8 @@ test.describe('file viewer', () => {
     await expect(artifacts.getByRole('button', { name: /^Open review\// })).toHaveCount(5);
     // Spec 9: nothing on the page points at the disk any more.
     await expect(page.locator('a[href^="file:"]')).toHaveCount(0);
-    await expect(panel(page)).toBeHidden();
+    // The run waits at its gate, so the panel shows the step's conversation (spec 14).
+    await expect(panel(page).getByTestId('panel-step-thread')).toContainText('Step 1 of 1');
 
     // Markdown is rendered, next to the run view, which stays where it was.
     await artifacts.getByRole('button', { name: 'Open review/notes.md' }).click();
@@ -304,11 +305,11 @@ test.describe('file viewer', () => {
     await expect(viewer).toBeHidden();
     await expect(panel(page).getByTestId('panel-step-thread')).toBeVisible();
 
-    // Leave the server as the other panel tests expect it: scripts off, panel closed.
+    // Leave the server as the other panel tests expect it: scripts off. The panel was shown for
+    // the gate without its setting being turned on, so it is closed away from the run.
     await page.goto('/settings/viewer');
     await scripts.click();
     await expect(scripts).not.toBeChecked();
-    await page.keyboard.press('Control+j');
     await expect(panel(page)).toBeHidden();
   });
 });

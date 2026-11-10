@@ -5,7 +5,7 @@ import { e2eHome } from './env';
 import { choose } from './controls';
 
 // U10 ground truth against the scripted mock provider (e2e/server.ts): build a workflow from the
-// Feature template, run it in a project, the mock completes step 1, the gate shows, and Continue
+// Feature template, run it in a project, the mock completes step 1, the gate shows, and Approve
 // starts step 2 with the handover (behaviors 24, 25, 26, 11).
 
 test.beforeEach(async ({ page }) => {
@@ -89,12 +89,16 @@ test.describe('workflows', () => {
 
     const runSteps = page.getByRole('list', { name: 'Run steps' }).getByTestId('run-step');
     const gate = page.getByRole('region', { name: 'Gate' });
-    await expect(gate).toContainText('capture-intent finished. Continue starts plan-work.');
+    await expect(gate).toContainText('capture-intent finished. Approve starts plan-work.');
     await expect(page.getByTestId('run-state')).toHaveText('Waiting for you');
     // The finished step is done; the marker after it says the run waits (audit D-03).
     await expect(runSteps.nth(0).getByTestId('step-state')).toHaveText('Done');
     await expect(page.getByTestId('gate-marker')).toHaveCount(1);
-    await expect(gate.getByTestId('gate-review')).toContainText('Last message from capture-intent');
+    // At a gate the step's conversation and the gate bar are in the side panel (review loop
+    // spec 14).
+    await expect(
+      page.getByRole('complementary', { name: 'Context panel' }).getByTestId('panel-step-thread'),
+    ).toContainText('Step 1 of');
     await expect(runSteps.nth(1).getByTestId('step-state')).toHaveText('Not started');
     await expect(runSteps.nth(1).getByRole('link', { name: 'Open thread' })).toHaveCount(0);
     // Artifacts open in the side panel (e2e/panel.spec.ts); no file:// link is left.
@@ -103,10 +107,10 @@ test.describe('workflows', () => {
     ).toBeVisible();
     await expect(page.locator('a[href^="file:"]')).toHaveCount(0);
 
-    await gate.getByRole('button', { name: 'Continue' }).click();
+    await gate.getByRole('button', { name: 'Approve' }).click();
     await expect(runSteps.nth(0).getByTestId('step-state')).toHaveText('Done');
     await expect(runSteps.nth(1).getByTestId('step-state')).toHaveText('Done');
-    await expect(gate).toContainText('plan-work finished. Continue starts deliver-work.');
+    await expect(gate).toContainText('plan-work finished. Approve starts deliver-work.');
 
     // Step 2's thread got the skill invocation and the handover from step 1.
     await runSteps.nth(1).getByRole('link', { name: 'Open thread' }).click();
@@ -116,13 +120,13 @@ test.describe('workflows', () => {
     await expect(prompt).toContainText('The previous step (capture-intent) ended with');
     // The waiting step's thread answers the gate too (spec 9), and so does the palette there.
     const threadGate = page.getByRole('region', { name: 'Gate' });
-    await expect(threadGate).toContainText('plan-work finished. Continue starts deliver-work.');
-    await expect(threadGate.getByRole('button', { name: 'Continue' })).toBeVisible();
+    await expect(threadGate).toContainText('plan-work finished. Approve starts deliver-work.');
+    await expect(threadGate.getByRole('button', { name: 'Approve' })).toBeVisible();
     await expect(threadGate.getByRole('button', { name: 'Stop' })).toBeVisible();
     await page.keyboard.press('Control+k');
-    await page.getByRole('dialog').getByRole('combobox').fill('continue run');
+    await page.getByRole('dialog').getByRole('combobox').fill('run: approve');
     await expect(page.getByRole('dialog').getByRole('option').first()).toContainText(
-      'Continue run',
+      'Run: approve',
     );
     await page.keyboard.press('Escape');
     await page.goBack();

@@ -284,6 +284,16 @@ export const defaultHandoverTemplate = [
   '{{/expectedArtifacts}}',
 ].join('\n');
 
+export const defaultSendBackTemplate = [
+  'The reviewer looked at the result of this step and sent it back.',
+  '',
+  "Reviewer's note:",
+  '',
+  '{{note}}',
+  '',
+  'Do the step ({{skill}}) again in this conversation with the note taken into account, and end with your result as before.',
+].join('\n');
+
 export const defaultSkillDirectories = [
   '~/.claude/skills',
   '~/.codex/skills',
@@ -637,6 +647,15 @@ export const settingsRegistry = {
     description:
       'Text added to every step prompt after the skill invocation. The placeholders below are replaced; a {{#name}}…{{/name}} section is left out when that value is empty.',
     default: defaultHandoverTemplate,
+    scope: 'project',
+  }),
+  'workflows.sendBackTemplate': defineSetting({
+    schema: z.string().meta({ widget: 'template', placeholders: ['note', 'skill', 'attempt'] }),
+    group: 'workflows',
+    label: 'Send back text',
+    description:
+      "The message a step gets in its own thread when you send it back at a gate. {{note}} is what you wrote, {{skill}} the step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
+    default: defaultSendBackTemplate,
     scope: 'project',
   }),
   'skills.directories': defineSetting({
@@ -994,10 +1013,15 @@ export const settingsRegistry = {
     'Interrupt the running turn of the open thread. What it produced so far stays.',
     'Mod+.',
   ),
-  'keybindings.continueRun': keybinding(
-    'Continue run',
-    "Continue the workflow run waiting at a gate, from its run view or the waiting step's thread.",
+  'keybindings.gateApprove': keybinding(
+    'Approve',
+    "Approve the step a workflow run waits for you on, so the run continues, from its run view or the waiting step's thread.",
     'Mod+Enter',
+  ),
+  'keybindings.gateSendBack': keybinding(
+    'Send back',
+    "Open the note field to send the step a workflow run waits for you on back to its agent, from its run view or the waiting step's thread.",
+    'Mod+Shift+Enter',
   ),
   'keybindings.runChanges': keybinding(
     'Run: show changes',

@@ -2,7 +2,14 @@ import type { Project, RunDiffFile, Workflow, WorkflowRun, WorkflowTemplate } fr
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
 import { openFile } from '@/panel/viewer';
-import { fileStatusLabels, refreshChanges, validateRunSearch, type RunSearch } from './changes';
+import {
+  fileStatusLabels,
+  refreshChanges,
+  runTabs,
+  validateRunSearch,
+  type RunSearch,
+} from './changes';
+import { cancelSendBack, canSendBack, confirmSendBack, openSendBack } from './gate';
 import { artifactPath, gateOf, isLive, runStateLabels, sortRuns } from './model';
 
 export interface WorkflowCommandData {
@@ -21,8 +28,35 @@ export interface WorkflowCommandData {
         readonly project: Project | undefined;
       }
     | undefined;
+  // The run whose send back note is being written, if any (from the gate store).
+  readonly sendBackRunId?: string | undefined;
   // "14:39" for a run's start, in the calendar's zone.
   readonly formatWhen?: (iso: string) => string;
+}
+
+// The review tabs beside Steps and Changes (review loop spec 14), and the way back to Steps from
+// one of them. Steps and Changes switch with `keybindings.runChanges` below.
+function tabCommands(runId: string, current: RunSearch): AppCommand[] {
+  const to = '/workflows/runs/$runId' as const;
+  const commands: AppCommand[] = [];
+  for (const { id, label } of runTabs) {
+    if (id === 'changes' || id === current.tab) continue;
+    if (id === 'steps' && (current.tab === undefined || current.tab === 'changes')) continue;
+    commands.push({
+      id: `workflowRun.tab.${id}`,
+      title: `Run: show ${label.toLowerCase()}`,
+      group: 'Workflows',
+      keywords: ['tab', 'review', 'gate'],
+      run: ({ navigate }) =>
+        void navigate({
+          to,
+          params: { runId },
+          search: id === 'steps' ? {} : { tab: id },
+          replace: true,
+        }),
+    });
+  }
+  return commands;
 }
 
 // The run view's tabs and its Changes tab (review loop spec 11): switch between Steps and
@@ -49,6 +83,7 @@ function changesCommands({
         keybinding: 'keybindings.runChanges',
         run: show({ tab: 'changes' }),
       },
+      ...tabCommands(runId, current),
     ];
   }
   const stepOnly = current.stepOnly === true;
@@ -81,6 +116,7 @@ function changesCommands({
       keywords: ['diff', 'reload', 'read again'],
       run: refreshChanges,
     },
+    ...tabCommands(runId, current),
   ];
   for (const file of changedFiles) {
     commands.push({
@@ -116,13 +152,14 @@ function changesCommands({
 }
 
 // Palette commands for workflows (spec 22): new workflow (blank or from a template), every
-// workflow and run, refresh skills, and Continue and Stop for the open run.
+// workflow and run, refresh skills, and Approve, Send back and Stop for the open run.
 export function workflowCommands({
   workflows,
   runs,
   templates,
   openRun,
   runView,
+  sendBackRunId,
   formatWhen = (iso) => iso,
 }: WorkflowCommandData): AppCommand[] {
   const commands: AppCommand[] = [
@@ -155,16 +192,49 @@ export function workflowCommands({
 
   if (openRun && isLive(openRun)) {
     const runId = openRun.id;
-    if (gateOf(openRun)) {
+    const writing = sendBackRunId === runId && canSendBack(openRun);
+    // While a note is being written the Approve key is off, so it cannot approve by accident;
+    // the Send back key sends the note.
+    if (gateOf(openRun) && !writing) {
       commands.push({
-        id: 'workflowRun.continue',
-        title: 'Continue run',
+        id: 'workflowRun.approve',
+        title: 'Run: approve',
         group: 'Workflows',
-        keywords: ['gate', 'next step', 'resume'],
-        keybinding: 'keybindings.continueRun',
+        keywords: ['gate', 'continue', 'next step', 'resume', 'accept'],
+        keybinding: 'keybindings.gateApprove',
         run: ({ connection }) => {
           if (connection) void dispatch(connection, { type: 'workflowRun.continue', runId });
         },
+      });
+    }
+    if (writing) {
+      commands.push(
+        {
+          id: 'workflowRun.sendBack',
+          title: 'Run: send back with this note',
+          group: 'Workflows',
+          keywords: ['gate', 'reject', 'again', 'retry', 'confirm'],
+          keybinding: 'keybindings.gateSendBack',
+          run: ({ connection }) => {
+            if (connection) void confirmSendBack((command) => dispatch(connection, command));
+          },
+        },
+        {
+          id: 'workflowRun.sendBack.cancel',
+          title: 'Run: cancel send back',
+          group: 'Workflows',
+          keywords: ['gate', 'note', 'close'],
+          run: cancelSendBack,
+        },
+      );
+    } else if (canSendBack(openRun)) {
+      commands.push({
+        id: 'workflowRun.sendBack',
+        title: 'Run: send back',
+        group: 'Workflows',
+        keywords: ['gate', 'reject', 'again', 'retry', 'note', 'changes requested'],
+        keybinding: 'keybindings.gateSendBack',
+        run: () => openSendBack(runId),
       });
     }
     commands.push({

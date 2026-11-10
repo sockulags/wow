@@ -293,8 +293,8 @@ export function gateMessage(gate: Gate, workflow: Workflow | undefined): string 
   const next = gate.stepIndex + 1;
   const total = workflow?.steps.length ?? next;
   return next < total
-    ? `${skill(gate.stepIndex)} finished. Continue starts ${skill(next)}.`
-    : `${skill(gate.stepIndex)} finished. Continue ends the run.`;
+    ? `${skill(gate.stepIndex)} finished. Approve starts ${skill(next)}.`
+    : `${skill(gate.stepIndex)} finished. Approve ends the run.`;
 }
 
 export const isLive = (run: WorkflowRun): boolean =>
@@ -349,8 +349,12 @@ export function reviewedStep(run: WorkflowRun): StepRun | undefined {
   return run.steps[gate.position === 'after' ? gate.stepIndex : gate.stepIndex - 1];
 }
 
+// "Attempt 2" for a step that was sent back and ran again; nothing for a first run.
+export const attemptLabel = (stepRun: StepRun | undefined): string | undefined =>
+  stepRun?.attempt === undefined ? undefined : `Attempt ${stepRun.attempt}`;
+
 // The run a thread can answer: one waiting at a gate right after the thread's step (spec 9:
-// Continue and Stop in the thread as well as the run view).
+// Approve, Send back and Stop in the thread as well as the run view).
 export function gateRunForThread(
   thread: { readonly id: string; readonly runId: string | null },
   runs: readonly WorkflowRun[],

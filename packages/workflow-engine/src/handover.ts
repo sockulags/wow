@@ -13,10 +13,26 @@ export interface HandoverValues {
 const SECTION = /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g;
 const PLACEHOLDER = /\{\{(\w+)\}\}/g;
 
-const valueOf = (values: HandoverValues, name: string): string =>
-  Object.hasOwn(values, name) ? values[name as keyof HandoverValues] : '';
+type TemplateValues = Readonly<Record<string, string>>;
 
-export function renderHandover(template: string, values: HandoverValues): string {
+const valueOf = (values: TemplateValues, name: string): string =>
+  Object.hasOwn(values, name) ? (values[name] ?? '') : '';
+
+export const renderHandover = (template: string, values: HandoverValues): string =>
+  renderTemplate(template, { ...values });
+
+// What `workflows.sendBackTemplate` can name: the reviewer's note, the step's skill and the
+// number of the attempt that starts.
+export interface SendBackValues {
+  readonly note: string;
+  readonly skill: string;
+  readonly attempt: string;
+}
+
+export const renderSendBack = (template: string, values: SendBackValues): string =>
+  renderTemplate(template, { ...values });
+
+function renderTemplate(template: string, values: TemplateValues): string {
   const sections = template.replace(SECTION, (_match, name: string, body: string) =>
     valueOf(values, name).trim() === '' ? '' : body,
   );

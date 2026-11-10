@@ -442,11 +442,28 @@ with prompt, notify, finish). The server performs them. The step prompt is:
 Gates. A gate sits between two steps. After a step with `gateAfter` its turn is over and the step
 itself shows `waiting` (its thread shows "needs you"). Before a step with `gateBefore` that step
 shows `waiting` without a thread, and the previous step's thread shows "needs you". The run is
-`waiting` in both cases and `pendingGate(run)` tells them apart. One Continue passes the gate
-between two steps even when both flags are set. Stop ends the run as `stopped`, interrupts a
-running turn and keeps every thread.
+`waiting` in both cases and `pendingGate(run)` tells them apart. One Continue (shown as Approve)
+passes the gate between two steps even when both flags are set. Stop ends the run as `stopped`,
+interrupts a running turn and keeps every thread.
 
-Commands: `workflow.create|update|delete`, `workflowRun.start|continue|stop` from clients, and
+Send back (review loop spec 16 to 18) is the other answer at a gate. `workflowRun.sendBack {runId,
+note}` runs the reviewed step again (`reviewedStepIndex`: the step that just ended for a gate
+after it, the one before for a gate before a step): that step becomes `running` again in its own
+thread, `StepRun.attempt` counts up (absent for the first run, 2 after one send back) and a step
+that waited before its gate goes back to `not_started`. The step keeps its last final message,
+artifacts and file hashes until the new turn ends and replaces them, and the run then waits at the
+same gate again, because the step ends through the same `stepCompleted` path as the first time.
+The message is `workflows.sendBackTemplate` (project scope) rendered with `note`, `skill` and
+`attempt`; an emptied template sends the note alone. The engine refuses an empty note, a run that
+is not waiting (with its state in the reason) and a gate before the first step, where nothing has
+run. The engine's `sendBack` effect is not performed by the runner: the orchestrator turns it into
+the thread's `turn.started` in the same commit as the run change (the `thread.sendMessage`
+decision), so the thread is never created again and a step is `running` exactly while its own
+turn is. That is how the runner tells a send-back turn from a message the user typed at the gate
+(spec 20): an ordinary message finds the step `waiting` and is ignored as before, and a send back
+while such a message is still being answered is refused instead of queued.
+
+Commands: `workflow.create|update|delete`, `workflowRun.start|continue|sendBack|stop` from clients, and
 `skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded` as `InternalCommand`s from
 the server. The orchestrator calls `startRun`/`advance` and stores one `workflowRun.changed` event
 (the run plus the effects to perform), an idle `thread.created` with `runId` and `stepId` for each
@@ -536,7 +553,9 @@ command, `false` leaves it going; the threads stay either way.
 Notifications are the server's channel to the user. While `scheduler.notifications` is on, the
 orchestrator stores a `notification.sent` row when a trigger starts a run, when a run waits at a
 gate and when a run or a trigger fails; ids derive from the run, step and gate, so a repeated
-transition notifies once. Clients read the `notifications` topic (newest first): the web app shows
+transition notifies once. A wait after a send back adds the reviewed step's attempt to the id
+(`<runId>:waiting:<stepId>:<position>:attempt-<n>`), so each attempt is told once (review loop
+spec 19). Clients read the `notifications` topic (newest first): the web app shows
 the rows that arrive after its first snapshot as toasts for `scheduler.toastSeconds`, whose "Open"
 action opens its `path`. The toasts are sonner's (`AppToaster` in `app/notifications.tsx`); the
 same toaster carries the app's own feedback (see "Look").
@@ -558,8 +577,8 @@ commands, so they are events like everything else; the server reads SQLite on ev
 change applies at once, and services holding derived state listen with `onChange`. The page picks the editor from the zod schema type; schemas that need a special editor
 carry `.meta({ widget: 'keybinding' | 'keyValue' | 'secret' | 'workHours' | 'template' })` (see
 `Keybinding`, `KeyValueList`, `SecretSetting`, a password field for a secret setting's reference,
-`WorkHours`, two time fields and a Mon–Sun toggle group, and the handover template, a text area
-whose `placeholders` meta lists the `{{name}}` chips it can insert). Objects
+`WorkHours`, two time fields and a Mon–Sun toggle group, and the handover and send back templates,
+a text area whose `placeholders` meta lists the `{{name}}` chips it can insert). Objects
 render their fields; anything else falls back to a JSON editor. Connected to a server, the web app
 reads the `settings` topic and writes global values with `setting.set` / `setting.reset`
 (`apps/web/src/settings/server-source.ts`); without one it uses the in-memory `SettingsSource`
@@ -581,7 +600,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `outlook.mailRail`, `outlook.mailRailCollapsed`, `outlook.mailLimit`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
   `scheduler.paused`, `scheduler.toastSeconds`
-- workflows: `workflows.templates`, `workflows.handoverTemplate`
+- workflows: `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`
 - skills: `skills.directories`, `skills.includeClaudePlugins`
 - plans: `plans.intentsDirectory` (project-scoped), `plans.writeSettleMs` (see "Plans")
 - trackers: `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
@@ -945,9 +964,31 @@ copy-path button; nothing links to `file://`. A step that ended and waits at its
 "Waiting for you" marker after it. The header links to the run's card and backlog item. The gate
 bar (`gate-bar.tsx`, also in the step's thread) reads the gate the way `pendingGate` does (the
 current step has ended: after it; not started: before it), shows the reviewed step's
-`finalMessage` and found artifacts, and offers Continue (`keybindings.continueRun`) and Stop; Stop
-alone while a step runs. Stop asks first, since a stopped run cannot go on. Palette commands: New workflow, New workflow from each template, Refresh skills, every
-workflow and run, and Continue run and Stop run for the open run.
+`finalMessage` and found artifacts, and offers Approve (`keybindings.gateApprove`, which sends
+`workflowRun.continue`), Send back (`keybindings.gateSendBack`) and Stop; Stop alone while a step
+runs. Stop asks first, since a stopped run cannot go on. Palette commands: New workflow, New workflow from each template, Refresh skills, every
+workflow and run, and Run: approve, Run: send back and Stop run for the open run.
+
+**Review at a gate** (`gate.ts`, `gate-bar.tsx`, `review-tabs.tsx`; review loop spec 14 to 18).
+The run view's tabs are Steps, Changes, Artifacts, Pull request, Ticket and Pages (`runTabs`;
+`?tab=artifacts|pullRequest|ticket|pages` beside `changes`). Artifacts lists the found files of
+every step, each opening in the panel's viewer; Pull request, Ticket and Pages have no source yet
+and say "Nothing to show yet", as does Artifacts for a run without found files. While the run on
+screen waits at a gate, a wide window shows the context panel with the step's conversation and
+the gate bar without changing `appearance.contextPanel` (the layout store's `contextPanelPeek`,
+see "Context panel"); it stays for that run until the user closes it or leaves the view. The run
+view's own gate bar shows only while the panel does not show the conversation (closed, or showing
+a file), so there is one gate bar on screen. Send back opens a note field in the gate bar. The
+note being written is view state in `gateStore` (`{runId, note, busy, error}`), so the button,
+the palette and the key act on the same field; nothing about the run is kept there. Confirming
+(the field's "Send it back", or the Send back key again) dispatches `workflowRun.sendBack`; an
+empty note is refused in place with the server's sentence and sends nothing, a server refusal
+shows its reason and keeps the note, Escape or Cancel puts the field away. While a note is open
+the Approve command is not offered, so its key cannot approve by accident. Send back is not
+offered before the first step. A step that was sent back shows "Attempt N" in its row, in the
+Artifacts tab and in the panel's step header. Palette commands: Run: show artifacts / pull
+request / ticket / pages / steps, Run: send back (Run: send back with this note and Run: cancel
+send back while the field is open).
 
 **Changes tab** (`changes.ts`, `changes-tab.tsx`; review loop spec 11 to 13). The run view has two
 tabs under its header, Steps and Changes; the address carries the choice
@@ -1110,7 +1151,8 @@ topics the views read.
 - Step thread (`step-thread.tsx`): `activeStep(run)` is the step to review at a gate (the one that
   just ended, or the one before a step that has not started), else the current step, else the last
   step with a thread. It renders `ThreadConversation` (`chat/thread-view.tsx`, the chat view's
-  conversation, `GateBar` and composer, `compact` and without taking the focus), so Continue, Stop,
+  conversation, `GateBar` and composer, `compact` and without taking the focus), so Approve, Send
+  back, Stop,
   approvals, questions and messages work exactly as in the thread. A step without a thread yet
   shows the gate bar alone when the run waits before it.
 - Workflows (`workflow-panel.tsx`): a run shows its step thread; a workflow its steps, gates and
@@ -1161,7 +1203,9 @@ setting once on release; the arrow keys (Shift for four steps), Home and End wri
 `lib/use-breakpoint.ts` holds the layout breakpoints (`breakpoints.narrow`, 1200 px) with
 `useBelow` and `isBelow`; below `narrow` the panel never takes room: opening it sets the layout
 store's `contextPanelPeek`, which lays it over the view (`data-overlay`, Escape closes it) and
-leaves the setting alone. Commands: "Toggle context panel" (`keybindings.toggleRightPanel`), "Focus
+leaves the setting alone. A run view whose run waits at a gate sets the same `contextPanelPeek`
+in a wide window, where the panel then takes room as usual (shown when the setting or the peek is
+on); closing the panel clears it, and so does leaving that run. Commands: "Toggle context panel" (`keybindings.toggleRightPanel`), "Focus
 context panel" (`keybindings.focusContextPanel`, F6), which moves the focus into the panel
 (opening it first) and back to the element it came from or the main view, and per view "Show in
 panel" while the view has a selection. A focus request made from the palette waits in the layout

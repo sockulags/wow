@@ -97,7 +97,7 @@ view:
 
 - **Calendar**: click a card for its time, project, workflow, trigger, backlog item and notes,
   with **Edit card**. When the card has a run, the thread of the step the run is on follows live
-  below it: the conversation, **Continue** and **Stop** when the run waits for you, and the
+  below it: the conversation, **Approve**, **Send back** and **Stop** when the run waits for you, and the
   composer to answer the step. Click a meeting for its time, place, organizer, **Join** and **Open
   in Outlook**. While the panel is open a click selects instead of opening the card form or the
   meeting's popover, and the arrow keys in the grid move the selection with the focus; Enter on
@@ -365,14 +365,14 @@ by a workflow is titled by its step, with the workflow on the second line.
 
 The thread header shows the project (hover it for the folder), the provider instance, and the
 model, effort and permission selects. When a workflow run waits at a gate after the thread's step,
-the thread shows the gate with **Continue** (**Ctrl+Enter**) and **Stop**, the same as the run
-view.
+the thread shows the gate with **Approve** (**Ctrl+Enter**), **Send back** (**Ctrl+Shift+Enter**)
+and **Stop**, the same as the run view.
 
 **Mark thread done** in the thread header (or in the palette) moves a thread you have finished
 with to **Done**. It is available while the agent neither works nor waits for you. **Reopen
 thread** puts it back under Idle (a thread whose last turn failed keeps its marker), and sending a
 new message to a done thread reopens it as well. A workflow step's thread moves to Done by itself
-when its step completes; with a gate after the step, that happens once you press Continue.
+when its step completes; with a gate after the step, that happens once you press Approve.
 
 Change model, effort or permission mode in the thread header; the next turn uses them. **Ctrl+.**
 or the stop button interrupts a running turn and keeps what it produced. After a restart, a thread
@@ -437,8 +437,15 @@ long it took, a link to its thread and links to the expected artifacts that exis
 When a run reaches a gate it waits: the run, its card and the step's thread show "waiting for
 you", the step reads Done followed by a "Waiting for you" marker, and a desktop notification is
 sent (`scheduler.notifications`). The gate shows what to review: the step's last message (folded)
-and the artifacts it produced. Press **Continue** (**Ctrl+Enter**, `keybindings.continueRun`) in
-the run view or the step's thread to start the next step, or **Stop** to end the run; Stop asks
+and the artifacts it produced. In a wide window the side panel opens with the step's conversation
+and the gate, and the run view's tabs (**Changes**, **Artifacts**, **Pull request**, **Ticket**,
+**Pages**) show what to look at; a tab with nothing to show says so. Press **Approve**
+(**Ctrl+Enter**, `keybindings.gateApprove`) in the panel, the run view or the step's thread to
+start the next step. Press **Send back** (**Ctrl+Shift+Enter**, `keybindings.gateSendBack`) to
+write what is wrong; **Send it back** (or the same key again) runs the step again in the same
+thread with your note (`workflows.sendBackTemplate`), the step shows "Attempt 2", and the run
+waits at the same gate with the new result. A note is needed. A message you type in the thread
+instead is a side conversation and leaves the run waiting. **Stop** ends the run; Stop asks
 first, because a stopped run cannot be continued. The next step's prompt is its skill invocation, its extra prompt, and the handover from
 `workflows.handoverTemplate` (by default the previous step's final message and the expected
 artifact paths). Stopping a run keeps all its threads.

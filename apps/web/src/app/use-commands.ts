@@ -19,6 +19,7 @@ import { useCalendarPrefs } from '@/calendar/prefs';
 import { pendingApproval } from '@/chat/view-model';
 import { changesStore } from '@/workflows/changes';
 import { workflowCommands } from '@/workflows/commands';
+import { gateStore } from '@/workflows/gate';
 import { gateRunForThread } from '@/workflows/model';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
 import { updateCommands } from './updates';
@@ -63,6 +64,7 @@ export function useCommands(): {
   const changedFiles = useStore(changesStore, (state) =>
     state.runId === openRunId ? state.files : undefined,
   );
+  const sendBackRunId = useStore(gateStore, (state) => state.sendBack?.runId);
   const staticCommands = useMemo(() => buildCommands(), []);
   const commands = useMemo(() => {
     const zone = calendarZone;
@@ -112,6 +114,7 @@ export function useCommands(): {
                 project: projects?.find((project) => project.id === openRun.projectId),
               }
             : undefined,
+        sendBackRunId,
         formatWhen: when,
       }),
       ...planCommands({
@@ -158,6 +161,7 @@ export function useCommands(): {
     viewer,
     planIntents,
     changedFiles,
+    sendBackRunId,
   ]);
   const context = useMemo(
     () => ({ navigate, settings, layout, draft, connection, updates }),

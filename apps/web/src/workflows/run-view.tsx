@@ -7,19 +7,24 @@ import {
   MessageSquareIcon,
   SearchXIcon,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { useRuntime } from '@/app/runtime';
+import { useEffect, useRef, useState } from 'react';
+import { useLayout, useRuntime } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { isoDate, localDate } from '@/calendar/time';
 import { formatDuration, useDateFormat } from '@/lib/format';
+import { isBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
+import { useContextPanelShown } from '@/panel/panel-state';
+import { shownFile } from '@/panel/viewer';
 import { Artifact } from './artifact-link';
-import type { RunSearch } from './changes';
+import { runTabs, type RunSearch } from './changes';
 import { ChangesTab } from './changes-tab';
 import { GateBar } from './gate-bar';
+import { ArtifactsTab, HostTab } from './review-tabs';
 import {
+  attemptLabel,
   gateOf,
   runStateDotClass,
   runStateLabels,
@@ -51,6 +56,7 @@ function StepRow({
   const name = step?.skillName ?? stepRun.stepId;
   const state = stepDisplayState(stepRun);
   const duration = stepDurationMs(stepRun);
+  const attempt = attemptLabel(stepRun);
   return (
     <>
       <li
@@ -74,6 +80,11 @@ function StepRow({
             <span>
               {instanceName}
               {step?.model ? ` · ${step.model}` : ''}
+            </span>
+          )}
+          {attempt && (
+            <span data-testid="step-attempt" className="font-medium text-foreground">
+              {attempt}
             </span>
           )}
           {stepRun.startedAt && <span>Started {when(stepRun.startedAt)}</span>}
@@ -133,7 +144,7 @@ function StepRow({
 
 // Behavior 26: every step's state, its thread and the expected artifacts found in the project.
 export function RunView({ runId, search = {} }: { runId: string; search?: RunSearch }) {
-  const { connection } = useRuntime();
+  const { connection, layout } = useRuntime();
   const runs = useTopic('workflowRuns');
   const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
@@ -148,6 +159,31 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
     if (!connection) return;
     connection.request('workflowRuns.detectArtifacts', { runId }).catch(() => {});
   }, [connection, runId]);
+
+  const waiting = runs?.find((candidate) => candidate.id === runId)?.state === 'waiting';
+  const panelShown = useContextPanelShown();
+  const fileInPanel =
+    shownFile(
+      useLayout((state) => state.viewer),
+      `/workflows/runs/${runId}`,
+    ) !== undefined;
+
+  // At a gate the step's conversation and the gate bar belong in the side panel (review loop
+  // spec 14), so a wide window shows it without changing the user's panel setting. It stays
+  // while this run is on screen, and closing it is the user's to do.
+  const peeked = useRef(false);
+  useEffect(() => {
+    if (!waiting || isBelow('narrow')) return;
+    peeked.current = true;
+    layout.setState({ contextPanelPeek: true });
+  }, [layout, runId, waiting]);
+  useEffect(
+    () => () => {
+      if (peeked.current) layout.setState({ contextPanelPeek: false });
+      peeked.current = false;
+    },
+    [layout, runId],
+  );
 
   if (!runs) return null;
   const run = runs.find((candidate) => candidate.id === runId);
@@ -170,7 +206,10 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
   const card = cards.find((candidate) => candidate.id === run.calendarItemId);
   const item = backlog.find((candidate) => candidate.id === run.backlogItemId);
   const gate = gateOf(run);
-  const changes = search.tab === 'changes';
+  const tab = search.tab ?? 'steps';
+  // The panel's conversation carries the gate bar; without it (closed, or showing a file) the
+  // answers stay reachable here.
+  const gateInPanel = gate !== undefined && panelShown && !fileInPanel;
   const linkClass =
     'inline-flex items-center gap-1 rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring';
   return (
@@ -217,37 +256,51 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
             </Link>
           )}
         </div>
-        <GateBar run={run} workflow={workflow} project={project} onError={setError} />
-        {error && (
+        {!gateInPanel && (
+          <GateBar run={run} workflow={workflow} project={project} onError={setError} />
+        )}
+        {error && !gateInPanel && (
           <p role="alert" className="text-xs text-destructive">
             {error}
           </p>
         )}
         <div role="tablist" aria-label="Run" className="flex gap-0.5">
-          {(['steps', 'changes'] as const).map((tab) => (
+          {runTabs.map(({ id, label }) => (
             <Button
-              key={tab}
+              key={id}
               asChild
               role="tab"
               size="xs"
-              variant={(tab === 'changes') === changes ? 'secondary' : 'ghost'}
-              aria-selected={(tab === 'changes') === changes}
+              variant={id === tab ? 'secondary' : 'ghost'}
+              aria-selected={id === tab}
             >
               <Link
                 to="/workflows/runs/$runId"
                 params={{ runId }}
-                search={tab === 'changes' ? { tab } : {}}
+                search={id === 'steps' ? {} : { tab: id }}
                 replace
               >
-                {tab === 'steps' ? 'Steps' : 'Changes'}
+                {label}
               </Link>
             </Button>
           ))}
         </div>
       </header>
-      {changes ? (
+      {tab === 'changes' ? (
         <div role="tabpanel" aria-label="Changes" className="min-h-0 flex-1">
           <ChangesTab run={run} workflow={workflow} project={project} search={search} />
+        </div>
+      ) : tab === 'artifacts' ? (
+        <div role="tabpanel" aria-label="Artifacts" className="min-h-0 flex-1">
+          <ArtifactsTab run={run} workflow={workflow} project={project} />
+        </div>
+      ) : tab !== 'steps' ? (
+        <div
+          role="tabpanel"
+          aria-label={runTabs.find((entry) => entry.id === tab)?.label}
+          className="min-h-0 flex-1"
+        >
+          <HostTab tab={tab} />
         </div>
       ) : (
         <div

@@ -234,7 +234,7 @@ describe('run view helpers', () => {
     const after = gateOf(run());
     expect(after).toEqual({ stepIndex: 0, position: 'after' });
     expect(gateMessage(after!, workflow)).toBe(
-      'capture-intent finished. Continue starts plan-work.',
+      'capture-intent finished. Approve starts plan-work.',
     );
     const before = run({
       currentStep: 1,
@@ -305,11 +305,13 @@ describe('workflowCommands', () => {
     });
   });
 
-  it('offers Continue and Stop for the open run at a gate, and only Stop while it runs', () => {
-    expect(titles(run())).toContain('Continue run');
+  it('offers Approve, Send back and Stop for the open run at a gate, and only Stop while it runs', () => {
+    expect(titles(run())).toContain('Run: approve');
+    expect(titles(run())).toContain('Run: send back');
     expect(titles(run())).toContain('Stop run');
     const running = run({ state: 'running' });
-    expect(titles(running)).not.toContain('Continue run');
+    expect(titles(running)).not.toContain('Run: approve');
+    expect(titles(running)).not.toContain('Run: send back');
     expect(titles(running)).toContain('Stop run');
     expect(titles(run({ state: 'done' }))).not.toContain('Stop run');
   });

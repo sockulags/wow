@@ -38,6 +38,9 @@ export const StepRun = z.object({
   // The changed files when the step ended, so the Changes tab can tell what this step changed
   // (review loop spec 11). Absent for a run without a base.
   fileHashes: z.array(FileHash).optional(),
+  // How many times the step has run: absent for the first time, 2 after one send back (review
+  // loop spec 16).
+  attempt: z.number().int().min(2).optional(),
 });
 export type StepRun = z.infer<typeof StepRun>;
 
@@ -56,6 +59,17 @@ export const RunEffect = z.discriminatedUnion('type', [
     runId: z.string().min(1),
     stepId: z.string().min(1),
     threadId: z.string().min(1),
+    prompt: z.string(),
+  }),
+  // A step sent back at a gate runs again in its own thread. The orchestrator starts that turn in
+  // the same commit as the run change, so nothing is left to perform; the effect records what
+  // was sent.
+  z.object({
+    type: z.literal('sendBack'),
+    runId: z.string().min(1),
+    stepId: z.string().min(1),
+    threadId: z.string().min(1),
+    attempt: z.number().int().min(2),
     prompt: z.string(),
   }),
   z.object({ type: z.literal('interrupt'), threadId: z.string().min(1) }),

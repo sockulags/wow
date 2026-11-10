@@ -3,6 +3,7 @@ export {
   initialStepRuns,
   missedTriggerOutcome,
   pendingGate,
+  reviewedStepIndex,
   renderStepPrompt,
   RunRejected,
   startRun,
@@ -14,4 +15,11 @@ export {
   type RunInput,
   type Transition,
 } from './engine.js';
-export { bulletList, renderHandover, stepPrompt, type HandoverValues } from './handover.js';
+export {
+  bulletList,
+  renderHandover,
+  renderSendBack,
+  stepPrompt,
+  type HandoverValues,
+  type SendBackValues,
+} from './handover.js';

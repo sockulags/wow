@@ -8,7 +8,7 @@ import type {
   WorkflowRun,
   WorkflowStep,
 } from '@wow/contracts';
-import { bulletList, renderHandover, stepPrompt } from './handover.js';
+import { bulletList, renderHandover, renderSendBack, stepPrompt } from './handover.js';
 
 // The workflow run state machine. Pure: every function takes the workflow, the run and an input
 // and returns the next run plus the effects the server performs after committing it.
@@ -16,7 +16,9 @@ import { bulletList, renderHandover, stepPrompt } from './handover.js';
 // A gate sits between two steps. After a step whose `gateAfter` is set, the step itself waits
 // (its turn is over, the user reviews it). Before a step whose `gateBefore` is set, that step
 // waits without a thread. One Continue passes the gate between two steps, even when both the
-// earlier step's gate after and the later step's gate before are set.
+// earlier step's gate after and the later step's gate before are set. Send back is the other
+// answer: the step the gate asks about runs again in its own thread, and when that turn ends the
+// run waits at the same gate again.
 
 export type RunInput =
   | {
@@ -34,6 +36,7 @@ export type RunInput =
     }
   | { readonly type: 'stepFailed'; readonly stepId: string; readonly error: string }
   | { readonly type: 'continue' }
+  | { readonly type: 'sendBack'; readonly note: string }
   | { readonly type: 'stop' }
   | {
       readonly type: 'artifactsFound';
@@ -44,6 +47,8 @@ export interface EngineContext {
   readonly now: string;
   // The `workflows.handoverTemplate` setting for the run's project.
   readonly handoverTemplate: string;
+  // The `workflows.sendBackTemplate` setting for the run's project.
+  readonly sendBackTemplate: string;
   // The step's skill as its provider invokes it: `/name` for Claude, `$name` for Codex.
   readonly invocationFor: (step: WorkflowStep) => string;
   readonly backlogBody?: string | null | undefined;
@@ -88,6 +93,15 @@ export function pendingGate(run: WorkflowRun): PendingGate | undefined {
   return { stepIndex: run.currentStep, position: step.endedAt ? 'after' : 'before' };
 }
 
+// The step a gate asks the user to judge: the one that just ended for a gate after it, the one
+// before for a gate before the next step. Undefined before the first step, where nothing ran.
+export function reviewedStepIndex(run: WorkflowRun): number | undefined {
+  const gate = pendingGate(run);
+  if (!gate) return undefined;
+  const index = gate.position === 'after' ? gate.stepIndex : gate.stepIndex - 1;
+  return index >= 0 ? index : undefined;
+}
+
 export function startRun(workflow: Workflow, input: NewRun, context: EngineContext): Transition {
   const [first] = workflow.steps;
   if (!first) throw new RunRejected(`Workflow ${workflow.name} has no steps`);
@@ -130,6 +144,8 @@ export function advance(
       return failStep(run, input.stepId, input.error, context);
     case 'continue':
       return continueRun(workflow, run, context);
+    case 'sendBack':
+      return sendBack(workflow, run, input.note, context);
     case 'stop':
       return stopRun(run, context);
   }
@@ -229,6 +245,50 @@ function continueRun(workflow: Workflow, run: WorkflowRun, context: EngineContex
 
   const previous = run.steps[gate.stepIndex - 1];
   return beginStep(workflow, run, gate.stepIndex, context, threadState(previous?.threadId, 'done'));
+}
+
+function sendBack(
+  workflow: Workflow,
+  run: WorkflowRun,
+  note: string,
+  context: EngineContext,
+): Transition {
+  const gate = pendingGate(run);
+  if (!gate) {
+    throw new RunRejected(
+      `Run ${run.id} is ${run.state}, not waiting for you, so there is nothing to send back`,
+    );
+  }
+  const text = note.trim();
+  if (text === '') throw new RunRejected('Write what should change before you send the step back');
+  const index = reviewedStepIndex(run);
+  const reviewed = index === undefined ? undefined : run.steps[index];
+  const threadId = reviewed?.threadId;
+  if (index === undefined || !reviewed || !threadId) {
+    throw new RunRejected(`Run ${run.id} waits before its first step: no step has run yet`);
+  }
+  const step = workflow.steps[index] as WorkflowStep;
+  const attempt = (reviewed.attempt ?? 1) + 1;
+  // The last result stays on the step until the new turn ends and replaces it.
+  const rerun: StepRun = { ...reviewed, state: 'running', startedAt: context.now, attempt };
+  delete rerun.endedAt;
+  const steps = run.steps.map((entry, at): StepRun => {
+    if (at === index) return rerun;
+    // A step that waited before its gate goes back to not started while the one before reruns.
+    if (at === gate.stepIndex) return { ...entry, state: 'not_started' };
+    return entry;
+  });
+  const rendered = renderSendBack(context.sendBackTemplate, {
+    note: text,
+    skill: step.skillName,
+    attempt: String(attempt),
+  });
+  // A template emptied in the settings still sends what the reviewer wrote.
+  const prompt = rendered === '' ? text : rendered;
+  return {
+    run: { ...run, steps, currentStep: index, state: 'running' },
+    effects: [{ type: 'sendBack', runId: run.id, stepId: step.id, threadId, attempt, prompt }],
+  };
 }
 
 function stopRun(run: WorkflowRun, context: EngineContext): Transition {

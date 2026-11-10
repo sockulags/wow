@@ -12,16 +12,36 @@ import { reviewedStep } from './model';
 // The Changes tab of a run (review loop spec 11 to 13). The server compares the folder with the
 // run's base and says which step changed which file; this is how the tab reads its answer.
 
-// The run view's address: `?tab=changes` opens the tab, `file` is the file whose diff shows and
-// `stepOnly` narrows the list to the step under review, so palette commands can do all three.
+// The run view's tabs (review loop spec 14). Steps is the run itself and has no `tab` in the
+// address; the others are what a gate asks the user to look at.
+export const runTabs = [
+  { id: 'steps', label: 'Steps' },
+  { id: 'changes', label: 'Changes' },
+  { id: 'artifacts', label: 'Artifacts' },
+  { id: 'pullRequest', label: 'Pull request' },
+  { id: 'ticket', label: 'Ticket' },
+  { id: 'pages', label: 'Pages' },
+] as const;
+
+export type RunTab = (typeof runTabs)[number]['id'];
+export type ReviewTab = Exclude<RunTab, 'steps'>;
+
+const isReviewTab = (value: unknown): value is ReviewTab =>
+  value !== 'steps' && runTabs.some((tab) => tab.id === value);
+
+// The run view's address: `?tab=<tab>` opens a tab; on Changes, `file` is the file whose diff
+// shows and `stepOnly` narrows the list to the step under review, so palette commands can do
+// all three.
 export interface RunSearch {
-  tab?: 'changes';
+  tab?: ReviewTab;
   file?: string;
   stepOnly?: true;
 }
 
 export function validateRunSearch(search: Record<string, unknown>): RunSearch {
-  if (search['tab'] !== 'changes') return {};
+  const tab = search['tab'];
+  if (!isReviewTab(tab)) return {};
+  if (tab !== 'changes') return { tab };
   const file = search['file'];
   return {
     tab: 'changes',

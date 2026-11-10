@@ -50,7 +50,7 @@ async function untilReviewWaits(page: Page, runId: string): Promise<void> {
   await expect(gate(page)).toContainText('deliver-work finished');
   await page.getByRole('tab', { name: 'Changes' }).click();
   await expect(files(page).first()).toBeVisible();
-  await gate(page).getByRole('button', { name: 'Continue' }).click();
+  await gate(page).getByRole('button', { name: 'Approve' }).click();
   await expect(gate(page)).toContainText('check-work finished');
 }
 
@@ -77,7 +77,7 @@ test.describe('changes', () => {
     await expect(files(page).filter({ hasText: 'This step' })).toHaveCount(7);
 
     // The second step waits: the list follows, and only its two files are marked.
-    await gate(page).getByRole('button', { name: 'Continue' }).click();
+    await gate(page).getByRole('button', { name: 'Approve' }).click();
     await expect(gate(page)).toContainText('check-work finished');
     await expect(files(page)).toHaveCount(8);
     await expect(files(page).filter({ hasText: 'This step' })).toHaveText([

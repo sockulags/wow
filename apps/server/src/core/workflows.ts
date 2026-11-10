@@ -13,6 +13,7 @@ import {
 import {
   advance,
   pendingGate,
+  reviewedStepIndex,
   RunRejected,
   startRun,
   type EngineContext,
@@ -23,6 +24,7 @@ import { invocationsFor } from '@wow/skills';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveStored } from '../settings/service.js';
 import { backlogFollowsRun } from './backlog.js';
+import { decideThread } from './threads.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 
 // Decisions for workflow definitions and runs. Run transitions come from the pure workflow
@@ -111,6 +113,14 @@ export function decideWorkflow(
       return startRunEvents(command.type, command, read, context);
     case 'workflowRun.continue':
       return runInput(command.type, command.runId, { type: 'continue' }, read, context);
+    case 'workflowRun.sendBack':
+      return runInput(
+        command.type,
+        command.runId,
+        { type: 'sendBack', note: command.note },
+        read,
+        context,
+      );
     case 'workflowRun.stop':
       return runInput(command.type, command.runId, { type: 'stop' }, read, context);
     case 'workflowRun.stepCompleted':
@@ -243,6 +253,9 @@ function transitionEvents(
       });
       continue;
     }
+    if (effect.type === 'sendBack') {
+      events.push(...sendBackTurn(effect, read, context));
+    }
     if (effect.type === 'startStep') {
       const step = workflow.steps.find((entry) => entry.id === effect.stepId) as WorkflowStep;
       events.push({
@@ -262,6 +275,35 @@ function transitionEvents(
   events.push(...runNotifications(workflow, run, effects, read, context));
   events.push(...backlogFollowsRun(run, read));
   return events;
+}
+
+// The turn of a step sent back at its gate (review loop spec 16). It starts in the same commit as
+// the run change and in the step's own thread, which is never created again. A step is running
+// exactly while its own turn is, so the runner can take the next turn that ends in the thread as
+// the step's outcome: a message the user typed at the gate has ended by now or refuses the send
+// back here.
+function sendBackTurn(
+  effect: Extract<RunEffect, { type: 'sendBack' }>,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  if (!read.thread(effect.threadId)) {
+    throw new CommandRejected(
+      'rejected',
+      `The thread of step ${effect.stepId} no longer exists, so it cannot be sent back`,
+    );
+  }
+  if (read.runningTurn(effect.threadId)) {
+    throw new CommandRejected(
+      'rejected',
+      "The step's thread is still answering a message. Wait for it or stop that turn, then send back.",
+    );
+  }
+  return decideThread(
+    { type: 'thread.sendMessage', threadId: effect.threadId, text: effect.prompt },
+    read,
+    context,
+  );
 }
 
 // Every run state has a card state of the same name; `waiting` is what the card shows as "needs
@@ -323,8 +365,13 @@ function runNotifications(
     const body = [workflow.name, step?.skillName, card?.title].filter(Boolean).join(' · ');
     const waiting = notice.reason === 'waiting';
     const gate = pendingGate(run);
+    // A step sent back waits again as a new attempt, which is told again (review loop spec 19).
+    const reviewed = reviewedStepIndex(run);
+    const attempt = reviewed === undefined ? undefined : run.steps[reviewed]?.attempt;
     const id = waiting
-      ? `${run.id}:waiting:${notice.stepId ?? ''}:${gate?.position ?? ''}`
+      ? `${run.id}:waiting:${notice.stepId ?? ''}:${gate?.position ?? ''}${
+          attempt === undefined ? '' : `:attempt-${attempt}`
+        }`
       : `${run.id}:failed`;
     const notification: AppNotification = {
       id,
@@ -381,19 +428,21 @@ function runContext(
 ): EngineContext {
   return {
     now: context.now,
-    handoverTemplate: resolvedHandoverTemplate(read, context, projectId),
+    handoverTemplate: resolvedTemplate(HANDOVER_KEY, read, context, projectId),
+    sendBackTemplate: resolvedTemplate(SEND_BACK_KEY, read, context, projectId),
     invocationFor: (step) => invocationFor(read, step),
     backlogBody,
   };
 }
 
 const HANDOVER_KEY = 'workflows.handoverTemplate';
+const SEND_BACK_KEY = 'workflows.sendBackTemplate';
 
-function resolvedHandoverTemplate(read: ReadModel, context: DecideContext, projectId: string) {
-  const definition = context.registry[HANDOVER_KEY];
-  if (!definition) throw new Error(`${HANDOVER_KEY} is missing from the settings registry`);
-  const { value } = resolveStored(HANDOVER_KEY, definition, { projectId }, (scope) =>
-    read.setting(HANDOVER_KEY, scope),
+function resolvedTemplate(key: string, read: ReadModel, context: DecideContext, projectId: string) {
+  const definition = context.registry[key];
+  if (!definition) throw new Error(`${key} is missing from the settings registry`);
+  const { value } = resolveStored(key, definition, { projectId }, (scope) =>
+    read.setting(key, scope),
   );
   return typeof value === 'string' ? value : String(definition.default);
 }
