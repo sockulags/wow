@@ -800,6 +800,11 @@ const control = createServer((request, response) => {
     response.setHeader('content-type', 'application/json');
     response.end(JSON.stringify(outlook.opened));
     return;
+  } else if (url.pathname === '/asked' && request.method === 'GET') {
+    // Every operation the server has asked the mock Outlook, once each.
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify([...new Set(outlook.asked)].toSorted()));
+    return;
   } else {
     response.statusCode = 404;
   }

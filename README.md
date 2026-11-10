@@ -3,7 +3,7 @@
 A personal desktop control surface for one developer's working day. It puts three things on one
 screen:
 
-- **Calendar** (day and week): meetings and unread mail from the local Outlook client, plus local
+- **Calendar** (day and week): meetings from the local Outlook client, plus local
   cards that exist only in the app. A card with a workflow is a scheduled trigger.
 - **Chat**: threads run by Codex (`codex app-server`) or Claude Code (Claude Agent SDK), with
   streaming, tool calls, approvals, agent questions, model and effort choice, and `$skill` picking.

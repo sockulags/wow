@@ -84,7 +84,6 @@ Default keys (all changeable in Settings → Keybindings):
 | C                | Calendar: new card on the day you are on |
 | Ctrl+= / -       | Calendar: zoom in, zoom out              |
 | Ctrl+0           | Calendar: reset zoom                     |
-| M                | Calendar: fold or unfold the mail rail   |
 | Ctrl+Enter       | Run at a gate: Approve                   |
 | Ctrl+Shift+Enter | Run at a gate: Send back                 |
 | Ctrl+Shift+D     | Run: Steps or Changes tab                |
@@ -110,8 +109,7 @@ view:
   in Outlook**. While the panel is open a click selects instead of opening the card form or the
   meeting's popover, and the arrow keys in the grid move the selection with the focus; Enter on
   a selected card, or **Edit card**, opens the form. The selection is in the address
-  (`?item=…`), so a reload shows the same card. While the panel is open the mail rail folds to its
-  count; its button unfolds it.
+  (`?item=…`), so a reload shows the same card.
 - **Workflows**: a run shows its active step's thread; a workflow shows its steps, where it waits
   for you and its runs.
 - **Backlog**: an item shows its state, tags, where it is planned on the calendar, its runs and
@@ -283,17 +281,7 @@ palette read at once.
 
 If Outlook is not running or does not answer (a modal dialog open in Outlook blocks it), the last
 items stay on screen with a banner "Outlook unavailable since <time>". **Try again** reads at once
-and **What to check** lists the usual causes. The mail rail says when it was last read. The rest of
-the app keeps working, and the banner goes away on the next good read.
-
-### Unread mail
-
-The mail rail lists unread mail from `outlook.folders` (Inbox by default), newest first, with the
-count, the sender, the time, the subject and one line of the message. Click a message, or move to
-it with the arrow keys and press Enter, to open it in Outlook. The fold button, `M` or "Collapse
-mail rail" in the palette fold the rail to a strip with the count (`outlook.mailRailCollapsed`);
-in a narrow window or while the context panel is open it folds on its own. Turn the rail off with
-`outlook.mailRail`.
+and **What to check** lists the usual causes. The rest of the app keeps working, and the banner goes away on the next good read.
 
 ### Cards
 
@@ -826,7 +814,7 @@ Useful ones to know:
   request; can be set per provider instance), `providers.updateTimeoutMs` (how long "Update Codex"
   may run npm)
 - `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`, `calendar.lookaheadDays`
-- `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`
+- `outlook.pollSeconds`, `outlook.requestTimeoutMs`
 - `scheduler.missedPolicy`, `scheduler.notifications`, `scheduler.paused`
 - `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`
 - `plans.intentsDirectory`, `hosts.polling`, `hosts.pollSeconds`, `triggers.eventsEnabled`

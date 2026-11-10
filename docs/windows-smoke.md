@@ -12,8 +12,8 @@ release workflow will not publish a tag whose notes still say "pending".
 ## Machine
 
 - Windows 11, a normal (non-admin) user account.
-- Classic Outlook desktop with a mail profile that has meetings this week (at least one recurring
-  meeting and one with a Teams link) and some unread mail.
+- Classic Outlook desktop with a profile that has meetings this week (at least one recurring
+  meeting and one with a Teams link) and some unread messages in the Inbox.
 - `claude` and `codex` CLIs installed, on `PATH`, and logged in (`claude` and `codex` each answer
   a prompt in a terminal).
 - A scratch Git repository to use as the project folder. Nothing in it should matter.
@@ -38,8 +38,9 @@ version and the CI run it came from.
 - [ ] Week view shows this week's Outlook meetings at their times, each with a lock marker.
 - [ ] A recurring meeting appears once per occurrence.
 - [ ] A meeting with a Teams link shows "Join Teams meeting"; clicking it opens Teams.
-- [ ] The mail rail shows the unread count and the newest messages; clicking one opens it in
-      Outlook.
+- [ ] After the update that reads Outlook for meetings only, the calendar still loads this
+      week's meetings, the time grid takes the whole width, and nothing in wow shows the Inbox or
+      its unread messages.
 - [ ] Move a meeting in Outlook. Within `outlook.pollSeconds` (60 s by default) it moves in wow,
       without a restart.
 - [ ] Open a modal dialog in Outlook (for example File → Options) and press "Refresh Outlook". The
