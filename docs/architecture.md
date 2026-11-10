@@ -803,6 +803,12 @@ There are no webhooks: an event is something a read from the host shows.
   to a commit that already failed, start nothing (spec 49). The run's id is derived from the
   trigger and the event (`eventRunId`). Several new comments in one read are one event, for
   the newest, so a review with ten comments starts one run.
+- **A run's answer starts nothing.** A review comment that arrives while the trigger's own run
+  for that pull request is still going, or one by an account in
+  `triggers.ignoredCommentAuthors`, is recorded as seen and starts no run. Otherwise a run that
+  answers the review with a comment would start the next run, without end. wow cannot tell
+  which account an agent writes as, so a person's comment made during that run is passed over
+  too.
 - **Off means never.** While `triggers.eventsEnabled` is off, the scheduler is paused or the
   trigger itself is off, nothing starts. The stored pull request moves on all the same, so
   the event is not seen again and nothing starts for it later (spec 52).
@@ -888,7 +894,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs`, `trackers.jira.keyScanCommits` (the
   `trackers.jira.*` and `trackers.github.*` ones are project-scoped, see "Backlog and trackers")
 - hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount` (see "Hosts")
-- triggers: `triggers.eventsEnabled` (the "Event triggers" page, see "Scheduler and triggers")
+- triggers: `triggers.eventsEnabled`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
 - diff: `diff.maxFileBytes`, `diff.maxFiles` (the "Changes" page, see "Run base and changes")
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),

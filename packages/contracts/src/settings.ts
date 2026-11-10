@@ -931,6 +931,15 @@ export const settingsRegistry = {
     default: true,
     scope: 'global',
   }),
+  'triggers.ignoredCommentAuthors': defineSetting({
+    schema: z.array(z.string().trim().min(1)),
+    group: 'triggers',
+    label: 'Accounts whose comments start nothing',
+    description:
+      "Host account names whose review comments never start a run, for example the account your agents write as. A comment that arrives while the trigger's own run for that pull request is still going starts nothing either, so a run that answers a review cannot start the next one.",
+    default: [],
+    scope: 'global',
+  }),
   'hosts.polling': defineSetting({
     schema: z.boolean(),
     group: 'hosts',

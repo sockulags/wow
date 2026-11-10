@@ -503,6 +503,51 @@ describe('a review comment (spec 51)', () => {
   });
 });
 
+// One more review comment on the bell pull request.
+const withComment = (id: number, user: string) => {
+  const comments = [
+    ...(host.pulls[0]?.comments ?? []),
+    { id, user, body: 'Invented', path: 'a.ts' },
+  ];
+  host.pulls = [{ ...bell, comments }];
+};
+
+describe('a comment that must not start a run', () => {
+  it('starts nothing for a comment that arrives while the trigger’s run for that pull request is going', async () => {
+    // A gate after the step keeps the run going until someone answers it.
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'answer',
+      name: 'Answer the review',
+      steps: [step('answer', { gateAfter: true })],
+    });
+    await follow();
+    createTrigger('commentAdded', 'on-comment', 'answer');
+    withComment(9101, 'mira');
+    await poll();
+    expect(eventRuns()).toHaveLength(1);
+    // The run answers with a comment of its own before it ends.
+    withComment(9102, 'wow-agent');
+    await poll();
+    dispatch({ type: 'workflowRun.continue', runId: eventRuns()[0]?.id ?? '' });
+    await eventRunEnds();
+    await poll();
+    expect(eventRuns()).toHaveLength(1);
+  });
+
+  it('starts nothing for a comment by an account in triggers.ignoredCommentAuthors', async () => {
+    set('triggers.ignoredCommentAuthors', ['WOW-Agent']);
+    await follow();
+    createTrigger('commentAdded');
+    withComment(9201, 'wow-agent');
+    await poll();
+    expect(eventRuns()).toHaveLength(0);
+    withComment(9202, 'mira');
+    await poll();
+    expect(eventRuns()).toHaveLength(1);
+  });
+});
+
 describe('switched off (spec 52)', () => {
   it('starts nothing while triggers.eventsEnabled is off, and nothing for it later', async () => {
     await follow();

@@ -21,6 +21,7 @@ import {
 import { missedTriggerOutcome } from '@wow/workflow-engine';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { resolveStored } from '../settings/service.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 import {
   globalSettingOn,
@@ -445,6 +446,14 @@ export function eventTriggerEvents(
     for (const happened of seen) {
       if (happened.event !== trigger.event) continue;
       if (read.triggerEventSeen(trigger.id, happened.id)) continue;
+      if (commentStartsNothing(trigger, happened, read, context)) {
+        events.push({
+          kind: 'trigger.eventSeen',
+          aggregate: trigger.id,
+          payload: { triggerId: trigger.id, eventId: happened.id, runId: null, at: context.now },
+        });
+        continue;
+      }
       const fired = fireEvent(trigger, happened, scopes, read, context);
       events.push(...fired.events);
       lastRunId = fired.runId ?? lastRunId;
@@ -452,6 +461,40 @@ export function eventTriggerEvents(
     if (lastRunId !== undefined) events.push(triggerSet({ ...trigger, runId: lastRunId }));
   }
   return events;
+}
+
+const IGNORED_AUTHORS_KEY = 'triggers.ignoredCommentAuthors';
+
+// A run that answers a review with a comment of its own must not start the next run, and so on
+// without end. wow cannot tell which account an agent writes as, so two things stop the loop: a
+// comment that arrives while the trigger's own run for that pull request is still going starts
+// nothing, and neither does one by an account the user listed.
+function commentStartsNothing(
+  trigger: EventTrigger,
+  happened: SeenEvent,
+  read: ReadModel,
+  context: DecideContext,
+): boolean {
+  if (!happened.comment) return false;
+  const definition = context.registry[IGNORED_AUTHORS_KEY];
+  const ignored = definition
+    ? resolveStored(IGNORED_AUTHORS_KEY, definition, {}, (scope) =>
+        read.setting(IGNORED_AUTHORS_KEY, scope),
+      ).value
+    : [];
+  const author = happened.comment.author.toLowerCase();
+  if (
+    Array.isArray(ignored) &&
+    ignored.some((name) => typeof name === 'string' && name.toLowerCase() === author)
+  ) {
+    return true;
+  }
+  const last = trigger.runId === null ? undefined : read.run(trigger.runId);
+  return (
+    last !== undefined &&
+    isLiveRunState(last.state) &&
+    last.event?.changeRequestId === happened.request.id
+  );
 }
 
 function fireEvent(
