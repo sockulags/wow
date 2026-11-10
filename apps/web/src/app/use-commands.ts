@@ -10,7 +10,7 @@ import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
 import { providerCommands } from '@/providers/commands';
 import { formatWhen } from '@/lib/format';
-import { panelCommands } from '@/panel/commands';
+import { panelCommands, viewerCommands } from '@/panel/commands';
 import { panelSelection } from '@/panel/model';
 import { useCalendarPrefs } from '@/calendar/prefs';
 import { pendingApproval } from '@/chat/view-model';
@@ -19,7 +19,7 @@ import { gateRunForThread } from '@/workflows/model';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
 import { updateCommands } from './updates';
 import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
-import { useRuntime, useSetting, useUpdateState } from './runtime';
+import { useLayout, useRuntime, useSetting, useUpdateState } from './runtime';
 
 export function useCommands(): {
   readonly commands: readonly AppCommand[];
@@ -54,6 +54,7 @@ export function useCommands(): {
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
     [pathname, locationSearch],
   );
+  const viewer = useLayout((state) => state.viewer);
   const staticCommands = useMemo(() => buildCommands(), []);
   const commands = useMemo(() => {
     const zone = calendarZone;
@@ -101,6 +102,7 @@ export function useCommands(): {
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
       }),
       ...panelCommands(panelSelection(pathname, locationSearch)),
+      ...viewerCommands({ viewer, pathname, openRun, projects: projects ?? [] }),
       ...providerCommands(instances ?? []),
       ...projectCommands(projects ?? []),
       ...updateCommands(updateState),
@@ -131,6 +133,7 @@ export function useCommands(): {
     schedulerPaused,
     backlogItems,
     openBacklogItemId,
+    viewer,
   ]);
   const context = useMemo(
     () => ({ navigate, settings, layout, draft, connection, updates }),

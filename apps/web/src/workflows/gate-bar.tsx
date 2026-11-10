@@ -95,7 +95,7 @@ export function GateBar({
       {review && gate && reviewed && reviewed.artifactsFound.length > 0 && project && (
         <ul aria-label="Artifacts to review" className="flex flex-col gap-0.5 text-xs">
           {reviewed.artifactsFound.map((path) => (
-            <Artifact key={path} cwd={project.cwd} path={path} />
+            <Artifact key={path} runId={run.id} cwd={project.cwd} path={path} />
           ))}
         </ul>
       )}

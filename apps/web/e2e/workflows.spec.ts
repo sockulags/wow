@@ -97,9 +97,11 @@ test.describe('workflows', () => {
     await expect(gate.getByTestId('gate-review')).toContainText('Last message from capture-intent');
     await expect(runSteps.nth(1).getByTestId('step-state')).toHaveText('Not started');
     await expect(runSteps.nth(1).getByRole('link', { name: 'Open thread' })).toHaveCount(0);
+    // Artifacts open in the side panel (e2e/panel.spec.ts); no file:// link is left.
     await expect(
-      runSteps.nth(0).getByRole('link', { name: 'Open intents/demo/intent.md' }),
-    ).toHaveAttribute('href', /^file:\/\/.*\/intents\/demo\/intent\.md$/);
+      runSteps.nth(0).getByRole('button', { name: 'Open intents/demo/intent.md' }),
+    ).toBeVisible();
+    await expect(page.locator('a[href^="file:"]')).toHaveCount(0);
 
     await gate.getByRole('button', { name: 'Continue' }).click();
     await expect(runSteps.nth(0).getByTestId('step-state')).toHaveText('Done');

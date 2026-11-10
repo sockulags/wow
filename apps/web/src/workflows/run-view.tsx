@@ -28,6 +28,7 @@ import {
 } from './model';
 
 function StepRow({
+  runId,
   index,
   step,
   stepRun,
@@ -35,6 +36,7 @@ function StepRow({
   instanceName,
   waitsAfter,
 }: {
+  runId: string;
   index: number;
   step: WorkflowStep | undefined;
   stepRun: StepRun;
@@ -100,7 +102,7 @@ function StepRow({
             {stepRun.artifactsFound.length > 0 && project ? (
               <ul aria-label={`Artifacts of ${name}`} className="mt-1 flex flex-col gap-0.5">
                 {stepRun.artifactsFound.map((path) => (
-                  <Artifact key={path} cwd={project.cwd} path={path} />
+                  <Artifact key={path} runId={runId} cwd={project.cwd} path={path} />
                 ))}
               </ul>
             ) : (
@@ -225,6 +227,7 @@ export function RunView({ runId }: { runId: string }) {
             const step = workflow?.steps.find((candidate) => candidate.id === stepRun.stepId);
             return (
               <StepRow
+                runId={run.id}
                 key={stepRun.stepId}
                 index={index}
                 step={step}

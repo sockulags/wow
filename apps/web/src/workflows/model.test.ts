@@ -10,7 +10,6 @@ import { workflowCommands } from './commands';
 import {
   applyStepChanges,
   artifactPath,
-  artifactUrl,
   blocking,
   draftFromTemplate,
   draftOf,
@@ -256,13 +255,7 @@ describe('run view helpers', () => {
     expect(sortRuns([old, done, live]).map((entry) => entry.id)).toEqual(['c', 'a', 'b']);
   });
 
-  it('links artifacts inside the project folder on Windows and POSIX', () => {
-    expect(artifactUrl('C:\\work\\demo', 'intents/my app/spec.md')).toBe(
-      'file:///C:/work/demo/intents/my%20app/spec.md',
-    );
-    expect(artifactUrl('/home/me/demo/', 'intents/x/spec.md')).toBe(
-      'file:///home/me/demo/intents/x/spec.md',
-    );
+  it('names an artifact by its full path on Windows and POSIX', () => {
     expect(artifactPath('C:\\work\\demo', 'intents/x/spec.md')).toBe(
       'C:\\work\\demo\\intents\\x\\spec.md',
     );

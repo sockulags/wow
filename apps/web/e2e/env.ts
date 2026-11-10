@@ -43,6 +43,10 @@ export const e2ePanelOutlookControlPort = 4552;
 export const e2ePanelTrackerPort = 4553;
 export const e2ePanelWorkflowId = 'panel-e2e';
 export const e2ePanelCardId = 'panel-e2e-card';
+// The same server seeds a workflow whose one step expects `review/*` and waits after it, and
+// invented files of every kind the viewer shows in the project's `review` folder. POST
+// /run?workflowId=…&runId=… on its tracker port starts a run of it.
+export const e2eViewerWorkflowId = 'viewer-e2e';
 
 // The folders those session files point at: two exist, one is gone.
 export const e2eWorkspace = (home: string, name: string) => path.join(home, 'workspaces', name);

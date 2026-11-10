@@ -306,19 +306,6 @@ export const sortRuns = (runs: readonly WorkflowRun[]): WorkflowRun[] =>
     (a, b) => Number(isLive(b)) - Number(isLive(a)) || b.startedAt.localeCompare(a.startedAt),
   );
 
-// A file:// link to an artifact found in the project folder. Paths come relative with forward
-// slashes; the folder may be a Windows path.
-export function artifactUrl(cwd: string, relative: string): string {
-  const base = cwd.replaceAll('\\', '/').replace(/\/+$/, '');
-  const absolute = `${base}/${relative.replace(/^\/+/, '')}`;
-  const withRoot = absolute.startsWith('/') ? absolute : `/${absolute}`;
-  return `file://${withRoot
-    .split('/')
-    .map(encodeURIComponent)
-    .join('/')
-    .replace(/^\/([A-Za-z])%3A/, '/$1:')}`;
-}
-
 // Merges an edit into a step. Moving a step to another provider instance drops its model,
 // effort and permission mode, because those belong to the instance it left.
 export function applyStepChanges(step: DraftStep, changes: Partial<DraftStep>): DraftStep {

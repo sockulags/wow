@@ -18,6 +18,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage } from 'node:http';
 import path from 'node:path';
+import { crc32, deflateSync } from 'node:zlib';
 import {
   e2eBinDir,
   e2eBinary,
@@ -34,6 +35,7 @@ import {
   e2eProjectsHome,
   e2eProviderInstanceId,
   e2eTrackerPort,
+  e2eViewerWorkflowId,
   e2eWorkflowId,
   e2eWorkspace,
 } from './env';
@@ -313,6 +315,103 @@ await writeFile(
 );
 await mkdir(path.join(home, 'intents', 'demo'), { recursive: true });
 await writeFile(path.join(home, 'intents', 'demo', 'intent.md'), '# Demo intent\n');
+const pngChunk = (type: string, data: Buffer) => {
+  const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const check = Buffer.alloc(4);
+  check.writeUInt32BE(crc32(body));
+  return Buffer.concat([length, body, check]);
+};
+
+// An invented picture for the viewer tests: a PNG drawn here, so no binary fixture is checked in.
+function inventedPng(width: number, height: number): Buffer {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  // Rows of red, green, blue: a slate page with a lighter card and an accent bar on it.
+  const rows = Buffer.alloc(height * (1 + width * 3));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const card = x > width * 0.1 && x < width * 0.9 && y > height * 0.2 && y < height * 0.8;
+      const bar = card && y < height * 0.3;
+      const color = bar ? [94, 106, 210] : card ? [236, 238, 244] : [30, 34, 46];
+      rows.set(color, y * (1 + width * 3) + 1 + x * 3);
+    }
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(rows)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+// The panel server's project holds one invented file of each kind the viewer shows, and one it
+// refuses. The HTML page tries everything a page must not be able to do from the viewer: reach
+// the app, its storage and the network (the tracker port below records any request that arrives).
+if (home === e2ePanelHome) {
+  const review = path.join(home, 'review');
+  const leak = `http://127.0.0.1:${trackerPort}/leak`;
+  await mkdir(review, { recursive: true });
+  await writeFile(
+    path.join(review, 'notes.md'),
+    [
+      '# Review notes',
+      '',
+      'The search panel was checked against its **three** acceptance lines.',
+      '',
+      '| Check | Result |',
+      '| --- | --- |',
+      '| Opens with its key | Pass |',
+      '| Keeps the query after a reload | Pass |',
+      '| Shows an empty state | Needs a look |',
+      '',
+      '- [x] Keyboard only',
+      '- [ ] Screen reader pass',
+      '',
+      '```ts',
+      "export const verdict = 'changes requested';",
+      '```',
+      '',
+    ].join('\n'),
+  );
+  await writeFile(path.join(review, 'screen.png'), inventedPng(640, 400));
+  await writeFile(
+    path.join(review, 'checks.json'),
+    `${JSON.stringify({ suite: 'search-panel', passed: 12, failed: 1 }, null, 2)}\n`,
+  );
+  await writeFile(path.join(review, 'archive.bin'), Buffer.from([0x50, 0x4b, 3, 4, 0, 0xff, 0]));
+  await writeFile(
+    path.join(review, 'report.html'),
+    [
+      '<!doctype html>',
+      '<html><head><title>Invented report</title>',
+      '<style>body { font: 14px sans-serif; margin: 16px; } h1 { font-size: 18px; }</style>',
+      '</head><body>',
+      '<h1>Search panel report</h1>',
+      '<p id="scripts">Scripts: off</p>',
+      '<p id="app">App: not tried</p>',
+      '<p id="network">Network: not tried</p>',
+      `<img alt="" src="${leak}/image">`,
+      `<a href="${leak}/link" target="_self">A link out</a>`,
+      '<script>',
+      "  document.getElementById('scripts').textContent = 'Scripts: on';",
+      "  let app = 'blocked';",
+      "  try { app = 'reached ' + parent.document.title; } catch {}",
+      "  let storage = 'blocked';",
+      "  try { localStorage.setItem('invented', '1'); storage = 'reached'; } catch {}",
+      "  document.getElementById('app').textContent = 'App: ' + app + ', storage: ' + storage;",
+      `  fetch('${leak}/fetch').then(() => 'reached', () => 'blocked').then((result) => {`,
+      "    document.getElementById('network').textContent = 'Network: ' + result;",
+      '  });',
+      '</script>',
+      '</body></html>',
+      '',
+    ].join('\n'),
+  );
+}
 const server = await startServer({
   home,
   port,
@@ -478,6 +577,24 @@ if (home === e2ePanelHome) {
       },
     ],
   });
+  server.engine.dispatch('seed-viewer-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eViewerWorkflowId,
+    name: 'Viewer e2e',
+    steps: [
+      {
+        id: 'review',
+        skillName: 'check-work',
+        providerInstanceId: e2eProviderInstanceId,
+        model: 'mock-model',
+        effort: 'default',
+        permissionMode: 'default',
+        gateBefore: false,
+        gateAfter: true,
+        expectedArtifacts: ['review/*'],
+      },
+    ],
+  });
   const start = new Date();
   start.setDate(start.getDate() + 1);
   start.setHours(10, 0, 0, 0);
@@ -535,6 +652,24 @@ const trackers = createServer((request, response) => {
       cardId === null ? card.backlogItemId === backlogItemId : card.id === cardId,
     );
     return runId ? json(200, { runId }) : json(404, { error: 'No such card' });
+  }
+  // A run started without a card, for the viewer tests.
+  if (request.method === 'POST' && url.pathname === '/run') {
+    const workflowId = url.searchParams.get('workflowId');
+    const runId = url.searchParams.get('runId');
+    if (!workflowId || !runId) return json(400, { error: 'workflowId and runId are needed' });
+    server.engine.dispatch(`run-${runId}`, {
+      type: 'workflowRun.start',
+      runId,
+      workflowId,
+      projectId: e2eProjectId,
+    });
+    return json(200, { runId });
+  }
+  // Anything the viewer's HTML page manages to fetch lands here and fails its test.
+  if (url.pathname.startsWith('/leak')) {
+    received.push({ path: url.pathname, authorization: undefined, body: undefined });
+    return json(200, {});
   }
   if (request.method !== 'POST') return json(404, {});
   void readBody(request).then((body) => {
