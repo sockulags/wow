@@ -2,6 +2,7 @@ import type {
   FileHash,
   MissedTriggerPolicy,
   RunEffect,
+  RunEvent,
   RunUnit,
   StepRun,
   TriggerState,
@@ -11,6 +12,7 @@ import type {
 } from '@wow/contracts';
 import {
   bulletList,
+  eventValues,
   renderHandover,
   renderSendBack,
   renderUnitPrompt,
@@ -77,6 +79,8 @@ export interface NewRun {
   readonly backlogItemId?: string | null | undefined;
   // The unit the run delivers, when a plan run starts it.
   readonly unit?: RunUnit | null | undefined;
+  // What started the run, when an event trigger did.
+  readonly event?: RunEvent | null | undefined;
 }
 
 export class RunRejected extends Error {
@@ -132,6 +136,7 @@ export function startRun(workflow: Workflow, input: NewRun, context: EngineConte
     baseSha: null,
     baseFiles: null,
     ...(input.unit ? { unit: input.unit } : {}),
+    ...(input.event ? { event: input.event } : {}),
   };
   if (first.gateBefore) return waitBefore(run, 0, []);
   return beginStep(workflow, run, 0, context, []);
@@ -446,6 +451,7 @@ export function renderStepPrompt(
     backlogBody: context.backlogBody ?? '',
     previousArtifacts: bulletList([...new Set(earlierArtifacts)]),
     expectedArtifacts: bulletList(step.expectedArtifacts),
+    ...eventValues(run.event),
   });
   // Every step of a unit's run is told which unit it works on (review loop spec 40).
   const unit = run.unit

@@ -20,6 +20,7 @@ import {
   Thread,
   ThreadItem,
   Trigger,
+  TriggerEvent,
   Turn,
   TurnState,
   Usage,
@@ -251,6 +252,18 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('planRun.start'), planRunId: Id, planId: Id, workflowId: Id }),
   // Stops the live unit run and starts no further unit (spec 45).
   z.object({ type: z.literal('planRun.stop'), planRunId: Id }),
+  // An event trigger (review loop spec 48): runs of the workflow start when polling first sees
+  // the event on a pull request wow follows in the project. New triggers are on.
+  z.object({
+    type: z.literal('trigger.create'),
+    triggerId: Id,
+    projectId: Id,
+    event: TriggerEvent,
+    workflowId: Id,
+  }),
+  z.object({ type: z.literal('trigger.setEnabled'), triggerId: Id, enabled: z.boolean() }),
+  // Event triggers only; a card's trigger goes with its card.
+  z.object({ type: z.literal('trigger.delete'), triggerId: Id }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command['type'];
@@ -721,6 +734,18 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   }),
   // The trigger row as it now is.
   z.object({ kind: z.literal('trigger.set'), aggregate: Id, payload: Trigger }),
+  z.object({
+    kind: z.literal('trigger.deleted'),
+    aggregate: Id,
+    payload: z.object({ triggerId: Id }),
+  }),
+  // An event trigger saw its event. Stored so the same event never fires the trigger again;
+  // `runId` is null when the run could not start.
+  z.object({
+    kind: z.literal('trigger.eventSeen'),
+    aggregate: Id,
+    payload: z.object({ triggerId: Id, eventId: Id, runId: Id.nullable(), at: Timestamp }),
+  }),
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
   z.object({ kind: z.literal('backlog.created'), aggregate: Id, payload: BacklogItem }),
   // Edits by the user, "Plan on calendar", and the item following its run (behavior 29).

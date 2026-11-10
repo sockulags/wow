@@ -1,3 +1,5 @@
+import { triggerEventLabels, type RunEvent } from '@wow/contracts';
+
 // Renders the `workflows.handoverTemplate` setting. `{{name}}` is replaced by the value and
 // `{{#name}}…{{/name}}` is kept only when the value is not empty, so an unused part of the
 // template (no backlog item, first step) leaves no stray heading.
@@ -8,6 +10,42 @@ export interface HandoverValues {
   readonly backlogBody: string;
   readonly previousArtifacts: string;
   readonly expectedArtifacts: string;
+  // For a run an event trigger started: what happened and on which pull request. Empty
+  // otherwise. A review comment is named by its link and author, never by its text.
+  readonly event: string;
+  readonly pullRequestNumber: string;
+  readonly pullRequestUrl: string;
+  readonly pullRequestBranch: string;
+  readonly commentUrl: string;
+  readonly commentAuthor: string;
+}
+
+const noEvent = {
+  event: '',
+  pullRequestNumber: '',
+  pullRequestUrl: '',
+  pullRequestBranch: '',
+  commentUrl: '',
+  commentAuthor: '',
+};
+
+// A name from the host as one short word in a prompt: letters, digits and the few marks account
+// names use. Anything else someone could put into a display name is dropped.
+const plainName = (name: string): string => name.replace(/[^\p{L}\p{N}._@[\]-]/gu, '').slice(0, 64);
+
+export function eventValues(
+  event: RunEvent | null | undefined,
+): Pick<HandoverValues, keyof typeof noEvent> {
+  if (!event) return noEvent;
+  return {
+    event: triggerEventLabels[event.event].toLowerCase(),
+    pullRequestNumber: String(event.number),
+    pullRequestUrl: event.url,
+    pullRequestBranch: event.branch,
+    commentUrl: event.commentUrl ?? '',
+    commentAuthor:
+      event.commentUrl === null ? '' : plainName(event.commentAuthor ?? '') || 'someone',
+  };
 }
 
 const SECTION = /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g;

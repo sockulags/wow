@@ -8,6 +8,7 @@ import {
   type OutlookStatus,
   type BacklogItem,
   type DomainEvent,
+  type EventTrigger,
   type Project,
   type ProviderInstance,
   type Question,
@@ -81,6 +82,10 @@ export interface ReadModel {
   hasLiveRun(workflowId: string): boolean;
   backlogItem(id: string): BacklogItem | undefined;
   trigger(id: string): Trigger | undefined;
+  // The project's event triggers, oldest first.
+  eventTriggers(projectId: string): EventTrigger[];
+  // Whether the trigger has already seen this event (and started its run, or failed to).
+  triggerEventSeen(triggerId: string, eventId: string): boolean;
   // True while a run started for this backlog item is running or waiting at a gate.
   backlogItemHasLiveRun(id: string): boolean;
 }
@@ -115,7 +120,7 @@ export function decide(
   if (isCalendarCommand(command)) return decideCalendar(command, read, context);
   if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
   if (isBacklogCommand(command)) return decideBacklog(command, read, context);
-  if (isHostCommand(command)) return decideHosts(command, read);
+  if (isHostCommand(command)) return decideHosts(command, read, context);
   if (isPlanRunCommand(command)) return decidePlanRun(command, read, context);
   switch (command.type) {
     case 'setting.set': {

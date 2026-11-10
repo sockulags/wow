@@ -4,6 +4,7 @@ import {
   type CardState,
   type DomainEvent,
   type RunEffect,
+  type RunEvent,
   type RunUnit,
   type ServerCommand,
   type Thread,
@@ -283,6 +284,10 @@ export interface RunStart {
   readonly backlogItemId?: string | null | undefined;
   // The unit the run delivers, when a plan run starts it.
   readonly unit?: RunUnit | undefined;
+  // What started the run, when an event trigger did, and the working copy the pull request
+  // already has, if any.
+  readonly event?: RunEvent | undefined;
+  readonly existingCopy?: { readonly run: WorkflowRun; readonly copy: WorkingCopy } | undefined;
 }
 
 // A new run of the workflow: a client's Run now, a card's Run now, a firing trigger or a plan
@@ -318,13 +323,32 @@ export function startRunEvents(
         calendarItemId: start.calendarItemId ?? null,
         backlogItemId: start.backlogItemId ?? null,
         unit: start.unit,
+        event: start.event,
       },
       engineContext,
     ),
   );
-  // A unit's run always works in its own working copy (review loop spec 40).
-  if (!workflow.ownWorkingCopy && !start.unit) {
+  // A unit's run always works in its own working copy (review loop spec 40), and so does a run
+  // an event started (spec 48).
+  if (!workflow.ownWorkingCopy && !start.unit && !start.event) {
     return transitionEvents(cause, workflow, undefined, transition, read, context);
+  }
+  // The pull request's working copy is there already: the run works in it beside the run that
+  // made it. Nothing is made, and the workspaces service removes it only when no run that
+  // works in it is still going.
+  if (start.existingCopy) {
+    const { run: owner, copy } = start.existingCopy;
+    const shared: WorkingCopy = {
+      path: copy.path,
+      state: 'ready',
+      startSha: copy.startSha,
+      defaultBranch: copy.defaultBranch,
+      note: `This run works in the working copy that run ${owner.id} made for the pull request.`,
+      unpushed: null,
+      error: null,
+    };
+    const run = { ...transition.run, workingCopy: shared };
+    return transitionEvents(cause, workflow, undefined, { ...transition, run }, read, context);
   }
   // The folder is only named here. The workspaces service makes it before the first step gets
   // its prompt, and the run fails there when it cannot (review loop spec 36, 38).
@@ -346,6 +370,8 @@ export function startRunEvents(
     note: null,
     unpushed: null,
     error: null,
+    // An event's run starts on the pull request's branch (spec 48).
+    ...(start.event && start.event.branch !== '' ? { branch: start.event.branch } : {}),
   };
   const run = { ...transition.run, workingCopy };
   return transitionEvents(cause, workflow, undefined, { ...transition, run }, read, context);
@@ -475,14 +501,16 @@ function cardFollowsRun(
 
 const NOTIFICATIONS_KEY = 'scheduler.notifications';
 
-export function notificationsEnabled(read: ReadModel, context: DecideContext): boolean {
-  const definition = context.registry[NOTIFICATIONS_KEY];
+// Whether a global on/off setting is on, as stored or by its default.
+export function globalSettingOn(key: string, read: ReadModel, context: DecideContext): boolean {
+  const definition = context.registry[key];
   if (!definition) return false;
-  const { value } = resolveStored(NOTIFICATIONS_KEY, definition, {}, (scope) =>
-    read.setting(NOTIFICATIONS_KEY, scope),
-  );
+  const { value } = resolveStored(key, definition, {}, (scope) => read.setting(key, scope));
   return value === true;
 }
+
+export const notificationsEnabled = (read: ReadModel, context: DecideContext): boolean =>
+  globalSettingOn(NOTIFICATIONS_KEY, read, context);
 
 export const runPath = (runId: string) => `/workflows/runs/${runId}`;
 

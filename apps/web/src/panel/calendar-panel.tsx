@@ -1,4 +1,9 @@
-import type { CalendarItem, Trigger, TriggerState } from '@wow/contracts';
+import {
+  isCardTrigger,
+  type CalendarItem,
+  type CardTrigger,
+  type TriggerState,
+} from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { PencilIcon, PlayIcon, SearchXIcon } from 'lucide-react';
 import { useRuntime, useSetting } from '@/app/runtime';
@@ -28,7 +33,7 @@ const stateDot: Readonly<Record<string, string>> = {
   missed: 'bg-state-failed',
 };
 
-function triggerText(trigger: Trigger, zone: string): string {
+function triggerText(trigger: CardTrigger, zone: string): string {
   const when = formatWhen(trigger.runAt, zone);
   const text: Readonly<Record<TriggerState, string>> = {
     scheduled: `Scheduled, ${when}`,
@@ -57,7 +62,9 @@ function CardPanel({ card }: { readonly card: CalendarItem }) {
   const state = cardState(card);
   const project = projects.find((candidate) => candidate.id === card.projectId);
   const workflow = workflows.find((candidate) => candidate.id === card.workflowId);
-  const trigger = triggers.find((candidate) => candidate.calendarItemId === card.id);
+  const trigger = triggers
+    .filter(isCardTrigger)
+    .find((candidate) => candidate.calendarItemId === card.id);
   const item = backlog.find((candidate) => candidate.id === card.backlogItemId);
   const run = cardRun(card, triggers, runs);
   const runWorkflow = run

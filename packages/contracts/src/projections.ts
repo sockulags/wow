@@ -323,6 +323,35 @@ export const RunUnit = z.object({
 });
 export type RunUnit = z.infer<typeof RunUnit>;
 
+// A card trigger fires at the card's start; an event trigger fires when polling first sees
+// something happen on a pull request wow follows (review loop spec 48).
+export const TriggerKind = z.enum(['card', 'event']);
+export type TriggerKind = z.infer<typeof TriggerKind>;
+
+export const TriggerEvent = z.enum(['merged', 'checksFailed', 'commentAdded']);
+export type TriggerEvent = z.infer<typeof TriggerEvent>;
+
+export const triggerEventLabels: Readonly<Record<TriggerEvent, string>> = {
+  merged: 'Pull request merged',
+  checksFailed: 'Checks failed',
+  commentAdded: 'Review comment added',
+};
+
+// What started a run that an event trigger started (review loop spec 48, 51). Every step's
+// handover names the pull request and the event. A review comment is carried as its link and
+// author only: text someone else wrote never becomes part of a prompt wow writes.
+export const RunEvent = z.object({
+  triggerId: Id,
+  event: TriggerEvent,
+  changeRequestId: Id,
+  number: z.number().int().positive(),
+  url: z.string().min(1),
+  branch: z.string(),
+  commentUrl: z.string().min(1).nullable(),
+  commentAuthor: z.string().nullable(),
+});
+export type RunEvent = z.infer<typeof RunEvent>;
+
 export const WorkflowRun = z.object({
   id: Id,
   workflowId: Id,
@@ -344,6 +373,8 @@ export const WorkflowRun = z.object({
   workingCopy: WorkingCopy.nullable().optional(),
   // Absent or null for a run nobody started for a unit.
   unit: RunUnit.nullable().optional(),
+  // Absent or null for a run no event trigger started.
+  event: RunEvent.nullable().optional(),
 });
 export type WorkflowRun = z.infer<typeof WorkflowRun>;
 
@@ -354,18 +385,59 @@ export const runFolder = (run: Pick<WorkflowRun, 'workingCopy'>, projectFolder: 
 export const TriggerState = z.enum(['scheduled', 'fired', 'missed', 'cancelled']);
 export type TriggerState = z.infer<typeof TriggerState>;
 
+// One table for both kinds. The fields of the other kind are null, because that is what SQLite
+// stores; `isCardTrigger` and `isEventTrigger` narrow a row to the fields its kind has.
 export const Trigger = z.object({
   id: Id,
-  calendarItemId: Id,
+  kind: TriggerKind,
   workflowId: Id,
-  runAt: Timestamp,
-  zone: z.string().min(1),
-  state: TriggerState,
+  // Card: the run the trigger started. Event: the last run it started.
   runId: Id.nullable(),
+  // Card triggers only.
+  calendarItemId: Id.nullable(),
+  runAt: Timestamp.nullable(),
+  zone: z.string().min(1).nullable(),
+  state: TriggerState.nullable(),
   // A missed trigger the card offers a one-click "Run now" for (missed policy `mark`).
   offerRunNow: z.boolean(),
+  // Event triggers only: the project whose pull requests it listens to, what it listens for,
+  // and whether it is on.
+  projectId: Id.nullable(),
+  event: TriggerEvent.nullable(),
+  enabled: z.boolean().nullable(),
+  createdAt: Timestamp.nullable(),
 });
 export type Trigger = z.infer<typeof Trigger>;
+
+export type CardTrigger = Trigger & {
+  kind: 'card';
+  calendarItemId: string;
+  runAt: string;
+  zone: string;
+  state: TriggerState;
+};
+
+export type EventTrigger = Trigger & {
+  kind: 'event';
+  projectId: string;
+  event: TriggerEvent;
+  enabled: boolean;
+  createdAt: string;
+};
+
+export const isCardTrigger = (trigger: Trigger): trigger is CardTrigger =>
+  trigger.kind === 'card' &&
+  trigger.calendarItemId !== null &&
+  trigger.runAt !== null &&
+  trigger.zone !== null &&
+  trigger.state !== null;
+
+export const isEventTrigger = (trigger: Trigger): trigger is EventTrigger =>
+  trigger.kind === 'event' &&
+  trigger.projectId !== null &&
+  trigger.event !== null &&
+  trigger.enabled !== null &&
+  trigger.createdAt !== null;
 
 // What the server tells the user about without being asked: a run started by a trigger, a run
 // waiting at a gate, a failed run or trigger. The desktop app shows them as system notifications,

@@ -1,4 +1,9 @@
-import type { CalendarItem, OutlookProfile, Trigger } from '@wow/contracts';
+import {
+  isCardTrigger,
+  type CalendarItem,
+  type OutlookProfile,
+  type Trigger,
+} from '@wow/contracts';
 import { dispatch, settingValue, type SettingValues } from '@wow/client-runtime';
 import type { AppCommand, CommandContext } from '@/app/commands';
 import { stepDays, type CalendarViewKind } from './layout';
@@ -52,6 +57,7 @@ export function runNowCardIds(
   const missed = new Set(cards.filter((card) => card.state === 'missed').map((card) => card.id));
   return new Set(
     triggers
+      .filter(isCardTrigger)
       .filter((trigger) => trigger.state === 'missed' && trigger.offerRunNow)
       .map((trigger) => trigger.calendarItemId)
       .filter((id) => missed.has(id)),

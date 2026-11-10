@@ -17,6 +17,7 @@ export {
 } from './engine.js';
 export {
   bulletList,
+  eventValues,
   renderHandover,
   renderSendBack,
   renderUnitPrompt,

@@ -83,6 +83,9 @@ export const WorkingCopy = z.object({
   unpushed: UnpushedWork.nullable(),
   // Why it could not be made (`failed`) or could not be removed (`kept`).
   error: z.string().nullable(),
+  // The branch the copy is made on, for a run an event started on a pull request (review loop
+  // spec 48). Absent or null: on no branch, at the default branch's tip.
+  branch: z.string().min(1).nullable().optional(),
 });
 export type WorkingCopy = z.infer<typeof WorkingCopy>;
 

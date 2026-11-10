@@ -24,12 +24,15 @@ import type {
   ProviderUpdate,
   ProviderUpdateRun,
   ReviewComment,
+  RunEvent,
   RunUnit,
   SecretRef,
   SkillSource,
   StepRun,
   ThreadItemKind,
   ThreadState,
+  TriggerEvent,
+  TriggerKind,
   TriggerState,
   TurnState,
   UnitRef,
@@ -236,6 +239,7 @@ export const workflowRuns = sqliteTable('workflow_runs', {
   baseFiles: json<FileHash[]>(),
   workingCopy: json<WorkingCopy>(),
   unit: json<RunUnit>(),
+  event: json<RunEvent>(),
 });
 
 // Plan runs: one row per "Run ready units", kept after it ended.
@@ -257,22 +261,42 @@ export const planRuns = sqliteTable(
   (table) => [index('plan_runs_plan_idx').on(table.planId)],
 );
 
+// Card triggers and event triggers in one table. The columns of the other kind are null.
 export const triggers = sqliteTable(
   'triggers',
   {
     id: text().primaryKey(),
-    calendarItemId: text().notNull(),
+    kind: text().$type<TriggerKind>().notNull().default('card'),
+    calendarItemId: text(),
     workflowId: text().notNull(),
-    runAt: text().notNull(),
-    zone: text().notNull(),
-    state: text().$type<TriggerState>().notNull(),
+    runAt: text(),
+    zone: text(),
+    state: text().$type<TriggerState>(),
     runId: text(),
     offerRunNow: bool().notNull().default(false),
+    projectId: text(),
+    event: text().$type<TriggerEvent>(),
+    enabled: bool(),
+    createdAt: text(),
   },
   (table) => [
     index('triggers_due_idx').on(table.state, table.runAt),
     index('triggers_card_idx').on(table.calendarItemId),
+    index('triggers_project_idx').on(table.projectId),
   ],
+);
+
+// The events an event trigger has seen, by the id the host gives them, so a repeated poll
+// starts nothing (review loop spec 49).
+export const triggerEvents = sqliteTable(
+  'trigger_events',
+  {
+    triggerId: text().notNull(),
+    eventId: text().notNull(),
+    runId: text(),
+    at: text().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.triggerId, table.eventId] })],
 );
 
 export const notifications = sqliteTable('notifications', {

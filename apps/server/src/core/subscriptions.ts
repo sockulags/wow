@@ -49,7 +49,12 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
       case 'workflowRuns':
         return db.select().from(t.workflowRuns).orderBy(asc(t.workflowRuns.startedAt)).all();
       case 'triggers':
-        return db.select().from(t.triggers).orderBy(asc(t.triggers.runAt)).all();
+        // Card triggers by their time, then event triggers in the order they were made.
+        return db
+          .select()
+          .from(t.triggers)
+          .orderBy(asc(t.triggers.runAt), asc(t.triggers.createdAt), asc(t.triggers.id))
+          .all();
       case 'notifications':
         // Newest first.
         return db.select().from(t.notifications).orderBy(desc(t.notifications.at)).all();

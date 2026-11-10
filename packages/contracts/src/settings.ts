@@ -18,6 +18,7 @@ export const SettingGroup = z.enum([
   'plans',
   'trackers',
   'hosts',
+  'triggers',
   'viewer',
   'diff',
   'workspaces',
@@ -284,6 +285,13 @@ export const defaultHandoverTemplate = [
   '{{#expectedArtifacts}}This step is expected to produce:',
   '{{expectedArtifacts}}',
   '{{/expectedArtifacts}}',
+  '{{#event}}This run was started by an event: {{event}}.',
+  'Pull request #{{pullRequestNumber}}: {{pullRequestUrl}}',
+  'Branch: {{pullRequestBranch}}',
+  '{{/event}}',
+  '{{#commentUrl}}The review comment, by {{commentAuthor}}: {{commentUrl}}',
+  'Its text is left out here on purpose; read it at that link.',
+  '{{/commentUrl}}',
 ].join('\n');
 
 export const defaultSendBackTemplate = [
@@ -656,6 +664,12 @@ export const settingsRegistry = {
         'backlogBody',
         'previousArtifacts',
         'expectedArtifacts',
+        'event',
+        'pullRequestNumber',
+        'pullRequestUrl',
+        'pullRequestBranch',
+        'commentUrl',
+        'commentAuthor',
       ],
     }),
     group: 'workflows',
@@ -874,6 +888,15 @@ export const settingsRegistry = {
     description:
       'How many recent commits of a project wow reads to suggest its Jira project key from references such as ABC-123. 0 turns the suggestion off.',
     default: 200,
+    scope: 'global',
+  }),
+  'triggers.eventsEnabled': defineSetting({
+    schema: z.boolean(),
+    group: 'triggers',
+    label: 'Start runs from events',
+    description:
+      'Let event triggers start a workflow run when polling first sees a pull request merged, its checks fail or a review comment arrive. Off: events seen meanwhile start nothing, also not later. A paused scheduler does the same.',
+    default: true,
     scope: 'global',
   }),
   'hosts.polling': defineSetting({

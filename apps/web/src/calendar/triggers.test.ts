@@ -26,6 +26,11 @@ const card = (id: string, state: string): CalendarItem => ({
 
 const trigger = (cardId: string, state: Trigger['state'], offerRunNow: boolean): Trigger => ({
   id: `${cardId}:trigger`,
+  kind: 'card',
+  projectId: null,
+  event: null,
+  enabled: null,
+  createdAt: null,
   calendarItemId: cardId,
   workflowId: 'wf1',
   runAt: '2026-11-02T09:00:00.000Z',

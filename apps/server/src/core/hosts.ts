@@ -10,7 +10,8 @@ import {
   type ServerCommand,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
-import { CommandRejected, type ReadModel } from './orchestrator.js';
+import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
+import { eventTriggerEvents } from './triggers.js';
 
 // Decides what the host poller's reads and the Follow switch change: the stored reads and change
 // requests, and from them the unit statuses of followed plans (review loop spec 23, 24 and 31).
@@ -169,7 +170,11 @@ function planEvents(
     : [];
 }
 
-export function decideHosts(command: HostCommand, read: ReadModel): DomainEvent[] {
+export function decideHosts(
+  command: HostCommand,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
   switch (command.type) {
     case 'plan.follow': {
       const stored = read.planIntents();
@@ -242,9 +247,23 @@ export function decideHosts(command: HostCommand, read: ReadModel): DomainEvent[
         if (request.projectId === projectId) changeRequests.set(request.id, request);
       }
       const after = { reads, changeRequests };
+      // Event triggers see what this read shows that the stored rows did not. Only pull
+      // requests a plan or run still names count, like the rows that are kept.
+      const named = new Set([...reads.values()].flatMap((row) => row.changeRequestIds));
+      const readNow = command.changeRequests.filter(
+        (request) => request.projectId === projectId && named.has(request.id),
+      );
       return [
         ...hostEvents(projectId, before, after),
         ...planEvents(stored, stored, after, (plan) => planIsOpen(plan, read)),
+        ...eventTriggerEvents(
+          projectId,
+          before.changeRequests,
+          readNow,
+          reads.values(),
+          read,
+          context,
+        ),
       ];
     }
   }

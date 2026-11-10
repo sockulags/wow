@@ -83,7 +83,9 @@ export class Workspaces {
       return Promise.resolve(copy.error ?? 'The working copy could not be made');
     }
     if (copy.state !== 'pending') return Promise.resolve(undefined);
-    const work = this.#create(run, copy.path).finally(() => this.#preparing.delete(runId));
+    const work = this.#create(run, copy.path, copy.branch).finally(() =>
+      this.#preparing.delete(runId),
+    );
     this.#preparing.set(runId, work);
     return work;
   }
@@ -97,6 +99,13 @@ export class Workspaces {
     if (isLiveRunState(run.state) || copy.state === 'pending') {
       throw new WorkspaceRefused('The run is still going. Stop it, then remove its working copy.');
     }
+    const sharing = this.#sharing(copy.path);
+    const busy = sharing.find((other) => this.#busy(other));
+    if (busy) {
+      throw new WorkspaceRefused(
+        `Run ${busy.id} is still working in this working copy. Stop it, then remove the working copy.`,
+      );
+    }
     const projectFolder = this.#projectFolder(run.projectId);
     if (projectFolder === undefined) {
       throw new WorkspaceRefused(
@@ -109,8 +118,8 @@ export class Workspaces {
       git: this.#git(),
     });
     // What it held is still true when it could not be removed.
-    this.#report(
-      runId,
+    this.#reportAll(
+      sharing,
       outcome.state === 'kept' ? { ...outcome, unpushed: copy.unpushed } : outcome,
     );
     if (outcome.state === 'kept') {
@@ -157,7 +166,11 @@ export class Workspaces {
     void tracked.finally(() => this.#pending.delete(tracked));
   }
 
-  async #create(run: WorkflowRun, target: string): Promise<string | undefined> {
+  async #create(
+    run: WorkflowRun,
+    target: string,
+    branch: string | null | undefined,
+  ): Promise<string | undefined> {
     const projectFolder = this.#projectFolder(run.projectId);
     const created =
       projectFolder === undefined
@@ -165,6 +178,7 @@ export class Workspaces {
         : await createWorkingCopy({
             projectFolder,
             target,
+            branch,
             fetch:
               this.#deps.settings.resolve('workspaces.fetchBeforeCreate', {
                 projectId: run.projectId,
@@ -193,15 +207,19 @@ export class Workspaces {
     return created.error;
   }
 
+  // Looks at a working copy once no run works in it any more. A run that an event started may
+  // work in the copy of the run that made the pull request, so the folder is judged once for
+  // every run that names it, after the last of them has ended.
   async #settle(runId: string): Promise<void> {
-    if (this.#settling.has(runId)) return;
     const run = this.#run(runId);
     const copy = run?.workingCopy;
     if (!run || copy?.state !== 'ready' || isLiveRunState(run.state)) return;
-    if (this.#turnRunning(runId)) return;
+    if (this.#settling.has(copy.path)) return;
+    const sharing = this.#sharing(copy.path);
+    if (sharing.some((other) => this.#busy(other))) return;
     const projectFolder = this.#projectFolder(run.projectId);
     if (projectFolder === undefined) return;
-    this.#settling.add(runId);
+    this.#settling.add(copy.path);
     try {
       const outcome = await settleWorkingCopy({
         projectFolder,
@@ -209,10 +227,32 @@ export class Workspaces {
         startSha: copy.startSha,
         git: this.#git(),
       });
-      this.#report(runId, outcome);
+      this.#reportAll(sharing, outcome);
     } finally {
-      this.#settling.delete(runId);
+      this.#settling.delete(copy.path);
     }
+  }
+
+  // The runs whose working copy is this folder and may still be on disk.
+  #sharing(folder: string): WorkflowRun[] {
+    return this.#deps.db
+      .select()
+      .from(workflowRuns)
+      .all()
+      .filter((run) => {
+        const copy = run.workingCopy;
+        return copy?.path === folder && copy.state !== 'removed' && copy.state !== 'failed';
+      });
+  }
+
+  #busy(run: WorkflowRun): boolean {
+    return (
+      isLiveRunState(run.state) || run.workingCopy?.state === 'pending' || this.#turnRunning(run.id)
+    );
+  }
+
+  #reportAll(runs: readonly WorkflowRun[], outcome: Settled): void {
+    for (const run of runs) this.#report(run.id, outcome);
   }
 
   #report(runId: string, outcome: Settled): void {

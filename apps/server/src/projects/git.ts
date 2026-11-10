@@ -605,6 +605,34 @@ export async function addWorktree(
   );
 }
 
+// A worktree on a branch the repository has. Git refuses when another folder is on the branch.
+export async function addBranchWorktree(
+  folder: string,
+  target: string,
+  branch: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(await runGit(folder, ['worktree', 'add', target, branch], options, longPaths));
+}
+
+// A worktree on a new local branch that follows the remote's branch of the same name.
+export async function addTrackingWorktree(
+  folder: string,
+  target: string,
+  branch: string,
+  remote: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(
+      folder,
+      ['worktree', 'add', '--track', '-b', branch, target, `${remote}/${branch}`],
+      options,
+      longPaths,
+    ),
+  );
+}
+
 // Removes the worktree and its folder. Without `force` git refuses when a tracked file is
 // changed or an untracked one is there, which is the last guard against losing work.
 export async function removeWorktree(

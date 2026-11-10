@@ -1,4 +1,4 @@
-import type { ServerCommand, Trigger } from '@wow/contracts';
+import { isCardTrigger, type CardTrigger, type ServerCommand } from '@wow/contracts';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Engine } from '../core/engine.js';
@@ -106,13 +106,15 @@ export class Scheduler implements BackgroundService {
     return Promise.resolve();
   }
 
-  #due(): Trigger[] {
+  // Card triggers only: an event trigger has no time and is fired by what the hosts show.
+  #due(): CardTrigger[] {
     const now = this.#clock().getTime();
     return this.#deps.db
       .select()
       .from(triggers)
       .where(eq(triggers.state, 'scheduled'))
       .all()
+      .filter(isCardTrigger)
       .filter((trigger) => Date.parse(trigger.runAt) <= now)
       .toSorted((a, b) => Date.parse(a.runAt) - Date.parse(b.runAt));
   }

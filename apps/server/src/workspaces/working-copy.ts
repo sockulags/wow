@@ -2,6 +2,8 @@ import type { UnpushedWork } from '@wow/contracts';
 import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  addBranchWorktree,
+  addTrackingWorktree,
   addWorktree,
   askRemoteDefaultBranch,
   fetchRemote,
@@ -17,6 +19,8 @@ import {
 
 // A run's own working copy (review loop spec 36 to 38): a Git worktree of the project's
 // repository on no branch, because the agent's delivery skill names and creates its own branch.
+// A run that an event started on a pull request is the exception: its copy is on the pull
+// request's branch, so the agent adds to that pull request (spec 48).
 // Nothing here installs dependencies or runs a command the repository declares.
 
 export interface CreateRequest {
@@ -25,6 +29,9 @@ export interface CreateRequest {
   readonly target: string;
   // `workspaces.fetchBeforeCreate`.
   readonly fetch: boolean;
+  // The branch to put the copy on, for a run an event started on a pull request. Without one
+  // the copy is on no branch at the default branch's tip.
+  readonly branch?: string | null | undefined;
   readonly git: GitRunOptions;
 }
 
@@ -138,9 +145,64 @@ export async function createWorkingCopy(request: CreateRequest): Promise<Created
   } catch (error) {
     return failed(error instanceof Error ? error.message : String(error));
   }
+  if (request.branch) {
+    const onBranch = await createOnBranch(request, request.branch, start);
+    if (onBranch) return onBranch;
+  }
   const added = await addWorktree(projectFolder, target, start.sha, git);
   if (!added.ok) return failed(`${added.message} (${target})`);
-  return { ok: true, startSha: start.sha, defaultBranch: start.defaultBranch, note: start.note };
+  const note =
+    request.branch && start.note === null
+      ? `Branch ${request.branch} was not found, so the working copy starts at the tip of the default branch, on no branch.`
+      : request.branch
+        ? `Branch ${request.branch} was not found. ${start.note}`
+        : start.note;
+  return { ok: true, startSha: start.sha, defaultBranch: start.defaultBranch, note };
+}
+
+// The working copy on the pull request's branch: the local branch when the repository has it,
+// else a new local branch that follows the remote's. When another folder is on the branch the
+// copy is on its commit and on no branch. Undefined when the branch is nowhere to be found (a
+// merged pull request's branch is often deleted, and a fork's branch is not on this remote);
+// the caller then starts at the default branch. `startCommit` has fetched by now.
+async function createOnBranch(
+  { projectFolder: folder, target, git }: CreateRequest,
+  branch: string,
+  start: Start,
+): Promise<Created | undefined> {
+  // The name comes from the host. One that git would read as an option is not used.
+  if (branch.startsWith('-')) return undefined;
+  const { primary: remote } = await readFolderGit(folder, git);
+  const localTip = await readCommit(folder, `refs/heads/${branch}`, git);
+  const remoteTip =
+    remote === null ? null : await readCommit(folder, `refs/remotes/${remote}/${branch}`, git);
+  const tip = localTip ?? remoteTip;
+  if (tip === null) return undefined;
+  const made = (sha: string, note: string | null): Created => ({
+    ok: true,
+    startSha: sha,
+    defaultBranch: start.defaultBranch,
+    note,
+  });
+  const added =
+    localTip !== null
+      ? await addBranchWorktree(folder, target, branch, git)
+      : await addTrackingWorktree(folder, target, branch, remote as string, git);
+  if (added.ok) {
+    return made(
+      tip,
+      localTip !== null && remoteTip !== null && localTip !== remoteTip
+        ? `The local branch ${branch} is not at the same commit as ${remote}/${branch}; the working copy is on the local one.`
+        : null,
+    );
+  }
+  // Most often the project folder or another working copy is on the branch.
+  const detached = await addWorktree(folder, target, remoteTip ?? tip, git);
+  if (!detached.ok) return failed(`${detached.message} (${target})`);
+  return made(
+    remoteTip ?? tip,
+    `The working copy could not be put on branch ${branch} (${added.message}), so it is on that branch's commit and on no branch.`,
+  );
 }
 
 export interface Settled {

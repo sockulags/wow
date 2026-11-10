@@ -107,6 +107,7 @@ describe('settings registry', () => {
         'plans',
         'trackers',
         'hosts',
+        'triggers',
         'viewer',
         'diff',
         'workspaces',

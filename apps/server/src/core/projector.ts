@@ -1,4 +1,5 @@
 import {
+  isEventTrigger,
   isLivePlanRunState,
   isLiveRunState,
   type DomainEvent,
@@ -6,7 +7,7 @@ import {
   type ProviderUpdateRun,
   type SubscriptionTopic,
 } from '@wow/contracts';
-import { and, count, desc, eq, inArray, isNull, max } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, max } from 'drizzle-orm';
 import type { DbOrTx } from '../db/database.js';
 import {
   approvals,
@@ -26,6 +27,7 @@ import {
   skills,
   threadItems,
   threads,
+  triggerEvents,
   triggers,
   turns,
   workflowRuns,
@@ -56,7 +58,19 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       tx.update(threads).set({ projectId: null }).where(eq(threads.projectId, id)).run();
       tx.delete(hostReads).where(eq(hostReads.projectId, id)).run();
       tx.delete(changeRequests).where(eq(changeRequests.projectId, id)).run();
-      return ['projects', 'settings', 'threads', 'hostReads', 'changeRequests'];
+      // Its event triggers have nothing left to listen to. Card triggers have no project here;
+      // the calendar cancels those.
+      const gone = tx
+        .select({ id: triggers.id })
+        .from(triggers)
+        .where(eq(triggers.projectId, id))
+        .all()
+        .map((row) => row.id);
+      if (gone.length > 0) {
+        tx.delete(triggerEvents).where(inArray(triggerEvents.triggerId, gone)).run();
+        tx.delete(triggers).where(inArray(triggers.id, gone)).run();
+      }
+      return ['projects', 'settings', 'threads', 'hostReads', 'changeRequests', 'triggers'];
     }
     case 'setting.changed':
       tx.insert(settings)
@@ -349,6 +363,18 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .onConflictDoUpdate({ target: triggers.id, set: event.payload })
         .run();
       return ['triggers'];
+    case 'trigger.deleted':
+      tx.delete(triggerEvents).where(eq(triggerEvents.triggerId, event.payload.triggerId)).run();
+      tx.delete(triggers).where(eq(triggers.id, event.payload.triggerId)).run();
+      return ['triggers'];
+    case 'trigger.eventSeen': {
+      const { triggerId, eventId, runId, at } = event.payload;
+      tx.insert(triggerEvents)
+        .values({ triggerId, eventId, runId, at })
+        .onConflictDoNothing()
+        .run();
+      return [];
+    }
     case 'notification.sent':
       // A transition performed twice tells the user once.
       tx.insert(notifications).values(event.payload).onConflictDoNothing().run();
@@ -524,6 +550,20 @@ export function readModel(tx: DbOrTx): ReadModel {
         .some((row) => isLiveRunState(row.state)),
     backlogItem: (id) => tx.select().from(backlogItems).where(eq(backlogItems.id, id)).get(),
     trigger: (id) => tx.select().from(triggers).where(eq(triggers.id, id)).get(),
+    eventTriggers: (projectId) =>
+      tx
+        .select()
+        .from(triggers)
+        .where(eq(triggers.projectId, projectId))
+        .orderBy(asc(triggers.createdAt), asc(triggers.id))
+        .all()
+        .filter(isEventTrigger),
+    triggerEventSeen: (triggerId, eventId) =>
+      tx
+        .select({ at: triggerEvents.at })
+        .from(triggerEvents)
+        .where(and(eq(triggerEvents.triggerId, triggerId), eq(triggerEvents.eventId, eventId)))
+        .get() !== undefined,
     backlogItemHasLiveRun: (id) =>
       tx
         .select({ state: workflowRuns.state })

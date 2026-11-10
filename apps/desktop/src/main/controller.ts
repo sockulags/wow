@@ -1,10 +1,11 @@
-import type {
-  CalendarItem,
-  Thread,
-  Trigger,
-  UpdateState,
-  Workflow,
-  WorkflowRun,
+import {
+  isCardTrigger,
+  type CalendarItem,
+  type Thread,
+  type Trigger,
+  type UpdateState,
+  type Workflow,
+  type WorkflowRun,
 } from '@wow/contracts';
 import {
   desktopSettingKeys,
@@ -372,7 +373,7 @@ export class DesktopController {
         ? traySummary(
             this.#threads,
             this.#runs,
-            this.#triggers,
+            this.#triggers.filter(isCardTrigger),
             this.#items,
             (this.#options.now ?? (() => new Date()))(),
             this.#options.formatTime ?? localTime,
