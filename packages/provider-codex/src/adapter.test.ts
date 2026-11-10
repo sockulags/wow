@@ -386,6 +386,23 @@ const testAnswers = (version: string): Record<string, Answer> => ({
   'model/list': () => ({ data: [model('a')], nextCursor: null }),
 });
 
+// A release whose thread/start and thread/resume also take what a tools-only thread sends.
+const withOptions = (method: 'thread/start' | 'thread/resume') => {
+  const entry = codexProtocolFingerprint.methods[method];
+  if (!entry) throw new Error(`no ${method} in the fingerprint`);
+  return {
+    ...entry,
+    params: [
+      ...entry.params,
+      { path: 'config', shape: { type: 'object', required: false, nullable: true } },
+      {
+        path: 'developerInstructions',
+        shape: { type: 'string', required: false, nullable: true },
+      },
+    ],
+  } as const;
+};
+
 describe('CodexAdapter', () => {
   it('passes Test with the account, version and paged models', async () => {
     const { adapter } = setup(
@@ -578,6 +595,157 @@ describe('CodexAdapter', () => {
     expect(take()).toEqual([
       { type: 'session', threadId: 'thread-1', providerSessionId: 'codex-thread' },
     ]);
+  });
+
+  const assistantTurn = {
+    ...startTurn,
+    threadId: 'assistant',
+    cwd: '/home/demo/.wow/assistant',
+    prompt: 'Set my work hours to 8 to 4',
+    permissionMode: 'full-access',
+    toolset: { name: 'wow', url: 'http://127.0.0.1:4317/assistant/mcp', token: 'invented-token' },
+    instructions: 'You operate wow only.',
+  } as const;
+  const toolsOnlySettings = {
+    cwd: '/home/demo/.wow/assistant',
+    model: 'gpt-6.1-sol',
+    // Whatever mode the turn names: nothing is written, nothing leaves, nobody is asked.
+    approvalPolicy: 'never',
+    sandbox: 'read-only',
+    config: {
+      mcp_servers: {
+        wow: {
+          url: 'http://127.0.0.1:4317/assistant/mcp',
+          http_headers: { Authorization: 'Bearer invented-token' },
+        },
+      },
+      web_search: 'disabled',
+    },
+    developerInstructions: 'You operate wow only.',
+  };
+
+  it('starts an assistant thread with the wow MCP server, a read-only sandbox without network and the given folder', async () => {
+    const { adapter, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(assistantTurn);
+    expect(written(current(), 'thread/start')?.['params']).toEqual(toolsOnlySettings);
+    expect(written(current(), 'turn/start')?.['params']).toEqual({
+      threadId: 'codex-thread',
+      input: [{ type: 'text', text: 'Set my work hours to 8 to 4', text_elements: [] }],
+      cwd: '/home/demo/.wow/assistant',
+      model: 'gpt-6.1-sol',
+      effort: 'medium',
+      approvalPolicy: 'never',
+      sandboxPolicy: { type: 'readOnly', networkAccess: false },
+    });
+  });
+
+  it('resumes an assistant thread with the same tools-only settings', async () => {
+    const { adapter, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send({ ...assistantTurn, resumeId: 'stored-session' });
+    expect(written(current(), 'thread/start')).toBeUndefined();
+    expect(written(current(), 'thread/resume')?.['params']).toEqual({
+      threadId: 'stored-session',
+      ...toolsOnlySettings,
+      excludeTurns: true,
+    });
+  });
+
+  it('declines every approval an assistant thread asks for, without asking the user', async () => {
+    const { adapter, current, take } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(assistantTurn);
+    take();
+    const ask = (id: number, method: string, params: Record<string, unknown>) =>
+      current().emit({
+        id,
+        method,
+        params: { threadId: 'codex-thread', turnId: 'turn-1', ...params },
+      });
+    ask(71, 'item/commandExecution/requestApproval', { itemId: 'c1', command: 'cat ~/.ssh/id' });
+    ask(72, 'item/fileChange/requestApproval', { itemId: 'f1' });
+    ask(73, 'item/permissions/requestApproval', {
+      itemId: 'p1',
+      permissions: { network: { enabled: true } },
+    });
+    const answers = current().written.filter((message) => !('method' in message));
+    expect(answers).toEqual([
+      { id: 71, result: { decision: 'decline' } },
+      { id: 72, result: { decision: 'decline' } },
+      { id: 73, result: { permissions: {}, scope: 'turn' } },
+    ]);
+    expect(take()).toEqual([]);
+  });
+
+  it('never turns an assistant thread into an ordinary one', async () => {
+    const { adapter, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(assistantTurn);
+    current().emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'codex-thread',
+        turn: { id: 'turn-1', status: 'completed', error: null },
+      },
+    });
+    await expect(adapter.send({ ...startTurn, threadId: 'assistant' })).rejects.toThrow(
+      /app's tools only/,
+    );
+  });
+
+  it('fails the assistant with a clear sentence on a codex that cannot take the MCP server', async () => {
+    // The tested fingerprint describes what an ordinary thread sends: a codex with exactly that
+    // has no `config` and no `developerInstructions` on thread/start.
+    const schema = fakeSchema({ ...codexProtocolFingerprint, codexVersion: '0.0.1' });
+    const { adapter, current, take } = setup(() => new ScriptedCodex(testAnswers('0.0.1')), {
+      generateSchema: schema.generate,
+    });
+    const sentence = `codex 0.0.1 cannot be given wow's tools when a thread starts (it has no thread/start params.config, thread/start params.developerInstructions, thread/resume params.config, thread/resume params.developerInstructions), so the assistant cannot run on it. Update codex to ${codexProtocolVersion}.`;
+    await expect(adapter.send(assistantTurn)).rejects.toThrow(sentence);
+    expect(take()).toEqual([{ type: 'turnFailed', threadId: 'assistant', error: sentence }]);
+    expect(written(current(), 'thread/start')).toBeUndefined();
+    // Asked once per version; an ordinary thread still starts on this codex.
+    await expect(adapter.send(assistantTurn)).rejects.toThrow(sentence);
+    expect(schema.runs).toHaveLength(1);
+    await adapter.send(startTurn);
+    expect(written(current(), 'thread/start')?.['params']).toEqual({
+      cwd: '/work/demo',
+      model: 'gpt-6.1-sol',
+      approvalPolicy: 'on-request',
+      sandbox: 'workspace-write',
+    });
+  });
+
+  it('starts the assistant on another codex version whose schema has the options', async () => {
+    const schema = fakeSchema({
+      codexVersion: '0.0.1',
+      methods: {
+        ...codexProtocolFingerprint.methods,
+        'thread/start': withOptions('thread/start'),
+        'thread/resume': withOptions('thread/resume'),
+      },
+    });
+    const { adapter, current } = setup(() => new ScriptedCodex(testAnswers('0.0.1')), {
+      generateSchema: schema.generate,
+    });
+    await adapter.send(assistantTurn);
+    expect(written(current(), 'thread/start')?.['params']).toEqual(toolsOnlySettings);
+  });
+
+  it('sends an ordinary thread exactly the settings it always had', async () => {
+    const { adapter, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(startTurn);
+    expect(written(current(), 'thread/start')?.['params']).toEqual({
+      cwd: '/work/demo',
+      model: 'gpt-6.1-sol',
+      approvalPolicy: 'on-request',
+      sandbox: 'workspace-write',
+    });
+    expect(written(current(), 'turn/start')?.['params']).toEqual({
+      threadId: 'codex-thread',
+      input: [{ type: 'text', text: 'Run the tests and fix the README', text_elements: [] }],
+      cwd: '/work/demo',
+      model: 'gpt-6.1-sol',
+      effort: 'medium',
+      approvalPolicy: 'on-request',
+    });
   });
 
   it('resumes a stored session id after an app restart', async () => {

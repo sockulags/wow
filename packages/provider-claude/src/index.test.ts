@@ -283,6 +283,136 @@ describe('@wow/provider-claude', () => {
     expect(options?.allowDangerouslySkipPermissions).toBeUndefined();
   });
 
+  const toolset = {
+    name: 'wow',
+    url: 'http://127.0.0.1:4317/assistant/mcp',
+    token: 'invented-token',
+  };
+  const assistantTurn = () =>
+    startTurn({
+      cwd: '/home/me/.wow/assistant',
+      prompt: 'Set my work hours to 8 to 4',
+      permissionMode: 'bypassPermissions',
+      toolset,
+      instructions: 'You operate wow only.',
+    });
+
+  it('starts an assistant turn with the wow tools only, no settings and the given folder', async () => {
+    const h = harness([[result(0.01)]]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(assistantTurn());
+    await done;
+    const options = h.queries[0]?.options;
+    expect(options).toMatchObject({
+      cwd: '/home/me/.wow/assistant',
+      mcpServers: {
+        wow: {
+          type: 'http',
+          url: 'http://127.0.0.1:4317/assistant/mcp',
+          headers: { Authorization: 'Bearer invented-token' },
+        },
+      },
+      strictMcpConfig: true,
+      // No built-in tool at all: nothing that reads or writes files, runs commands or fetches.
+      tools: [],
+      allowedTools: ['mcp__wow__*'],
+      settingSources: [],
+      // The instance's launch arguments (--add-dir here) are left out too.
+      extraArgs: {},
+      systemPrompt: 'You operate wow only.',
+      // Whatever mode the turn names, an assistant turn denies what is not allowed.
+      permissionMode: 'dontAsk',
+      env: { CLAUDE_CONFIG_DIR: '/home/me/.claude-work', ANTHROPIC_API_KEY: 'resolved-secret' },
+    });
+    expect(options?.allowDangerouslySkipPermissions).toBeUndefined();
+    expect(options?.additionalDirectories).toBeUndefined();
+    expect(options?.plugins).toBeUndefined();
+  });
+
+  it('denies an assistant turn every tool that is not one of the wow tools', async () => {
+    const h = harness([
+      [
+        {
+          permission: {
+            toolName: 'Bash',
+            input: { command: 'cat ~/.ssh/id_ed25519' },
+            toolUseID: 'a',
+          },
+        },
+        { permission: { toolName: 'Read', input: { file_path: '/etc/hosts' }, toolUseID: 'b' } },
+        { permission: { toolName: 'mcp__other__read_file', input: {}, toolUseID: 'c' } },
+        { permission: { toolName: 'mcp__wow__read_settings', input: {}, toolUseID: 'd' } },
+        result(0),
+      ],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(assistantTurn());
+    await done;
+    expect(h.queries[0]?.permissionResults.map((answer) => answer.behavior)).toEqual([
+      'deny',
+      'deny',
+      'deny',
+      'allow',
+    ]);
+    // Nothing was asked of the user.
+    expect(h.events.some((event) => event.type === 'approvalRequested')).toBe(false);
+  });
+
+  it('keeps an assistant session on its own mode and never turns it into an ordinary one', async () => {
+    const h = harness([[result(0)], [result(0)]]);
+    let done = h.next('turnCompleted');
+    await h.adapter.send(assistantTurn());
+    await done;
+    await h.adapter.send({
+      type: 'setPermissionMode',
+      threadId: 't1',
+      permissionMode: 'bypassPermissions',
+    });
+    done = h.next('turnCompleted');
+    await h.adapter.send(assistantTurn());
+    await done;
+    expect(h.queries).toHaveLength(1);
+    expect(h.queries[0]?.calls).toEqual([]);
+    await expect(h.adapter.send(startTurn())).rejects.toThrow(/app's tools only/);
+  });
+
+  it('sends an ordinary turn exactly the options it always had', async () => {
+    const h = harness([[result(0.01)]]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    const options = h.queries[0]?.options ?? {};
+    expect(Object.keys(options).toSorted()).toEqual([
+      'canUseTool',
+      'cwd',
+      'effort',
+      'env',
+      'extraArgs',
+      'includePartialMessages',
+      'model',
+      'pathToClaudeCodeExecutable',
+      'permissionMode',
+      'settingSources',
+      'stderr',
+    ]);
+    expect(options).toMatchObject({
+      cwd: '/work/demo',
+      model: 'sonnet',
+      effort: 'high',
+      permissionMode: 'default',
+      includePartialMessages: true,
+      settingSources: ['user', 'project', 'local'],
+      pathToClaudeCodeExecutable: '/opt/claude/bin/claude',
+      extraArgs: { 'add-dir': '../shared', verbose: null },
+      env: {
+        PATH: '/usr/bin',
+        CLAUDE_AGENT_SDK_CLIENT_APP: 'wow',
+        CLAUDE_CONFIG_DIR: '/home/me/.claude-work',
+        ANTHROPIC_API_KEY: 'resolved-secret',
+      },
+    });
+  });
+
   it('keeps one session across turns and applies model, effort and permission changes', async () => {
     const h = harness([[result(0.01)], [result(0.03)]]);
     let done = h.next('turnCompleted');

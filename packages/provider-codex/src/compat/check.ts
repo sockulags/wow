@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { CodexError } from '../connection.js';
 import { runCommand, type RunCommand } from '../process.js';
-import { compareWithInstalled, type ProtocolFingerprint, type SchemaFiles } from './schema.js';
+import {
+  compareWithInstalled,
+  missingFields,
+  type MethodUse,
+  type ProtocolFingerprint,
+  type SchemaFiles,
+} from './schema.js';
 
 export interface SchemaLaunch {
   readonly binaryPath: string;
@@ -88,6 +94,23 @@ export async function checkInstalledCodex(
     return report.compatible
       ? { state: 'compatible', doesWithout: report.doesWithout }
       : { state: 'incompatible', problems: report.problems };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+// Asks the installed codex for its schema and names the methods and fields of `uses` it does not
+// define. Rejects like checkInstalledCodex, and with 'unsupported' when that codex cannot
+// describe its protocol.
+export async function installedCodexLacks(
+  uses: Readonly<Record<string, MethodUse>>,
+  generate: GenerateSchema,
+  launch: SchemaLaunch,
+): Promise<string[]> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'wow-codex-schema-'));
+  try {
+    await generate(launch, dir);
+    return missingFields(schemaFilesIn(dir), uses);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
