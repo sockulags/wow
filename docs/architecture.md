@@ -897,8 +897,10 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.jira.email`, `trackers.jira.token` (secret), `trackers.jira.projectKey`,
   `trackers.jira.issueType`, `trackers.github.baseUrl`, `trackers.github.token` (secret),
   `trackers.github.owner`, `trackers.github.repo`, `trackers.github.labels`,
+  `trackers.gitlab.baseUrl`, `trackers.gitlab.token` (secret; see "Hosts", GitLab),
   `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs`, `trackers.jira.keyScanCommits` (the
-  `trackers.jira.*` and `trackers.github.*` ones are project-scoped, see "Backlog and trackers")
+  `trackers.jira.*`, `trackers.github.*` and `trackers.gitlab.*` ones are project-scoped, see
+  "Backlog and trackers")
 - hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount` (see "Hosts")
 - triggers: `triggers.eventsEnabled`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
@@ -1215,8 +1217,8 @@ run view of a unit's run names its unit with a link back to the plan.
 
 wow reads pull requests from a project's code host to show unit status and a run's pull request
 (review loop spec 23 and 26 to 32). It only reads: every request is a GET, and nothing is merged,
-approved or commented on. GitHub and GitHub Enterprise Server are the first host; the others
-join behind the same interface.
+approved or commented on. GitHub and GitHub Enterprise Server are the first host; GitLab
+(merge requests, spec 34) and the others join behind the same interface.
 
 **Types** (`packages/contracts/src/hosts.ts`). `ChangeRequest` is a pull request as last read:
 number, title, link, `state`, `draft`, `mergedAt`, head branch and commit, the `Intent-Unit`
@@ -1254,6 +1256,33 @@ an error, a row or a log line. What the host answers is not trusted: a link is k
 it is an http or https address (a pull request without one is left out, as is a comment; a
 check keeps its name and loses the link), a pull request number must be a positive integer and
 a comment must have an id. A `Retry-After` or reset that gives no valid date is ignored.
+
+**GitLab** (review loop spec 34; `hosts/gitlab.ts`, `trackers/gitlab.ts`). A project is on
+GitLab when its primary git remote is on the host of the stored `trackers.gitlab.baseUrl`
+(`gitLabProjectOf` in `projects/git.ts`; any host can run GitLab, so the remote alone never
+decides, and a site under a sub-path has that prefix cut from its https remotes). The project
+path keeps every nested group (`git@gitlab.example.test:group/sub/app.git` is `group/sub/app`)
+and goes to the API URL-encoded as one project id (`group%2Fsub%2Fapp`). Such a remote names no
+GitHub repository, and the poller reads that project from GitLab instead of GitHub
+(`TrackerService.gitlabHost`, the poller's `resolveGitLab`). API v4 under `<site>/api/v4`, with
+the token in the `PRIVATE-TOKEN` header and nowhere else. Merge requests fill the role of pull
+requests: a plan's are found with one
+`GET /projects/<id>/merge_requests?state=all&search="Intent-Unit: <intent-id>/"&in=description`,
+filtered to descriptions that really carry the line, falling back to the newest
+`hosts.listFallbackCount` when the search is turned down (400, 405, 422, 501); a run's is the
+newest with `source_branch=<branch>`. `iid` is the number, shown as `!12` (`changeRequestRef`,
+`changeRequestName` in contracts); `opened` is open, `merged` merged, `closed` and `locked`
+closed; `draft` (or `work_in_progress` before version 14). Checks are the jobs of the newest
+merge request pipeline on the head commit (`…/merge_requests/<iid>/pipelines`, then
+`/pipelines/<id>/jobs`): failed and canceled jobs fail, a failure the job is allowed passes,
+skipped and manual jobs are left out, anything still to run is pending, and a pipeline without
+jobs counts as one check. 403, 404, 410 and 501 there mean no checks (CI off). Notes are the
+review comments, without GitLab's system notes, linked as `<merge request>#note_<id>`. 401 and
+403 are `refused` and name `trackers.gitlab.token`, as does 404 on the project; a 429 with
+`Retry-After`, or `RateLimit-Remaining`/`RateLimit-Reset`, leaves the site alone like GitHub's
+limit; anything else and a timeout are `failed`. Unit status reasons say "Merge request !12 is
+merged". GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
+GitLab the server tests and the e2e server share.
 
 **Poller** (`apps/server/src/hosts/poller.ts`, started with the scheduler and stopped right
 after it). A round asks only about open plans (followed, or with a live plan run, see "Plan
@@ -1733,12 +1762,13 @@ backlog item also emits `backlog.updated` when the item's state or `runId` diffe
 means: running or waiting is `running`, done is `done`, failed or stopped is `planned`. The item
 keeps the `runId`, so the backlog shows the failed step's error from the run (behavior 29).
 
-**Per-project settings** (owner decision F-4). Every `trackers.jira.*` and `trackers.github.*`
-setting has `scope: 'project'`, so it can be stored globally (the defaults, Settings → Trackers) and
+**Per-project settings** (owner decision F-4). Every `trackers.jira.*`, `trackers.github.*` and
+`trackers.gitlab.*` setting has `scope: 'project'`, so it can be stored globally (the defaults, Settings → Trackers) and
 per project (`project:<id>`); `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs` and
 `trackers.jira.keyScanCommits` stay global. `trackers/resolve.ts` decides a project's values
 without I/O, in this order: stored for the project, then the project's git remote (GitHub owner,
-repository and API URL of the primary remote), then the global default, then the Outlook profile's
+repository and API URL of the primary remote, unless that remote is on the stored GitLab site),
+then the global default, then the Outlook profile's
 `address` (Jira email, only for Jira Cloud and only while nothing is stored), then the registry
 default. Each value carries its source (`TrackerValueSource`: `project`, `gitRemote`, `global`,
 `outlook`, `default`), which the UI shows as the field's marker. The remote wins over the global
@@ -1750,7 +1780,13 @@ account; a project on another site or host stores its own token. Guesses that ar
 suggestions (`TrackerSuggestion`) the user confirms: the Jira site another project stores (most
 used first) while this one has none, and the Jira key `guessJiraKeys` finds most often when it
 differs from the current value and the project has not set one. `trackers.project {projectId}`
-answers `ProjectTrackers` (`{projectId, git, settings, suggestions}`).
+answers `ProjectTrackers` (`{projectId, git, gitlab, settings, suggestions}`; `gitlab` is the
+GitLab project the remote names on the stored GitLab site, or null). The GitLab site is never
+taken from a remote, so its token goes only where the user said. "Test connection" takes
+`TrackerConnection` (`jira`, `github`, `gitlab`; GitLab is no publish target) and answers
+`TrackerTestResult` with `version`: for GitLab it asks `/user`, `/version` and, for a project
+whose remote is on the site, the project itself, and says "Signed in as <name> @<user> on GitLab
+<version>"; a refused token shows the host's message.
 
 **Publish target.** `publishTarget` picks whose settings a preview or publish uses: the
 `projectId` the dialog sends (`null` means none: the defaults), else the project of the item's
@@ -1809,6 +1845,9 @@ chosen project, and asks again; otherwise the preview says "Publishes to <target
 <project>", shows the target with its source marker, an editable title, the tags to add as labels
 and the rendered body, and "Publish issue" calls `trackers.publish` with the same `projectId`.
 
+Settings → Trackers has one section per host (Jira, GitHub, GitLab), each with Test connection,
+and "Every tracker" for the shared request settings.
+
 Settings → Projects → Trackers (`projects/project-trackers.tsx`) renders `trackers.project` and
 asks again on every `settings` push. GitHub owner, repository and API URL and Jira site, project
 key and issue type are `FormField`s with the source as marker; a typed value is validated with the
@@ -1816,7 +1855,9 @@ registry schema and stored with `setting.set` at `project:<id>` on blur or Enter
 project value resets it, and "Use git remote" / "Use default" resets it. A suggestion shows below
 its field with "Use <value>". Sign-in is one line ("Signs in with the shared GitHub token") with
 "Use a different token", which opens a `SecretField` for the project's own token. Each tracker
-has the same Test connection as Settings → Trackers, with the `projectId`. Palette commands: New
+has the same Test connection as Settings → Trackers, with the `projectId`. The GitLab section
+has the site URL, a line naming the GitLab project the remote points at (or saying the remote is
+not on that site, so GitHub applies) and the same sign-in line. Palette commands: New
 backlog item, every item, and for the open item Plan on calendar, Publish to Jira and Publish to
 GitHub.
 

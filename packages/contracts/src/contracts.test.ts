@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ChangeRequest,
+  changeRequestName,
   Command,
   InternalCommand,
   WorkingCopy,
@@ -307,7 +308,11 @@ describe('hosts', () => {
       newestCommentId: null,
     };
     expect(ChangeRequest.safeParse(request).success).toBe(true);
-    expect(ChangeRequest.safeParse({ ...request, host: 'gitlab' }).success).toBe(false);
+    // A GitLab merge request is a change request too (review loop spec 34), written `!14`.
+    expect(ChangeRequest.safeParse({ ...request, host: 'gitlab' }).success).toBe(true);
+    expect(ChangeRequest.safeParse({ ...request, host: 'bitbucket' }).success).toBe(false);
+    expect(changeRequestName({ host: 'gitlab', number: 14 })).toBe('Merge request !14');
+    expect(changeRequestName({ host: 'github', number: 14 })).toBe('Pull request #14');
     expect(
       ChangeRequest.safeParse({ ...request, checks: [{ name: 'test', state: 'none', url: null }] })
         .success,

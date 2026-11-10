@@ -1,4 +1,10 @@
-import type { DiffFileStatus, GitHubRemote, GitRemote, ProjectGitStatus } from '@wow/contracts';
+import type {
+  DiffFileStatus,
+  GitHubRemote,
+  GitLabProject,
+  GitRemote,
+  ProjectGitStatus,
+} from '@wow/contracts';
 import { execFile } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import { devNull } from 'node:os';
@@ -81,6 +87,29 @@ export function parseRemoteUrl(name: string, raw: string): GitRemote {
     return { name, url, host, path: repoPath, github: githubOf(host, repoPath) };
   }
   return { name, url, host: null, path: null, github: null };
+}
+
+// The GitLab project a remote points at, when the remote is on the GitLab site the user stored
+// (`trackers.gitlab.baseUrl`). Any host can run GitLab, so only the stored site says that one
+// does; the remote's own host is never enough. The path keeps every nested group
+// (`group/sub/app`). A site under a sub-path (https://example.com/gitlab) has that prefix in its
+// https remotes, which is not part of the project path.
+export function gitLabProjectOf(
+  remote: GitRemote | undefined,
+  baseUrl: string,
+): GitLabProject | null {
+  if (!remote?.host || !remote.path || !URL.canParse(baseUrl)) return null;
+  const site = new URL(baseUrl);
+  if (site.hostname.toLowerCase() !== remote.host) return null;
+  const prefix = cleanPath(site.pathname);
+  const web = /^https?:\/\//i.test(remote.url);
+  const projectPath =
+    web && prefix !== null && remote.path.startsWith(`${prefix}/`)
+      ? remote.path.slice(prefix.length + 1)
+      : remote.path;
+  const parts = projectPath.split('/');
+  if (parts.length < 2 || parts.some((part) => part === '')) return null;
+  return { host: remote.host, path: projectPath };
 }
 
 // `git remote -v` prints each remote twice, "(fetch)" and "(push)"; the fetch URL is the one

@@ -1,5 +1,6 @@
 import { field, getJson, trimBase, type RequestOptions } from './http.js';
 import type { GitHubConfig } from './github.js';
+import { gitLabApi, gitLabHeaders, gitLabProjectId, type GitLabConfig } from './gitlab.js';
 import { jiraAuthorization, type JiraConfig } from './jira.js';
 
 // "Test connection" (audit E-08): who the stored credentials sign in as. Throws TrackerError with
@@ -39,4 +40,35 @@ export async function gitHubWhoAmI(config: GitHubConfig, options: RequestOptions
     );
   }
   return typeof login === 'string' && login !== '' ? login : 'Signed in';
+}
+
+// GitLab answers who the token belongs to and, signed in, which version it runs; the version
+// says which API wow is talking to (merge request search differs between versions).
+export async function gitLabWhoAmI(
+  config: GitLabConfig,
+  options: RequestOptions,
+): Promise<{ account: string; version: string | null }> {
+  const api = gitLabApi(config.baseUrl);
+  const headers = gitLabHeaders(config.token);
+  const user = await getJson('GitLab', `${api}/user`, headers, options);
+  const username = field(user, 'username');
+  const name = field(user, 'name');
+  const version = field(await getJson('GitLab', `${api}/version`, headers, options), 'version');
+  // The project must be readable with this token too, or no merge request can be.
+  if (config.projectPath !== '') {
+    await getJson(
+      'GitLab',
+      `${api}/projects/${gitLabProjectId(config.projectPath)}`,
+      headers,
+      options,
+    );
+  }
+  const parts = [
+    typeof name === 'string' && name !== '' ? name : undefined,
+    typeof username === 'string' && username !== '' ? `@${username}` : undefined,
+  ].filter((part): part is string => part !== undefined);
+  return {
+    account: parts.length > 0 ? parts.join(' ') : 'Signed in',
+    version: typeof version === 'string' && version !== '' ? version : null,
+  };
 }

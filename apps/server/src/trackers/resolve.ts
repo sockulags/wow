@@ -21,7 +21,9 @@ import type { JiraKeyGuess } from '../projects/git.js';
 export const trackerKeys: readonly string[] = Object.entries(settingsRegistry)
   .filter(
     ([key, definition]) =>
-      (key.startsWith('trackers.jira.') || key.startsWith('trackers.github.')) &&
+      (key.startsWith('trackers.jira.') ||
+        key.startsWith('trackers.github.') ||
+        key.startsWith('trackers.gitlab.')) &&
       definition.scope === 'project',
   )
   .map(([key]) => key)
@@ -33,6 +35,8 @@ const sourceOf = (scope: string): TrackerValueSource =>
 export interface ResolveInput {
   // The settings service's answer for the key in the project's context.
   readonly resolve: (key: string) => ResolvedSetting;
+  // The primary remote's GitHub repository; null when the remote is on the GitLab host. The
+  // GitLab site is never taken from a remote, so its token goes only where the user said.
   readonly github: GitHubRemote | null;
   readonly outlookAddress: string | null;
 }

@@ -13,7 +13,7 @@ const pullRequest = (
   ...keys: string[]
 ): UnitPullRequest => ({
   id: `tea:${number}`,
-  label: `#${number}`,
+  label: `Pull request #${number}`,
   state,
   units: keys.map((unitKey) => ({ intentId, unitKey })),
 });

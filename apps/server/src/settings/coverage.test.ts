@@ -127,6 +127,8 @@ export function findTunables(source: string): TunableConstant[] {
 const exemptions: Readonly<Record<string, string>> = {
   'apps/server/src/hosts/github.ts:pageSize':
     "GitHub's largest page (per_page=100): a limit of the host's API, not a preference",
+  'apps/server/src/hosts/gitlab.ts:pageSize':
+    "GitLab's largest page (per_page=100): a limit of the host's API, not a preference",
 };
 
 async function sourceFiles(dir: string): Promise<string[]> {

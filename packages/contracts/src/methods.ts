@@ -33,7 +33,13 @@ import {
   ProviderTestResult,
 } from './provider.js';
 import { SecretRef } from './settings.js';
-import { ProjectGit, ProjectTrackers, PublishProject, TrackerValueSource } from './trackers.js';
+import {
+  ProjectGit,
+  ProjectTrackers,
+  PublishProject,
+  TrackerConnection,
+  TrackerValueSource,
+} from './trackers.js';
 
 // Subscription topics: one per projection. Thread-scoped topics need a threadId so a client
 // never receives every item of every thread.
@@ -120,10 +126,12 @@ export type TrackerPreview = z.infer<typeof TrackerPreview>;
 // "Test connection" in Settings → Trackers: signs in with the stored settings and says as whom
 // (audit E-08). `missing` names settings still empty; nothing is sent while any are.
 export const TrackerTestResult = z.object({
-  service: TrackerService,
+  service: TrackerConnection,
   ok: z.boolean(),
-  // The signed-in account: Jira display name and email, or the GitHub login.
+  // The signed-in account: Jira display name and email, the GitHub login or the GitLab user.
   account: z.string().nullable(),
+  // The host's version where it says one (GitLab), so the user knows which API wow talks to.
+  version: z.string().nullable(),
   message: z.string(),
   missing: z.array(z.string()),
 });
@@ -284,7 +292,7 @@ export const rpcMethods = {
   },
   // Signs in with the settings as they apply to the project, or the defaults without one.
   'trackers.test': {
-    params: z.object({ service: TrackerService, projectId: z.string().min(1).optional() }),
+    params: z.object({ service: TrackerConnection, projectId: z.string().min(1).optional() }),
     result: TrackerTestResult,
   },
   // Creates the issue and stores its key and URL on the item. Refused when the item already has

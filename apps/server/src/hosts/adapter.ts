@@ -61,3 +61,19 @@ export class HostFailure extends Error {
     this.name = 'HostFailure';
   }
 }
+
+export const validTime = (ms: number): boolean => !Number.isNaN(new Date(ms).getTime());
+
+// A time from the host as an ISO string, or null when it is none.
+export const hostTime = (value: unknown): string | null => {
+  const parsed = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+  return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+};
+
+// A link from the host is kept only when it is a web address; the app puts it in a link, and
+// anything else (javascript:, file:, an empty string) must never get that far.
+export const hostLink = (value: unknown): string | null => {
+  if (typeof value !== 'string' || !URL.canParse(value)) return null;
+  const { protocol } = new URL(value);
+  return protocol === 'https:' || protocol === 'http:' ? value : null;
+};

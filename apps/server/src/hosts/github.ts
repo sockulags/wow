@@ -11,6 +11,9 @@ import {
 } from '../trackers/http.js';
 import {
   HostFailure,
+  hostLink as link,
+  hostTime as time,
+  validTime,
   type FoundChangeRequest,
   type HostAdapter,
   type HostChangeRequest,
@@ -39,18 +42,6 @@ const missingEndpoint = new Set([404, 410, 501]);
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 const textOrNull = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
-const validTime = (ms: number): boolean => !Number.isNaN(new Date(ms).getTime());
-const time = (value: unknown): string | null => {
-  const parsed = typeof value === 'string' ? Date.parse(value) : Number.NaN;
-  return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
-};
-// A link from the host is kept only when it is a web address; the app puts it in a link, and
-// anything else (javascript:, file:, an empty string) must never get that far.
-const link = (value: unknown): string | null => {
-  if (typeof value !== 'string' || !URL.canParse(value)) return null;
-  const { protocol } = new URL(value);
-  return protocol === 'https:' || protocol === 'http:' ? value : null;
-};
 
 // One item of a search (an issue with `pull_request`) or of the pull request list.
 function found(item: unknown): FoundChangeRequest | undefined {

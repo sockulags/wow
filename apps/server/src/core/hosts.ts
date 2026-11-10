@@ -1,5 +1,6 @@
 import { fileStatus, unitStatuses } from '@wow/agent-os';
 import {
+  changeRequestName,
   hostReadId,
   type ChangeRequest,
   type DomainEvent,
@@ -73,7 +74,7 @@ export function withUnitStatus(
       .toSorted((a, b) => b.number - a.number)
       .map((request) => ({
         id: request.id,
-        label: `#${request.number}`,
+        label: changeRequestName(request),
         state: request.state,
         units: request.units,
       })),

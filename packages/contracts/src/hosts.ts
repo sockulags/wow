@@ -7,14 +7,15 @@ import { z } from 'zod';
 const Id = z.string().min(1);
 const Timestamp = z.iso.datetime({ offset: true });
 
-// GitHub and GitHub Enterprise Server for pull requests, Jira (Cloud, Server and Data Center) for
-// tickets; the other hosts join this list with their adapter.
-export const HostKind = z.enum(['github', 'jira']);
+// GitHub and GitHub Enterprise Server for pull requests, GitLab for merge requests (spec 34), Jira
+// (Cloud, Server and Data Center) for tickets; the other hosts join this list with their adapter.
+export const HostKind = z.enum(['github', 'jira', 'gitlab']);
 export type HostKind = z.infer<typeof HostKind>;
 
 export const hostKindLabels: Readonly<Record<HostKind, string>> = {
   github: 'GitHub',
   jira: 'Jira',
+  gitlab: 'GitLab',
 };
 
 export const ChangeRequestState = z.enum(['open', 'merged', 'closed']);
@@ -47,7 +48,7 @@ export const ReviewComment = z.object({
 });
 export type ReviewComment = z.infer<typeof ReviewComment>;
 
-// A pull request (GitHub) as last read. Later units compare the next read with this row, so it
+// A pull request (GitHub) or merge request (GitLab) as last read. Later units compare the next read with this row, so it
 // keeps the state, the head commit, the check result and the newest comment.
 export const ChangeRequest = z.object({
   // `<projectId>:<number>`.
@@ -69,6 +70,15 @@ export const ChangeRequest = z.object({
   newestCommentId: Id.nullable(),
 });
 export type ChangeRequest = z.infer<typeof ChangeRequest>;
+
+// How the host writes a change request's number: GitLab's merge requests are `!12`, GitHub's
+// pull requests `#12`.
+export const changeRequestRef = (request: Pick<ChangeRequest, 'host' | 'number'>): string =>
+  `${request.host === 'gitlab' ? '!' : '#'}${request.number}`;
+
+// "Merge request !12" or "Pull request #12", for a sentence or a label.
+export const changeRequestName = (request: Pick<ChangeRequest, 'host' | 'number'>): string =>
+  `${request.host === 'gitlab' ? 'Merge request' : 'Pull request'} ${changeRequestRef(request)}`;
 
 // Why the last read did not work. `notSetUp`: a setting is missing; `refused`: the host turned
 // the token down or cannot see the repository with it; `failed`: an error, no answer in time or

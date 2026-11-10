@@ -23,6 +23,12 @@ export {
   type MockReviewComment,
 } from './hosts/mock-github.js';
 export { MockJira, type MockIssue } from './hosts/mock-jira.js';
+export {
+  MockGitLab,
+  type MockGitLabJob,
+  type MockGitLabNote,
+  type MockMergeRequest,
+} from './hosts/mock-gitlab.js';
 export { HostPoller, type HostPollerDeps } from './hosts/poller.js';
 export {
   failureCommand,

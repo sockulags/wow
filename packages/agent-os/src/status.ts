@@ -37,7 +37,7 @@ export function intentUnitLines(body: string): UnitReference[] {
 
 export interface UnitPullRequest {
   readonly id: string;
-  // How the pull request is named in a reason, such as "#12".
+  // How the pull request is named in a reason, such as "Pull request #12" or "Merge request !12".
   readonly label: string;
   readonly state: 'open' | 'merged' | 'closed';
   readonly units: readonly UnitReference[];
@@ -93,7 +93,7 @@ export function unitStatuses(input: UnitStatusInput): DerivedUnitStatus[] {
       return {
         key: unit.key,
         status: 'delivered',
-        reason: `Pull request ${merged.label} is merged`,
+        reason: `${merged.label} is merged`,
         pullRequestId: merged.id,
       };
     }
@@ -102,7 +102,7 @@ export function unitStatuses(input: UnitStatusInput): DerivedUnitStatus[] {
       return {
         key: unit.key,
         status: 'claimed',
-        reason: `Pull request ${open.label} is open`,
+        reason: `${open.label} is open`,
         pullRequestId: open.id,
       };
     }

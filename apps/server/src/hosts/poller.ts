@@ -1,5 +1,6 @@
 import {
   changeRequestId,
+  changeRequestRef,
   hostKindLabels,
   hostReadId,
   isLivePlanRunState,
@@ -8,6 +9,7 @@ import {
   workingCopyOnDisk,
   ChangeRequest,
   type HostError,
+  type HostKind,
   type HostRead,
   type HostReadOutcome,
   type HostRefreshParams,
@@ -33,9 +35,10 @@ import type { BackgroundService } from '../hooks/index.js';
 import type { Logger } from '../logger.js';
 import type { SchedulerTimers } from '../scheduler/service.js';
 import type { SettingsService } from '../settings/service.js';
-import type { ProjectGitHubHost, ProjectJiraHost } from '../trackers/service.js';
+import type { ProjectGitHubHost, ProjectGitLabHost, ProjectJiraHost } from '../trackers/service.js';
 import { HostFailure, type FoundChangeRequest, type HostAdapter } from './adapter.js';
 import { createGitHubHost } from './github.js';
+import { createGitLabHost } from './gitlab.js';
 import { createJiraHost, jiraKeyIn, MissingTicket } from './jira.js';
 
 const realTimers: SchedulerTimers = {
@@ -58,6 +61,11 @@ export interface HostPollerDeps {
   readonly fetch?: typeof fetch;
   // Builds the host adapter; GitHub's unless a test gives its own.
   readonly adapter?: typeof createGitHubHost;
+  // The project's GitLab site when its git remote is on it (TrackerService.gitlabHost); such a
+  // project reads merge requests there instead of GitHub (review loop spec 34).
+  readonly resolveGitLab?: (projectId: string) => Promise<ProjectGitLabHost | undefined>;
+  // Builds the GitLab adapter; the real one unless a test gives its own.
+  readonly gitlabAdapter?: typeof createGitLabHost;
   // The project's Jira settings as they apply (TrackerService.jiraHost). Without it no ticket is
   // read.
   readonly resolveJira?: (projectId: string) => Promise<ProjectJiraHost | undefined>;
@@ -425,41 +433,80 @@ export class HostPoller implements BackgroundService {
     }
   }
 
+  // The project's code host: GitLab when its remote is on the stored GitLab site, else GitHub.
+  // `adapter` is undefined while a setting is missing, which `missing` names.
+  async #codeHost(projectId: string): Promise<
+    | {
+        readonly kind: HostKind;
+        readonly name: string;
+        readonly branch: string | null;
+        readonly missing: readonly string[];
+        readonly adapter: (() => HostAdapter) | undefined;
+      }
+    | undefined
+  > {
+    const { settings } = this.#deps;
+    const options = {
+      timeoutMs: settings.get('trackers.requestTimeoutMs'),
+      listFallbackCount: settings.get('hosts.listFallbackCount'),
+      clock: this.#clock,
+      ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
+    };
+    const gitlab = await this.#deps.resolveGitLab?.(projectId);
+    if (gitlab) {
+      const { config, missing } = gitlab.gitlab;
+      return {
+        kind: 'gitlab',
+        name: gitlab.name,
+        branch: gitlab.branch,
+        missing,
+        adapter: config
+          ? () => (this.#deps.gitlabAdapter ?? createGitLabHost)(config, gitlab.name, options)
+          : undefined,
+      };
+    }
+    const github = await this.#deps.resolve(projectId);
+    if (!github) return undefined;
+    const { config, missing } = github.github;
+    return {
+      kind: 'github',
+      name: github.name,
+      branch: github.branch,
+      missing,
+      adapter: config
+        ? () => (this.#deps.adapter ?? createGitHubHost)(config, github.name, options)
+        : undefined,
+    };
+  }
+
   async #readProject(projectId: string, { plans, runs }: Targets, asked: boolean): Promise<void> {
-    const { db, settings } = this.#deps;
-    const host = await this.#deps.resolve(projectId);
+    const { db } = this.#deps;
+    const host = await this.#codeHost(projectId);
     if (!host) return;
     const outcomes: HostReadOutcome[] = [];
     const read = new Map<number, ChangeRequest>();
     const failed = (id: string, scope: 'plan' | 'run', error: ErrorNow) =>
       outcomes.push({ id, scope, branch: null, result: { ok: false, error } });
 
-    if (!host.github.config) {
-      const missing = host.github.missing;
+    if (!host.adapter) {
+      const { missing } = host;
       const error: ErrorNow = {
         kind: 'notSetUp',
-        message: `${hostKindLabels.github} is not set up for this project: fill in ${missing.map(labelOf).join(', ')} in Settings → Trackers or in the project's own trackers`,
+        message: `${hostKindLabels[host.kind]} is not set up for this project: fill in ${missing.map(labelOf).join(', ')} in Settings → Trackers or in the project's own trackers`,
         setting: missing[0] ?? null,
       };
       for (const plan of plans) failed(hostReadId('plan', plan.id), 'plan', error);
       for (const run of runs) failed(hostReadId('run', run.id), 'run', error);
-      this.#store(projectId, host.name, outcomes, []);
+      this.#store(projectId, host.kind, host.name, outcomes, []);
       return;
     }
 
-    const until = this.#leaveAlone.get(host.name);
+    const leaveAlone = `${host.kind}:${host.name}`;
+    const until = this.#leaveAlone.get(leaveAlone);
     if (!asked && until && until > this.#clock()) return;
 
-    const adapter: HostAdapter = (this.#deps.adapter ?? createGitHubHost)(
-      host.github.config,
-      host.name,
-      {
-        timeoutMs: settings.get('trackers.requestTimeoutMs'),
-        listFallbackCount: settings.get('hosts.listFallbackCount'),
-        clock: this.#clock,
-        ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
-      },
-    );
+    const adapter = host.adapter();
+    const noun = host.kind === 'gitlab' ? 'merge request' : 'pull request';
     const stored = new Map(
       db
         .select()
@@ -486,7 +533,7 @@ export class HostPoller implements BackgroundService {
         const where = row.error.issues[0]?.path.join('.') ?? '';
         throw new UnusableAnswer(
           'failed',
-          `${host.name} answered pull request #${found.number} in a form wow cannot read (${where === '' ? 'the whole answer' : where})`,
+          `${host.name} answered ${noun} ${changeRequestRef({ host: host.kind, number: found.number })} in a form wow cannot read (${where === '' ? 'the whole answer' : where})`,
         );
       }
       read.set(found.number, row.data);
@@ -549,9 +596,9 @@ export class HostPoller implements BackgroundService {
       );
     }
     const wait = adapter.waitUntil;
-    if (wait) this.#leaveAlone.set(host.name, wait);
-    else this.#leaveAlone.delete(host.name);
-    this.#store(projectId, host.name, outcomes, [...read.values()]);
+    if (wait) this.#leaveAlone.set(leaveAlone, wait);
+    else this.#leaveAlone.delete(leaveAlone);
+    this.#store(projectId, host.kind, host.name, outcomes, [...read.values()]);
   }
 
   // The ticket of each run (review loop spec 33): the Jira issue its backlog item was published
@@ -684,6 +731,7 @@ export class HostPoller implements BackgroundService {
 
   #store(
     projectId: string,
+    host: HostKind,
     hostName: string,
     reads: HostReadOutcome[],
     requests: ChangeRequest[],
@@ -694,7 +742,7 @@ export class HostPoller implements BackgroundService {
         type: 'hosts.sync',
         projectId,
         at: this.#clock().toISOString(),
-        host: 'github',
+        host,
         hostName,
         reads,
         changeRequests: requests,

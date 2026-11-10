@@ -121,11 +121,14 @@ function parseJson(text: string): unknown {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-// Jira answers {errorMessages: [], errors: {field: message}}; GitHub {message, errors: [...]}.
+// Jira answers {errorMessages: [], errors: {field: message}}; GitHub {message, errors: [...]};
+// GitLab {message} or, for a token it turns down, {error, error_description}.
 function errorDetail(body: unknown): string | undefined {
   if (!isRecord(body)) return undefined;
   const parts: string[] = [];
   if (typeof body['message'] === 'string') parts.push(body['message']);
+  if (typeof body['error_description'] === 'string') parts.push(body['error_description']);
+  else if (typeof body['error'] === 'string') parts.push(body['error']);
   if (Array.isArray(body['errorMessages'])) {
     parts.push(...body['errorMessages'].filter((entry) => typeof entry === 'string'));
   }

@@ -893,6 +893,25 @@ export const settingsRegistry = {
     default: [],
     scope: 'project',
   }),
+  'trackers.gitlab.baseUrl': defineSetting({
+    schema: TrackerUrl,
+    group: 'trackers',
+    label: 'GitLab URL',
+    description:
+      'The GitLab site, such as https://gitlab.example.com. A project whose git remote is on this host reads its merge requests from it; its token goes nowhere else.',
+    default: '',
+    scope: 'project',
+  }),
+  'trackers.gitlab.token': defineSetting({
+    schema: SecretSetting,
+    group: 'trackers',
+    label: 'GitLab token',
+    description:
+      'A personal or project access token with read_api. Stored in the wow secret store and never shown again.',
+    default: null,
+    scope: 'project',
+    secret: true,
+  }),
   'trackers.requestTimeoutMs': defineSetting({
     schema: z.number().int().min(1000).max(300_000),
     group: 'trackers',
