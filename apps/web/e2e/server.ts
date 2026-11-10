@@ -8,6 +8,7 @@ import type {
 import { MockOutlookSource, loadFixtures } from '@wow/outlook-bridge';
 import {
   MockGitHub,
+  MockJira,
   MockProviderAdapter,
   createNpmRunner,
   snapshot,
@@ -46,6 +47,8 @@ import {
   e2eHostIntentId,
   e2eHostProjectId,
   e2eHostWorkflowId,
+  e2eTicketBacklogItemId,
+  e2eTicketKey,
   e2ePlanRunIntentId,
   e2ePlanRunProjectId,
   e2ePlanRunWorkflowId,
@@ -1073,7 +1076,48 @@ gitHubHost.pulls = [
     ],
   },
 ];
+// The Jira the ticket tests read (GET /jira/rest/api/2/issue/<key>), signed in with the
+// seeded global Jira settings.
+const jiraHost = new MockJira();
+jiraHost.authorization = `Basic ${Buffer.from('me@example.invalid:jira-e2e-token').toString('base64')}`;
+jiraHost.issues = [
+  {
+    key: e2eTicketKey,
+    summary: 'Water the beds before the sun is up',
+    status: 'In Progress',
+    assignee: 'Mira Invented',
+    type: 'Story',
+    description: [
+      'h2. Why',
+      'The beds dry out by *noon*, see {{water.ts}}.',
+      '# Open the valve',
+      '# Close it after _ten_ minutes',
+      '',
+      '{code:ts}',
+      'openValve(10);',
+      '{code}',
+      '<script>window.ranTicketScript = true</script> [click|javascript:alert(1)]',
+    ].join('\n'),
+  },
+];
 if (home === e2eChangesHome) {
+  // A backlog item already published to Jira; the ticket test runs it in the host project.
+  server.engine.dispatch('seed-ticket-item', {
+    type: 'backlog.create',
+    backlogItemId: e2eTicketBacklogItemId,
+    title: 'Water the beds early',
+    body: '',
+    tags: [],
+  });
+  server.engine.dispatch('seed-ticket-published', {
+    type: 'backlog.published',
+    backlogItemId: e2eTicketBacklogItemId,
+    remote: {
+      service: 'jira',
+      key: e2eTicketKey,
+      url: `${trackerUrl}/jira/browse/${e2eTicketKey}`,
+    },
+  });
   server.engine.dispatch('seed-host-project', {
     type: 'project.create',
     projectId: e2eHostProjectId,
@@ -1208,6 +1252,7 @@ const trackers = createServer((request, response) => {
     const runId = url.searchParams.get('runId');
     if (!workflowId || !runId) return json(400, { error: 'workflowId and runId are needed' });
     const projectId = url.searchParams.get('projectId') ?? e2eProjectId;
+    const backlogItemId = url.searchParams.get('backlogItemId');
     // Every run of the tea timer starts from the same invented commit.
     if (projectId === e2eChangesProjectId) seedTeaRepo(changesRepo);
     if (projectId === e2eGateProjectId) seedTeaRepo(gateRepo);
@@ -1217,6 +1262,7 @@ const trackers = createServer((request, response) => {
       runId,
       workflowId,
       projectId,
+      ...(backlogItemId ? { backlogItemId } : {}),
     });
     return json(200, { runId });
   }
@@ -1229,6 +1275,24 @@ const trackers = createServer((request, response) => {
     gitHubHost.failure =
       request.method === 'PUT' ? { status, message: 'Invented server error' } : undefined;
     return json(200, {});
+  }
+  // The mock Jira the ticket tests read, and its controls.
+  if (url.pathname === '/jira-host/requests' && request.method === 'GET') {
+    return json(200, jiraHost.requests);
+  }
+  if (url.pathname === '/jira-host/failure') {
+    const status = Number(url.searchParams.get('status') ?? '500');
+    jiraHost.failure =
+      request.method === 'PUT' ? { status, message: 'Invented Jira refusal' } : undefined;
+    return json(200, {});
+  }
+  if (request.method === 'GET' && url.pathname.startsWith('/jira/rest/api/2/issue/')) {
+    const answer = jiraHost.answer(
+      'GET',
+      `${url.pathname.slice('/jira'.length)}${url.search}`,
+      request.headers.authorization ?? null,
+    );
+    return json(answer.status, answer.body);
   }
   // Merges the pull request of one unit of the plan run tests' plan.
   if (url.pathname === '/github-pot/merged' && request.method === 'PUT') {

@@ -1,6 +1,7 @@
 import {
   gatePartLabels,
   type ChangeRequest,
+  type Ticket,
   type Project,
   type RunDiffFile,
   type Trigger,
@@ -59,6 +60,8 @@ export interface WorkflowCommandData {
         readonly folder?: string | undefined;
         // The run's pull request as the host last showed it, if it has one.
         readonly pullRequest?: ChangeRequest | undefined;
+        // The run's Jira ticket as the host last showed it, if it has one.
+        readonly ticket?: Ticket | undefined;
       }
     | undefined;
   // Every trigger row and the projects, for the event triggers' commands; whether the Triggers
@@ -134,21 +137,33 @@ function conditionCommands(workflow: Workflow, alwaysStop: readonly string[]): A
   return commands;
 }
 
-// The run's pull request (review loop spec 28 and 30): ask the host once, and open it there.
+// The run's pull request and ticket (review loop spec 28, 30 and 33): ask the hosts once, and
+// open either there.
 function pullRequestCommands({
   runId,
   pullRequest,
+  ticket,
 }: NonNullable<WorkflowCommandData['runView']>): AppCommand[] {
   const commands: AppCommand[] = [
     {
       id: 'workflowRun.pullRequest.refresh',
-      title: 'Run: refresh pull request now',
+      title: 'Run: refresh pull request and ticket now',
       group: 'Workflows',
-      keywords: ['host', 'github', 'checks', 'review', 'fetch', 'poll'],
+      keywords: ['host', 'github', 'jira', 'ticket', 'checks', 'review', 'fetch', 'poll'],
       run: ({ connection }) => void connection?.request('hosts.refresh', { runId }).catch(() => {}),
     },
   ];
   const url = safeHref(pullRequest?.url);
+  const ticketUrl = safeHref(ticket?.url ?? undefined);
+  if (ticket && ticketUrl !== undefined) {
+    commands.push({
+      id: 'workflowRun.ticket.open',
+      title: `Run: open ticket ${ticket.key} on the host`,
+      group: 'Workflows',
+      keywords: ['host', 'jira', 'issue', 'browser'],
+      run: () => void window.open(ticketUrl, '_blank', 'noreferrer'),
+    });
+  }
   if (pullRequest && url !== undefined) {
     commands.push({
       id: 'workflowRun.pullRequest.open',

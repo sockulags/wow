@@ -105,9 +105,10 @@ export function HostReadLine({
   refresh,
   openUrl,
 }: {
-  readonly read: HostRead | undefined;
+  // A pull request read or a ticket read: both say when and from where, and what went wrong.
+  readonly read: Pick<HostRead, 'fetchedAt' | 'host' | 'hostName' | 'error'> | undefined;
   readonly refresh: ReturnType<typeof useHostRefresh>;
-  // The pull request on the host, for "Open on host".
+  // The pull request or ticket on the host, for "Open on host".
   readonly openUrl?: string | undefined;
 }) {
   const { when } = useDateFormat();

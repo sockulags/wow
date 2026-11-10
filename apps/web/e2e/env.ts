@@ -104,6 +104,9 @@ export const e2eHostProjectId = 'tea-garden';
 export const e2eHostWorkflowId = 'host-e2e';
 export const e2eHostIntentId = '2026-06-tea-garden';
 export const e2eHostBranch = 'agent/U2-water-the-beds';
+// The ticket tests' backlog item in the Changes copy, published to the mock Jira as this key.
+export const e2eTicketBacklogItemId = 'ticket-e2e-item';
+export const e2eTicketKey = 'DEMO-41';
 
 // The folders those session files point at: two exist, one is gone.
 export const e2eWorkspace = (home: string, name: string) => path.join(home, 'workspaces', name);

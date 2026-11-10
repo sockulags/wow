@@ -17,6 +17,7 @@ import { panelSelection } from '@/panel/model';
 import { planCommands } from '@/plans/commands';
 import { openPlan, runRead } from '@/plans/model';
 import { runPullRequest } from '@/workflows/pull-request-tab';
+import { runTicketRead } from '@/workflows/ticket-tab';
 import { useCalendarPrefs } from '@/calendar/prefs';
 import { pendingApproval } from '@/chat/view-model';
 import { changesStore } from '@/workflows/changes';
@@ -62,6 +63,7 @@ export function useCommands(): {
   const planRuns = useTopic('planRuns');
   const changeRequests = useTopic('changeRequests');
   const hostReads = useTopic('hostReads');
+  const ticketReads = useTopic('ticketReads');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
@@ -126,6 +128,7 @@ export function useCommands(): {
                   runRead(hostReads ?? [], openRunId),
                   changeRequests ?? [],
                 ),
+                ticket: runTicketRead(ticketReads ?? [], openRunId)?.ticket ?? undefined,
               }
             : undefined,
         sendBackRunId,
@@ -184,6 +187,7 @@ export function useCommands(): {
     planRuns,
     changeRequests,
     hostReads,
+    ticketReads,
     changedFiles,
     sendBackRunId,
   ]);

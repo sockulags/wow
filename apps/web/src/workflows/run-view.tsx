@@ -25,6 +25,7 @@ import { ChangesTab } from './changes-tab';
 import { GateBar } from './gate-bar';
 import { PullRequestTab } from './pull-request-tab';
 import { ArtifactsTab, HostTab } from './review-tabs';
+import { TicketTab } from './ticket-tab';
 import { WorkingCopyLine } from './working-copy-line';
 import {
   attemptLabel,
@@ -345,6 +346,10 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
       ) : tab === 'pullRequest' ? (
         <div role="tabpanel" aria-label="Pull request" className="min-h-0 flex-1">
           <PullRequestTab run={run} />
+        </div>
+      ) : tab === 'ticket' ? (
+        <div role="tabpanel" aria-label="Ticket" className="min-h-0 flex-1">
+          <TicketTab run={run} />
         </div>
       ) : tab !== 'steps' ? (
         <div
