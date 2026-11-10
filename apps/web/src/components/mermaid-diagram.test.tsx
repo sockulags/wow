@@ -107,6 +107,34 @@ describe('mermaid diagram (review loop spec 2)', () => {
     expect(mermaid.render).not.toHaveBeenCalled();
   });
 
+  it('refuses a style that loads something, in any diagram type, before the library sees it', async () => {
+    const host = 'https://elsewhere.example.test';
+    const reaching = [
+      `stateDiagram-v2\n  classDef evil background-image:url(${host}/state.png)\n  [*] --> A\n  class A evil`,
+      `stateDiagram-v2\n  classDef evil fill:url(${host}/fill.svg#p)\n  [*] --> A\n  class A evil`,
+      `stateDiagram-v2\n  classDef evil background:u\\rl('${host}/escaped.png')\n  [*] --> A`,
+      `classDiagram\n  class A\n  style A background-image:image-set("${host}/set.png" 1x)`,
+      `flowchart LR\n  A --> B\n  style A fill:URL( "${host}/flow.svg#p" )`,
+    ];
+    for (const diagram of reaching) {
+      const { unmount } = render(<MermaidDiagram source={diagram} />);
+      expect((await screen.findByRole('note')).textContent).toBe(
+        'Diagram not drawn: Styles that load something are not drawn',
+      );
+      unmount();
+    }
+    expect(mermaid.mermaidAPI.getDiagramFromText).not.toHaveBeenCalled();
+    expect(mermaid.render).not.toHaveBeenCalled();
+
+    // A reference inside the drawing loads nothing and is drawn.
+    render(
+      <MermaidDiagram
+        source={'stateDiagram-v2\n  classDef own fill:url(#gradient)\n  [*] --> A'}
+      />,
+    );
+    expect(await screen.findByRole('img', { name: 'Diagram' })).toBeTruthy();
+  });
+
   it('shows a drawn diagram without anything that would be fetched', async () => {
     mermaid.render.mockResolvedValue({
       svg: [

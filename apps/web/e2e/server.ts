@@ -118,11 +118,10 @@ const markdownAnswer = [
   '```',
 ].join('\n');
 
-// Invented diagrams that try to make the app fetch from another host: a picture in a label, CSS
-// from a directive, a link, and an image shape.
+// Invented diagrams that try to make the app fetch from another host: a picture in a label, a
+// link, an image shape, a state diagram's class with a background, and CSS from a directive.
 const reachingAnswer = [
   '```mermaid',
-  '%%{init: {"themeCSS": ".node rect{fill:url(https://elsewhere.example.test/css.png)}"}}%%',
   'flowchart LR',
   '  Plan["Plan <img src=https://elsewhere.example.test/label.png>"] --> Build',
   '  click Build href "https://elsewhere.example.test/build"',
@@ -131,6 +130,19 @@ const reachingAnswer = [
   '```mermaid',
   'flowchart LR',
   '  Logo@{ img: "https://elsewhere.example.test/shape.png", label: "Logo" } --> Build',
+  '```',
+  '',
+  '```mermaid',
+  'stateDiagram-v2',
+  '  classDef reaching background-image:url(https://elsewhere.example.test/state.png)',
+  '  [*] --> Waiting',
+  '  class Waiting reaching',
+  '```',
+  '',
+  '```mermaid',
+  '%%{init: {"themeCSS": ".node rect{fill:url(https://elsewhere.example.test/css.png)}"}}%%',
+  'flowchart LR',
+  '  Plan --> Build',
   '```',
 ].join('\n');
 

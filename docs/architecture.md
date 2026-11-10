@@ -1108,19 +1108,29 @@ Shared pieces in `apps/web/src/components` (views compose them; none restyles `c
   shows as its text, and a picture shows as a link so nothing is fetched. Headings render two
   levels down (`#` is an `h3`). Fenced code goes to `CodeBlock`. With `streaming`, `splitUnfinished`
   holds back a fence without its closing line, or a table at the very end of the text, and shows
-  it as plain text until it is complete, also inside a list item or a quote.
+  it as plain text until it is complete, also inside a list item or a quote. It reads a fence
+  where markdown does: at most three spaces in from its quote or list item, and ended by the end
+  of that quote or item.
 - `mermaid-diagram.tsx` (`MermaidDiagram`) draws a `mermaid` fence in place with a "Source"
   switch. `mermaid.ts` loads the library on first use, runs it at its `strict` security level in
   the app's theme, and returns the SVG or a one-line reason; while drawing and on failure the
   source shows as code, with the reason below it on failure. The strict level stops scripts but
-  not fetches, and a message must not make the app fetch anything, so `mermaid.ts` adds three
-  things: labels are drawn as text and a diagram's own directives cannot set CSS, theme
-  variables or fonts (`htmlLabels: false` and the `secure` list); a flowchart with an image shape
-  is refused before drawing, because the library fetches the image while it draws; and
-  `scrubSvg` removes pictures, scripts, event attributes and any CSS or reference that points
-  outside the drawing, and gives links the rule of `safeHref` (a new window for http, https and
-  mailto, no link otherwise). The web app has no content security policy, so this is the only
-  guard. The palette command "Toggle diagram source" switches every diagram at once
+  not fetches, and a message must not make the app fetch anything. The library draws in the live
+  document, so a picture named in a diagram's style would be fetched while it draws, before any
+  check of the result. What makes that impossible is the content security policy in
+  `apps/web/index.html`: pictures, fonts, media and stylesheets load only from the app itself (or
+  `data:`), and plugins never. It leaves scripts and connections alone, because the dev server
+  and the socket to the wow server need them. `mermaid.ts` adds three things on top, so a
+  diagram also draws nothing it should not: labels are drawn as text and a diagram's own
+  directives cannot set CSS, theme variables or fonts (`htmlLabels: false` and the `secure`
+  list); a diagram that names something to load is refused before drawing, with a reason (a
+  flowchart image shape, read from the parsed diagram, and in any diagram type a source with
+  `url(` to somewhere outside the drawing, `image-set(` or `@import`, with backslashes removed,
+  which also refuses a label that spells `url(`); and `scrubSvg` removes pictures, scripts, event
+  attributes and any CSS or reference that points outside the drawing, and gives links the rule
+  of `safeHref` (a new window for http, https and mailto, no link otherwise). The desktop window
+  opens only http and https links outside the app, so a mailto link does nothing there yet.
+  The palette command "Toggle diagram source" switches every diagram at once
   (`diagramView`); it is view state and is not persisted.
 - `lib/feedback.ts`: `notify.success|error|info|warning` and `offerUndo({message, undo})`.
   Destructive actions delete at once and offer Undo; only irreversible ones (stored secrets, a

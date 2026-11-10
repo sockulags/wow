@@ -166,5 +166,27 @@ describe('a streaming message (review loop spec 3)', () => {
     // Closed in place, they are done.
     expect(splitUnfinished('- a\n\n    ```ts\n    x\n    ```\n- b').pending).toBe('');
     expect(splitUnfinished('> ```ts\n> x\n> ```\n> end').pending).toBe('');
+    // Four spaces in is an indented code block, not a fence, and so is a marker with five after.
+    expect(splitUnfinished('Text\n\n    ```\n\nMore **text**').pending).toBe('');
+    expect(splitUnfinished('Text\n    ```mermaid\nMore').pending).toBe('');
+    expect(splitUnfinished('- a\n\n      ```\n\n  more').pending).toBe('');
+    expect(splitUnfinished('-     ```\n\nMore').pending).toBe('');
+    expect(splitUnfinished('Text\n\n   ```ts\nconst a = 1;').pending).toBe(
+      '   ```ts\nconst a = 1;',
+    );
+    expect(splitUnfinished('```ts\nx\n    ```\ny').pending).toBe('```ts\nx\n    ```\ny');
+    // A fence ends with the quote or the list item it is in.
+    expect(splitUnfinished('> ```ts\n> x\nAfter the quote').pending).toBe('');
+    expect(splitUnfinished('> ```ts\n> x\n\n```mermaid\nflowchart LR').pending).toBe(
+      '```mermaid\nflowchart LR',
+    );
+    expect(splitUnfinished('- a\n\n  ```ts\n  x\n\nAfter the list').pending).toBe('');
+    expect(splitUnfinished('- a\n\n  ```ts\n  x\n\n  still code').pending).toBe(
+      '  ```ts\n  x\n\n  still code',
+    );
+    // Dashes under a line with a pipe make a heading, not a table, unless they have a pipe too.
+    expect(splitUnfinished('a | b\n---').pending).toBe('');
+    expect(splitUnfinished('a | b\n--- | ---').pending).toBe('a | b\n--- | ---');
+    expect(splitUnfinished('a | b\n:--').pending).toBe('a | b\n:--');
   });
 });

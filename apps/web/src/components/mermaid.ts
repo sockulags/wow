@@ -5,9 +5,11 @@ import { safeHref } from './markdown';
 // Draws a `mermaid` block (review loop spec 2). The library is large, so it loads on first use
 // in its own chunk. Its strict security level turns off click handlers and scripts, but it still
 // lets a diagram name pictures, styles and links. A message must not make the app fetch
-// anything, so labels are drawn as text, a diagram cannot set its own CSS or fonts, an image
-// shape is refused before drawing (the library fetches it while it draws), and `scrubSvg`
-// cleans what comes back.
+// anything. The page's content security policy (index.html) is what makes that impossible: the
+// library draws in the live document, so a style it applies while drawing would otherwise fetch
+// before anything here sees the result. On top of that, labels are drawn as text, a diagram
+// cannot set its own CSS or fonts, a diagram that names something to load (an image shape, or a
+// style with `url(`) is refused before drawing, and `scrubSvg` cleans what comes back.
 
 type Mermaid = typeof mermaid;
 
@@ -134,6 +136,10 @@ export async function drawDiagram(source: string, dark: boolean): Promise<Drawin
       flowchart: { htmlLabels: false },
       secure,
     });
+    // Any diagram type can carry CSS in a `classDef` or `style` line, so the text is checked
+    // and not each type's parsed form. A label that spells `url(` is refused with it.
+    if (loadingCss.test(unescaped(source)))
+      return { reason: 'Styles that load something are not drawn' };
     const diagram = await library.mermaidAPI.getDiagramFromText(source);
     if (hasImageShape(diagram.db)) return { reason: 'Image shapes are not drawn' };
     const { svg } = await library.render(id, source);

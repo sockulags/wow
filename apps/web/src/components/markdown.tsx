@@ -16,40 +16,88 @@ export const safeHref = (href: string | undefined): string | undefined =>
 
 const fenceOpening = /^(`{3,}|~{3,})(.*)$/;
 const fenceClosing = /^(`{3,}|~{3,})\s*$/;
-// A fence or table can sit inside a list item or a quote. Its lines then start with that
-// container's indentation and `>` marks, and its first line may follow the list marker.
+const quoteMarks = /^(?: {0,3}> ?)+/;
+const listMarker = /^(?:[-*+]|\d{1,9}[.)])(?: +|$)/;
+const indentOf = (line: string) =>
+  (/^[ \t]*/.exec(line)?.[0] ?? '').replaceAll('\t', '    ').length;
+// A table can sit inside a list item or a quote; its lines then start with that container's
+// indentation and `>` marks.
 const inContainer = (line: string) => line.replace(/^[\s>]+/, '');
-const afterMarker = (line: string) => inContainer(line).replace(/^(?:[-*+]|\d{1,9}[.)])\s+/, '');
+// A row of dashes without a pipe or colon is a heading underline or a rule, not a table.
 const delimiterRow = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+const isDelimiterRow = (line: string) => /[|:]/.test(line) && delimiterRow.test(line);
+
+type Fence = {
+  readonly marker: string;
+  readonly start: number;
+  // The quote and the list item content column the fence sits in; it ends when they end.
+  readonly quoted: boolean;
+  readonly indent: number;
+};
 
 // While a message streams, the part that is still being written (a fence without its closing
 // line, or a table at the very end that may still get rows) is held back as plain text, so a
-// half table or half diagram never flickers through wrong shapes.
+// half table or half diagram never flickers through wrong shapes. A fence counts only where
+// markdown reads one: at most three spaces in from its quote or list item, since four make an
+// indented code block.
 export function splitUnfinished(text: string): { readonly done: string; readonly pending: string } {
   const lines = text.split('\n');
-  let fence: { readonly marker: string; readonly start: number } | undefined;
+  let fence: Fence | undefined;
+  // Content columns of the open list items, innermost last.
+  let items: number[] = [];
+  let wasQuoted = false;
   let runStart = 0;
   for (const [index, line] of lines.entries()) {
+    const marks = quoteMarks.exec(line)?.[0] ?? '';
+    const quoted = marks !== '';
+    const rest = line.slice(marks.length);
+    const blank = rest.trim() === '';
+    let indent = indentOf(rest);
     if (fence) {
-      const closing = fenceClosing.exec(inContainer(line))?.[1];
-      if (closing?.startsWith(fence.marker)) {
-        fence = undefined;
-        runStart = index + 1;
+      if (quoted === fence.quoted && (blank || indent >= fence.indent)) {
+        const closing = indent - fence.indent < 4 ? fenceClosing.exec(rest.trim())?.[1] : undefined;
+        if (closing?.startsWith(fence.marker)) {
+          fence = undefined;
+          runStart = index + 1;
+        }
+        continue;
       }
+      // The quote or list item around the fence ended here, and the fence with it.
+      fence = undefined;
+      runStart = index;
+    }
+    if (quoted !== wasQuoted) items = [];
+    wasQuoted = quoted;
+    if (blank) {
+      runStart = index + 1;
       continue;
     }
-    const opening = fenceOpening.exec(afterMarker(line));
+    const column = indent;
+    items = items.filter((item) => item <= column);
+    let base = items.at(-1) ?? 0;
+    let content = rest.trimStart();
+    // The line may open list items, and a fence can follow the last marker on the same line.
+    for (let marker = listMarker.exec(content)?.[0]; marker !== undefined && indent - base < 4;) {
+      const sign = marker.trimEnd().length;
+      const gap = marker.length - sign;
+      content = content.slice(marker.length);
+      base = indent + sign + (content === '' || gap > 4 ? 1 : gap);
+      indent = content === '' || gap <= 4 ? base : indent + marker.length;
+      items.push(base);
+      marker = listMarker.exec(content)?.[0];
+    }
+    const opening = indent - base < 4 ? fenceOpening.exec(content) : null;
     if (opening?.[1] && !(opening[1].startsWith('`') && (opening[2] ?? '').includes('`'))) {
-      fence = { marker: opening[1], start: index };
-    } else if (inContainer(line) === '') {
-      runStart = index + 1;
+      fence = { marker: opening[1], start: index, quoted, indent: base };
     }
   }
   let cut = fence?.start ?? lines.length;
   if (!fence) {
     for (let index = runStart; index + 1 < lines.length; index += 1) {
-      const next = inContainer(lines[index + 1] ?? '');
-      if ((lines[index] ?? '').includes('|') && next.includes('-') && delimiterRow.test(next)) {
+      if (
+        (lines[index] ?? '').includes('|') &&
+        isDelimiterRow(inContainer(lines[index + 1] ?? ''))
+      ) {
         cut = index;
         break;
       }

@@ -111,15 +111,34 @@ test.describe('chat', () => {
     await expect(diagram.locator('svg')).toBeVisible();
     await expect(diagram).toContainText('Build');
     await expect(diagram.locator('img, image')).toHaveCount(0);
-    // The image shape is fetched by the library while it draws, so it is not drawn at all.
-    await expect(answer.getByRole('note')).toHaveText(
+    // The library fetches an image shape, and a picture named in a class of a state diagram,
+    // while it draws, so those are not drawn at all, and neither is one that brings its own CSS.
+    await expect(answer.getByRole('note')).toHaveText([
       'Diagram not drawn: Image shapes are not drawn',
-    );
+      'Diagram not drawn: Styles that load something are not drawn',
+      'Diagram not drawn: Styles that load something are not drawn',
+    ]);
 
     // A diagram's link follows the link rule: it opens outside the app.
     const link = diagram.locator('a');
     await expect(link).toHaveAttribute('href', 'https://elsewhere.example.test/build');
     await expect(link).toHaveAttribute('target', '_blank');
+
+    // Whatever gets past those checks is stopped by the page's content security policy.
+    const picture = 'https://elsewhere.example.test/policy.png';
+    const blocked = await page.evaluate((address) => {
+      const { document } = globalThis as unknown as {
+        document: {
+          addEventListener(type: string, heard: (event: { blockedURI: string }) => void): void;
+          body: { insertAdjacentHTML(where: string, html: string): void };
+        };
+      };
+      return new Promise<string>((resolve) => {
+        document.addEventListener('securitypolicyviolation', (event) => resolve(event.blockedURI));
+        document.body.insertAdjacentHTML('beforeend', `<img src="${address}" alt="">`);
+      });
+    }, picture);
+    expect(blocked).toBe(picture);
 
     // Requests reach the route in order, so one made now comes after any the diagrams made.
     await page.evaluate(() => fetch('https://elsewhere.example.test/last').catch(() => undefined));
