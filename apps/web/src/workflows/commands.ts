@@ -1,10 +1,10 @@
-import type {
-  ChangeRequest,
-  Project,
-  RunDiffFile,
-  Workflow,
-  WorkflowRun,
-  WorkflowTemplate,
+import {
+  type ChangeRequest,
+  type Project,
+  type RunDiffFile,
+  type Workflow,
+  type WorkflowRun,
+  type WorkflowTemplate,
 } from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
@@ -19,6 +19,7 @@ import {
 } from './changes';
 import { cancelSendBack, canSendBack, confirmSendBack, openSendBack } from './gate';
 import { artifactPath, gateOf, isLive, runStateLabels, sortRuns } from './model';
+import { askRemoveWorkingCopy, canRemoveWorkingCopy, workingCopyStatus } from './working-copy';
 
 export interface WorkflowCommandData {
   readonly workflows: readonly Workflow[];
@@ -34,6 +35,8 @@ export interface WorkflowCommandData {
         readonly search: Record<string, unknown>;
         readonly changedFiles: readonly RunDiffFile[];
         readonly project: Project | undefined;
+        // The folder the run works in: its own working copy, else the project folder.
+        readonly folder?: string | undefined;
         // The run's pull request as the host last showed it, if it has one.
         readonly pullRequest?: ChangeRequest | undefined;
       }
@@ -104,6 +107,7 @@ function changesCommands({
   search,
   changedFiles,
   project,
+  folder = project?.cwd,
 }: NonNullable<WorkflowCommandData['runView']>): AppCommand[] {
   const current = validateRunSearch(search);
   const to = '/workflows/runs/$runId' as const;
@@ -179,7 +183,7 @@ function changesCommands({
           {
             runId,
             path: chosen.path,
-            fullPath: project ? artifactPath(project.cwd, chosen.path) : chosen.path,
+            fullPath: folder === undefined ? chosen.path : artifactPath(folder, chosen.path),
             from: `/workflows/runs/${runId}`,
           },
         ),
@@ -300,10 +304,48 @@ export function workflowCommands({
       run: ({ navigate }) =>
         void navigate({ to: '/workflows/$workflowId', params: { workflowId: workflow.id } }),
     });
+    // The builder's "Own working copy" switch (review loop spec 36, 39).
+    const own = workflow.ownWorkingCopy ?? false;
+    commands.push({
+      id: `workflow.ownWorkingCopy.${workflow.id}`,
+      title: own
+        ? `${workflow.name}: run in the project folder`
+        : `${workflow.name}: run in an own working copy`,
+      value: `Workflow ${workflow.name} own working copy ${own ? 'off' : 'on'} ${workflow.id}`,
+      group: 'Workflows',
+      keywords: ['workflow', 'working copy', 'worktree', 'project folder', 'switch'],
+      detail: own ? 'Own working copy is on' : 'Own working copy is off',
+      searchOnly: true,
+      run: ({ connection }) => {
+        if (!connection) return;
+        void dispatch(connection, {
+          type: 'workflow.update',
+          workflowId: workflow.id,
+          ownWorkingCopy: !own,
+        });
+      },
+    });
   }
   const names = new Map(workflows.map((workflow) => [workflow.id, workflow.name]));
   for (const run of sortRuns(runs)) {
     const name = names.get(run.workflowId) ?? 'Workflow';
+    // Every kept working copy is listed here; the run view asks before it removes one (review
+    // loop spec 37).
+    if (canRemoveWorkingCopy(run)) {
+      commands.push({
+        id: `workflowRun.removeWorkingCopy.${run.id}`,
+        title: `Remove working copy: ${name}`,
+        value: `Remove working copy ${name} ${run.id} ${run.workingCopy?.path ?? ''}`,
+        group: 'Workflows',
+        keywords: ['working copy', 'worktree', 'delete', 'kept', 'unpushed', 'folder'],
+        detail: `${workingCopyStatus(run) ?? ''} · ${formatWhen(run.startedAt)}`,
+        searchOnly: run.id !== runView?.runId,
+        run: ({ navigate }) => {
+          askRemoveWorkingCopy(run.id);
+          void navigate({ to: '/workflows/runs/$runId', params: { runId: run.id } });
+        },
+      });
+    }
     commands.push({
       id: `workflowRun.${run.id}`,
       title: name,

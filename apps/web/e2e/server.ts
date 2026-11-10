@@ -28,6 +28,8 @@ import {
   e2eChangesHome,
   e2eChangesProjectId,
   e2eChangesWorkflowId,
+  e2eCopyProjectId,
+  e2eCopyWorkflowId,
   e2eGateProjectId,
   e2eGateWorkflowId,
   e2eClaudeConfigDir,
@@ -169,6 +171,11 @@ const changesRepo = path.join(home, 'tea-timer');
 // reseed the folder the Changes tests are reading.
 const gateRepo = path.join(home, 'tea-kettle');
 const teaRepos = new Set([changesRepo, gateRepo]);
+// The working copy tests (review loop spec 36, 37): the agent must find itself in a working copy
+// under the server's own `workspaces` folder, never in this repository.
+const copyRepo = path.join(home, 'tea-cup');
+const inTeaRepo = (cwd: string) =>
+  teaRepos.has(cwd) || path.dirname(cwd) === path.join(home, 'workspaces');
 // The host tests (review loop spec 23, 28, 31) read a third copy; nothing edits it.
 const hostRepo = path.join(home, 'tea-garden');
 const gardenUnits = `## Units
@@ -228,6 +235,13 @@ function seedTeaRepo(repo: string): void {
   writeInRepo(repo, 'docs/howto.md', `# How to\n\n${guide}\n`);
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'Invented tea timer');
+}
+
+// A working copy shares its repository's settings, so its files get the line endings written
+// here whatever this machine's git is set to.
+function seedCopyRepo(): void {
+  seedTeaRepo(copyRepo);
+  git(copyRepo, 'config', 'core.autocrlf', 'false');
 }
 
 // The build step: one committed change, then uncommitted ones of every kind the tab lists.
@@ -300,7 +314,7 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   const resumed = command.resumeId === undefined ? '' : `Resumed ${command.resumeId}. `;
   // A send back names no step, and the note in it may say anything, so it is looked for first.
   if (/sent it back/i.test(prompt)) {
-    if (teaRepos.has(command.cwd)) reworkTeaTimer(command.cwd);
+    if (inTeaRepo(command.cwd)) reworkTeaTimer(command.cwd);
     return [
       session,
       ...finish(threadId, 'Second attempt: the bell and a new document name the kettle.'),
@@ -308,11 +322,11 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   }
   // The review step's prompt quotes the build step's answer, so it is looked for first.
   if (/review the tea timer/i.test(prompt)) {
-    if (teaRepos.has(command.cwd)) reviewTeaTimer(command.cwd);
+    if (inTeaRepo(command.cwd)) reviewTeaTimer(command.cwd);
     return [session, ...finish(threadId, 'Reviewed the tea timer: one rename, notes written.')];
   }
   if (/build the tea timer/i.test(prompt)) {
-    if (teaRepos.has(command.cwd)) buildTeaTimer(command.cwd);
+    if (inTeaRepo(command.cwd)) buildTeaTimer(command.cwd);
     return [session, ...finish(threadId, 'The tea timer rings twice now.')];
   }
   if (/approve/i.test(prompt)) {
@@ -593,6 +607,7 @@ if (home === e2ePanelHome) {
 if (home === e2eChangesHome) {
   seedTeaRepo(changesRepo);
   seedTeaRepo(gateRepo);
+  seedCopyRepo();
   // The host tests: a repository on a branch that has a pull request, with a plan in it.
   seedTeaRepo(hostRepo);
   git(hostRepo, 'checkout', '-q', '-b', e2eHostBranch);
@@ -864,6 +879,23 @@ if (home === e2eChangesHome) {
       teaStep('wrap', 'learn-work', 'Note what the tea timer taught us.'),
     ],
   });
+  // The working copy tests: the same agent again; the test turns "Own working copy" on in the
+  // builder before it starts a run.
+  server.engine.dispatch('seed-copy-project', {
+    type: 'project.create',
+    projectId: e2eCopyProjectId,
+    name: 'Tea cup',
+    cwd: copyRepo,
+  });
+  server.engine.dispatch('seed-copy-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eCopyWorkflowId,
+    name: 'Build in a working copy',
+    steps: [
+      teaStep('build', 'deliver-work', 'Build the tea timer.'),
+      { ...teaStep('review', 'check-work', 'Review the tea timer.'), gateAfter: false },
+    ],
+  });
 }
 
 // The host tests' project: its own GitHub repository and token, a plan, and a workflow that waits
@@ -992,6 +1024,7 @@ const trackers = createServer((request, response) => {
     // Every run of the tea timer starts from the same invented commit.
     if (projectId === e2eChangesProjectId) seedTeaRepo(changesRepo);
     if (projectId === e2eGateProjectId) seedTeaRepo(gateRepo);
+    if (projectId === e2eCopyProjectId) seedCopyRepo();
     server.engine.dispatch(`run-${runId}`, {
       type: 'workflowRun.start',
       runId,

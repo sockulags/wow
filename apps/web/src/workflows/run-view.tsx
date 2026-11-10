@@ -1,4 +1,4 @@
-import type { Project, StepRun, WorkflowStep } from '@wow/contracts';
+import { runFolder, type StepRun, type WorkflowStep } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import {
   CalendarIcon,
@@ -24,6 +24,7 @@ import { ChangesTab } from './changes-tab';
 import { GateBar } from './gate-bar';
 import { PullRequestTab } from './pull-request-tab';
 import { ArtifactsTab, HostTab } from './review-tabs';
+import { WorkingCopyLine } from './working-copy-line';
 import {
   attemptLabel,
   gateOf,
@@ -40,7 +41,7 @@ function StepRow({
   index,
   step,
   stepRun,
-  project,
+  folder,
   instanceName,
   waitsAfter,
 }: {
@@ -48,7 +49,8 @@ function StepRow({
   index: number;
   step: WorkflowStep | undefined;
   stepRun: StepRun;
-  project: Project | undefined;
+  // The folder the run works in, once its project is known.
+  folder: string | undefined;
   instanceName: string | undefined;
   // The run waits for the user right after this step.
   waitsAfter: boolean;
@@ -113,10 +115,10 @@ function StepRow({
             <span className="text-muted-foreground">
               Expected: <span className="font-mono">{step.expectedArtifacts.join(', ')}</span>
             </span>
-            {stepRun.artifactsFound.length > 0 && project ? (
+            {stepRun.artifactsFound.length > 0 && folder !== undefined ? (
               <ul aria-label={`Artifacts of ${name}`} className="mt-1 flex flex-col gap-0.5">
                 {stepRun.artifactsFound.map((path) => (
-                  <Artifact key={path} runId={runId} cwd={project.cwd} path={path} />
+                  <Artifact key={path} runId={runId} cwd={folder} path={path} />
                 ))}
               </ul>
             ) : (
@@ -257,6 +259,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
             </Link>
           )}
         </div>
+        <WorkingCopyLine run={run} />
         {!gateInPanel && (
           <GateBar run={run} workflow={workflow} project={project} onError={setError} />
         )}
@@ -323,7 +326,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
                   index={index}
                   step={step}
                   stepRun={stepRun}
-                  project={project}
+                  folder={project && runFolder(run, project.cwd)}
                   instanceName={
                     instances.find((candidate) => candidate.id === step?.providerInstanceId)?.name
                   }

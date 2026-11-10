@@ -26,6 +26,8 @@ export interface WorkflowDraft {
   readonly name: string;
   readonly templateKind: string | null;
   readonly steps: readonly DraftStep[];
+  // "Own working copy"; absent means off.
+  readonly ownWorkingCopy?: boolean;
 }
 
 export const newStepId = (): string => `step-${globalThis.crypto.randomUUID().slice(0, 8)}`;
@@ -53,6 +55,7 @@ export function draftOf(workflow: Workflow): WorkflowDraft {
   return {
     name: workflow.name,
     templateKind: workflow.templateKind,
+    ownWorkingCopy: workflow.ownWorkingCopy ?? false,
     steps: workflow.steps.map(({ expectedArtifacts, ...step }) => ({
       ...step,
       artifactsText: expectedArtifacts.join('\n'),

@@ -1,4 +1,4 @@
-import type { Project, Workflow, WorkflowRun } from '@wow/contracts';
+import { runFolder, type Project, type Workflow, type WorkflowRun } from '@wow/contracts';
 import { FileTextIcon, LibraryIcon, TicketIcon } from 'lucide-react';
 import { EmptyState } from '@/components/states';
 import { Artifact } from './artifact-link';
@@ -44,7 +44,12 @@ export function ArtifactsTab({
               </span>
               <ul aria-label={`Artifacts of ${name}`} className="flex flex-col gap-0.5 pl-4">
                 {stepRun.artifactsFound.map((path) => (
-                  <Artifact key={path} runId={run.id} cwd={project.cwd} path={path} />
+                  <Artifact
+                    key={path}
+                    runId={run.id}
+                    cwd={runFolder(run, project.cwd)}
+                    path={path}
+                  />
                 ))}
               </ul>
             </li>

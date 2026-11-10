@@ -90,6 +90,7 @@ function WorkflowList() {
                       className="truncate pl-3.5 text-2xs text-muted-foreground tabular-nums"
                     >
                       {projectNames.get(run.projectId) ?? run.projectId} · {when(run.startedAt)}
+                      {run.workingCopy?.state === 'kept' && ' · working copy kept'}
                     </span>
                   </Link>
                 </li>

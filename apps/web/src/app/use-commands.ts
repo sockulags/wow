@@ -1,3 +1,4 @@
+import { runFolder } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef } from 'react';
@@ -79,6 +80,7 @@ export function useCommands(): {
     const openRun =
       runs?.find((run) => run.id === openRunId) ??
       (openThread ? gateRunForThread(openThread, runs ?? []) : undefined);
+    const openRunProject = projects?.find((project) => project.id === openRun?.projectId);
     return [
       // Cards say when they are ("Card · Tomorrow 10:00").
       ...calendarCommands({
@@ -114,7 +116,8 @@ export function useCommands(): {
                 runId: openRunId,
                 search: locationSearch,
                 changedFiles: changedFiles ?? [],
-                project: projects?.find((project) => project.id === openRun.projectId),
+                project: openRunProject,
+                folder: openRunProject && runFolder(openRun, openRunProject.cwd),
                 pullRequest: runPullRequest(
                   runRead(hostReads ?? [], openRunId),
                   changeRequests ?? [],

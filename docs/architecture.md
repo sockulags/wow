@@ -1150,6 +1150,23 @@ current step has ended: after it; not started: before it), shows the reviewed st
 runs. Stop asks first, since a stopped run cannot go on. Palette commands: New workflow, New workflow from each template, Refresh skills, every
 workflow and run, and Run: approve, Run: send back and Stop run for the open run.
 
+**Own working copy** (`working-copy.ts`, `working-copy-line.tsx`; review loop spec 36 to 39).
+The builder has an "Own working copy" switch beside the name; it is part of the draft and is
+stored with Save as `Workflow.ownWorkingCopy`. The palette switches it on the stored workflow
+("<workflow>: run in an own working copy" / "…: run in the project folder") and an open builder
+follows. A run that has a working copy shows a "Working copy" group in the run view's header,
+rendered from `WorkflowRun.workingCopy` alone: "Making the working copy…", "Works in its own
+working copy" with the folder (copy button) and the note when it did not start at the fetched
+tip, "No working copy was made" (the reason is on the failed step), "Working copy removed", or
+"Working copy kept: 2 files not committed, 1 commit not pushed (on agent/u2-bell)" with the
+newest unpushed commit's subject and the reason when it could not be removed. Kept copies are
+listed in three places: that line, "· working copy kept" on the run's row in the runs list, and
+a palette command "Remove working copy: <workflow>" for every kept copy. The command and the
+line's button open the same question (`workingCopyStore`, a `ConfirmDialog` in the run view,
+which the command navigates to); Remove calls `workflowRuns.removeWorkingCopy` and a refusal
+stays on the line. A live run's copy has no button. Artifact links, the Changes tab's "Open
+file" and the viewer's paths use `runFolder`, so they name files in the working copy.
+
 **Review at a gate** (`gate.ts`, `gate-bar.tsx`, `review-tabs.tsx`; review loop spec 14 to 18).
 The run view's tabs are Steps, Changes, Artifacts, Pull request, Ticket and Pages (`runTabs`;
 `?tab=artifacts|pullRequest|ticket|pages` beside `changes`). Artifacts lists the found files of
@@ -1637,7 +1654,12 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   server tests use too) answers under `/github` on the tracker port, only this project has a
   GitHub token, and its workflow waits before its only step, so a run is live without the mock
   agent. `PUT` and `DELETE /github-host/failure` make the host fail and answer again, and
-  `GET /github-host/requests` lists what it was asked. That copy polls once a day, so the tests
+  `GET /github-host/requests` lists what it was asked. The working copy tests
+  (`e2e/working-copy.spec.ts`) use the same copy too: a fourth repository, project `tea-cup`,
+  and a workflow whose "Own working copy" switch the test turns on in the builder. The mock
+  agent edits whatever folder its turn starts in when that is a tea repository or a folder
+  under the home's `workspaces`, so the test sees the edits in the working copy and the project
+  folder unchanged, then the kept copy and "Remove working copy". That copy polls once a day, so the tests
   see only the reads that following a plan, starting a run and "Refresh now" start. CI runs `pnpm e2e` on
   `ubuntu-latest` and `windows-latest` (the `e2e` job) and keeps the traces of a failed run.
   Tests wait for what the page shows, never for time: no sleeps, polls or retries.

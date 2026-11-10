@@ -1,4 +1,4 @@
-import type { Project, Workflow, WorkflowRun } from '@wow/contracts';
+import { runFolder, type Project, type Workflow, type WorkflowRun } from '@wow/contracts';
 import { CheckIcon, ChevronRightIcon, SquareIcon, Undo2Icon } from 'lucide-react';
 import { useId, useState } from 'react';
 import { useStore } from 'zustand';
@@ -186,7 +186,7 @@ export function GateBar({
       {review && gate && reviewed && reviewed.artifactsFound.length > 0 && project && (
         <ul aria-label="Artifacts to review" className="flex flex-col gap-0.5 text-xs">
           {reviewed.artifactsFound.map((path) => (
-            <Artifact key={path} runId={run.id} cwd={project.cwd} path={path} />
+            <Artifact key={path} runId={run.id} cwd={runFolder(run, project.cwd)} path={path} />
           ))}
         </ul>
       )}

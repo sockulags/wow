@@ -27,6 +27,8 @@ import { IconButton, WithTooltip } from '@/components/hint';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { notify, offerUndo } from '@/lib/feedback';
 import { useDateFormat } from '@/lib/format';
@@ -476,10 +478,17 @@ function Builder({
   const problems = validateDraft(draft, instances, skills);
   const shown = attempted ? problems : problems.filter((problem) => problem.warning);
   const steps = stepsOf(draft);
+  const ownWorkingCopy = draft.ownWorkingCopy ?? false;
+  // The palette switches it on the stored workflow; the draft follows so Save does not undo it.
+  const storedOwnCopy = workflow?.ownWorkingCopy ?? false;
+  useEffect(() => {
+    setDraft((current) => ({ ...current, ownWorkingCopy: storedOwnCopy }));
+  }, [storedOwnCopy]);
   const dirty =
     !workflow ||
     workflow.name !== draft.name.trim() ||
     workflow.templateKind !== draft.templateKind ||
+    (workflow.ownWorkingCopy ?? false) !== ownWorkingCopy ||
     !sameJson(workflow.steps, steps);
   const firstInstance = preferredInstance(instances);
   const runProject = projects.find((candidate) => candidate.id === projectId) ?? projects[0];
@@ -518,9 +527,12 @@ function Builder({
     });
 
   const applyTemplate = (chosen: WorkflowTemplate | undefined) => {
-    const next = chosen
-      ? draftFromTemplate(chosen, firstInstance, draft.name)
-      : { ...emptyDraft, name: draft.name };
+    const next = {
+      ...(chosen
+        ? draftFromTemplate(chosen, firstInstance, draft.name)
+        : { ...emptyDraft, name: draft.name }),
+      ownWorkingCopy,
+    };
     edit(() => next);
     setExpanded(new Set(workflow ? [] : next.steps.map((step) => step.id)));
     setReplacing(false);
@@ -551,6 +563,7 @@ function Builder({
           name: draft.name.trim(),
           templateKind: draft.templateKind,
           steps,
+          ownWorkingCopy,
         });
         setSaved(true);
       } else {
@@ -561,6 +574,7 @@ function Builder({
           name: draft.name.trim(),
           ...(draft.templateKind === null ? {} : { templateKind: draft.templateKind }),
           steps,
+          ...(ownWorkingCopy ? { ownWorkingCopy } : {}),
         });
         notify.success(`Workflow ${draft.name.trim()} created`);
         await navigate({ to: '/workflows/$workflowId', params: { workflowId } });
@@ -771,6 +785,20 @@ function Builder({
                 </div>
               </FormField>
             )}
+            <WithTooltip label="Each run works in its own Git working copy under the working copies folder, made at the newest commit of the default branch. Your project folder is left alone.">
+              <div className="flex h-8 items-center gap-2">
+                <Switch
+                  id="workflow-own-copy"
+                  checked={ownWorkingCopy}
+                  onCheckedChange={(checked) =>
+                    edit((current) => ({ ...current, ownWorkingCopy: checked }))
+                  }
+                />
+                <Label htmlFor="workflow-own-copy" className="text-xs font-normal">
+                  Own working copy
+                </Label>
+              </div>
+            </WithTooltip>
             <div className="ml-auto flex items-center gap-1">
               {workflow && (
                 <Button

@@ -282,6 +282,7 @@ describe('workflowCommands', () => {
       'New workflow from template: Feature',
       'New workflow from template: Initiative',
       'Feature',
+      'Feature: run in an own working copy',
       'Feature',
     ]);
   });

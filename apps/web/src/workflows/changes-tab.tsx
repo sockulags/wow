@@ -1,5 +1,6 @@
 import {
   RunDiff,
+  runFolder,
   type Project,
   type RunDiffFile,
   type Workflow,
@@ -114,7 +115,7 @@ function FileDiff({
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   // The file as the server saw it when it made the diff, which may be newer than the list.
   const shown = answer instanceof Error ? file : (answer?.files[0] ?? file);
-  const full = project ? artifactPath(project.cwd, file.path) : file.path;
+  const full = project ? artifactPath(runFolder(run, project.cwd), file.path) : file.path;
   const reason = unshownReason(shown);
   return (
     <section

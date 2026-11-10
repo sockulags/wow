@@ -1,4 +1,4 @@
-import type { Project, WorkflowRun } from '@wow/contracts';
+import { runFolder, type Project, type WorkflowRun } from '@wow/contracts';
 import type { AppCommand, CommandGroup } from '@/app/commands';
 import type { ViewerFile } from '@/app/runtime';
 import { artifactPath } from '@/workflows/model';
@@ -73,7 +73,7 @@ export function viewerCommands({
           openFile(context, {
             runId: openRun.id,
             path,
-            fullPath: artifactPath(project.cwd, path),
+            fullPath: artifactPath(runFolder(openRun, project.cwd), path),
             from: pathname,
           }),
       });

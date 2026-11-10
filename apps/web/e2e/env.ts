@@ -70,6 +70,12 @@ export const e2eGateProjectId = 'tea-kettle';
 // run of it is live without the mock agent. On the tracker port, PUT /github-host/failure?status=…
 // makes the mock host fail, DELETE brings it back, GET /github-host/requests lists what it was
 // asked.
+// The same server holds a fourth repository as project `tea-cup` and a workflow whose "Own
+// working copy" switch the working copy tests (e2e/working-copy.spec.ts) turn on themselves: a
+// run of it works in a Git worktree under the server home's `workspaces` folder, where the mock
+// agent then makes its edits, and the project folder stays as seeded.
+export const e2eCopyProjectId = 'tea-cup';
+export const e2eCopyWorkflowId = 'copy-e2e';
 export const e2eHostProjectId = 'tea-garden';
 export const e2eHostWorkflowId = 'host-e2e';
 export const e2eHostIntentId = '2026-06-tea-garden';
