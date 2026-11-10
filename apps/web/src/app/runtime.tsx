@@ -49,6 +49,14 @@ export interface ViewerFile {
   readonly fullSize: boolean;
 }
 
+// The linked Confluence page the context panel shows in place of the conversation (review loop
+// spec 35), by the run and the link's `ref`. The page itself is the server's last read of it.
+export interface ViewerPage {
+  readonly runId: string;
+  readonly ref: string;
+  readonly from: string;
+}
+
 // UI-only state: which panels and dialogs are open. Everything else comes from the server (or,
 // without one, from the in-memory settings source).
 export interface LayoutState {
@@ -60,6 +68,7 @@ export interface LayoutState {
   // it is there and clears it.
   readonly contextPanelFocus: boolean;
   readonly viewer: ViewerFile | undefined;
+  readonly page: ViewerPage | undefined;
   readonly paletteOpen: boolean;
   readonly providerDialog: ProviderDialog | undefined;
   readonly projectDialog: ProjectDialog | undefined;
@@ -74,6 +83,7 @@ export const createLayoutStore = (): LayoutStore =>
     contextPanelPeek: false,
     contextPanelFocus: false,
     viewer: undefined,
+    page: undefined,
     paletteOpen: false,
     providerDialog: undefined,
     projectDialog: undefined,

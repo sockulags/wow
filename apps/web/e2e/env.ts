@@ -117,6 +117,9 @@ export const e2eHostBranch = 'agent/U2-water-the-beds';
 // The ticket tests' backlog item in the Changes copy, published to the mock Jira as this key.
 export const e2eTicketBacklogItemId = 'ticket-e2e-item';
 export const e2eTicketKey = 'DEMO-41';
+// The page tests' backlog item, published as this key, whose Jira description links to a page.
+export const e2ePagesBacklogItemId = 'pages-e2e-item';
+export const e2ePagesTicketKey = 'DEMO-42';
 
 // The folders those session files point at: two exist, one is gone.
 export const e2eWorkspace = (home: string, name: string) => path.join(home, 'workspaces', name);

@@ -7,6 +7,7 @@ import type {
 } from '@wow/contracts';
 import { MockOutlookSource, loadFixtures } from '@wow/outlook-bridge';
 import {
+  MockConfluence,
   MockGitHub,
   MockGitLab,
   MockJira,
@@ -54,6 +55,8 @@ import {
   e2eHostWorkflowId,
   e2eTicketBacklogItemId,
   e2eTicketKey,
+  e2ePagesBacklogItemId,
+  e2ePagesTicketKey,
   e2ePlanRunIntentId,
   e2ePlanRunProjectId,
   e2ePlanRunWorkflowId,
@@ -699,7 +702,8 @@ if (home === e2eChangesHome) {
   git(hostRepo, 'checkout', '-q', '-b', e2eHostBranch);
   const garden = 'A tea garden that waters itself';
   for (const [name, text] of Object.entries({
-    'intent.md': e2eIntentMd(e2eHostIntentId, garden),
+    // The page tests: the intent links to a page on the mock Confluence by space and title.
+    'intent.md': `${e2eIntentMd(e2eHostIntentId, garden)}\nDesign notes: http://127.0.0.1:${trackerPort}/confluence/display/ENG/Watering+notes\n`,
     'spec.md': e2eSpecMd(e2eHostIntentId, garden),
     'plan.md': e2ePlanMd(e2eHostIntentId, garden, gardenUnits),
   })) {
@@ -872,6 +876,12 @@ const seedSettings: Record<string, unknown> = {
   'trackers.github.baseUrl': `${trackerUrl}/github`,
   'trackers.github.owner': 'acme',
   'trackers.github.repo': 'demo',
+  'trackers.confluence.baseUrl': `${trackerUrl}/confluence`,
+  'trackers.confluence.authMode': 'pat',
+  'trackers.confluence.token': await server.secrets.set(
+    'setting:trackers.confluence.token',
+    'confluence-e2e-token',
+  ),
 };
 for (const [key, value] of Object.entries(seedSettings)) {
   server.engine.dispatch(`seed-${key}`, { type: 'setting.set', key, scope: 'global', value });
@@ -1168,6 +1178,62 @@ jiraHost.issues = [
     ].join('\n'),
   },
 ];
+// The Confluence the page tests read (GET /confluence/rest/api/content…), signed in with the
+// seeded global Confluence token. The pages are invented; one tries to run a script and to load
+// a picture, and neither may happen in the viewer.
+const confluenceHost = new MockConfluence('/confluence');
+confluenceHost.authorization = 'Bearer confluence-e2e-token';
+confluenceHost.pages = [
+  {
+    id: '123',
+    title: 'Watering schedule',
+    space: 'ENG',
+    version: 3,
+    body: [
+      '<h1>Watering schedule</h1>',
+      '<p>Water the beds at <strong>five</strong> in the morning.</p>',
+      `<p><img alt="valve diagram" src="${trackerUrl}/confluence/download/attachments/123/valve.png"></p>`,
+      '<script>document.body.insertAdjacentHTML("beforeend", "<p id=ran>ran</p>")</script>',
+    ].join(''),
+  },
+  {
+    id: '456',
+    title: 'Watering notes',
+    space: 'ENG',
+    version: 1,
+    body: '<p>Notes on the <em>valves</em>.</p>',
+  },
+];
+jiraHost.issues.push({
+  key: e2ePagesTicketKey,
+  summary: 'Water on a schedule',
+  status: 'To Do',
+  assignee: null,
+  type: 'Story',
+  description: [
+    `See [the schedule|${trackerUrl}/confluence/pages/viewpage.action?pageId=123].`,
+    `Not this one: ${trackerUrl}/elsewhere/pages/viewpage.action?pageId=999`,
+  ].join('\n'),
+});
+if (home === e2eChangesHome) {
+  // A backlog item already published to Jira whose description links to a page.
+  server.engine.dispatch('seed-pages-item', {
+    type: 'backlog.create',
+    backlogItemId: e2ePagesBacklogItemId,
+    title: 'Water on a schedule',
+    body: '',
+    tags: [],
+  });
+  server.engine.dispatch('seed-pages-published', {
+    type: 'backlog.published',
+    backlogItemId: e2ePagesBacklogItemId,
+    remote: {
+      service: 'jira',
+      key: e2ePagesTicketKey,
+      url: `${trackerUrl}/jira/browse/${e2ePagesTicketKey}`,
+    },
+  });
+}
 if (home === e2eChangesHome) {
   // A backlog item already published to Jira; the ticket test runs it in the host project.
   server.engine.dispatch('seed-ticket-item', {
@@ -1384,6 +1450,25 @@ const trackers = createServer((request, response) => {
       typeof token === 'string' ? token : null,
     );
     for (const [name, value] of Object.entries(answer.headers)) response.setHeader(name, value);
+    return json(answer.status, answer.body);
+  }
+  // The mock Confluence the page tests read, and its controls. Every GET under /confluence goes
+  // to it, so a picture the viewer tried to load would show in its requests.
+  if (url.pathname === '/confluence-host/requests' && request.method === 'GET') {
+    return json(200, confluenceHost.requests);
+  }
+  if (url.pathname === '/confluence-host/failure') {
+    const status = Number(url.searchParams.get('status') ?? '500');
+    confluenceHost.failure =
+      request.method === 'PUT' ? { status, message: 'Invented Confluence refusal' } : undefined;
+    return json(200, {});
+  }
+  if (request.method === 'GET' && url.pathname.startsWith('/confluence/')) {
+    const answer = confluenceHost.answer(
+      'GET',
+      `${url.pathname.slice('/confluence'.length)}${url.search}`,
+      request.headers.authorization ?? null,
+    );
     return json(answer.status, answer.body);
   }
   // The mock Jira the ticket tests read, and its controls.

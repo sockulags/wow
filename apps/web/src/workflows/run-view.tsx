@@ -24,7 +24,8 @@ import { runTabs, type RunSearch } from './changes';
 import { ChangesTab } from './changes-tab';
 import { GateBar } from './gate-bar';
 import { PullRequestTab } from './pull-request-tab';
-import { ArtifactsTab, HostTab } from './review-tabs';
+import { PagesTab } from './pages-tab';
+import { ArtifactsTab } from './review-tabs';
 import { TicketTab } from './ticket-tab';
 import { WorkingCopyLine } from './working-copy-line';
 import {
@@ -351,13 +352,9 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
         <div role="tabpanel" aria-label="Ticket" className="min-h-0 flex-1">
           <TicketTab run={run} />
         </div>
-      ) : tab !== 'steps' ? (
-        <div
-          role="tabpanel"
-          aria-label={runTabs.find((entry) => entry.id === tab)?.label}
-          className="min-h-0 flex-1"
-        >
-          <HostTab tab={tab} />
+      ) : tab === 'pages' ? (
+        <div role="tabpanel" aria-label="Pages" className="min-h-0 flex-1">
+          <PagesTab run={run} />
         </div>
       ) : (
         <div

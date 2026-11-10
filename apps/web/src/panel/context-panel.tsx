@@ -10,10 +10,11 @@ import { cn } from '@/lib/utils';
 import { BacklogPanel } from './backlog-panel';
 import { CalendarPanel, useCalendarPanelTitle } from './calendar-panel';
 import { FileViewer } from './file-viewer';
+import { PageViewer } from './page-viewer';
 import { clampPanelWidth, hasSelection, panelSelection, type PanelSelection } from './model';
 import { CONTEXT_PANEL_ID, closeContextPanel, takePanelFocusRequest } from './panel-state';
 import { ThreadPanel } from './thread-panel';
-import { shownFile } from './viewer';
+import { shownFile, shownPage } from './viewer';
 import { RunPanel, WorkflowPanel } from './workflow-panel';
 
 // What the empty panel says it would show, per view.
@@ -159,6 +160,11 @@ export function ContextPanel() {
     useLayout((state) => state.viewer),
     pathname,
   );
+  // So does a linked page.
+  const page = shownPage(
+    useLayout((state) => state.page),
+    pathname,
+  );
   const width = preview ?? storedWidth;
 
   // "Focus context panel" on a closed panel: take the focus once it is on screen.
@@ -206,6 +212,8 @@ export function ContextPanel() {
         <h2 className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
           {file ? (
             'File'
+          ) : page ? (
+            'Page'
           ) : selection.view === 'calendar' && selection.itemId ? (
             <CalendarTitle itemId={selection.itemId} />
           ) : (
@@ -224,6 +232,8 @@ export function ContextPanel() {
       <div className="flex min-h-0 flex-1 flex-col">
         {file ? (
           <FileViewer key={`${file.runId}\n${file.path}`} file={file} />
+        ) : page ? (
+          <PageViewer key={`${page.runId}\n${page.ref}`} page={page} />
         ) : (
           <PanelBody selection={selection} />
         )}

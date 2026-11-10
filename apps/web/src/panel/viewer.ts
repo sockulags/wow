@@ -1,5 +1,5 @@
 import type { SettingsStore } from '@wow/client-runtime';
-import type { LayoutStore, ViewerFile } from '@/app/runtime';
+import type { LayoutStore, ViewerFile, ViewerPage } from '@/app/runtime';
 import { CONTEXT_PANEL_ID, showInContextPanel } from './panel-state';
 
 // The file viewer is a state of the context panel (review loop spec 6, Interface): opening a file
@@ -15,9 +15,23 @@ export function openFile(
   context: ViewerContext,
   file: Pick<ViewerFile, 'runId' | 'path' | 'fullPath' | 'from'>,
 ): void {
-  context.layout.setState({ viewer: { ...file, fullSize: false, read: undefined } });
+  context.layout.setState({
+    viewer: { ...file, fullSize: false, read: undefined },
+    page: undefined,
+  });
   showInContextPanel(context);
 }
+
+// A linked Confluence page in the same place (review loop spec 35).
+export function openPage(context: ViewerContext, page: ViewerPage): void {
+  context.layout.setState({ page, viewer: undefined });
+  showInContextPanel(context);
+}
+
+export const shownPage = (
+  page: ViewerPage | undefined,
+  pathname: string,
+): ViewerPage | undefined => (page?.from === pathname ? page : undefined);
 
 // The viewer's file while the view it was opened on is still the one on screen.
 export const shownFile = (
@@ -30,7 +44,7 @@ export const shownFile = (
 export function closeViewer(layout: LayoutStore): void {
   const panel = document.getElementById(CONTEXT_PANEL_ID);
   const inside = panel?.contains(document.activeElement) === true;
-  layout.setState({ viewer: undefined });
+  layout.setState({ viewer: undefined, page: undefined });
   if (inside) panel?.focus();
 }
 
@@ -133,4 +147,13 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1000) return `${bytes} bytes`;
   if (bytes < 1_000_000) return `${(bytes / 1000).toFixed(1)} KB`;
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
+// A page's rendered body as a page of its own for the no-scripts frame: the host answers a
+// fragment. Pictures and anything else the page would fetch stay out (the frame's policy allows
+// only data: addresses), since they need the user's Confluence session.
+export function pageDocument(body: string): string {
+  return frameDocument(
+    `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:16px;font:14px/1.5 system-ui,sans-serif;color:#1f2328;background:#fff}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #d0d7de;padding:4px 8px}pre{white-space:pre-wrap}</style></head><body>${body}</body></html>`,
+  );
 }

@@ -1,8 +1,7 @@
 import { runFolder, type Project, type Workflow, type WorkflowRun } from '@wow/contracts';
-import { FileTextIcon, LibraryIcon } from 'lucide-react';
+import { FileTextIcon } from 'lucide-react';
 import { EmptyState } from '@/components/states';
 import { Artifact } from './artifact-link';
-import type { ReviewTab } from './changes';
 import { attemptLabel } from './model';
 
 // The review tabs beside Changes (review loop spec 14). Artifacts lists what each step left in
@@ -58,21 +57,4 @@ export function ArtifactsTab({
       </ul>
     </div>
   );
-}
-
-const hostTabs = {
-  pages: {
-    icon: LibraryIcon,
-    description: 'wow does not read linked pages yet, so this run has none to show.',
-  },
-} as const;
-
-// Pages has no source yet: it says so.
-export function HostTab({
-  tab,
-}: {
-  readonly tab: Exclude<ReviewTab, 'changes' | 'artifacts' | 'pullRequest' | 'ticket'>;
-}) {
-  const { icon, description } = hostTabs[tab];
-  return <EmptyState icon={icon} title="Nothing to show yet" description={description} />;
 }

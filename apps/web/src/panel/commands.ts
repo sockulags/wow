@@ -1,10 +1,20 @@
-import { runFolder, type Project, type WorkflowRun } from '@wow/contracts';
+import { runFolder, type PageRead, type Project, type WorkflowRun } from '@wow/contracts';
+import { safeHref } from '@/components/markdown';
 import type { AppCommand, CommandGroup } from '@/app/commands';
-import type { ViewerFile } from '@/app/runtime';
+import type { ViewerFile, ViewerPage } from '@/app/runtime';
 import { artifactPath } from '@/workflows/model';
+import { pageTitle, runPageRead } from '@/workflows/pages-tab';
 import { hasSelection, type PanelSelection } from './model';
 import { showInContextPanel } from './panel-state';
-import { closeViewer, copyFilePath, openFile, shownFile, toggleFullSize } from './viewer';
+import {
+  closeViewer,
+  copyFilePath,
+  openFile,
+  openPage,
+  shownFile,
+  shownPage,
+  toggleFullSize,
+} from './viewer';
 
 const groups: Readonly<Partial<Record<PanelSelection['view'], CommandGroup>>> = {
   calendar: 'Calendar',
@@ -45,6 +55,9 @@ export interface ViewerCommandData {
   // The run open in the run view, or the run waiting at a gate after the open thread's step.
   readonly openRun: WorkflowRun | undefined;
   readonly projects: readonly Project[];
+  // The linked page the panel shows, and what was last read about the pages of each run.
+  readonly page?: ViewerPage | undefined;
+  readonly pageReads?: readonly PageRead[] | undefined;
 }
 
 // The file viewer from the keyboard (review loop spec 6): every artifact the open run's steps
@@ -56,6 +69,8 @@ export function viewerCommands({
   pathname,
   openRun,
   projects,
+  page,
+  pageReads = [],
 }: ViewerCommandData): AppCommand[] {
   const commands: AppCommand[] = [];
   const project = openRun && projects.find((candidate) => candidate.id === openRun.projectId);
@@ -76,6 +91,46 @@ export function viewerCommands({
             fullPath: artifactPath(runFolder(openRun, project.cwd), path),
             from: pathname,
           }),
+      });
+    }
+  }
+  // Every linked page of the open run that has been read opens in the side panel (spec 35).
+  const runId = openRun?.id;
+  for (const link of runId ? (runPageRead(pageReads, runId)?.pages ?? []) : []) {
+    if (!link.page || !runId) continue;
+    const title = pageTitle(link);
+    commands.push({
+      id: `viewer.page.${link.ref}`,
+      title: `Open page: ${title}`,
+      value: `Open page ${title} ${link.ref}`,
+      group: 'Workflows',
+      keywords: ['confluence', 'page', 'wiki', 'side panel'],
+      detail: 'In the side panel',
+      run: (context) => openPage(context, { runId, ref: link.ref, from: pathname }),
+    });
+  }
+  const shown = shownPage(page, pathname);
+  if (shown) {
+    const link = runPageRead(pageReads, shown.runId)?.pages.find(
+      (entry) => entry.ref === shown.ref,
+    );
+    commands.push({
+      id: 'viewer.back',
+      title: 'Back to conversation',
+      group: 'Workflows',
+      keywords: ['close page', 'viewer', 'side panel'],
+      detail: link ? pageTitle(link) : '',
+      run: ({ layout }) => closeViewer(layout),
+    });
+    const url = safeHref(link?.page?.url ?? link?.link);
+    if (link && url !== undefined) {
+      commands.push({
+        id: 'viewer.page.openOnHost',
+        title: `Open page on host: ${pageTitle(link)}`,
+        group: 'Workflows',
+        keywords: ['confluence', 'browser', 'external'],
+        detail: url,
+        run: () => void window.open(url, '_blank', 'noreferrer'),
       });
     }
   }

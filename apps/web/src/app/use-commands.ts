@@ -64,12 +64,14 @@ export function useCommands(): {
   const changeRequests = useTopic('changeRequests');
   const hostReads = useTopic('hostReads');
   const ticketReads = useTopic('ticketReads');
+  const pageReads = useTopic('pageReads');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
     [pathname, locationSearch],
   );
   const viewer = useLayout((state) => state.viewer);
+  const page = useLayout((state) => state.page);
   const changedFiles = useStore(changesStore, (state) =>
     state.runId === openRunId ? state.files : undefined,
   );
@@ -150,7 +152,14 @@ export function useCommands(): {
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
       }),
       ...panelCommands(panelSelection(pathname, locationSearch)),
-      ...viewerCommands({ viewer, pathname, openRun, projects: projects ?? [] }),
+      ...viewerCommands({
+        viewer,
+        pathname,
+        openRun,
+        projects: projects ?? [],
+        page,
+        pageReads: pageReads ?? [],
+      }),
       ...providerCommands(instances ?? []),
       ...projectCommands(projects ?? []),
       ...updateCommands(updateState),
@@ -183,6 +192,8 @@ export function useCommands(): {
     backlogItems,
     openBacklogItemId,
     viewer,
+    page,
+    pageReads,
     planIntents,
     planRuns,
     changeRequests,
