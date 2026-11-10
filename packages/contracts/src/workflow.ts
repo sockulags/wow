@@ -87,6 +87,9 @@ export const StepGate = z.object({
   // When the step ended: checks count only when read after this, and the wait for them is
   // measured from it.
   since: z.iso.datetime(),
+  // The commit the run's folder was on when the step ended. Checks count only when they are for
+  // this commit; null or absent when the folder has none, and then any read after `since` counts.
+  headSha: z.string().nullable().optional(),
   // When the gate got its current state.
   at: z.iso.datetime(),
 });

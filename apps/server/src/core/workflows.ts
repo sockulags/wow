@@ -11,6 +11,7 @@ import {
   type RunEvent,
   type RunUnit,
   type ServerCommand,
+  type StepGate,
   type Thread,
   type Workflow,
   type WorkflowChanges,
@@ -170,6 +171,7 @@ export function decideWorkflow(
           artifactsFound: command.artifactsFound,
           artifactsMissing: command.artifactsMissing,
           fileHashes: command.fileHashes,
+          headSha: command.headSha,
         },
         read,
         context,
@@ -279,7 +281,7 @@ function refuseConditions(
 // What the host showed about the checks of the run's pull request since the step ended. Null
 // when nothing was read since then: an older read says nothing about what the step pushed.
 function checksReading(
-  since: string,
+  { since, headSha }: Pick<StepGate, 'since' | 'headSha'>,
   hostRead: HostRead | undefined,
   changeRequests: readonly ChangeRequest[],
 ): ChecksReading | null {
@@ -294,6 +296,10 @@ function checksReading(
   }
   const request = changeRequests.find((row) => hostRead.changeRequestIds.includes(row.id));
   if (!request) return { state: 'noPullRequest', branch: hostRead.branch };
+  // Checks for another commit say nothing about what the step left: the host may not have seen
+  // the push yet, or the step did not push. Wait for a read of this commit, or for the wait to
+  // run out.
+  if (typeof headSha === 'string' && request.headSha !== headSha) return null;
   const { number } = request;
   const named = (state: 'success' | 'failure' | 'pending') =>
     request.checks.filter((check) => check.state === state).map((check) => check.name);
@@ -328,7 +334,7 @@ export function gateChecksEvents(
     {
       type: 'gateChecks',
       stepId: current.stepId,
-      reading: checksReading(current.gate.since, hostRead, changeRequests),
+      reading: checksReading(current.gate, hostRead, changeRequests),
     },
     read,
     context,

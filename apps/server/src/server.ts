@@ -24,7 +24,7 @@ import { HostPoller } from './hosts/poller.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
 import type { OutlookService } from './outlook/service.js';
 import { discoverProjects } from './projects/discover.js';
-import { readCurrentBranch } from './projects/git.js';
+import { readCurrentBranch, readHeadCommit } from './projects/git.js';
 import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
 import { ProviderUpdates, createNpmRunner, type RunNpm } from './providers/update.js';
@@ -172,6 +172,10 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     detectArtifacts: options.detectArtifacts ?? detectArtifacts,
     changes: {
       base: (folder) => readRunBase(folder, changesOptions(settings)),
+      head: async (folder) => {
+        const head = await readHeadCommit(folder, changesOptions(settings).git);
+        return head.status === 'ok' ? head.sha : undefined;
+      },
       snapshot: (folder, baseSha) => snapshotChanges(folder, baseSha, changesOptions(settings)),
     },
     prepare: (runId) => workspaces.prepare(runId),

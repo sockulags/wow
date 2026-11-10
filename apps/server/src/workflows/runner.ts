@@ -20,6 +20,8 @@ import type { RunBase } from './changes.js';
 // say (not a repository, not installed, timed out).
 export interface RunChanges {
   base(folder: string): Promise<RunBase | undefined>;
+  // The commit the folder is on, or undefined when it has none or git cannot say.
+  head?(folder: string): Promise<string | undefined>;
   snapshot(folder: string, baseSha: string): Promise<FileHash[] | undefined>;
 }
 
@@ -285,6 +287,10 @@ export class WorkflowRunner {
         }
       }
     }
+    const headSha =
+      folder !== undefined && step?.gateAfterCondition?.includes('checks')
+        ? await this.#deps.changes.head?.(folder).catch(() => undefined)
+        : undefined;
     const { baseSha } = run;
     const fileHashes =
       folder !== undefined && baseSha
@@ -301,6 +307,7 @@ export class WorkflowRunner {
       artifactsFound,
       ...(step?.gateAfterCondition?.includes('artifacts') ? { artifactsMissing } : {}),
       ...(fileHashes ? { fileHashes } : {}),
+      ...(headSha === undefined ? {} : { headSha }),
     });
   }
 

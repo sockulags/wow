@@ -105,7 +105,8 @@ const checks = (...runs: MockCheckRun[]): MockPullRequest => ({
   body: 'Invented for the tests.',
   state: 'open',
   branch: bellBranch,
-  sha: 'b2b2b2b',
+  // The commit the project folder is on: a gate counts checks only for the commit its step left.
+  sha: git(project, 'rev-parse', 'HEAD').trim(),
   checkRuns: runs,
 });
 const passed = (name: string): MockCheckRun => ({
@@ -402,6 +403,22 @@ describe('the checks part (spec 54 to 56)', () => {
       parts: [{ part: 'checks', state: 'pending' }],
     });
     host.failure = undefined;
+    await poll();
+    expect(gate()?.state).toBe('passedByItself');
+  });
+
+  it('does not take successful checks of another commit as its answer', async () => {
+    // The host still shows the commit before the one the step left.
+    host.pulls = [{ ...checks(passed('test')), sha: 'a1a1a1a' }];
+    createWorkflow({ gateAfterCondition: ['checks'] });
+    await start();
+    expect(run().state).toBe('waiting');
+    expect(gate()).toMatchObject({
+      state: 'waitingForChecks',
+      parts: [{ part: 'checks', state: 'pending' }],
+    });
+    // Once the host shows the step's commit with its checks green, the gate passes.
+    host.pulls = [checks(passed('test'))];
     await poll();
     expect(gate()?.state).toBe('passedByItself');
   });

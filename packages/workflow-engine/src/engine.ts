@@ -60,6 +60,8 @@ export type RunInput =
       readonly artifactsMissing?: readonly string[] | undefined;
       // The changed files as the step left them; absent for a run without a base.
       readonly fileHashes?: readonly FileHash[] | undefined;
+      // The commit the run's folder is on, when the step's gate asks for checks.
+      readonly headSha?: string | undefined;
     }
   | {
       readonly type: 'baseRecorded';
@@ -263,6 +265,7 @@ function completeStep(
     state,
     parts: results,
     since: context.now,
+    headSha: input.headSha ?? null,
     at: context.now,
   });
   if (parts.some((part) => part.state === 'failed')) {

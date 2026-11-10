@@ -523,7 +523,10 @@ wow never merges: passing a gate only starts the next step.
 Waiting for checks (spec 56). The engine's `gateChecks {stepId, reading}` input looks at such a
 gate again. The reading is what the stored host read of the run (`run:<runId>`) shows, and only
 a read fetched at or after `gate.since` (when the step ended) counts, because an older one says
-nothing about what the step pushed. Success passes the gate; a failing check waits for the user
+nothing about what the step pushed. The gate also keeps the commit the run's folder was on when
+the step ended (`gate.headSha`, read by the runner), and a read whose pull request is on another
+commit counts as no read: the host has not seen the push yet, or the step did not push. Success
+passes the gate; a failing check waits for the user
 and names it; checks still running, a pull request without checks, no pull request for the
 branch yet, or a host that did not answer keep it waiting and update the part's sentence; a
 host that is not set up waits for the user at once. Once `workflows.gateChecksTimeoutMinutes`

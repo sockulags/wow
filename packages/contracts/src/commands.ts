@@ -370,6 +370,8 @@ export const InternalCommand = z.discriminatedUnion('type', [
     // The step's expected artifact globs that matched no file.
     artifactsMissing: z.array(z.string()).optional(),
     fileHashes: z.array(FileHash).optional(),
+    // The commit the run's folder is on, for a gate that waits for that commit's checks.
+    headSha: z.string().optional(),
   }),
   // Look again at a gate that waits for its pull request's checks: the host poller sends it when
   // `workflows.gateChecksTimeoutMinutes` has passed since the step ended.
