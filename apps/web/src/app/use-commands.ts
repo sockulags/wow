@@ -1,6 +1,7 @@
 import { settingValue } from '@wow/client-runtime';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef } from 'react';
+import { useStore } from 'zustand';
 import { backlogCommands } from '@/backlog/commands';
 import { calendarCommands } from '@/calendar/commands';
 import { validateCalendarSearch } from '@/calendar/search';
@@ -16,6 +17,7 @@ import { planCommands } from '@/plans/commands';
 import { openPlan } from '@/plans/model';
 import { useCalendarPrefs } from '@/calendar/prefs';
 import { pendingApproval } from '@/chat/view-model';
+import { changesStore } from '@/workflows/changes';
 import { workflowCommands } from '@/workflows/commands';
 import { gateRunForThread } from '@/workflows/model';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
@@ -58,6 +60,9 @@ export function useCommands(): {
     [pathname, locationSearch],
   );
   const viewer = useLayout((state) => state.viewer);
+  const changedFiles = useStore(changesStore, (state) =>
+    state.runId === openRunId ? state.files : undefined,
+  );
   const staticCommands = useMemo(() => buildCommands(), []);
   const commands = useMemo(() => {
     const zone = calendarZone;
@@ -98,6 +103,15 @@ export function useCommands(): {
         runs: runs ?? [],
         templates,
         openRun,
+        runView:
+          openRunId !== undefined && openRun?.id === openRunId
+            ? {
+                runId: openRunId,
+                search: locationSearch,
+                changedFiles: changedFiles ?? [],
+                project: projects?.find((project) => project.id === openRun.projectId),
+              }
+            : undefined,
         formatWhen: when,
       }),
       ...planCommands({
@@ -143,6 +157,7 @@ export function useCommands(): {
     openBacklogItemId,
     viewer,
     planIntents,
+    changedFiles,
   ]);
   const context = useMemo(
     () => ({ navigate, settings, layout, draft, connection, updates }),

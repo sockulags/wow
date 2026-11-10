@@ -949,6 +949,26 @@ current step has ended: after it; not started: before it), shows the reviewed st
 alone while a step runs. Stop asks first, since a stopped run cannot go on. Palette commands: New workflow, New workflow from each template, Refresh skills, every
 workflow and run, and Continue run and Stop run for the open run.
 
+**Changes tab** (`changes.ts`, `changes-tab.tsx`; review loop spec 11 to 13). The run view has two
+tabs under its header, Steps and Changes; the address carries the choice
+(`/workflows/runs/<id>?tab=changes&file=<path>&stepOnly=true`, read by `validateRunSearch`), so
+links and palette commands open the same state. The tab asks `workflowRuns.diff {runId}` when it
+opens, again whenever the run row moves on (a step ended, a gate was passed) and on Refresh, and
+asks `{runId, path}` for the chosen file's diff; nothing is cached beyond what is on screen. The
+list is on the left (status letter, path, `+added −removed`, or "Binary file" / "Too large to
+show" with the size), the chosen file's unified diff on the right with line numbers of both
+sides (`parsePatch`), not highlighted and not side by side. The step under review
+(`stepUnderReview`) is the one the gate asks about, else the last step that stored its hashes;
+its files carry a "This step" badge and "This step only" narrows the list to them. The switch is
+off for a run whose steps stored no hashes. "Open file" shows the file in the context panel's
+viewer through `openFile`; a deleted file has none. A status other than `ok` shows its reason in
+place of the list ("Not a Git repository", "Git was not found", "No base recorded", ...) and the
+Steps tab and gate bar work as before. `changesStore` holds the files the tab last read so the
+palette can offer them. Palette commands: Run: show changes / Run: show steps
+(`keybindings.runChanges`), Changes: this step only / every step (`keybindings.changesStepOnly`),
+Refresh changes, Changed file: <path> for each listed file, and Open changed file: <path> for
+the chosen one.
+
 ## Calendar view
 
 `apps/web/src/calendar`. `/calendar?view=day|week&date=YYYY-MM-DD` shows a time grid for one day or
@@ -1373,6 +1393,12 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   a backlog item's card run the way the scheduler will (`POST /fire`). The plans tests read invented intent
   folders that `e2e/plans-seed.ts` writes to the seeded project's `plan-files` folder, which the
   project's `plans.intentsDirectory` points at so the workflow tests' `intents/*` artifacts stay
-  as they are; one test rewrites a plan file and waits for the view to follow. CI runs `pnpm e2e` on
+  as they are; one test rewrites a plan file and waits for the view to follow. The Changes tab
+  tests use a sixth copy (`e2eChangesHome`, `e2eChangesPort`), because opening a changed file
+  opens the context panel, a global setting. The script creates an invented tea timer
+  repository in its home with `git` (which the e2e machines therefore need on the PATH) and
+  registers it as a second project; a two-step workflow's prompts make the mock agent commit one
+  change and leave others uncommitted, then add review notes. `POST /run?…&projectId=…` puts the
+  repository back to its first commit before each run. CI runs `pnpm e2e` on
   `ubuntu-latest` and `windows-latest` (the `e2e` job) and keeps the traces of a failed run.
   Tests wait for what the page shows, never for time: no sleeps, polls or retries.

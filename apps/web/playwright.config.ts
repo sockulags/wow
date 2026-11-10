@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 import {
+  e2eChangesHome,
+  e2eChangesOutlookControlPort,
+  e2eChangesPort,
+  e2eChangesTrackerPort,
   e2eHome,
   e2ePanelHome,
   e2ePanelOutlookControlPort,
@@ -87,6 +91,19 @@ export default defineConfig({
         WOW_E2E_PORT: String(e2ePanelPort),
         WOW_E2E_OUTLOOK_CONTROL_PORT: String(e2ePanelOutlookControlPort),
         WOW_E2E_TRACKER_PORT: String(e2ePanelTrackerPort),
+        WOW_OUTLOOK: 'mock',
+      },
+      reuseExistingServer: false,
+    },
+    {
+      // A copy for the Changes tab tests, with an invented Git repository as a project.
+      command: 'pnpm exec tsx e2e/server.ts',
+      port: e2eChangesPort,
+      env: {
+        WOW_E2E_HOME: e2eChangesHome,
+        WOW_E2E_PORT: String(e2eChangesPort),
+        WOW_E2E_OUTLOOK_CONTROL_PORT: String(e2eChangesOutlookControlPort),
+        WOW_E2E_TRACKER_PORT: String(e2eChangesTrackerPort),
         WOW_OUTLOOK: 'mock',
       },
       reuseExistingServer: false,

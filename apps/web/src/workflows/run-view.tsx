@@ -16,6 +16,8 @@ import { isoDate, localDate } from '@/calendar/time';
 import { formatDuration, useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Artifact } from './artifact-link';
+import type { RunSearch } from './changes';
+import { ChangesTab } from './changes-tab';
 import { GateBar } from './gate-bar';
 import {
   gateOf,
@@ -130,7 +132,7 @@ function StepRow({
 }
 
 // Behavior 26: every step's state, its thread and the expected artifacts found in the project.
-export function RunView({ runId }: { runId: string }) {
+export function RunView({ runId, search = {} }: { runId: string; search?: RunSearch }) {
   const { connection } = useRuntime();
   const runs = useTopic('workflowRuns');
   const workflows = useTopic('workflows') ?? [];
@@ -168,6 +170,7 @@ export function RunView({ runId }: { runId: string }) {
   const card = cards.find((candidate) => candidate.id === run.calendarItemId);
   const item = backlog.find((candidate) => candidate.id === run.backlogItemId);
   const gate = gateOf(run);
+  const changes = search.tab === 'changes';
   const linkClass =
     'inline-flex items-center gap-1 rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring';
   return (
@@ -220,33 +223,64 @@ export function RunView({ runId }: { runId: string }) {
             {error}
           </p>
         )}
+        <div role="tablist" aria-label="Run" className="flex gap-0.5">
+          {(['steps', 'changes'] as const).map((tab) => (
+            <Button
+              key={tab}
+              asChild
+              role="tab"
+              size="xs"
+              variant={(tab === 'changes') === changes ? 'secondary' : 'ghost'}
+              aria-selected={(tab === 'changes') === changes}
+            >
+              <Link
+                to="/workflows/runs/$runId"
+                params={{ runId }}
+                search={tab === 'changes' ? { tab } : {}}
+                replace
+              >
+                {tab === 'steps' ? 'Steps' : 'Changes'}
+              </Link>
+            </Button>
+          ))}
+        </div>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        <ol aria-label="Run steps" className="flex flex-col gap-2">
-          {run.steps.map((stepRun, index) => {
-            const step = workflow?.steps.find((candidate) => candidate.id === stepRun.stepId);
-            return (
-              <StepRow
-                runId={run.id}
-                key={stepRun.stepId}
-                index={index}
-                step={step}
-                stepRun={stepRun}
-                project={project}
-                instanceName={
-                  instances.find((candidate) => candidate.id === step?.providerInstanceId)?.name
-                }
-                waitsAfter={
-                  gate !== undefined &&
-                  (gate.position === 'after'
-                    ? gate.stepIndex === index
-                    : gate.stepIndex - 1 === index)
-                }
-              />
-            );
-          })}
-        </ol>
-      </div>
+      {changes ? (
+        <div role="tabpanel" aria-label="Changes" className="min-h-0 flex-1">
+          <ChangesTab run={run} workflow={workflow} project={project} search={search} />
+        </div>
+      ) : (
+        <div
+          role="tabpanel"
+          aria-label="Steps"
+          className="min-h-0 flex-1 overflow-y-auto px-4 py-3"
+        >
+          <ol aria-label="Run steps" className="flex flex-col gap-2">
+            {run.steps.map((stepRun, index) => {
+              const step = workflow?.steps.find((candidate) => candidate.id === stepRun.stepId);
+              return (
+                <StepRow
+                  runId={run.id}
+                  key={stepRun.stepId}
+                  index={index}
+                  step={step}
+                  stepRun={stepRun}
+                  project={project}
+                  instanceName={
+                    instances.find((candidate) => candidate.id === step?.providerInstanceId)?.name
+                  }
+                  waitsAfter={
+                    gate !== undefined &&
+                    (gate.position === 'after'
+                      ? gate.stepIndex === index
+                      : gate.stepIndex - 1 === index)
+                  }
+                />
+              );
+            })}
+          </ol>
+        </div>
+      )}
     </div>
   );
 }

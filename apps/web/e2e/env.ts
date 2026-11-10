@@ -48,6 +48,17 @@ export const e2ePanelCardId = 'panel-e2e-card';
 // /run?workflowId=…&runId=… on its tracker port starts a run of it.
 export const e2eViewerWorkflowId = 'viewer-e2e';
 
+// A sixth server for the Changes tab tests (e2e/changes.spec.ts): opening a changed file opens
+// the context panel, a global setting the panel tests need to themselves. Its home holds an
+// invented Git repository as a second project and a two-step workflow whose mock agent edits it;
+// POST /run?workflowId=…&runId=…&projectId=… on its tracker port starts a run.
+export const e2eChangesHome = path.join(tmpdir(), 'wow-e2e-changes-home');
+export const e2eChangesPort = 4561;
+export const e2eChangesOutlookControlPort = 4562;
+export const e2eChangesTrackerPort = 4563;
+export const e2eChangesWorkflowId = 'changes-e2e';
+export const e2eChangesProjectId = 'tea-timer';
+
 // The folders those session files point at: two exist, one is gone.
 export const e2eWorkspace = (home: string, name: string) => path.join(home, 'workspaces', name);
 

@@ -24,6 +24,7 @@ import { validatePlanSearch } from '@/plans/model';
 import { PlansHome, PlansLayout, PlanView } from '@/plans/plans-view';
 import { NotFoundView } from '@/views/empty-views';
 import { EditWorkflowView, NewWorkflowView } from '@/workflows/builder';
+import { validateRunSearch } from '@/workflows/changes';
 import { RunView } from '@/workflows/run-view';
 import { WorkflowsHome, WorkflowsLayout } from '@/workflows/workflows-view';
 import { isSettingGroup, settingsByGroup } from './sections';
@@ -112,9 +113,11 @@ const newWorkflowRoute = createRoute({
 const workflowRunRoute = createRoute({
   getParentRoute: () => workflowsRoute,
   path: '/runs/$runId',
+  // `?tab=changes` opens the Changes tab, with `file` and `stepOnly`, so palette commands can.
+  validateSearch: validateRunSearch,
   component: function WorkflowRunRoute() {
     const { runId } = workflowRunRoute.useParams();
-    return <RunView key={runId} runId={runId} />;
+    return <RunView key={runId} runId={runId} search={workflowRunRoute.useSearch()} />;
   },
 });
 
