@@ -232,10 +232,16 @@ export class TrackerService {
   // The project's GitHub host as the poller reads it: the same settings a publish uses, the
   // host's name and the branch the project folder is on. Without a token nothing is set up, and
   // the folder's git is not asked.
+  //
+  // The poller sends the token without anyone pressing a button, so it goes only to a host the
+  // user chose: the API URL they stored, or the remote's host when it is the one they stored or
+  // when the token is the project's own. A folder's git remote alone can name any host, and a
+  // publish shows its target before the user confirms; a poll does not.
   async githubHost(projectId: string): Promise<ProjectGitHubHost | undefined> {
     const project = this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
     if (!project) return undefined;
-    const token = this.#deps.settings.resolve('trackers.github.token', { projectId }).value;
+    const tokenSetting = this.#deps.settings.resolve('trackers.github.token', { projectId });
+    const token = tokenSetting.value;
     if (!SecretRef.safeParse(token).success) {
       return {
         github: { config: undefined, missing: ['trackers.github.token'] },
@@ -245,12 +251,21 @@ export class TrackerService {
     }
     const git = await this.#folderGit(project.id, project.cwd);
     const values = new Map(this.#resolve(project.id, git).map((entry) => [entry.key, entry]));
-    const github = await this.#github(values);
-    return {
-      github,
-      name: hostOf(String(values.get('trackers.github.baseUrl')?.value ?? '')) ?? '',
-      branch: git.branch,
-    };
+    const api = values.get('trackers.github.baseUrl');
+    const name = hostOf(String(api?.value ?? '')) ?? '';
+    const stored = this.#deps.settings.resolve('trackers.github.baseUrl', { projectId }).value;
+    const chosen =
+      api?.source !== 'gitRemote' ||
+      tokenSetting.source.startsWith('project:') ||
+      hostOf(String(stored)) === name;
+    if (!chosen) {
+      return {
+        github: { config: undefined, missing: ['trackers.github.baseUrl'] },
+        name,
+        branch: git.branch,
+      };
+    }
+    return { github: await this.#github(values), name, branch: git.branch };
   }
 
   // Whose settings apply to the item: see publishTarget.

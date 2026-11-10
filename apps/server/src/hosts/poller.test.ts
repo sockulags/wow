@@ -350,6 +350,38 @@ describe('unit status from pull requests (spec 23, 24, 26, 27)', () => {
     expect(asked()).toEqual([]);
   });
 
+  it('does not send the shared token to a host that only the folder’s git remote names', async () => {
+    onBranch('main');
+    git(
+      path.join(root, 'tea'),
+      'remote',
+      'add',
+      'origin',
+      'https://git.other.invalid/acme/tea.git',
+    );
+    await follow();
+    startRun('r1');
+    await server.hosts.idle();
+    expect(asked()).toEqual([]);
+    expect(read()?.error).toMatchObject({ kind: 'notSetUp', setting: 'trackers.github.baseUrl' });
+    expect(statuses()).toMatchObject({ U1: 'unknown', U5: 'blocked' });
+  });
+
+  it('reads from the remote’s host once the user stored that host as the API URL', async () => {
+    onBranch('main');
+    // The stored API URL is the mock host; a remote on the same host is the user's own choice.
+    git(
+      path.join(root, 'tea'),
+      'remote',
+      'add',
+      'origin',
+      `https://${new URL(api).host}/acme/tea.git`,
+    );
+    set('trackers.github.baseUrl', `https://${new URL(api).host}/api/v3`);
+    await follow();
+    expect(read()?.error).not.toMatchObject({ kind: 'notSetUp' });
+  });
+
   it('forgets what was read when the plan is unfollowed', async () => {
     await follow();
     dispatch({ type: 'plan.follow', planId, followed: false });
