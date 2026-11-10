@@ -628,6 +628,22 @@ const storedLimit = () =>
     .find((row) => row.id === 'review')?.maxStepVisits;
 
 describe('rules on a step (workflow branches)', () => {
+  it('tells the user each time a run waits before a step it was sent back to', async () => {
+    answers = { build: 'Built.', 'check-work': 'Still rings twice.\n\nCHANGES_REQUESTED' };
+    createRules([
+      step('build', { gateBefore: true }),
+      step('check-work', { rules: [goTo(changesRequested, 'build')] }),
+    ]);
+    await start();
+    expect(run()).toMatchObject({ state: 'waiting', currentStep: 0 });
+    expect(waitingNotices()).toHaveLength(1);
+    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
+    await settle();
+    // Review sent the work back: the run waits before build again, and says so again.
+    expect(run()).toMatchObject({ state: 'waiting', currentStep: 0 });
+    expect(waitingNotices()).toHaveLength(2);
+  });
+
   it('sends the work back to build until the limit, then waits for the user, in two threads', async () => {
     answers = { build: 'Built.', 'check-work': 'Still rings twice.\n\nCHANGES_REQUESTED' };
     createRules([

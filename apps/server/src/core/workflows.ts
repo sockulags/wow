@@ -719,10 +719,16 @@ function runNotifications(
     // The limit can be reached again after the user let the step run once more.
     const held = gate ? run.steps[gate.stepIndex] : undefined;
     const limit = held?.gate?.state === 'waitingAtLimit' ? `:limit-${held.attempt ?? 1}` : '';
+    // A run that a rule sent back waits again before a step it has already been at; without
+    // the visit in the id the second wait would be dropped as a repeat of the first.
+    const again =
+      gate?.position === 'before' && held?.endedAt !== undefined
+        ? `:visit-${run.path?.length ?? 0}`
+        : '';
     const id = waiting
       ? `${run.id}:waiting:${notice.stepId ?? ''}:${gate?.position ?? ''}${
           attempt === undefined ? '' : `:attempt-${attempt}`
-        }${limit}`
+        }${limit}${again}`
       : `${run.id}:failed`;
     const notification: AppNotification = {
       id,
