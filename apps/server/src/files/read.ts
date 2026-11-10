@@ -17,15 +17,18 @@ export function isInside(root: string, target: string, api: PathApi = path): boo
 }
 
 // Where a requested path could be, one candidate per folder, keeping only those that stay inside
-// a folder as written. Nothing on disk is touched.
+// one of `within` as written. Nothing on disk is touched. `within` is the folders plus, when the
+// caller knows them, where the folders really are: a folder registered through a link is then
+// also reachable by the full path the viewer shows for its files.
 export function candidatePaths(
   roots: readonly string[],
   requested: string,
   api: PathApi = path,
+  within: readonly string[] = roots,
 ): string[] {
   const candidates = roots
     .map((root) => api.resolve(root, requested))
-    .filter((candidate) => roots.some((root) => isInside(root, candidate, api)));
+    .filter((candidate) => within.some((root) => isInside(root, candidate, api)));
   return [...new Set(candidates)];
 }
 
@@ -90,17 +93,17 @@ export async function readViewerFile({
   path: requested,
   maxBytes,
 }: ReadFileRequest): Promise<FileReadResult> {
-  const candidates = candidatePaths(roots, requested);
+  const realRoots: string[] = [];
+  for (const root of roots) {
+    const real = await realpath(root).catch(() => undefined);
+    if (real !== undefined) realRoots.push(real);
+  }
+  const candidates = candidatePaths(roots, requested, path, [...roots, ...realRoots]);
   if (candidates.length === 0) {
     return refused(
       'outside',
       `${requested} is outside the run's working folder and the project folder, so it was not read.`,
     );
-  }
-  const realRoots: string[] = [];
-  for (const root of roots) {
-    const real = await realpath(root).catch(() => undefined);
-    if (real !== undefined) realRoots.push(real);
   }
   for (const candidate of candidates) {
     const real = await realpath(candidate).catch(() => undefined);
@@ -113,7 +116,14 @@ export async function readViewerFile({
     }
     const found = await stat(real).catch(() => undefined);
     if (found === undefined) continue;
-    if (!found.isFile()) return refused('not_a_file', `${requested} is a folder, not a file.`);
+    if (!found.isFile()) {
+      return refused(
+        'not_a_file',
+        found.isDirectory()
+          ? `${requested} is a folder, not a file.`
+          : `${requested} is not a regular file.`,
+      );
+    }
     if (found.size > maxBytes) {
       return refused(
         'too_large',

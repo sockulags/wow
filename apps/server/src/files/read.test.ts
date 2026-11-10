@@ -163,6 +163,23 @@ describe('refusing to read', () => {
     },
   );
 
+  it.skipIf(process.platform === 'win32')(
+    'reads a full path by its real place when the folder is registered through a link',
+    async () => {
+      await writeFile(path.join(project, 'real.txt'), 'inside');
+      const linked = path.join(base, 'linked-project');
+      await symlink(project, linked);
+      const shown = { kind: 'text', text: 'inside', absolutePath: path.join(project, 'real.txt') };
+      expect(await read('real.txt', 10_000, [linked])).toMatchObject(shown);
+      expect(await read(path.join(linked, 'real.txt'), 10_000, [linked])).toMatchObject(shown);
+      // The path the viewer hands out with Copy path opens the same file again.
+      expect(await read(path.join(project, 'real.txt'), 10_000, [linked])).toMatchObject(shown);
+      const refusal = await read(path.join(outside, 'secret.txt'), 10_000, [linked]);
+      expect(refusal).toMatchObject({ kind: 'refused', reason: 'outside' });
+      expect(JSON.stringify(refusal)).not.toContain('invented secret');
+    },
+  );
+
   it('refuses a missing file', async () => {
     expect(await read('review/nothing.md')).toEqual({
       kind: 'refused',

@@ -96,11 +96,13 @@ projectId?, title?, labels?}`). Error codes are `RpcErrorCode`.
   directory listing. The handler gives it the folders the run may read (the project folder; a
   run with its own working copy adds that folder in front) and `viewer.maxFileBytes`. A
   relative path is looked for in each folder in order, a full path must lie in one of them. The
-  order of checks: the path as written must stay inside a folder (`path.resolve` and
-  `path.relative`, so `..` and other drives are refused without touching the disk); `realpath`
-  of the file must still be inside the `realpath` of a folder (a symbolic link that leaves is
-  refused); it must be a regular file no larger than the limit; then it is read once. Content
-  decides what it is: PNG, JPEG, GIF and WebP by their first bytes, SVG by its extension;
+  order of checks: the path as written must stay inside a folder, as registered or at its
+  `realpath` (`path.resolve` and `path.relative`, so `..` and other drives are refused without
+  touching the file; a folder registered through a link or junction is also reached by the
+  resolved full path that Copy path hands out); `realpath` of the file must still be inside the
+  `realpath` of a folder (a symbolic link that leaves is refused); it must be a regular file no
+  larger than the limit; then it is read once. Binary is decided after that read, and a binary
+  file's bytes are dropped on the server. Content decides what it is: PNG, JPEG, GIF and WebP by their first bytes, SVG by its extension;
   anything else must decode as UTF-8 (or UTF-16 with a byte order mark, which Windows tools
   write) without a NUL, or it is binary. The answer (`FileReadResult` in
   `packages/contracts/src/files.ts`) is `markdown`, `html` or `text` with the text, `image` with
