@@ -9,6 +9,8 @@ import type {
 import { plainProtector } from '@wow/secrets';
 import { invocationsFor } from '@wow/skills';
 import { eq } from 'drizzle-orm';
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -24,6 +26,7 @@ import {
 } from '../db/schema.js';
 import { MockProviderAdapter, type MockScript } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
+import { changesOptions, readRunDiff } from './changes.js';
 import type { RunNotification } from './runner.js';
 
 let root: string;
@@ -527,5 +530,134 @@ describe('workflow runs', () => {
     await writeFile(path.join(projectDir, 'intents', 'y', 'spec.md'), '');
     await server.workflows.detectArtifacts('r1');
     expect(run().steps[0]?.artifactsFound).toEqual(['intents/x/spec.md', 'intents/y/spec.md']);
+  });
+});
+
+// The mock agent: each step writes the file its prompt names, then ends its turn.
+const editing: MockScript = (command) => {
+  if (command.type === 'startTurn') {
+    const file = /write (\S+)/.exec(command.prompt)?.[1];
+    if (file) writeFileSync(path.join(command.cwd, file), `written by ${command.threadId}\n`);
+  }
+  return echo(command);
+};
+
+// Review loop spec 10 and 11: the run's base commit, and what each step changed.
+describe('run base and changes', () => {
+  let repo: string;
+  const ceiling = process.env['GIT_CEILING_DIRECTORIES'];
+  const git = (...args: string[]) =>
+    execFileSync(
+      'git',
+      [
+        '-C',
+        repo,
+        '-c',
+        'user.name=Invented',
+        '-c',
+        'user.email=invented@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ],
+      { stdio: 'pipe', encoding: 'utf8' },
+    ).trim();
+
+  const changes = (runId = 'r1') =>
+    readRunDiff({ folder: repo, run: run(runId), options: changesOptions(server.settings) });
+
+  beforeEach(async () => {
+    // The temporary folder must never be read as part of a repository around it.
+    process.env['GIT_CEILING_DIRECTORIES'] = root;
+    repo = path.join(root, 'repo');
+    await mkdir(repo);
+    git('init', '-q', '-b', 'main');
+    await writeFile(path.join(repo, 'readme.md'), '# Invented\n');
+    await writeFile(path.join(repo, 'plan.md'), 'Nothing yet\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'Invented start');
+    dispatch({ type: 'project.create', projectId: 'git', name: 'repo', cwd: repo });
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'edits',
+      name: 'Edits',
+      steps: [
+        step('one', { extraPrompt: 'write plan.md', gateAfter: true }),
+        step('two', { extraPrompt: 'write notes.md', gateAfter: true }),
+      ],
+    });
+    script = editing;
+  });
+
+  afterEach(() => {
+    if (ceiling === undefined) delete process.env['GIT_CEILING_DIRECTORIES'];
+    else process.env['GIT_CEILING_DIRECTORIES'] = ceiling;
+  });
+
+  it('stores the commit the folder was on when the first step began (spec 10)', async () => {
+    const head = git('rev-parse', 'HEAD');
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'edits', projectId: 'git' });
+    const waiting = await runBecomes((current) => current.state === 'waiting');
+    expect(waiting.baseSha).toBe(head);
+    // Nothing differed before the step; the step's own edit is in its hashes, not in the base's.
+    expect(waiting.baseFiles).toEqual([]);
+    expect(waiting.steps[0]?.fileHashes?.map((entry) => entry.path)).toEqual(['plan.md']);
+
+    // A commit made during the run moves the folder, not the base.
+    git('commit', '-q', '-am', 'Invented commit by the agent');
+    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
+    const again = await runBecomes(
+      (current) => current.state === 'waiting' && current.currentStep === 1,
+    );
+    expect(again.baseSha).toBe(head);
+  });
+
+  it('records the base when a gate before the first step is passed, not earlier', async () => {
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'gated',
+      name: 'Gated',
+      steps: [step('only', { gateBefore: true })],
+    });
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'gated', projectId: 'git' });
+    await server.workflows.settled();
+    expect(run().baseSha).toBeNull();
+    await writeFile(path.join(repo, 'readme.md'), '# Committed while waiting\n');
+    git('commit', '-q', '-am', 'Invented commit before the step');
+    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
+    const done = await runBecomes((current) => current.state === 'done');
+    expect(done.baseSha).toBe(git('rev-parse', 'HEAD'));
+  });
+
+  it('marks only the files of the step that waits (spec 11)', async () => {
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'edits', projectId: 'git' });
+    await runBecomes((current) => current.state === 'waiting');
+    expect((await changes()).files.map((file) => [file.path, file.changedBy])).toEqual([
+      ['plan.md', ['one']],
+    ]);
+    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
+    await runBecomes((current) => current.state === 'waiting' && current.currentStep === 1);
+    expect((await changes()).files.map((file) => [file.path, file.status, file.changedBy])).toEqual(
+      [
+        ['notes.md', 'added', ['two']],
+        ['plan.md', 'modified', ['one']],
+      ],
+    );
+  });
+
+  it('runs without a base in a folder that is not a repository (spec 13)', async () => {
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'edits', projectId: 'p1' });
+    const waiting = await runBecomes((current) => current.state === 'waiting');
+    expect(waiting.baseSha).toBeNull();
+    expect(waiting.steps[0]?.fileHashes).toBeUndefined();
+    expect(
+      await readRunDiff({
+        folder: projectDir,
+        run: waiting,
+        options: changesOptions(server.settings),
+      }),
+    ).toMatchObject({ status: 'noRepository' });
+    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
+    await runBecomes((current) => current.state === 'waiting' && current.currentStep === 1);
   });
 });

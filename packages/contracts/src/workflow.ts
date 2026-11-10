@@ -19,6 +19,12 @@ export type WorkflowStep = z.infer<typeof WorkflowStep>;
 export const StepRunState = z.enum(['not_started', 'running', 'waiting', 'done', 'failed']);
 export type StepRunState = z.infer<typeof StepRunState>;
 
+// What one file looked like at a moment of a run: the SHA-256 of its content in the working
+// folder, or null when the file is not there. Only files that differ from the run's base are
+// listed, so a path that is missing from a list was the same as in the base.
+export const FileHash = z.object({ path: z.string().min(1), hash: z.string().min(1).nullable() });
+export type FileHash = z.infer<typeof FileHash>;
+
 export const StepRun = z.object({
   stepId: z.string().min(1),
   state: StepRunState,
@@ -29,6 +35,9 @@ export const StepRun = z.object({
   // The step's final assistant message, kept for the next step's handover.
   finalMessage: z.string().optional(),
   error: z.string().optional(),
+  // The changed files when the step ended, so the Changes tab can tell what this step changed
+  // (review loop spec 11). Absent for a run without a base.
+  fileHashes: z.array(FileHash).optional(),
 });
 export type StepRun = z.infer<typeof StepRun>;
 

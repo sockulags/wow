@@ -122,7 +122,16 @@ export function decideWorkflow(
           stepId: command.stepId,
           finalMessage: command.finalMessage,
           artifactsFound: command.artifactsFound,
+          fileHashes: command.fileHashes,
         },
+        read,
+        context,
+      );
+    case 'workflowRun.baseRecorded':
+      return runInput(
+        command.type,
+        command.runId,
+        { type: 'baseRecorded', baseSha: command.baseSha, files: command.files },
         read,
         context,
       );

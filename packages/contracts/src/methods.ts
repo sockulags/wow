@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Command, CommandId, DispatchResult } from './commands.js';
+import { RunDiff, RunDiffParams } from './diff.js';
 import { FileReadParams, FileReadResult } from './files.js';
 import {
   Approval,
@@ -229,6 +230,12 @@ export const rpcMethods = {
   'workflowRuns.detectArtifacts': {
     params: z.object({ runId: z.string().min(1) }),
     result: WorkflowRun,
+  },
+  // What the run changed in its working folder since its base commit: the changed files, or one
+  // file's diff when `path` is given. Read only; git runs with hooks off.
+  'workflowRuns.diff': {
+    params: RunDiffParams,
+    result: RunDiff,
   },
   // Files in a project folder that expected artifact globs match, for the builder's "Matches 2
   // files in Demo" line. Read only; nothing is stored.

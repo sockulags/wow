@@ -354,6 +354,14 @@ describe('rpc', () => {
       error: { code: 'invalid_params' },
     });
 
+    // The same run's changes: its folder is not a repository, which is an answer, not a fault.
+    expect(await client.request('workflowRuns.diff', { runId: 'r1' })).toMatchObject({
+      result: { status: 'noRepository', files: [], patch: null },
+    });
+    expect(await client.request('workflowRuns.diff', { runId: 'nope' })).toMatchObject({
+      error: { code: 'not_found' },
+    });
+
     await dispatch('c5', {
       type: 'setting.set',
       key: 'viewer.maxFileBytes',
@@ -378,6 +386,7 @@ describe('rpc', () => {
     },
     { type: 'workflowRun.stepFailed', runId: 'r1', stepId: 's1', error: 'no' },
     { type: 'workflowRun.artifactsFound', runId: 'r1', found: [] },
+    { type: 'workflowRun.baseRecorded', runId: 'r1', baseSha: 'a'.repeat(40), files: [] },
   ])('refuses the server-only command $type over RPC', async (command) => {
     expect(
       await client.request('dispatch', { commandId: `internal-${command.type}`, command }),

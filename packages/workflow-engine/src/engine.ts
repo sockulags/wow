@@ -1,4 +1,5 @@
 import type {
+  FileHash,
   MissedTriggerPolicy,
   RunEffect,
   StepRun,
@@ -23,6 +24,13 @@ export type RunInput =
       readonly stepId: string;
       readonly finalMessage: string;
       readonly artifactsFound: readonly string[];
+      // The changed files as the step left them; absent for a run without a base.
+      readonly fileHashes?: readonly FileHash[] | undefined;
+    }
+  | {
+      readonly type: 'baseRecorded';
+      readonly baseSha: string;
+      readonly files: readonly FileHash[];
     }
   | { readonly type: 'stepFailed'; readonly stepId: string; readonly error: string }
   | { readonly type: 'continue' }
@@ -94,6 +102,8 @@ export function startRun(workflow: Workflow, input: NewRun, context: EngineConte
     steps: initialStepRuns(workflow.steps),
     startedAt: context.now,
     endedAt: null,
+    baseSha: null,
+    baseFiles: null,
   };
   if (first.gateBefore) return waitBefore(run, 0, []);
   return beginStep(workflow, run, 0, context, []);
@@ -112,6 +122,8 @@ export function advance(
   switch (input.type) {
     case 'artifactsFound':
       return recordArtifacts(run, input.found);
+    case 'baseRecorded':
+      return recordBase(run, input);
     case 'stepCompleted':
       return completeStep(workflow, run, input, context);
     case 'stepFailed':
@@ -158,6 +170,7 @@ function completeStep(
     finalMessage: input.finalMessage,
     artifactsFound: [...input.artifactsFound],
     state: step.gateAfter ? 'waiting' : 'done',
+    ...(input.fileHashes ? { fileHashes: [...input.fileHashes] } : {}),
   };
   const steps = replaceStep(run.steps, index, finished);
   const next = workflow.steps[index + 1];
@@ -244,6 +257,15 @@ function stopRun(run: WorkflowRun, context: EngineContext): Transition {
     effects.push(...threadState(run.steps[gate.stepIndex - 1]?.threadId, 'done'));
   }
   return { run: { ...run, steps, state: 'stopped', endedAt: context.now }, effects };
+}
+
+// The first base stands: a run has one starting point, whatever is reported later.
+function recordBase(
+  run: WorkflowRun,
+  input: Extract<RunInput, { type: 'baseRecorded' }>,
+): Transition {
+  if (run.baseSha) return { run, effects: [] };
+  return { run: { ...run, baseSha: input.baseSha, baseFiles: [...input.files] }, effects: [] };
 }
 
 function recordArtifacts(

@@ -98,6 +98,7 @@ describe('settings registry', () => {
         'plans',
         'trackers',
         'viewer',
+        'diff',
         'appearance',
         'keybindings',
         'desktop',

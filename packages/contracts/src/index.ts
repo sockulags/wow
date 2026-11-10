@@ -1,5 +1,6 @@
 export * from './calendar-prefs.js';
 export * from './commands.js';
+export * from './diff.js';
 export * from './files.js';
 export * from './methods.js';
 export * from './projections.js';

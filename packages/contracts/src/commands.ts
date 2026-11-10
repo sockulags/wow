@@ -34,7 +34,7 @@ import {
   ThreadState,
 } from './provider.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
-import { RunEffect, WorkflowStep } from './workflow.js';
+import { FileHash, RunEffect, WorkflowStep } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
 // add their own members to both unions.
@@ -321,6 +321,14 @@ export const InternalCommand = z.discriminatedUnion('type', [
     stepId: Id,
     finalMessage: z.string(),
     artifactsFound: z.array(z.string()),
+    fileHashes: z.array(FileHash).optional(),
+  }),
+  // The commit the run's folder was on when its first step began, and what already differed.
+  z.object({
+    type: z.literal('workflowRun.baseRecorded'),
+    runId: Id,
+    baseSha: z.string().min(1),
+    files: z.array(FileHash),
   }),
   z.object({
     type: z.literal('workflowRun.stepFailed'),

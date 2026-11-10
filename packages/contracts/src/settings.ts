@@ -18,6 +18,7 @@ export const SettingGroup = z.enum([
   'plans',
   'trackers',
   'viewer',
+  'diff',
   'appearance',
   'keybindings',
   'desktop',
@@ -839,6 +840,25 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'bytes',
   }),
+  'diff.maxFileBytes': defineSetting({
+    schema: z.number().int().min(1000).max(1_000_000),
+    group: 'diff',
+    label: 'Largest file compared',
+    description:
+      "A changed file larger than this is listed in a run's Changes tab with its status and size, without its lines.",
+    default: 400_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
+  'diff.maxFiles': defineSetting({
+    schema: z.number().int().min(10).max(20_000),
+    group: 'diff',
+    label: 'Most files listed',
+    description:
+      "How many changed files a run's Changes tab lists and remembers per step. The tab says how many it left out.",
+    default: 2_000,
+    scope: 'global',
+  }),
   'appearance.theme': defineSetting({
     schema: Theme,
     group: 'appearance',
@@ -978,6 +998,16 @@ export const settingsRegistry = {
     'Continue run',
     "Continue the workflow run waiting at a gate, from its run view or the waiting step's thread.",
     'Mod+Enter',
+  ),
+  'keybindings.runChanges': keybinding(
+    'Run: show changes',
+    'Switch the open workflow run between its steps and its Changes tab.',
+    'Mod+Shift+D',
+  ),
+  'keybindings.changesStepOnly': keybinding(
+    'Changes: this step only',
+    "Narrow the open run's Changes tab to the files the step under review changed, and back (while the tab is open).",
+    'O',
   ),
   'keybindings.stopRun': keybinding(
     'Stop run',

@@ -4,6 +4,7 @@ import type {
   BacklogRemote,
   BacklogState,
   CalendarItemSource,
+  FileHash,
   NotificationKind,
   OutlookProfile,
   PlanFile,
@@ -217,6 +218,8 @@ export const workflowRuns = sqliteTable('workflow_runs', {
   steps: json<StepRun[]>().notNull(),
   startedAt: text().notNull(),
   endedAt: text(),
+  baseSha: text(),
+  baseFiles: json<FileHash[]>(),
 });
 
 export const triggers = sqliteTable(

@@ -43,7 +43,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test`, `provider.listModels` and
   `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`, `plans.refresh` (reads every project's
   intents folder now, see "Plans"),
-  `workflowRuns.detectArtifacts` (`{runId}`), `workflows.matchArtifacts` (`{projectId, globs}`),
+  `workflowRuns.detectArtifacts` (`{runId}`), `workflowRuns.diff` (`{runId, path?}`, what the run
+  changed since its base, see "Run base and changes"), `workflows.matchArtifacts` (`{projectId, globs}`),
   `files.read` (`{runId, path}`, one file of a run for the viewer, see "Files"), `outlook.open`
   (`{entryId}`), `outlook.refresh`, `projects.git` (every project folder's git
   status and remotes), `trackers.project` (`{projectId}`, one project's tracker settings with their
@@ -93,9 +94,10 @@ projectId?, title?, labels?}`). Error codes are `RpcErrorCode`.
   for triggers whose time passed while the server was down. Times are stored as UTC ISO strings
   plus the IANA zone they were entered in; `Temporal` polyfill (`@js-temporal/polyfill`) does zone
   math. Default zone is the system zone. Details in "Scheduler and triggers".
-- **Files.** `apps/server/src/files/read.ts` (`readViewerFile`) is the only way file content
+- **Files.** `apps/server/src/files/read.ts` (`readViewerFile`) is the only way a whole file
   leaves the server, and `files.read` is its only caller; there is no HTTP file server and no
-  directory listing. The handler gives it the folders the run may read (the project folder; a
+  directory listing. (`workflowRuns.diff` sends the changed lines of files git lists as changed
+  inside the run's folder, see "Run base and changes".) The handler gives it the folders the run may read (the project folder; a
   run with its own working copy adds that folder in front) and `viewer.maxFileBytes`. A
   relative path is looked for in each folder in order, a full path must lie in one of them. The
   order of checks: the path as written must stay inside a folder, as registered or at its
@@ -143,7 +145,7 @@ backlog_items    id, title, body, tags(json), state, runId?, remote(json: servic
 workflows        id, name, templateKind?, steps(json: WorkflowStep[]), createdAt, updatedAt
 workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, state ('running'|
                  'waiting'|'done'|'failed'|'stopped'), currentStep, steps(json: StepRun[]),
-                 startedAt, endedAt
+                 startedAt, endedAt, baseSha?, baseFiles(json: FileHash[])?
 triggers         id, calendarItemId, workflowId, runAt, zone, state ('scheduled'|'fired'|'missed'|
                  'cancelled'), runId?, offerRunNow
 notifications    id, at, kind ('started'|'waiting'|'failed'), title, body, path, runId?,
@@ -445,7 +447,7 @@ between two steps even when both flags are set. Stop ends the run as `stopped`, 
 running turn and keeps every thread.
 
 Commands: `workflow.create|update|delete`, `workflowRun.start|continue|stop` from clients, and
-`skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound` as `InternalCommand`s from
+`skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded` as `InternalCommand`s from
 the server. The orchestrator calls `startRun`/`advance` and stores one `workflowRun.changed` event
 (the run plus the effects to perform), an idle `thread.created` with `runId` and `stepId` for each
 started step (model, effort and permission mode from the step, then the provider instance
@@ -459,7 +461,8 @@ the scanned skills and unknown ones.
 dispatches `thread.sendMessage` with the rendered prompt, so the provider service starts the turn
 like any other, and `interrupt` dispatches `thread.interrupt`. A step ends when the persisted
 `turn.ended` of its thread does: completed becomes `workflowRun.stepCompleted` with the turn's
-last assistant text as the final message and the artifacts found, failed (with the turn's error
+last assistant text as the final message, the artifacts found and the step's file hashes (see
+"Run base and changes"), failed (with the turn's error
 item) or interrupted becomes `workflowRun.stepFailed`. Command ids derive from the turn, so a
 repeated report is a duplicate. A step with no model, effort or permission mode fails instead of
 starting. At startup the runner subscribes before `ProviderService.recover()`, so a step whose turn
@@ -467,6 +470,40 @@ was running fails with the recovered turn; `recover()` on the runner then settle
 ended unseen or never started. `notify` effects go to `onNotify` listeners; the orchestrator also
 stores them as notifications (see "Scheduler and triggers"). `missedTriggerOutcome(policy)` is the
 engine's table for the scheduler's missed policy.
+
+### Run base and changes
+
+`apps/server/src/workflows/changes.ts` (review loop spec 10 to 13). A run remembers where it
+began: before the runner sends the first step's prompt it reads the commit the project folder is
+on and reports `workflowRun.baseRecorded {runId, baseSha, files}`; the engine keeps the first one
+as `WorkflowRun.baseSha` and `baseFiles`. With a gate before the first step that happens when the
+gate is passed. A folder that is not a repository, has no commit yet or cannot be read by git
+leaves `baseSha` null and the run goes on; runs from before this have it null too.
+
+What changed is always the folder as it is now against the base commit, so committed and
+uncommitted work both show. wow makes no commit per step, so "what did this step change" comes
+from content hashes: `baseFiles` and each ended step's `StepRun.fileHashes` are lists of
+`FileHash {path, hash}` for the files that differed from the base at that moment (SHA-256 of the
+file in the folder, null when it is gone; a link is hashed as its target path and never
+followed). A step changed a file when the file's hash at the step's end differs from the one in
+the list before it (`stepsThatChanged`); a path missing from a list was the same as in the base.
+`baseFiles` holds what was already edited when the run began, so the first step is not credited
+with it. Changes made after the last step ended belong to no step.
+
+`workflowRuns.diff {runId, path?}` answers `RunDiff {status, message, baseSha, files, omitted,
+patch}`. `status` is `ok`, or why there is nothing to compare: `folderMissing`, `noRepository`,
+`gitUnavailable` (asked from the folder first, so they win), `noBase`, `baseMissing` (the commit
+is gone) or `failed` with git's message. Each `RunDiffFile` has `path`, `oldPath` (renames),
+`status` (`added`, `modified`, `renamed`, `deleted`), `added` and `removed` line counts, `size`
+(in the folder, or in the base for a deleted file), `content` (`text`, or `binary` / `tooLarge`
+for a file that shows status and size only: binary by git's own test, too large when over
+`diff.maxFileBytes`) and `changedBy` (step ids). The list is sorted by path and cut at
+`diff.maxFiles`, with `omitted` saying how many were left out; the hash lists are cut the same
+way. Without `path` no content is sent. With `path` the answer holds that one file and its
+unified diff from the first hunk on; the path is only looked up among the files git listed, so it
+cannot name anything else. A new file git does not track yet has no diff of its own: its lines
+are read and sent as added lines. A rename shows only when git sees it (committed or staged); a
+file moved without telling git lists as one deleted and one added file.
 
 ## Scheduler and triggers
 
@@ -554,6 +591,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs`, `trackers.jira.keyScanCommits` (the
   `trackers.jira.*` and `trackers.github.*` ones are project-scoped, see "Backlog and trackers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
+- diff: `diff.maxFileBytes`, `diff.maxFiles` (the "Changes" page, see "Run base and changes")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -713,6 +751,21 @@ first GitHub one, else the first. `projects.git` answers `ProjectGit` for every 
 because it is live I/O on the user's files. `guessJiraKeys` counts distinct `KEY-123` references
 in the branch names and the last `trackers.jira.keyScanCommits` commit messages (`git log
 --format=%s%n%b`), skipping look-alikes such as `UTF-8` and `SHA-256`.
+
+Every git command also runs with `-c core.hooksPath=<null device>` and `-c core.fsmonitor=false`,
+so no hook or file system monitor a repository's config names is started, with
+`core.quotePath=false` and `GIT_LITERAL_PATHSPECS=1`, so a file name is read and passed as it is.
+The commands for a run's changes are read-only too: `readHeadCommit` (`rev-parse --verify
+HEAD^{commit}`), `listChangedPaths` (`cat-file -e` for the base, then `diff --name-status -z` and
+`diff --numstat -z` against the base with `-M`, or `--no-renames` for the hash lists, plus
+`ls-files --others --exclude-standard -z` for new files git does not ignore), `readPatch` (`diff`
+for one file) and `readBaseSizes` (`ls-tree -l`, at most 100 paths per command). The diffs run
+with `--no-ext-diff --no-textconv`, so no program from the repository's config runs, and with
+`--relative`, so a project that is a subfolder of its repository sees its own files. No option
+turns off line-ending conversion: git converts the working file the way a commit would before
+it compares, so a file saved with CRLF under `* text=auto` differs only where its text does.
+With optional locks off the index is not refreshed on disk, and nothing is added to the object
+store.
 
 **Discovery** ("Import from Claude and Codex", `projects.discover`). Each adapter package reads
 its own CLI's session files and answers `ProviderFolder[]` (`{cwd, lastUsedAt}`, in contracts):

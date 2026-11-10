@@ -35,6 +35,7 @@ import type { PlansWatchFactory } from './plans/watch.js';
 import { SkillsService } from './skills/service.js';
 import { TrackerService } from './trackers/service.js';
 import { detectArtifacts, type ArtifactDetector } from './workflows/artifacts.js';
+import { changesOptions, readRunBase, snapshotChanges } from './workflows/changes.js';
 import { WorkflowRunner } from './workflows/runner.js';
 
 export const serverInfoFileName = 'server.json';
@@ -159,6 +160,10 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     db: database.db,
     engine,
     detectArtifacts: options.detectArtifacts ?? detectArtifacts,
+    changes: {
+      base: (folder) => readRunBase(folder, changesOptions(settings)),
+      snapshot: (folder, baseSha) => snapshotChanges(folder, baseSha, changesOptions(settings)),
+    },
     logger,
   });
   const providerUpdates = new ProviderUpdates({

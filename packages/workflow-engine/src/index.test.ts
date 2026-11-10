@@ -336,6 +336,35 @@ describe('run transitions', () => {
     expect(run.state).toBe('waiting');
     expect(run.steps[0]?.artifactsFound).toEqual(['intents/x/spec.md']);
   });
+
+  it('keeps the first base of a run and the file hashes of each step', () => {
+    const started = startRun(workflow(A({ gateAfter: true }), B()), newRun, context());
+    expect(started.run.baseSha).toBeNull();
+    const base: RunInput = {
+      type: 'baseRecorded',
+      baseSha: 'a'.repeat(40),
+      files: [{ path: 'dirty.txt', hash: 'h0' }],
+    };
+    const { run, effects } = play(workflow(A({ gateAfter: true }), B()), [
+      base,
+      { ...base, baseSha: 'b'.repeat(40), files: [] },
+      {
+        type: 'stepCompleted',
+        stepId: 'a',
+        finalMessage: 'done',
+        artifactsFound: [],
+        fileHashes: [{ path: 'new.txt', hash: 'h1' }],
+      },
+    ]);
+    expect(run.baseSha).toBe('a'.repeat(40));
+    expect(run.baseFiles).toEqual([{ path: 'dirty.txt', hash: 'h0' }]);
+    expect(run.steps[0]?.fileHashes).toEqual([{ path: 'new.txt', hash: 'h1' }]);
+    expect(run.state).toBe('waiting');
+    // Recording a base starts nothing.
+    const recorded = advance(workflow(A(), B()), started.run, base, context());
+    expect(recorded.effects).toEqual([]);
+    expect(effects.some((effect) => effect.type === 'startStep')).toBe(false);
+  });
 });
 
 describe('step prompts and handover', () => {

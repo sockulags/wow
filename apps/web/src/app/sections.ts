@@ -80,6 +80,7 @@ export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
   plans: 'Plans',
   trackers: 'Trackers',
   viewer: 'Viewer',
+  diff: 'Changes',
   appearance: 'Appearance',
   keybindings: 'Keybindings',
   desktop: 'Desktop',

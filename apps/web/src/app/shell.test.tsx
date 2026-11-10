@@ -134,6 +134,7 @@ describe('shell', () => {
       'Plans',
       'Trackers',
       'Viewer',
+      'Changes',
       'Appearance',
       'Keybindings',
       'Advanced',

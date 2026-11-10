@@ -10,7 +10,7 @@ import {
   ThreadState,
 } from './provider.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
-import { StepRun, WorkflowRunState, WorkflowStep } from './workflow.js';
+import { FileHash, StepRun, WorkflowRunState, WorkflowStep } from './workflow.js';
 
 // Row shapes of the projection tables in docs/architecture.md, as clients receive them through
 // subscriptions. Absent optional columns arrive as null, because that is what SQLite stores.
@@ -316,6 +316,12 @@ export const WorkflowRun = z.object({
   steps: z.array(StepRun),
   startedAt: Timestamp,
   endedAt: Timestamp.nullable(),
+  // The commit the working folder was on when the run's first step began (review loop spec 10).
+  // Null for a run from before bases were recorded, and for a folder that was not a repository.
+  baseSha: z.string().min(1).nullable().optional(),
+  // The files that already differed from the base at that moment, so the first step is not
+  // credited with changes that were there before it.
+  baseFiles: z.array(FileHash).nullable().optional(),
 });
 export type WorkflowRun = z.infer<typeof WorkflowRun>;
 

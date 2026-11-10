@@ -23,6 +23,7 @@ import type { SkillsService } from '../skills/service.js';
 import { TrackerError } from '../trackers/http.js';
 import type { TrackerService } from '../trackers/service.js';
 import { detectArtifacts } from '../workflows/artifacts.js';
+import { changesOptions, readRunDiff } from '../workflows/changes.js';
 import type { WorkflowRunner } from '../workflows/runner.js';
 import { RpcFault, type Handlers } from './router.js';
 
@@ -140,6 +141,18 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         roots: [project.cwd],
         path: requested,
         maxBytes: deps.settings.get('viewer.maxFileBytes'),
+      });
+    },
+    'workflowRuns.diff': async ({ runId, path: asked }) => {
+      const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();
+      if (!run) throw new RpcFault('not_found', `No run ${runId}`);
+      const project = deps.db.select().from(projects).where(eq(projects.id, run.projectId)).get();
+      if (!project) throw new RpcFault('not_found', `No project ${run.projectId}`);
+      return readRunDiff({
+        folder: project.cwd,
+        run,
+        path: asked,
+        options: changesOptions(deps.settings),
       });
     },
     'workflowRuns.detectArtifacts': async ({ runId }) => {
