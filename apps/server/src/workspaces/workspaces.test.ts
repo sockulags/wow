@@ -190,10 +190,10 @@ beforeEach(async () => {
   git(seed, 'init', '-q', '-b', 'main');
   await commit(seed, 'readme.md', '# Invented tea timer\n', 'Invented start');
   git(root, 'clone', '-q', '--bare', seed, remote);
-  git(root, 'clone', '-q', remote, project);
-  // Working copies share this setting, so their files have the line endings written here
-  // whatever this machine's git is set to.
-  git(project, 'config', 'core.autocrlf', 'false');
+  // Set at the clone, so the project's own files are checked out with the line endings written
+  // here whatever this machine's git is set to (Windows converts by default, and turning that
+  // off afterwards leaves the checked out file looking changed). Working copies share the setting.
+  git(root, 'clone', '-q', '-c', 'core.autocrlf=false', remote, project);
   adapters = [];
   agent = () => undefined;
   server = await launch();
