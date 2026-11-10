@@ -74,6 +74,15 @@ export const e2eGateProjectId = 'tea-kettle';
 // working copy" switch the working copy tests (e2e/working-copy.spec.ts) turn on themselves: a
 // run of it works in a Git worktree under the server home's `workspaces` folder, where the mock
 // agent then makes its edits, and the project folder stays as seeded.
+// The same server holds a fifth repository as project `tea-pot` for the plan run tests
+// (e2e/plan-run.spec.ts): its `intents` folder holds a plan with three units and no pull request
+// yet, on a second mock GitHub repository (`acme/tea-pot`, also under /github on the tracker
+// port). Its workflow is marked "For units" and has one step without a gate; the mock agent
+// answers that step by opening the unit's pull request on the mock host. On the tracker port,
+// PUT /github-pot/merged?unit=U1 merges a unit's pull request.
+export const e2ePlanRunProjectId = 'tea-pot';
+export const e2ePlanRunWorkflowId = 'plan-run-e2e';
+export const e2ePlanRunIntentId = '2026-07-tea-pot';
 export const e2eCopyProjectId = 'tea-cup';
 export const e2eCopyWorkflowId = 'copy-e2e';
 export const e2eHostProjectId = 'tea-garden';

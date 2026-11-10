@@ -97,7 +97,7 @@ function PlanRunCard({
               <Link
                 to="/workflows/runs/$runId"
                 params={{ runId: unit.runId }}
-                className="rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-sm underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <span className="font-mono">{unit.unitKey}</span> {unit.title}
               </Link>

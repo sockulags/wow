@@ -40,6 +40,9 @@ import {
   e2eHostIntentId,
   e2eHostProjectId,
   e2eHostWorkflowId,
+  e2ePlanRunIntentId,
+  e2ePlanRunProjectId,
+  e2ePlanRunWorkflowId,
   e2eOutlookControlPort,
   e2ePanelCardId,
   e2ePanelHome,
@@ -187,6 +190,15 @@ const gardenUnits = `## Units
 - [U5] Sell the tea -- blocked: the stall is not built
 
 ${['U1', 'U2', 'U3', 'U4', 'U5'].map((key) => `### ${key} Invented\n\nOutcome: invented for the tests.\n`).join('\n')}`;
+// The plan run tests (review loop spec 40, 41) run a workflow over the units of this plan.
+const potRepo = path.join(home, 'tea-pot');
+const potUnits = `## Units
+
+- [U1] Shape the pot
+- [U2] Glaze the pot -- depends on U1
+- [U3] Fire the kiln
+
+${['U1', 'U2', 'U3'].map((key) => `### ${key} Invented\n\nOutcome: invented for the tests.\n`).join('\n')}`;
 const git = (repo: string, ...args: string[]) =>
   execFileSync(
     'git',
@@ -312,6 +324,30 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     providerSessionId: command.resumeId ?? `mock-session-${threadId.slice(0, 8)}`,
   };
   const resumed = command.resumeId === undefined ? '' : `Resumed ${command.resumeId}. `;
+  // A step of a unit's run: the agent opens the unit's pull request, as deliver-work would, and
+  // says which unit it was told about.
+  const unit = /^Unit: (\S+) (.*)$/m.exec(prompt);
+  const unitIntent = /^Intent: (\S+)$/m.exec(prompt)?.[1];
+  if (/deliver the plan unit/i.test(prompt) && unit?.[1] && unitIntent) {
+    const key = unit[1];
+    const line = `Intent-Unit: ${unitIntent}/${key}`;
+    if (!potHost.pulls.some((pull) => pull.body.endsWith(line))) {
+      const number = 31 + potHost.pulls.length;
+      potHost.pulls = [
+        ...potHost.pulls,
+        {
+          number,
+          title: unit[2] ?? key,
+          body: `Invented.\n\n${line}`,
+          state: 'open',
+          branch: `agent/${key}`,
+          sha: `c${number}c${number}c${number}`,
+          checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }],
+        },
+      ];
+    }
+    return [session, ...finish(threadId, `Delivered ${key} of ${unitIntent}: ${unit[2] ?? ''}`)];
+  }
   // A send back names no step, and the note in it may say anything, so it is looked for first.
   if (/sent it back/i.test(prompt)) {
     if (inTeaRepo(command.cwd)) reworkTeaTimer(command.cwd);
@@ -619,6 +655,18 @@ if (home === e2eChangesHome) {
   })) {
     writeInRepo(hostRepo, `intents/${e2eHostIntentId}/${name}`, text);
   }
+  // The plan run tests: a repository whose plan has no pull request yet. Its unit runs work in
+  // working copies, which share the repository's settings.
+  seedTeaRepo(potRepo);
+  git(potRepo, 'config', 'core.autocrlf', 'false');
+  const pot = 'A tea pot that pours without dripping';
+  for (const [name, text] of Object.entries({
+    'intent.md': e2eIntentMd(e2ePlanRunIntentId, pot),
+    'spec.md': e2eSpecMd(e2ePlanRunIntentId, pot),
+    'plan.md': e2ePlanMd(e2ePlanRunIntentId, pot, potUnits),
+  })) {
+    writeInRepo(potRepo, `intents/${e2ePlanRunIntentId}/${name}`, text);
+  }
 }
 await seedPlanFiles(home);
 const server = await startServer({
@@ -905,6 +953,10 @@ const gitHubHost = new MockGitHub({
   repo: 'tea-garden',
   webUrl: `${trackerUrl}/web`,
 });
+// The plan run tests' repository on the same invented host. It starts without pull requests;
+// the mock agent opens one per unit it is asked to deliver.
+const potHost = new MockGitHub({ owner: 'acme', repo: 'tea-pot', webUrl: `${trackerUrl}/web` });
+potHost.token = 'github-host-e2e-token';
 const unitLine = (key: string) => `Invented.\n\nIntent-Unit: ${e2eHostIntentId}/${key}`;
 gitHubHost.token = 'github-host-e2e-token';
 gitHubHost.pulls = [
@@ -969,6 +1021,30 @@ if (home === e2eChangesHome) {
     workflowId: e2eHostWorkflowId,
     name: 'Water the beds',
     steps: [{ ...teaStep('water', 'deliver-work', 'Water the beds.'), gateBefore: true }],
+  });
+  server.engine.dispatch('seed-pot-project', {
+    type: 'project.create',
+    projectId: e2ePlanRunProjectId,
+    name: 'Tea pot',
+    cwd: potRepo,
+  });
+  const potScope = `project:${e2ePlanRunProjectId}`;
+  const potSettings: Record<string, unknown> = {
+    'trackers.github.repo': 'tea-pot',
+    'trackers.github.token': await server.secrets.set(
+      `setting:${potScope}:trackers.github.token`,
+      'github-host-e2e-token',
+    ),
+  };
+  for (const [key, value] of Object.entries(potSettings)) {
+    server.engine.dispatch(`seed-pot-${key}`, { type: 'setting.set', key, scope: potScope, value });
+  }
+  server.engine.dispatch('seed-pot-workflow', {
+    type: 'workflow.create',
+    workflowId: e2ePlanRunWorkflowId,
+    name: 'Deliver a unit',
+    steps: [{ ...teaStep('deliver', 'deliver-work', 'Deliver the plan unit.'), gateAfter: false }],
+    forUnits: true,
   });
   await server.plans.refresh();
 }
@@ -1043,12 +1119,24 @@ const trackers = createServer((request, response) => {
       request.method === 'PUT' ? { status, message: 'Invented server error' } : undefined;
     return json(200, {});
   }
-  if (request.method === 'GET' && url.pathname.startsWith('/github/')) {
-    const answer = gitHubHost.answer(
-      'GET',
-      `${url.pathname.slice('/github'.length)}${url.search}`,
-      request.headers.authorization ?? null,
+  // Merges the pull request of one unit of the plan run tests' plan.
+  if (url.pathname === '/github-pot/merged' && request.method === 'PUT') {
+    const line = `Intent-Unit: ${e2ePlanRunIntentId}/${url.searchParams.get('unit') ?? ''}`;
+    if (!potHost.pulls.some((pull) => pull.body.endsWith(line))) {
+      return json(404, { error: 'No pull request for that unit' });
+    }
+    potHost.pulls = potHost.pulls.map((pull) =>
+      pull.body.endsWith(line)
+        ? { ...pull, state: 'closed', mergedAt: '2026-11-05T10:00:00Z' }
+        : pull,
     );
+    return json(200, {});
+  }
+  if (request.method === 'GET' && url.pathname.startsWith('/github/')) {
+    const asked = `${url.pathname.slice('/github'.length)}${url.search}`;
+    // Two invented repositories live on this host; a request names its own.
+    const repository = decodeURIComponent(asked).includes('acme/tea-pot') ? potHost : gitHubHost;
+    const answer = repository.answer('GET', asked, request.headers.authorization ?? null);
     for (const [name, value] of Object.entries(answer.headers)) response.setHeader(name, value);
     return json(answer.status, answer.body);
   }

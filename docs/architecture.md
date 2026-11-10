@@ -1757,7 +1757,12 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   and a workflow whose "Own working copy" switch the test turns on in the builder. The mock
   agent edits whatever folder its turn starts in when that is a tea repository or a folder
   under the home's `workspaces`, so the test sees the edits in the working copy and the project
-  folder unchanged, then the kept copy and "Remove working copy". That copy polls once a day, so the tests
+  folder unchanged, then the kept copy and "Remove working copy". The plan run test
+  (`e2e/plan-run.spec.ts`) uses the same copy as well: a fifth repository, project `tea-pot`,
+  holds a plan with three units and no pull request, on a second `MockGitHub` repository
+  (`acme/tea-pot`) under the same `/github` path, and its workflow is marked "For units". The
+  mock agent answers that workflow's step by opening the unit's pull request on the mock host,
+  `PUT /github-pot/merged?unit=…` merges one, and the test asks with "Refresh now". That copy polls once a day, so the tests
   see only the reads that following a plan, starting a run and "Refresh now" start. CI runs `pnpm e2e` on
   `ubuntu-latest` and `windows-latest` (the `e2e` job) and keeps the traces of a failed run.
   Tests wait for what the page shows, never for time: no sleeps, polls or retries.
