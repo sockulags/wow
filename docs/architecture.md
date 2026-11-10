@@ -200,8 +200,9 @@ assistant_changes id (the command's id), at, commandType, what, from?, to?, plac
                  ('applied'|'undone'), undoneAt?   -- what the assistant changed, with the record
                  Undo needs
 assistant_proposals id (the command's id), at, commandType, title, lines(json: {what, from, to}[]),
-                 place(json), command(json: Command), state ('pending'|'accepted'|'declined'),
-                 answeredAt?, reason?   -- commands of the assistant that wait for the user's yes
+                 place(json), command(json: Command), basis(json)?, state
+                 ('pending'|'accepted'|'declined'), answeredAt?, reason?   -- commands of the
+                 assistant that wait for the user's yes, with the state they were proposed for
 settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
 events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
@@ -1561,7 +1562,8 @@ two kinds and nothing else.
 
 Every result passes `hideSecretsDeep` with the patterns of `assistant.secretPatterns` before it
 leaves `call`, so text that looks like a secret arrives as `[hidden]` (spec 18). The log line
-for a call names the tool and how it ended, never what went in or came out.
+for a call names the tool and how it ended, never what went in or came out; a name that is not
+a tool's is logged as `unknown`.
 
 **The class table** (`assistant/classes.ts`, `commandClasses`). The server, not the model,
 decides what a command of the assistant does. The table names every type of `ServerCommand`
@@ -1576,7 +1578,13 @@ decides what a command of the assistant does. The table names every type of `Ser
   rules, lose a gate, or that turns "for units" or "own working copy" on or off, and a setting
   that then lets the app do more: `scheduler.paused` off, `scheduler.missedPolicy` to `run`,
   `hosts.polling`, `triggers.eventsEnabled` or `viewer.htmlScripts` on. A change to
-  `assistant.secretPatterns` is a proposal too, since that is the assistant's own net.
+  `assistant.secretPatterns` is a proposal too, since that is the assistant's own net. Three
+  more are proposals though spec 9 does not list them, because they do the same kind of thing:
+  another skill, extra prompt, provider or model on a step that has a permission mode or a
+  gate that passes by itself (the yes once given for that step was for that work); taking a
+  skill off `workflows.alwaysStopSkills`; and a tracker's `baseUrl` or `authMode` while that
+  tracker's token is stored at the scope or globally, since the token would then be sent to
+  the new address.
 - `refused`: never applied, with a sentence for the assistant. The answers at a gate
   (`workflowRun.continue`, `sendBack`, `stop`; the sentence carries the run's path),
   `planRun.stop`, a card delete that would stop a run, every thread, approval and question
@@ -1607,13 +1615,22 @@ removed the thing). `assistant.undo {changeId}` compares the target as it is now
 inverse command is decided as the user's, one step each, and `assistant.changeUndone` marks
 the row. Undo is recorded when the change is made and is never a snapshot of anything else.
 The shown texts go through the secret net; `inverse` and `expect` keep the real values,
-because undo needs them, and are not part of what a tool returns.
+because undo needs them. They are in `AssistantChangeRecord` (the event and the table) and not
+in `AssistantChange`, the row of the topic, so neither a tool nor a client gets them.
 
 **Proposals.** A proposal row (`AssistantProposal`, topic `assistantProposals`) holds a title
-("Start Delivery in Tea"), one line per thing that would change, the place, and the command
-as the assistant sent it. `assistant.proposal.accept {proposalId}` decides that command as
-the user's and marks the row accepted in the same transaction; if the app refuses it now, the
-accept is rejected with the reason and the proposal stays open. `assistant.proposal.decline
+("Start Delivery in Tea"), one line per thing that would change, and the place. The server's
+record (`AssistantProposalRecord`, the event and the table) also holds the command as the
+assistant sent it and `basis`: the state the title and lines were written from (`basisOf`: the
+stored setting value; the whole workflow for a workflow change or a start; the card's title,
+workflow, project and backlog item; the trigger's row; the names a title shows). The topic's
+row leaves both out. `assistant.proposal.accept {proposalId}` first compares `basis` with the
+state now. If it differs the accept is rejected and says what changed, and the proposal stays
+pending for the user's No: a yes is for what the card says, so the assistant cannot point a
+pending yes somewhere else with an ordinary change, and a held step list never overwrites
+what the user changed by hand since. Otherwise the command is decided as the user's and the
+row is marked accepted in the same transaction; if the app refuses it now, the accept is
+rejected with the reason and the proposal stays open. `assistant.proposal.decline
 {proposalId, reason?}` marks it declined and keeps the reason. The three answer commands
 (`accept`, `decline`, `undo`) are in the table as refused, so they only work with the user's
 origin.

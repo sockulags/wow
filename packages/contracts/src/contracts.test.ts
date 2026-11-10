@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   AssistantChange,
+  AssistantChangeRecord,
   AssistantProposal,
+  AssistantProposalRecord,
   DomainEvent,
   defaultSecretPatterns,
   hiddenText,
@@ -749,10 +751,14 @@ describe('app assistant', () => {
     to: '08:00–16:00',
     place,
     target: { kind: 'setting', id: 'calendar.workHours:global' },
-    expect: { value: { start: '08:00', end: '16:00' } },
-    inverse: [{ type: 'setting.reset', key: 'calendar.workHours', scope: 'global' }],
     state: 'applied',
     undoneAt: null,
+  };
+  // What the server keeps beside the row.
+  const changeRecord = {
+    ...change,
+    expect: { value: { start: '08:00', end: '16:00' } },
+    inverse: [{ type: 'setting.reset', key: 'calendar.workHours', scope: 'global' }],
   };
   const proposal = {
     id: 'p1',
@@ -761,10 +767,14 @@ describe('app assistant', () => {
     title: 'Start Delivery in Tea',
     lines: [{ what: 'Backlog item', from: null, to: 'A quieter kettle' }],
     place: { label: 'Workflows → Delivery', path: '/workflows/delivery' },
-    command: { type: 'workflowRun.start', runId: 'r1', workflowId: 'delivery', projectId: 'tea' },
     state: 'pending',
     answeredAt: null,
     reason: null,
+  };
+  const proposalRecord = {
+    ...proposal,
+    command: { type: 'workflowRun.start', runId: 'r1', workflowId: 'delivery', projectId: 'tea' },
+    basis: { workflow: { id: 'delivery', name: 'Delivery' }, project: 'Tea' },
   };
 
   it('has commands for the answers only the user gives', () => {
@@ -791,12 +801,26 @@ describe('app assistant', () => {
     expect(subscriptionTopics.assistantChanges.row.parse(change)).toEqual(change);
     expect(subscriptionTopics.assistantProposals.row.parse(proposal)).toEqual(proposal);
     expect(AssistantChange.safeParse({ ...change, state: 'gone' }).success).toBe(false);
-    expect(AssistantChange.safeParse({ ...change, from: null, expect: null }).success).toBe(true);
+    expect(AssistantChange.safeParse({ ...change, from: null }).success).toBe(true);
+    // The topics' rows leave the server's own record behind: what Undo puts back and the held
+    // command hold real values.
+    expect(subscriptionTopics.assistantChanges.row.parse(changeRecord)).toEqual(change);
+    expect(subscriptionTopics.assistantProposals.row.parse(proposalRecord)).toEqual(proposal);
+    expect(AssistantChangeRecord.safeParse({ ...changeRecord, expect: null }).success).toBe(true);
+    // An inverse or a held command that is not a command is not stored.
+    expect(
+      AssistantChangeRecord.safeParse({ ...changeRecord, inverse: [{ type: 'project.explode' }] })
+        .success,
+    ).toBe(false);
+    expect(
+      AssistantProposalRecord.safeParse({ ...proposalRecord, command: { type: 'nothing' } })
+        .success,
+    ).toBe(false);
     expect(AssistantProposal.safeParse({ ...proposal, state: 'applied' }).success).toBe(false);
     for (const event of [
-      { kind: 'assistant.changed', aggregate: 'c1', payload: change },
+      { kind: 'assistant.changed', aggregate: 'c1', payload: changeRecord },
       { kind: 'assistant.changeUndone', aggregate: 'c1', payload: { changeId: 'c1', at } },
-      { kind: 'assistant.proposed', aggregate: 'p1', payload: proposal },
+      { kind: 'assistant.proposed', aggregate: 'p1', payload: proposalRecord },
       {
         kind: 'assistant.proposalAnswered',
         aggregate: 'p1',

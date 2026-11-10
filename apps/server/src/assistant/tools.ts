@@ -3,8 +3,8 @@ import {
   hideSecrets,
   hideSecretsDeep,
   secretPatterns,
-  type AssistantChange,
-  type AssistantProposal,
+  type AssistantChangeRecord,
+  type AssistantProposalRecord,
   type CommandType,
 } from '@wow/contracts';
 import { eq } from 'drizzle-orm';
@@ -39,7 +39,7 @@ export const changeTools = {
   set_setting: {
     type: 'setting.set',
     description:
-      'Sets a setting. scope is "global" or "project:<id>". Read the setting first for its allowed values. Secret settings cannot be set here. A few settings that let the app do more on its own become a proposal.',
+      'Sets a setting. scope is "global" or "project:<id>". Read the setting first for its allowed values. Secret settings cannot be set here. A few settings that let the app do more on its own become a proposal, and so does the address of a tracker whose token is set.',
   },
   reset_setting: {
     type: 'setting.reset',
@@ -84,7 +84,7 @@ export const changeTools = {
   update_workflow: {
     type: 'workflow.update',
     description:
-      'Changes a workflow. Give steps as the whole new list. Changing a permission mode, a gate, a gate condition, rules, "for units" or "own working copy" makes it a proposal.',
+      'Changes a workflow. Give steps as the whole new list. Changing a permission mode, a gate, a gate condition, rules, "for units" or "own working copy" makes it a proposal; so does changing the skill, extra prompt, provider or model of a step that has a permission mode or a gate that passes by itself.',
   },
   delete_workflow: {
     type: 'workflow.delete',
@@ -170,7 +170,7 @@ export interface AssistantToolsDeps extends ReaderDeps {
   readonly logger: Logger;
 }
 
-const changeRow = ({ id, what, from, to, place }: AssistantChange) => ({
+const changeRow = ({ id, what, from, to, place }: AssistantChangeRecord) => ({
   id,
   what,
   from,
@@ -178,7 +178,7 @@ const changeRow = ({ id, what, from, to, place }: AssistantChange) => ({
   place,
 });
 
-const proposalRow = ({ id, title, lines, place }: AssistantProposal) => ({
+const proposalRow = ({ id, title, lines, place }: AssistantProposalRecord) => ({
   id,
   title,
   lines,
@@ -223,9 +223,10 @@ export class AssistantTools {
 
   async call(name: string, args: unknown): Promise<ToolResult> {
     const { content, isError } = await this.#run(name, args);
-    // The log says which tool ran and how it ended, never what went in or came out.
+    // The log says which tool ran and how it ended, never what went in or came out. A name
+    // that is not a tool's is something that went in.
     this.#deps.logger.debug('assistant tool', {
-      tool: name,
+      tool: this.#inputs.has(name) ? name : 'unknown',
       outcome: isError ? 'failed' : ((content as { outcome?: string }).outcome ?? 'read'),
     });
     return { text: JSON.stringify(hideSecretsDeep(content, this.#patterns())), isError };

@@ -1,5 +1,5 @@
 import { subscriptionTopics, type SubscribeParams, type SubscriptionTopic } from '@wow/contracts';
-import { asc, desc, eq, sql } from 'drizzle-orm';
+import { asc, desc, eq, getTableColumns, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
@@ -77,19 +77,33 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
         return db.select().from(t.ticketReads).orderBy(asc(t.ticketReads.id)).all();
       case 'pageReads':
         return db.select().from(t.pageReads).orderBy(asc(t.pageReads.id)).all();
-      case 'assistantChanges':
-        // In the order they were made (spec 13): the insertion order of the table.
+      case 'assistantChanges': {
+        // In the order they were made (spec 13): the insertion order of the table. Without what
+        // Undo puts back: it holds real values and is the server's alone.
+        const {
+          expect: _expect,
+          inverse: _inverse,
+          ...shown
+        } = getTableColumns(t.assistantChanges);
         return db
-          .select()
+          .select(shown)
           .from(t.assistantChanges)
           .orderBy(sql`rowid`)
           .all();
-      case 'assistantProposals':
+      }
+      case 'assistantProposals': {
+        // Without the held command and what it was proposed for.
+        const {
+          command: _command,
+          basis: _basis,
+          ...shown
+        } = getTableColumns(t.assistantProposals);
         return db
-          .select()
+          .select(shown)
           .from(t.assistantProposals)
           .orderBy(sql`rowid`)
           .all();
+      }
       case 'settings':
         return db
           .select()

@@ -292,6 +292,26 @@ export const Command = z.discriminatedUnion('type', [
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command['type'];
 
+// The server's whole record of a change the assistant made. Beside what the conversation shows
+// it keeps what Undo needs: the values the change left behind (null when it removed the thing)
+// and the commands that take it back. Undo is refused when the thing no longer holds `expect`.
+// These hold real values, so they stay on the server and are not part of the topic's rows.
+export const AssistantChangeRecord = AssistantChange.extend({
+  expect: z.record(z.string(), z.unknown()).nullable(),
+  inverse: z.array(Command),
+});
+export type AssistantChangeRecord = z.infer<typeof AssistantChangeRecord>;
+
+// The server's whole record of a proposal: the command the assistant sent, kept as it was, and
+// the state its title and lines were written from. Nothing of the command is applied until
+// `assistant.proposal.accept` arrives with the user's origin, and then only while the state
+// still is `basis`: a yes is for what the card said. Null in a row from before it was recorded.
+export const AssistantProposalRecord = AssistantProposal.extend({
+  command: Command,
+  basis: z.record(z.string(), z.unknown()).nullable(),
+});
+export type AssistantProposalRecord = z.infer<typeof AssistantProposalRecord>;
+
 // One Outlook calendar row as the sync delivers it; the server fills in the local-only fields.
 export const OutlookCalendarRow = CalendarItem.pick({
   id: true,
@@ -809,14 +829,18 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   }),
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
   // An ordinary change the assistant made, stored in the same commit as the change itself.
-  z.object({ kind: z.literal('assistant.changed'), aggregate: Id, payload: AssistantChange }),
+  z.object({ kind: z.literal('assistant.changed'), aggregate: Id, payload: AssistantChangeRecord }),
   z.object({
     kind: z.literal('assistant.changeUndone'),
     aggregate: Id,
     payload: z.object({ changeId: Id, at: Timestamp }),
   }),
   // A command of the assistant that waits for the user's yes; nothing else was changed.
-  z.object({ kind: z.literal('assistant.proposed'), aggregate: Id, payload: AssistantProposal }),
+  z.object({
+    kind: z.literal('assistant.proposed'),
+    aggregate: Id,
+    payload: AssistantProposalRecord,
+  }),
   z.object({
     kind: z.literal('assistant.proposalAnswered'),
     aggregate: Id,

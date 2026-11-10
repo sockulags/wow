@@ -40,11 +40,9 @@ export type AssistantTarget = z.infer<typeof AssistantTarget>;
 export const AssistantChangeState = z.enum(['applied', 'undone']);
 export type AssistantChangeState = z.infer<typeof AssistantChangeState>;
 
-// One ordinary change the assistant made (spec 7, 8, 13). `what`, `from` and `to` are the row
-// the conversation shows; `from` is null for something new and `to` is null for something
-// removed. `expect` and `inverse` are the server's own record for Undo: the values the change
-// left behind (null when it removed the thing) and the commands that take it back. Undo is
-// refused when the thing no longer holds `expect`.
+// One ordinary change the assistant made (spec 7, 8, 13), as the conversation shows it: `from`
+// is null for something new and `to` is null for something removed. This is all a client gets;
+// the server's own record for Undo is `AssistantChangeRecord` (commands.ts).
 export const AssistantChange = z.object({
   // The id of the command that made the change.
   id: Id,
@@ -55,8 +53,6 @@ export const AssistantChange = z.object({
   to: z.string().nullable(),
   place: AssistantPlace,
   target: AssistantTarget,
-  expect: z.record(z.string(), z.unknown()).nullable(),
-  inverse: z.array(z.unknown()),
   state: AssistantChangeState,
   undoneAt: Timestamp.nullable(),
 });
@@ -73,9 +69,8 @@ export type AssistantProposalLine = z.infer<typeof AssistantProposalLine>;
 export const AssistantProposalState = z.enum(['pending', 'accepted', 'declined']);
 export type AssistantProposalState = z.infer<typeof AssistantProposalState>;
 
-// A change that waits for the user's yes (spec 9, 10). `command` is the command the assistant
-// sent, kept as it was; nothing of it is applied until `assistant.proposal.accept` arrives with
-// the user's origin.
+// A change that waits for the user's yes (spec 9, 10), as its card shows it. This is all a
+// client gets; the command it holds is in `AssistantProposalRecord` (commands.ts).
 export const AssistantProposal = z.object({
   // The id of the command the assistant sent.
   id: Id,
@@ -84,7 +79,6 @@ export const AssistantProposal = z.object({
   title: z.string().min(1),
   lines: z.array(AssistantProposalLine),
   place: AssistantPlace,
-  command: z.unknown(),
   state: AssistantProposalState,
   answeredAt: Timestamp.nullable(),
   // What the user wrote with a No, for the assistant's next turn.

@@ -11,6 +11,7 @@ import type {
   CalendarItemSource,
   ChangeRequestState,
   CheckState,
+  Command,
   FileHash,
   HostCheck,
   HostError,
@@ -320,7 +321,7 @@ export const assistantChanges = sqliteTable('assistant_changes', {
   place: json<AssistantPlace>().notNull(),
   target: json<AssistantTarget>().notNull(),
   expect: json<Record<string, unknown>>(),
-  inverse: json<unknown[]>().notNull(),
+  inverse: json<Command[]>().notNull(),
   state: text().$type<AssistantChangeState>().notNull(),
   undoneAt: text(),
 });
@@ -333,7 +334,9 @@ export const assistantProposals = sqliteTable('assistant_proposals', {
   title: text().notNull(),
   lines: json<AssistantProposalLine[]>().notNull(),
   place: json<AssistantPlace>().notNull(),
-  command: json<unknown>().notNull(),
+  command: json<Command>().notNull(),
+  // What the title and lines were written from; an accept is refused once it no longer holds.
+  basis: json<Record<string, unknown>>(),
   state: text().$type<AssistantProposalState>().notNull(),
   answeredAt: text(),
   reason: text(),

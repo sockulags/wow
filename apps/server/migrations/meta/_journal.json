@@ -120,6 +120,13 @@
       "when": 1794340833365,
       "tag": "0016_assistant",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1794342396347,
+      "tag": "0017_assistant_proposal_basis",
+      "breakpoints": true
     }
   ]
 }

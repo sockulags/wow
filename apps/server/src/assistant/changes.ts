@@ -7,9 +7,9 @@ import {
   secretPatterns,
   settingGroupTitles,
   triggerEventLabels,
-  type AssistantChange,
+  type AssistantChangeRecord,
   type AssistantPlace,
-  type AssistantProposal,
+  type AssistantProposalRecord,
   type AssistantProposalLine,
   type AssistantTarget,
   type WorkflowStep,
@@ -416,7 +416,7 @@ export function changeOf(
   after: Row | null,
   read: ReadModel,
   context: DecideContext,
-): AssistantChange | undefined {
+): AssistantChangeRecord | undefined {
   if (before === null && after === null) return undefined;
   const changed = before && after ? changedKeys(before, after) : [];
   if (before && after && changed.length === 0) return undefined;
@@ -449,7 +449,7 @@ export function changeOf(
       place: placeOf(command, target, after, context),
     },
     patternsOf(read, context),
-  ) as Pick<AssistantChange, 'what' | 'from' | 'to' | 'place'>;
+  ) as Pick<AssistantChangeRecord, 'what' | 'from' | 'to' | 'place'>;
   return {
     id,
     at: context.now,
@@ -467,7 +467,7 @@ export function changeOf(
 // Why a change cannot be undone any more: the thing no longer holds what the change left
 // (spec 8). Undefined while it does.
 export function undoRefusal(
-  change: AssistantChange,
+  change: AssistantChangeRecord,
   read: ReadModel,
   context: DecideContext,
 ): string | undefined {
@@ -583,6 +583,91 @@ function stepLines(
   return lines;
 }
 
+const whole = (row: object | undefined): Row | null =>
+  row ? without({ ...row }, bookkeeping) : null;
+
+// The state a proposal's title and lines are written from, under the words a refusal names it
+// by. A yes is for what the card said (spec 9, 10), so an accept is refused once this no longer
+// holds: the assistant cannot point a pending yes somewhere else with an ordinary change, and a
+// held step list does not overwrite what the user changed by hand since. A start holds the
+// whole workflow, because the yes is for starting it as it was.
+export function basisOf(command: Command, read: ReadModel): Row {
+  const workflow = (id: string | null | undefined) => whole(id ? read.workflow(id) : undefined);
+  const project = (id: string | null | undefined) =>
+    (id ? read.project(id)?.name : undefined) ?? null;
+  const basis = ((): Row => {
+    switch (command.type) {
+      case 'setting.set':
+      case 'setting.reset': {
+        const stored = read.setting(command.key, command.scope);
+        return { setting: stored ? { value: stored.value } : null };
+      }
+      case 'workflow.update':
+        return { workflow: workflow(command.workflowId) };
+      case 'workflowRun.start':
+        return {
+          workflow: workflow(command.workflowId),
+          project: project(command.projectId),
+          'backlog item':
+            (command.backlogItemId ? read.backlogItem(command.backlogItemId)?.title : null) ?? null,
+        };
+      case 'card.runNow': {
+        const card = read.calendarItem(command.cardId);
+        return {
+          card: card
+            ? pick({ ...card }, ['title', 'workflowId', 'projectId', 'backlogItemId'])
+            : null,
+          workflow: workflow(card?.workflowId),
+          project: project(card?.projectId),
+        };
+      }
+      case 'planRun.start': {
+        const plan = read.planIntents().find((intent) => intent.id === command.planId);
+        return {
+          plan: plan ? { title: plan.title, projectId: plan.projectId } : null,
+          workflow: workflow(command.workflowId),
+          project: project(plan?.projectId),
+        };
+      }
+      case 'trigger.create':
+        return {
+          workflow: read.workflow(command.workflowId)?.name ?? null,
+          project: project(command.projectId),
+        };
+      case 'trigger.setEnabled': {
+        const trigger = read.trigger(command.triggerId);
+        return {
+          trigger: trigger
+            ? pick({ ...trigger }, ['event', 'workflowId', 'projectId', 'enabled'])
+            : null,
+          workflow: (trigger?.workflowId ? read.workflow(trigger.workflowId)?.name : null) ?? null,
+          project: project(trigger?.projectId),
+        };
+      }
+      default:
+        return {};
+    }
+  })();
+  // As it reads back from its column, so the two compare.
+  return JSON.parse(JSON.stringify(basis)) as Row;
+}
+
+// Why a proposal cannot be accepted any more: what it was shown for changed since. Undefined
+// while it holds.
+export function acceptRefusal(
+  proposal: AssistantProposalRecord,
+  read: ReadModel,
+): string | undefined {
+  const now = basisOf(proposal.command, read);
+  const was = proposal.basis ?? {};
+  const moved =
+    proposal.basis === null
+      ? ['state']
+      : Object.keys(now).filter((key) => !isDeepStrictEqual(now[key], was[key] ?? null));
+  if (moved.length === 0) return undefined;
+  return `"${proposal.title}" was proposed for how things were then, and the ${moved.join(' and the ')} changed since. Say No to it and ask again.`;
+}
+
 const onOff = (value: boolean | undefined): string => (value ? 'on' : 'off');
 
 // What a held command would change, in the words the proposal card shows. The command has
@@ -592,10 +677,10 @@ export function proposalOf(
   command: Command,
   read: ReadModel,
   context: DecideContext,
-): AssistantProposal {
+): AssistantProposalRecord {
   const workflowName = (workflowId: string) => read.workflow(workflowId)?.name ?? workflowId;
   const projectName = (projectId: string) => read.project(projectId)?.name ?? projectId;
-  const card = ((): Pick<AssistantProposal, 'title' | 'lines' | 'place'> => {
+  const card = ((): Pick<AssistantProposalRecord, 'title' | 'lines' | 'place'> => {
     switch (command.type) {
       case 'setting.set':
       case 'setting.reset': {
@@ -735,6 +820,7 @@ export function proposalOf(
     commandType: command.type,
     ...shown,
     command,
+    basis: basisOf(command, read),
     state: 'pending',
     answeredAt: null,
     reason: null,

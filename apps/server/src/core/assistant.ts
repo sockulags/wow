@@ -1,6 +1,6 @@
 import { Command, hideSecrets, type DomainEvent, type ServerCommand } from '@wow/contracts';
-import { z } from 'zod';
 import {
+  acceptRefusal,
   changeOf,
   patternsOf,
   proposalOf,
@@ -78,7 +78,10 @@ export function* decideInSteps(
   switch (command.type) {
     case 'assistant.proposal.accept': {
       const proposal = pendingProposal(read, command.proposalId);
-      yield decide(Command.parse(proposal.command), read, asUser);
+      // The yes is for what the card says. The proposal stays open so the user can say No.
+      const stale = acceptRefusal(proposal, read);
+      if (stale !== undefined) throw new CommandRejected('conflict', stale);
+      yield decide(proposal.command, read, asUser);
       yield [answered(proposal.id, 'accepted', null, context)];
       return;
     }
@@ -103,7 +106,7 @@ export function* decideInSteps(
       }
       const refusal = undoRefusal(change, read, context);
       if (refusal !== undefined) throw new CommandRejected('conflict', refusal);
-      for (const inverse of z.array(Command).parse(change.inverse)) {
+      for (const inverse of change.inverse) {
         try {
           yield decide(inverse, read, asUser);
         } catch (error) {

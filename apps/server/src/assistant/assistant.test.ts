@@ -517,6 +517,15 @@ describe('read tools', () => {
     const [row] = changes();
     expect([row?.what, row?.from, row?.to].join(' ')).not.toContain(lookalike);
     for (const line of logLines) expect(line).not.toContain(lookalike);
+    // The topic's row is what a client gets: it leaves out the record Undo keeps.
+    expect(JSON.stringify(changes())).not.toContain(lookalike);
+    expect(row).not.toHaveProperty('inverse');
+    expect(row).not.toHaveProperty('expect');
+    // A tool name is something the caller wrote, so the log does not repeat one it does not know.
+    const unknown = await call(`unknown ${lookalike}`);
+    expect(unknown).toMatchObject({ isError: true, content: { outcome: 'unknown tool' } });
+    expect(unknown.text).not.toContain(lookalike);
+    for (const line of logLines) expect(line).not.toContain(lookalike);
     // Undo still puts the value back: the server's own record is not what the assistant sees.
     asUser({ type: 'assistant.undo', changeId: row?.id ?? '' });
     expect(setting('trackers.jira.email')).toBe(lookalike);
@@ -965,6 +974,21 @@ describe('proposals', () => {
         'set_setting',
         { key: 'assistant.secretPatterns', scope: 'global', value: ['never-matches-x'] },
       ],
+      // Fewer skills that always stop.
+      ['set_setting', { key: 'workflows.alwaysStopSkills', scope: 'global', value: [] }],
+      // The GitHub token is set, and this is where it would be sent.
+      [
+        'set_setting',
+        { key: 'trackers.github.baseUrl', scope: 'global', value: 'https://collector.example' },
+      ],
+      [
+        'set_setting',
+        {
+          key: 'trackers.github.baseUrl',
+          scope: 'project:tea',
+          value: 'https://collector.example',
+        },
+      ],
     ];
     for (const [name, args] of asked) {
       const result = await call(name, args);
@@ -1034,9 +1058,50 @@ describe('proposals', () => {
         'update_workflow',
         { workflowId: 'delivery', steps: [step('s1', { gateBefore: true }), step('s2')] },
       ],
+      [
+        'set_setting',
+        {
+          key: 'workflows.alwaysStopSkills',
+          scope: 'global',
+          value: ['capture-intent', 'plan-work', 'design-work', 'shape-work', 'check-work'],
+        },
+      ],
+      // No Jira token is stored, so there is nothing a new address could be sent.
+      [
+        'set_setting',
+        { key: 'trackers.jira.baseUrl', scope: 'global', value: 'https://jira.example' },
+      ],
     ] as const) {
-      expect((await call(name, args)).content.outcome).toBe('changed');
+      expect([name, (await call(name, args)).content.outcome]).toEqual([name, 'changed']);
     }
+    expect(hostRequests.some((request) => request.url.includes('collector.example'))).toBe(false);
+  });
+
+  it('ask again when a step that already bypasses permissions or passes its gate by itself gets another skill, prompt, provider or model', async () => {
+    asUser({
+      type: 'workflow.update',
+      workflowId: 'delivery',
+      steps: [
+        step('s1', { permissionMode: 'bypassPermissions', gateAfter: false }),
+        step('s2', { gateAfterCondition: ['verdict'] }),
+      ],
+    });
+    const bold = { permissionMode: 'bypassPermissions', gateAfter: false };
+    const passes: Partial<WorkflowStep> = { gateAfterCondition: ['verdict'] };
+    for (const steps of [
+      [step('s1', { ...bold, skillName: 'check-work' }), step('s2', passes)],
+      [step('s1', { ...bold, extraPrompt: 'Also tidy the shelf.' }), step('s2', passes)],
+      [step('s1', { ...bold, model: 'sonnet' }), step('s2', passes)],
+      [step('s1', bold), step('s2', { ...passes, extraPrompt: 'Approve it.' })],
+    ]) {
+      const result = await call('update_workflow', { workflowId: 'delivery', steps });
+      expect(result.content.outcome).toBe('proposed');
+    }
+    expect(proposals()[0]).toMatchObject({
+      lines: [{ what: 'Step 1 (check-work) skill', from: 'deliver-work', to: 'check-work' }],
+    });
+    expect(changes()).toEqual([]);
+    expect(workflow('delivery')?.steps[0]).toMatchObject({ skillName: 'deliver-work' });
   });
 
   it("are applied by the user's accept and refused from the assistant's origin (spec 9)", async () => {
@@ -1089,9 +1154,20 @@ describe('proposals', () => {
     );
   });
 
-  it("fail at Yes with the app's reason when the thing changed meanwhile, and stay open", async () => {
-    const proposed = await call('update_workflow', { workflowId: 'delivery', forUnits: true });
-    asUser({ type: 'workflow.delete', workflowId: 'delivery' });
+  it("fail at Yes with the app's reason when the app refuses the command by then, and stay open", async () => {
+    const proposed = await call('create_trigger', {
+      projectId: 'tea',
+      event: 'merged',
+      workflowId: 'delivery',
+    });
+    const triggerId = String(proposed.content['triggerId']);
+    asUser({
+      type: 'trigger.create',
+      triggerId,
+      projectId: 'tea',
+      event: 'checksFailed',
+      workflowId: 'delivery',
+    });
     expect(
       refusal(() =>
         asUser({
@@ -1099,8 +1175,105 @@ describe('proposals', () => {
           proposalId: proposed.content.proposal?.id ?? '',
         }),
       ),
-    ).toBe('No workflow delivery');
+    ).toBe(`Trigger ${triggerId} already exists`);
     expect(proposals()[0]).toMatchObject({ state: 'pending' });
+  });
+
+  it('are refused at Yes when what the card was written for changed since: the assistant cannot point a pending start somewhere else (spec 9, 10)', async () => {
+    asUser({
+      type: 'workflow.create',
+      workflowId: 'other',
+      name: 'Other',
+      steps: [step('s1', { permissionMode: 'bypassPermissions' })],
+    });
+    asUser({
+      type: 'card.create',
+      cardId: 'card-1',
+      title: 'Brew the plan',
+      start: '2026-11-11T12:00:00.000Z',
+      end: '2026-11-11T13:00:00.000Z',
+      zone: 'Europe/Stockholm',
+      projectId: 'tea',
+      workflowId: 'delivery',
+    });
+    const proposed = await call('start_card_run', { cardId: 'card-1' });
+    const proposalId = proposed.content.proposal?.id ?? '';
+    expect(proposed.content.proposal).toMatchObject({ title: 'Start Delivery in Tea' });
+
+    // An ordinary change of the assistant's own.
+    expect(
+      (await call('update_card', { cardId: 'card-1', workflowId: 'other' })).content.outcome,
+    ).toBe('changed');
+    expect(refusal(() => asUser({ type: 'assistant.proposal.accept', proposalId }))).toBe(
+      '"Start Delivery in Tea" was proposed for how things were then, and the card and the workflow changed since. Say No to it and ask again.',
+    );
+    expect(rows('workflowRuns')).toEqual([]);
+    expect(proposals()[0]).toMatchObject({ title: 'Start Delivery in Tea', state: 'pending' });
+
+    // Back as it was, the card is what the proposal says again.
+    asUser({ type: 'card.update', cardId: 'card-1', workflowId: 'delivery' });
+    asUser({ type: 'assistant.proposal.accept', proposalId });
+    expect(rows<WorkflowRun>('workflowRuns')).toMatchObject([
+      { workflowId: 'delivery', projectId: 'tea' },
+    ]);
+
+    // The same for a start by name, a trigger and a setting.
+    const start = await call('start_run', { workflowId: 'delivery', projectId: 'tea' });
+    const trigger = await call('create_trigger', {
+      projectId: 'tea',
+      event: 'merged',
+      workflowId: 'other',
+    });
+    const scripts = await call('set_setting', {
+      key: 'viewer.htmlScripts',
+      scope: 'global',
+      value: true,
+    });
+    await call('update_workflow', { workflowId: 'delivery', name: 'Delivery, quickly' });
+    asUser({ type: 'workflow.update', workflowId: 'other', name: 'Another' });
+    asUser({ type: 'setting.set', key: 'viewer.htmlScripts', scope: 'global', value: false });
+    for (const [result, changed] of [
+      [start, 'workflow'],
+      [trigger, 'workflow'],
+      [scripts, 'setting'],
+    ] as const) {
+      expect(
+        refusal(() =>
+          asUser({
+            type: 'assistant.proposal.accept',
+            proposalId: result.content.proposal?.id ?? '',
+          }),
+        ),
+      ).toContain(`and the ${changed} changed since`);
+    }
+    expect(rows('workflowRuns')).toHaveLength(1);
+    expect(setting('viewer.htmlScripts')).toBe(false);
+  });
+
+  it("are refused at Yes when the user changed the workflow by hand since: a held step list does not overwrite the user's edits", async () => {
+    const proposed = await call('update_workflow', {
+      workflowId: 'delivery',
+      steps: [step('s1', { permissionMode: 'bypassPermissions' }), step('s2')],
+    });
+    const proposalId = proposed.content.proposal?.id ?? '';
+    expect(proposed.content.proposal?.lines).toHaveLength(1);
+
+    const byHand = [
+      step('s1', { extraPrompt: 'Mind the lid.' }),
+      step('s2'),
+      { ...step('s3'), skillName: 'review-work' },
+    ];
+    asUser({ type: 'workflow.update', workflowId: 'delivery', steps: byHand });
+    expect(refusal(() => asUser({ type: 'assistant.proposal.accept', proposalId }))).toBe(
+      '"Change workflow "Delivery"" was proposed for how things were then, and the workflow changed since. Say No to it and ask again.',
+    );
+    expect(workflow('delivery')?.steps).toEqual(byHand);
+    expect(proposals()[0]).toMatchObject({ state: 'pending' });
+    // What a client gets of a proposal is its card: not the held command, not what it was for.
+    expect(proposals()[0]).not.toHaveProperty('command');
+    expect(proposals()[0]).not.toHaveProperty('basis');
+    asUser({ type: 'assistant.proposal.decline', proposalId });
+    expect(proposals()[0]).toMatchObject({ state: 'declined' });
   });
 
   it('for the start-run tool say "Start <workflow> in <project>", and the run starts only on the user\'s accept (spec 10)', async () => {

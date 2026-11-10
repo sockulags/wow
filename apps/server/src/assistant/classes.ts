@@ -48,18 +48,43 @@ const gateAnswer = refused(
     `Only the user approves, sends back or stops a run. The run is at ${runPath(command.runId)}.`,
 );
 
-// Settings whose new value lets the app do more on its own (spec 9).
-const moreOnItsOwn: Readonly<Record<string, (value: unknown) => boolean>> = {
-  'scheduler.paused': (value) => value === false,
-  'scheduler.missedPolicy': (value) => value === 'run',
-  'hosts.polling': (value) => value === true,
-  'triggers.eventsEnabled': (value) => value === true,
-  'viewer.htmlScripts': (value) => value === true,
+const turnedOn = (on: unknown) => (next: unknown, current: unknown) =>
+  next === on && current !== on;
+
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : [];
+
+// Settings whose new value lets the app do more on its own (spec 9). Taking a skill off the
+// list of skills that always stop is not in the spec's list but is the same kind of change: a
+// gate that always waited may then pass by itself.
+const moreOnItsOwn: Readonly<Record<string, (next: unknown, current: unknown) => boolean>> = {
+  'scheduler.paused': turnedOn(false),
+  'scheduler.missedPolicy': turnedOn('run'),
+  'hosts.polling': turnedOn(true),
+  'triggers.eventsEnabled': turnedOn(true),
+  'viewer.htmlScripts': turnedOn(true),
+  'workflows.alwaysStopSkills': (next, current) => {
+    const kept = new Set(strings(next));
+    return strings(current).some((skill) => !kept.has(skill));
+  },
 };
 
 // The net that hides secret-looking text is the assistant's own guard, so the assistant does
 // not change it without a yes.
 const guardSettings: ReadonlySet<string> = new Set(['assistant.secretPatterns']);
+
+// Where a tracker's token is sent. Spec 7 calls tracker host settings ordinary, but with the
+// token set a new address would send that token to a host the user never chose, so then the
+// user is asked. Without a token there is nothing to send and the change is ordinary.
+const trackerAddress = /^(trackers\.[^.]+)\.(?:baseUrl|authMode)$/;
+
+function sendsStoredToken(key: string, scope: string, read: ReadModel): boolean {
+  const tracker = trackerAddress.exec(key)?.[1];
+  if (tracker === undefined) return false;
+  return [scope, 'global'].some(
+    (at) => (read.setting(`${tracker}.token`, at)?.value ?? null) !== null,
+  );
+}
 
 const definitionOf = (key: string, context: DecideContext): SettingDefinition | undefined =>
   Object.hasOwn(context.registry, key) ? context.registry[key] : undefined;
@@ -80,12 +105,12 @@ function settingClass(
       reason: `${definition.label} is a secret. The user types it into its own field; the assistant never sets, clears or sees one.`,
     };
   }
-  if (guardSettings.has(key)) return proposal;
+  if (guardSettings.has(key) || sendsStoredToken(key, scope, read)) return proposal;
   const more = moreOnItsOwn[key];
   if (!more) return ordinary;
   const stored = read.setting(key, scope);
   const current = stored ? stored.value : definition.default;
-  return more(next(definition)) && !more(current) ? proposal : ordinary;
+  return more(next(definition), current) ? proposal : ordinary;
 }
 
 // The parts of a step that decide how much it does without the user (spec 9): its permission
@@ -102,9 +127,23 @@ const hasAutonomy = (step: WorkflowStep): boolean =>
 const stops = (steps: readonly WorkflowStep[]): number =>
   steps.reduce((count, step) => count + Number(step.gateBefore) + Number(step.gateAfter), 0);
 
+// What a step with a permission mode or a gate that passes by itself runs. The user's yes to
+// those was for this skill and prompt, so changing them under it asks again.
+const work = (step: WorkflowStep) => ({
+  skillName: step.skillName,
+  extraPrompt: step.extraPrompt || null,
+  providerInstanceId: step.providerInstanceId ?? null,
+  model: step.model ?? null,
+});
+
+const actsAlone = (step: WorkflowStep): boolean => {
+  const { permissionMode, gateAfterCondition } = autonomy(step);
+  return permissionMode !== null || gateAfterCondition !== null;
+};
+
 // A step list asks for more when a step gains or changes one of those parts, when a step that
-// stays loses a gate, or when the list as a whole stops less often than it did (a step swapped
-// for one without its gate).
+// stays loses a gate, when a step that acts alone gets other work, or when the list as a whole
+// stops less often than it did (a step swapped for one without its gate).
 function stepsAskForMore(before: readonly WorkflowStep[], after: readonly WorkflowStep[]): boolean {
   const old = new Map(before.map((step) => [step.id, step]));
   if (stops(after) < stops(before)) return true;
@@ -113,6 +152,7 @@ function stepsAskForMore(before: readonly WorkflowStep[], after: readonly Workfl
     if (!was) return hasAutonomy(step);
     return (
       !isDeepStrictEqual(autonomy(was), autonomy(step)) ||
+      (actsAlone(step) && !isDeepStrictEqual(work(was), work(step))) ||
       (was.gateBefore && !step.gateBefore) ||
       (was.gateAfter && !step.gateAfter)
     );

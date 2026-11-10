@@ -1,8 +1,8 @@
 import {
   SecretRef,
   type Approval,
-  type AssistantChange,
-  type AssistantProposal,
+  type AssistantChangeRecord,
+  type AssistantProposalRecord,
   type CommandOrigin,
   type CalendarItem,
   type ChangeRequest,
@@ -97,8 +97,8 @@ export interface ReadModel {
   triggerEventSeen(triggerId: string, eventId: string): boolean;
   // True while a run started for this backlog item is running or waiting at a gate.
   backlogItemHasLiveRun(id: string): boolean;
-  assistantChange(id: string): AssistantChange | undefined;
-  assistantProposal(id: string): AssistantProposal | undefined;
+  assistantChange(id: string): AssistantChangeRecord | undefined;
+  assistantProposal(id: string): AssistantProposalRecord | undefined;
 }
 
 export interface DecideContext {
@@ -107,7 +107,7 @@ export interface DecideContext {
   // wow's own folder (`WOW_HOME`), where a relative `workspaces.root` is resolved.
   readonly home?: string | undefined;
   // Who sent the command; absent means the user. `decide` itself does not look at it: what the
-  // assistant may send is settled in `stagesOf` (core/assistant.ts) before a command gets here.
+  // assistant may send is settled in `decideInSteps` (core/assistant.ts) before a command gets here.
   readonly origin?: CommandOrigin | undefined;
 }
 
@@ -145,7 +145,7 @@ export function decide(
   if (isPlanRunCommand(command)) return decidePlanRun(command, read, context);
   if (isAssistantCommand(command)) {
     // They apply other commands step by step, each on what the one before left behind.
-    throw new Error(`${command.type} is decided in stages; dispatch it through the engine`);
+    throw new Error(`${command.type} is decided in steps; dispatch it through the engine`);
   }
   switch (command.type) {
     case 'setting.set': {
