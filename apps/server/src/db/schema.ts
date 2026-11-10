@@ -184,24 +184,12 @@ export const calendarItems = sqliteTable(
   (table) => [index('calendar_items_start_idx').on(table.start)],
 );
 
-export const mailItems = sqliteTable('mail_items', {
-  id: text().primaryKey(),
-  externalId: text().notNull(),
-  folder: text().notNull(),
-  from: text().notNull(),
-  subject: text().notNull(),
-  receivedAt: text().notNull(),
-  unread: bool().notNull(),
-  snippet: text().notNull(),
-});
-
 // A single row; the id only exists so the row can be upserted.
 export const outlookStatus = sqliteTable('outlook_status', {
   id: integer().primaryKey(),
   lastSyncAt: text(),
   lastError: text(),
   unavailableSince: text(),
-  unreadCount: integer().notNull().default(0),
   bridgeVersion: text(),
   profile: json<OutlookProfile>(),
 });

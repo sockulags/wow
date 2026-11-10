@@ -27,23 +27,12 @@ export const Appointment = z.object({
 });
 export type Appointment = z.infer<typeof Appointment>;
 
-export const UnreadMessage = z.object({
-  entryId: z.string().min(1),
-  folder: z.string(),
-  from: z.string(),
-  subject: z.string(),
-  receivedAt: OffsetDateTime,
-  snippet: z.string(),
-});
-export type UnreadMessage = z.infer<typeof UnreadMessage>;
-
 export const BridgeErrorCode = z.enum(['unavailable', 'failed', 'bad_request']);
 export type BridgeErrorCode = z.infer<typeof BridgeErrorCode>;
 
 export type BridgeRequest =
   | { op: 'ping' }
   | { op: 'calendar'; from: string; to: string }
-  | { op: 'unreadMail'; folders: readonly string[]; limit: number }
   | { op: 'open'; entryId: string }
   | { op: 'profile' };
 
@@ -61,12 +50,6 @@ const listOf = <T extends z.ZodType>(item: T) =>
 
 export const CalendarResult = z.object({ items: listOf(Appointment) });
 export type CalendarResult = z.infer<typeof CalendarResult>;
-
-export const UnreadMailResult = z.object({
-  items: listOf(UnreadMessage),
-  unreadCount: z.number().int().nonnegative(),
-});
-export type UnreadMailResult = z.infer<typeof UnreadMailResult>;
 
 export const OpenResult = z.object({ opened: z.literal(true) });
 
@@ -95,7 +78,6 @@ export type BridgeResponse = z.infer<typeof BridgeResponse>;
 export const resultSchemas = {
   ping: PingResult,
   calendar: CalendarResult,
-  unreadMail: UnreadMailResult,
   open: OpenResult,
   profile: ProfileResult,
 } as const;

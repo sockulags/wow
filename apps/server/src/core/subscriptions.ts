@@ -37,9 +37,6 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
         return db.select().from(t.questions).where(eq(t.questions.threadId, threadId)).all();
       case 'calendarItems':
         return db.select().from(t.calendarItems).orderBy(asc(t.calendarItems.start)).all();
-      case 'mailItems':
-        // Newest first, as the mail rail shows them (spec 4).
-        return db.select().from(t.mailItems).orderBy(desc(t.mailItems.receivedAt)).all();
       case 'outlookStatus':
         return readOutlookStatus(db);
       case 'backlogItems':

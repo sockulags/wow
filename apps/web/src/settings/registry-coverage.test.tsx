@@ -50,6 +50,27 @@ describe('settings registry coverage', () => {
     cleanup();
   });
 
+  // Spec 4 (plan U18): Outlook is read for meetings only, so no setting is about mail. The
+  // trackers' sign-in email is the one setting that may say "mail".
+  it('lists no mail setting, on the Outlook page or anywhere else', async () => {
+    const aboutMail = Object.entries(settingsRegistry)
+      .filter(([key, { label, description }]) =>
+        /mail|unread/i.test(`${key} ${label} ${description}`.replace(/e-?mail/gi, '')),
+      )
+      .map(([key]) => key);
+    expect(aboutMail).toEqual([]);
+    await renderApp(
+      '/settings/outlook',
+      createTestRuntime(undefined, { 'advanced.showSettingKeys': true }),
+    );
+    const page = await screen.findByRole('heading', { name: settingGroupTitles.outlook });
+    expect(page).toBeTruthy();
+    expect(screen.getByTestId('setting-outlook.pollSeconds')).toBeTruthy();
+    expect(screen.getByTestId('setting-outlook.requestTimeoutMs')).toBeTruthy();
+    expect(screen.queryByText(/mail|unread/i)).toBeNull();
+    cleanup();
+  });
+
   it('hides setting keys and raw defaults unless asked', async () => {
     await renderApp('/settings/calendar');
     const row = within(await screen.findByTestId('setting-calendar.zone'));

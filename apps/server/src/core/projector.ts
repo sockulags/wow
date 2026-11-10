@@ -17,7 +17,6 @@ import {
   hostReads,
   ticketReads,
   pageReads,
-  mailItems,
   notifications,
   outlookStatus,
   planIntents,
@@ -435,7 +434,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .run();
       return ['backlogItems'];
     case 'outlook.synced': {
-      const { calendarUpsert, calendarRemove, mailUpsert, mailRemove } = event.payload;
+      const { calendarUpsert, calendarRemove } = event.payload;
       const topics: SubscriptionTopic[] = ['outlookStatus'];
       for (const row of calendarUpsert) {
         tx.insert(calendarItems)
@@ -451,20 +450,10 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           .run();
       }
       if (calendarUpsert.length > 0 || calendarRemove.length > 0) topics.push('calendarItems');
-      for (const row of mailUpsert) {
-        tx.insert(mailItems)
-          .values(row)
-          .onConflictDoUpdate({ target: mailItems.id, set: row })
-          .run();
-      }
-      if (mailRemove.length > 0)
-        tx.delete(mailItems).where(inArray(mailItems.id, mailRemove)).run();
-      if (mailUpsert.length > 0 || mailRemove.length > 0) topics.push('mailItems');
       const status = {
         lastSyncAt: event.payload.at,
         lastError: null,
         unavailableSince: null,
-        unreadCount: event.payload.unreadCount,
         bridgeVersion: event.payload.bridgeVersion,
         // A poll that could not read the profile keeps the one stored.
         ...(event.payload.profile ? { profile: event.payload.profile } : {}),
@@ -496,7 +485,6 @@ const outlookStatusColumns = {
   lastSyncAt: outlookStatus.lastSyncAt,
   lastError: outlookStatus.lastError,
   unavailableSince: outlookStatus.unavailableSince,
-  unreadCount: outlookStatus.unreadCount,
   bridgeVersion: outlookStatus.bridgeVersion,
   profile: outlookStatus.profile,
 };
@@ -642,7 +630,6 @@ export function readModel(tx: DbOrTx): ReadModel {
     calendarItem: (id) => tx.select().from(calendarItems).where(eq(calendarItems.id, id)).get(),
     outlookCalendarItems: () =>
       tx.select().from(calendarItems).where(eq(calendarItems.source, 'outlook')).all(),
-    mailItems: () => tx.select().from(mailItems).all(),
     outlookStatus: () => readOutlookStatus(tx)[0],
   };
 }

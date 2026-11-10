@@ -143,8 +143,7 @@ calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end,
                  location?, joinUrl?, body?, organizer?, projectId?, backlogItemId?, workflowId?,
                  runId?, state, updatedAt   -- state: CardState for cards, 'scheduled'|'cancelled'
                  for Outlook; body: a card's notes or an Outlook item's snippet
-mail_items       id, externalId, folder, from, subject, receivedAt, unread, snippet
-outlook_status   singleton: lastSyncAt, lastError?, unavailableSince?, unreadCount, bridgeVersion,
+outlook_status   singleton: lastSyncAt, lastError?, unavailableSince?, bridgeVersion,
                  profile(json: OutlookProfile)?
 backlog_items    id, title, body, tags(json), state, runId?, remote(json: service,key,url)?, createdAt
 workflows        id, name, templateKind?, steps(json: WorkflowStep[]), ownWorkingCopy, forUnits,
@@ -339,16 +338,17 @@ not running or stopped answering), `bad_request` or `failed`:
 ← {"id":2,"result":{"items":[{"entryId":"...","subject":"...","start":"...","end":"...",
      "location":"...","isAllDay":false,"isRecurring":true,"isCancelled":false,"organizer":"...",
      "joinUrl":"https://teams...","busyStatus":2,"body":"..."}]}}
-→ {"id":3,"op":"unreadMail","folders":["Inbox"],"limit":50}
-← {"id":3,"result":{"items":[{"entryId":"...","folder":"Inbox","from":"...","subject":"...",
-     "receivedAt":"...","snippet":"..."}],"unreadCount":7}}
-→ {"id":4,"op":"open","entryId":"..."}     (Outlook shows the item)
-← {"id":4,"result":{"opened":true}}
-→ {"id":5,"op":"profile"}
-← {"id":5,"result":{"timeZoneId":"W. Europe Standard Time","workHoursXml":"<Root ...>",
+→ {"id":3,"op":"open","entryId":"..."}     (Outlook shows the meeting)
+← {"id":3,"result":{"opened":true}}
+→ {"id":4,"op":"profile"}
+← {"id":4,"result":{"timeZoneId":"W. Europe Standard Time","workHoursXml":"<Root ...>",
      "firstDayOfWeek":1,"address":"you@example.com"}}
-← {"id":6,"error":{"code":"unavailable","message":"Outlook is not running"}}
+← {"id":5,"error":{"code":"unavailable","message":"Outlook is not running"}}
 ```
+
+These four operations are the whole protocol: Outlook is read for meetings only (spec 4). The
+bridge answers any other op with `bad_request`, and `protocol.test.ts` reads the script's request
+switch to check that it handles exactly the operations `resultSchemas` lists.
 
 The schemas for these lines live in `packages/outlook-bridge/src/protocol.ts`, not in
 `packages/contracts`, because they never leave the server.
@@ -358,9 +358,7 @@ Implementation notes: the bridge attaches to a running Outlook with
 starts Outlook itself (behavior 3: Outlook not running means "unavailable"). `GetNamespace("MAPI")`,
 `GetDefaultFolder(9)` for the calendar with `Sort("[Start]")`, then `Items.IncludeRecurrences =
 $true`, and a `Restrict` on `[Start]`/`[End]`; iteration stops at the window end because a series
-without an end date never runs out of occurrences. `GetDefaultFolder(6)` and
-`Restrict("[UnRead] = True")` for mail; folder names other than `Inbox` are looked up under the
-inbox, then at the top of the mailbox. Times go out as `DateTimeOffset` strings with the local
+without an end date never runs out of occurrences. No other folder is opened. Times go out as `DateTimeOffset` strings with the local
 offset. A cancelled meeting that is still in the calendar has `isCancelled` (MeetingStatus 5 or 7).
 The Teams join link is read from the item body or the `Location` when it looks like a
 `teams.microsoft.com/l/meetup-join` URL. The body goes out cut at 2000 characters;
@@ -397,29 +395,27 @@ setting always wins. The server uses it for the polled window, the web app for t
 answers `profile` from `fixtures/profile.json`; a null `timeZoneId` there means the zone the
 fixtures are written in, which the mock turns back into a Windows id (`windowsIdOf`).
 
-`OutlookSource` is the interface (`ping`, `calendar`, `unreadMail`, `open`, `profile`, `close`).
+`OutlookSource` is the interface (`ping`, `calendar`, `open`, `profile`, `close`).
 `PowershellOutlookSource` starts the bridge on first use, numbers requests, and times each one out
 after `outlook.requestTimeoutMs`; a timeout (Outlook blocked by a modal dialog) or an exit rejects
 every pending request, kills the process, and the next request starts a fresh one.
 `MockOutlookSource` answers from `packages/outlook-bridge/fixtures` (invented items placed relative
 to today: a weekday standup with a Teams link, a weekly 1:1, an all-day offsite, a cancelled
-meeting, unread mail in two folders) and is selected off Windows and with `WOW_OUTLOOK=mock`
-(`prefersMock`, `createOutlookSource`).
+meeting) and is selected off Windows and with `WOW_OUTLOOK=mock` (`prefersMock`,
+`createOutlookSource`). It records every operation it is asked in `asked`, so tests can check that
+a poll reads `ping`, `profile` and `calendar` and nothing else.
 
 `OutlookSync` polls every `outlook.pollSeconds` (re-read before each poll; one poll at a time). The
 window runs from the start of the current week (`calendar.firstDayOfWeek` in `calendar.zone`, both
 resolved against the profile read in the same poll) to
-the end of the day `calendar.lookaheadDays` after today. Unread mail is read only while
-`outlook.mailRail` is on, at most `outlook.mailLimit` messages from `outlook.folders`. A poll
-hands the server's `OutlookSink` either a snapshot or a failure:
+the end of the day `calendar.lookaheadDays` after today. A poll hands the server's `OutlookSink` either a snapshot or a failure:
 
 - **Snapshot.** Calendar rows with id `outlook:<externalId>`, where `externalId` is the EntryID, or
   `EntryID@<occurrence start>` for a recurring series because occurrences share the EntryID, state
-  `scheduled` or `cancelled`, plus mail rows with id `outlook-mail:<EntryID>`, the unread count and
-  the bridge version. `diffCalendar` and `diffMail` turn a snapshot and the stored rows into
-  upserts and removals: Outlook rows overlapping the window that Outlook no longer returns are
-  removed (deleted or moved meetings), rows outside the window stay; mail rows not returned are
-  removed. The server applies them and sets `outlook_status.lastSyncAt`, clears `lastError` and
+  `scheduled` or `cancelled`, plus the bridge version and the profile. `diffCalendar` turns a
+  snapshot and the stored rows into upserts and removals: Outlook rows overlapping the window that
+  Outlook no longer returns are removed (deleted or moved meetings), rows outside the window stay.
+  The server applies them and sets `outlook_status.lastSyncAt`, clears `lastError` and
   stores `bridgeVersion`.
 - **Failure.** Code, message and `unavailableSince` (the first failed poll since the last good
   one, for the "Outlook unavailable since <time>" banner). The server sets
@@ -984,8 +980,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`,
   `calendar.hourHeight`, `calendar.zoomStep`
-- outlook: `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`,
-  `outlook.mailRail`, `outlook.mailRailCollapsed`, `outlook.mailLimit`
+- outlook: `outlook.pollSeconds`, `outlook.requestTimeoutMs`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
   `scheduler.paused`, `scheduler.toastSeconds`
 - workflows: `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`,
@@ -1865,15 +1860,13 @@ the year, the week number, the zoom controls and the New card label as the calen
 (`formatWhen`) with the error, **What to check** and **Try again** (`outlook.refresh`). An error
 from Run now is a toast.
 
-Mail rail (`mail-rail.tsx`). `mailItems` newest first with the `unreadCount` from `outlook_status`:
-sender, `formatWhen` time, subject and one line of snippet, one Tab stop with the arrow keys
-between messages. A click calls `outlook.open` and confirms with a toast. While Outlook is
-unavailable the header says "Last read <time>" and the list is dimmed. The rail folds to a 40 px
-strip with the count: its button, the `keybindings.toggleMailRail` key and the palette ("Collapse
-mail rail" / "Show mail rail") write `outlook.mailRailCollapsed` (owner decision F-3); below a
-1200 px window (`useBelow('narrow')`, see "Context panel"), and while the context panel is open,
-it folds on its own, and opening it then lasts until it is folded again. Before the first snapshot
-it shows the shared loading state, then the compact empty state.
+No mail. The calendar shows meetings and cards only: the time grid takes the full width of the
+view, and no topic, setting, command or key is about mail (spec 4, plan U18). Stores from before
+that are cleaned by migration `0015_no_mail`: it drops `mail_items` and
+`outlook_status.unread_count`, deletes stored values of the removed settings (`outlook.folders`,
+the three mail rail settings and the rail's key), removes the mail fields from stored
+`outlook.synced` events and deletes the receipts of `outlook.sync` commands, whose fingerprints
+held the polled mail.
 
 Settings. `calendar.zone` uses the `timeZone` widget, a searchable `Combobox` of
 `Intl.supportedValuesOf('timeZone')` labelled with their offsets, with "From Outlook (<zone>)" and
@@ -1890,8 +1883,8 @@ meeting popover, the arrow keys move the selection with the focus, Enter on the 
 opens its dialog, and the selected block carries a ring and `aria-current`. With the panel closed
 a click still records the selection and opens the dialog or popover as before.
 
-Palette commands: today, next, previous, day view, week view, zoom in, zoom out, reset zoom and
-collapse or show the mail rail (on the calendar only, with their keys), hide or show weekends,
+Palette commands: today, next, previous, day view, week view, zoom in, zoom out and reset zoom
+(on the calendar only, with their keys), hide or show weekends,
 New card, Refresh Outlook, and one "Edit card" entry per card.
 
 ## Context panel

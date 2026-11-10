@@ -238,18 +238,6 @@ export const CalendarItem = z.object({
 });
 export type CalendarItem = z.infer<typeof CalendarItem>;
 
-export const MailItem = z.object({
-  id: Id,
-  externalId: z.string().min(1),
-  folder: z.string(),
-  from: z.string(),
-  subject: z.string(),
-  receivedAt: Timestamp,
-  unread: z.boolean(),
-  snippet: z.string(),
-});
-export type MailItem = z.infer<typeof MailItem>;
-
 // Calendar preferences read from Outlook (F-8). Each part is null when Outlook does not say. The
 // calendar settings default to these and fall back to the system's when they are null.
 export const OutlookProfile = z.object({
@@ -267,8 +255,6 @@ export const OutlookStatus = z.object({
   lastError: z.string().nullable(),
   // The first failed poll since the last good one: "Outlook unavailable since <time>".
   unavailableSince: Timestamp.nullable(),
-  // Unread mail in the configured folders, including messages beyond the rail's limit.
-  unreadCount: z.number().int().nonnegative(),
   bridgeVersion: z.string().nullable(),
   // The last profile Outlook returned; kept while Outlook is unavailable.
   profile: OutlookProfile.nullable(),

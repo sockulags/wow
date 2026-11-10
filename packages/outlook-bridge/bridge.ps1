@@ -1,7 +1,8 @@
 # wow Outlook bridge. Reads one JSON request per line on stdin and writes one JSON response per
 # line on stdout. Read-only: it attaches to an Outlook that is already running and never starts
-# Outlook, changes items or sends mail. "open" only asks Outlook to show an item, and "profile"
-# only reads the calendar's work hours, time zone, first day of the week and the user's address.
+# Outlook or changes items. It reads the calendar and nothing else: "open" only asks Outlook to
+# show a meeting, and "profile" only reads the calendar's work hours, time zone, first day of the
+# week and the user's address.
 #
 # Started by PowershellOutlookSource as:
 #   powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File bridge.ps1
@@ -10,8 +11,6 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3
 
 $BridgeVersion = '1'
-# Longest mail snippet sent back; the rail shows one line, the rest only costs time on the pipe.
-$SnippetChars = 200
 # Longest meeting body sent back; the server keeps a short snippet of it for the calendar.
 $BodyChars = 2000
 # Outlook's olFolderCalendar, olIdentifyByMessageClass and PR_ROAMING_XMLSTREAM.
@@ -132,60 +131,13 @@ function Invoke-Calendar($request) {
     return [ordered]@{ items = $list.ToArray() }
 }
 
-function Resolve-MailFolder($ns, [string] $name) {
-    $inbox = $ns.GetDefaultFolder(6)
-    if ($name -eq 'Inbox') { return $inbox }
-    try { return $inbox.Folders.Item($name) } catch { }
-    try { return $inbox.Parent.Folders.Item($name) } catch { }
-    return $null
-}
-
-function Invoke-UnreadMail($request) {
-    $ns = Get-Namespace
-    $limit = [int]$request.limit
-    $found = New-Object System.Collections.ArrayList
-    $count = 0
-    foreach ($name in @($request.folders)) {
-        $folder = Resolve-MailFolder $ns ([string]$name)
-        if ($null -eq $folder) { continue }
-        $unread = $folder.Items.Restrict('[UnRead] = True')
-        $count += $unread.Count
-        $unread.Sort('[ReceivedTime]', $true)
-        $taken = 0
-        $item = $unread.GetFirst()
-        while ($null -ne $item -and $taken -lt $limit) {
-            $received = Get-Property $item 'ReceivedTime'
-            if ($null -ne $received) {
-                $body = [string](Get-Property $item 'Body')
-                $snippet = ($body -replace '\s+', ' ').Trim()
-                if ($snippet.Length -gt $SnippetChars) { $snippet = $snippet.Substring(0, $SnippetChars) }
-                [void]$found.Add(@{
-                    ticks = ([datetime]$received).ToUniversalTime().Ticks
-                    value = [ordered]@{
-                        entryId    = [string]$item.EntryID
-                        folder     = [string]$name
-                        from       = [string](Get-Property $item 'SenderName')
-                        subject    = [string](Get-Property $item 'Subject')
-                        receivedAt = ConvertTo-IsoOffset $received
-                        snippet    = $snippet
-                    }
-                })
-                $taken++
-            }
-            $item = $unread.GetNext()
-        }
-    }
-    $newest = @($found | Sort-Object -Property { $_.ticks } -Descending | Select-Object -First $limit | ForEach-Object { $_.value })
-    return [ordered]@{ items = $newest; unreadCount = $count }
-}
-
 function Invoke-Open($request) {
     $ns = Get-Namespace
     $ns.GetItemFromID([string]$request.entryId).Display()
     return [ordered]@{ opened = $true }
 }
 
-# Each part is read on its own and is null when Outlook does not have it, so a mailbox without
+# Each part is read on its own and is null when Outlook does not have it, so a profile without
 # work hours still reports its time zone.
 function Read-WorkHoursXml($ns) {
     try {
@@ -256,7 +208,6 @@ while ($true) {
         $result = switch ([string]$request.op) {
             'ping' { Invoke-Ping }
             'calendar' { Invoke-Calendar $request }
-            'unreadMail' { Invoke-UnreadMail $request }
             'open' { Invoke-Open $request }
             'profile' { Invoke-Profile }
             default { throw "bad_request::Unknown op '$($request.op)'" }

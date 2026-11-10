@@ -58,7 +58,6 @@ export function useCommands(): {
   const schedulerPaused = useSetting('scheduler.paused');
   const outlookProfile = useTopic('outlookStatus')?.[0]?.profile;
   const showWeekends = useSetting('calendar.showWeekends');
-  const mailRailCollapsed = useSetting('outlook.mailRailCollapsed');
   const backlogItems = useTopic('backlogItems');
   const planIntents = useTopic('planIntents');
   const planRuns = useTopic('planRuns');
@@ -100,7 +99,6 @@ export function useCommands(): {
         schedulerPaused,
         profile: outlookProfile,
         showWeekends,
-        mailRailCollapsed,
       }).map((command) => {
         const start = command.id.startsWith('card.')
           ? cardStart.get(command.id.slice(5))
@@ -173,7 +171,6 @@ export function useCommands(): {
     calendarZone,
     outlookProfile,
     showWeekends,
-    mailRailCollapsed,
     approvals,
     pathname,
     locationSearch,

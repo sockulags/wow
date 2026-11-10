@@ -1,9 +1,8 @@
 import { useSyncExternalStore } from 'react';
 
 // Window widths where the layout changes, like Tailwind's breakpoints: layout facts, not
-// preferences. The user's own choices are settings (outlook.mailRailCollapsed,
-// appearance.contextPanel); below `narrow` the mail rail folds to its count strip and the context
-// panel stops taking room from the view and opens over it instead (audit A-12).
+// preferences. The user's own choices are settings (appearance.contextPanel); below `narrow` the
+// context panel stops taking room from the view and opens over it instead (audit A-12).
 export const breakpoints = {
   narrow: 1200,
 } as const;

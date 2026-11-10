@@ -337,7 +337,6 @@ describe('per-project trackers', () => {
       .insert(outlookStatus)
       .values({
         id: 1,
-        unreadCount: 0,
         profile: {
           zone: null,
           workHours: null,

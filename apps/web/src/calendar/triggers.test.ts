@@ -79,6 +79,23 @@ describe('Run now on missed cards (behavior 12)', () => {
       ),
     ).toContain('Resume scheduler');
   });
+
+  // Spec 4 (plan U18): no palette command or key is about mail, in day or week view.
+  it('offers no mail command on the calendar', () => {
+    for (const view of ['day', 'week'] as const) {
+      const commands = calendarCommands({
+        search: { view },
+        cards,
+        triggers,
+        schedulerPaused: false,
+      });
+      const aboutMail = commands.filter((command) =>
+        /mail|unread/i.test([command.id, command.title, ...(command.keywords ?? [])].join(' ')),
+      );
+      expect(aboutMail).toEqual([]);
+      expect(commands.map((command) => command.id)).toContain('calendar.today');
+    }
+  });
 });
 
 describe('notification toasts', () => {

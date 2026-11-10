@@ -6,7 +6,6 @@ import {
   type HostRead,
   type TicketRead,
   type PageRead,
-  type MailItem,
   type OutlookStatus,
   type BacklogItem,
   type DomainEvent,
@@ -68,9 +67,8 @@ export interface ReadModel {
   // Approvals and questions of the thread that are still waiting for an answer.
   openRequests(threadId: string): number;
   calendarItem(id: string): CalendarItem | undefined;
-  // Every cached Outlook calendar row, and the cached unread mail.
+  // Every cached Outlook calendar row.
   outlookCalendarItems(): CalendarItem[];
-  mailItems(): MailItem[];
   outlookStatus(): OutlookStatus | undefined;
   skills(): Skill[];
   planIntents(): PlanIntent[];

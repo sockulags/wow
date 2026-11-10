@@ -73,7 +73,6 @@ export interface CalendarCommandData {
   // What Outlook last said about zone and work hours (F-8); undefined before the first read.
   readonly profile?: OutlookProfile | null | undefined;
   readonly showWeekends?: boolean | undefined;
-  readonly mailRailCollapsed?: boolean | undefined;
 }
 
 // Palette commands for the calendar (spec 7, 22). Today, next, previous and the view switches only
@@ -85,7 +84,6 @@ export function calendarCommands({
   schedulerPaused,
   profile,
   showWeekends = true,
-  mailRailCollapsed = false,
 }: CalendarCommandData): AppCommand[] {
   const commands: AppCommand[] = [];
   const zoneSetting = ({ settings }: CommandContext) =>
@@ -170,14 +168,6 @@ export function calendarCommands({
         keybinding: 'keybindings.calendarZoomReset',
         run: ({ settings }) => void calendarZoom(settings).reset(),
       },
-      {
-        id: 'calendar.toggleMailRail',
-        title: mailRailCollapsed ? 'Show mail rail' : 'Collapse mail rail',
-        group: 'Calendar',
-        keywords: ['mail', 'unread', 'rail', 'outlook', 'hide', 'show'],
-        keybinding: 'keybindings.toggleMailRail',
-        run: ({ settings }) => void settings.write('outlook.mailRailCollapsed', !mailRailCollapsed),
-      },
     );
   }
 
@@ -214,7 +204,7 @@ export function calendarCommands({
       id: 'outlook.refresh',
       title: 'Refresh Outlook',
       group: 'Calendar',
-      keywords: ['sync', 'poll', 'mail', 'meetings'],
+      keywords: ['sync', 'poll', 'meetings'],
       run: ({ connection }) => {
         // The outcome shows up in the calendar's banner, which follows outlook_status.
         if (connection) void connection.request('outlook.refresh', {}).catch(() => undefined);

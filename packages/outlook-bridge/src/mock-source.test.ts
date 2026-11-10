@@ -63,26 +63,14 @@ describe('MockOutlookSource', () => {
     ]);
   });
 
-  it('lists unread mail in the asked folders, newest first, with the full count', async () => {
-    const inbox = await source().unreadMail(['inbox'], 2);
-    expect(inbox.unreadCount).toBe(3);
-    expect(inbox.items.map((item) => item.entryId)).toEqual([
-      'mock-mail-build',
-      'mock-mail-review',
-    ]);
-    expect(inbox.items[0]?.receivedAt).toBe('2026-11-04T08:48:00.000Z');
-    const both = await source().unreadMail(['Inbox', 'Newsletters'], 50);
-    expect(both.unreadCount).toBe(4);
-  });
-
   it('fails every read while unavailable and records opened items', async () => {
     const mock = source();
-    await mock.open('mock-mail-build');
-    expect(mock.opened).toEqual(['mock-mail-build']);
+    await mock.open('mock-design-review');
+    expect(mock.opened).toEqual(['mock-design-review']);
     mock.setUnavailable('Outlook is not running');
     expect(await mock.ping()).toMatchObject({ outlook: 'unavailable' });
     await expect(mock.calendar(window)).rejects.toBeInstanceOf(OutlookError);
-    await expect(mock.unreadMail(['Inbox'], 5)).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(mock.profile()).rejects.toMatchObject({ code: 'unavailable' });
     mock.setUnavailable(null);
     expect(await mock.ping()).toMatchObject({ outlook: 'available' });
   });
@@ -102,7 +90,6 @@ describe('MockOutlookSource', () => {
                 minutes: 10,
               },
             ],
-            messages: [],
           },
         }),
     ).toThrow('Give either dayOffset or weekdays');

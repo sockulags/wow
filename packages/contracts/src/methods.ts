@@ -8,7 +8,6 @@ import {
   BacklogItem,
   BacklogRemote,
   CalendarItem,
-  MailItem,
   AppNotification,
   OutlookStatus,
   PlanIntent,
@@ -52,7 +51,6 @@ export const subscriptionTopics = {
   approvals: { row: Approval, threadScoped: true },
   questions: { row: Question, threadScoped: true },
   calendarItems: { row: CalendarItem, threadScoped: false },
-  mailItems: { row: MailItem, threadScoped: false },
   outlookStatus: { row: OutlookStatus, threadScoped: false },
   backlogItems: { row: BacklogItem, threadScoped: false },
   workflows: { row: Workflow, threadScoped: false },
@@ -219,7 +217,7 @@ export const rpcMethods = {
     params: NoParams,
     result: z.object({ protection: SecretProtection, names: z.array(z.string()) }),
   },
-  // Asks Outlook to show a mail or calendar item (spec 4). Nothing in Outlook changes.
+  // Asks Outlook to show a meeting (spec 1). Nothing in Outlook changes.
   'outlook.open': {
     params: z.object({ entryId: z.string().min(1) }),
     result: z.object({ opened: z.literal(true) }),

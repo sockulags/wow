@@ -519,19 +519,10 @@ export const settingsRegistry = {
     schema: z.number().int().min(15).max(3600),
     group: 'outlook',
     label: 'Poll interval',
-    description: 'How often calendar items and unread mail are read from Outlook.',
+    description: 'How often calendar items are read from Outlook.',
     default: 60,
     scope: 'global',
     unit: 'seconds',
-  }),
-  'outlook.folders': defineSetting({
-    schema: z.array(z.string().min(1)).min(1),
-    group: 'outlook',
-    label: 'Mail folders',
-    description:
-      'Folders whose unread mail is shown in the mail rail. "Inbox" is the default inbox; other names are looked up under it, then at the top of the mailbox.',
-    default: ['Inbox'],
-    scope: 'global',
   }),
   'outlook.requestTimeoutMs': defineSetting({
     schema: z.number().int().min(1000).max(300000),
@@ -542,31 +533,6 @@ export const settingsRegistry = {
     default: 20000,
     scope: 'global',
     unit: 'ms',
-  }),
-  'outlook.mailRail': defineSetting({
-    schema: z.boolean(),
-    group: 'outlook',
-    label: 'Mail rail',
-    description: 'Read unread mail from Outlook and show it next to the calendar.',
-    default: true,
-    scope: 'global',
-  }),
-  'outlook.mailRailCollapsed': defineSetting({
-    schema: z.boolean(),
-    group: 'outlook',
-    label: 'Mail rail collapsed',
-    description:
-      'Fold the mail rail to a narrow strip with the unread count. The rail button, the palette and its key change it.',
-    default: false,
-    scope: 'global',
-  }),
-  'outlook.mailLimit': defineSetting({
-    schema: z.number().int().min(1).max(500),
-    group: 'outlook',
-    label: 'Mail rail size',
-    description: 'Most unread messages read per poll, newest first. The count covers all of them.',
-    default: 50,
-    scope: 'global',
   }),
   'scheduler.tickSeconds': defineSetting({
     schema: z.number().int().min(1).max(3600),
@@ -1299,11 +1265,6 @@ export const settingsRegistry = {
     'New card',
     'Open the form for a new card on the day the calendar shows (while the calendar is open).',
     'C',
-  ),
-  'keybindings.toggleMailRail': keybinding(
-    'Toggle mail rail',
-    'Fold or unfold the unread mail rail next to the calendar (while the calendar is open).',
-    'M',
   ),
   'keybindings.newThread': keybinding('New thread', 'Start a new chat thread.', 'Mod+Alt+N'),
   'keybindings.stopTurn': keybinding(

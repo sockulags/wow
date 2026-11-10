@@ -2,7 +2,6 @@ import type {
   CalendarItem,
   CardChanges,
   DomainEvent,
-  MailItem,
   OutlookCalendarRow,
   ServerCommand,
 } from '@wow/contracts';
@@ -23,8 +22,8 @@ export const isCalendarCommand = (command: ServerCommand): command is CalendarCo
   (command.type.startsWith('card.') && command.type !== 'card.runNow') ||
   command.type.startsWith('outlook.');
 
-// Outlook rows are `outlook:<id>` and mail rows `outlook-mail:<id>`; a card id may not look like
-// either, so a card can never replace a cached Outlook row.
+// Outlook rows are `outlook:<id>`; a card id may not look like one, so a card can never replace a
+// cached Outlook row.
 const outlookIdPrefix = 'outlook';
 
 const OUTLOOK_STATUS_AGGREGATE = 'outlook';
@@ -97,22 +96,6 @@ export function diffOutlookCalendar(
         (row) => !seen.has(row.id) && Date.parse(row.start) < to && Date.parse(row.end) > from,
       )
       .map((row) => row.id),
-  };
-}
-
-// The mail rail mirrors what is unread now, so anything not returned is gone.
-export function diffMail(
-  stored: readonly MailItem[],
-  incoming: readonly MailItem[],
-): { upsert: MailItem[]; remove: string[] } {
-  const before = new Map(stored.map((row) => [row.id, row]));
-  const seen = new Set(incoming.map((row) => row.id));
-  return {
-    upsert: incoming.filter((row) => {
-      const old = before.get(row.id);
-      return !old || !isDeepStrictEqual(old, row);
-    }),
-    remove: stored.filter((row) => !seen.has(row.id)).map((row) => row.id),
   };
 }
 
@@ -204,7 +187,6 @@ export function decideCalendar(
         command.calendar.map((row) => toCalendarItem(row, command.at)),
         command.window,
       );
-      const mail = diffMail(read.mailItems(), command.mail);
       return [
         {
           kind: 'outlook.synced',
@@ -213,9 +195,6 @@ export function decideCalendar(
             at: command.at,
             calendarUpsert: calendar.upsert,
             calendarRemove: calendar.remove,
-            mailUpsert: mail.upsert,
-            mailRemove: mail.remove,
-            unreadCount: command.unreadCount,
             bridgeVersion: command.bridgeVersion,
             profile: command.profile,
           },

@@ -162,7 +162,6 @@ describe('migrations', () => {
         'calendar_items',
         'command_receipts',
         'events',
-        'mail_items',
         'outlook_status',
         'plan_intents',
         'projects',

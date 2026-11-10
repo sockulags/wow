@@ -1,4 +1,4 @@
-import type { CalendarItem, MailItem } from '@wow/contracts';
+import type { CalendarItem } from '@wow/contracts';
 import { MockOutlookSource, loadFixtures, type Clock } from '@wow/outlook-bridge';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Engine } from '../core/engine.js';
@@ -58,11 +58,10 @@ afterEach(async () => {
 });
 
 const calendar = () => snapshot(database.db, { topic: 'calendarItems' }) as CalendarItem[];
-const mail = () => snapshot(database.db, { topic: 'mailItems' }) as MailItem[];
 const status = () => snapshot(database.db, { topic: 'outlookStatus' })[0];
 
 describe('Outlook service', () => {
-  it('stores the mock calendar and unread mail of the configured folders', () => {
+  it('stores the mock calendar and asks Outlook for nothing else (spec 4)', () => {
     const standups = calendar().filter((item) => item.title === 'Team standup');
     // Monday to Friday of the current week plus the lookahead.
     expect(standups.length).toBeGreaterThanOrEqual(5);
@@ -78,12 +77,16 @@ describe('Outlook service', () => {
     expect(calendar().find((item) => item.title.startsWith('Canceled'))).toMatchObject({
       state: 'cancelled',
     });
-    expect(mail().map((row) => row.subject)).toEqual([
-      'Nightly build for lantern-web passed',
-      "Notes before tomorrow's design review",
-      'Offsite agenda draft',
+    // The service polls on start and again on refresh(); each poll asks the same three things.
+    expect(new Set(source.asked)).toEqual(new Set(['ping', 'profile', 'calendar']));
+    expect(status()).toMatchObject({ lastError: null });
+    expect(Object.keys(status() as object).toSorted()).toEqual([
+      'bridgeVersion',
+      'lastError',
+      'lastSyncAt',
+      'profile',
+      'unavailableSince',
     ]);
-    expect(status()).toMatchObject({ lastError: null, unreadCount: 3 });
   });
 
   it('keeps the cache and records since when Outlook is unavailable', async () => {
@@ -100,7 +103,7 @@ describe('Outlook service', () => {
     expect(status()).toMatchObject({ lastError: null, unavailableSince: null });
   });
 
-  it('opens a mail item in Outlook over RPC and reports a closed Outlook', async () => {
+  it('opens a meeting in Outlook over RPC and reports a closed Outlook', async () => {
     const handlers = createHandlers({
       engine,
       subscriptions: undefined as never,
@@ -123,12 +126,12 @@ describe('Outlook service', () => {
     const connection: Connection = { push: () => {}, subscriptionIds: new Set() };
     const call = (method: string, params: unknown) =>
       route(JSON.stringify({ id: `r${++ids}`, method, params }), handlers, connection, () => {});
-    expect(await call('outlook.open', { entryId: 'mock-mail-build' })).toMatchObject({
+    expect(await call('outlook.open', { entryId: 'mock-design-review' })).toMatchObject({
       result: { opened: true },
     });
-    expect(source.opened).toEqual(['mock-mail-build']);
+    expect(source.opened).toEqual(['mock-design-review']);
     source.setUnavailable('Outlook is not running');
-    expect(await call('outlook.open', { entryId: 'mock-mail-build' })).toMatchObject({
+    expect(await call('outlook.open', { entryId: 'mock-design-review' })).toMatchObject({
       error: { code: 'rejected', message: 'Outlook is not running' },
     });
     expect(await call('outlook.refresh', {})).toMatchObject({ result: { outcome: 'failed' } });

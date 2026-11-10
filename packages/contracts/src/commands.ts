@@ -7,7 +7,6 @@ import {
   BacklogState,
   CalendarItem,
   CardState,
-  MailItem,
   OutlookItemState,
   OutlookProfile,
   PlanIntent,
@@ -338,8 +337,6 @@ export const InternalCommand = z.discriminatedUnion('type', [
     at: Timestamp,
     window: z.object({ from: Timestamp, to: Timestamp }),
     calendar: z.array(OutlookCalendarRow),
-    mail: z.array(MailItem),
-    unreadCount: z.number().int().nonnegative(),
     bridgeVersion: z.string(),
     // Null when Outlook could not say this poll; the stored profile is then kept.
     profile: OutlookProfile.nullable(),
@@ -823,9 +820,6 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       at: Timestamp,
       calendarUpsert: z.array(CalendarItem),
       calendarRemove: z.array(Id),
-      mailUpsert: z.array(MailItem),
-      mailRemove: z.array(Id),
-      unreadCount: z.number().int().nonnegative(),
       bridgeVersion: z.string(),
       // Absent in events stored before Outlook profiles were read.
       profile: OutlookProfile.nullable().optional(),
