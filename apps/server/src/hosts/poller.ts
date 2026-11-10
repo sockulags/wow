@@ -58,6 +58,14 @@ interface Targets {
 
 type ErrorNow = Omit<HostError, 'at'>;
 
+// A run whose gate waits for its pull request's checks, and when that wait is over.
+interface WaitingGate {
+  readonly run: WorkflowRun;
+  readonly stepId: string;
+  readonly key: string;
+  readonly deadline: number;
+}
+
 // One pull request came back in a form the contract does not allow. Only the plan or run that
 // names it fails; the host itself answered, so the rest of the round goes on.
 class UnusableAnswer extends HostFailure {}
@@ -75,6 +83,12 @@ const labelOf = (key: string) =>
 // a plan run's unit run ends, whatever the settings say. What it reads goes through the engine
 // as `hosts.sync`; a read that fails is stored as the error beside the last data. It only reads
 // from the hosts.
+//
+// A run whose gate starts waiting for its pull request's checks (review loop spec 56) is asked
+// about once, whatever the polling settings say, because the step has most likely just pushed;
+// later rounds keep asking while the run is live. When `workflows.gateChecksTimeoutMinutes` has
+// passed since the step ended, the poller sends `workflowRun.checkGate` and the run waits for
+// the user.
 export class HostPoller implements BackgroundService {
   readonly #deps: HostPollerDeps;
   readonly #clock: () => Date;
@@ -84,6 +98,9 @@ export class HostPoller implements BackgroundService {
   readonly #leaveAlone = new Map<string, Date>();
   // The scopes seen so far, to tell a newly followed plan or a new run from the rest.
   #seen = new Set<string>();
+  // The gates seen waiting for checks, to tell one that just started waiting from the rest.
+  #gates = new Set<string>();
+  #gateTimer: unknown;
   #tail: Promise<unknown> = Promise.resolve();
   #timer: unknown;
   #running = false;
@@ -100,6 +117,10 @@ export class HostPoller implements BackgroundService {
     this.#unsubscribe.push(
       this.#deps.settings.onChange((key) => {
         if (key === 'hosts.pollSeconds') this.#schedule();
+        if (key === 'workflows.gateChecksTimeoutMinutes') {
+          // A shorter wait may be over already. Not from inside the commit that changed it.
+          this.#background(this.#enqueue(() => Promise.resolve(this.checkGates())));
+        }
       }),
       this.#deps.engine.onCommit((commit) => {
         if (
@@ -109,9 +130,11 @@ export class HostPoller implements BackgroundService {
         ) {
           this.#noticed();
         }
+        if (commit.topics.has('workflowRuns')) this.#gatesNoticed();
       }),
     );
     this.#seen = new Set(this.#scopeIds(this.#targets()));
+    this.#gatesNoticed();
     this.#background(this.poll());
     this.#schedule();
   }
@@ -149,6 +172,27 @@ export class HostPoller implements BackgroundService {
     });
   }
 
+  // Gates that have waited for checks as long as `workflows.gateChecksTimeoutMinutes` allows are
+  // looked at once more; the engine then lets the run wait for the user. The timer calls it.
+  checkGates(): void {
+    const now = this.#clock().getTime();
+    for (const gate of this.#waitingGates()) {
+      if (gate.deadline > now) continue;
+      try {
+        this.#deps.engine.dispatch(`gate:${gate.key}:waited`, {
+          type: 'workflowRun.checkGate',
+          runId: gate.run.id,
+          stepId: gate.stepId,
+        });
+      } catch (error) {
+        // The run went away meanwhile.
+        if (!(error instanceof CommandRejected)) throw error;
+        this.#deps.logger.debug('gate check dropped', { runId: gate.run.id });
+      }
+    }
+    this.#scheduleGates();
+  }
+
   // Settles when nothing is being asked; for tests and shutdown.
   async idle(): Promise<void> {
     let tail: Promise<unknown> | undefined;
@@ -163,6 +207,8 @@ export class HostPoller implements BackgroundService {
     for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
     if (this.#timer !== undefined) this.#timers.clearTimeout(this.#timer);
     this.#timer = undefined;
+    if (this.#gateTimer !== undefined) this.#timers.clearTimeout(this.#gateTimer);
+    this.#gateTimer = undefined;
     await this.idle();
   }
 
@@ -212,6 +258,67 @@ export class HostPoller implements BackgroundService {
       this.#enqueue(async () => {
         if (this.#automatic()) await this.#read(targets, false);
       }),
+    );
+  }
+
+  #waitingGates(): WaitingGate[] {
+    const { db, settings } = this.#deps;
+    const waiting: WaitingGate[] = [];
+    for (const run of db
+      .select()
+      .from(workflowRuns)
+      .where(eq(workflowRuns.state, 'waiting'))
+      .all()) {
+      const step = run.steps[run.currentStep];
+      if (step?.gate?.state !== 'waitingForChecks') continue;
+      const minutes = settings.get('workflows.gateChecksTimeoutMinutes', {
+        projectId: run.projectId,
+      });
+      waiting.push({
+        run,
+        stepId: step.stepId,
+        key: `${run.id}:${step.stepId}:${step.gate.since}`,
+        deadline: Date.parse(step.gate.since) + minutes * 60 * 1000,
+      });
+    }
+    return waiting;
+  }
+
+  // A gate that just started waiting for checks has its run asked about at once, and the timer
+  // is set to the earliest end of a wait.
+  #gatesNoticed(): void {
+    const waiting = this.#waitingGates();
+    const fresh = waiting.filter((gate) => !this.#gates.has(gate.key));
+    this.#gates = new Set(waiting.map((gate) => gate.key));
+    this.#scheduleGates(waiting);
+    if (fresh.length === 0) return;
+    const targets = new Map<string, Targets>();
+    for (const { run } of fresh) {
+      const own = targets.get(run.projectId) ?? { plans: [], runs: [] };
+      own.runs.push(run);
+      targets.set(run.projectId, own);
+    }
+    this.#background(
+      this.#enqueue(async () => {
+        if (this.#running) await this.#read(targets, false);
+      }),
+    );
+  }
+
+  #scheduleGates(waiting: readonly WaitingGate[] = this.#waitingGates()): void {
+    if (this.#gateTimer !== undefined) this.#timers.clearTimeout(this.#gateTimer);
+    this.#gateTimer = undefined;
+    if (!this.#running) return;
+    const now = this.#clock().getTime();
+    // A wait that is over already was looked at by `checkGates`; only later ones need the timer.
+    const deadlines = waiting.map((gate) => gate.deadline).filter((deadline) => deadline > now);
+    if (deadlines.length === 0) return;
+    this.#gateTimer = this.#timers.setTimeout(
+      () => {
+        this.#gateTimer = undefined;
+        this.checkGates();
+      },
+      Math.min(...deadlines) - now,
     );
   }
 

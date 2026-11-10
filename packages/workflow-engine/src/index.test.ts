@@ -49,6 +49,9 @@ const context = (overrides: Partial<EngineContext> = {}): EngineContext => ({
   handoverTemplate: defaultHandoverTemplate,
   sendBackTemplate: defaultSendBackTemplate,
   unitPromptTemplate: defaultUnitPromptTemplate,
+  verdictApprovedLine: 'APPROVED',
+  alwaysStopSkills: [],
+  gateChecksTimeoutMinutes: 30,
   invocationFor: (s) =>
     s.providerInstanceId.startsWith('codex') ? `$${s.skillName}` : `/${s.skillName}`,
   ...overrides,

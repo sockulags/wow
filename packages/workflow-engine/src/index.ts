@@ -16,6 +16,15 @@ export {
   type Transition,
 } from './engine.js';
 export {
+  artifactsPart,
+  checksPart,
+  gateCondition,
+  verdictLine,
+  verdictPart,
+  type ChecksReading,
+  type GateSettings,
+} from './gate.js';
+export {
   bulletList,
   eventValues,
   renderHandover,

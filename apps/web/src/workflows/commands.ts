@@ -1,4 +1,5 @@
 import {
+  gatePartLabels,
   type ChangeRequest,
   type Project,
   type RunDiffFile,
@@ -19,7 +20,17 @@ import {
   type RunSearch,
 } from './changes';
 import { cancelSendBack, canSendBack, confirmSendBack, openSendBack } from './gate';
-import { artifactPath, gateOf, isLive, runStateLabels, sortRuns } from './model';
+import {
+  artifactPath,
+  conditionOffered,
+  gateOf,
+  gatePartChoices,
+  gateParts,
+  isLive,
+  runStateLabel,
+  sortRuns,
+  toggleGatePart,
+} from './model';
 import {
   openNewTrigger,
   removeTrigger,
@@ -55,6 +66,8 @@ export interface WorkflowCommandData {
   readonly triggers?: readonly Trigger[] | undefined;
   readonly projects?: readonly Project[] | undefined;
   readonly onTriggers?: boolean | undefined;
+  // The `workflows.alwaysStopSkills` setting: gates after these skills get no condition.
+  readonly alwaysStopSkills?: readonly string[] | undefined;
   // The run whose send back note is being written, if any (from the gate store).
   readonly sendBackRunId?: string | undefined;
   // "14:39" for a run's start, in the calendar's zone.
@@ -83,6 +96,41 @@ function tabCommands(runId: string, current: RunSearch): AppCommand[] {
         }),
     });
   }
+  return commands;
+}
+
+// The builder's "Pass by itself when" checkboxes (review loop spec 54, 57): one command per
+// part of each gate after a step, none for a skill that always stops.
+function conditionCommands(workflow: Workflow, alwaysStop: readonly string[]): AppCommand[] {
+  const commands: AppCommand[] = [];
+  workflow.steps.forEach((step, index) => {
+    if (!conditionOffered(step, alwaysStop)) return;
+    for (const part of gateParts) {
+      const on = step.gateAfterCondition?.includes(part) ?? false;
+      const label = gatePartLabels[part].toLowerCase();
+      commands.push({
+        id: `workflow.gateCondition.${workflow.id}.${step.id}.${part}`,
+        title: on
+          ? `${workflow.name}: gate after ${step.skillName} no longer needs ${label}`
+          : `${workflow.name}: gate after ${step.skillName} passes by itself with ${label}`,
+        value: `Workflow ${workflow.name} step ${index + 1} ${step.skillName} gate condition ${part} ${on ? 'off' : 'on'} ${workflow.id}`,
+        group: 'Workflows',
+        keywords: ['workflow', 'gate', 'condition', 'pass by itself', 'verdict', 'checks'],
+        detail: `Pass by itself when: ${gatePartChoices[part]} (${on ? 'on' : 'off'})`,
+        searchOnly: true,
+        run: ({ connection }) => {
+          if (!connection) return;
+          void dispatch(connection, {
+            type: 'workflow.update',
+            workflowId: workflow.id,
+            steps: workflow.steps.map((entry) =>
+              entry.id === step.id ? toggleGatePart(entry, part) : entry,
+            ),
+          });
+        },
+      });
+    }
+  });
   return commands;
 }
 
@@ -429,6 +477,7 @@ export function workflowCommands(data: WorkflowCommandData): AppCommand[] {
         });
       },
     });
+    commands.push(...conditionCommands(workflow, data.alwaysStopSkills ?? []));
   }
   const names = new Map(workflows.map((workflow) => [workflow.id, workflow.name]));
   for (const run of sortRuns(runs)) {
@@ -456,7 +505,7 @@ export function workflowCommands(data: WorkflowCommandData): AppCommand[] {
       value: `Run ${name} ${run.state} ${run.id}`,
       group: 'Workflows',
       keywords: ['run', 'workflow', run.state],
-      detail: `Run · ${runStateLabels[run.state]} · ${formatWhen(run.startedAt)}`,
+      detail: `Run · ${runStateLabel(run)} · ${formatWhen(run.startedAt)}`,
       needsYou: run.state === 'waiting',
       recentAt: run.startedAt,
       run: ({ navigate }) =>

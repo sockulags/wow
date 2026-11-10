@@ -276,6 +276,15 @@ export class WorkflowRunner {
       step && folder !== undefined
         ? await this.#deps.detectArtifacts(folder, step.expectedArtifacts)
         : [];
+    // Which globs found nothing, for a gate whose condition asks for every expected artifact.
+    const artifactsMissing: string[] = [];
+    if (step && folder !== undefined && step.gateAfterCondition?.includes('artifacts')) {
+      for (const glob of step.expectedArtifacts) {
+        if ((await this.#deps.detectArtifacts(folder, [glob])).length === 0) {
+          artifactsMissing.push(glob);
+        }
+      }
+    }
     const { baseSha } = run;
     const fileHashes =
       folder !== undefined && baseSha
@@ -290,6 +299,7 @@ export class WorkflowRunner {
       stepId,
       finalMessage: this.#lastText(turn.id, 'assistant_text', 'text') ?? '',
       artifactsFound,
+      ...(step?.gateAfterCondition?.includes('artifacts') ? { artifactsMissing } : {}),
       ...(fileHashes ? { fileHashes } : {}),
     });
   }

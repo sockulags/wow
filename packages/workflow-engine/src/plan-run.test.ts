@@ -364,6 +364,9 @@ describe('the unit in the step prompt (spec 40)', () => {
     handoverTemplate: defaultHandoverTemplate,
     sendBackTemplate: defaultSendBackTemplate,
     unitPromptTemplate: defaultUnitPromptTemplate,
+    verdictApprovedLine: 'APPROVED',
+    alwaysStopSkills: [],
+    gateChecksTimeoutMinutes: 30,
     invocationFor: (s: { skillName: string }) => `/${s.skillName}`,
   };
   const runUnit = {

@@ -1,8 +1,12 @@
 import {
+  alwaysStops,
+  hostReadId,
   isLiveRunState,
   type AppNotification,
   type CardState,
+  type ChangeRequest,
   type DomainEvent,
+  type HostRead,
   type RunEffect,
   type RunEvent,
   type RunUnit,
@@ -20,6 +24,7 @@ import {
   reviewedStepIndex,
   RunRejected,
   startRun,
+  type ChecksReading,
   type EngineContext,
   type RunInput,
   type Transition,
@@ -64,6 +69,7 @@ export function decideWorkflow(
       if (read.workflow(command.workflowId)) {
         throw new CommandRejected('conflict', `Workflow ${command.workflowId} already exists`);
       }
+      refuseConditions(command.steps, read, context);
       return [
         {
           kind: 'workflow.created',
@@ -96,6 +102,7 @@ export function decideWorkflow(
             `Workflow ${workflow.name} has a run in progress; stop it before changing the steps`,
           );
         }
+        refuseConditions(command.steps, read, context);
         changes.steps = command.steps;
       }
       // Runs that exist keep the folder they started in; the switch is read when a run starts.
@@ -135,6 +142,7 @@ export function decideWorkflow(
       if (read.workflow(workflow.id)) {
         throw new CommandRejected('conflict', `Workflow ${workflow.id} already exists`);
       }
+      refuseConditions(workflow.steps, read, context);
       return [{ kind: 'workflow.created', aggregate: workflow.id, payload: workflow }];
     }
     case 'workflowRun.start':
@@ -160,11 +168,24 @@ export function decideWorkflow(
           stepId: command.stepId,
           finalMessage: command.finalMessage,
           artifactsFound: command.artifactsFound,
+          artifactsMissing: command.artifactsMissing,
           fileHashes: command.fileHashes,
         },
         read,
         context,
       );
+    case 'workflowRun.checkGate': {
+      const run = read.run(command.runId);
+      if (!run) throw new CommandRejected('not_found', `No run ${command.runId}`);
+      return gateChecksEvents(
+        command.type,
+        run,
+        read.hostReads(run.projectId).find((row) => row.id === hostReadId('run', run.id)),
+        read.changeRequests(run.projectId),
+        read,
+        context,
+      );
+    }
     case 'workflowRun.baseRecorded':
       return runInput(
         command.type,
@@ -225,6 +246,93 @@ export function decideWorkflow(
       ];
     }
   }
+}
+
+const ALWAYS_STOP_KEY = 'workflows.alwaysStopSkills';
+
+// A condition belongs to a gate after a step, and never to the gate after a skill that plans or
+// specifies (review loop spec 57). Workflows belong to no project, so the list is the one set
+// for all projects; the engine applies the run's project's list again when a step ends.
+function refuseConditions(
+  steps: readonly WorkflowStep[],
+  read: ReadModel,
+  context: DecideContext,
+): void {
+  const listed = stringList(resolvedSetting(ALWAYS_STOP_KEY, read, context, undefined));
+  for (const step of steps) {
+    if (!step.gateAfterCondition) continue;
+    if (!step.gateAfter) {
+      throw new CommandRejected(
+        'rejected',
+        `Step ${step.skillName} has a condition but no gate after it: a condition lets a gate pass by itself, so add the gate or take the condition away`,
+      );
+    }
+    if (alwaysStops(step.skillName, listed)) {
+      throw new CommandRejected(
+        'rejected',
+        `The gate after ${step.skillName} always waits for you: skills that plan or specify cannot get a condition (${ALWAYS_STOP_KEY})`,
+      );
+    }
+  }
+}
+
+// What the host showed about the checks of the run's pull request since the step ended. Null
+// when nothing was read since then: an older read says nothing about what the step pushed.
+function checksReading(
+  since: string,
+  hostRead: HostRead | undefined,
+  changeRequests: readonly ChangeRequest[],
+): ChecksReading | null {
+  if (!hostRead) return null;
+  if (hostRead.error) {
+    return hostRead.error.kind === 'notSetUp'
+      ? { state: 'notSetUp', message: hostRead.error.message }
+      : { state: 'unavailable', message: hostRead.error.message };
+  }
+  if (hostRead.fetchedAt === null || Date.parse(hostRead.fetchedAt) < Date.parse(since)) {
+    return null;
+  }
+  const request = changeRequests.find((row) => hostRead.changeRequestIds.includes(row.id));
+  if (!request) return { state: 'noPullRequest', branch: hostRead.branch };
+  const { number } = request;
+  const named = (state: 'success' | 'failure' | 'pending') =>
+    request.checks.filter((check) => check.state === state).map((check) => check.name);
+  switch (request.checkState) {
+    case 'success':
+      return { state: 'success', number, checks: named('success') };
+    case 'failure':
+      return { state: 'failure', number, failing: named('failure') };
+    case 'pending':
+      return { state: 'pending', number, running: named('pending') };
+    case 'none':
+      return { state: 'none', number };
+  }
+}
+
+// A gate that waits for its pull request's checks is looked at again (review loop spec 56):
+// after a host read, with the rows that read leaves, or when the wait has run out. A run that
+// does not wait for checks is left alone.
+export function gateChecksEvents(
+  cause: string,
+  run: WorkflowRun,
+  hostRead: HostRead | undefined,
+  changeRequests: readonly ChangeRequest[],
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const current = run.steps[run.currentStep];
+  if (run.state !== 'waiting' || current?.gate?.state !== 'waitingForChecks') return [];
+  return runInput(
+    cause,
+    run.id,
+    {
+      type: 'gateChecks',
+      stepId: current.stepId,
+      reading: checksReading(current.gate.since, hostRead, changeRequests),
+    },
+    read,
+    context,
+  );
 }
 
 // A change to the run that the engine has no part in: what became of its working copy.
@@ -600,6 +708,9 @@ function runContext(
     handoverTemplate: resolvedTemplate(HANDOVER_KEY, read, context, projectId),
     sendBackTemplate: resolvedTemplate(SEND_BACK_KEY, read, context, projectId),
     unitPromptTemplate: resolvedTemplate(UNIT_PROMPT_KEY, read, context, projectId),
+    verdictApprovedLine: resolvedTemplate(VERDICT_KEY, read, context, projectId),
+    alwaysStopSkills: stringList(resolvedSetting(ALWAYS_STOP_KEY, read, context, projectId)),
+    gateChecksTimeoutMinutes: Number(resolvedSetting(CHECKS_TIMEOUT_KEY, read, context, projectId)),
     invocationFor: (step) => invocationFor(read, step),
     backlogBody,
   };
@@ -609,14 +720,30 @@ const HANDOVER_KEY = 'workflows.handoverTemplate';
 const SEND_BACK_KEY = 'workflows.sendBackTemplate';
 const UNIT_PROMPT_KEY = 'workflows.unitPromptTemplate';
 
-function resolvedTemplate(key: string, read: ReadModel, context: DecideContext, projectId: string) {
+const VERDICT_KEY = 'workflows.verdictApprovedLine';
+const CHECKS_TIMEOUT_KEY = 'workflows.gateChecksTimeoutMinutes';
+
+// The setting as it applies to the project, or to all projects without one.
+function resolvedSetting(
+  key: string,
+  read: ReadModel,
+  context: DecideContext,
+  projectId: string | undefined,
+): unknown {
   const definition = context.registry[key];
   if (!definition) throw new Error(`${key} is missing from the settings registry`);
-  const { value } = resolveStored(key, definition, { projectId }, (scope) =>
+  return resolveStored(key, definition, projectId === undefined ? {} : { projectId }, (scope) =>
     read.setting(key, scope),
-  );
-  return typeof value === 'string' ? value : String(definition.default);
+  ).value;
 }
+
+function resolvedTemplate(key: string, read: ReadModel, context: DecideContext, projectId: string) {
+  const value = resolvedSetting(key, read, context, projectId);
+  return typeof value === 'string' ? value : String(context.registry[key]?.default);
+}
+
+const stringList = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : [];
 
 // The step's skill as its provider invokes it. A step names a skill by its name, or a Claude
 // plugin skill by plugin:name. Skills are matched by name; with several of that name the

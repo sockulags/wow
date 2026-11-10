@@ -184,8 +184,13 @@ command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempo
 ```
 
 `WorkflowStep = {id, skillName, providerInstanceId, model?, effort?, permissionMode?, gateBefore,
-gateAfter, extraPrompt?, expectedArtifacts: string[]}`. `StepRun = {stepId, state, threadId?,
-startedAt?, endedAt?, artifactsFound: string[], finalMessage?, error?}`.
+gateAfter, gateAfterCondition?: ('verdict'|'checks'|'artifacts')[], extraPrompt?,
+expectedArtifacts: string[]}`. `StepRun = {stepId, state, threadId?, startedAt?, endedAt?,
+artifactsFound: string[], finalMessage?, error?, fileHashes?, attempt?, gate?}`. `gate` is
+`StepGate = {state: 'waitingForChecks'|'waitingForUser'|'passedByItself'|'passedByUser', parts:
+{part, state: 'held'|'failed'|'pending', detail}[], since, at}` and only a gate with a condition
+has one (see "Gates that pass by themselves"). Both live in JSON columns, so they need no
+migration.
 
 ## Providers
 
@@ -490,9 +495,56 @@ turn is. That is how the runner tells a send-back turn from a message the user t
 (spec 20): an ordinary message finds the step `waiting` and is ignored as before, and a send back
 while such a message is still being answered is refused instead of queued.
 
+Gates that pass by themselves (review loop spec 54 to 58; `gate.ts` in the engine). A step's
+`gateAfterCondition` names the parts the gate after it needs: `verdict`, `checks`, `artifacts`.
+When the step ends the engine judges them; no model does.
+
+- `verdict` holds when the last non-empty line of the step's final message, trimmed, equals
+  `workflows.verdictApprovedLine` (default `APPROVED`). Backticks or bold around the line are
+  taken off and nothing else is, so `- APPROVED`, `APPROVED.` or `approved` do not count.
+- `artifacts` holds when every one of the step's `expectedArtifacts` globs found a file. The
+  runner looks for each glob on its own and reports the ones that found nothing
+  (`workflowRun.stepCompleted.artifactsMissing`). A step that names no expected artifacts fails
+  the part.
+- `checks` holds when the run's pull request has every check successful, read from the host
+  after the step ended (see below).
+
+Every part holds: the step is `done`, its `gate` says `passedByItself` with what each part found,
+and the run goes on exactly as after a step without a gate: the next step starts, the run ends,
+or the run waits at the next step's own `gateBefore`, which has no condition. A part fails: the
+run waits for the user as at any gate (thread "needs you", the waiting notification) and `gate`
+says `waitingForUser` with the failed part; the checks are then not waited for. Only the checks
+are undecided: the run is `waiting` with `gate.state` `waitingForChecks`, nobody is notified and
+the step's thread is left alone. Approve, Send back and Stop work in both waiting states;
+Approve records `passedByUser`, Send back and Stop drop the record, and the step is judged from
+nothing when it ends again. A gate without a condition records nothing and behaves as before.
+wow never merges: passing a gate only starts the next step.
+
+Waiting for checks (spec 56). The engine's `gateChecks {stepId, reading}` input looks at such a
+gate again. The reading is what the stored host read of the run (`run:<runId>`) shows, and only
+a read fetched at or after `gate.since` (when the step ended) counts, because an older one says
+nothing about what the step pushed. Success passes the gate; a failing check waits for the user
+and names it; checks still running, a pull request without checks, no pull request for the
+branch yet, or a host that did not answer keep it waiting and update the part's sentence; a
+host that is not set up waits for the user at once. Once `workflows.gateChecksTimeoutMinutes`
+have passed since the step ended and the part is still undecided, the run waits for the user
+with what was last seen. The orchestrator feeds the input from two places: `hosts.sync` does it
+for every run its reads name, in the same commit as the read, and `workflowRun.checkGate {runId,
+stepId}` (internal, sent by the host poller when the wait is over) does it from the stored rows.
+A look at a gate that does not wait for checks changes nothing, so both are safe to repeat.
+
+Skills that always stop (spec 57). `alwaysStops(skillName, listed)` in `packages/contracts` is
+true for `capture-intent`, `plan-work`, `design-work`, `shape-work` and every skill in
+`workflows.alwaysStopSkills`; names are compared without a `plugin:` prefix. The setting can
+add skills and cannot take one of the four away. `workflow.create`, `workflow.update` and
+`workflow.restore` refuse a condition on such a step (with the list as set for all projects,
+since a workflow belongs to no project) and a condition on a step without `gateAfter`. The
+engine applies the list of the run's project again when the step ends and ignores the
+condition of such a step, so its gate waits for the user whatever was stored.
+
 Commands: `workflow.create|update|delete`, `workflowRun.start|continue|sendBack|stop` and
 `planRun.start|stop` (see "Plan runs") from clients, and
-`skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded` and
+`skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded|checkGate` and
 `workflowRun.workingCopyReady|workingCopyFailed|workingCopySettled` as `InternalCommand`s from
 the server. The orchestrator calls `startRun`/`advance` and stores one `workflowRun.changed` event
 (the run plus the effects to perform), an idle `thread.created` with `runId` and `stepId` for each
@@ -825,7 +877,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `scheduler.paused`, `scheduler.toastSeconds`
 - workflows: `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`,
   `workflows.unitPromptTemplate`, `workflows.planRunOnFailure` (the last two are project-scoped,
-  see "Plan runs")
+  see "Plan runs"), `workflows.verdictApprovedLine`, `workflows.alwaysStopSkills`,
+  `workflows.gateChecksTimeoutMinutes` (project-scoped, see "Gates that pass by themselves")
 - skills: `skills.directories`, `skills.includeClaudePlugins`
 - plans: `plans.intentsDirectory` (project-scoped), `plans.writeSettleMs` (see "Plans")
 - trackers: `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
@@ -1197,7 +1250,13 @@ asked about and its git is not read. It runs at every poll interval while pollin
 scheduler is not paused, once when a plan is followed or a run starts under the same
 conditions, and once for `hosts.refresh` whatever those settings and the host's request limit
 say (spec 30). `readPlan` asks about one open plan when a plan run's unit run has ended,
-whatever those settings say but not past a used-up request limit (see "Plan runs"). Per project it resolves the GitHub settings and the
+whatever those settings say but not past a used-up request limit (see "Plan runs"). A run whose
+gate starts waiting for its pull request's checks is asked about once in the same way, because
+its step has most likely just pushed; later rounds ask about it like any live run, and the
+`hosts.sync` of each read decides the gate. The poller also keeps one timer for the earliest end
+of such a wait (`workflows.gateChecksTimeoutMinutes` after the step ended, for the run's
+project) and then sends `workflowRun.checkGate` (`checkGates()`; see "Gates that pass by
+themselves" under "Workflow engine"). Per project it resolves the GitHub settings and the
 folder's branch (`TrackerService.githubHost`; without a token nothing is asked and the reads
 say which setting is missing; the shared token goes only to a host the user chose, so when the
 API URL comes from the folder's git remote and is neither the stored `trackers.github.baseUrl`'s
@@ -1347,6 +1406,20 @@ file" and the viewer's paths use `runFolder`, so they name files in the working 
 Save as `Workflow.forUnits`; the palette switches it on the stored workflow ("<workflow>: use
 for plan units" / "…: no longer for plan units"). Only such a workflow is offered for a plan
 run (see "Plan runs").
+
+**Gate conditions** (review loop spec 54 to 58). Under a gate that is stored as a step's
+`gateAfter` the builder shows "Pass by itself when" with three checkboxes (`GateConditionEditor`
+in `builder.tsx`; `toggleGatePart`, `conditionOffered`, `gatePartChoices` in `model.ts`). They
+are part of the draft and stored with Save as the step's `gateAfterCondition`; turning the gate
+off takes the condition with it, and `stepsOf` saves a condition only where one is offered. For
+a skill that always stops (`workflows.alwaysStopSkills`, read as set for all projects) there
+are no checkboxes, only the sentence that this gate always waits for you. The palette switches
+each part on the stored workflow (`workflow.gateCondition.<workflowId>.<stepId>.<part>`, found
+by search). At a gate that did not pass, the gate bar says "Did not pass by itself: <parts>" or
+"Waiting for checks" and lists every part with what it found (`gateStanding`); while a run
+waits for checks its run view says "Waiting for checks" instead of "Waiting for you" (other
+lists keep the run state's own words). A step whose gate passed by itself shows "Passed by
+itself: <parts>" with each part's sentence in its row (`passedByItself`).
 
 **Review at a gate** (`gate.ts`, `gate-bar.tsx`, `review-tabs.tsx`; review loop spec 14 to 18).
 The run view's tabs are Steps, Changes, Artifacts, Pull request, Ticket and Pages (`runTabs`;
@@ -1849,7 +1922,13 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   trigger test (`e2e/event-triggers.spec.ts`) uses a sixth repository, project `tea-leaf`, whose
   plan has one unit with an open pull request on a third `MockGitHub` repository
   (`acme/tea-leaf`) and whose repository has that pull request's branch; it makes triggers in
-  the Triggers tab, merges with `PUT /github-leaf/merged` and asks with "Refresh now". That copy polls once a day, so the tests
+  the Triggers tab, merges with `PUT /github-leaf/merged` and asks with "Refresh now". The gate
+  condition tests (`e2e/gate-condition.spec.ts`) use two workflows of that copy in the Demo
+  project, without a repository: a check whose mock agent ends with `APPROVED`, or with
+  `CHANGES_REQUESTED` when the step's extra prompt says "strictly", and a `plan-work` step whose
+  answer also ends with `APPROVED`. The test ticks the verdict part in the builder, sees the
+  gate pass by itself and then wait with the part named, and sees the planning gate offer no
+  condition and wait. That copy polls once a day, so the tests
   see only the reads that following a plan, starting a run and "Refresh now" start. CI runs `pnpm e2e` on
   `ubuntu-latest` and `windows-latest` (the `e2e` job) and keeps the traces of a failed run.
   Tests wait for what the page shows, never for time: no sleeps, polls or retries.

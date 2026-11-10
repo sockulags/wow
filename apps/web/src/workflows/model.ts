@@ -1,5 +1,9 @@
 import {
+  alwaysStops,
+  GatePart,
+  gatePartLabels,
   providerChatOptions,
+  type GatePartResult,
   type ProviderInstance,
   type ProviderModel,
   type Skill,
@@ -66,15 +70,49 @@ export function draftOf(workflow: Workflow): WorkflowDraft {
   };
 }
 
-export function stepsOf(draft: WorkflowDraft): WorkflowStep[] {
-  return draft.steps.map(({ artifactsText, extraPrompt, ...step }) => {
+// The steps as they are saved. A condition is kept only where the builder offers one: on a
+// gate after the step, and not for a skill that always stops (`workflows.alwaysStopSkills`).
+export function stepsOf(draft: WorkflowDraft, alwaysStop: readonly string[] = []): WorkflowStep[] {
+  return draft.steps.map(({ artifactsText, extraPrompt, gateAfterCondition, ...step }) => {
     const prompt = extraPrompt?.trim() ?? '';
+    const condition = conditionOffered(step, alwaysStop) ? (gateAfterCondition ?? []) : [];
     return {
       ...step,
+      ...(condition.length > 0 ? { gateAfterCondition: condition } : {}),
       ...(prompt === '' ? {} : { extraPrompt: prompt }),
       expectedArtifacts: parseGlobs(artifactsText),
     };
   });
+}
+
+// Whether the gate after the step may pass by itself (review loop spec 57): it has a gate
+// after it and its skill is not one that plans or specifies.
+export const conditionOffered = (
+  step: Pick<WorkflowStep, 'skillName' | 'gateAfter'>,
+  alwaysStop: readonly string[],
+): boolean => step.gateAfter && !alwaysStops(step.skillName, alwaysStop);
+
+export const gateParts: readonly GatePart[] = GatePart.options;
+
+// What each checkbox of "Pass by itself when" says.
+export const gatePartChoices: Readonly<Record<GatePart, string>> = {
+  verdict: 'The final message ends with the approved verdict',
+  checks: "Every check of the run's pull request is successful",
+  artifacts: 'Every expected artifact was found',
+};
+
+// Turns one part of the condition on the gate after a step on or off, keeping the parts in
+// their fixed order.
+export function toggleGatePart<S extends Pick<WorkflowStep, 'gateAfterCondition'>>(
+  step: S,
+  part: GatePart,
+): S {
+  const chosen = new Set(step.gateAfterCondition ?? []);
+  if (chosen.has(part)) chosen.delete(part);
+  else chosen.add(part);
+  const { gateAfterCondition: _before, ...rest } = step;
+  const condition = gateParts.filter((candidate) => chosen.has(candidate));
+  return (condition.length > 0 ? { ...rest, gateAfterCondition: condition } : rest) as S;
 }
 
 // Behavior 25: a template is a list of skills with gates. It carries no provider instance, so
@@ -112,7 +150,11 @@ export function setGate<D extends Pick<WorkflowDraft, 'steps'>>(draft: D, positi
   return {
     ...draft,
     steps: draft.steps.map((step, index) => {
-      if (index === position - 1) return { ...step, gateAfter: on };
+      if (index === position - 1) {
+        // A gate taken away takes its condition with it.
+        const { gateAfterCondition: _condition, ...rest } = step;
+        return on ? { ...step, gateAfter: true } : { ...rest, gateAfter: false };
+      }
       if (index === position) return { ...step, gateBefore: on && position === 0 };
       return step;
     }),
@@ -301,6 +343,38 @@ export function gateMessage(gate: Gate, workflow: Workflow | undefined): string 
   return next < total
     ? `${skill(gate.stepIndex)} finished. Approve starts ${skill(next)}.`
     : `${skill(gate.stepIndex)} finished. Approve ends the run.`;
+}
+
+// A gate with a condition, as the gate bar says it (review loop spec 55, 56): whether the run
+// waits for the pull request's checks or for the user, and what each part found.
+export interface GateStanding {
+  readonly waitsFor: 'checks' | 'user';
+  readonly parts: readonly GatePartResult[];
+  // The parts that did not hold, by their labels.
+  readonly failed: readonly string[];
+}
+
+export function gateStanding(run: WorkflowRun): GateStanding | undefined {
+  const gate = gateOf(run);
+  const record = gate?.position === 'after' ? run.steps[gate.stepIndex]?.gate : undefined;
+  if (record?.state !== 'waitingForChecks' && record?.state !== 'waitingForUser') return undefined;
+  return {
+    waitsFor: record.state === 'waitingForChecks' ? 'checks' : 'user',
+    parts: record.parts,
+    failed: record.parts
+      .filter((part) => part.state === 'failed')
+      .map((part) => gatePartLabels[part.part]),
+  };
+}
+
+// "Waiting for checks" while a gate waits for the host; otherwise the run state's own words.
+export const runStateLabel = (run: WorkflowRun): string =>
+  gateStanding(run)?.waitsFor === 'checks' ? 'Waiting for checks' : runStateLabels[run.state];
+
+// "Passed by itself: Approved verdict, Checks successful" for a step whose gate did.
+export function passedByItself(stepRun: StepRun): string | undefined {
+  if (stepRun.gate?.state !== 'passedByItself') return undefined;
+  return `Passed by itself: ${stepRun.gate.parts.map((part) => gatePartLabels[part.part]).join(', ')}`;
 }
 
 export const isLive = (run: WorkflowRun): boolean =>

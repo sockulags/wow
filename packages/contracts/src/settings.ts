@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { WorkflowTemplate, type WorkflowTemplateStep } from './workflow.js';
+import {
+  alwaysStopSkillDefaults,
+  WorkflowTemplate,
+  type WorkflowTemplateStep,
+} from './workflow.js';
 
 // Every tunable value in wow is one entry here. The server validates writes against `schema`, and
 // the settings UI renders fields from it, so adding a setting needs no other code.
@@ -718,6 +722,34 @@ export const settingsRegistry = {
       },
     },
   }),
+  'workflows.verdictApprovedLine': defineSetting({
+    schema: z.string().trim().min(1),
+    group: 'workflows',
+    label: 'Approved verdict line',
+    description:
+      'The line a step\'s final message must end with for the "Approved verdict" part of a gate\'s condition to hold. Only the last line that is not empty counts; backticks or bold around it are ignored.',
+    default: 'APPROVED',
+    scope: 'project',
+  }),
+  'workflows.alwaysStopSkills': defineSetting({
+    schema: z.array(z.string().trim().min(1)),
+    group: 'workflows',
+    label: 'Skills that always stop',
+    description:
+      'The gate after a step with one of these skills always waits for you and cannot get a condition. capture-intent, plan-work, design-work and shape-work always stop, whether they are listed or not; add the skills your project plans or specifies with. The builder and saving a workflow use the list as set for all projects.',
+    default: [...alwaysStopSkillDefaults],
+    scope: 'project',
+  }),
+  'workflows.gateChecksTimeoutMinutes': defineSetting({
+    schema: z.number().int().min(1).max(1440),
+    group: 'workflows',
+    label: 'Wait for checks at a gate',
+    description:
+      "How long a gate whose condition includes the pull request's checks waits for them to finish after its step ended. After that the run waits for you.",
+    default: 30,
+    scope: 'project',
+    unit: 'minutes',
+  }),
   'skills.directories': defineSetting({
     schema: z.array(z.string().min(1)),
     group: 'skills',
@@ -904,7 +936,7 @@ export const settingsRegistry = {
     group: 'hosts',
     label: 'Ask the hosts on a timer',
     description:
-      'Read pull requests of followed plans and live runs from their host at every interval. Off: nothing is asked until you press Refresh now, except once when a unit run of a plan run ends. A paused scheduler also stops it.',
+      'Read pull requests of followed plans and live runs from their host at every interval. Off: nothing is asked until you press Refresh now, except once when a unit run of a plan run ends and once when a gate starts waiting for the checks of a pull request. A paused scheduler also stops it.',
     default: true,
     scope: 'global',
   }),

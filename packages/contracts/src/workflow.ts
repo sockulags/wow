@@ -1,6 +1,44 @@
 import { z } from 'zod';
 import { ThreadState } from './provider.js';
 
+// One part of a gate's condition (review loop spec 54): the step's final message ends with the
+// approved verdict line, the run's pull request has every check successful, or a file was found
+// for every expected artifact.
+export const GatePart = z.enum(['verdict', 'checks', 'artifacts']);
+export type GatePart = z.infer<typeof GatePart>;
+
+export const gatePartLabels: Readonly<Record<GatePart, string>> = {
+  verdict: 'Approved verdict',
+  checks: 'Checks successful',
+  artifacts: 'Expected artifacts found',
+};
+
+// The parts a gate needs to pass by itself, each named once.
+export const GateCondition = z
+  .array(GatePart)
+  .min(1)
+  .refine((parts) => new Set(parts).size === parts.length, {
+    message: 'Name each part of the condition once',
+  });
+export type GateCondition = z.infer<typeof GateCondition>;
+
+// Skills that plan or specify: the gate after them always waits for the user (review loop
+// spec 57). `workflows.alwaysStopSkills` adds to these and cannot take one away.
+export const alwaysStopSkillDefaults: readonly string[] = [
+  'capture-intent',
+  'plan-work',
+  'design-work',
+  'shape-work',
+];
+
+// A step names a plugin's skill as `plugin:name`; the list names skills either way.
+const bareSkillName = (name: string): string => name.slice(name.lastIndexOf(':') + 1).trim();
+
+export function alwaysStops(skillName: string, listed: readonly string[]): boolean {
+  const bare = bareSkillName(skillName);
+  return [...alwaysStopSkillDefaults, ...listed].some((name) => bareSkillName(name) === bare);
+}
+
 export const WorkflowStep = z.object({
   id: z.string().min(1),
   skillName: z.string().min(1),
@@ -10,6 +48,9 @@ export const WorkflowStep = z.object({
   permissionMode: z.string().min(1).optional(),
   gateBefore: z.boolean(),
   gateAfter: z.boolean(),
+  // When set, the gate after the step passes by itself once every part holds. Absent: the gate
+  // waits for the user as it always did.
+  gateAfterCondition: GateCondition.optional(),
   extraPrompt: z.string().optional(),
   expectedArtifacts: z.array(z.string().min(1)),
 });
@@ -24,6 +65,32 @@ export type StepRunState = z.infer<typeof StepRunState>;
 // listed, so a path that is missing from a list was the same as in the base.
 export const FileHash = z.object({ path: z.string().min(1), hash: z.string().min(1).nullable() });
 export type FileHash = z.infer<typeof FileHash>;
+
+// What became of one part when the gate was looked at. `pending` is the checks part while the
+// pull request's checks have not finished, or a part that was not looked at because another one
+// had already failed.
+export const GatePartResult = z.object({
+  part: GatePart,
+  state: z.enum(['held', 'failed', 'pending']),
+  // One sentence for the user: what was found.
+  detail: z.string(),
+});
+export type GatePartResult = z.infer<typeof GatePartResult>;
+
+// A gate with a condition, as it stands (review loop spec 54 to 58). `waitingForChecks`: the
+// other parts hold and the pull request's checks are not finished. `waitingForUser`: a part did
+// not hold, or the checks took too long. `passedByItself`: every part held and the run went on.
+// `passedByUser`: the user approved it.
+export const StepGate = z.object({
+  state: z.enum(['waitingForChecks', 'waitingForUser', 'passedByItself', 'passedByUser']),
+  parts: z.array(GatePartResult),
+  // When the step ended: checks count only when read after this, and the wait for them is
+  // measured from it.
+  since: z.iso.datetime(),
+  // When the gate got its current state.
+  at: z.iso.datetime(),
+});
+export type StepGate = z.infer<typeof StepGate>;
 
 export const StepRun = z.object({
   stepId: z.string().min(1),
@@ -41,6 +108,8 @@ export const StepRun = z.object({
   // How many times the step has run: absent for the first time, 2 after one send back (review
   // loop spec 16).
   attempt: z.number().int().min(2).optional(),
+  // How the gate after the step stands or was passed. Only a gate with a condition has one.
+  gate: StepGate.optional(),
 });
 export type StepRun = z.infer<typeof StepRun>;
 

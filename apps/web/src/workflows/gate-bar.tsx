@@ -1,5 +1,19 @@
-import { runFolder, type Project, type Workflow, type WorkflowRun } from '@wow/contracts';
-import { CheckIcon, ChevronRightIcon, SquareIcon, Undo2Icon } from 'lucide-react';
+import {
+  gatePartLabels,
+  runFolder,
+  type GatePartResult,
+  type Project,
+  type Workflow,
+  type WorkflowRun,
+} from '@wow/contracts';
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  CircleDashedIcon,
+  SquareIcon,
+  Undo2Icon,
+  XIcon,
+} from 'lucide-react';
 import { useId, useState } from 'react';
 import { useStore } from 'zustand';
 import { useSetting } from '@/app/runtime';
@@ -20,13 +34,28 @@ import {
   sendBackDraft,
   setSendBackNote,
 } from './gate';
-import { gateMessage, gateOf, isLive, reviewedStep } from './model';
+import { gateMessage, gateOf, gateStanding, isLive, reviewedStep } from './model';
+
+const partIcons = {
+  held: <CheckIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-state-done" />,
+  failed: <XIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-destructive" />,
+  pending: (
+    <CircleDashedIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+  ),
+};
+
+const partStates: Readonly<Record<GatePartResult['state'], string>> = {
+  held: 'holds',
+  failed: 'does not hold',
+  pending: 'not decided',
+};
 
 // The answers at a gate (review loop spec 15 to 18): Approve lets the run continue, Send back
 // opens a note field in place and runs the reviewed step again with the note, Stop ends the run.
 // The run view shows it with what to review (the step's last message and the artifacts it
 // produced); a step's thread shows it above its composer, where the thread itself is what to
-// review.
+// review. A gate with a condition that did not pass by itself says which part failed, or that
+// it waits for the pull request's checks (spec 55, 56).
 export function GateBar({
   run,
   workflow,
@@ -53,6 +82,7 @@ export function GateBar({
   const gate = gateOf(run);
   if (!isLive(run)) return null;
   const reviewed = reviewedStep(run);
+  const standing = gateStanding(run);
   const reportError = (message: string | undefined) => {
     setError(message);
     onError?.(message);
@@ -116,6 +146,27 @@ export function GateBar({
           </Button>
         </WithTooltip>
       </div>
+      {standing && (
+        <div data-testid="gate-condition" className="flex flex-col gap-1 text-xs">
+          <p className="font-medium">
+            {standing.waitsFor === 'checks'
+              ? 'Waiting for checks. The gate passes by itself when they are successful; Approve passes it now.'
+              : `Did not pass by itself: ${standing.failed.join(', ')}.`}
+          </p>
+          <ul aria-label="Gate condition" className="flex flex-col gap-0.5">
+            {standing.parts.map((part) => (
+              <li key={part.part} data-state={part.state} className="flex items-start gap-1.5">
+                {partIcons[part.state]}
+                <span>
+                  <span className="font-medium">{gatePartLabels[part.part]}</span>
+                  <span className="sr-only"> ({partStates[part.state]})</span>
+                  <span className="text-muted-foreground">: {part.detail}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {draft && (
         <form
           aria-label="Send back"

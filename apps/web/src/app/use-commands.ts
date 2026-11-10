@@ -50,6 +50,7 @@ export function useCommands(): {
   const workflows = useTopic('workflows');
   const runs = useTopic('workflowRuns');
   const templates = useSetting('workflows.templates');
+  const alwaysStopSkills = useSetting('workflows.alwaysStopSkills');
   const calendarItems = useTopic('calendarItems');
   const triggers = useTopic('triggers');
   const schedulerPaused = useSetting('scheduler.paused');
@@ -111,6 +112,7 @@ export function useCommands(): {
         workflows: workflows ?? [],
         runs: runs ?? [],
         templates,
+        alwaysStopSkills,
         openRun,
         runView:
           openRunId !== undefined && openRun?.id === openRunId
@@ -169,6 +171,7 @@ export function useCommands(): {
     workflows,
     runs,
     templates,
+    alwaysStopSkills,
     openRunId,
     calendarItems,
     calendarSearch,

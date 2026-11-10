@@ -21,6 +21,8 @@ import {
   ServerMessage,
   StepRun,
   WorkflowStep,
+  alwaysStopSkillDefaults,
+  alwaysStops,
   settingsRegistry,
   type SettingDefinition,
 } from './index.js';
@@ -426,5 +428,60 @@ describe('plan runs', () => {
     expect(onFailure.default).toBe('stop');
     expect(onFailure.schema.safeParse('skip').success).toBe(true);
     expect(onFailure.schema.safeParse('retry').success).toBe(false);
+  });
+});
+
+describe('gate conditions (review loop spec 54 to 57)', () => {
+  const step = {
+    id: 'check',
+    skillName: 'check-work',
+    providerInstanceId: 'claude-work',
+    gateBefore: false,
+    gateAfter: true,
+    expectedArtifacts: [],
+  };
+
+  it('takes each part once on a step and nothing else', () => {
+    const parse = (gateAfterCondition: unknown) =>
+      WorkflowStep.safeParse({ ...step, gateAfterCondition }).success;
+    expect(WorkflowStep.safeParse(step).success).toBe(true);
+    expect(parse(['verdict', 'checks', 'artifacts'])).toBe(true);
+    expect(parse(['verdict', 'verdict'])).toBe(false);
+    expect(parse([])).toBe(false);
+    expect(parse(['model'])).toBe(false);
+  });
+
+  it('records how a gate stands on the step run', () => {
+    const gate = {
+      state: 'passedByItself',
+      parts: [{ part: 'verdict', state: 'held', detail: 'The final message ends with APPROVED' }],
+      since: '2026-11-03T09:00:00.000Z',
+      at: '2026-11-03T09:00:00.000Z',
+    };
+    const run = { stepId: 'check', state: 'done', artifactsFound: [] };
+    expect(StepRun.safeParse({ ...run, gate }).success).toBe(true);
+    expect(StepRun.safeParse({ ...run, gate: { ...gate, state: 'merged' } }).success).toBe(false);
+  });
+
+  it('always stops the four planning skills, with or without a plugin prefix, and what the setting adds', () => {
+    for (const name of alwaysStopSkillDefaults) expect(alwaysStops(name, [])).toBe(true);
+    expect(alwaysStops('agent-os-core:plan-work', [])).toBe(true);
+    expect(alwaysStops('check-work', [])).toBe(false);
+    expect(alwaysStops('write-spec', ['write-spec'])).toBe(true);
+    expect(alwaysStops('acme:write-spec', ['write-spec'])).toBe(true);
+  });
+
+  it('has the three settings with their defaults, and the checks wait is sent only by the server', () => {
+    expect(settingsRegistry['workflows.verdictApprovedLine'].default).toBe('APPROVED');
+    expect(settingsRegistry['workflows.alwaysStopSkills'].default).toEqual([
+      'capture-intent',
+      'plan-work',
+      'design-work',
+      'shape-work',
+    ]);
+    expect(settingsRegistry['workflows.gateChecksTimeoutMinutes'].default).toBe(30);
+    const check = { type: 'workflowRun.checkGate', runId: 'r1', stepId: 'check' };
+    expect(InternalCommand.safeParse(check).success).toBe(true);
+    expect(Command.safeParse(check).success).toBe(false);
   });
 });

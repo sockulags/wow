@@ -1,15 +1,29 @@
 import type {
   FileHash,
+  GatePartResult,
   MissedTriggerPolicy,
   RunEffect,
   RunEvent,
   RunUnit,
+  StepGate,
   StepRun,
   TriggerState,
   Workflow,
   WorkflowRun,
   WorkflowStep,
 } from '@wow/contracts';
+import {
+  artifactsPart,
+  checksNotLookedAt,
+  checksNotReadYet,
+  checksPart,
+  checksTimedOut,
+  gateCondition,
+  verdictPart,
+  waitIsOver,
+  type ChecksReading,
+  type GateSettings,
+} from './gate.js';
 import {
   bulletList,
   eventValues,
@@ -28,6 +42,12 @@ import {
 // earlier step's gate after and the later step's gate before are set. Send back is the other
 // answer: the step the gate asks about runs again in its own thread, and when that turn ends the
 // run waits at the same gate again.
+//
+// A gate after a step may carry a condition (review loop spec 54 to 58). When the step ends and
+// every chosen part holds, the gate passes by itself and the run goes on; when a part does not
+// hold the run waits for the user as at any gate; while only the pull request's checks are
+// undecided the run waits for them, and `gateChecks` inputs decide it later. The step's `gate`
+// records which of these it is and what each part found.
 
 export type RunInput =
   | {
@@ -35,6 +55,9 @@ export type RunInput =
       readonly stepId: string;
       readonly finalMessage: string;
       readonly artifactsFound: readonly string[];
+      // The step's expected artifact globs that matched no file. Absent: every glob is taken as
+      // missing when nothing was found, and as found otherwise.
+      readonly artifactsMissing?: readonly string[] | undefined;
       // The changed files as the step left them; absent for a run without a base.
       readonly fileHashes?: readonly FileHash[] | undefined;
     }
@@ -46,6 +69,13 @@ export type RunInput =
   | { readonly type: 'stepFailed'; readonly stepId: string; readonly error: string }
   // The folder the run was to work in could not be made, so no step may begin.
   | { readonly type: 'setupFailed'; readonly error: string }
+  // A look at a gate that waits for checks: what the host shows now, or null when nothing was
+  // read since the step ended (then only the time waited can decide).
+  | {
+      readonly type: 'gateChecks';
+      readonly stepId: string;
+      readonly reading: ChecksReading | null;
+    }
   | { readonly type: 'continue' }
   | { readonly type: 'sendBack'; readonly note: string }
   | { readonly type: 'stop' }
@@ -54,7 +84,7 @@ export type RunInput =
       readonly found: readonly { readonly stepId: string; readonly paths: readonly string[] }[];
     };
 
-export interface EngineContext {
+export interface EngineContext extends GateSettings {
   readonly now: string;
   // The `workflows.handoverTemplate` setting for the run's project.
   readonly handoverTemplate: string;
@@ -163,6 +193,8 @@ export function advance(
       return failStep(run, input.stepId, input.error, context);
     case 'setupFailed':
       return failSetup(run, input.error, context);
+    case 'gateChecks':
+      return decideChecks(workflow, run, input, context);
     case 'continue':
       return continueRun(workflow, run, context);
     case 'sendBack':
@@ -200,7 +232,6 @@ function completeStep(
   const index = runningStepIndex(run, input.stepId);
   const current = run.steps[index] as StepRun;
   const step = workflow.steps[index] as WorkflowStep;
-  const threadId = current.threadId;
   const finished: StepRun = {
     ...current,
     endedAt: context.now,
@@ -209,18 +240,77 @@ function completeStep(
     state: step.gateAfter ? 'waiting' : 'done',
     ...(input.fileHashes ? { fileHashes: [...input.fileHashes] } : {}),
   };
-  const steps = replaceStep(run.steps, index, finished);
-  const next = workflow.steps[index + 1];
+  // A step sent back is judged again from nothing.
+  delete finished.gate;
 
-  if (step.gateAfter) {
+  if (!step.gateAfter) return afterStep(workflow, run, index, finished, context);
+  const condition = gateCondition(step, context);
+  if (!condition) return waitForUser(run, index, finished);
+
+  const missing =
+    input.artifactsMissing ?? (input.artifactsFound.length === 0 ? step.expectedArtifacts : []);
+  const parts = condition.map((part): GatePartResult => {
+    switch (part) {
+      case 'verdict':
+        return verdictPart(input.finalMessage, context.verdictApprovedLine);
+      case 'artifacts':
+        return artifactsPart(step.expectedArtifacts, missing);
+      case 'checks':
+        return checksNotReadYet();
+    }
+  });
+  const gate = (state: StepGate['state'], results: GatePartResult[]): StepGate => ({
+    state,
+    parts: results,
+    since: context.now,
+    at: context.now,
+  });
+  if (parts.some((part) => part.state === 'failed')) {
+    // Checks are not waited for when the gate cannot pass anyway.
+    const told = parts.map((part) => (part.part === 'checks' ? checksNotLookedAt() : part));
+    return waitForUser(run, index, { ...finished, gate: gate('waitingForUser', told) });
+  }
+  if (parts.some((part) => part.state === 'pending')) {
+    // Nobody is asked yet: the run waits for the host, and the user is told when it is their
+    // turn after all.
+    const waiting: StepRun = { ...finished, gate: gate('waitingForChecks', parts) };
     return {
-      run: { ...run, steps, state: 'waiting' },
-      effects: [
-        ...threadState(threadId, 'needs_you'),
-        { type: 'notify', runId: run.id, stepId: step.id, reason: 'waiting' },
-      ],
+      run: { ...run, steps: replaceStep(run.steps, index, waiting), state: 'waiting' },
+      effects: [],
     };
   }
+  return afterStep(
+    workflow,
+    run,
+    index,
+    { ...finished, state: 'done', gate: gate('passedByItself', parts) },
+    context,
+  );
+}
+
+// The run waits for the user after the step, as at any gate after a step.
+function waitForUser(run: WorkflowRun, index: number, waiting: StepRun): Transition {
+  return {
+    run: { ...run, steps: replaceStep(run.steps, index, waiting), state: 'waiting' },
+    effects: [
+      ...threadState(waiting.threadId, 'needs_you'),
+      { type: 'notify', runId: run.id, stepId: waiting.stepId, reason: 'waiting' },
+    ],
+  };
+}
+
+// What follows a step that is done with no gate after it left to answer: the end of the run,
+// the next step's own gate before it, or the next step.
+function afterStep(
+  workflow: Workflow,
+  run: WorkflowRun,
+  index: number,
+  done: StepRun,
+  context: EngineContext,
+): Transition {
+  const steps = replaceStep(run.steps, index, done);
+  const threadId = done.threadId;
+  const next = workflow.steps[index + 1];
   if (!next) {
     return finish({ ...run, steps }, 'done', context, threadState(threadId, 'done'));
   }
@@ -229,6 +319,58 @@ function completeStep(
     return waitBefore({ ...run, steps }, index + 1, threadState(threadId, 'needs_you'));
   }
   return beginStep(workflow, { ...run, steps }, index + 1, context, threadState(threadId, 'done'));
+}
+
+// A gate that waits for its pull request's checks is looked at again: with what the host shows
+// now, or because time has passed. Anything else leaves the run as it is, so a late look at a
+// gate that was answered meanwhile changes nothing.
+function decideChecks(
+  workflow: Workflow,
+  run: WorkflowRun,
+  input: Extract<RunInput, { type: 'gateChecks' }>,
+  context: EngineContext,
+): Transition {
+  const index = run.currentStep;
+  const current = run.steps[index];
+  const gate = current?.gate;
+  if (
+    run.state !== 'waiting' ||
+    !current ||
+    current.stepId !== input.stepId ||
+    gate?.state !== 'waitingForChecks'
+  ) {
+    return { run, effects: [] };
+  }
+  const last = gate.parts.find((part) => part.part === 'checks') ?? checksNotReadYet();
+  const seen = input.reading ? checksPart(input.reading) : last;
+  const checks =
+    seen.state === 'pending' &&
+    waitIsOver(gate.since, context.now, context.gateChecksTimeoutMinutes)
+      ? checksTimedOut(seen, context.gateChecksTimeoutMinutes)
+      : seen;
+  const parts = gate.parts.map((part) => (part.part === 'checks' ? checks : part));
+  if (checks.state === 'pending') {
+    if (checks.detail === last.detail) return { run, effects: [] };
+    const waiting: StepRun = { ...current, gate: { ...gate, parts } };
+    return { run: { ...run, steps: replaceStep(run.steps, index, waiting) }, effects: [] };
+  }
+  if (checks.state === 'failed') {
+    return waitForUser(run, index, {
+      ...current,
+      gate: { ...gate, state: 'waitingForUser', parts, at: context.now },
+    });
+  }
+  return afterStep(
+    workflow,
+    run,
+    index,
+    {
+      ...current,
+      state: 'done',
+      gate: { ...gate, state: 'passedByItself', parts, at: context.now },
+    },
+    context,
+  );
 }
 
 function failStep(run: WorkflowRun, stepId: string, error: string, context: EngineContext) {
@@ -277,7 +419,14 @@ function continueRun(workflow: Workflow, run: WorkflowRun, context: EngineContex
   const current = run.steps[gate.stepIndex] as StepRun;
 
   if (gate.position === 'after') {
-    const steps = replaceStep(run.steps, gate.stepIndex, { ...current, state: 'done' });
+    const steps = replaceStep(run.steps, gate.stepIndex, {
+      ...current,
+      state: 'done',
+      // A gate with a condition records that the user passed it.
+      ...(current.gate
+        ? { gate: { ...current.gate, state: 'passedByUser' as const, at: context.now } }
+        : {}),
+    });
     const released = threadState(current.threadId, 'done');
     const nextIndex = gate.stepIndex + 1;
     if (nextIndex >= workflow.steps.length) {
@@ -315,6 +464,7 @@ function sendBack(
   // The last result stays on the step until the new turn ends and replaces it.
   const rerun: StepRun = { ...reviewed, state: 'running', startedAt: context.now, attempt };
   delete rerun.endedAt;
+  delete rerun.gate;
   const steps = run.steps.map((entry, at): StepRun => {
     if (at === index) return rerun;
     // A step that waited before its gate goes back to not started while the one before reruns.
@@ -349,7 +499,9 @@ function stopRun(run: WorkflowRun, context: EngineContext): Transition {
     if (step.state === 'waiting') {
       if (step.endedAt) {
         effects.push(...threadState(step.threadId, 'done'));
-        return { ...step, state: 'done' };
+        // A gate nobody passed leaves no record of how it was passed.
+        const { gate: _unanswered, ...ended } = step;
+        return { ...ended, state: 'done' };
       }
       return { ...step, state: 'not_started' };
     }

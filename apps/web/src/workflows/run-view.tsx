@@ -2,6 +2,7 @@ import { runFolder, triggerEventLabels, type StepRun, type WorkflowStep } from '
 import { Link } from '@tanstack/react-router';
 import {
   CalendarIcon,
+  CheckCheckIcon,
   HourglassIcon,
   ListTodoIcon,
   MessageSquareIcon,
@@ -28,8 +29,10 @@ import { WorkingCopyLine } from './working-copy-line';
 import {
   attemptLabel,
   gateOf,
+  gateStanding,
+  passedByItself,
   runStateDotClass,
-  runStateLabels,
+  runStateLabel,
   stepDisplayState,
   stepDurationMs,
   stepStateDotClass,
@@ -52,14 +55,16 @@ function StepRow({
   // The folder the run works in, once its project is known.
   folder: string | undefined;
   instanceName: string | undefined;
-  // The run waits for the user right after this step.
-  waitsAfter: boolean;
+  // The run waits right after this step: for the user, or for its pull request's checks.
+  waitsAfter: 'user' | 'checks' | undefined;
 }) {
   const { when } = useDateFormat();
   const name = step?.skillName ?? stepRun.stepId;
   const state = stepDisplayState(stepRun);
   const duration = stepDurationMs(stepRun);
   const attempt = attemptLabel(stepRun);
+  const passed = passedByItself(stepRun);
+  const waitingLabel = waitsAfter === 'checks' ? 'Waiting for checks' : 'Waiting for you';
   return (
     <>
       <li
@@ -105,6 +110,21 @@ function StepRow({
             </Link>
           )}
         </div>
+        {passed && (
+          <div data-testid="step-gate" className="pl-4 text-xs">
+            <p className="flex items-center gap-1.5 font-medium">
+              <CheckCheckIcon aria-hidden className="size-3.5 text-state-done" />
+              {passed}
+            </p>
+            <ul aria-label={`Why the gate after ${name} passed`} className="mt-0.5 pl-5">
+              {stepRun.gate?.parts.map((part) => (
+                <li key={part.part} className="text-muted-foreground">
+                  {part.detail}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {stepRun.error && (
           <p role="alert" className="pl-4 text-xs text-destructive">
             {stepRun.error}
@@ -129,12 +149,12 @@ function StepRow({
       </li>
       {waitsAfter && (
         <li
-          aria-label="Waiting for you"
+          aria-label={waitingLabel}
           data-testid="gate-marker"
           className="flex items-center gap-2 px-3 text-xs font-medium"
         >
           <HourglassIcon aria-hidden className="size-3.5 text-state-needs-you" />
-          Waiting for you
+          {waitingLabel}
           <span
             aria-hidden
             className="h-px flex-1 border-t border-dashed border-state-needs-you/60"
@@ -234,7 +254,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
             )}
           </h2>
           <span data-testid="run-state" className="shrink-0 text-xs text-muted-foreground">
-            {runStateLabels[run.state]}
+            {runStateLabel(run)}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -359,6 +379,10 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
                     (gate.position === 'after'
                       ? gate.stepIndex === index
                       : gate.stepIndex - 1 === index)
+                      ? gateStanding(run)?.waitsFor === 'checks'
+                        ? 'checks'
+                        : 'user'
+                      : undefined
                   }
                 />
               );

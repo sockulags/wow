@@ -1,4 +1,4 @@
-import type { ProviderInstance, Skill, Workflow, WorkflowTemplate } from '@wow/contracts';
+import type { GatePart, ProviderInstance, Skill, Workflow, WorkflowTemplate } from '@wow/contracts';
 import { Link, useNavigate } from '@tanstack/react-router';
 import {
   ArrowDownIcon,
@@ -26,6 +26,7 @@ import { FormField } from '@/components/form-field';
 import { IconButton, WithTooltip } from '@/components/hint';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -36,9 +37,12 @@ import { cn } from '@/lib/utils';
 import {
   applyStepChanges,
   blocking,
+  conditionOffered,
   draftFromTemplate,
   draftOf,
   emptyDraft,
+  gatePartChoices,
+  gateParts,
   moveStep,
   newStep,
   parseGlobs,
@@ -51,6 +55,7 @@ import {
   sortRuns,
   stepDefaults,
   stepsOf,
+  toggleGatePart,
   validateDraft,
   waitsAt,
   type DraftProblem,
@@ -143,40 +148,109 @@ function useArtifactMatches(globs: readonly string[], projectId: string | undefi
 
 // Between two steps (and before the first and after the last): whether the run waits for you
 // there. One toggle per position, so a gate is a visible stop in the chain, not a checkbox.
-function GateDivider({ on, label, onToggle }: { on: boolean; label: string; onToggle(): void }) {
+function GateDivider({
+  on,
+  label,
+  onToggle,
+  children,
+}: {
+  on: boolean;
+  label: string;
+  onToggle(): void;
+  children?: ReactNode;
+}) {
   return (
-    <li className="group/gate flex items-center gap-2 px-3 py-0.5" data-testid="gate-divider">
-      <span
-        aria-hidden
-        className={cn(
-          'h-px flex-1 border-t',
-          on ? 'border-dashed border-state-needs-you/70' : 'border-transparent',
-        )}
-      />
-      <Button
-        type="button"
-        size="xs"
-        variant="ghost"
-        aria-pressed={on}
-        aria-label={label}
-        onClick={onToggle}
-        className={cn(
-          on
-            ? 'text-foreground [&_svg]:text-state-needs-you'
-            : 'text-muted-foreground opacity-40 group-hover/gate:opacity-100 focus-visible:opacity-100',
-        )}
-      >
-        <HourglassIcon />
-        {on ? 'Waits for you' : 'Add a gate'}
-      </Button>
-      <span
-        aria-hidden
-        className={cn(
-          'h-px flex-1 border-t',
-          on ? 'border-dashed border-state-needs-you/70' : 'border-transparent',
-        )}
-      />
+    <li className="group/gate flex flex-col gap-1 px-3 py-0.5" data-testid="gate-divider">
+      <div className="flex items-center gap-2">
+        <span
+          aria-hidden
+          className={cn(
+            'h-px flex-1 border-t',
+            on ? 'border-dashed border-state-needs-you/70' : 'border-transparent',
+          )}
+        />
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          aria-pressed={on}
+          aria-label={label}
+          onClick={onToggle}
+          className={cn(
+            on
+              ? 'text-foreground [&_svg]:text-state-needs-you'
+              : 'text-muted-foreground opacity-40 group-hover/gate:opacity-100 focus-visible:opacity-100',
+          )}
+        >
+          <HourglassIcon />
+          {on ? 'Waits for you' : 'Add a gate'}
+        </Button>
+        <span
+          aria-hidden
+          className={cn(
+            'h-px flex-1 border-t',
+            on ? 'border-dashed border-state-needs-you/70' : 'border-transparent',
+          )}
+        />
+      </div>
+      {children}
     </li>
+  );
+}
+
+// "Pass by itself when" for the gate after a step (review loop spec 54, 57): three parts to
+// choose from. A skill that plans or specifies gets no choice, only the reason.
+function GateConditionEditor({
+  step,
+  number,
+  alwaysStop,
+  onToggle,
+}: {
+  step: DraftStep | undefined;
+  // The step's place in the chain, counted from one.
+  number: number;
+  alwaysStop: readonly string[];
+  onToggle(part: GatePart): void;
+}) {
+  const id = useId();
+  if (!step?.gateAfter) return null;
+  if (!conditionOffered(step, alwaysStop)) {
+    return (
+      <p data-testid="gate-always-stops" className="text-center text-xs text-muted-foreground">
+        {step.skillName} plans or specifies, so this gate always waits for you.
+      </p>
+    );
+  }
+  const chosen = step.gateAfterCondition ?? [];
+  const noArtifacts = chosen.includes('artifacts') && parseGlobs(step.artifactsText).length === 0;
+  return (
+    <fieldset
+      data-testid="gate-condition-editor"
+      aria-describedby={noArtifacts ? `${id}-hint` : undefined}
+      className="mx-auto flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs"
+    >
+      <legend className="sr-only">{`Pass the gate after step ${number} by itself when`}</legend>
+      <span aria-hidden className="basis-full font-medium">
+        Pass by itself when
+      </span>
+      {gateParts.map((part) => (
+        <span key={part} className="flex items-center gap-1.5">
+          <Checkbox
+            id={`${id}-${part}`}
+            checked={chosen.includes(part)}
+            onCheckedChange={() => onToggle(part)}
+          />
+          <Label htmlFor={`${id}-${part}`} className="text-xs font-normal">
+            {gatePartChoices[part]}
+          </Label>
+        </span>
+      ))}
+      {noArtifacts && (
+        <p id={`${id}-hint`} className="basis-full text-muted-foreground">
+          Step {number} names no expected artifacts yet, so this part cannot hold.
+        </p>
+      )}
+    </fieldset>
   );
 }
 
@@ -477,7 +551,8 @@ function Builder({
 
   const problems = validateDraft(draft, instances, skills);
   const shown = attempted ? problems : problems.filter((problem) => problem.warning);
-  const steps = stepsOf(draft);
+  const alwaysStop = useSetting('workflows.alwaysStopSkills');
+  const steps = stepsOf(draft, alwaysStop);
   const ownWorkingCopy = draft.ownWorkingCopy ?? false;
   // The palette switches it on the stored workflow; the draft follows so Save does not undo it.
   const storedOwnCopy = workflow?.ownWorkingCopy ?? false;
@@ -524,6 +599,13 @@ function Builder({
   };
   const move = (from: number, to: number) =>
     edit((current) => ({ ...current, steps: moveStep(current.steps, from, to) }));
+  const toggleCondition = (stepIndex: number, part: GatePart) =>
+    edit((current) => ({
+      ...current,
+      steps: current.steps.map((step, index) =>
+        index === stepIndex ? toggleGatePart(step, part) : step,
+      ),
+    }));
   const toggle = (stepId: string) =>
     setExpanded((current) => {
       const next = new Set(current);
@@ -956,7 +1038,9 @@ function Builder({
                 key={step.id}
                 draft={draft}
                 index={index}
+                alwaysStop={alwaysStop}
                 onToggleGate={() => edit((current) => setGate(current, index))}
+                onTogglePart={toggleCondition}
               >
                 <StepEditor
                   step={step}
@@ -991,7 +1075,14 @@ function Builder({
                 on={waitsAt(draft, draft.steps.length)}
                 label="Gate after the last step"
                 onToggle={() => edit((current) => setGate(current, current.steps.length))}
-              />
+              >
+                <GateConditionEditor
+                  step={draft.steps.at(-1)}
+                  number={draft.steps.length}
+                  alwaysStop={alwaysStop}
+                  onToggle={(part) => toggleCondition(draft.steps.length - 1, part)}
+                />
+              </GateDivider>
             )}
           </ol>
           <Button
@@ -1015,16 +1106,21 @@ function Builder({
   );
 }
 
-// The gate before a step, then the step.
+// The gate before a step, then the step. The gate is stored on the step before it, and so is
+// its condition.
 function StepPosition({
   draft,
   index,
+  alwaysStop,
   onToggleGate,
+  onTogglePart,
   children,
 }: {
   draft: WorkflowDraft;
   index: number;
+  alwaysStop: readonly string[];
   onToggleGate(): void;
+  onTogglePart(stepIndex: number, part: GatePart): void;
   children: ReactNode;
 }) {
   return (
@@ -1035,7 +1131,16 @@ function StepPosition({
           index === 0 ? 'Gate before step 1' : `Gate between step ${index} and step ${index + 1}`
         }
         onToggle={onToggleGate}
-      />
+      >
+        {index > 0 && (
+          <GateConditionEditor
+            step={draft.steps[index - 1]}
+            number={index}
+            alwaysStop={alwaysStop}
+            onToggle={(part) => onTogglePart(index - 1, part)}
+          />
+        )}
+      </GateDivider>
       {children}
     </>
   );

@@ -367,8 +367,13 @@ export const InternalCommand = z.discriminatedUnion('type', [
     stepId: Id,
     finalMessage: z.string(),
     artifactsFound: z.array(z.string()),
+    // The step's expected artifact globs that matched no file.
+    artifactsMissing: z.array(z.string()).optional(),
     fileHashes: z.array(FileHash).optional(),
   }),
+  // Look again at a gate that waits for its pull request's checks: the host poller sends it when
+  // `workflows.gateChecksTimeoutMinutes` has passed since the step ended.
+  z.object({ type: z.literal('workflowRun.checkGate'), runId: Id, stepId: Id }),
   // The commit the run's folder was on when its first step began, and what already differed.
   z.object({
     type: z.literal('workflowRun.baseRecorded'),

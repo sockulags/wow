@@ -12,6 +12,7 @@ import {
 import { isDeepStrictEqual } from 'node:util';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 import { eventTriggerEvents } from './triggers.js';
+import { gateChecksEvents } from './workflows.js';
 
 // Decides what the host poller's reads and the Follow switch change: the stored reads and change
 // requests, and from them the unit statuses of followed plans (review loop spec 23, 24 and 31).
@@ -264,6 +265,21 @@ export function decideHosts(
           read,
           context,
         ),
+        // A run whose gate waits for its pull request's checks is decided by what this read
+        // shows (review loop spec 56).
+        ...command.reads.flatMap((outcome) => {
+          const run = outcome.scope === 'run' ? read.run(outcome.id.slice('run:'.length)) : null;
+          return run
+            ? gateChecksEvents(
+                command.type,
+                run,
+                reads.get(outcome.id),
+                [...changeRequests.values()],
+                read,
+                context,
+              )
+            : [];
+        }),
       ];
     }
   }
