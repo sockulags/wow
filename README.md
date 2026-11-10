@@ -16,10 +16,13 @@ the server owns processes, files and Git; the UI is dumb and renders persisted s
 
 ## Status
 
-Planning. The delivery plan is `intents/2026-11-wow-app/plan.md`, the behavior is
-`intents/2026-11-wow-app/spec.md`, and the technical decisions are `docs/architecture.md`. The
-plan is executed by the workflow in `.claude/workflows/build-wow.js` with at most three agents at
-a time.
+The app (`intents/2026-11-wow-app`) and the review loop (`intents/2026-11-review-loop`: review
+at a gate, plans, working copies, host reading, event triggers and gates that pass by themselves)
+are built; workflow branches (`intents/2026-11-workflow-branches`) are delivered too. Each
+intent's behavior is in its `spec.md` and its delivery units in its `plan.md`; the technical
+decisions are in `docs/architecture.md`. `pnpm e2e --grep @review-loop` runs the end-to-end cases
+the review loop's ground truth names. The manual Windows check with real hosts
+(`docs/windows-smoke.md`, section 9) is still to be run.
 
 ## Develop
 

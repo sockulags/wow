@@ -5,7 +5,8 @@ with Claude Code and Codex, workflows that chain skills with stops for your answ
 of ideas. Everything runs on your machine. Nothing is sent to Outlook, Jira or GitHub unless you
 press a button that says so.
 
-This guide covers the first run, providers, the calendar, chat, workflows, the backlog, settings
+This guide covers the first run, providers, the calendar, chat, workflows (with review at a gate,
+working copies, event triggers and gates that pass by themselves), plans, the backlog, settings
 and troubleshooting. Technical details are in `docs/architecture.md`.
 
 ## First run
@@ -55,8 +56,9 @@ instead of a project; cards with a trigger and workflow runs need a project.
 
 ### Finding your way
 
-The left sidebar has Calendar, Chat, Workflows, Backlog and Settings. Chat and Workflows show a
-yellow count when threads or runs wait for you; hovering an item or focusing it shows its key.
+The left sidebar has Calendar, Chat, Workflows, Plans, Backlog and Settings. Chat and Workflows
+show a yellow count when threads or runs wait for you; hovering an item or focusing it shows its
+key.
 Below 1280 pixels wide the sidebar narrows to icons. When the window cannot reach the wow server, a
 bar under the header says so and offers **Retry now**; lists keep what they last showed, dimmed,
 until the connection is back. Everything you can do is in
@@ -65,23 +67,29 @@ workflows, runs, settings pages and actions together; arrow keys and Enter pick.
 
 Default keys (all changeable in Settings → Keybindings):
 
-| Key          | Does                                     |
-| ------------ | ---------------------------------------- |
-| Ctrl+K       | Command palette                          |
-| Ctrl+1 … 4   | Calendar, Chat, Workflows, Backlog       |
-| Ctrl+,       | Settings                                 |
-| Ctrl+B       | Show or hide the sidebar                 |
-| Ctrl+J       | Show or hide the context panel           |
-| F6           | Move the focus into the panel and back   |
-| Ctrl+Shift+L | Dark or light theme                      |
-| Ctrl+Alt+N   | New thread                               |
-| Ctrl+.       | Stop the running turn                    |
-| T, N, P      | Calendar: today, next, previous          |
-| D, W         | Calendar: day view, week view            |
-| C            | Calendar: new card on the day you are on |
-| Ctrl+= / -   | Calendar: zoom in, zoom out              |
-| Ctrl+0       | Calendar: reset zoom                     |
-| M            | Calendar: fold or unfold the mail rail   |
+| Key              | Does                                     |
+| ---------------- | ---------------------------------------- |
+| Ctrl+K           | Command palette                          |
+| Ctrl+1 … 4       | Calendar, Chat, Workflows, Backlog       |
+| Ctrl+5           | Plans                                    |
+| Ctrl+,           | Settings                                 |
+| Ctrl+B           | Show or hide the sidebar                 |
+| Ctrl+J           | Show or hide the context panel           |
+| F6               | Move the focus into the panel and back   |
+| Ctrl+Shift+L     | Dark or light theme                      |
+| Ctrl+Alt+N       | New thread                               |
+| Ctrl+.           | Stop the running turn                    |
+| T, N, P          | Calendar: today, next, previous          |
+| D, W             | Calendar: day view, week view            |
+| C                | Calendar: new card on the day you are on |
+| Ctrl+= / -       | Calendar: zoom in, zoom out              |
+| Ctrl+0           | Calendar: reset zoom                     |
+| M                | Calendar: fold or unfold the mail rail   |
+| Ctrl+Enter       | Run at a gate: Approve                   |
+| Ctrl+Shift+Enter | Run at a gate: Send back                 |
+| Ctrl+Shift+D     | Run: Steps or Changes tab                |
+| Ctrl+Shift+Y     | Run: Steps or Path tab                   |
+| O                | Changes tab: this step only, and back    |
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
@@ -356,6 +364,21 @@ come from (Project, User, Plugins) with the source on the right. Keep typing to 
 the arrow keys, and press Enter or Tab (or click) to insert one; Escape closes the list. wow inserts
 the form the thread's provider understands: `/name` for Claude and `$name` for Codex.
 
+### How answers look
+
+Agent answers show the way they were written: headings, lists inside lists, tables, links, inline
+code and highlighted code blocks. While a turn streams, the text is shown as markdown as it grows;
+a table or a diagram that is not finished yet shows as plain text until it is. HTML written in a
+message shows as text and never runs. Links open in your browser, and only for `http`, `https` and
+`mailto` addresses; any other link shows as plain text.
+
+A fenced `mermaid` block is drawn as a diagram. Its **Source** button (or "Toggle diagram source"
+in the palette, for every diagram on screen) shows the text it was drawn from. A diagram that
+cannot be drawn shows its source as code with a one-line reason, such as "Diagram not drawn:
+Image shapes are not drawn": wow does not draw anything that would load from another address.
+
+Backlog item bodies and the publish preview use the same rendering.
+
 ### Managing threads
 
 The sidebar groups threads under **Needs you**, **Working**, **Idle** and **Done**, with pinned
@@ -454,6 +477,85 @@ first, because a stopped run cannot be continued. The next step's prompt is its 
 `workflows.handoverTemplate` (by default the previous step's final message and the expected
 artifact paths). Stopping a run keeps all its threads.
 
+### Reviewing at a gate
+
+When a run waits at a gate, its run view shows the review tabs and the side panel shows the step's
+conversation with the gate bar (**Approve**, **Send back**, **Stop**). Each tab is also in the
+palette ("Run: show changes" and so on) and in the address, so a reload shows the same tab.
+
+- **Changes** (**Ctrl+Shift+D**, `keybindings.runChanges`; the same key goes back to Steps) lists
+  every file added, changed, renamed or deleted since the run started, committed or not, including
+  new files Git does not ignore, each with its added and removed lines. Pick a file for its diff
+  on the right. A file the step under review changed is marked; **This step only** (**O**,
+  `keybindings.changesStepOnly`) narrows the list to those. When the first step starts, wow
+  records the commit the folder was on (the run's base); everything is compared with it. A binary
+  file, or one larger than `diff.maxFileBytes`, shows its status and size without lines; past
+  `diff.maxFiles` files the tab says how many it left out. When the folder is not a Git
+  repository or Git is not installed, the tab says so and the rest of the review works.
+- **Artifacts** lists the files the step produced. Opening one shows it in the side panel (see
+  "Files in the side panel").
+- **Pull request**, **Ticket** and **Pages** show what the hosts say about the run (see "Reading
+  from the hosts" under Plans): the pull request on the run's branch with its state, checks, the
+  failing check names and review comments; the Jira ticket with key, summary, status, assignee,
+  type and description; and the Confluence pages the ticket, the pull request or the intent link
+  to. Each has a "Last fetched" line, **Refresh now** and **Open on host**. A tab with nothing to
+  show says why.
+
+### Files in the side panel
+
+Opening an artifact, a changed file or a page shows it in the side panel next to the conversation,
+while the main view stays where it is. The panel's header has the path, **Back to conversation**
+(also Escape and the palette) and **Copy path**. "Open artifact: <path>" in the palette opens one
+too.
+
+- Markdown is rendered like a chat answer.
+- A picture is fitted to the panel; **Full size** and **Fit to panel** switch.
+- An HTML file shows as a page in a frame that cannot reach the app, the network or the disk.
+  Pictures and styles beside the file therefore do not load. Its scripts run only while
+  `viewer.htmlScripts` is on (off by default); scripts in attributes such as `onclick` never run.
+- Any other text shows as code, colored up to `viewer.highlightMaxBytes` and plain beyond.
+
+wow reads only files inside the run's folder and the project folder. A path outside them, a missing
+file, a binary file that is not a picture, or a file larger than `viewer.maxFileBytes` is not read,
+and the panel says why.
+
+### Working copies
+
+Turn on **Own working copy** in a workflow's builder (or "Own working copy" in the palette) and
+each run gets its own Git working copy of the project, so your project folder is left alone. When
+the run starts, wow fetches the project's remote (`workspaces.fetchBeforeCreate`, per project) and
+creates the copy at the tip of the default branch, on no branch, under `workspaces.root` (a full
+path, or a folder name inside the wow folder; `workspaces` by default). Every step works there;
+the agent names and creates its own branch when it delivers. When the fetch fails, the copy starts
+from the local tip and the run says so. Fetching, creating or removing a copy may take
+`workspaces.gitTimeoutMs`.
+
+When the run ends and everything in the copy is committed and reachable from a branch on the
+remote, the copy is removed. Otherwise it is kept, and the run header lists what is unpushed
+(uncommitted files, commits not on the remote). **Remove working copy** (also in the palette)
+removes it after you confirm. If a copy cannot be created (the project is not a Git repository,
+the disk is full, the path is too long), the run fails before its first step with the reason, and
+nothing runs in the project folder instead. A short `workspaces.root` helps with Windows path
+length.
+
+### Gates that pass by themselves
+
+A gate after a step can pass without you. Open the step in the builder; under the gate,
+**Pass by itself when** has three checkboxes:
+
+- **The final message ends with the approved verdict**: its last non-empty line is
+  `workflows.verdictApprovedLine` (`APPROVED` by default), which is how check-work ends.
+- **Every check of the run's pull request is successful**: read from the host for the commit the
+  step left. While checks still run, the run says "Waiting for checks" and decides when polling
+  shows them finished; after `workflows.gateChecksTimeoutMinutes` it waits for you instead.
+- **Every expected artifact was found**: every path or glob the step expects exists.
+
+When every chosen part holds, the next step starts and the step shows "passed by itself" with the
+parts that held; wow never merges anything. When one does not, the run waits for you as usual and
+the gate bar says which part failed. Steps whose skill is in `workflows.alwaysStopSkills`
+(capture-intent, plan-work, design-work and shape-work, which cannot be removed) always wait for
+you: the builder does not offer the checkboxes for them and the server refuses a condition there.
+
 ### Rules, the limit and the path
 
 Without rules a run goes through its steps in order. A rule on a step sends the run somewhere
@@ -516,6 +618,101 @@ paused" until you resume. Triggers that came due while paused get the missed pol
 
 Deleting a card whose run is running or waiting asks whether to stop the run too. The threads stay
 either way.
+
+### Event triggers
+
+An event trigger starts a run when something happens to a pull request wow follows (one of a
+followed plan, or one of a live run). Workflows → **Triggers** ("Go to event triggers" in the
+palette) lists them per project, each with an on and off switch and Delete. **New trigger** ("New event
+trigger" in the palette) asks for the project, the event and the workflow:
+
+- **Pull request merged**,
+- **Checks failed**,
+- **Review comment added**.
+
+When polling first sees the event, one run of the workflow starts with the pull request's link,
+number, branch and the event in its handover, in the pull request's working copy when one exists
+and in a new working copy on its branch otherwise. The same event seen again starts nothing, and
+what was already true when you created the trigger or followed the plan starts nothing either;
+only later changes do. For a review comment the run gets the comment's link and author, never its
+text: the agent reads it with its own tools. Comments by accounts in
+`triggers.ignoredCommentAuthors` (for example the account your agents write as) start nothing.
+`triggers.eventsEnabled` off, or a paused scheduler, holds every event trigger; events seen
+meanwhile are not started later. A run that cannot start leaves a failed notification.
+
+## Plans
+
+The **Plans** view (**Ctrl+5**, `keybindings.goPlans`) reads the intent, spec and plan files of
+your projects, the format agent-os writes. Each project's `plans.intentsDirectory` (`intents` by
+default) holds one folder per intent with `intent.md`, `spec.md` and `plan.md`. wow only reads
+these files, and reads them again when they change (once a file has stayed the same for
+`plans.writeSettleMs`).
+
+On the left are the projects and their intents with title, status and revision, which files exist,
+and a "stale" mark on a spec or plan whose `built_on` revision is older than its source. Pick one
+to see its units on the right: key, title, dependencies, the `blocked:` note and, for a plan with
+`source: files`, the unit's contract (Outcome, Boundaries and the rest). A plan with
+`source: issues` shows key and title only. A plan that cannot be read shows the problem and its
+line, and the other intents still show. The palette finds every intent by its title and each unit
+of the open plan as "Unit <key>: <title>".
+
+### Unit status
+
+Turn **Follow** on for a plan ("Plan: follow" in the palette) and wow reads its pull requests from the project's host (see
+"Reading from the hosts"). Each unit then shows:
+
+- **Delivered**: a merged pull request carries `Intent-Unit: <intent-id>/<unit-key>`,
+- **Claimed**: an open one does,
+- **Blocked**: its line has a `blocked:` note,
+- **Ready**: every unit it depends on is delivered,
+- **Waiting**: none of the above.
+
+A unit of a stale plan, or of a plan whose spec is stale, is never ready and says which file is
+stale. A unit with a pull request links to it and shows its state, checks and when that was last
+fetched. Without a followed plan, a host, or when the host cannot be reached, units show what the
+files alone say (blocked, or "status unknown") with the reason; nothing is guessed.
+
+### Plan runs
+
+A workflow with **For units** on (in its builder) can work through a plan. **Run ready units** in
+the plan ("Plan: run ready units with <workflow>" in the palette) picks the workflow and starts a plan run: wow takes the first ready
+unit in plan order and starts an ordinary run of the workflow for it, always in its own working
+copy, telling every step the intent, unit key and title (`workflows.unitPromptTemplate`, which
+also asks the agent to put the `Intent-Unit:` line in its pull request). Gates, review and
+notifications work as for any run.
+
+The plan run is shown above the units: its state, what it waits for (for example "U2 waits for
+U1 to merge"), each unit's run with a link, and **Stop**. When a unit run is done the next ready
+unit starts; when units remain but none is ready, the plan run waits and goes on when the host
+shows the change. A unit claimed by a pull request this plan run did not start is skipped. When a
+unit run fails or is stopped, `workflows.planRunOnFailure` decides: `stop` (default) stops the
+plan run, `skip` leaves that unit and goes on with the next ready unit that does not depend on
+it. When every unit is delivered, the plan run is done. Stop ends the live unit run and starts no
+further unit. One plan run per plan at a time; a stale plan or spec, or a plan with
+`source: issues`, cannot be run, and the button says why.
+
+### Reading from the hosts
+
+wow reads GitHub (github.com or Enterprise Server), Jira, GitLab and Confluence to show unit status
+and the run's Pull request, Ticket and Pages tabs. It only reads: it never merges, approves or
+comments. Set them up under Settings → Trackers (and per project, see "Backlog"); GitLab
+(`trackers.gitlab.baseUrl`, `trackers.gitlab.token`, a token with `read_api`) and Confluence
+(`trackers.confluence.baseUrl`, `trackers.confluence.authMode`, `trackers.confluence.email`,
+`trackers.confluence.token`) sit beside Jira and GitHub, each with **Test connection**. A project
+whose remote is on the GitLab site reads merge requests (with pipelines as checks and notes as
+review comments) instead of pull requests. A token only ever goes to the host you stored it for.
+
+Every `hosts.pollSeconds` (60 by default) wow asks the hosts about the pull requests and tickets
+of live runs and followed plans only: one search per followed plan for its `Intent-Unit:` lines,
+never a list of the whole repository. A host without search is asked for its newest
+`hosts.listFallbackCount` pull requests instead. The Ticket tab reads the backlog item's issue, or
+else a Jira key in the pull request's title or branch; the Pages tab reads only Confluence pages
+the ticket, the pull request or the intent link to. With `hosts.polling` off or the scheduler
+paused nothing is asked on the timer; **Refresh now** in a view still asks once. When a host
+fails, the last data stays with "Last fetched <time>" and the error, and the next interval tries
+again; a token that is wrong or lacks rights names the host that refused and points to its
+setting, and the token is never shown or logged. A host that says its request limit is used up is
+left alone until the limit resets.
 
 ## Backlog
 
@@ -605,8 +802,9 @@ project …" for every project.
 
 ## Settings
 
-Settings are grouped: Providers, Projects, Chat, Calendar, Outlook, Scheduler, Workflows, Skills, Trackers,
-Appearance, Keybindings, Desktop, Updates and Advanced. The search box above the groups finds a
+Settings are grouped: Providers, Projects, Chat, Calendar, Outlook, Scheduler, Workflows, Skills,
+Plans, Trackers, Hosts, Event triggers, Viewer, Changes, Working copies, Appearance, Keybindings,
+Desktop, Updates and Advanced. The search box above the groups finds a
 setting by its name or description across all of them. Every setting shows its description and
 its current value; numbers show their unit, and times in milliseconds are shown in seconds.
 **Reset to default** appears only when a value differs from the default, and its tooltip says
@@ -616,8 +814,8 @@ not pass validation is refused and the old one stays. Turn on **Show setting key
 see each setting's key and raw default, for config files and bug reports.
 
 Work hours are two times and a row of day buttons. The handover text has buttons that insert
-each `{{placeholder}}` at the cursor. Settings → Trackers has a Jira and a GitHub section, each
-with **Test connection**, which signs in with what you entered and says as whom; the Jira email is
+each `{{placeholder}}` at the cursor. Settings → Trackers has a Jira, a GitHub, a GitLab and a Confluence
+section, each with **Test connection**, which signs in with what you entered and says as whom; the Jira email is
 only asked for Jira Cloud. These are the defaults; each project can have its own under Settings →
 Projects. Settings → Keybindings groups the keys by where they work and marks a
 key that two commands share; click a key and press the new combination.
@@ -630,7 +828,9 @@ Useful ones to know:
 - `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`, `calendar.lookaheadDays`
 - `outlook.pollSeconds`, `outlook.folders`, `outlook.requestTimeoutMs`
 - `scheduler.missedPolicy`, `scheduler.notifications`, `scheduler.paused`
-- `workflows.templates`, `workflows.handoverTemplate`
+- `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`
+- `plans.intentsDirectory`, `hosts.polling`, `hosts.pollSeconds`, `triggers.eventsEnabled`
+- `viewer.maxFileBytes`, `viewer.htmlScripts`, `diff.maxFileBytes`, `workspaces.root`
 - `appearance.theme` (dark by default), `appearance.density`
 - `desktop.closeToTray`, `desktop.autostart`, `desktop.startMinimized`
 - `updates.enabled`, `updates.checkIntervalMinutes`

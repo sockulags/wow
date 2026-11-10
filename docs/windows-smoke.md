@@ -106,16 +106,50 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       icon.
 - [ ] Turn off `desktop.closeToTray`: closing the window quits wow.
 
-## 9. Hosts
+## 9. Hosts, review and working copies
 
-- [ ] With a GitHub Enterprise personal access token in Settings → Trackers, open a plan of a
-      project whose remote is on that host and turn Follow on: units with pull requests show
-      Delivered or Claimed with a link, the others Ready, Waiting or Blocked, and "Last fetched"
-      names the host.
+The manual check from the review loop spec's "Ground truth"
+(`intents/2026-11-review-loop/spec.md`). It needs a project whose remote is on your GitHub
+Enterprise Server, with a plan under its `intents` folder whose units carry `Intent-Unit:` lines in
+their pull requests, a Jira site with an issue for one of those pull requests (its key in the pull
+request title or branch), and a Confluence page that the issue description links to. Use invented
+or throwaway content; nothing here writes to the hosts.
+
+The three steps the spec asks for:
+
+- [ ] **A followed plan shows unit status from GitHub Enterprise with a personal access token.**
+      Put a GitHub Enterprise personal access token in Settings → Trackers (API URL
+      `https://<host>/api/v3`), open the plan in Plans (Ctrl+5) and turn Follow on: units with
+      pull requests show Delivered or Claimed with a link, state and checks, the others Ready,
+      Waiting or Blocked, and "Last fetched" names the host. Write down the host's version from
+      Test connection.
+- [ ] **A Jira ticket and a Confluence page open beside a run.** With the Jira and Confluence
+      sites and personal access tokens in Settings → Trackers, start a run on the pull request's
+      branch. The Ticket tab shows key, summary, status, assignee, type and description with
+      Open on host; the Pages tab lists the linked page, and opening it shows its body in the
+      side panel next to the run, with no script run.
+- [ ] **A working copy is created and removed under a path with spaces.** Set `workspaces.root`
+      to a folder whose path has spaces (for example `C:\Users\<you>\wow work copies`). Turn
+      on "Own working copy" for a workflow and run it: the run header shows the working copy
+      under that folder, Explorer shows the folder, and the project folder is untouched. Let the
+      run end with nothing unpushed: the copy is removed. Run it again, leave a file uncommitted
+      and stop the run: the copy is kept and lists what is unpushed; "Remove working copy" asks
+      first and then removes it. Write down how long the first step took (it installs
+      dependencies in the fresh copy).
+
+Further checks against the same hosts:
+
 - [ ] Start a run in a project folder that is on a branch with a pull request: the Pull request
-      tab shows it with its checks and review comments.
+      tab shows it with its checks, the failing check names and review comments.
 - [ ] Turn `hosts.polling` off: "Last fetched" stops moving; Refresh now moves it once.
-- [ ] Put a wrong token in: the plan names the host and links to the GitHub token setting.
+- [ ] Put a wrong token in: the plan names the host and points to the GitHub token setting; the
+      token appears nowhere in the view or in `desktop.log`.
+- [ ] If a GitLab site is available: with `trackers.gitlab.baseUrl` and a token, a plan of a
+      project on it shows unit status from merge requests, and Test connection shows the
+      version.
+- [ ] Optional: create an event trigger (Workflows → Triggers → New trigger, "Pull request
+      merged") and merge a followed pull request on the host: one run starts within
+      `hosts.pollSeconds`, and polling again starts no second one.
 
 ## 10. Uninstall
 
