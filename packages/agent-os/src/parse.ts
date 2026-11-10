@@ -51,13 +51,17 @@ export function parseFrontmatter(text: string): Frontmatter | null {
   return { data, lines: at, body: lines.slice(end + 1).join('\n'), bodyLine: end + 2 };
 }
 
+// A revision is a positive whole number a JavaScript number holds exactly; a longer run of digits
+// is not one.
 export function parseRev(value: string | undefined): number | null {
-  return /^[1-9]\d*$/.test(value ?? '') ? Number(value) : null;
+  if (!/^[1-9]\d*$/.test(value ?? '')) return null;
+  const rev = Number(value);
+  return Number.isSafeInteger(rev) ? rev : null;
 }
 
 export function parseBuiltOn(value: string | undefined, kind: 'intent' | 'spec'): number | null {
-  const match = new RegExp(`^${kind}@([1-9]\\d*)$`).exec(value ?? '');
-  return match ? Number(match[1]) : null;
+  const prefix = `${kind}@`;
+  return value?.startsWith(prefix) ? parseRev(value.slice(prefix.length)) : null;
 }
 
 export interface UnitLine {

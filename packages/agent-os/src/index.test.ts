@@ -109,6 +109,23 @@ describe('intent folder', () => {
     ]);
   });
 
+  it('does not take a run of digits too long to be a number for a revision', () => {
+    const digits = '99999999999999999999999';
+    const document = tea({
+      intent: intentText().replace(/rev: \d+/, `rev: ${digits}`),
+      spec: specText().replace('built_on: intent@1', `built_on: intent@${digits}`),
+    });
+    expect(document.rev).toBeNull();
+    expect(document.spec?.stale).toBeNull();
+    expect(document.problems.map((problem) => `${problem.file}: ${problem.message}`)).toEqual([
+      'intent: rev must be a positive whole number',
+      'spec: built_on must look like intent@<rev>',
+    ]);
+    expect(tea({ intent: intentText().replace(/rev: \d+/, 'rev: 9007199254740991') }).rev).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
+  });
+
   it('reports a folder name that is not an intent id', () => {
     expect(readIntent({ id: 'demo', intent: intentText() }).problems).toEqual([
       {

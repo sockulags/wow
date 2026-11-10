@@ -525,7 +525,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `scheduler.paused`, `scheduler.toastSeconds`
 - workflows: `workflows.templates`, `workflows.handoverTemplate`
 - skills: `skills.directories`, `skills.includeClaudePlugins`
-- plans: `plans.intentsDirectory` (project-scoped, see "Plans")
+- plans: `plans.intentsDirectory` (project-scoped), `plans.writeSettleMs` (see "Plans")
 - trackers: `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
   `trackers.jira.email`, `trackers.jira.token` (secret), `trackers.jira.projectKey`,
   `trackers.jira.issueType`, `trackers.github.baseUrl`, `trackers.github.token` (secret),
@@ -740,7 +740,9 @@ file is stale when that number is lower than its source file's `rev` (the intent
 spec for a plan); a unit is a `- [KEY] title` line under `## Units`, with notes split on an em
 dash or `--` with spaces around, `depends on A, B` and `blocked: reason` read without regard to
 case; a unit's contract is its `### KEY` section, read into the nine agent-os fields. With
-`source: issues` the tracker holds dependencies and contracts, so units carry key and title only.
+`source: issues` the tracker holds dependencies and contracts, so units carry key and title only
+(spec 22); a `blocked:` note on such a line is not read either, so the unit's status is unknown
+until a host says more. A `rev` or `built_on` number too long to be held exactly is a bad one.
 The package has no dependencies and does no I/O. Nothing throws: a file without frontmatter, a
 bad `rev`, `built_on` or `source`, a plan without `## Units` lines, a key that appears twice, an
 unknown dependency, a unit without its section and a folder name that is not an intent id each
@@ -750,14 +752,31 @@ some fields.
 
 **Service** (`apps/server/src/plans/service.ts`). For every project it resolves
 `plans.intentsDirectory` (default `intents`, project-scoped, a relative path that may not leave
-the project folder) against the project folder, lists the folders in it and reads each one's
-`intent.md`, `spec.md` and `plan.md`. Links are not followed, and a folder with none of the three
-files is not an intent. The result goes through the engine as the internal `plans.sync` command;
-the orchestrator compares it with the stored rows, so `plans.synced` carries only what changed and
-an unchanged read stores nothing. It reads at start, when the project list or the setting changes,
-when the chokidar watcher on the intents folders reports a change (the watcher of
-`packages/skills`, so a plan edited on disk shows without a restart), and on `plans.refresh`.
-Reads that arrive while one is waiting share it.
+the project folder and may not be the project folder itself) against the project folder, lists the folders in it and reads each one's
+`intent.md`, `spec.md` and `plan.md`. Links are not followed: an intent folder or file that is a
+link is skipped, and the intents folder is only read when its real location (`fs.realpath`, so
+links and Windows junctions anywhere on the path are resolved) is inside the project's real
+folder; one that leads out is refused with a warning in the server log. A folder with none of the
+three files is not an intent. Every intent is checked against the `PlanIntent` contract before it
+is stored; one that does not fit becomes a row with the single problem "Cannot be shown: …",
+because a row the contract rejects would fail the topic's snapshot for every project. The result
+goes through the engine as the internal `plans.sync` command; the orchestrator compares it with
+the stored rows, so `plans.synced` carries only what changed and an unchanged read stores nothing.
+It reads at start, when the project list or a plans setting changes, when the watcher reports a
+change, and on `plans.refresh`. Reads that arrive while one is waiting share it.
+
+**Watcher** (`apps/server/src/plans/watch.ts`, chokidar, the plans service's own). The intents
+folders are watched one level deep, which covers `<id>/{intent,spec,plan}.md`. A save in place
+empties a file before writing it, and a read in between would store an empty plan with no later
+event to correct it, so a change is reported only once the file has kept its size for
+`plans.writeSettleMs` (default 200 ms, chokidar's `awaitWriteFinish`; 0 turns the wait off). An
+intents folder that does not exist yet is waited for: the nearest existing folder above it, never
+above the project folder, is watched for the next part of the path only, and each time that
+appears or goes the read works out again what to watch, so a folder created or removed later is
+followed without a restart. The watcher is ready before the files are read, so a change made
+during a read is reported after it. Not followed: a project folder that does not exist when the
+plans are read, and an intents folder refused as a link; both are looked at again on the next read
+("Refresh now", a project or setting change, a restart).
 
 **Rows.** `PlanIntent` (topic `planIntents`) is one intent folder: `hasIntent`, `status` and
 `rev` of the intent, `spec` and `plan` as `PlanFile` (`{rev, status, stale: {builtOn, current}?}`,

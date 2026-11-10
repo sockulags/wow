@@ -27,7 +27,7 @@ import {
 } from './model';
 
 // Reads the plan files again (`plans.refresh`). The watcher normally keeps the view current; this
-// is for a folder the watcher cannot see, such as one created after the server started.
+// is for what it cannot see, such as a project folder that did not exist when the plans were read.
 function RefreshButton() {
   const { connection } = useRuntime();
   const [busy, setBusy] = useState(false);
@@ -215,7 +215,8 @@ function UnitRow({
   open: boolean;
   onToggle: () => void;
 }) {
-  const contractId = `unit-contract-${unit.key}`;
+  // The line keeps the id apart for a key a plan lists twice.
+  const contractId = `unit-contract-${unit.key}-${unit.line}`;
   return (
     <li data-testid={`unit-${unit.key}`} className="border-b border-border last:border-b-0">
       <div className="flex items-start gap-2 px-3 py-2">
@@ -358,9 +359,10 @@ export function PlanView({
           <section aria-label="Problems" className="flex flex-col gap-1">
             <h3 className="text-xs font-medium">Problems</h3>
             <ul className="flex flex-col gap-1">
-              {intent.problems.map((problem) => (
+              {intent.problems.map((problem, index) => (
                 <li
-                  key={problemLabel(problem)}
+                  // One line can have the same problem twice.
+                  key={`${index}:${problemLabel(problem)}`}
                   className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs"
                 >
                   {problemLabel(problem)}

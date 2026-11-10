@@ -21,6 +21,7 @@
     "@wow/skills": "workspace:*",
     "@wow/workflow-engine": "workspace:*",
     "better-sqlite3": "^13.0.3",
+    "chokidar": "^5.0.0",
     "drizzle-orm": "^0.45.4",
     "fast-glob": "^3.3.3",
     "ws": "^8.22.1",

@@ -189,7 +189,8 @@ describe('server contracts', () => {
   it('keeps the intents folder inside the project', () => {
     const { schema } = settingsRegistry['plans.intentsDirectory'];
     expect(schema.parse(' docs/intents ')).toBe('docs/intents');
-    const outside = ['', '../intents', 'docs/../../x', '/etc', 'C:\\plans', '~/intents'];
+    const outside = ['', '../intents', 'docs/../../x', '/etc', 'C:\\plans', '~/intents', '.', './'];
+    expect(schema.parse('..drafts')).toBe('..drafts');
     expect(outside.filter((value) => schema.safeParse(value).success)).toEqual([]);
   });
 

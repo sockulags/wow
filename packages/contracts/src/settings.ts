@@ -197,7 +197,8 @@ export const IntentsDirectory = z
   .refine(
     (value) =>
       !/^([A-Za-z]:|[\\/]|~)/.test(value) &&
-      !value.split(/[\\/]/).some((segment) => segment === '..'),
+      !value.split(/[\\/]/).some((segment) => segment === '..') &&
+      value.split(/[\\/]/).some((segment) => segment !== '' && segment !== '.'),
     { message: 'Use a folder inside the project, such as intents or docs/intents' },
   );
 
@@ -653,6 +654,16 @@ export const settingsRegistry = {
       'Folder inside a project whose <id>/intent.md, spec.md and plan.md files the Plans view reads. wow only reads them.',
     default: 'intents',
     scope: 'project',
+  }),
+  'plans.writeSettleMs': defineSetting({
+    schema: z.number().int().min(0).max(10_000),
+    group: 'plans',
+    label: 'Wait for a file to settle',
+    description:
+      'How long an intent, spec or plan file must stay the same size before it is read again after a change, so a file is not read halfway through a save.',
+    default: 200,
+    scope: 'global',
+    unit: 'ms',
   }),
   'trackers.jira.baseUrl': defineSetting({
     schema: TrackerUrl,

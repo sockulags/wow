@@ -31,6 +31,7 @@ import { route } from './rpc/router.js';
 import { Scheduler, type SchedulerTimers } from './scheduler/service.js';
 import { SettingsService } from './settings/service.js';
 import { PlansService } from './plans/service.js';
+import type { PlansWatchFactory } from './plans/watch.js';
 import { SkillsService } from './skills/service.js';
 import { TrackerService } from './trackers/service.js';
 import { detectArtifacts, type ArtifactDetector } from './workflows/artifacts.js';
@@ -69,7 +70,7 @@ export interface StartOptions {
   // Replaces the chokidar watcher on the skill folders, for tests.
   readonly watchSkills?: WatchFactory;
   // Replaces the chokidar watcher on the projects' intents folders, for tests.
-  readonly watchPlans?: WatchFactory;
+  readonly watchPlans?: PlansWatchFactory;
   readonly detectArtifacts?: ArtifactDetector;
   // The time the engine stamps and the scheduler compares triggers with, for tests.
   readonly clock?: () => Date;
