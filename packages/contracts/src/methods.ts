@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AssistantChange, AssistantProposal } from './assistant.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RunDiff, RunDiffParams } from './diff.js';
 import { FileReadParams, FileReadResult } from './files.js';
@@ -65,6 +66,8 @@ export const subscriptionTopics = {
   ticketReads: { row: TicketRead, threadScoped: false },
   pageReads: { row: PageRead, threadScoped: false },
   settings: { row: SettingRow, threadScoped: false },
+  assistantChanges: { row: AssistantChange, threadScoped: false },
+  assistantProposals: { row: AssistantProposal, threadScoped: false },
 } as const;
 
 export type SubscriptionTopic = keyof typeof subscriptionTopics;

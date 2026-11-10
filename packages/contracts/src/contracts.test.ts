@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AssistantChange,
+  AssistantProposal,
+  DomainEvent,
+  defaultSecretPatterns,
+  hiddenText,
+  hideSecrets,
+  hideSecretsDeep,
+  looksLikeSecret,
+  secretPatterns,
+  settingGroupTitles,
+  SettingGroup,
   PageRead,
   ChangeRequest,
   changeRequestName,
@@ -131,6 +142,7 @@ describe('settings registry', () => {
         'viewer',
         'diff',
         'workspaces',
+        'assistant',
         'appearance',
         'keybindings',
         'desktop',
@@ -722,5 +734,157 @@ describe('rules on a step (workflow branches spec 1 to 18)', () => {
     );
     expect(settingsRegistry['workflows.verdictBlockedLine'].default).toBe('BLOCKED');
     expect(settingsRegistry['workflows.goBackTemplate'].default).toContain('{{fromStep}}');
+  });
+});
+
+describe('app assistant', () => {
+  const at = '2026-11-10T08:00:00.000Z';
+  const place = { label: 'Settings → Calendar', path: '/settings/calendar' };
+  const change = {
+    id: 'c1',
+    at,
+    commandType: 'setting.set',
+    what: 'Work hours',
+    from: '08:00–17:00',
+    to: '08:00–16:00',
+    place,
+    target: { kind: 'setting', id: 'calendar.workHours:global' },
+    expect: { value: { start: '08:00', end: '16:00' } },
+    inverse: [{ type: 'setting.reset', key: 'calendar.workHours', scope: 'global' }],
+    state: 'applied',
+    undoneAt: null,
+  };
+  const proposal = {
+    id: 'p1',
+    at,
+    commandType: 'workflowRun.start',
+    title: 'Start Delivery in Tea',
+    lines: [{ what: 'Backlog item', from: null, to: 'A quieter kettle' }],
+    place: { label: 'Workflows → Delivery', path: '/workflows/delivery' },
+    command: { type: 'workflowRun.start', runId: 'r1', workflowId: 'delivery', projectId: 'tea' },
+    state: 'pending',
+    answeredAt: null,
+    reason: null,
+  };
+
+  it('has commands for the answers only the user gives', () => {
+    expect(Command.safeParse({ type: 'assistant.undo', changeId: 'c1' }).success).toBe(true);
+    expect(Command.safeParse({ type: 'assistant.proposal.accept', proposalId: 'p1' }).success).toBe(
+      true,
+    );
+    expect(
+      Command.safeParse({ type: 'assistant.proposal.decline', proposalId: 'p1', reason: 'No' })
+        .success,
+    ).toBe(true);
+    expect(
+      Command.safeParse({ type: 'assistant.proposal.decline', proposalId: 'p1' }).success,
+    ).toBe(true);
+    expect(Command.safeParse({ type: 'assistant.undo' }).success).toBe(false);
+    // A command carries no origin: who sent it is the connection's to say, not the sender's.
+    expect(Command.parse({ type: 'assistant.undo', changeId: 'c1', origin: 'user' })).toEqual({
+      type: 'assistant.undo',
+      changeId: 'c1',
+    });
+  });
+
+  it('describes a change and a proposal, as rows of their own topics and as events', () => {
+    expect(subscriptionTopics.assistantChanges.row.parse(change)).toEqual(change);
+    expect(subscriptionTopics.assistantProposals.row.parse(proposal)).toEqual(proposal);
+    expect(AssistantChange.safeParse({ ...change, state: 'gone' }).success).toBe(false);
+    expect(AssistantChange.safeParse({ ...change, from: null, expect: null }).success).toBe(true);
+    expect(AssistantProposal.safeParse({ ...proposal, state: 'applied' }).success).toBe(false);
+    for (const event of [
+      { kind: 'assistant.changed', aggregate: 'c1', payload: change },
+      { kind: 'assistant.changeUndone', aggregate: 'c1', payload: { changeId: 'c1', at } },
+      { kind: 'assistant.proposed', aggregate: 'p1', payload: proposal },
+      {
+        kind: 'assistant.proposalAnswered',
+        aggregate: 'p1',
+        payload: { proposalId: 'p1', state: 'declined', reason: 'Not today', at },
+      },
+    ]) {
+      expect(DomainEvent.safeParse(event).success).toBe(true);
+    }
+    expect(
+      DomainEvent.safeParse({
+        kind: 'assistant.proposalAnswered',
+        aggregate: 'p1',
+        payload: { proposalId: 'p1', state: 'pending', reason: null, at },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('registers the assistant settings and names every settings page', () => {
+    expect(settingsRegistry['assistant.providerInstanceId'].default).toBe('');
+    expect(settingsRegistry['assistant.model'].default).toBe('');
+    expect(settingsRegistry['assistant.effort'].default).toBe('');
+    expect(settingsRegistry['assistant.secretPatterns'].default).toEqual(defaultSecretPatterns);
+    expect(Object.keys(settingGroupTitles)).toEqual(SettingGroup.options);
+    expect(settingGroupTitles.assistant).toBe('Assistant');
+  });
+
+  it('refuses a pattern that does not compile or that matches nothing at all', () => {
+    const { schema } = settingsRegistry['assistant.secretPatterns'];
+    expect(schema.safeParse(['tea-[0-9]{4}']).success).toBe(true);
+    expect(schema.safeParse(['(']).success).toBe(false);
+    expect(schema.safeParse(['x*']).success).toBe(false);
+    expect(schema.safeParse(['']).success).toBe(false);
+    expect(schema.safeParse([]).success).toBe(true);
+  });
+
+  it('hides known token shapes, key blocks and a long random string after "token", "password" or "key"', () => {
+    const patterns = secretPatterns(defaultSecretPatterns);
+    const secrets = [
+      'ghp_abcdefghijklmnopqrstuvwxyz012345',
+      'github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuvwxyz',
+      'glpat-abcdefghijklmnopqrst',
+      'ATATT3xFfGF0abcdefghijklmnop',
+      'xoxb-1234567890-abcdefghij',
+      'sk-abcdefghijklmnopqrstuvwx',
+      'AKIAABCDEFGHIJKLMNOP',
+    ];
+    for (const secret of secrets) {
+      expect(hideSecrets(`use ${secret} for it`, patterns)).toBe(`use ${hiddenText} for it`);
+      expect(looksLikeSecret(secret, patterns)).toBe(true);
+    }
+    expect(
+      hideSecrets(
+        'before -----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY----- after',
+        patterns,
+      ),
+    ).toBe(`before ${hiddenText} after`);
+    expect(hideSecrets('my password is 9f8e7d6c5b4a39281706f5e4d3c2', patterns)).toBe(
+      `my password is ${hiddenText}`,
+    );
+    expect(hideSecrets('password: 9f8e7d6c5b4a39281706f5e4d3c2', patterns)).toBe(
+      `password: ${hiddenText}`,
+    );
+    expect(hideSecrets('token=Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA==', patterns)).toBe(
+      `token=${hiddenText}`,
+    );
+    for (const harmless of [
+      'Set the work hours to 08:00–16:00',
+      'the key keybindings.goCalendar opens the calendar',
+      'key: a-long-name-without-any-digit-in-it',
+      'https://gitlab.example/tea/pot',
+      'the branch task-123-fix-the-kettle-lid-for-good',
+      'risk-assessment-for-the-new-kettle-and-pot',
+    ]) {
+      expect(looksLikeSecret(harmless, patterns)).toBe(false);
+    }
+  });
+
+  it('hides inside any JSON value and skips a stored pattern that no longer compiles', () => {
+    const patterns = secretPatterns(['(', 'tea-[0-9]{4}']);
+    expect(patterns).toHaveLength(1);
+    expect(
+      hideSecretsDeep(
+        { a: ['tea-1234', 5, null], 'tea-9999': { b: 'x tea-0000 y', c: true } },
+        patterns,
+      ),
+    ).toEqual({ a: [hiddenText, 5, null], [hiddenText]: { b: `x ${hiddenText} y`, c: true } });
+    // The same pattern object hides every time it is used.
+    expect(hideSecrets('tea-1111 tea-2222', patterns)).toBe(`${hiddenText} ${hiddenText}`);
+    expect(hideSecrets('tea-3333', patterns)).toBe(hiddenText);
   });
 });

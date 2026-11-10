@@ -1,4 +1,9 @@
-import { SettingGroup, settingsRegistry, type SettingDefinition } from '@wow/contracts';
+import {
+  SettingGroup,
+  settingGroupTitles,
+  settingsRegistry,
+  type SettingDefinition,
+} from '@wow/contracts';
 import {
   CalendarDaysIcon,
   ListTodoIcon,
@@ -69,27 +74,7 @@ export const sections: readonly Section[] = [
   },
 ];
 
-export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
-  providers: 'Providers',
-  chat: 'Chat',
-  calendar: 'Calendar',
-  outlook: 'Outlook',
-  scheduler: 'Scheduler',
-  workflows: 'Workflows',
-  skills: 'Skills',
-  plans: 'Plans',
-  trackers: 'Trackers',
-  hosts: 'Hosts',
-  triggers: 'Event triggers',
-  viewer: 'Viewer',
-  diff: 'Changes',
-  workspaces: 'Working copies',
-  appearance: 'Appearance',
-  keybindings: 'Keybindings',
-  desktop: 'Desktop',
-  updates: 'Updates',
-  advanced: 'Advanced',
-};
+export { settingGroupTitles };
 
 export type SettingEntry = readonly [key: string, definition: SettingDefinition];
 

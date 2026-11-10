@@ -138,6 +138,7 @@ describe('shell', () => {
       'Viewer',
       'Changes',
       'Working copies',
+      'Assistant',
       'Appearance',
       'Keybindings',
       'Advanced',

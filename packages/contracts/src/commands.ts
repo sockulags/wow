@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AssistantChange, AssistantProposal } from './assistant.js';
 import {
   AppNotification,
   Approval,
@@ -275,6 +276,18 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('trigger.setEnabled'), triggerId: Id, enabled: z.boolean() }),
   // Event triggers only; a card's trigger goes with its card.
   z.object({ type: z.literal('trigger.delete'), triggerId: Id }),
+  // The user's Yes to a proposal of the assistant (app assistant spec 9, 10): the command the
+  // proposal holds is applied. Refused from the assistant's own origin.
+  z.object({ type: z.literal('assistant.proposal.accept'), proposalId: Id }),
+  // The user's No, with an optional reason for the assistant's next turn.
+  z.object({
+    type: z.literal('assistant.proposal.decline'),
+    proposalId: Id,
+    reason: z.string().optional(),
+  }),
+  // Takes back one change the assistant made (spec 8). Refused when the thing changed again
+  // since, with what changed.
+  z.object({ type: z.literal('assistant.undo'), changeId: Id }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command['type'];
@@ -795,6 +808,25 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     payload: z.object({ triggerId: Id, eventId: Id, runId: Id.nullable(), at: Timestamp }),
   }),
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
+  // An ordinary change the assistant made, stored in the same commit as the change itself.
+  z.object({ kind: z.literal('assistant.changed'), aggregate: Id, payload: AssistantChange }),
+  z.object({
+    kind: z.literal('assistant.changeUndone'),
+    aggregate: Id,
+    payload: z.object({ changeId: Id, at: Timestamp }),
+  }),
+  // A command of the assistant that waits for the user's yes; nothing else was changed.
+  z.object({ kind: z.literal('assistant.proposed'), aggregate: Id, payload: AssistantProposal }),
+  z.object({
+    kind: z.literal('assistant.proposalAnswered'),
+    aggregate: Id,
+    payload: z.object({
+      proposalId: Id,
+      state: z.enum(['accepted', 'declined']),
+      reason: z.string().nullable(),
+      at: Timestamp,
+    }),
+  }),
   z.object({ kind: z.literal('backlog.created'), aggregate: Id, payload: BacklogItem }),
   // Edits by the user, "Plan on calendar", and the item following its run (behavior 29).
   z.object({

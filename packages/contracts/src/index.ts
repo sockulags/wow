@@ -1,3 +1,4 @@
+export * from './assistant.js';
 export * from './calendar-prefs.js';
 export * from './commands.js';
 export * from './diff.js';

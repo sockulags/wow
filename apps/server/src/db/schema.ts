@@ -1,4 +1,9 @@
 import type {
+  AssistantChangeState,
+  AssistantPlace,
+  AssistantProposalLine,
+  AssistantProposalState,
+  AssistantTarget,
   ApprovalDecision,
   ApprovalKind,
   BacklogRemote,
@@ -302,6 +307,36 @@ export const notifications = sqliteTable('notifications', {
   path: text().notNull(),
   runId: text(),
   calendarItemId: text(),
+});
+
+// What the assistant changed, with the record Undo needs, in the order it happened.
+export const assistantChanges = sqliteTable('assistant_changes', {
+  id: text().primaryKey(),
+  at: text().notNull(),
+  commandType: text().notNull(),
+  what: text().notNull(),
+  from: text(),
+  to: text(),
+  place: json<AssistantPlace>().notNull(),
+  target: json<AssistantTarget>().notNull(),
+  expect: json<Record<string, unknown>>(),
+  inverse: json<unknown[]>().notNull(),
+  state: text().$type<AssistantChangeState>().notNull(),
+  undoneAt: text(),
+});
+
+// Commands of the assistant that wait for the user's yes.
+export const assistantProposals = sqliteTable('assistant_proposals', {
+  id: text().primaryKey(),
+  at: text().notNull(),
+  commandType: text().notNull(),
+  title: text().notNull(),
+  lines: json<AssistantProposalLine[]>().notNull(),
+  place: json<AssistantPlace>().notNull(),
+  command: json<unknown>().notNull(),
+  state: text().$type<AssistantProposalState>().notNull(),
+  answeredAt: text(),
+  reason: text(),
 });
 
 export const skills = sqliteTable('skills', {

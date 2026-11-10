@@ -55,6 +55,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   settings as they apply and answers `{ok, account, message, missing}`), and `trackers.preview`
   (`{backlogItemId, service, projectId?}`) and `trackers.publish` (`{backlogItemId, service,
 projectId?, title?, labels?}`). Error codes are `RpcErrorCode`.
+  The same port answers plain HTTP on one path, `/assistant/mcp`, for the assistant's tools
+  (see "Assistant"); every other HTTP request gets 426. That path has a token of its own.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
   topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
   touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
@@ -77,6 +79,12 @@ projectId?, title?, labels?}`). Error codes are `RpcErrorCode`.
   server issues (`provider.events`, `providerInstance.recordTest`, `skills.sync`, the workflow
   runner's step outcomes) are `InternalCommand`s: they go
   through the same engine but `dispatch` over RPC does not accept them.
+  A command also has an origin, `user` or `assistant`. It is an argument of `Engine.dispatch`
+  that defaults to `user`, not a field of the command, so nothing a client sends can claim one:
+  everything over the WebSocket is the user's, and only the assistant's tools dispatch as the
+  assistant. `decideInSteps` (`core/assistant.ts`) decides a command in steps inside the one
+  transaction; each step's events are stored and projected before the next step decides. A
+  user's command is one step, as before. See "Assistant" for what the steps are for.
 - **Hooks.** `startServer({hooks})` takes provider adapter factories per kind (`ProviderAdapter`
   in contracts, created with the instance and a `ProviderAdapterContext` that resolves the
   instance env with its secrets and reads `providers.testTimeoutMs` and
@@ -187,6 +195,13 @@ ticket_reads     id ('run:<runId>'), projectId, runId, host ('jira'), hostName, 
 page_reads       id ('run:<runId>'), projectId, runId, host ('confluence'), hostName,
                  pages(json: PageLink[]), fetchedAt?, error(json: HostError)?
                  -- the Confluence pages a run's texts link to, with the pages as last read
+assistant_changes id (the command's id), at, commandType, what, from?, to?, place(json: {label,
+                 path}), target(json: {kind, id}), expect(json)?, inverse(json: Command[]), state
+                 ('applied'|'undone'), undoneAt?   -- what the assistant changed, with the record
+                 Undo needs
+assistant_proposals id (the command's id), at, commandType, title, lines(json: {what, from, to}[]),
+                 place(json), command(json: Command), state ('pending'|'accepted'|'declined'),
+                 answeredAt?, reason?   -- commands of the assistant that wait for the user's yes
 settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
 events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
@@ -1008,6 +1023,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - diff: `diff.maxFileBytes`, `diff.maxFiles` (the "Changes" page, see "Run base and changes")
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
+- assistant: `assistant.providerInstanceId`, `assistant.model`, `assistant.effort`,
+  `assistant.secretPatterns` (see "Assistant")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -1506,6 +1523,106 @@ for as the reason). A unit of a stale plan, or of a plan whose spec is stale, is
 waits, and the reason names the file and both revisions. A closed pull request that was not
 merged counts for nothing. With `source: issues` the dependencies are in the tracker, so a unit
 without a pull request and without a `blocked:` note stays `unknown` and says why.
+
+## Assistant
+
+Behavior lives in `intents/2026-11-app-assistant/spec.md`. The assistant is a chat whose agent
+can only use wow's own tools. This section covers the server side of those tools; the thread
+and the view come with their own units.
+
+**One MCP server on the wow port.** `apps/server/src/assistant/mcp.ts` answers
+`POST http://127.0.0.1:<port>/assistant/mcp` with MCP's Streamable HTTP transport, without
+sessions and in plain JSON, through the official `@modelcontextprotocol/sdk` (its `Server` and
+`StreamableHTTPServerTransport`; a new pair per request, which is what the SDK asks of a server
+without sessions). The package is 4.9 MB unpacked and was already installed, because the
+Claude Agent SDK depends on it; the desktop app's server bundle grows by about 0.7 MB, from
+3.8 MB to 4.5 MB. A request must carry `Authorization: Bearer <token>`. The token is made at
+every server start, is not the WebSocket token, is never written to `server.json` and is checked
+before anything of the request is read; without it every method gets 401. The assistant's
+token does not open the WebSocket either. `RunningServer.assistant` (`{url, token, tools}`) is
+what a provider adapter is handed for the assistant's turn.
+
+**Tools** (`assistant/tools.ts`, `AssistantTools`: `list()` and `call(name, args)`). There are
+two kinds and nothing else.
+
+- Read tools are the readers in `assistant/readers.ts`: `read_settings`, `read_projects`,
+  `read_providers`, `read_workflows`, `read_templates`, `read_skills`, `read_calendar`,
+  `read_backlog`, `read_runs`, `read_triggers`, `read_notifications`, `read_connections` and
+  `test_connection` (the same sign-in test as `trackers.test`). Each reader builds its answer
+  field by field. None returns a thread's items, a step's final message, a file's content, a
+  card's notes or more of a meeting than its time and title. A secret setting and a secret
+  environment variable say `set` or `not set`, decided from the names in the secret store; no
+  reader ever asks the store for a value. A plain environment variable says `not shown`.
+- Change tools (`changeTools`) each name one command type of `Command`. The tool's input is
+  that command's own schema without `type`, without the id of the thing it makes (the tool
+  makes one up, as a view does) and without fields the assistant never fills in (`stopRun`).
+  The tool builds the command, runs the same folder check as `dispatch` over RPC, and
+  dispatches it with the origin `assistant`. It has no other way into the store.
+
+Every result passes `hideSecretsDeep` with the patterns of `assistant.secretPatterns` before it
+leaves `call`, so text that looks like a secret arrives as `[hidden]` (spec 18). The log line
+for a call names the tool and how it ended, never what went in or came out.
+
+**The class table** (`assistant/classes.ts`, `commandClasses`). The server, not the model,
+decides what a command of the assistant does. The table names every type of `ServerCommand`
+(the type system and a test both fail when a new command has no entry):
+
+- `ordinary`: applied at once, with a record that can be undone. Settings, projects (create
+  and update), cards, backlog items, workflows without the parts below, following a plan,
+  turning an event trigger off or deleting it.
+- `proposal`: nothing is applied; the command is stored and waits for the user. Starting a
+  run (`workflowRun.start`, `card.runNow`, `planRun.start`), `trigger.create`, turning a
+  trigger on, a workflow whose steps gain or change a permission mode, a gate condition or
+  rules, lose a gate, or that turns "for units" or "own working copy" on or off, and a setting
+  that then lets the app do more: `scheduler.paused` off, `scheduler.missedPolicy` to `run`,
+  `hosts.polling`, `triggers.eventsEnabled` or `viewer.htmlScripts` on. A change to
+  `assistant.secretPatterns` is a proposal too, since that is the assistant's own net.
+- `refused`: never applied, with a sentence for the assistant. The answers at a gate
+  (`workflowRun.continue`, `sendBack`, `stop`; the sentence carries the run's path),
+  `planRun.stop`, a card delete that would stop a run, every thread, approval and question
+  command, provider instances, `project.delete` (it cannot be undone), secret settings, the
+  two restore commands, the assistant's own answer commands and every internal command.
+
+An entry is a word, a refusal, or a function of the command and the projections where the
+class depends on what the command says. No tool exists for a type that is always refused, and
+`AssistantTools` refuses to start with one.
+
+**Deciding as the assistant** (`core/assistant.ts`, `decideInSteps`). For the origin
+`assistant` the class comes first. A refused command is rejected with its sentence. An
+ordinary command is decided by the same `decide` the user's command goes through; its events
+are stored, then the thing it changed is read again and an `assistant.changed` event is added
+in the same transaction. A proposal is decided once and the result thrown away, so that a
+command the app would refuse fails now with the app's reason and a command that would change
+nothing asks no question; then only `assistant.proposed` is stored. A command the app refuses
+is a `CommandRejected` either way, and the tool hands its message to the assistant (spec 12).
+
+**Changes and undo** (`assistant/changes.ts`). A change row (`AssistantChange`, topic
+`assistantChanges`, in the order made) holds what the conversation shows (`what`, `from`,
+`to`, `place` with the path the web app opens) and the server's own record: `target` (the
+setting, project, card, backlog item, workflow, plan or trigger), `inverse` (the commands that
+take the change back, built from the target as it was before and checked against `Command`
+when the change is made) and `expect` (the fields the change left behind, or null when it
+removed the thing). `assistant.undo {changeId}` compares the target as it is now with
+`expect`; if a field differs the undo is refused and says which (spec 8). Otherwise each
+inverse command is decided as the user's, one step each, and `assistant.changeUndone` marks
+the row. Undo is recorded when the change is made and is never a snapshot of anything else.
+The shown texts go through the secret net; `inverse` and `expect` keep the real values,
+because undo needs them, and are not part of what a tool returns.
+
+**Proposals.** A proposal row (`AssistantProposal`, topic `assistantProposals`) holds a title
+("Start Delivery in Tea"), one line per thing that would change, the place, and the command
+as the assistant sent it. `assistant.proposal.accept {proposalId}` decides that command as
+the user's and marks the row accepted in the same transaction; if the app refuses it now, the
+accept is rejected with the reason and the proposal stays open. `assistant.proposal.decline
+{proposalId, reason?}` marks it declined and keeps the reason. The three answer commands
+(`accept`, `decline`, `undo`) are in the table as refused, so they only work with the user's
+origin.
+
+Tests: `apps/server/src/assistant/assistant.test.ts` starts a whole server and has a case per
+line of the unit's contract. It stores a marked value in the secret store, calls every read
+tool, and searches every result, stored event, command receipt and log line for it; it does
+the same for a marked thread message and a marked file. One case speaks MCP to the endpoint
+with the SDK's own client.
 
 ## Chat view
 

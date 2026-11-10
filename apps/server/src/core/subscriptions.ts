@@ -1,5 +1,5 @@
 import { subscriptionTopics, type SubscribeParams, type SubscriptionTopic } from '@wow/contracts';
-import { asc, desc, eq } from 'drizzle-orm';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
@@ -77,6 +77,19 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
         return db.select().from(t.ticketReads).orderBy(asc(t.ticketReads.id)).all();
       case 'pageReads':
         return db.select().from(t.pageReads).orderBy(asc(t.pageReads.id)).all();
+      case 'assistantChanges':
+        // In the order they were made (spec 13): the insertion order of the table.
+        return db
+          .select()
+          .from(t.assistantChanges)
+          .orderBy(sql`rowid`)
+          .all();
+      case 'assistantProposals':
+        return db
+          .select()
+          .from(t.assistantProposals)
+          .orderBy(sql`rowid`)
+          .all();
       case 'settings':
         return db
           .select()

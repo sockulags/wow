@@ -1,6 +1,9 @@
 import {
   SecretRef,
   type Approval,
+  type AssistantChange,
+  type AssistantProposal,
+  type CommandOrigin,
   type CalendarItem,
   type ChangeRequest,
   type HostRead,
@@ -94,6 +97,8 @@ export interface ReadModel {
   triggerEventSeen(triggerId: string, eventId: string): boolean;
   // True while a run started for this backlog item is running or waiting at a gate.
   backlogItemHasLiveRun(id: string): boolean;
+  assistantChange(id: string): AssistantChange | undefined;
+  assistantProposal(id: string): AssistantProposal | undefined;
 }
 
 export interface DecideContext {
@@ -101,7 +106,15 @@ export interface DecideContext {
   readonly registry: Readonly<Record<string, SettingDefinition>>;
   // wow's own folder (`WOW_HOME`), where a relative `workspaces.root` is resolved.
   readonly home?: string | undefined;
+  // Who sent the command; absent means the user. `decide` itself does not look at it: what the
+  // assistant may send is settled in `stagesOf` (core/assistant.ts) before a command gets here.
+  readonly origin?: CommandOrigin | undefined;
 }
+
+type AssistantCommand = Extract<ServerCommand, { type: `assistant.${string}` }>;
+
+export const isAssistantCommand = (command: ServerCommand): command is AssistantCommand =>
+  command.type.startsWith('assistant.');
 
 export class CommandRejected extends Error {
   constructor(
@@ -130,6 +143,10 @@ export function decide(
   if (command.type === 'tickets.sync') return decideTickets(command, read);
   if (command.type === 'pages.sync') return decidePages(command, read);
   if (isPlanRunCommand(command)) return decidePlanRun(command, read, context);
+  if (isAssistantCommand(command)) {
+    // They apply other commands step by step, each on what the one before left behind.
+    throw new Error(`${command.type} is decided in stages; dispatch it through the engine`);
+  }
   switch (command.type) {
     case 'setting.set': {
       const definition = settingDefinition(command.key, context);

@@ -12,6 +12,7 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@wow/agent-os": "workspace:*",
     "@wow/contracts": "workspace:*",
     "@wow/outlook-bridge": "workspace:*",

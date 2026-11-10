@@ -1,5 +1,6 @@
 import {
   settingsRegistry,
+  type CommandOrigin,
   type DispatchResult,
   type DomainEvent,
   type ServerCommand,
@@ -9,7 +10,8 @@ import {
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/database.js';
 import { commandReceipts, events } from '../db/schema.js';
-import { CommandRejected, decide } from './orchestrator.js';
+import { decideInSteps } from './assistant.js';
+import { CommandRejected } from './orchestrator.js';
 import { project, readModel } from './projector.js';
 
 export interface StoredEvent {
@@ -72,8 +74,15 @@ export class Engine {
     return () => this.#listeners.delete(listener);
   }
 
-  dispatch(commandId: string, command: ServerCommand): DispatchResult {
-    const print = fingerprint(command);
+  // `origin` says who sent the command. Every caller is the user unless it says otherwise; only
+  // the assistant's tools do.
+  dispatch(
+    commandId: string,
+    command: ServerCommand,
+    origin: CommandOrigin = 'user',
+  ): DispatchResult {
+    // The user's commands keep the fingerprint they always had.
+    const print = fingerprint(origin === 'user' ? command : { origin, command });
     const outcome = this.#db.transaction((tx) => {
       const receipt = tx
         .select()
@@ -91,21 +100,25 @@ export class Engine {
       }
 
       const at = this.#clock().toISOString();
-      const decided = decide(command, readModel(tx), {
+      const steps = decideInSteps(commandId, command, readModel(tx), {
         now: at,
         registry: this.#registry,
         home: this.#home,
+        origin,
       });
       const stored: StoredEvent[] = [];
       const topics: SubscriptionTopic[] = [];
-      for (const event of decided) {
-        const row = tx
-          .insert(events)
-          .values({ at, kind: event.kind, aggregate: event.aggregate, payload: event.payload })
-          .returning({ seq: events.seq })
-          .get();
-        stored.push({ seq: row.seq, at, event });
-        topics.push(...project(tx, event));
+      // Each step decides on the projections as the steps before it left them.
+      for (const decided of steps) {
+        for (const event of decided) {
+          const row = tx
+            .insert(events)
+            .values({ at, kind: event.kind, aggregate: event.aggregate, payload: event.payload })
+            .returning({ seq: events.seq })
+            .get();
+          stored.push({ seq: row.seq, at, event });
+          topics.push(...project(tx, event));
+        }
       }
       const seqs = stored.map((event) => event.seq);
       tx.insert(commandReceipts)

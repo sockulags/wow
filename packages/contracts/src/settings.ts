@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SecretPattern, defaultSecretPatterns } from './assistant.js';
 import {
   alwaysStopSkillDefaults,
   WorkflowTemplate,
@@ -26,6 +27,7 @@ export const SettingGroup = z.enum([
   'viewer',
   'diff',
   'workspaces',
+  'assistant',
   'appearance',
   'keybindings',
   'desktop',
@@ -33,6 +35,30 @@ export const SettingGroup = z.enum([
   'advanced',
 ]);
 export type SettingGroup = z.infer<typeof SettingGroup>;
+
+// The name of each group's page under Settings.
+export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
+  providers: 'Providers',
+  chat: 'Chat',
+  calendar: 'Calendar',
+  outlook: 'Outlook',
+  scheduler: 'Scheduler',
+  workflows: 'Workflows',
+  skills: 'Skills',
+  plans: 'Plans',
+  trackers: 'Trackers',
+  hosts: 'Hosts',
+  triggers: 'Event triggers',
+  viewer: 'Viewer',
+  diff: 'Changes',
+  workspaces: 'Working copies',
+  assistant: 'Assistant',
+  appearance: 'Appearance',
+  keybindings: 'Keybindings',
+  desktop: 'Desktop',
+  updates: 'Updates',
+  advanced: 'Advanced',
+};
 
 // Where a stored value applies: 'global', 'project:<id>' or 'provider:<id>'. Reads resolve
 // provider over project over global over the registry default.
@@ -1141,6 +1167,40 @@ export const settingsRegistry = {
     default: 120_000,
     scope: 'global',
     unit: 'ms',
+  }),
+  'assistant.providerInstanceId': defineSetting({
+    schema: z.string(),
+    group: 'assistant',
+    label: 'Provider',
+    description:
+      'The provider instance that runs the assistant, by its id. Empty: the first connected instance.',
+    default: '',
+    scope: 'global',
+  }),
+  'assistant.model': defineSetting({
+    schema: z.string(),
+    group: 'assistant',
+    label: 'Model',
+    description: "The model the assistant uses. Empty: the provider instance's default model.",
+    default: '',
+    scope: 'global',
+  }),
+  'assistant.effort': defineSetting({
+    schema: z.string(),
+    group: 'assistant',
+    label: 'Effort',
+    description: "How hard the assistant thinks. Empty: the provider instance's default effort.",
+    default: '',
+    scope: 'global',
+  }),
+  'assistant.secretPatterns': defineSetting({
+    schema: z.array(SecretPattern),
+    group: 'assistant',
+    label: 'Text that looks like a secret',
+    description:
+      'Regular expressions, matched without regard to case. Text that matches one is replaced by "[hidden]" before anything the assistant reads or wrote is stored. This is a net for mistakes: tokens and passwords belong in their own fields and never in the conversation.',
+    default: [...defaultSecretPatterns],
+    scope: 'global',
   }),
   'appearance.theme': defineSetting({
     schema: Theme,

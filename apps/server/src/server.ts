@@ -1,14 +1,17 @@
-import type { ServerMessage } from '@wow/contracts';
+import { settingsRegistry, type ServerMessage } from '@wow/contracts';
 import { discoverClaudeFolders } from '@wow/provider-claude';
 import { discoverCodexFolders } from '@wow/provider-codex';
 import { SecretStore, defaultProtector, type Protector } from '@wow/secrets';
 import type { WatchFactory } from '@wow/skills';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { assistantMcpPath, createMcpHandler, type AssistantEndpoint } from './assistant/mcp.js';
+import { AssistantTools } from './assistant/tools.js';
 import { Engine } from './core/engine.js';
 import { Subscriptions } from './core/subscriptions.js';
 import { openDatabase, type Database } from './db/database.js';
@@ -111,6 +114,8 @@ export interface RunningServer {
   readonly scheduler: Scheduler;
   readonly trackers: TrackerService;
   readonly hosts: HostPoller;
+  // Where the assistant's tools are reached and the token that opens them (see "Assistant").
+  readonly assistant: AssistantEndpoint;
   readonly logger: Logger;
   stop(): Promise<void>;
 }
@@ -280,9 +285,33 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
 
   const token = randomBytes(32).toString('base64url');
   const expected = Buffer.from(token);
+  // A token of its own: what opens the assistant's tools does not open the app's connection,
+  // and the other way round.
+  const assistantToken = randomBytes(32).toString('base64url');
+  const assistantTools = new AssistantTools({
+    db: database.db,
+    engine,
+    settings,
+    secrets,
+    trackers,
+    logger,
+    clock: options.clock ?? (() => new Date()),
+    registry: settingsRegistry,
+  });
+  const mcp = createMcpHandler({ tools: assistantTools, token: assistantToken, version, logger });
+  // One port for both: the WebSocket upgrade for the app, and plain HTTP for the assistant's
+  // tools only.
+  const http = createServer((request, response) => {
+    const { pathname } = new URL(request.url ?? '/', 'http://127.0.0.1');
+    if (pathname === assistantMcpPath) {
+      void mcp(request, response);
+      return;
+    }
+    response.writeHead(426, { 'content-type': 'text/plain' });
+    response.end('Upgrade Required');
+  });
   const wss = new WebSocketServer({
-    host: '127.0.0.1',
-    port: options.port ?? settings.get('advanced.port'),
+    server: http,
     verifyClient: ({ req }, done) => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       if (tokensMatch(expected, url.searchParams.get('token'))) done(true);
@@ -291,8 +320,9 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   });
   try {
     await new Promise<void>((resolve, reject) => {
-      wss.once('listening', resolve);
-      wss.once('error', reject);
+      http.once('listening', resolve);
+      http.once('error', reject);
+      http.listen(options.port ?? settings.get('advanced.port'), '127.0.0.1');
     });
   } catch (error) {
     await workflows.stop();
@@ -301,7 +331,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     database.close();
     throw error;
   }
-  const address = wss.address();
+  const address = http.address();
   if (typeof address !== 'object' || address === null)
     throw new Error('WebSocket server has no TCP address');
   const port = address.port;
@@ -388,6 +418,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     await stopServices();
     await providerService.stop();
     wss.close();
+    http.close();
     await rm(infoFile, { force: true });
     database.close();
     throw error;
@@ -404,6 +435,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       await trackers.idle();
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
+      http.closeAllConnections();
+      await new Promise<void>((resolve) => http.close(() => resolve()));
       // Leave the file alone if another server instance has replaced it meanwhile.
       const current = await readServerInfo(home).catch(() => undefined);
       if (current?.token === token) await rm(infoFile, { force: true });
@@ -430,6 +463,11 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     scheduler,
     trackers,
     hosts,
+    assistant: {
+      url: `http://127.0.0.1:${port}${assistantMcpPath}`,
+      token: assistantToken,
+      tools: assistantTools,
+    },
     logger,
     stop,
   };

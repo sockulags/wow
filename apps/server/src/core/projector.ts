@@ -11,6 +11,8 @@ import { and, asc, count, desc, eq, inArray, isNull, max } from 'drizzle-orm';
 import type { DbOrTx } from '../db/database.js';
 import {
   approvals,
+  assistantChanges,
+  assistantProposals,
   backlogItems,
   calendarItems,
   changeRequests,
@@ -407,6 +409,26 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       // A transition performed twice tells the user once.
       tx.insert(notifications).values(event.payload).onConflictDoNothing().run();
       return ['notifications'];
+    case 'assistant.changed':
+      tx.insert(assistantChanges).values(event.payload).run();
+      return ['assistantChanges'];
+    case 'assistant.changeUndone':
+      tx.update(assistantChanges)
+        .set({ state: 'undone', undoneAt: event.payload.at })
+        .where(eq(assistantChanges.id, event.payload.changeId))
+        .run();
+      return ['assistantChanges'];
+    case 'assistant.proposed':
+      tx.insert(assistantProposals).values(event.payload).run();
+      return ['assistantProposals'];
+    case 'assistant.proposalAnswered': {
+      const { proposalId, state, reason, at } = event.payload;
+      tx.update(assistantProposals)
+        .set({ state, reason, answeredAt: at })
+        .where(eq(assistantProposals.id, proposalId))
+        .run();
+      return ['assistantProposals'];
+    }
     case 'backlog.created':
       tx.insert(backlogItems).values(event.payload).run();
       return ['backlogItems'];
@@ -570,6 +592,10 @@ export function readModel(tx: DbOrTx): ReadModel {
         .all()
         .some((row) => isLiveRunState(row.state)),
     backlogItem: (id) => tx.select().from(backlogItems).where(eq(backlogItems.id, id)).get(),
+    assistantChange: (id) =>
+      tx.select().from(assistantChanges).where(eq(assistantChanges.id, id)).get(),
+    assistantProposal: (id) =>
+      tx.select().from(assistantProposals).where(eq(assistantProposals.id, id)).get(),
     trigger: (id) => tx.select().from(triggers).where(eq(triggers.id, id)).get(),
     eventTriggers: (projectId) =>
       tx
