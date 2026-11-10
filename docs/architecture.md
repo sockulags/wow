@@ -1037,23 +1037,22 @@ the reference; clearing the field resets the setting and deletes the secret.
 `apps/web/src/backlog`. `/backlog` lists the items (filter by text, state and tag; "Open", the
 default, hides done and dropped) next to `/backlog/$itemId` (title edited in the heading, markdown
 body with Write and Preview through `markdown.tsx`, a thin wrapper over the shared `Markdown`
-renderer (see "Shared pieces"), tags as chips, state; Ctrl+S saves) or `/backlog/new`. The user sets only Idea
-and Dropped (owner decision F-12); Planned, Running and Done show read-only. Delete dispatches at
-once and offers Undo with `backlog.restore`. "Plan on calendar" opens a dialog for workflow,
-project, date, start and end in `calendar.zone`: it suggests `nextFreeSlot` (the first
-`calendar.cardMinutes` gap on a `calendar.snapMinutes` boundary inside `calendar.workHours`,
-around non-cancelled, timed `calendarItems`, up to `calendar.lookaheadDays` ahead), warns about
-overlaps, preselects the workflow of the newest card made from a backlog item, and dispatches
-`backlog.plan`. "Publish to Jira" and "Publish to GitHub" ask `trackers.preview`: an item that
-already has an issue gets "Open <key>"; a Project select (whenever projects exist) shows whose
-trackers apply, marked "From the item's card" or "From the item's run", and when `needsProject`
-it asks for one before anything else ("No project" sends `projectId: null`); a tracker that is
-not set up asks for the missing settings in the dialog (secret ones through `secrets.set`, like
-the settings page), storing sign-in settings (site, auth mode, email, tokens, GitHub API URL)
-globally and the rest for the chosen project, and asks again; otherwise the preview says
-"Publishes to <target> on <host> for <project>", shows the target with its source marker, an
-editable title, the tags to add as labels and the rendered body, and "Publish issue" calls
-`trackers.publish` with the same `projectId`.
+renderer (see "Shared pieces"), tags as chips, state; Ctrl+S saves) or `/backlog/new`. The user sets
+only Idea and Dropped (owner decision F-12); Planned, Running and Done show read-only. Delete
+dispatches at once and offers Undo with `backlog.restore`. "Plan on calendar" opens a dialog for
+workflow, project, date, start and end in `calendar.zone`: it suggests `nextFreeSlot` (the first
+`calendar.cardMinutes` gap on a `calendar.snapMinutes` boundary inside `calendar.workHours`, around
+non-cancelled, timed `calendarItems`, up to `calendar.lookaheadDays` ahead), warns about overlaps,
+preselects the workflow of the newest card made from a backlog item, and dispatches `backlog.plan`.
+"Publish to Jira" and "Publish to GitHub" ask `trackers.preview`: an item that already has an issue
+gets "Open <key>"; a Project select (whenever projects exist) shows whose trackers apply, marked
+"From the item's card" or "From the item's run", and when `needsProject` it asks for one before
+anything else ("No project" sends `projectId: null`); a tracker that is not set up asks for the
+missing settings in the dialog (secret ones through `secrets.set`, like the settings page), storing
+sign-in settings (site, auth mode, email, tokens, GitHub API URL) globally and the rest for the
+chosen project, and asks again; otherwise the preview says "Publishes to <target> on <host> for
+<project>", shows the target with its source marker, an editable title, the tags to add as labels
+and the rendered body, and "Publish issue" calls `trackers.publish` with the same `projectId`.
 
 Settings → Projects → Trackers (`projects/project-trackers.tsx`) renders `trackers.project` and
 asks again on every `settings` push. GitHub owner, repository and API URL and Jira site, project
@@ -1109,12 +1108,20 @@ Shared pieces in `apps/web/src/components` (views compose them; none restyles `c
   shows as its text, and a picture shows as a link so nothing is fetched. Headings render two
   levels down (`#` is an `h3`). Fenced code goes to `CodeBlock`. With `streaming`, `splitUnfinished`
   holds back a fence without its closing line, or a table at the very end of the text, and shows
-  it as plain text until it is complete.
+  it as plain text until it is complete, also inside a list item or a quote.
 - `mermaid-diagram.tsx` (`MermaidDiagram`) draws a `mermaid` fence in place with a "Source"
   switch. `mermaid.ts` loads the library on first use, runs it at its `strict` security level in
   the app's theme, and returns the SVG or a one-line reason; while drawing and on failure the
-  source shows as code, with the reason below it on failure. The palette command "Toggle diagram
-  source" switches every diagram at once (`diagramView`); it is view state and is not persisted.
+  source shows as code, with the reason below it on failure. The strict level stops scripts but
+  not fetches, and a message must not make the app fetch anything, so `mermaid.ts` adds three
+  things: labels are drawn as text and a diagram's own directives cannot set CSS, theme
+  variables or fonts (`htmlLabels: false` and the `secure` list); a flowchart with an image shape
+  is refused before drawing, because the library fetches the image while it draws; and
+  `scrubSvg` removes pictures, scripts, event attributes and any CSS or reference that points
+  outside the drawing, and gives links the rule of `safeHref` (a new window for http, https and
+  mailto, no link otherwise). The web app has no content security policy, so this is the only
+  guard. The palette command "Toggle diagram source" switches every diagram at once
+  (`diagramView`); it is view state and is not persisted.
 - `lib/feedback.ts`: `notify.success|error|info|warning` and `offerUndo({message, undo})`.
   Destructive actions delete at once and offer Undo; only irreversible ones (stored secrets, a
   project whose cards and threads lose their link) confirm first.

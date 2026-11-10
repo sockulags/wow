@@ -53,7 +53,9 @@ const clockOffsetMs = Number(process.env['WOW_E2E_CLOCK_OFFSET_SECONDS'] ?? '0')
 
 // Starts the wow server for the chat tests with a scripted mock provider. The prompt picks the
 // scenario: "approve" asks for an approval, "question" asks a question, "wait" streams a little
-// and then waits for stop; "table and a diagram" answers in markdown; anything else streams an answer with reasoning, tasks and usage.
+// and then waits for stop; "table and a diagram" answers in markdown; "reaches out" answers with
+// diagrams that name another host; anything else streams an answer with reasoning, tasks and
+// usage.
 // Approval and question ids carry the thread id, because the answer only carries the id.
 
 const separator = '|';
@@ -116,6 +118,22 @@ const markdownAnswer = [
   '```',
 ].join('\n');
 
+// Invented diagrams that try to make the app fetch from another host: a picture in a label, CSS
+// from a directive, a link, and an image shape.
+const reachingAnswer = [
+  '```mermaid',
+  '%%{init: {"themeCSS": ".node rect{fill:url(https://elsewhere.example.test/css.png)}"}}%%',
+  'flowchart LR',
+  '  Plan["Plan <img src=https://elsewhere.example.test/label.png>"] --> Build',
+  '  click Build href "https://elsewhere.example.test/build"',
+  '```',
+  '',
+  '```mermaid',
+  'flowchart LR',
+  '  Logo@{ img: "https://elsewhere.example.test/shape.png", label: "Logo" } --> Build',
+  '```',
+].join('\n');
+
 function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): ProviderEvent[] {
   const { threadId, prompt } = command;
   const session: ProviderEvent = {
@@ -165,6 +183,9 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   }
   if (/table and a diagram/i.test(prompt)) {
     return [session, ...finish(threadId, markdownAnswer)];
+  }
+  if (/reaches out/i.test(prompt)) {
+    return [session, ...finish(threadId, reachingAnswer)];
   }
   if (/wait/i.test(prompt)) {
     return [session, { type: 'textDelta', threadId, itemId: 'partial', delta: 'Working on it' }];

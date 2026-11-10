@@ -65,7 +65,7 @@ export function MermaidDiagram({ source }: { readonly source: string }) {
           role="img"
           aria-label="Diagram"
           className="wow-diagram overflow-x-auto"
-          // oxlint-disable-next-line react/no-danger -- mermaid's strict level sanitizes its SVG.
+          // oxlint-disable-next-line react/no-danger -- drawDiagram scrubs the SVG (scrubSvg).
           dangerouslySetInnerHTML={{ __html: result.svg }}
         />
       )}

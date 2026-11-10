@@ -147,5 +147,24 @@ describe('a streaming message (review loop spec 3)', () => {
     // The header row alone is still a paragraph; the delimiter row makes it a table.
     expect(splitUnfinished('| a | b |\n| -').pending).toBe('| a | b |\n| -');
     expect(splitUnfinished('Intro\n| a | b |\n|---|---|').pending).toBe('| a | b |\n|---|---|');
+    // Inside a nested list item, under a wide list marker, right after a marker, or in a quote.
+    expect(splitUnfinished('- a\n  - b\n\n    ```mermaid\n    flowchart LR\n      a -->')).toEqual({
+      done: '- a\n  - b\n',
+      pending: '    ```mermaid\n    flowchart LR\n      a -->',
+    });
+    expect(splitUnfinished('10. a\n\n    ```ts\n    const a = 1;').pending).toBe(
+      '    ```ts\n    const a = 1;',
+    );
+    expect(splitUnfinished('- ```mermaid\n  flowchart LR').pending).toBe(
+      '- ```mermaid\n  flowchart LR',
+    );
+    expect(splitUnfinished('> Note\n>\n> ```mermaid\n> flowchart LR\n>   a -->')).toEqual({
+      done: '> Note\n>',
+      pending: '> ```mermaid\n> flowchart LR\n>   a -->',
+    });
+    expect(splitUnfinished('> | a | b |\n> | - | - |').pending).toBe('> | a | b |\n> | - | - |');
+    // Closed in place, they are done.
+    expect(splitUnfinished('- a\n\n    ```ts\n    x\n    ```\n- b').pending).toBe('');
+    expect(splitUnfinished('> ```ts\n> x\n> ```\n> end').pending).toBe('');
   });
 });

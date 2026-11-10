@@ -1,9 +1,13 @@
 import type mermaid from 'mermaid';
 import { createStore } from 'zustand';
+import { safeHref } from './markdown';
 
 // Draws a `mermaid` block (review loop spec 2). The library is large, so it loads on first use
-// in its own chunk. Its strict security level turns off click handlers and HTML labels and
-// sanitizes the SVG it returns.
+// in its own chunk. Its strict security level turns off click handlers and scripts, but it still
+// lets a diagram name pictures, styles and links. A message must not make the app fetch
+// anything, so labels are drawn as text, a diagram cannot set its own CSS or fonts, an image
+// shape is refused before drawing (the library fetches it while it draws), and `scrubSvg`
+// cleans what comes back.
 
 type Mermaid = typeof mermaid;
 
@@ -30,6 +34,94 @@ function oneLine(error: unknown): string {
   return line.trim().replace(/:$/, '') || 'The diagram could not be drawn';
 }
 
+// What the library protects from a diagram's own directives by default, and what lets a diagram
+// bring CSS or turn HTML labels back on.
+const secure = [
+  'secure',
+  'securityLevel',
+  'startOnLoad',
+  'maxTextSize',
+  'suppressErrorRendering',
+  'maxEdges',
+  'themeCSS',
+  'themeVariables',
+  'fontFamily',
+  'altFontFamily',
+  'htmlLabels',
+];
+
+const fetching = new Set([
+  'img',
+  'image',
+  'feimage',
+  'script',
+  'iframe',
+  'object',
+  'embed',
+  'video',
+  'audio',
+  'link',
+]);
+const linkAttributes = ['href', 'xlink:href', 'src'];
+// CSS that loads something. A `url(#id)` points inside the drawing (markers, gradients).
+const loadingCss = /@import|image-set\(|url\((?!\s*['"]?\s*#)/i;
+// CSS escapes can spell `url` without the letters, and the library's own styles have none.
+const unescaped = (css: string) => css.replaceAll('\\', '');
+
+function scrubStyle(css: string): string {
+  return unescaped(css)
+    .replace(/@import[^;]*;?/gi, '')
+    .replace(/(?:[\w-]*image-set|url)\((?!\s*['"]?\s*#)[^)]*\)/gi, 'none');
+}
+
+// Removes everything from a drawn diagram that would be fetched when it is shown, and makes its
+// links follow the link rule of the markdown renderer: http, https and mailto open outside the
+// app, anything else is not a link. Returns undefined when the text holds no drawing.
+export function scrubSvg(svg: string): string | undefined {
+  // The same parser the page uses to show it, in a document that loads nothing.
+  const drawing = new DOMParser().parseFromString(svg, 'text/html').querySelector('svg');
+  if (!drawing) return undefined;
+  for (const element of [drawing, ...drawing.querySelectorAll('*')]) {
+    const tag = element.localName.toLowerCase();
+    if (fetching.has(tag)) {
+      element.remove();
+      continue;
+    }
+    if (tag === 'style') {
+      element.textContent = scrubStyle(element.textContent ?? '');
+      continue;
+    }
+    for (const { name, value } of Array.from(element.attributes)) {
+      if (name.toLowerCase().startsWith('on') || loadingCss.test(unescaped(value))) {
+        element.removeAttribute(name);
+      }
+    }
+    const target = linkAttributes
+      .map((name) => element.getAttribute(name))
+      .find((value) => value !== null);
+    if (target === undefined || target === null || target.trim().startsWith('#')) continue;
+    for (const name of linkAttributes) element.removeAttribute(name);
+    const safe = tag === 'a' ? safeHref(target) : undefined;
+    if (safe !== undefined) {
+      element.setAttribute('href', safe);
+      element.setAttribute('target', '_blank');
+      element.setAttribute('rel', 'noreferrer');
+    }
+  }
+  return drawing.outerHTML;
+}
+
+const hasImage = (vertex: unknown): boolean =>
+  typeof vertex === 'object' && vertex !== null && 'img' in vertex && Boolean(vertex.img);
+
+// A flowchart's image shape, read from the parsed diagram and not from its text, because the
+// shape data is YAML and can spell the same key and address in many ways.
+function hasImageShape(db: object): boolean {
+  if (!('getVertices' in db) || typeof db.getVertices !== 'function') return false;
+  const vertices: unknown = db.getVertices();
+  return vertices instanceof Map && [...vertices.values()].some(hasImage);
+}
+
 export async function drawDiagram(source: string, dark: boolean): Promise<Drawing> {
   const id = `wow-diagram-${(drawn += 1)}`;
   try {
@@ -38,10 +130,15 @@ export async function drawDiagram(source: string, dark: boolean): Promise<Drawin
       startOnLoad: false,
       securityLevel: 'strict',
       theme: dark ? 'dark' : 'default',
+      htmlLabels: false,
+      flowchart: { htmlLabels: false },
+      secure,
     });
-    await library.parse(source);
+    const diagram = await library.mermaidAPI.getDiagramFromText(source);
+    if (hasImageShape(diagram.db)) return { reason: 'Image shapes are not drawn' };
     const { svg } = await library.render(id, source);
-    return { svg };
+    const scrubbed = scrubSvg(svg);
+    return scrubbed === undefined ? { reason: oneLine('') } : { svg: scrubbed };
   } catch (error) {
     return { reason: oneLine(error) };
   } finally {

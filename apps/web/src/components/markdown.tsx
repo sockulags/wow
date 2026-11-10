@@ -14,7 +14,12 @@ const MarkdownBody = lazy(() => import('./markdown-body'));
 export const safeHref = (href: string | undefined): string | undefined =>
   href !== undefined && /^(https?:|mailto:)/i.test(href.trim()) ? href.trim() : undefined;
 
-const fenceOpening = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const fenceOpening = /^(`{3,}|~{3,})(.*)$/;
+const fenceClosing = /^(`{3,}|~{3,})\s*$/;
+// A fence or table can sit inside a list item or a quote. Its lines then start with that
+// container's indentation and `>` marks, and its first line may follow the list marker.
+const inContainer = (line: string) => line.replace(/^[\s>]+/, '');
+const afterMarker = (line: string) => inContainer(line).replace(/^(?:[-*+]|\d{1,9}[.)])\s+/, '');
 const delimiterRow = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 
 // While a message streams, the part that is still being written (a fence without its closing
@@ -26,24 +31,24 @@ export function splitUnfinished(text: string): { readonly done: string; readonly
   let runStart = 0;
   for (const [index, line] of lines.entries()) {
     if (fence) {
-      const closing = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line)?.[1];
+      const closing = fenceClosing.exec(inContainer(line))?.[1];
       if (closing?.startsWith(fence.marker)) {
         fence = undefined;
         runStart = index + 1;
       }
       continue;
     }
-    const opening = fenceOpening.exec(line);
+    const opening = fenceOpening.exec(afterMarker(line));
     if (opening?.[1] && !(opening[1].startsWith('`') && (opening[2] ?? '').includes('`'))) {
       fence = { marker: opening[1], start: index };
-    } else if (line.trim() === '') {
+    } else if (inContainer(line) === '') {
       runStart = index + 1;
     }
   }
   let cut = fence?.start ?? lines.length;
   if (!fence) {
     for (let index = runStart; index + 1 < lines.length; index += 1) {
-      const next = lines[index + 1] ?? '';
+      const next = inContainer(lines[index + 1] ?? '');
       if ((lines[index] ?? '').includes('|') && next.includes('-') && delimiterRow.test(next)) {
         cut = index;
         break;

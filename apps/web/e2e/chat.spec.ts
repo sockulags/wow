@@ -99,6 +99,33 @@ test.describe('chat', () => {
     await expect(source).toHaveAttribute('aria-pressed', 'true');
   });
 
+  test('a diagram fetches nothing from another host', async ({ page }) => {
+    const asked: string[] = [];
+    await page.route('https://elsewhere.example.test/**', (route) => {
+      asked.push(new URL(route.request().url()).pathname);
+      return route.abort();
+    });
+    await startThread(page, 'Draw a diagram that reaches out');
+    const answer = conversation(page).getByTestId('item-assistant_text');
+    const diagram = answer.getByRole('img', { name: 'Diagram' });
+    await expect(diagram.locator('svg')).toBeVisible();
+    await expect(diagram).toContainText('Build');
+    await expect(diagram.locator('img, image')).toHaveCount(0);
+    // The image shape is fetched by the library while it draws, so it is not drawn at all.
+    await expect(answer.getByRole('note')).toHaveText(
+      'Diagram not drawn: Image shapes are not drawn',
+    );
+
+    // A diagram's link follows the link rule: it opens outside the app.
+    const link = diagram.locator('a');
+    await expect(link).toHaveAttribute('href', 'https://elsewhere.example.test/build');
+    await expect(link).toHaveAttribute('target', '_blank');
+
+    // Requests reach the route in order, so one made now comes after any the diagrams made.
+    await page.evaluate(() => fetch('https://elsewhere.example.test/last').catch(() => undefined));
+    expect(asked).toEqual(['/last']);
+  });
+
   test('marks a thread done, reopens it, and a new message reopens it too', async ({ page }) => {
     await startThread(page, 'Wrap this up');
     await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
