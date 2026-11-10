@@ -37,6 +37,17 @@ const diagram = (page: Page) =>
 const arrowWords = (page: Page) => diagram(page).locator('.edgeLabel').filter({ hasText: /\S/ });
 const boxWords = (page: Page) => diagram(page).locator('.node');
 
+// A box's words as the diagram draws them. A label that does not fit on one line is drawn one
+// word per line, and then the text has no space between them; which labels fit depends on the
+// machine's fonts.
+const drawn = (label: string) =>
+  new RegExp(
+    `^${label
+      .split(' ')
+      .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`))
+      .join(String.raw`\s*`)}$`,
+  );
+
 test.describe('workflow rules', () => {
   test('build a workflow with a loop', async ({ page }) => {
     await page.goto('/workflows/new?template=initiative');
@@ -45,13 +56,13 @@ test.describe('workflow rules', () => {
     // Without rules the diagram is a straight line: the steps in list order between Start and
     // End, and the three gates of the template (spec 15, 17).
     await expect(boxWords(page)).toHaveText([
-      'Start',
-      '1. capture-intent',
-      '2. plan-work',
-      '3. shape-work',
-      '4. deliver-work',
-      '5. check-work',
-      'End',
+      drawn('Start'),
+      drawn('1. capture-intent'),
+      drawn('2. plan-work'),
+      drawn('3. shape-work'),
+      drawn('4. deliver-work'),
+      drawn('5. check-work'),
+      drawn('End'),
     ]);
     await expect(arrowWords(page)).toHaveText(['gate', 'gate', 'gate']);
 

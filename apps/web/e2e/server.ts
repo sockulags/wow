@@ -791,6 +791,9 @@ const control = createServer((request, response) => {
   }
   response.end();
 });
+// A test's requests can be more than Node's five idle seconds apart; a connection closed in
+// between is reused by the test's fetch and fails with a reset.
+control.keepAliveTimeout = 0;
 await new Promise<void>((resolve) => control.listen(outlookControlPort, '127.0.0.1', resolve));
 
 server.engine.dispatch('seed-instance', {
@@ -1559,6 +1562,7 @@ const trackers = createServer((request, response) => {
   });
   return undefined;
 });
+trackers.keepAliveTimeout = 0;
 await new Promise<void>((resolve) => trackers.listen(trackerPort, '127.0.0.1', resolve));
 // The same port for datagrams: a STUN request from the viewer's HTML page would arrive here.
 const datagrams = createSocket('udp4');

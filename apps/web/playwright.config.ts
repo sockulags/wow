@@ -34,6 +34,9 @@ export default defineConfig({
   testDir: './e2e',
   forbidOnly: !!process.env['CI'],
   reporter: 'list',
+  // Most cases wait for a run to start, a git worktree to be made or a host to be read. On the
+  // Windows runner those take longer than the five seconds an assertion waits by default.
+  expect: { timeout: 15_000 },
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     trace: 'retain-on-failure',
