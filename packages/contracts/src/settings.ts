@@ -1320,6 +1320,21 @@ export const settingsRegistry = {
     "Narrow the open run's Changes tab to the files the step under review changed, and back (while the tab is open).",
     'O',
   ),
+  'keybindings.ruleAdd': keybinding(
+    'Rule: add',
+    'Add a rule under "After this step" to the step being edited in the workflow builder.',
+    'Alt+R',
+  ),
+  'keybindings.ruleMoveUp': keybinding(
+    'Rule: move up',
+    'Move the rule that has the keyboard one place up in its step, so it is tried earlier (in the workflow builder).',
+    'Alt+ArrowUp',
+  ),
+  'keybindings.ruleMoveDown': keybinding(
+    'Rule: move down',
+    'Move the rule that has the keyboard one place down in its step, so it is tried later (in the workflow builder).',
+    'Alt+ArrowDown',
+  ),
   'keybindings.stopRun': keybinding(
     'Stop run',
     'Stop the open workflow run. Empty by default, because a stopped run cannot be continued.',

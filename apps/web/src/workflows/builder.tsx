@@ -1,4 +1,12 @@
-import type { GatePart, ProviderInstance, Skill, Workflow, WorkflowTemplate } from '@wow/contracts';
+import type {
+  GatePart,
+  ProviderInstance,
+  RuleProblem,
+  Skill,
+  StepRule,
+  Workflow,
+  WorkflowTemplate,
+} from '@wow/contracts';
 import { Link, useNavigate } from '@tanstack/react-router';
 import {
   ArrowDownIcon,
@@ -15,7 +23,7 @@ import {
   SearchXIcon,
   Trash2Icon,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
 import { errorMessage, useDispatch, useModels, useTopic } from '@/chat/data';
 import { ThreadSettings } from '@/chat/thread-settings';
@@ -24,6 +32,7 @@ import { ChoiceSelect } from '@/components/choice-select';
 import { Combobox } from '@/components/combobox';
 import { FormField } from '@/components/form-field';
 import { IconButton, WithTooltip } from '@/components/hint';
+import { MermaidDiagram } from '@/components/mermaid-diagram';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -62,6 +71,9 @@ import {
   type DraftStep,
   type WorkflowDraft,
 } from './model';
+import { diagramText, pathsDiagram } from './paths-diagram';
+import { draftRuleProblems, rulesStore, withRules } from './rules';
+import { StepRules } from './step-rules';
 
 // New steps run on the first instance whose test passed, else the first (audit C-03). A
 // workflow outlives any one chat, so the last thread's instance is not a good guess here.
@@ -257,10 +269,13 @@ function GateConditionEditor({
 interface StepEditorProps {
   readonly step: DraftStep;
   readonly index: number;
-  readonly count: number;
+  // Every step of the draft, for the targets of this step's rules.
+  readonly steps: readonly DraftStep[];
   readonly instances: readonly ProviderInstance[];
   readonly skills: readonly Skill[];
   readonly problems: readonly DraftProblem[];
+  // What the server would refuse about this step's rules.
+  readonly ruleProblems: readonly RuleProblem[];
   readonly dragging: boolean;
   readonly expanded: boolean;
   readonly runProject: { readonly id: string; readonly name: string } | undefined;
@@ -276,10 +291,11 @@ interface StepEditorProps {
 function StepEditor({
   step,
   index,
-  count,
+  steps,
   instances,
   skills,
   problems,
+  ruleProblems,
   dragging,
   expanded,
   runProject,
@@ -304,17 +320,33 @@ function StepEditor({
   const globs = parseGlobs(step.artifactsText);
   const matches = useArtifactMatches(globs, runProject?.id);
   const label = `Step ${index + 1}`;
+  const count = steps.length;
+  const ruleCount = step.rules?.length ?? 0;
   const summary = [
     instance ? providerLabel(instance, instances) : 'No provider',
     step.model,
     globs.length > 0 ? `${globs.length} artifact${globs.length === 1 ? '' : 's'}` : undefined,
+    ruleCount > 0 ? `${ruleCount} rule${ruleCount === 1 ? '' : 's'}` : undefined,
   ]
     .filter(Boolean)
     .join(' · ');
+  // An open step marks the rule itself; a closed one says it on its line.
+  const shownProblems = expanded
+    ? problems
+    : [
+        ...problems,
+        ...ruleProblems.map(({ rule, reason }) => ({ message: `Rule ${rule + 1}: ${reason}.` })),
+      ];
   return (
     <li
       aria-label={label}
       data-testid="workflow-step"
+      onFocus={() => {
+        // The step being edited is the one the rule keys and palette commands add to.
+        if (rulesStore.getState().at?.stepId !== step.id) {
+          rulesStore.setState({ at: { stepId: step.id, rule: undefined } });
+        }
+      }}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
@@ -322,7 +354,9 @@ function StepEditor({
       }}
       className={cn(
         'flex flex-col rounded-md border bg-card',
-        problems.some((problem) => !problem.warning) ? 'border-destructive/60' : 'border-border',
+        problems.some((problem) => !problem.warning) || ruleProblems.length > 0
+          ? 'border-destructive/60'
+          : 'border-border',
         dragging && 'opacity-50',
       )}
     >
@@ -472,11 +506,12 @@ function StepEditor({
               />
             </FormField>
           </div>
+          <StepRules step={step} index={index} steps={steps} problems={ruleProblems} />
         </div>
       )}
-      {problems.length > 0 && (
+      {shownProblems.length > 0 && (
         <div className="px-3 pb-2 pl-9">
-          <Problems problems={problems} />
+          <Problems problems={shownProblems} />
         </div>
       )}
     </li>
@@ -606,6 +641,25 @@ function Builder({
         index === stepIndex ? toggleGatePart(step, part) : step,
       ),
     }));
+  // The rules' buttons, keys and palette commands change the draft through the rules store, and
+  // a step whose rules change opens.
+  const [setRules] = useState(() => (stepId: string, rules: readonly StepRule[]) => {
+    setSaved(false);
+    setDraft((current) => ({
+      ...current,
+      steps: current.steps.map((step) => (step.id === stepId ? withRules(step, rules) : step)),
+    }));
+    setExpanded((current) => (current.has(stepId) ? current : new Set([...current, stepId])));
+  });
+  useEffect(() => {
+    rulesStore.setState({ builder: { steps: draft.steps, setRules } });
+  }, [draft.steps, setRules]);
+  useEffect(
+    () => () => rulesStore.setState({ builder: undefined, at: undefined, focus: undefined }),
+    [],
+  );
+  const ruleProblems = useMemo(() => draftRuleProblems(draft.steps), [draft.steps]);
+  const diagram = useMemo(() => pathsDiagram(draft.steps), [draft.steps]);
   const toggle = (stepId: string) =>
     setExpanded((current) => {
       const next = new Set(current);
@@ -1031,75 +1085,93 @@ function Builder({
             </p>
           )}
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          <ol aria-label="Steps" className="flex flex-col">
-            {draft.steps.map((step, index) => (
-              <StepPosition
-                key={step.id}
-                draft={draft}
-                index={index}
-                alwaysStop={alwaysStop}
-                onToggleGate={() => edit((current) => setGate(current, index))}
-                onTogglePart={toggleCondition}
+        {/* Wide enough, the steps and the diagram scroll side by side, each on its own. */}
+        <div className="@container flex min-h-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto @3xl:flex-row @3xl:overflow-hidden">
+            <div className="min-w-0 shrink-0 px-4 py-3 @3xl:flex-1 @3xl:shrink @3xl:overflow-y-auto">
+              <ol aria-label="Steps" className="flex flex-col">
+                {draft.steps.map((step, index) => (
+                  <StepPosition
+                    key={step.id}
+                    draft={draft}
+                    index={index}
+                    alwaysStop={alwaysStop}
+                    onToggleGate={() => edit((current) => setGate(current, index))}
+                    onTogglePart={toggleCondition}
+                  >
+                    <StepEditor
+                      step={step}
+                      index={index}
+                      steps={draft.steps}
+                      instances={instances}
+                      skills={skills}
+                      problems={shown.filter((problem) => problem.stepId === step.id)}
+                      ruleProblems={ruleProblems.filter((problem) => problem.stepId === step.id)}
+                      dragging={dragIndex === index}
+                      expanded={expanded.has(step.id)}
+                      runProject={runProject}
+                      onToggle={() => toggle(step.id)}
+                      onChange={changeStep}
+                      onRemove={(stepId) =>
+                        edit((current) => ({
+                          ...current,
+                          steps: current.steps.filter((candidate) => candidate.id !== stepId),
+                        }))
+                      }
+                      onMove={move}
+                      onDragStart={setDragIndex}
+                      onDragEnd={() => setDragIndex(undefined)}
+                      onDrop={(to) => {
+                        if (dragIndex !== undefined) move(dragIndex, to);
+                        setDragIndex(undefined);
+                      }}
+                    />
+                  </StepPosition>
+                ))}
+                {draft.steps.length > 0 && (
+                  <GateDivider
+                    on={waitsAt(draft, draft.steps.length)}
+                    label="Gate after the last step"
+                    onToggle={() => edit((current) => setGate(current, current.steps.length))}
+                  >
+                    <GateConditionEditor
+                      step={draft.steps.at(-1)}
+                      number={draft.steps.length}
+                      alwaysStop={alwaysStop}
+                      onToggle={(part) => toggleCondition(draft.steps.length - 1, part)}
+                    />
+                  </GateDivider>
+                )}
+              </ol>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                onClick={() => {
+                  const step = newStep(firstInstance);
+                  edit((current) => ({ ...current, steps: [...current.steps, step] }));
+                  setExpanded((current) => new Set([...current, step.id]));
+                }}
               >
-                <StepEditor
-                  step={step}
-                  index={index}
-                  count={draft.steps.length}
-                  instances={instances}
-                  skills={skills}
-                  problems={shown.filter((problem) => problem.stepId === step.id)}
-                  dragging={dragIndex === index}
-                  expanded={expanded.has(step.id)}
-                  runProject={runProject}
-                  onToggle={() => toggle(step.id)}
-                  onChange={changeStep}
-                  onRemove={(stepId) =>
-                    edit((current) => ({
-                      ...current,
-                      steps: current.steps.filter((candidate) => candidate.id !== stepId),
-                    }))
-                  }
-                  onMove={move}
-                  onDragStart={setDragIndex}
-                  onDragEnd={() => setDragIndex(undefined)}
-                  onDrop={(to) => {
-                    if (dragIndex !== undefined) move(dragIndex, to);
-                    setDragIndex(undefined);
-                  }}
-                />
-              </StepPosition>
-            ))}
+                <PlusIcon />
+                Add step
+              </Button>
+              {workflow && <RunsOfWorkflow workflow={workflow} />}
+            </div>
             {draft.steps.length > 0 && (
-              <GateDivider
-                on={waitsAt(draft, draft.steps.length)}
-                label="Gate after the last step"
-                onToggle={() => edit((current) => setGate(current, current.steps.length))}
+              <section
+                aria-label="Paths"
+                data-testid="paths-diagram"
+                className="flex shrink-0 flex-col gap-1 px-4 py-3 @3xl:w-80 @3xl:overflow-y-auto @3xl:pl-0"
               >
-                <GateConditionEditor
-                  step={draft.steps.at(-1)}
-                  number={draft.steps.length}
-                  alwaysStop={alwaysStop}
-                  onToggle={(part) => toggleCondition(draft.steps.length - 1, part)}
-                />
-              </GateDivider>
+                <h3 className="px-2 text-xs font-medium text-muted-foreground">
+                  Paths a run can take
+                </h3>
+                <MermaidDiagram source={diagram} shown={diagramText} />
+              </section>
             )}
-          </ol>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="mt-2"
-            onClick={() => {
-              const step = newStep(firstInstance);
-              edit((current) => ({ ...current, steps: [...current.steps, step] }));
-              setExpanded((current) => new Set([...current, step.id]));
-            }}
-          >
-            <PlusIcon />
-            Add step
-          </Button>
-          {workflow && <RunsOfWorkflow workflow={workflow} />}
+          </div>
         </div>
       </form>
     </div>

@@ -23,6 +23,7 @@ import { pendingApproval } from '@/chat/view-model';
 import { changesStore } from '@/workflows/changes';
 import { workflowCommands } from '@/workflows/commands';
 import { gateStore } from '@/workflows/gate';
+import { rulesStore } from '@/workflows/rules';
 import { gateRunForThread } from '@/workflows/model';
 import { triggersPath } from '@/workflows/triggers';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
@@ -76,6 +77,8 @@ export function useCommands(): {
     state.runId === openRunId ? state.files : undefined,
   );
   const sendBackRunId = useStore(gateStore, (state) => state.sendBack?.runId);
+  const ruleBuilder = useStore(rulesStore, (state) => state.builder);
+  const ruleAt = useStore(rulesStore, (state) => state.at);
   const staticCommands = useMemo(() => buildCommands(), []);
   const commands = useMemo(() => {
     const zone = calendarZone;
@@ -134,6 +137,7 @@ export function useCommands(): {
               }
             : undefined,
         sendBackRunId,
+        rules: { builder: ruleBuilder, at: ruleAt, focus: undefined },
         formatWhen: when,
         triggers,
         projects,
@@ -201,6 +205,8 @@ export function useCommands(): {
     ticketReads,
     changedFiles,
     sendBackRunId,
+    ruleBuilder,
+    ruleAt,
   ]);
   const context = useMemo(
     () => ({ navigate, settings, layout, draft, connection, updates }),

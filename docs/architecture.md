@@ -1625,6 +1625,45 @@ waits for checks its run view says "Waiting for checks" instead of "Waiting for 
 lists keep the run state's own words). A step whose gate passed by itself shows "Passed by
 itself: <parts>" with each part's sentence in its row (`passedByItself`).
 
+**Rules on a step** (`rules.ts`, `step-rules.tsx`; workflow branches spec 14, 16, 17). An open
+step ends with "After this step": its rules in the order they are tried, each a row of three
+selects, "When <fact> <value>, go to <step or End>", with move up, move down and remove
+buttons, then the fixed line "Otherwise: the next step" (on the last step it adds that the run
+ends) and "Add rule". The facts are the verdict, the checks, the expected artifacts and "the
+step failed" (which has no value select); artifacts are offered only for a step that names
+expected artifacts. A new rule starts on the first condition the step has no rule for yet and
+goes back to the step before. Rules are part of the draft and stored with Save as the step's
+`rules`; `stepsOf` leaves `rules` out for a step that has none, so a workflow without rules is
+saved exactly as before. A closed step says "2 rules" on its line. The builder marks a rule
+with what `ruleProblems` says about the draft, which is the reason the server refuses with: a
+deleted step stays as the rule's target, shown as "A step that no longer exists", until the
+user picks another. These marks do not stop Save; the server refuses the workflow and its
+sentence shows above the steps. The buttons, the keys and the palette all go through
+`rulesStore` (the open builder's steps and how to change them, the step being edited and the
+rule that has, or last had, the keyboard), so they act on the same draft: "Rule: add to step
+N" (`keybindings.ruleAdd`; for the step being edited, and for every other step by search),
+"Rule: move up" and "Rule: move down" (`keybindings.ruleMoveUp`, `keybindings.ruleMoveDown`)
+and "Rule: remove". A rule row takes its two move keys itself before its selects see them,
+because a select would open its list on an arrow key; a moved or added rule keeps the keyboard.
+
+**Paths diagram** (`paths-diagram.ts`; workflow branches spec 15). Beside the steps (below them
+in a narrow window) the builder draws the paths a run can take with `MermaidDiagram`, from the
+draft, so it follows every edit. It is read only. `pathsDiagram(steps)` is pure: Start, one box
+per step in list order ("2. check-work"), End; a solid arrow from each step to the next (marked
+"otherwise" where the step has rules); a dotted arrow per rule with its condition
+(`ruleConditionText`); and "gate" on every arrow that passes a gate, which is the gate after
+the step it leaves (a failed step passes none) or the gate before the step it reaches. A rule
+whose step is gone has no arrow. The source holds generated ids (`s1`, `s2`, …) and labels
+only. The diagram language cannot carry a double quote in a label and reads other punctuation
+as markup, entities or line breaks, so `diagramLabel` keeps letters, digits, spaces and the
+`-`, `_` and `.` inside words, and writes every other ASCII character as a stand-in from the
+private use range (U+E000 plus its code). `MermaidDiagram` takes `shown`, a function applied
+to each piece of drawn text after `scrubSvg` cleaned the drawing; the builder passes
+`diagramText`, which turns the stand-ins back. The result is set as text, so a step called
+`say "hi" <b>` shows exactly that and can never become syntax, markup, a style or a link.
+While a changed source is drawn, `MermaidDiagram` keeps the drawing before it (`aria-busy`)
+instead of going back to code.
+
 **Review at a gate** (`gate.ts`, `gate-bar.tsx`, `review-tabs.tsx`; review loop spec 14 to 18).
 The run view's tabs are Steps, Changes, Artifacts, Pull request, Ticket and Pages (`runTabs`;
 `?tab=artifacts|pullRequest|ticket|pages` beside `changes`). Artifacts lists the found files of
@@ -2183,7 +2222,12 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   `CHANGES_REQUESTED` when the step's extra prompt says "strictly", and a `plan-work` step whose
   answer also ends with `APPROVED`. The test ticks the verdict part in the builder, sees the
   gate pass by itself and then wait with the part named, and sees the planning gate offer no
-  condition and wait. That copy polls once a day, so the tests
+  condition and wait. The rules test (`e2e/workflow-rules.spec.ts`, "build a workflow with a
+  loop") makes a workflow from the Initiative template on that copy, adds two rules to its last
+  step, moves one by key, and reads the drawn diagram's boxes and arrow labels before and after
+  saving, after an edit, and after the rule's step is deleted (marked, and refused by the
+  server); a seeded workflow whose step name has quotes, brackets, markup and a line break must
+  be drawn with that name as text. That copy polls once a day, so the tests
   see only the reads that following a plan, starting a run and "Refresh now" start. CI runs `pnpm e2e` on
   `ubuntu-latest` and `windows-latest` (the `e2e` job) and keeps the traces of a failed run.
   Tests wait for what the page shows, never for time: no sleeps, polls or retries.

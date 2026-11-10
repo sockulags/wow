@@ -20,6 +20,18 @@ vi.mock('mermaid', () => ({ default: mermaid }));
 
 const source = 'flowchart LR\n  plan --> build';
 
+// What a caller's `shown` may return: text that would be markup anywhere else.
+const shown = (text: string) => text.replaceAll('X', '<img src="/leak.png">"');
+
+// A promise the test ends when it wants to.
+function pending<T>() {
+  const held: { resolve?: (value: T) => void } = {};
+  const promise = new Promise<T>((done) => {
+    held.resolve = done;
+  });
+  return { promise, resolve: (value: T) => held.resolve?.(value) };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   diagramView.setState({ source: false });
@@ -211,5 +223,35 @@ describe('mermaid diagram (review loop spec 2)', () => {
     expect(screen.getByRole('button', { name: 'Source' }).getAttribute('aria-pressed')).toBe(
       'true',
     );
+  });
+
+  it('keeps the drawing while a changed source is drawn, then shows the new one', async () => {
+    const { rerender } = render(<MermaidDiagram source={source} />);
+    await screen.findByText('plan');
+    const second = pending<{ svg: string }>();
+    mermaid.render.mockImplementation(() => second.promise);
+    rerender(<MermaidDiagram source={`${source}\n  build --> check`} />);
+    // Not back to code while the new drawing is on its way.
+    expect(screen.getByRole('img', { name: 'Diagram' }).textContent).toBe('plan');
+    expect(screen.getByRole('figure').getAttribute('aria-busy')).toBe('true');
+    await act(() => {
+      second.resolve({ svg: '<svg><text>check</text></svg>' });
+      return Promise.resolve();
+    });
+    expect((await screen.findByRole('img', { name: 'Diagram' })).textContent).toBe('check');
+    expect(screen.getByRole('figure').getAttribute('aria-busy')).toBeNull();
+  });
+
+  it('puts what `shown` returns into the drawing as text, never as markup or a style', async () => {
+    mermaid.render.mockResolvedValue({
+      svg: '<svg><style>.a{fill:red}/*X*/</style><text>one X two</text><a href="https://example.test/X"><text>X</text></a></svg>',
+    });
+    render(<MermaidDiagram source={source} shown={shown} />);
+    const diagram = await screen.findByRole('img', { name: 'Diagram' });
+    expect(diagram.querySelector('text')?.textContent).toBe('one <img src="/leak.png">" two');
+    expect(diagram.querySelector('img')).toBeNull();
+    // Only drawn text is rewritten: styles and addresses stay as they were.
+    expect(diagram.querySelector('style')?.textContent).toBe('.a{fill:red}/*X*/');
+    expect(diagram.querySelector('a')?.getAttribute('href')).toBe('https://example.test/X');
   });
 });

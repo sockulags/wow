@@ -33,6 +33,7 @@ import {
   sortRuns,
   toggleGatePart,
 } from './model';
+import { addRule, moveRule, removeRule, ruleSentence, ruleStep, type RulesState } from './rules';
 import {
   openNewTrigger,
   removeTrigger,
@@ -72,6 +73,8 @@ export interface WorkflowCommandData {
   readonly onTriggers?: boolean | undefined;
   // The `workflows.alwaysStopSkills` setting: gates after these skills get no condition.
   readonly alwaysStopSkills?: readonly string[] | undefined;
+  // The open builder's steps and the rule that has the keyboard (from the rules store).
+  readonly rules?: RulesState | undefined;
   // The run whose send back note is being written, if any (from the gate store).
   readonly sendBackRunId?: string | undefined;
   // "14:39" for a run's start, in the calendar's zone.
@@ -134,6 +137,69 @@ function conditionCommands(workflow: Workflow, alwaysStop: readonly string[]): A
         },
       });
     }
+  });
+  return commands;
+}
+
+// The rules of the open builder's draft (workflow branches spec 14): add a rule to the step
+// being edited, or to any other step by search, and move or remove the rule that has, or last
+// had, the keyboard. They change the draft; Save stores it.
+const stepWords = (step: { readonly skillName: string }, index: number): string =>
+  step.skillName.trim() === ''
+    ? `step ${index + 1}`
+    : `step ${index + 1} (${step.skillName.trim()})`;
+
+function ruleCommands(rules: RulesState | undefined): AppCommand[] {
+  if (!rules?.builder) return [];
+  const { steps } = rules.builder;
+  const current = ruleStep(rules);
+  const keywords = ['rule', 'after this step', 'branch', 'loop', 'path', 'builder', 'workflow'];
+  const commands: AppCommand[] = steps.map((step, index) => {
+    const edited = step.id === current?.step.id;
+    return {
+      id: edited ? 'workflow.rule.add' : `workflow.rule.add.${step.id}`,
+      title: `Rule: add to ${stepWords(step, index)}`,
+      group: 'Workflows',
+      keywords,
+      ...(edited ? { keybinding: 'keybindings.ruleAdd' as const } : { searchOnly: true }),
+      run: () => addRule(step.id),
+    };
+  });
+  const at = rules.at?.rule;
+  const rule = at === undefined ? undefined : current?.step.rules?.[at];
+  if (!current || at === undefined || !rule) return commands;
+  const { step, index } = current;
+  const count = step.rules?.length ?? 0;
+  const detail = `Rule ${at + 1} of ${stepWords(step, index)}: ${ruleSentence(rule, steps)}`;
+  if (at > 0) {
+    commands.push({
+      id: 'workflow.rule.moveUp',
+      title: 'Rule: move up',
+      group: 'Workflows',
+      keywords: [...keywords, 'order', 'earlier'],
+      keybinding: 'keybindings.ruleMoveUp',
+      detail,
+      run: () => moveRule(step.id, at, -1),
+    });
+  }
+  if (at < count - 1) {
+    commands.push({
+      id: 'workflow.rule.moveDown',
+      title: 'Rule: move down',
+      group: 'Workflows',
+      keywords: [...keywords, 'order', 'later'],
+      keybinding: 'keybindings.ruleMoveDown',
+      detail,
+      run: () => moveRule(step.id, at, 1),
+    });
+  }
+  commands.push({
+    id: 'workflow.rule.remove',
+    title: 'Rule: remove',
+    group: 'Workflows',
+    keywords: [...keywords, 'delete'],
+    detail,
+    run: () => removeRule(step.id, at),
   });
   return commands;
 }
@@ -448,6 +514,7 @@ export function workflowCommands(data: WorkflowCommandData): AppCommand[] {
   }
 
   if (runView) commands.push(...changesCommands(runView), ...pullRequestCommands(runView));
+  commands.push(...ruleCommands(data.rules));
   commands.push(...triggerCommands(data));
 
   for (const workflow of workflows) {

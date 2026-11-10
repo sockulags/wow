@@ -78,8 +78,9 @@ function scrubStyle(css: string): string {
 
 // Removes everything from a drawn diagram that would be fetched when it is shown, and makes its
 // links follow the link rule of the markdown renderer: http, https and mailto open outside the
-// app, anything else is not a link. Returns undefined when the text holds no drawing.
-export function scrubSvg(svg: string): string | undefined {
+// app, anything else is not a link. Returns undefined when the text holds no drawing. `shown`
+// rewrites each piece of drawn text (see `drawDiagram`); what it returns is put back as text.
+export function scrubSvg(svg: string, shown?: (text: string) => string): string | undefined {
   // The same parser the page uses to show it, in a document that loads nothing.
   const drawing = new DOMParser().parseFromString(svg, 'text/html').querySelector('svg');
   if (!drawing) return undefined;
@@ -110,6 +111,15 @@ export function scrubSvg(svg: string): string | undefined {
       element.setAttribute('rel', 'noreferrer');
     }
   }
+  if (shown) {
+    const texts = drawing.ownerDocument.createTreeWalker(drawing, NodeFilter.SHOW_TEXT);
+    while (texts.nextNode()) {
+      const text = texts.currentNode;
+      if (text.parentElement?.localName.toLowerCase() === 'style') continue;
+      const next = shown(text.nodeValue ?? '');
+      if (next !== text.nodeValue) text.nodeValue = next;
+    }
+  }
   return drawing.outerHTML;
 }
 
@@ -124,7 +134,13 @@ function hasImageShape(db: object): boolean {
   return vertices instanceof Map && [...vertices.values()].some(hasImage);
 }
 
-export async function drawDiagram(source: string, dark: boolean): Promise<Drawing> {
+// `shown` lets a caller that writes the source itself use stand-ins for characters the diagram
+// language cannot carry in a label, and put the real ones back in the drawn text.
+export async function drawDiagram(
+  source: string,
+  dark: boolean,
+  shown?: (text: string) => string,
+): Promise<Drawing> {
   const id = `wow-diagram-${(drawn += 1)}`;
   try {
     const library = await loadMermaid();
@@ -143,7 +159,7 @@ export async function drawDiagram(source: string, dark: boolean): Promise<Drawin
     const diagram = await library.mermaidAPI.getDiagramFromText(source);
     if (hasImageShape(diagram.db)) return { reason: 'Image shapes are not drawn' };
     const { svg } = await library.render(id, source);
-    const scrubbed = scrubSvg(svg);
+    const scrubbed = scrubSvg(svg, shown);
     return scrubbed === undefined ? { reason: oneLine('') } : { svg: scrubbed };
   } catch (error) {
     return { reason: oneLine(error) };

@@ -73,12 +73,14 @@ export function draftOf(workflow: Workflow): WorkflowDraft {
 // The steps as they are saved. A condition is kept only where the builder offers one: on a
 // gate after the step, and not for a skill that always stops (`workflows.alwaysStopSkills`).
 export function stepsOf(draft: WorkflowDraft, alwaysStop: readonly string[] = []): WorkflowStep[] {
-  return draft.steps.map(({ artifactsText, extraPrompt, gateAfterCondition, ...step }) => {
+  return draft.steps.map(({ artifactsText, extraPrompt, gateAfterCondition, rules, ...step }) => {
     const prompt = extraPrompt?.trim() ?? '';
     const condition = conditionOffered(step, alwaysStop) ? (gateAfterCondition ?? []) : [];
     return {
       ...step,
       ...(condition.length > 0 ? { gateAfterCondition: condition } : {}),
+      // A step without rules is saved as it was before rules existed.
+      ...(rules && rules.length > 0 ? { rules } : {}),
       ...(prompt === '' ? {} : { extraPrompt: prompt }),
       expectedArtifacts: parseGlobs(artifactsText),
     };
