@@ -63,6 +63,8 @@ function refusal(send: () => unknown): string | undefined {
 }
 
 const rows = <T>(topic: SubscriptionTopic) => snapshot(server.database.db, { topic }) as T[];
+// A time this many minutes after the tests' now.
+const at = (minutes: number) => new Date(Date.parse(now) + minutes * 60_000).toISOString();
 const changes = () => rows<AssistantChange>('assistantChanges');
 const proposals = () => rows<AssistantProposal>('assistantProposals');
 const setting = (key: string, scope = 'global') =>
@@ -1075,6 +1077,77 @@ describe('proposals', () => {
       expect([name, (await call(name, args)).content.outcome]).toEqual([name, 'changed']);
     }
     expect(hostRequests.some((request) => request.url.includes('collector.example'))).toBe(false);
+  });
+
+  it('ask before a tracker address changes at any scope while a project holds its own token: the token is never sent to the new host first', async () => {
+    // The shared token is gone; only the project has one, and the address it resolves is global.
+    asUser({ type: 'setting.reset', key: 'trackers.github.token', scope: 'global' });
+    asUser({
+      type: 'setting.set',
+      key: 'trackers.github.token',
+      scope: 'project:tea',
+      value: await server.secrets.set('setting:project:tea:trackers.github.token', storedSecret),
+    });
+    hostRequests = [];
+    for (const args of [
+      {
+        key: 'trackers.github.baseUrl',
+        scope: 'global',
+        value: 'https://collector.example/api/v3',
+      },
+      { key: 'trackers.github.baseUrl', scope: 'project:tea', value: 'https://collector.example' },
+    ]) {
+      const result = await call('set_setting', args);
+      expect([args.scope, result.content.outcome]).toEqual([args.scope, 'proposed']);
+    }
+    expect(
+      (await call('reset_setting', { key: 'trackers.github.baseUrl', scope: 'global' })).content
+        .outcome,
+    ).not.toBe('changed');
+    await call('test_connection', { service: 'github', projectId: 'tea' });
+    expect(hostRequests.some((request) => request.url.includes('collector.example'))).toBe(false);
+  });
+
+  it('ask before a project moves to another folder, and before a card with a workflow that starts now or within assistant.startSoonMinutes', async () => {
+    const elsewhere = path.join(root, 'elsewhere');
+    await mkdir(elsewhere, { recursive: true });
+    const moved = await call('update_project', { projectId: 'tea', cwd: elsewhere });
+    expect(moved.content.outcome).toBe('proposed');
+    expect(
+      rows<{ id: string; cwd: string }>('projects').find((row) => row.id === 'tea')?.cwd,
+    ).not.toBe(elsewhere);
+    // A new name is still an ordinary change.
+    expect(
+      (await call('update_project', { projectId: 'tea', name: 'Tea pot' })).content.outcome,
+    ).toBe('changed');
+
+    const lid = (start: number) => ({
+      title: 'Deliver the lid',
+      start: at(start),
+      end: at(start + 30),
+      zone: 'Europe/Stockholm',
+      projectId: 'tea',
+      workflowId: 'delivery',
+    });
+    expect((await call('create_card', lid(0))).content.outcome).toBe('proposed');
+    expect((await call('create_card', lid(10))).content.outcome).toBe('proposed');
+    expect(rows('workflowRuns')).toEqual([]);
+    // Further ahead it is scheduling: made at once, and it can be undone.
+    const later = await call('create_card', lid(120));
+    expect(later.content.outcome).toBe('changed');
+    // Moving that card to now asks.
+    expect(
+      (
+        await call('update_card', {
+          cardId: String(later.content['cardId']),
+          start: at(1),
+          end: at(31),
+        })
+      ).content.outcome,
+    ).toBe('proposed');
+    // A card without a workflow starts nothing, whenever it is.
+    const { workflowId: _none, ...plain } = lid(0);
+    expect((await call('create_card', plain)).content.outcome).toBe('changed');
   });
 
   it('ask again when a step that already bypasses permissions or passes its gate by itself gets another skill, prompt, provider or model', async () => {

@@ -564,6 +564,12 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(settings)
         .where(and(eq(settings.key, key), eq(settings.scope, scope)))
         .get(),
+    settingStored: (key) =>
+      tx
+        .select({ scope: settings.scope, value: settings.value })
+        .from(settings)
+        .where(eq(settings.key, key))
+        .all(),
     skills: () => tx.select().from(skills).all(),
     planIntents: () => tx.select().from(planIntents).all(),
     planRun: (id) => tx.select().from(planRuns).where(eq(planRuns.id, id)).get(),

@@ -57,6 +57,8 @@ export interface ReadModel {
   instanceUsage(id: string): { readonly threads: number; readonly runningTurns: number };
   // Stored value at exactly this scope, or undefined when none is stored.
   setting(key: string, scope: SettingScopeRef): { value: unknown } | undefined;
+  // Every stored value of the key, whatever its scope.
+  settingStored(key: string): readonly { readonly scope: string; readonly value: unknown }[];
   thread(id: string): Thread | undefined;
   runningTurn(threadId: string): Turn | undefined;
   // The thread's turn with the highest index, running or not.

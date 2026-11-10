@@ -1025,7 +1025,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
 - assistant: `assistant.providerInstanceId`, `assistant.model`, `assistant.effort`,
-  `assistant.secretPatterns` (see "Assistant")
+  `assistant.startSoonMinutes`, `assistant.secretPatterns` (see "Assistant")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -1583,8 +1583,15 @@ decides what a command of the assistant does. The table names every type of `Ser
   another skill, extra prompt, provider or model on a step that has a permission mode or a
   gate that passes by itself (the yes once given for that step was for that work); taking a
   skill off `workflows.alwaysStopSkills`; and a tracker's `baseUrl` or `authMode` while that
-  tracker's token is stored at the scope or globally, since the token would then be sent to
-  the new address.
+  tracker's token is stored at any scope, since the token would then be sent to the new address
+  (a project's own token is sent to the address the project resolves, which can be the global
+  one, so a global change counts for a project's token too). Two more close ways around a yes:
+  `project.update` with another folder, because the folder is where agents work and its git
+  remote names the host a project's own token goes to; and a card with a workflow and a project
+  (`card.create`, `card.update`, `backlog.plan`) whose start is in the past or within
+  `assistant.startSoonMinutes` of now, because the scheduler would start its run almost at
+  once, which is "start a run now" by another name. A card further ahead is scheduling and stays
+  ordinary.
 - `refused`: never applied, with a sentence for the assistant. The answers at a gate
   (`workflowRun.continue`, `sendBack`, `stop`; the sentence carries the run's path),
   `planRun.stop`, a card delete that would stop a run, every thread, approval and question

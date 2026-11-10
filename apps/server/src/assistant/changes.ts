@@ -629,6 +629,31 @@ export function basisOf(command: Command, read: ReadModel): Row {
           project: project(plan?.projectId),
         };
       }
+      // The yes is for this project as it is: its folder is where agents work.
+      case 'project.update': {
+        const current = read.project(command.projectId);
+        return {
+          project: current
+            ? pick({ ...current }, ['name', 'cwd', 'defaultProviderInstanceId', 'defaultModel'])
+            : null,
+        };
+      }
+      // A card that starts a run at once: the yes is for this workflow in this project.
+      case 'card.create':
+      case 'backlog.plan':
+        return { workflow: workflow(command.workflowId), project: project(command.projectId) };
+      case 'card.update': {
+        const card = read.calendarItem(command.cardId);
+        const workflowId = command.workflowId === undefined ? card?.workflowId : command.workflowId;
+        const projectId = command.projectId === undefined ? card?.projectId : command.projectId;
+        return {
+          card: card
+            ? pick({ ...card }, ['title', 'start', 'workflowId', 'projectId', 'backlogItemId'])
+            : null,
+          workflow: workflow(workflowId),
+          project: project(projectId),
+        };
+      }
       case 'trigger.create':
         return {
           workflow: read.workflow(command.workflowId)?.name ?? null,
@@ -807,6 +832,49 @@ export function proposalOf(
             },
           ],
           place: { label: 'Workflows → Triggers', path: triggersPath },
+        };
+      }
+      case 'project.update': {
+        const current = read.project(command.projectId);
+        return {
+          title: `Move project "${current?.name ?? command.projectId}" to another folder`,
+          lines: [
+            { what: 'Folder', from: current?.cwd ?? null, to: command.cwd ?? null },
+            ...(command.name !== undefined && command.name !== current?.name
+              ? [{ what: 'Name', from: current?.name ?? null, to: command.name }]
+              : []),
+          ],
+          place: { label: 'Settings → Projects', path: '/settings/projects' },
+        };
+      }
+      case 'card.create':
+      case 'backlog.plan': {
+        const title =
+          command.type === 'card.create'
+            ? command.title
+            : (read.backlogItem(command.backlogItemId)?.title ?? command.backlogItemId);
+        return {
+          title: `Start ${workflowName(command.workflowId ?? '')} in ${projectName(command.projectId ?? '')} from a card at ${command.start}`,
+          lines: [{ what: 'Card', from: null, to: title }],
+          place: cardPlace(command.cardId, false),
+        };
+      }
+      case 'card.update': {
+        const moved = read.calendarItem(command.cardId);
+        const workflowId =
+          (command.workflowId === undefined ? moved?.workflowId : command.workflowId) ?? '';
+        const projectId =
+          (command.projectId === undefined ? moved?.projectId : command.projectId) ?? '';
+        const start = command.start ?? moved?.start ?? '';
+        return {
+          title: `Start ${workflowName(workflowId)} in ${projectName(projectId)} from a card at ${start}`,
+          lines: [
+            { what: 'Card', from: null, to: command.title ?? moved?.title ?? command.cardId },
+            ...(command.start !== undefined && command.start !== moved?.start
+              ? [{ what: 'Starts', from: moved?.start ?? null, to: command.start }]
+              : []),
+          ],
+          place: cardPlace(command.cardId, moved !== undefined),
         };
       }
       default:

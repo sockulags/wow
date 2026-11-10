@@ -7,6 +7,7 @@ import {
 import { isDeepStrictEqual } from 'node:util';
 import type { DecideContext, ReadModel } from '../core/orchestrator.js';
 import { runPath } from '../core/workflows.js';
+import { resolveStored } from '../settings/service.js';
 
 // The one table that says what the server does with a command the assistant sends (app
 // assistant spec 7 to 11): `ordinary` is applied at once and can be undone, `proposal` is held
@@ -78,12 +79,38 @@ const guardSettings: ReadonlySet<string> = new Set(['assistant.secretPatterns'])
 // user is asked. Without a token there is nothing to send and the change is ordinary.
 const trackerAddress = /^(trackers\.[^.]+)\.(?:baseUrl|authMode)$/;
 
-function sendsStoredToken(key: string, scope: string, read: ReadModel): boolean {
+// A token stored at any scope counts: a project's own token is sent to the address the project
+// resolves, and that can be the global one, so a global change reaches a project's token too.
+function sendsStoredToken(key: string, read: ReadModel): boolean {
   const tracker = trackerAddress.exec(key)?.[1];
   if (tracker === undefined) return false;
-  return [scope, 'global'].some(
-    (at) => (read.setting(`${tracker}.token`, at)?.value ?? null) !== null,
-  );
+  return read.settingStored(`${tracker}.token`).some((stored) => (stored.value ?? null) !== null);
+}
+
+// A field of a card as an update leaves it: absent keeps what is there, null clears it.
+const afterUpdate = <T>(next: T | null | undefined, current: T | null | undefined) =>
+  next === undefined ? (current ?? undefined) : (next ?? undefined);
+
+const START_SOON_KEY = 'assistant.startSoonMinutes';
+
+// A card with a workflow and a project starts a run at its time. Put at once or a moment from
+// now it is "start a run now" by another name, which waits for a yes (spec 10); a card further
+// ahead is scheduling, which the user can see on the calendar and take back.
+function startsSoon(
+  workflowId: string | undefined,
+  projectId: string | undefined,
+  start: string | undefined,
+  read: ReadModel,
+  context: DecideContext,
+): Classified {
+  if (workflowId === undefined || projectId === undefined || start === undefined) return ordinary;
+  const definition = context.registry[START_SOON_KEY];
+  const minutes = definition
+    ? resolveStored(START_SOON_KEY, definition, {}, (scope) => read.setting(START_SOON_KEY, scope))
+        .value
+    : 0;
+  const soon = Date.parse(context.now) + (typeof minutes === 'number' ? minutes : 0) * 60_000;
+  return Date.parse(start) <= soon ? proposal : ordinary;
 }
 
 const definitionOf = (key: string, context: DecideContext): SettingDefinition | undefined =>
@@ -105,7 +132,7 @@ function settingClass(
       reason: `${definition.label} is a secret. The user types it into its own field; the assistant never sets, clears or sees one.`,
     };
   }
-  if (guardSettings.has(key) || sendsStoredToken(key, scope, read)) return proposal;
+  if (guardSettings.has(key) || sendsStoredToken(key, read)) return proposal;
   const more = moreOnItsOwn[key];
   if (!more) return ordinary;
   const stored = read.setting(key, scope);
@@ -161,7 +188,12 @@ function stepsAskForMore(before: readonly WorkflowStep[], after: readonly Workfl
 
 export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } = {
   'project.create': 'ordinary',
-  'project.update': 'ordinary',
+  // The folder decides where agents work and, through its git remote, which host a project's own
+  // token is sent to, so another folder waits for a yes. A name or a default does not.
+  'project.update': (command, read) =>
+    command.cwd !== undefined && command.cwd !== read.project(command.projectId)?.cwd
+      ? proposal
+      : ordinary,
   'project.delete': refused(
     'Deleting a project cannot be undone, so the user does it in Settings → Projects.',
   ),
@@ -180,8 +212,18 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'thread.setDone': chatOnly,
   'approval.answer': refused("Only the user answers an agent's request for approval."),
   'question.answer': refused("Only the user answers an agent's question."),
-  'card.create': 'ordinary',
-  'card.update': 'ordinary',
+  'card.create': (command, read, context) =>
+    startsSoon(command.workflowId, command.projectId, command.start, read, context),
+  'card.update': (command, read, context) => {
+    const card = read.calendarItem(command.cardId);
+    return startsSoon(
+      afterUpdate(command.workflowId, card?.workflowId),
+      afterUpdate(command.projectId, card?.projectId),
+      command.start ?? card?.start,
+      read,
+      context,
+    );
+  },
   'card.delete': (command, read) => {
     const card = read.calendarItem(command.cardId);
     const run = card?.runId ? read.run(card.runId) : undefined;
@@ -224,7 +266,8 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'backlog.restore': refused(
     'A deleted backlog item comes back through Undo, which the user presses.',
   ),
-  'backlog.plan': 'ordinary',
+  'backlog.plan': (command, read, context) =>
+    startsSoon(command.workflowId, command.projectId, command.start, read, context),
   'plan.follow': 'ordinary',
   'planRun.start': 'proposal',
   'planRun.stop': refused('Only the user stops a plan run, on the plan in the Plans view.'),

@@ -1193,6 +1193,16 @@ export const settingsRegistry = {
     default: '',
     scope: 'global',
   }),
+  'assistant.startSoonMinutes': defineSetting({
+    schema: z.number().int().min(0).max(1440),
+    group: 'assistant',
+    label: 'A card this soon waits for a yes',
+    description:
+      'When the assistant puts a card with a workflow on the calendar this close to now, or in the past, the card would start a run almost at once, so it is shown as a proposal first. A card further ahead is made at once and can be undone.',
+    default: 15,
+    scope: 'global',
+    unit: 'minutes',
+  }),
   'assistant.secretPatterns': defineSetting({
     schema: z.array(SecretPattern),
     group: 'assistant',
