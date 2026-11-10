@@ -1,4 +1,11 @@
-import type { FileHash, RunEffect, ServerCommand, TurnState, WorkflowRun } from '@wow/contracts';
+import {
+  runFolder,
+  type FileHash,
+  type RunEffect,
+  type ServerCommand,
+  type TurnState,
+  type WorkflowRun,
+} from '@wow/contracts';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Engine } from '../core/engine.js';
@@ -24,6 +31,9 @@ export interface RunnerDeps {
   readonly engine: Engine;
   readonly detectArtifacts: ArtifactDetector;
   readonly changes: RunChanges;
+  // Resolves when the run's folder is there to work in, or with the reason it could not be made
+  // (the run has failed by then). Runs in the project folder resolve at once.
+  readonly prepare?: (runId: string) => Promise<string | undefined>;
   readonly logger: Logger;
 }
 
@@ -100,7 +110,7 @@ export class WorkflowRunner {
     }
   }
 
-  // Looks for every started step's expected artifacts in the project folder and stores them.
+  // Looks for every started step's expected artifacts in the run's folder and stores them.
   async detectArtifacts(runId: string): Promise<void> {
     const { db } = this.#deps;
     const run = this.#run(runId);
@@ -113,7 +123,10 @@ export class WorkflowRunner {
       if (stepRun.state === 'not_started') continue;
       const step = workflow.steps.find((entry) => entry.id === stepRun.stepId);
       if (!step) continue;
-      const paths = await this.#deps.detectArtifacts(project.cwd, step.expectedArtifacts);
+      const paths = await this.#deps.detectArtifacts(
+        runFolder(run, project.cwd),
+        step.expectedArtifacts,
+      );
       found.push({ stepId: step.id, paths });
     }
     if (found.length === 0) return;
@@ -144,6 +157,8 @@ export class WorkflowRunner {
   async #perform(effect: RunEffect): Promise<void> {
     switch (effect.type) {
       case 'startStep':
+        // No prompt is sent while the run's own working copy is not there (review loop spec 38).
+        if ((await this.#deps.prepare?.(effect.runId)) !== undefined) return;
         await this.#recordBase(effect.runId);
         this.#startStep(effect);
         return;
@@ -176,7 +191,8 @@ export class WorkflowRunner {
     if (!first || run.steps[run.currentStep]?.endedAt) return;
     const project = this.#project(run.projectId);
     if (!project) return;
-    const base = await this.#deps.changes.base(project.cwd).catch((error: unknown) => {
+    const folder = runFolder(run, project.cwd);
+    const base = await this.#deps.changes.base(folder).catch((error: unknown) => {
       this.#deps.logger.warn('reading the run base failed', error);
       return undefined;
     });
@@ -255,12 +271,15 @@ export class WorkflowRunner {
     const workflow = db.select().from(workflows).where(eq(workflows.id, run.workflowId)).get();
     const project = this.#project(run.projectId);
     const step = workflow?.steps.find((entry) => entry.id === stepId);
+    const folder = project ? runFolder(run, project.cwd) : undefined;
     const artifactsFound =
-      step && project ? await this.#deps.detectArtifacts(project.cwd, step.expectedArtifacts) : [];
+      step && folder !== undefined
+        ? await this.#deps.detectArtifacts(folder, step.expectedArtifacts)
+        : [];
     const { baseSha } = run;
     const fileHashes =
-      project && baseSha
-        ? await this.#deps.changes.snapshot(project.cwd, baseSha).catch((error: unknown) => {
+      folder !== undefined && baseSha
+        ? await this.#deps.changes.snapshot(folder, baseSha).catch((error: unknown) => {
             this.#deps.logger.warn('reading what the step changed failed', error);
             return undefined;
           })

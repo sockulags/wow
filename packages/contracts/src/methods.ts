@@ -247,6 +247,12 @@ export const rpcMethods = {
     params: RunDiffParams,
     result: RunDiff,
   },
+  // "Remove working copy" (review loop spec 37): deletes a kept working copy of a run that has
+  // ended, with whatever is uncommitted or unpushed in it. The app asks before it calls this.
+  'workflowRuns.removeWorkingCopy': {
+    params: z.object({ runId: z.string().min(1) }),
+    result: WorkflowRun,
+  },
   // Files in a project folder that expected artifact globs match, for the builder's "Matches 2
   // files in Demo" line. Read only; nothing is stored.
   'workflows.matchArtifacts': {

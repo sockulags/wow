@@ -51,6 +51,45 @@ export type WorkflowRunState = z.infer<typeof WorkflowRunState>;
 export const isLiveRunState = (state: WorkflowRunState): boolean =>
   state === 'running' || state === 'waiting';
 
+// A run's own working copy (review loop spec 36 to 38): `pending` while the server makes it,
+// `ready` while the run works in it, `failed` when it could not be made, and after the run ended
+// `removed`, or `kept` because removing it would lose work or did not succeed.
+export const WorkingCopyState = z.enum(['pending', 'ready', 'failed', 'kept', 'removed']);
+export type WorkingCopyState = z.infer<typeof WorkingCopyState>;
+
+// What a kept working copy holds that is nowhere else.
+export const UnpushedWork = z.object({
+  // Changed and new files that are not committed (ignored files do not count).
+  uncommittedFiles: z.number().int().nonnegative(),
+  // Commits no branch on the remote reaches, and the subject of the newest one.
+  unpushedCommits: z.number().int().nonnegative(),
+  newestSubject: z.string().nullable(),
+  // The branch the working copy is on, null while it is on none.
+  branch: z.string().nullable(),
+});
+export type UnpushedWork = z.infer<typeof UnpushedWork>;
+
+export const WorkingCopy = z.object({
+  // The folder, decided when the run starts so every step's thread can name it as its `cwd`.
+  path: z.string().min(1),
+  state: WorkingCopyState,
+  // The commit it was made at and the default branch that commit was the tip of. Null until it
+  // is ready, and the branch is null when the project has no remote to name one.
+  startSha: z.string().min(1).nullable(),
+  defaultBranch: z.string().nullable(),
+  // Said on the run when the start is not the fetched tip (the fetch failed, or was not asked).
+  note: z.string().nullable(),
+  // Set when the copy is kept because of what it holds.
+  unpushed: UnpushedWork.nullable(),
+  // Why it could not be made (`failed`) or could not be removed (`kept`).
+  error: z.string().nullable(),
+});
+export type WorkingCopy = z.infer<typeof WorkingCopy>;
+
+// Whether the folder is (or may still be) on disk.
+export const workingCopyOnDisk = (copy: WorkingCopy): boolean =>
+  copy.state === 'ready' || copy.state === 'kept';
+
 // What the server does once a run transition has committed. The workflow engine decides them;
 // the server performs them and reports outcomes back as commands.
 export const RunEffect = z.discriminatedUnion('type', [

@@ -35,6 +35,8 @@ export type RunInput =
       readonly files: readonly FileHash[];
     }
   | { readonly type: 'stepFailed'; readonly stepId: string; readonly error: string }
+  // The folder the run was to work in could not be made, so no step may begin.
+  | { readonly type: 'setupFailed'; readonly error: string }
   | { readonly type: 'continue' }
   | { readonly type: 'sendBack'; readonly note: string }
   | { readonly type: 'stop' }
@@ -142,6 +144,8 @@ export function advance(
       return completeStep(workflow, run, input, context);
     case 'stepFailed':
       return failStep(run, input.stepId, input.error, context);
+    case 'setupFailed':
+      return failSetup(run, input.error, context);
     case 'continue':
       return continueRun(workflow, run, context);
     case 'sendBack':
@@ -226,6 +230,28 @@ function failStep(run: WorkflowRun, stepId: string, error: string, context: Engi
       { type: 'notify', runId: run.id, stepId, reason: 'failed' },
     ],
   } satisfies Transition;
+}
+
+// The run fails at the step it is on, whether that step waits at its gate or was about to get
+// its prompt. Setup is over before any turn starts, so there is nothing to interrupt.
+function failSetup(run: WorkflowRun, error: string, context: EngineContext): Transition {
+  if (run.state !== 'running' && run.state !== 'waiting') {
+    throw new RunRejected(`Run ${run.id} is already ${run.state}`);
+  }
+  const current = run.steps[run.currentStep] as StepRun;
+  const steps = replaceStep(run.steps, run.currentStep, {
+    ...current,
+    state: 'failed',
+    endedAt: context.now,
+    error,
+  });
+  return {
+    run: { ...run, steps, state: 'failed', endedAt: context.now },
+    effects: [
+      ...threadState(current.threadId, 'failed'),
+      { type: 'notify', runId: run.id, stepId: current.stepId, reason: 'failed' },
+    ],
+  };
 }
 
 function continueRun(workflow: Workflow, run: WorkflowRun, context: EngineContext): Transition {

@@ -46,7 +46,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   intents folder now, see "Plans"), `hosts.refresh` (`{planId?, runId?}`, asks the host once
   about one followed plan, one run or everything wow follows, see "Hosts"),
   `workflowRuns.detectArtifacts` (`{runId}`), `workflowRuns.diff` (`{runId, path?}`, what the run
-  changed since its base, see "Run base and changes"), `workflows.matchArtifacts` (`{projectId, globs}`),
+  changed since its base, see "Run base and changes"), `workflowRuns.removeWorkingCopy` (`{runId}`,
+  deletes a kept working copy of an ended run, see "Working copies"), `workflows.matchArtifacts` (`{projectId, globs}`),
   `files.read` (`{runId, path}`, one file of a run for the viewer, see "Files"), `outlook.open`
   (`{entryId}`), `outlook.refresh`, `projects.git` (every project folder's git
   status and remotes), `trackers.project` (`{projectId}`, one project's tracker settings with their
@@ -144,10 +145,12 @@ mail_items       id, externalId, folder, from, subject, receivedAt, unread, snip
 outlook_status   singleton: lastSyncAt, lastError?, unavailableSince?, unreadCount, bridgeVersion,
                  profile(json: OutlookProfile)?
 backlog_items    id, title, body, tags(json), state, runId?, remote(json: service,key,url)?, createdAt
-workflows        id, name, templateKind?, steps(json: WorkflowStep[]), createdAt, updatedAt
+workflows        id, name, templateKind?, steps(json: WorkflowStep[]), ownWorkingCopy, createdAt,
+                 updatedAt
 workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, state ('running'|
                  'waiting'|'done'|'failed'|'stopped'), currentStep, steps(json: StepRun[]),
-                 startedAt, endedAt, baseSha?, baseFiles(json: FileHash[])?
+                 startedAt, endedAt, baseSha?, baseFiles(json: FileHash[])?,
+                 workingCopy(json: WorkingCopy)?   -- null for a run in the project folder
 triggers         id, calendarItemId, workflowId, runAt, zone, state ('scheduled'|'fired'|'missed'|
                  'cancelled'), runId?, offerRunNow
 notifications    id, at, kind ('started'|'waiting'|'failed'), title, body, path, runId?,
@@ -446,7 +449,8 @@ with prompt, notify, finish). The server performs them. The step prompt is:
 `{{#name}}…{{/name}}` is dropped when the value is empty; the values are `previousStep`,
 `previousMessage`, `backlogBody`, `previousArtifacts` (found by earlier steps) and
 `expectedArtifacts` (this step's globs). Artifact detection runs `fast-glob` with the step's
-`expectedArtifacts` in the project `cwd` when the step completes and on run view open
+`expectedArtifacts` in the run's folder (`runFolder`: its own working copy when it has one, else
+the project `cwd`) when the step completes and on run view open
 (`workflowRuns.detectArtifacts`).
 
 Gates. A gate sits between two steps. After a step with `gateAfter` its turn is over and the step
@@ -474,7 +478,8 @@ turn is. That is how the runner tells a send-back turn from a message the user t
 while such a message is still being answered is refused instead of queued.
 
 Commands: `workflow.create|update|delete`, `workflowRun.start|continue|sendBack|stop` from clients, and
-`skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded` as `InternalCommand`s from
+`skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded` and
+`workflowRun.workingCopyReady|workingCopyFailed|workingCopySettled` as `InternalCommand`s from
 the server. The orchestrator calls `startRun`/`advance` and stores one `workflowRun.changed` event
 (the run plus the effects to perform), an idle `thread.created` with `runId` and `stepId` for each
 started step (model, effort and permission mode from the step, then the provider instance
@@ -501,8 +506,8 @@ engine's table for the scheduler's missed policy.
 ### Run base and changes
 
 `apps/server/src/workflows/changes.ts` (review loop spec 10 to 13). A run remembers where it
-began: before the runner sends the first step's prompt it reads the commit the project folder is
-on and reports `workflowRun.baseRecorded {runId, baseSha, files}`; the engine keeps the first one
+began: before the runner sends the first step's prompt it reads the commit the run's folder is
+on (for a run with its own working copy that is the commit the copy was made at) and reports `workflowRun.baseRecorded {runId, baseSha, files}`; the engine keeps the first one
 as `WorkflowRun.baseSha` and `baseFiles`. With a gate before the first step that happens when the
 gate is passed. A folder that is not a repository, has no commit yet or cannot be read by git
 leaves `baseSha` null and the run goes on; runs from before this have it null too.
@@ -531,6 +536,73 @@ unified diff from the first hunk on; the path is only looked up among the files 
 cannot name anything else. A new file git does not track yet has no diff of its own: its lines
 are read and sent as added lines. A rename shows only when git sees it (committed or staged); a
 file moved without telling git lists as one deleted and one added file.
+
+### Working copies
+
+`apps/server/src/workspaces` (review loop spec 36 to 39). A workflow with `ownWorkingCopy` (the
+builder's "Own working copy" switch) runs each run in a Git worktree of the project's repository
+instead of the project folder. A worktree, not a clone, because it needs no credentials and no
+second download; on no branch, because the agent's delivery skill names and creates its own
+branch and wow does not guess a project's branch names. Without the switch nothing here runs and
+the run works in the project folder as before.
+
+`WorkflowRun.workingCopy` is `WorkingCopy {path, state, startSha, defaultBranch, note, unpushed,
+error}` and is the only state; `runFolder(run, projectFolder)` in contracts is the folder a run
+works in, and everything that reads a run's files uses it (the step threads' `cwd`, the run
+base, the step hashes, artifact detection, `workflowRuns.diff`, and `files.read`, which allows
+the working copy first and still the project folder).
+
+- **Named at the start.** `startRunEvents` stores the copy as `pending` with its path:
+  `workspaces.root` (a full path, or a folder inside `WOW_HOME`, default `workspaces`) and a
+  folder `<project name as a slug, 16 characters at most>-<8 hex of the run id's SHA-256>`. The
+  name is short so Windows paths stay short. The path is decided without touching the disk
+  because the orchestrator does no I/O and each step's thread is created with it as `cwd`, so
+  no step of such a run can ever start in the project folder.
+- **Made before the first prompt.** `Workspaces` (`service.ts`) hears the `pending` run and
+  makes the worktree; the runner awaits `prepare(runId)` before it records the base and sends a
+  step's prompt. `createWorkingCopy` (`working-copy.ts`) checks that the project folder is a
+  repository with a commit, fetches the primary remote when `workspaces.fetchBeforeCreate` is
+  on (`git fetch --no-tags --no-recurse-submodules <remote>`, which only moves the
+  remote-tracking branches of the project's repository), finds the default branch
+  (`refs/remotes/<remote>/HEAD`, else what the remote answers to `ls-remote --symref` after a
+  fetch that worked, else `main` or `master` if the remote has one) and runs `git worktree add
+--detach <path> <commit>`. The commit is the remote branch's tip after a fetch that worked.
+  Otherwise it is the local branch of that name, then the tip as last fetched, then the commit
+  the project folder is on, and `note` says which and why ("Fetching origin failed (…), so the
+  working copy starts at the local tip of main."). `workflowRun.workingCopyReady` stores
+  `ready`, `startSha`, `defaultBranch` and the note. The project folder's files, index and
+  branch are never touched.
+- **Failing.** Anything that stops this (no folder, no git, not a repository, no commit, the
+  target taken, no disk space, a path too long: git's own message is kept) is
+  `workflowRun.workingCopyFailed`: the copy becomes `failed` and the engine's `setupFailed`
+  input fails the run at the step it is on, whether that step was about to get its prompt or
+  waits at a gate before it. No turn starts, and nothing falls back to the project folder (spec
+  38).
+- **After the run.** When a run with a `ready` copy has ended and no turn of its threads is
+  still running (a stopped run's turn is interrupted after the run ended, so `turn.ended` is
+  heard too), `settleWorkingCopy` counts what would be lost: files `git status` lists
+  (changed, staged or new and not ignored) and commits that `HEAD` reaches and neither a
+  remote-tracking branch nor the start commit does (`readUnpushed`). With none, `git worktree
+remove` without `--force` removes the folder (git itself refuses if something is there after
+  all) and the copy is `removed`. Otherwise it is `kept` with `unpushed {uncommittedFiles,
+unpushedCommits, newestSubject, branch}`. A removal that fails, for example a file locked on
+  Windows, is not retried: the copy is `kept` with the reason in `error`. Both arrive as
+  `workflowRun.workingCopySettled`, which is refused for a live run.
+- **Remove working copy.** `workflowRuns.removeWorkingCopy {runId}` is the user's answer for a
+  kept copy: `git worktree remove --force`, then `removed`. It is refused while the run is
+  live, and a failure leaves the copy `kept` with what it held and the reason.
+- **Restart.** `Workspaces.recover()` runs before the runner's: a copy still `pending` fails
+  its run ("The server stopped while the working copy was being made"), and a `ready` copy
+  whose run ended while the server was down is settled.
+
+The git commands are in `projects/git.ts` beside the reading ones and run the same way: hooks
+and the file system monitor off, no prompt, and `core.longpaths` on for the worktree commands.
+Their time limit is `workspaces.gitTimeoutMs`, since a fetch takes longer than a read. wow
+installs nothing in a working copy and runs no command the repository declares; that is the
+agent's work. Known limits: a project folder that is a subfolder of its repository gets the
+whole repository as its working copy, with the copy's root as `cwd`; a kept copy is not looked
+at again after someone pushes from it by hand; a step thread of an ended run keeps the removed
+folder as its `cwd`.
 
 ## Scheduler and triggers
 
@@ -622,6 +694,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount` (see "Hosts")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
 - diff: `diff.maxFileBytes`, `diff.maxFiles` (the "Changes" page, see "Run base and changes")
+- workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
+  `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -964,7 +1038,9 @@ poll interval while polling is on and the scheduler is not paused, once when a p
 or a run starts under the same conditions, and once for `hosts.refresh` whatever those settings
 and the host's request limit say (spec 30). Per project it resolves the GitHub settings and the
 folder's branch (`TrackerService.githubHost`; without a token nothing is asked and the reads
-say which setting is missing), finds the plan's and the run's pull requests, and reads each pull
+say which setting is missing; a run with its own working copy is asked about the branch that
+copy is on, read with `readCurrentBranch`, and about nothing while the copy is on no branch or
+gone), finds the plan's and the run's pull requests, and reads each pull
 request once a round; a pull request already stored as merged is not read again. The first
 failure ends the project's round, since a refused token or a host that is down fails the rest
 the same way. Each pull request read is parsed with the `ChangeRequest` schema before it is

@@ -4,6 +4,7 @@ import {
   hostReadId,
   isLiveRunState,
   settingsRegistry,
+  workingCopyOnDisk,
   ChangeRequest,
   type HostError,
   type HostRead,
@@ -38,6 +39,9 @@ export interface HostPollerDeps {
   readonly logger: Logger;
   // The project's host settings as they apply (TrackerService.githubHost).
   readonly resolve: (projectId: string) => Promise<ProjectGitHubHost | undefined>;
+  // The branch a run's own working copy is on (null on none). Runs in the project folder share
+  // the project's branch and are not asked.
+  readonly workingCopyBranch?: (folder: string) => Promise<string | null>;
   readonly clock?: () => Date;
   readonly timers?: SchedulerTimers;
   readonly fetch?: typeof fetch;
@@ -349,14 +353,25 @@ export class HostPoller implements BackgroundService {
         adapter.findForIntent(plan.intentId),
       );
     }
-    // Every run of the project works in the project folder, so they share its branch.
-    let ofBranch: Promise<FoundChangeRequest[]> | undefined;
-    const { branch } = host;
+    // Runs in the project folder share its branch; a run with its own working copy is on the
+    // branch its agent made there. One branch is asked once a round.
+    const ofBranch = new Map<string, Promise<FoundChangeRequest[]>>();
+    const found = (branch: string) => {
+      const known =
+        ofBranch.get(branch) ??
+        adapter.findForBranch(branch).then((request) => (request ? [request] : []));
+      ofBranch.set(branch, known);
+      return known;
+    };
     for (const run of runs) {
+      const copy = run.workingCopy;
+      const branch = !copy
+        ? host.branch
+        : workingCopyOnDisk(copy)
+          ? ((await this.#deps.workingCopyBranch?.(copy.path).catch(() => null)) ?? null)
+          : null;
       await attempt(hostReadId('run', run.id), 'run', branch, () =>
-        branch === null
-          ? Promise.resolve([])
-          : (ofBranch ??= adapter.findForBranch(branch).then((found) => (found ? [found] : []))),
+        branch === null ? Promise.resolve([]) : found(branch),
       );
     }
     const wait = adapter.waitUntil;

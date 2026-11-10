@@ -192,11 +192,16 @@ const neverRun = ['-c', `core.hooksPath=${devNull}`, '-c', 'core.fsmonitor=false
 // Paths come back as they are, not quoted and escaped.
 const plainPaths = ['-c', 'core.quotePath=false'];
 
-function runGit(folder: string, args: readonly string[], options: GitRunOptions) {
+function runGit(
+  folder: string,
+  args: readonly string[],
+  options: GitRunOptions,
+  config: readonly string[] = [],
+) {
   return new Promise<GitResult>((resolve) => {
     execFile(
       options.git ?? 'git',
-      [...neverRun, ...plainPaths, '-C', folder, ...args],
+      [...neverRun, ...plainPaths, ...config, '-C', folder, ...args],
       {
         timeout: options.timeoutMs,
         windowsHide: true,
@@ -508,4 +513,158 @@ export async function readBaseSizes(
     }
   }
   return sizes;
+}
+
+// What a run's own working copy needs (review loop spec 36 to 38). These are the only git
+// commands wow runs that write: a fetch into the project's repository and a worktree beside it.
+// Hooks stay off as for every other command, so making a working copy runs nothing a repository
+// declares.
+
+export type GitOutcome = { readonly ok: true } | { readonly ok: false; readonly message: string };
+
+const outcomeOf = (result: GitResult): GitOutcome =>
+  result.ok ? { ok: true } : { ok: false, message: result.message };
+
+// Brings the remote's branches up to date in the project's repository. Tags and submodules are
+// left alone, and nothing in the project folder itself changes.
+export async function fetchRemote(
+  folder: string,
+  remote: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(
+      folder,
+      ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', remote],
+      options,
+    ),
+  );
+}
+
+// The branch the remote calls its default (`refs/remotes/<remote>/HEAD`, which a clone sets), or
+// null when the repository does not say.
+export async function readRemoteDefaultBranch(
+  folder: string,
+  remote: string,
+  options: GitRunOptions,
+): Promise<string | null> {
+  const prefix = `refs/remotes/${remote}/`;
+  const head = await runGit(folder, ['symbolic-ref', '--quiet', `${prefix}HEAD`], options);
+  const ref = head.ok ? head.stdout.trim() : '';
+  return ref.startsWith(prefix) && ref.length > prefix.length ? ref.slice(prefix.length) : null;
+}
+
+// Asks the remote itself which branch is its default, for a repository that was not cloned and
+// so never stored it. Null when the remote does not answer or does not say.
+export async function askRemoteDefaultBranch(
+  folder: string,
+  remote: string,
+  options: GitRunOptions,
+): Promise<string | null> {
+  const listed = await runGit(folder, ['ls-remote', '--symref', remote, 'HEAD'], options);
+  if (!listed.ok) return null;
+  return /^ref: refs\/heads\/(\S+)\s+HEAD$/m.exec(listed.stdout)?.[1] ?? null;
+}
+
+// The commit a ref names, or null when there is none.
+export async function readCommit(
+  folder: string,
+  ref: string,
+  options: GitRunOptions,
+): Promise<string | null> {
+  const found = await runGit(
+    folder,
+    ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`],
+    options,
+  );
+  const sha = found.ok ? found.stdout.trim() : '';
+  return sha === '' ? null : sha;
+}
+
+// The branch the folder is on, or null on no branch.
+export async function readCurrentBranch(
+  folder: string,
+  options: GitRunOptions,
+): Promise<string | null> {
+  const branch = await runGit(folder, ['symbolic-ref', '--quiet', '--short', 'HEAD'], options);
+  return branch.ok ? branch.stdout.trim() || null : null;
+}
+
+// Windows refuses paths over 260 characters unless git is told to use long ones.
+const longPaths = ['-c', 'core.longpaths=true'];
+
+// A worktree of the project's repository at `target`, on the commit and on no branch.
+export async function addWorktree(
+  folder: string,
+  target: string,
+  commit: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(folder, ['worktree', 'add', '--detach', target, commit], options, longPaths),
+  );
+}
+
+// Removes the worktree and its folder. Without `force` git refuses when a tracked file is
+// changed or an untracked one is there, which is the last guard against losing work.
+export async function removeWorktree(
+  folder: string,
+  target: string,
+  force: boolean,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(
+      folder,
+      ['worktree', 'remove', ...(force ? ['--force'] : []), target],
+      options,
+      longPaths,
+    ),
+  );
+}
+
+// Forgets worktrees whose folder is gone.
+export async function pruneWorktrees(folder: string, options: GitRunOptions): Promise<GitOutcome> {
+  return outcomeOf(await runGit(folder, ['worktree', 'prune'], options));
+}
+
+export interface Unpushed {
+  readonly uncommittedFiles: number;
+  readonly unpushedCommits: number;
+  readonly newestSubject: string | null;
+  readonly branch: string | null;
+}
+
+// What the folder holds that would be gone with it: files that are changed or new and not
+// committed (ignored files do not count), and commits that neither a branch on a remote nor the
+// commit the folder started at reaches. Undefined when git cannot say.
+export async function readUnpushed(
+  folder: string,
+  startSha: string | null,
+  options: GitRunOptions,
+): Promise<Unpushed | undefined> {
+  const reached = ['--not', '--remotes', ...(startSha === null ? [] : [startSha])];
+  const [status, count, newest, branch] = await Promise.all([
+    runGit(folder, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], options),
+    runGit(folder, ['rev-list', '--count', 'HEAD', ...reached], options),
+    runGit(folder, ['log', '-n1', '--format=%s', 'HEAD', ...reached], options),
+    readCurrentBranch(folder, options),
+  ]);
+  if (!status.ok || !count.ok) return undefined;
+  let uncommittedFiles = 0;
+  const entries = records(status.stdout);
+  for (let at = 0; at < entries.length; at += 1) {
+    uncommittedFiles += 1;
+    // A rename or copy is followed by the path it came from.
+    if (/^[RC]|^.[RC]/.test(entries[at] ?? '')) at += 1;
+  }
+  const unpushedCommits = Number(count.stdout.trim());
+  if (!Number.isInteger(unpushedCommits)) return undefined;
+  const subject = newest.ok ? newest.stdout.trim() : '';
+  return {
+    uncommittedFiles,
+    unpushedCommits,
+    newestSubject: unpushedCommits > 0 && subject !== '' ? subject : null,
+    branch,
+  };
 }

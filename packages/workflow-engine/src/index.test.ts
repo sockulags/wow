@@ -511,6 +511,42 @@ describe('send back at a gate (review loop spec 16 to 18)', () => {
   });
 });
 
+describe('a run whose folder could not be made (review loop spec 38)', () => {
+  it('fails the first step that was about to start, with the reason', () => {
+    const wf = workflow(step('plan'), step('build'));
+    const started = startRun(wf, newRun, context());
+    const { run, effects } = advance(
+      wf,
+      started.run,
+      { type: 'setupFailed', error: 'Not a Git repository' },
+      context(),
+    );
+    expect(run.state).toBe('failed');
+    expect(run.endedAt).toBe(T1);
+    expect(run.steps[0]).toMatchObject({ state: 'failed', error: 'Not a Git repository' });
+    expect(run.steps[1]?.state).toBe('not_started');
+    expect(effects).toEqual([
+      { type: 'setThreadState', threadId: 'r1.plan', state: 'failed' },
+      { type: 'notify', runId: 'r1', stepId: 'plan', reason: 'failed' },
+    ]);
+  });
+
+  it('fails a run that waits before its first step, and refuses a run that has ended', () => {
+    const wf = workflow(step('plan', { gateBefore: true }));
+    const waiting = startRun(wf, newRun, context());
+    expect(waiting.run.state).toBe('waiting');
+    const failed = advance(wf, waiting.run, { type: 'setupFailed', error: 'No room' }, context());
+    expect(failed.run.state).toBe('failed');
+    expect(failed.run.steps[0]).toMatchObject({ state: 'failed', error: 'No room' });
+    expect(failed.effects).toEqual([
+      { type: 'notify', runId: 'r1', stepId: 'plan', reason: 'failed' },
+    ]);
+    expect(() =>
+      advance(wf, failed.run, { type: 'setupFailed', error: 'again' }, context()),
+    ).toThrow(RunRejected);
+  });
+});
+
 describe('step prompts and handover', () => {
   it('hands the previous final message and the expected artifacts to the next step (behavior 11)', () => {
     const steps = [

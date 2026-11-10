@@ -1,5 +1,6 @@
 import {
   WorkflowRun,
+  runFolder,
   type Command,
   type DetectedProvider,
   type DiscoveredProject,
@@ -26,6 +27,7 @@ import type { TrackerService } from '../trackers/service.js';
 import { detectArtifacts } from '../workflows/artifacts.js';
 import { changesOptions, readRunDiff } from '../workflows/changes.js';
 import type { WorkflowRunner } from '../workflows/runner.js';
+import { WorkspaceRefused, type Workspaces } from '../workspaces/service.js';
 import { RpcFault, type Handlers } from './router.js';
 
 // One per WebSocket. Subscriptions it opened end with it.
@@ -43,6 +45,7 @@ export interface HandlerDeps {
   readonly skills: SkillsService;
   readonly plans: PlansService;
   readonly workflows: WorkflowRunner;
+  readonly workspaces: Workspaces;
   readonly providers: ProviderService;
   readonly providerUpdates: ProviderUpdates;
   readonly trackers: TrackerService;
@@ -139,9 +142,9 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       if (!run) throw new RpcFault('not_found', `No run ${runId}`);
       const project = deps.db.select().from(projects).where(eq(projects.id, run.projectId)).get();
       if (!project) throw new RpcFault('not_found', `No project ${run.projectId}`);
-      // A run works in its project folder; a run with its own working copy adds that folder first.
+      // A run with its own working copy reads from there first; the project folder stays allowed.
       return readViewerFile({
-        roots: [project.cwd],
+        roots: run.workingCopy ? [run.workingCopy.path, project.cwd] : [project.cwd],
         path: requested,
         maxBytes: deps.settings.get('viewer.maxFileBytes'),
       });
@@ -152,11 +155,25 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       const project = deps.db.select().from(projects).where(eq(projects.id, run.projectId)).get();
       if (!project) throw new RpcFault('not_found', `No project ${run.projectId}`);
       return readRunDiff({
-        folder: project.cwd,
+        folder: runFolder(run, project.cwd),
         run,
         path: asked,
         options: changesOptions(deps.settings),
       });
+    },
+    'workflowRuns.removeWorkingCopy': async ({ runId }) => {
+      if (!deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get()) {
+        throw new RpcFault('not_found', `No run ${runId}`);
+      }
+      try {
+        await deps.workspaces.remove(runId);
+      } catch (error) {
+        if (error instanceof WorkspaceRefused) throw new RpcFault('rejected', error.message);
+        throw error;
+      }
+      const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();
+      if (!run) throw new RpcFault('not_found', `No run ${runId}`);
+      return WorkflowRun.parse(run);
     },
     'workflowRuns.detectArtifacts': async ({ runId }) => {
       await deps.workflows.detectArtifacts(runId);

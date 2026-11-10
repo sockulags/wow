@@ -33,6 +33,7 @@ import type {
   Usage,
   WorkflowRunState,
   WorkflowStep,
+  WorkingCopy,
 } from '@wow/contracts';
 import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
@@ -211,6 +212,7 @@ export const workflows = sqliteTable('workflows', {
   name: text().notNull(),
   templateKind: text(),
   steps: json<WorkflowStep[]>().notNull(),
+  ownWorkingCopy: bool().notNull().default(false),
   createdAt: text().notNull(),
   updatedAt: text().notNull(),
 });
@@ -228,6 +230,7 @@ export const workflowRuns = sqliteTable('workflow_runs', {
   endedAt: text(),
   baseSha: text(),
   baseFiles: json<FileHash[]>(),
+  workingCopy: json<WorkingCopy>(),
 });
 
 export const triggers = sqliteTable(

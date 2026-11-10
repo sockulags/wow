@@ -30,6 +30,8 @@ export type CommitListener = (commit: Commit) => void;
 export interface EngineOptions {
   readonly registry?: Readonly<Record<string, SettingDefinition>>;
   readonly clock?: () => Date;
+  // wow's own folder, for decisions that name a path inside it.
+  readonly home?: string;
   readonly onListenerError?: (error: unknown) => void;
 }
 
@@ -50,6 +52,7 @@ export class Engine {
   readonly #db: Db;
   readonly #registry: Readonly<Record<string, SettingDefinition>>;
   readonly #clock: () => Date;
+  readonly #home: string | undefined;
   readonly #onListenerError: (error: unknown) => void;
   readonly #listeners = new Set<CommitListener>();
 
@@ -57,6 +60,7 @@ export class Engine {
     this.#db = db;
     this.#registry = options.registry ?? settingsRegistry;
     this.#clock = options.clock ?? (() => new Date());
+    this.#home = options.home;
     // A failing listener must not undo or hide a committed command.
     this.#onListenerError =
       options.onListenerError ??
@@ -87,7 +91,11 @@ export class Engine {
       }
 
       const at = this.#clock().toISOString();
-      const decided = decide(command, readModel(tx), { now: at, registry: this.#registry });
+      const decided = decide(command, readModel(tx), {
+        now: at,
+        registry: this.#registry,
+        home: this.#home,
+      });
       const stored: StoredEvent[] = [];
       const topics: SubscriptionTopic[] = [];
       for (const event of decided) {

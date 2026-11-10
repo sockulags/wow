@@ -20,6 +20,7 @@ export const SettingGroup = z.enum([
   'hosts',
   'viewer',
   'diff',
+  'workspaces',
   'appearance',
   'keybindings',
   'desktop',
@@ -906,6 +907,34 @@ export const settingsRegistry = {
       "How many changed files a run's Changes tab lists and remembers per step. The tab says how many it left out.",
     default: 2_000,
     scope: 'global',
+  }),
+  'workspaces.root': defineSetting({
+    schema: z.string().trim().min(1),
+    group: 'workspaces',
+    label: 'Folder for working copies',
+    description:
+      'Where runs of a workflow with "Own working copy" get their copy of the project. A full path, or a folder name inside wow\'s own folder. On Windows a short path leaves more room for long file names.',
+    default: 'workspaces',
+    scope: 'global',
+  }),
+  'workspaces.fetchBeforeCreate': defineSetting({
+    schema: z.boolean(),
+    group: 'workspaces',
+    label: 'Fetch before making a working copy',
+    description:
+      "Fetch the project's remote first, so a working copy starts at the newest commit of the default branch. Off, or when the fetch fails: it starts at the commit this computer already has, and the run says so.",
+    default: true,
+    scope: 'project',
+  }),
+  'workspaces.gitTimeoutMs': defineSetting({
+    schema: z.number().int().min(1_000).max(3_600_000),
+    group: 'workspaces',
+    label: 'Git timeout',
+    description:
+      'How long fetching, making or removing a working copy may take. A fetch that takes longer counts as failed; a working copy that cannot be made in time fails its run.',
+    default: 120_000,
+    scope: 'global',
+    unit: 'ms',
   }),
   'appearance.theme': defineSetting({
     schema: Theme,

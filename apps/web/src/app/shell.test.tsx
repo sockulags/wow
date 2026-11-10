@@ -136,6 +136,7 @@ describe('shell', () => {
       'Hosts',
       'Viewer',
       'Changes',
+      'Working copies',
       'Appearance',
       'Keybindings',
       'Advanced',

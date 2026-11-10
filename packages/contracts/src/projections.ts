@@ -10,7 +10,7 @@ import {
   ThreadState,
 } from './provider.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
-import { FileHash, StepRun, WorkflowRunState, WorkflowStep } from './workflow.js';
+import { FileHash, StepRun, WorkflowRunState, WorkflowStep, WorkingCopy } from './workflow.js';
 
 // Row shapes of the projection tables in docs/architecture.md, as clients receive them through
 // subscriptions. Absent optional columns arrive as null, because that is what SQLite stores.
@@ -300,6 +300,9 @@ export const Workflow = z.object({
   name: z.string().min(1),
   templateKind: z.string().nullable(),
   steps: z.array(WorkflowStep),
+  // "Own working copy": each run works in a Git worktree of its own instead of the project
+  // folder (review loop spec 36, 39). Absent means off.
+  ownWorkingCopy: z.boolean().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -322,8 +325,14 @@ export const WorkflowRun = z.object({
   // The files that already differed from the base at that moment, so the first step is not
   // credited with changes that were there before it.
   baseFiles: z.array(FileHash).nullable().optional(),
+  // The run's own working copy; absent or null for a run that works in the project folder.
+  workingCopy: WorkingCopy.nullable().optional(),
 });
 export type WorkflowRun = z.infer<typeof WorkflowRun>;
+
+// The folder a run works in: its own working copy when it has one, else the project folder.
+export const runFolder = (run: Pick<WorkflowRun, 'workingCopy'>, projectFolder: string): string =>
+  run.workingCopy?.path ?? projectFolder;
 
 export const TriggerState = z.enum(['scheduled', 'fired', 'missed', 'cancelled']);
 export type TriggerState = z.infer<typeof TriggerState>;

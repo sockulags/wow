@@ -24,6 +24,7 @@ import { HostPoller } from './hosts/poller.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
 import type { OutlookService } from './outlook/service.js';
 import { discoverProjects } from './projects/discover.js';
+import { readCurrentBranch } from './projects/git.js';
 import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
 import { ProviderUpdates, createNpmRunner, type RunNpm } from './providers/update.js';
@@ -38,6 +39,7 @@ import { TrackerService } from './trackers/service.js';
 import { detectArtifacts, type ArtifactDetector } from './workflows/artifacts.js';
 import { changesOptions, readRunBase, snapshotChanges } from './workflows/changes.js';
 import { WorkflowRunner } from './workflows/runner.js';
+import { Workspaces } from './workspaces/service.js';
 
 export const serverInfoFileName = 'server.json';
 export const databaseFileName = 'wow.sqlite';
@@ -100,6 +102,7 @@ export interface RunningServer {
   readonly skills: SkillsService;
   readonly plans: PlansService;
   readonly workflows: WorkflowRunner;
+  readonly workspaces: Workspaces;
   readonly providerService: ProviderService;
   readonly providerUpdates: ProviderUpdates;
   readonly scheduler: Scheduler;
@@ -138,6 +141,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   let logger: Logger = createLogger(() => 'info', options.logSink);
   const engine = new Engine(database.db, {
     onListenerError: (error) => logger.error('commit listener failed', error),
+    home,
     ...(options.clock ? { clock: options.clock } : {}),
   });
   const settings = new SettingsService(database.db, engine);
@@ -160,6 +164,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     secrets,
     logger,
   });
+  const workspaces = new Workspaces({ db: database.db, engine, settings, logger });
   const workflows = new WorkflowRunner({
     db: database.db,
     engine,
@@ -168,6 +173,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       base: (folder) => readRunBase(folder, changesOptions(settings)),
       snapshot: (folder, baseSha) => snapshotChanges(folder, baseSha, changesOptions(settings)),
     },
+    prepare: (runId) => workspaces.prepare(runId),
     logger,
   });
   const providerUpdates = new ProviderUpdates({
@@ -184,6 +190,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   providerService.recover();
   // Set once the Outlook hook has started, which happens after the socket listens.
   let outlook: OutlookService | undefined;
+  // First, so a run whose working copy was being made fails with that reason.
+  workspaces.recover();
   workflows.recover();
   const skills = new SkillsService({
     db: database.db,
@@ -214,6 +222,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     settings,
     logger,
     resolve: (projectId) => trackers.githubHost(projectId),
+    workingCopyBranch: (folder) =>
+      readCurrentBranch(folder, { timeoutMs: settings.get('trackers.gitTimeoutMs') }),
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.hostTimers ? { timers: options.hostTimers } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
@@ -227,6 +237,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     skills,
     plans,
     workflows,
+    workspaces,
     providers: providerService,
     providerUpdates,
     trackers,
@@ -262,6 +273,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     });
   } catch (error) {
     await workflows.stop();
+    await workspaces.stop();
     await providerService.stop();
     database.close();
     throw error;
@@ -318,7 +330,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.schedulerTimers ? { timers: options.schedulerTimers } : {}),
   });
-  const services: BackgroundService[] = [workflows];
+  const services: BackgroundService[] = [workspaces, workflows];
   const stopServices = async () => {
     for (const service of services.splice(0).toReversed()) {
       try {
@@ -386,6 +398,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     skills,
     plans,
     workflows,
+    workspaces,
     providerService,
     providerUpdates,
     scheduler,

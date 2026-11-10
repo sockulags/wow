@@ -104,6 +104,7 @@ describe('Outlook service', () => {
     const handlers = createHandlers({
       engine,
       subscriptions: undefined as never,
+      workspaces: undefined as never,
       settings,
       secrets: undefined as never,
       db: undefined as never,

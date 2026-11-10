@@ -35,7 +35,7 @@ import {
   ThreadState,
 } from './provider.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
-import { FileHash, RunEffect, WorkflowStep } from './workflow.js';
+import { FileHash, RunEffect, UnpushedWork, WorkflowStep } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
 // add their own members to both unions.
@@ -179,6 +179,7 @@ export const Command = z.discriminatedUnion('type', [
     name: z.string().min(1),
     templateKind: z.string().min(1).optional(),
     steps: WorkflowSteps,
+    ownWorkingCopy: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('workflow.update'),
@@ -186,6 +187,7 @@ export const Command = z.discriminatedUnion('type', [
     name: z.string().min(1).optional(),
     templateKind: z.string().min(1).nullable().optional(),
     steps: WorkflowSteps.optional(),
+    ownWorkingCopy: z.boolean().optional(),
   }),
   z.object({ type: z.literal('workflow.delete'), workflowId: Id }),
   // Undo of a delete: puts the row the client still holds back as it was.
@@ -361,6 +363,26 @@ export const InternalCommand = z.discriminatedUnion('type', [
     runId: Id,
     found: z.array(z.object({ stepId: Id, paths: z.array(z.string()) })),
   }),
+  // The run's working copy exists: the commit it was made at, the default branch that commit
+  // was read from, and a note when that is not the fetched tip.
+  z.object({
+    type: z.literal('workflowRun.workingCopyReady'),
+    runId: Id,
+    startSha: z.string().min(1),
+    defaultBranch: z.string().nullable(),
+    note: z.string().nullable(),
+  }),
+  // The working copy could not be made. The run fails before its first step (review loop
+  // spec 38).
+  z.object({ type: z.literal('workflowRun.workingCopyFailed'), runId: Id, error: z.string() }),
+  // What became of the working copy after the run ended, or after "Remove working copy".
+  z.object({
+    type: z.literal('workflowRun.workingCopySettled'),
+    runId: Id,
+    state: z.enum(['kept', 'removed']),
+    unpushed: UnpushedWork.nullable(),
+    error: z.string().nullable(),
+  }),
   // The scheduler's tick found the trigger due (spec 8). `runAt` is the time it saw, so a card
   // moved in the meantime does not fire.
   z.object({ type: z.literal('trigger.fire'), triggerId: Id, runAt: Timestamp, runId: Id }),
@@ -436,7 +458,12 @@ export const ThreadChanges = Thread.pick({
 }).partial();
 export type ThreadChanges = z.infer<typeof ThreadChanges>;
 
-export const WorkflowChanges = Workflow.pick({ name: true, templateKind: true, steps: true })
+export const WorkflowChanges = Workflow.pick({
+  name: true,
+  templateKind: true,
+  steps: true,
+  ownWorkingCopy: true,
+})
   .partial()
   .extend({ updatedAt: Workflow.shape.updatedAt });
 export type WorkflowChanges = z.infer<typeof WorkflowChanges>;

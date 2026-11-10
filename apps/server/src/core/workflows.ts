@@ -1,4 +1,5 @@
 import {
+  isLiveRunState,
   type AppNotification,
   type CardState,
   type DomainEvent,
@@ -9,6 +10,7 @@ import {
   type WorkflowChanges,
   type WorkflowRun,
   type WorkflowStep,
+  type WorkingCopy,
 } from '@wow/contracts';
 import {
   advance,
@@ -21,6 +23,8 @@ import {
   type Transition,
 } from '@wow/workflow-engine';
 import { invocationsFor } from '@wow/skills';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveStored } from '../settings/service.js';
 import { backlogFollowsRun } from './backlog.js';
@@ -58,6 +62,7 @@ export function decideWorkflow(
             name: command.name,
             templateKind: command.templateKind ?? null,
             steps: command.steps,
+            ...(command.ownWorkingCopy ? { ownWorkingCopy: true } : {}),
             createdAt: context.now,
             updatedAt: context.now,
           },
@@ -80,6 +85,13 @@ export function decideWorkflow(
           );
         }
         changes.steps = command.steps;
+      }
+      // Runs that exist keep the folder they started in; the switch is read when a run starts.
+      if (
+        command.ownWorkingCopy !== undefined &&
+        command.ownWorkingCopy !== (workflow.ownWorkingCopy ?? false)
+      ) {
+        changes.ownWorkingCopy = command.ownWorkingCopy;
       }
       if (Object.keys(changes).length === 0) return [];
       return [
@@ -161,7 +173,91 @@ export function decideWorkflow(
         read,
         context,
       );
+    case 'workflowRun.workingCopyReady': {
+      const { run, copy } = runWithCopy(read, command.runId, ['pending']);
+      const { startSha, defaultBranch, note } = command;
+      return [
+        runChanged(command.type, {
+          ...run,
+          workingCopy: { ...copy, state: 'ready', startSha, defaultBranch, note },
+        }),
+      ];
+    }
+    case 'workflowRun.workingCopyFailed': {
+      const { run, copy } = runWithCopy(read, command.runId, ['pending']);
+      const failed: WorkflowRun = {
+        ...run,
+        workingCopy: { ...copy, state: 'failed', error: command.error },
+      };
+      // A run stopped while its working copy was being made has ended already.
+      if (!isLiveRunState(run.state)) return [runChanged(command.type, failed)];
+      const workflow = requireWorkflow(read, run.workflowId);
+      const engineContext = runContext(read, context, run.projectId, null);
+      const transition = engineCall(() =>
+        advance(workflow, failed, { type: 'setupFailed', error: command.error }, engineContext),
+      );
+      return transitionEvents(command.type, workflow, run, transition, read, context);
+    }
+    case 'workflowRun.workingCopySettled': {
+      const { run, copy } = runWithCopy(read, command.runId, ['ready', 'kept', 'failed']);
+      if (isLiveRunState(run.state)) {
+        throw new CommandRejected('rejected', `Run ${run.id} still works in its working copy`);
+      }
+      const { state, unpushed, error } = command;
+      return [
+        runChanged(command.type, { ...run, workingCopy: { ...copy, state, unpushed, error } }),
+      ];
+    }
   }
+}
+
+// A change to the run that the engine has no part in: what became of its working copy.
+const runChanged = (cause: string, run: WorkflowRun): DomainEvent => ({
+  kind: 'workflowRun.changed',
+  aggregate: run.id,
+  payload: { cause, run, effects: [] },
+});
+
+function runWithCopy(read: ReadModel, runId: string, states: readonly WorkingCopy['state'][]) {
+  const run = read.run(runId);
+  if (!run) throw new CommandRejected('not_found', `No run ${runId}`);
+  const copy = run.workingCopy;
+  if (!copy) throw new CommandRejected('rejected', `Run ${runId} has no working copy`);
+  if (!states.includes(copy.state)) {
+    throw new CommandRejected('rejected', `The working copy of run ${runId} is ${copy.state}`);
+  }
+  return { run, copy };
+}
+
+const WORKSPACES_ROOT_KEY = 'workspaces.root';
+
+// The project's name as a folder name: short, so the path stays well under what Windows allows.
+const folderSlug = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 16)
+    .replace(/-+$/, '');
+
+// Where a run's own working copy goes: `workspaces.root` (inside wow's own folder unless it is a
+// full path) and a folder named after the project and the run. Decided here, without touching
+// the disk, so the threads of the run's steps can be created with it as their `cwd`.
+export function workingCopyPath(
+  root: string,
+  home: string | undefined,
+  projectName: string,
+  runId: string,
+): string {
+  if (!path.isAbsolute(root) && home === undefined) {
+    throw new CommandRejected(
+      'rejected',
+      `${WORKSPACES_ROOT_KEY} is "${root}", which is not a full path, and this server has no folder of its own to put it in`,
+    );
+  }
+  const id = createHash('sha256').update(runId).digest('hex').slice(0, 8);
+  const slug = folderSlug(projectName);
+  return path.join(path.resolve(home ?? '', root), slug === '' ? id : `${slug}-${id}`);
 }
 
 export interface RunStart {
@@ -183,9 +279,8 @@ export function startRunEvents(
     throw new CommandRejected('conflict', `Run ${start.runId} already exists`);
   }
   const workflow = requireWorkflow(read, start.workflowId);
-  if (!read.project(start.projectId)) {
-    throw new CommandRejected('not_found', `No project ${start.projectId}`);
-  }
+  const project = read.project(start.projectId);
+  if (!project) throw new CommandRejected('not_found', `No project ${start.projectId}`);
   for (const step of workflow.steps) {
     if (!read.providerInstance(step.providerInstanceId)) {
       throw new CommandRejected(
@@ -208,7 +303,32 @@ export function startRunEvents(
       engineContext,
     ),
   );
-  return transitionEvents(cause, workflow, undefined, transition, read, context);
+  if (!workflow.ownWorkingCopy) {
+    return transitionEvents(cause, workflow, undefined, transition, read, context);
+  }
+  // The folder is only named here. The workspaces service makes it before the first step gets
+  // its prompt, and the run fails there when it cannot (review loop spec 36, 38).
+  const definition = context.registry[WORKSPACES_ROOT_KEY];
+  if (!definition) throw new Error(`${WORKSPACES_ROOT_KEY} is missing from the settings registry`);
+  const { value } = resolveStored(WORKSPACES_ROOT_KEY, definition, {}, (scope) =>
+    read.setting(WORKSPACES_ROOT_KEY, scope),
+  );
+  const workingCopy: WorkingCopy = {
+    path: workingCopyPath(
+      typeof value === 'string' ? value : String(definition.default),
+      context.home,
+      project.name,
+      start.runId,
+    ),
+    state: 'pending',
+    startSha: null,
+    defaultBranch: null,
+    note: null,
+    unpushed: null,
+    error: null,
+  };
+  const run = { ...transition.run, workingCopy };
+  return transitionEvents(cause, workflow, undefined, { ...transition, run }, read, context);
 }
 
 export function runInput(
@@ -403,7 +523,8 @@ function stepThread(
   return {
     id: threadId,
     projectId: run.projectId,
-    cwd: project?.cwd ?? '.',
+    // A run with its own working copy never works in the project folder (review loop spec 36).
+    cwd: run.workingCopy?.path ?? project?.cwd ?? '.',
     branch: null,
     providerInstanceId: step.providerInstanceId,
     providerSessionId: null,

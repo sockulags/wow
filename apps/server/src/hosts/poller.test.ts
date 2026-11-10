@@ -4,6 +4,7 @@ import type {
   PlanIntent,
   ProviderInstance,
   ServerCommand,
+  WorkflowRun,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import { execFileSync } from 'node:child_process';
@@ -156,6 +157,20 @@ function startRun(runId = 'r1'): void {
   }
   dispatch({ type: 'workflowRun.start', runId, workflowId: 'gated', projectId: 'tea' });
 }
+
+// Git in a folder, as an invented author.
+const git = (folder: string, ...args: string[]) =>
+  execFileSync('git', [
+    '-C',
+    folder,
+    '-c',
+    'user.name=Invented',
+    '-c',
+    'user.email=invented@example.invalid',
+    '-c',
+    'commit.gpgsign=false',
+    ...args,
+  ]);
 
 // The project folder as a repository on this branch, without a commit.
 function onBranch(branch: string): void {
@@ -401,6 +416,30 @@ describe('pull request beside a run (spec 28)', () => {
     expect(asked()).toEqual([
       '/repos/acme/tea/pulls?head=acme%3Aagent%2FU9-nothing&state=all&sort=created&direction=desc&per_page=1',
     ]);
+  });
+
+  it('takes the branch of the run’s own working copy, not the project folder’s', async () => {
+    const tea = path.join(root, 'tea');
+    onBranch('main');
+    git(tea, 'add', '-A');
+    git(tea, 'commit', '--quiet', '-m', 'Invented start');
+    startRun('r0');
+    dispatch({ type: 'workflow.update', workflowId: 'gated', ownWorkingCopy: true });
+    startRun('r1');
+    await server.workspaces.settled();
+    await server.hosts.idle();
+    // Fresh from the default branch the working copy is on no branch, so nothing is asked.
+    expect(read('run:r1')).toMatchObject({ branch: null, changeRequestIds: [] });
+    expect(asked()).toEqual([expect.stringContaining('head=acme%3Amain')]);
+
+    const [copy] = (snapshot(server.database.db, { topic: 'workflowRuns' }) as WorkflowRun[])
+      .filter((run) => run.id === 'r1')
+      .map((run) => run.workingCopy);
+    expect(copy?.state).toBe('ready');
+    git(copy?.path ?? '', 'checkout', '--quiet', '-b', 'agent/U2-bell');
+    await server.hosts.refresh({});
+    expect(read('run:r1')).toMatchObject({ branch: 'agent/U2-bell', changeRequestIds: ['tea:14'] });
+    expect(read('run:r0')).toMatchObject({ branch: 'main', changeRequestIds: [] });
   });
 });
 

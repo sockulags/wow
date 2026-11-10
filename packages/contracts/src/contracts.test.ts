@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   ChangeRequest,
   Command,
+  InternalCommand,
+  WorkingCopy,
+  runFolder,
+  workingCopyOnDisk,
   PlanIntent,
   Keybinding,
   KeyValueList,
@@ -102,6 +106,7 @@ describe('settings registry', () => {
         'hosts',
         'viewer',
         'diff',
+        'workspaces',
         'appearance',
         'keybindings',
         'desktop',
@@ -301,5 +306,62 @@ describe('hosts', () => {
       ChangeRequest.safeParse({ ...request, checks: [{ name: 'test', state: 'none', url: null }] })
         .success,
     ).toBe(false);
+  });
+});
+
+describe('working copies', () => {
+  const copy = {
+    path: '/home/me/.wow/workspaces/tea-timer-1a2b3c4d',
+    state: 'pending',
+    startSha: null,
+    defaultBranch: null,
+    note: null,
+    unpushed: null,
+    error: null,
+  };
+
+  it('accepts a working copy in every state and only those', () => {
+    for (const state of ['pending', 'ready', 'failed', 'kept', 'removed']) {
+      expect(WorkingCopy.safeParse({ ...copy, state }).success).toBe(true);
+    }
+    expect(WorkingCopy.safeParse({ ...copy, state: 'gone' }).success).toBe(false);
+    expect(WorkingCopy.safeParse({ ...copy, path: '' }).success).toBe(false);
+    expect(workingCopyOnDisk(WorkingCopy.parse({ ...copy, state: 'kept' }))).toBe(true);
+    expect(workingCopyOnDisk(WorkingCopy.parse({ ...copy, state: 'removed' }))).toBe(false);
+  });
+
+  it('names the folder a run works in', () => {
+    expect(runFolder({ workingCopy: WorkingCopy.parse(copy) }, '/home/me/tea')).toBe(copy.path);
+    expect(runFolder({ workingCopy: null }, '/home/me/tea')).toBe('/home/me/tea');
+    expect(runFolder({}, '/home/me/tea')).toBe('/home/me/tea');
+  });
+
+  it('takes the switch on a workflow and the outcome of a working copy as commands', () => {
+    expect(
+      Command.safeParse({ type: 'workflow.update', workflowId: 'w', ownWorkingCopy: true }).success,
+    ).toBe(true);
+    expect(
+      InternalCommand.safeParse({
+        type: 'workflowRun.workingCopySettled',
+        runId: 'r1',
+        state: 'kept',
+        unpushed: {
+          uncommittedFiles: 2,
+          unpushedCommits: 1,
+          newestSubject: 'Ring the bell',
+          branch: null,
+        },
+        error: null,
+      }).success,
+    ).toBe(true);
+    // A client cannot report what became of a working copy.
+    expect(
+      Command.safeParse({
+        type: 'workflowRun.workingCopyFailed',
+        runId: 'r1',
+        error: 'made up',
+      }).success,
+    ).toBe(false);
+    expect(Object.keys(rpcMethods)).toContain('workflowRuns.removeWorkingCopy');
   });
 });

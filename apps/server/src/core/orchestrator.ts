@@ -83,6 +83,8 @@ export interface ReadModel {
 export interface DecideContext {
   readonly now: string;
   readonly registry: Readonly<Record<string, SettingDefinition>>;
+  // wow's own folder (`WOW_HOME`), where a relative `workspaces.root` is resolved.
+  readonly home?: string | undefined;
 }
 
 export class CommandRejected extends Error {
