@@ -22,7 +22,12 @@ const dependsNote = /^depends on\s+(.+)$/i;
 const blockedNote = /^blocked:\s*(.+)$/i;
 const fieldLine = new RegExp(`^(${unitContractFields.join('|')})(?:\\s*\\([^)]*\\))?:\\s*(.*)$`);
 
-const splitLines = (text: string): string[] => text.replace(/\r\n/g, '\n').split('\n');
+// Windows editors and PowerShell often start a file with a byte order mark.
+const splitLines = (text: string): string[] =>
+  text
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n/g, '\n')
+    .split('\n');
 
 export interface Frontmatter {
   // Flat `key: value` pairs; values stay strings.
@@ -92,7 +97,11 @@ export function parseUnits(body: string, bodyLine = 1): UnitList | null {
     const match = unitLine.exec(line.trim());
     const key = match?.[1];
     if (key === undefined) continue;
-    const [title = '', ...notes] = (match?.[2] ?? '').split(/\s+(?:—|--)\s+/);
+    const [title = '', ...notes] = (match?.[2] ?? '')
+      // One space between words first: splitting on runs of whitespace around the dash takes
+      // quadratic time on a line with a long run of spaces.
+      .replace(/\s+/g, ' ')
+      .split(/ (?:—|--) /);
     const dependsOn: string[] = [];
     let blocked: string | null = null;
     for (const note of notes) {

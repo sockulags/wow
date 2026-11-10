@@ -60,6 +60,10 @@ describe('frontmatter', () => {
     expect(parsed?.body).toBe('body\n');
   });
 
+  it('reads a file that starts with a byte order mark', () => {
+    expect(parseFrontmatter('\uFEFF---\nid: a\n---\nbody\n')?.data).toEqual({ id: 'a' });
+  });
+
   it('answers null without a closed --- block', () => {
     expect(parseFrontmatter('# Title\n')).toBeNull();
     expect(parseFrontmatter('---\nid: a\n')).toBeNull();
@@ -158,6 +162,14 @@ describe('plan units', () => {
         line: 14,
       },
       { key: 'U3', title: 'Show the time left', dependsOn: ['U1', 'U2'], blocked: null, line: 15 },
+    ]);
+  });
+
+  it('reads a unit line with a very long run of spaces without slowing down', () => {
+    // A hundred thousand spaces took minutes when notes were split on runs of whitespace.
+    const list = parseUnits(`## Units\n- [U1] a${' '.repeat(100_000)}b — depends on U2\n`);
+    expect(list?.units).toEqual([
+      { key: 'U1', title: 'a b', dependsOn: ['U2'], blocked: null, line: 2 },
     ]);
   });
 
