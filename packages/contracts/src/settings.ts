@@ -16,6 +16,7 @@ export const SettingGroup = z.enum([
   'workflows',
   'skills',
   'trackers',
+  'viewer',
   'appearance',
   'keybindings',
   'desktop',
@@ -39,8 +40,16 @@ export const LogLevel = z.enum(['error', 'warn', 'info', 'debug']);
 export type LogLevel = z.infer<typeof LogLevel>;
 
 // The unit a number setting is stored in. The settings page shows it as a suffix and shows
-// milliseconds as seconds, so labels carry no unit.
-export const SettingUnit = z.enum(['ms', 'seconds', 'minutes', 'days', 'pixels', 'percent']);
+// milliseconds as seconds and bytes as kilobytes, so labels carry no unit.
+export const SettingUnit = z.enum([
+  'ms',
+  'seconds',
+  'minutes',
+  'days',
+  'pixels',
+  'percent',
+  'bytes',
+]);
 export type SettingUnit = z.infer<typeof SettingUnit>;
 
 // How the settings page names one value of an enum setting; the stored value stays the id.
@@ -766,6 +775,35 @@ export const settingsRegistry = {
       'How many recent commits of a project wow reads to suggest its Jira project key from references such as ABC-123. 0 turns the suggestion off.',
     default: 200,
     scope: 'global',
+  }),
+  'viewer.maxFileBytes': defineSetting({
+    schema: z.number().int().min(1000).max(50_000_000),
+    group: 'viewer',
+    label: 'Largest file shown',
+    description:
+      'A file larger than this is not read when you open it in the side panel; the panel says so instead.',
+    default: 2_000_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
+  'viewer.htmlScripts': defineSetting({
+    schema: z.boolean(),
+    group: 'viewer',
+    label: 'Run scripts in HTML files',
+    description:
+      'Let an HTML file shown in the side panel run its own scripts. The page still cannot reach the app, the network or the disk.',
+    default: false,
+    scope: 'global',
+  }),
+  'viewer.highlightMaxBytes': defineSetting({
+    schema: z.number().int().min(0).max(50_000_000),
+    group: 'viewer',
+    label: 'Largest file highlighted',
+    description:
+      'A text file larger than this is shown as plain text, because coloring a very long file makes the app slow. 0 turns coloring off.',
+    default: 200_000,
+    scope: 'global',
+    unit: 'bytes',
   }),
   'appearance.theme': defineSetting({
     schema: Theme,

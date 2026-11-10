@@ -69,6 +69,7 @@ export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
   workflows: 'Workflows',
   skills: 'Skills',
   trackers: 'Trackers',
+  viewer: 'Viewer',
   appearance: 'Appearance',
   keybindings: 'Keybindings',
   desktop: 'Desktop',

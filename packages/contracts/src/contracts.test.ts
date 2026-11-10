@@ -96,6 +96,7 @@ describe('settings registry', () => {
         'workflows',
         'skills',
         'trackers',
+        'viewer',
         'appearance',
         'keybindings',
         'desktop',
@@ -103,6 +104,29 @@ describe('settings registry', () => {
         'advanced',
       ]),
     );
+  });
+
+  it('accepts the answers of files.read and nothing between them', () => {
+    const result = rpcMethods['files.read'].result;
+    const read = { absolutePath: '/work/demo/a.md', size: 3 };
+    expect(result.safeParse({ kind: 'markdown', ...read, text: '# a' }).success).toBe(true);
+    expect(
+      result.safeParse({ kind: 'image', ...read, mediaType: 'image/png', base64: 'AAEC' }).success,
+    ).toBe(true);
+    expect(
+      result.safeParse({ kind: 'refused', reason: 'outside', message: 'Not read.' }).success,
+    ).toBe(true);
+    expect(result.safeParse({ kind: 'image', ...read, text: 'not a picture' }).success).toBe(false);
+    expect(
+      result.safeParse({ kind: 'image', ...read, mediaType: 'text/html', base64: '' }).success,
+    ).toBe(false);
+    expect(result.safeParse({ kind: 'refused', reason: 'secret', message: 'x' }).success).toBe(
+      false,
+    );
+    const params = rpcMethods['files.read'].params;
+    expect(params.safeParse({ runId: 'r1', path: 'a.md' }).success).toBe(true);
+    expect(params.safeParse({ runId: 'r1', path: '' }).success).toBe(false);
+    expect(params.safeParse({ runId: 'r1', path: 'a\0.md' }).success).toBe(false);
   });
 
   it('seeds the Bug, Feature and Initiative templates (behavior 25)', () => {

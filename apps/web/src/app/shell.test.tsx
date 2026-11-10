@@ -132,6 +132,7 @@ describe('shell', () => {
       'Workflows',
       'Skills',
       'Trackers',
+      'Viewer',
       'Appearance',
       'Keybindings',
       'Advanced',

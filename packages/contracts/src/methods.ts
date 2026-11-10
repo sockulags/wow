@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Command, CommandId, DispatchResult } from './commands.js';
+import { FileReadParams, FileReadResult } from './files.js';
 import {
   Approval,
   BacklogItem,
@@ -226,6 +227,12 @@ export const rpcMethods = {
   'workflows.matchArtifacts': {
     params: z.object({ projectId: z.string().min(1), globs: z.array(z.string().min(1)) }),
     result: z.object({ files: z.array(z.string()) }),
+  },
+  // Reads one file of a run for the viewer. Only files inside the run's working folder or the
+  // project folder are read; anything else is answered as `refused` with the reason.
+  'files.read': {
+    params: FileReadParams,
+    result: FileReadResult,
   },
   // Each project folder's git status and remotes, for the rows in Settings → Projects. Read only.
   'projects.git': {

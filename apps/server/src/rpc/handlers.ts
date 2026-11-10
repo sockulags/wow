@@ -13,6 +13,7 @@ import type { Engine } from '../core/engine.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
 import { projects, workflowRuns } from '../db/schema.js';
+import { readViewerFile } from '../files/read.js';
 import type { OutlookService } from '../outlook/service.js';
 import type { ProviderService } from '../providers/service.js';
 import type { ProviderUpdates } from '../providers/update.js';
@@ -125,6 +126,18 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       const project = deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
       if (!project) throw new RpcFault('not_found', `No project ${projectId}`);
       return { files: await detectArtifacts(project.cwd, globs) };
+    },
+    'files.read': async ({ runId, path: requested }) => {
+      const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();
+      if (!run) throw new RpcFault('not_found', `No run ${runId}`);
+      const project = deps.db.select().from(projects).where(eq(projects.id, run.projectId)).get();
+      if (!project) throw new RpcFault('not_found', `No project ${run.projectId}`);
+      // A run works in its project folder; a run with its own working copy adds that folder first.
+      return readViewerFile({
+        roots: [project.cwd],
+        path: requested,
+        maxBytes: deps.settings.get('viewer.maxFileBytes'),
+      });
     },
     'workflowRuns.detectArtifacts': async ({ runId }) => {
       await deps.workflows.detectArtifacts(runId);

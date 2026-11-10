@@ -42,7 +42,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test`, `provider.listModels` and
   `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`,
   `workflowRuns.detectArtifacts` (`{runId}`), `workflows.matchArtifacts` (`{projectId, globs}`),
-  `outlook.open` (`{entryId}`), `outlook.refresh`, `projects.git` (every project folder's git
+  `files.read` (`{runId, path}`, one file of a run for the viewer, see "Files"), `outlook.open`
+  (`{entryId}`), `outlook.refresh`, `projects.git` (every project folder's git
   status and remotes), `trackers.project` (`{projectId}`, one project's tracker settings with their
   sources and suggestions), `trackers.test` (`{service, projectId?}`, signs in with the tracker
   settings as they apply and answers `{ok, account, message, missing}`), and `trackers.preview`
@@ -90,6 +91,24 @@ projectId?, title?, labels?}`). Error codes are `RpcErrorCode`.
   for triggers whose time passed while the server was down. Times are stored as UTC ISO strings
   plus the IANA zone they were entered in; `Temporal` polyfill (`@js-temporal/polyfill`) does zone
   math. Default zone is the system zone. Details in "Scheduler and triggers".
+- **Files.** `apps/server/src/files/read.ts` (`readViewerFile`) is the only way file content
+  leaves the server, and `files.read` is its only caller; there is no HTTP file server and no
+  directory listing. The handler gives it the folders the run may read (the project folder; a
+  run with its own working copy adds that folder in front) and `viewer.maxFileBytes`. A
+  relative path is looked for in each folder in order, a full path must lie in one of them. The
+  order of checks: the path as written must stay inside a folder (`path.resolve` and
+  `path.relative`, so `..` and other drives are refused without touching the disk); `realpath`
+  of the file must still be inside the `realpath` of a folder (a symbolic link that leaves is
+  refused); it must be a regular file no larger than the limit; then it is read once. Content
+  decides what it is: PNG, JPEG, GIF and WebP by their first bytes, SVG by its extension;
+  anything else must decode as UTF-8 (or UTF-16 with a byte order mark, which Windows tools
+  write) without a NUL, or it is binary. The answer (`FileReadResult` in
+  `packages/contracts/src/files.ts`) is `markdown`, `html` or `text` with the text, `image` with
+  a media type and base64, or `refused` with a reason (`outside`, `missing`, `not_a_file`,
+  `binary`, `too_large`) and a sentence for the panel. A refusal is an answer, not an RPC error;
+  only an unknown run is `not_found`. `isInside` and `candidatePaths` take the path module, so
+  the Windows rules (case, both separators, drives, UNC) are tested on every platform, and one
+  test reads real files on `windows-latest`.
 - **Services, thin transports.** Each feature is a service with an `Effect`-free plain TypeScript
   API; RPC handlers only validate and call services.
 
@@ -483,8 +502,8 @@ same toaster carries the app's own feedback (see "Look").
 `packages/contracts/src/settings.ts` exports `settingsRegistry`: a map of key → `{schema: zod,
 group, label, description, default, scope: 'global'|'project'|'provider', restartRequired?,
 secret?, unit?, options?, radio?}`. `unit` (`ms`, `seconds`, `minutes`, `days`, `pixels`,
-`percent`) is shown as a suffix after a number field, so labels carry no unit; milliseconds are
-shown and typed as seconds. `options` names each enum value (`{label, description?}`), so the page
+`percent`, `bytes`) is shown as a suffix after a number field, so labels carry no unit;
+milliseconds are shown and typed as seconds, bytes as kilobytes. `options` names each enum value (`{label, description?}`), so the page
 never shows a raw id; `radio` shows the choices as a radio group with their descriptions. The server validates writes against it; the settings UI renders groups and fields from
 it (text, number, boolean, enum, list, key-value with secret flag, keybinding). Adding a setting is
 one entry. A definition's `scope` is the narrowest place it may be stored: `global` settings only
@@ -526,6 +545,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.github.owner`, `trackers.github.repo`, `trackers.github.labels`,
   `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs`, `trackers.jira.keyScanCommits` (the
   `trackers.jira.*` and `trackers.github.*` ones are project-scoped, see "Backlog and trackers")
+- viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -787,8 +807,9 @@ only for the saved steps. With a project to run in, each step's expected globs a
 for a "Matches N files" line. Delete dispatches `workflow.delete` at once and offers Undo, which
 sends `workflow.restore {workflow}` with the row the client held (refused if the id exists again). The run view asks
 `workflowRuns.detectArtifacts` when it opens and renders the run row: each step's state, its
-thread link, how long it took, the expected globs and the found files as `file://` links into the
-project folder with a copy-path button. A step that ended and waits at its gate reads Done with a
+thread link, how long it took, the expected globs and the found files, each a button that opens
+the file in the context panel's viewer (`artifact-link.tsx`, see "Context panel") with a
+copy-path button; nothing links to `file://`. A step that ended and waits at its gate reads Done with a
 "Waiting for you" marker after it. The header links to the run's card and backlog item. The gate
 bar (`gate-bar.tsx`, also in the step's thread) reads the gate the way `pendingGate` does (the
 current step has ended: after it; not started: before it), shows the reviewed step's
@@ -950,6 +971,28 @@ topics the views read.
   summed over `turns` (`threadUsage`) with the last context report, and the run, card and backlog
   item it belongs to.
 - No selection: a compact `EmptyState` that says what the view would show.
+- File viewer (`file-viewer.tsx`, `viewer.ts`; review loop spec 6 to 9): a state of the panel, not
+  a second panel. `openFile` stores `{runId, path, fullPath, from, fullSize}` as the layout
+  store's `viewer` and opens the panel; while `viewer.from` is the route on screen
+  (`shownFile`), `FileViewer` takes the place of the panel's body, so the main view stays put
+  and leaving the view puts the file away. It is UI state like an open dialog; the content is
+  asked from the server with `files.read` each time a file is opened and never kept. The header
+  has Back to conversation (also Escape), Copy path (the path the server resolved) and the
+  path; markdown goes through `Markdown`, a picture is a `data:` URL fitted to the panel with a
+  Full size switch, other text is a `CodeBlock` colored by its extension up to
+  `viewer.highlightMaxBytes`, and a refusal shows the server's sentence. HTML is shown in an
+  `iframe` from a string (`frameDocument`): `sandbox` without `allow-same-origin` gives the
+  page no origin, so it cannot read the app, its storage or the disk, open windows or leave the
+  frame, and `allow-scripts` is added only while `viewer.htmlScripts` is on. A policy placed
+  before the file's own markup (`default-src 'none'`, pictures, fonts and media from `data:`
+  only, inline styles, inline scripts only with the setting, no form targets, no `base`) stops
+  every fetch from inside the page, so files beside it do not load. The page could still
+  navigate its own frame to another address; `frame-src 'none'` in `apps/web/index.html` stops
+  that (a `srcdoc` frame still loads), and the e2e test checks that the mock port the page
+  names gets no request. While the focus is inside the frame its keys stay there; a click
+  outside or Tab brings the app's shortcuts back. Palette commands (`viewerCommands`): "Open
+  artifact: <path>" for every found file of the open run, and Back to conversation, Copy file
+  path and the picture's size switch while a file shows.
 
 State (`panel-state.ts`). `appearance.contextPanel` stores whether it is open and
 `appearance.contextPanelWidth` its width (pixels, bounds `contextPanelWidthBounds` in
@@ -1119,7 +1162,8 @@ Shared pieces in `apps/web/src/components` (views compose them; none restyles `c
   document, so a picture named in a diagram's style would be fetched while it draws, before any
   check of the result. What makes that impossible is the content security policy in
   `apps/web/index.html`: pictures, fonts, media and stylesheets load only from the app itself (or
-  `data:`), and plugins never. It leaves scripts and connections alone, because the dev server
+  `data:`), plugins never, and no frame may load an address (the file viewer's frame is filled from
+  a string, see "Context panel"). It leaves scripts and connections alone, because the dev server
   and the socket to the wow server need them. `mermaid.ts` adds three things on top, so a
   diagram also draws nothing it should not: labels are drawn as text and a diagram's own
   directives cannot set CSS, theme variables or fonts (`htmlLabels: false` and the `secure`
@@ -1175,7 +1219,11 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   (`e2ePanelHome`, `e2ePanelPort`), because the panel's open state and width are global settings
   that change what a click in the calendar does; its home seeds a one-step workflow with a gate
   after the step and a card tomorrow that runs it, started with `POST /fire?cardId=…` on its
-  tracker port. The trigger tests start a third copy themselves
+  tracker port. The same copy holds the file viewer's fixtures: invented files of every kind in the
+  project's `review` folder (the picture is drawn by the script, the HTML page tries to reach
+  the app, its storage and the tracker port) and a workflow whose step finds them, started with
+  `POST /run?workflowId=…&runId=…`; requests to `/leak…` on the tracker port are recorded, so a
+  page that got out fails the test. The trigger tests start a third copy themselves
   (`e2eTriggersHome`, `e2eTriggersPort`) because they restart it: `WOW_E2E_KEEP_HOME=1` keeps the
   home across a restart and `WOW_E2E_CLOCK_OFFSET_SECONDS` runs the server's clock ahead, so a
   trigger's time passes while the server is down without the test waiting. The server prints
