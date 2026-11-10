@@ -37,6 +37,7 @@ import {
   e2eWorkflowId,
   e2eWorkspace,
 } from './env';
+import { e2ePlansDirectory, seedPlanFiles } from './plans-seed';
 
 // WOW_E2E_HOME and WOW_E2E_PORT start a second copy for the settings tests (playwright.config.ts).
 const home = process.env['WOW_E2E_HOME'] ?? e2eHome;
@@ -280,6 +281,7 @@ await writeFile(
 );
 await mkdir(path.join(home, 'intents', 'demo'), { recursive: true });
 await writeFile(path.join(home, 'intents', 'demo', 'intent.md'), '# Demo intent\n');
+await seedPlanFiles(home);
 const server = await startServer({
   home,
   port,
@@ -387,6 +389,13 @@ server.engine.dispatch('seed-project', {
   projectId: e2eProjectId,
   name: 'Demo',
   cwd: home,
+});
+
+server.engine.dispatch('seed-plans-directory', {
+  type: 'setting.set',
+  key: 'plans.intentsDirectory',
+  scope: `project:${e2eProjectId}`,
+  value: e2ePlansDirectory,
 });
 
 // Settings for the mock trackers below: Jira fully set up, GitHub without its token, which the

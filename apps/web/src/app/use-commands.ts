@@ -12,6 +12,8 @@ import { providerCommands } from '@/providers/commands';
 import { formatWhen } from '@/lib/format';
 import { panelCommands } from '@/panel/commands';
 import { panelSelection } from '@/panel/model';
+import { planCommands } from '@/plans/commands';
+import { openPlan } from '@/plans/model';
 import { useCalendarPrefs } from '@/calendar/prefs';
 import { pendingApproval } from '@/chat/view-model';
 import { workflowCommands } from '@/workflows/commands';
@@ -49,6 +51,7 @@ export function useCommands(): {
   const showWeekends = useSetting('calendar.showWeekends');
   const mailRailCollapsed = useSetting('outlook.mailRailCollapsed');
   const backlogItems = useTopic('backlogItems');
+  const planIntents = useTopic('planIntents');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
@@ -96,6 +99,11 @@ export function useCommands(): {
         openRun,
         formatWhen: when,
       }),
+      ...planCommands({
+        intents: planIntents ?? [],
+        projects: projects ?? [],
+        openIntent: openPlan(pathname, planIntents ?? []),
+      }),
       ...backlogCommands({
         items: backlogItems ?? [],
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
@@ -131,6 +139,7 @@ export function useCommands(): {
     schedulerPaused,
     backlogItems,
     openBacklogItemId,
+    planIntents,
   ]);
   const context = useMemo(
     () => ({ navigate, settings, layout, draft, connection, updates }),

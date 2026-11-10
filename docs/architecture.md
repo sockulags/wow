@@ -19,6 +19,7 @@ packages/
   outlook-bridge/    PowerShell COM bridge + mock adapter + fixtures.
   skills/        SKILL.md discovery.
   workflow-engine/   workflow definitions, runs, gates, step handover. Pure; the server wires it.
+  agent-os/      reads agent-os intent, spec and plan files from their text. Pure; no I/O.
   secrets/       DPAPI (Windows) or 0600 file (elsewhere) secret store.
 docs/            architecture (this file), user guide, windows-smoke checklist, releases/ notes.
 intents/         agent-os intent, spec and plan.
@@ -40,7 +41,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test`, `provider.listModels` and
-  `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`,
+  `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`, `plans.refresh` (reads every project's
+  intents folder now, see "Plans"),
   `workflowRuns.detectArtifacts` (`{runId}`), `workflows.matchArtifacts` (`{projectId, globs}`),
   `outlook.open` (`{entryId}`), `outlook.refresh`, `projects.git` (every project folder's git
   status and remotes), `trackers.project` (`{projectId}`, one project's tracker settings with their
@@ -127,6 +129,9 @@ notifications    id, at, kind ('started'|'waiting'|'failed'), title, body, path,
                  calendarItemId?
 skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
                  'project-agents'|'custom'), manualOnly, invocations(json: {claude, codex})
+plan_intents     id ('<projectId>:<intentId>'), projectId, intentId, title, hasIntent, status?, rev?,
+                 spec(json: PlanFile)?, plan(json: PlanFile)?, source ('files'|'issues')?,
+                 units(json: PlanUnit[]), problems(json: PlanProblem[])   -- what the files say
 settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
 events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
@@ -520,6 +525,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `scheduler.paused`, `scheduler.toastSeconds`
 - workflows: `workflows.templates`, `workflows.handoverTemplate`
 - skills: `skills.directories`, `skills.includeClaudePlugins`
+- plans: `plans.intentsDirectory` (project-scoped, see "Plans")
 - trackers: `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
   `trackers.jira.email`, `trackers.jira.token` (secret), `trackers.jira.projectKey`,
   `trackers.jira.issueType`, `trackers.github.baseUrl`, `trackers.github.token` (secret),
@@ -718,6 +724,57 @@ project's id or folder changes), or "No git repository", "No git remote", "Git n
 "Folder missing" warning. **Trackers** expands `projects/project-trackers.tsx` in the row (the
 palette's "Trackers for project …" opens it through `#trackers-<id>`), described under
 "Backlog and trackers".
+
+## Plans
+
+wow reads agent-os plans; it never writes an intent, spec or plan file and never runs an agent-os
+script (review loop spec 21 to 25).
+
+**Parser** (`packages/agent-os`). `readIntent({id, intent?, spec?, plan?})` takes the text of one
+intent folder's files and answers title (the first `# ` heading), status and revision from the
+frontmatter, whether the spec and the plan are stale, the plan's units and the problems found. It
+follows agent-os's own parser (`quality-ratchet/scripts/intent-files.mjs`) rule for rule, because
+calling that script would mean running repository code and it is not always installed:
+frontmatter is a flat `key: value` block between `---` lines; `built_on` is `<kind>@<n>` and a
+file is stale when that number is lower than its source file's `rev` (the intent for a spec, the
+spec for a plan); a unit is a `- [KEY] title` line under `## Units`, with notes split on an em
+dash or `--` with spaces around, `depends on A, B` and `blocked: reason` read without regard to
+case; a unit's contract is its `### KEY` section, read into the nine agent-os fields. With
+`source: issues` the tracker holds dependencies and contracts, so units carry key and title only.
+The package has no dependencies and does no I/O. Nothing throws: a file without frontmatter, a
+bad `rev`, `built_on` or `source`, a plan without `## Units` lines, a key that appears twice, an
+unknown dependency, a unit without its section and a folder name that is not an intent id each
+become a problem `{file, line, message}`, and everything that can be read is still returned. A
+contract field a section does not have is absent, not a problem, because older plans predate
+some fields.
+
+**Service** (`apps/server/src/plans/service.ts`). For every project it resolves
+`plans.intentsDirectory` (default `intents`, project-scoped, a relative path that may not leave
+the project folder) against the project folder, lists the folders in it and reads each one's
+`intent.md`, `spec.md` and `plan.md`. Links are not followed, and a folder with none of the three
+files is not an intent. The result goes through the engine as the internal `plans.sync` command;
+the orchestrator compares it with the stored rows, so `plans.synced` carries only what changed and
+an unchanged read stores nothing. It reads at start, when the project list or the setting changes,
+when the chokidar watcher on the intents folders reports a change (the watcher of
+`packages/skills`, so a plan edited on disk shows without a restart), and on `plans.refresh`.
+Reads that arrive while one is waiting share it.
+
+**Rows.** `PlanIntent` (topic `planIntents`) is one intent folder: `hasIntent`, `status` and
+`rev` of the intent, `spec` and `plan` as `PlanFile` (`{rev, status, stale: {builtOn, current}?}`,
+null when the file is missing), `source`, `units` and `problems`. A `PlanUnit` is `{key, title,
+line, dependsOn, blocked, contract, status, statusReason}`; `contract` lists all nine fields with
+null for one the section lacks, and is null for `source: issues`. The server decides `status`.
+Without a host it is what the files alone say: `blocked` when the unit's line has a `blocked:`
+note (the note is the reason), otherwise `unknown` with the reason that no host is set up. Status
+from pull requests belongs to the host reading that comes after this.
+
+**View** (`apps/web/src/plans`, section "Plans" after Workflows, `keybindings.goPlans`). `/plans`
+lists every project with its intents: title, status and revision, spec and plan presence, "stale"
+and the number of problems. `/plans/$projectId/$intentId` shows the three files with a stale
+badge that names both revisions, the problems as `plan.md line 11: …`, and the units with key,
+title, dependencies, blocked note and status; the reason units share shows once above the list.
+`?unit=<key>` opens that unit's contract, rendered with the shared markdown renderer. Palette:
+"Plans: Refresh now", every intent (when searching) and each unit of the open plan.
 
 ## Chat view
 
@@ -1165,6 +1222,9 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   `wow e2e server ready` once it is seeded. The backlog tests publish to a mock Jira and GitHub on
   `e2eTrackerPort`, which the server's tracker settings point at (GitHub without its token, which
   the test enters on the settings page); the same port lists what the trackers received and starts
-  a backlog item's card run the way the scheduler will (`POST /fire`). CI runs `pnpm e2e` on
+  a backlog item's card run the way the scheduler will (`POST /fire`). The plans tests read invented intent
+  folders that `e2e/plans-seed.ts` writes to the seeded project's `plan-files` folder, which the
+  project's `plans.intentsDirectory` points at so the workflow tests' `intents/*` artifacts stay
+  as they are; one test rewrites a plan file and waits for the view to follow. CI runs `pnpm e2e` on
   `ubuntu-latest` and `windows-latest` (the `e2e` job) and keeps the traces of a failed run.
   Tests wait for what the page shows, never for time: no sleeps, polls or retries.

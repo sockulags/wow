@@ -20,6 +20,8 @@ import {
   NewItemView,
   validateBacklogItemSearch,
 } from '@/backlog/backlog-view';
+import { validatePlanSearch } from '@/plans/model';
+import { PlansHome, PlansLayout, PlanView } from '@/plans/plans-view';
 import { NotFoundView } from '@/views/empty-views';
 import { EditWorkflowView, NewWorkflowView } from '@/workflows/builder';
 import { RunView } from '@/workflows/run-view';
@@ -125,6 +127,30 @@ const workflowRoute = createRoute({
   },
 });
 
+const plansRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/plans',
+  component: PlansLayout,
+});
+
+const plansIndexRoute = createRoute({
+  getParentRoute: () => plansRoute,
+  path: '/',
+  component: PlansHome,
+});
+
+const planRoute = createRoute({
+  getParentRoute: () => plansRoute,
+  path: '/$projectId/$intentId',
+  // `?unit=<key>` opens that unit's contract, so palette commands can.
+  validateSearch: validatePlanSearch,
+  component: function PlanRoute() {
+    const { projectId, intentId } = planRoute.useParams();
+    const { unit } = planRoute.useSearch();
+    return <PlanView projectId={projectId} intentId={intentId} openUnit={unit} />;
+  },
+});
+
 const backlogRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/backlog',
@@ -190,6 +216,7 @@ const routeTree = rootRoute.addChildren([
     workflowRunRoute,
     workflowRoute,
   ]),
+  plansRoute.addChildren([plansIndexRoute, planRoute]),
   backlogRoute.addChildren([backlogIndexRoute, newBacklogItemRoute, backlogItemRoute]),
   settingsIndexRoute,
   settingsProjectsRoute,
