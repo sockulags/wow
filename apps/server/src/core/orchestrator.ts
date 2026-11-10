@@ -13,6 +13,7 @@ import {
   type ServerCommand,
   type SettingDefinition,
   type SettingScopeRef,
+  type PlanIntent,
   type Skill,
   type Thread,
   type Trigger,
@@ -62,6 +63,7 @@ export interface ReadModel {
   mailItems(): MailItem[];
   outlookStatus(): OutlookStatus | undefined;
   skills(): Skill[];
+  planIntents(): PlanIntent[];
   workflow(id: string): Workflow | undefined;
   run(id: string): WorkflowRun | undefined;
   // True while a run of this workflow is running or waiting at a gate.
@@ -151,6 +153,19 @@ export function decide(
       const removed = [...current.keys()].filter((id) => !next.has(id));
       if (upserted.length === 0 && removed.length === 0) return [];
       return [{ kind: 'skills.synced', aggregate: 'skills', payload: { upserted, removed } }];
+    }
+    case 'plans.sync': {
+      const current = new Map(read.planIntents().map((intent) => [intent.id, intent]));
+      const next = new Set(command.intents.map((intent) => intent.id));
+      if (next.size !== command.intents.length) {
+        throw new CommandRejected('rejected', 'Plan intent ids must be unique');
+      }
+      const upserted = command.intents.filter(
+        (intent) => !isDeepStrictEqual(current.get(intent.id), intent),
+      );
+      const removed = [...current.keys()].filter((id) => !next.has(id));
+      if (upserted.length === 0 && removed.length === 0) return [];
+      return [{ kind: 'plans.synced', aggregate: 'plans', payload: { upserted, removed } }];
     }
   }
 }

@@ -15,6 +15,7 @@ export const SettingGroup = z.enum([
   'scheduler',
   'workflows',
   'skills',
+  'plans',
   'trackers',
   'appearance',
   'keybindings',
@@ -186,6 +187,19 @@ const keybinding = (label: string, description: string, binding: string) =>
     default: binding,
     scope: 'global',
   });
+
+// A folder inside a project, written relative to it. It may not leave the project folder, so a
+// setting cannot point the plans reader at other files on the machine.
+export const IntentsDirectory = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(
+    (value) =>
+      !/^([A-Za-z]:|[\\/]|~)/.test(value) &&
+      !value.split(/[\\/]/).some((segment) => segment === '..'),
+    { message: 'Use a folder inside the project, such as intents or docs/intents' },
+  );
 
 // A tracker's base URL: http or https, or empty while the tracker is not set up.
 export const TrackerUrl = z
@@ -631,6 +645,15 @@ export const settingsRegistry = {
     default: true,
     scope: 'global',
   }),
+  'plans.intentsDirectory': defineSetting({
+    schema: IntentsDirectory,
+    group: 'plans',
+    label: 'Intents folder',
+    description:
+      'Folder inside a project whose <id>/intent.md, spec.md and plan.md files the Plans view reads. wow only reads them.',
+    default: 'intents',
+    scope: 'project',
+  }),
   'trackers.jira.baseUrl': defineSetting({
     schema: TrackerUrl,
     group: 'trackers',
@@ -856,6 +879,7 @@ export const settingsRegistry = {
   'keybindings.goChat': keybinding('Go to Chat', 'Open the chat.', 'Mod+2'),
   'keybindings.goWorkflows': keybinding('Go to Workflows', 'Open the workflows.', 'Mod+3'),
   'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+4'),
+  'keybindings.goPlans': keybinding('Go to Plans', 'Open the plans.', 'Mod+5'),
   'keybindings.goSettings': keybinding('Go to Settings', 'Open the settings.', 'Mod+,'),
   'keybindings.calendarToday': keybinding('Calendar: today', 'Show today in the calendar.', 'T'),
   'keybindings.calendarNext': keybinding(

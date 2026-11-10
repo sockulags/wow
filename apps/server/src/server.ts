@@ -30,6 +30,7 @@ import { closeConnection, createHandlers, type Connection } from './rpc/handlers
 import { route } from './rpc/router.js';
 import { Scheduler, type SchedulerTimers } from './scheduler/service.js';
 import { SettingsService } from './settings/service.js';
+import { PlansService } from './plans/service.js';
 import { SkillsService } from './skills/service.js';
 import { TrackerService } from './trackers/service.js';
 import { detectArtifacts, type ArtifactDetector } from './workflows/artifacts.js';
@@ -67,6 +68,8 @@ export interface StartOptions {
   readonly userHome?: string;
   // Replaces the chokidar watcher on the skill folders, for tests.
   readonly watchSkills?: WatchFactory;
+  // Replaces the chokidar watcher on the projects' intents folders, for tests.
+  readonly watchPlans?: WatchFactory;
   readonly detectArtifacts?: ArtifactDetector;
   // The time the engine stamps and the scheduler compares triggers with, for tests.
   readonly clock?: () => Date;
@@ -90,6 +93,7 @@ export interface RunningServer {
   readonly secrets: SecretStore;
   readonly providers: ProviderAdapters;
   readonly skills: SkillsService;
+  readonly plans: PlansService;
   readonly workflows: WorkflowRunner;
   readonly providerService: ProviderService;
   readonly providerUpdates: ProviderUpdates;
@@ -179,6 +183,13 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     userHome: options.userHome ?? homedir(),
     ...(options.watchSkills ? { watch: options.watchSkills } : {}),
   });
+  const plans = new PlansService({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    ...(options.watchPlans ? { watch: options.watchPlans } : {}),
+  });
   const trackers = new TrackerService({
     db: database.db,
     engine,
@@ -194,6 +205,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     secrets,
     db: database.db,
     skills,
+    plans,
     workflows,
     providers: providerService,
     providerUpdates,
@@ -299,6 +311,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     services.push(skills);
     // A folder that cannot be read must not keep the server from starting.
     await skills.start().catch((error: unknown) => logger.error('skill scan failed', error));
+    services.push(plans);
+    await plans.start().catch((error: unknown) => logger.error('plan read failed', error));
     const mode = outlookMode(options.platform ?? process.platform, env);
     if (options.hooks?.outlook) {
       outlook = await options.hooks.outlook(mode, context);
@@ -346,6 +360,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     secrets,
     providers,
     skills,
+    plans,
     workflows,
     providerService,
     providerUpdates,

@@ -14,6 +14,7 @@ import {
   mailItems,
   notifications,
   outlookStatus,
+  planIntents,
   projects,
   providerInstances,
   questions,
@@ -73,6 +74,17 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         tx.delete(skills).where(inArray(skills.id, event.payload.removed)).run();
       }
       return ['skills'];
+    case 'plans.synced':
+      for (const intent of event.payload.upserted) {
+        tx.insert(planIntents)
+          .values(intent)
+          .onConflictDoUpdate({ target: planIntents.id, set: intent })
+          .run();
+      }
+      if (event.payload.removed.length > 0) {
+        tx.delete(planIntents).where(inArray(planIntents.id, event.payload.removed)).run();
+      }
+      return ['planIntents'];
     case 'workflow.created':
       tx.insert(workflows).values(event.payload).run();
       return ['workflows'];
@@ -450,6 +462,7 @@ export function readModel(tx: DbOrTx): ReadModel {
         .where(and(eq(settings.key, key), eq(settings.scope, scope)))
         .get(),
     skills: () => tx.select().from(skills).all(),
+    planIntents: () => tx.select().from(planIntents).all(),
     workflow: (id) => tx.select().from(workflows).where(eq(workflows.id, id)).get(),
     run: (id) => tx.select().from(workflowRuns).where(eq(workflowRuns.id, id)).get(),
     hasLiveRun: (workflowId) =>

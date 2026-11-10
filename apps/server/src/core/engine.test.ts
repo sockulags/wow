@@ -164,6 +164,7 @@ describe('migrations', () => {
         'events',
         'mail_items',
         'outlook_status',
+        'plan_intents',
         'projects',
         'provider_instances',
         'questions',
