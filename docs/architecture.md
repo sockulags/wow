@@ -631,6 +631,17 @@ that step's visit is the last one and nothing has decided where the run goes nex
 before this change have no path, never get one, and only run workflows without rules (steps
 cannot change under a live run), so they continue as they always did.
 
+Templates (spec 20). A template's steps have no ids, so a rule in a template (`TemplateRule`,
+`WorkflowTemplateStep.rules?`) names the step it goes to by its skill: `{type: 'skill',
+skillName}` or `{type: 'end'}`. `rulesFromTemplate(templateSteps, stepIds, index)` turns them
+into the rules of a workflow made from the template: the skill becomes the nearest step before
+the rule's step that runs it, else the first one in the list, and a rule whose skill no step
+runs is left out. `rulesForTemplate(steps, index)` is the other way for "Save as template": a
+rule is kept when its step can be found again by its skill. The default Bug, Feature and
+Initiative templates give check-work the rule "when the verdict is changes requested, go to
+deliver-work". Only the default of `workflows.templates` changed: `rules` is optional in the
+schema, so templates a user stored before are read as they were stored and get no rule.
+
 `workflow.create`, `workflow.update` and `workflow.restore` refuse rules that cannot be followed
 (spec 16), from `ruleProblems(steps)` in `packages/contracts`, which the builder can use for
 the same marks: a rule that goes to a step the workflow does not have, a rule on artifacts for
@@ -1571,7 +1582,8 @@ effort and a permission mode; a skill missing from the scan is only a warning, b
 invokes unknown skills by name. "Start from" (Blank or a template) is offered for a new workflow;
 an existing one shows "Based on <template>" and replaces its steps only through "Replace steps
 with template…", which still needs Save. "Save as template…" writes the draft's skills, gates and artifact globs into
-`workflows.templates` (`saveAsTemplate`: replaced by name, else a new kind from the name); the
+`workflows.templates` (`saveAsTemplate`: replaced by name, else a new kind from the name), with
+the rules whose step can be named by its skill (see "Templates" under "Rules"); the
 settings page's editor stays for everything else. Refresh skills calls `skills.refresh`. Run now is offered
 only for the saved steps. With a project to run in, each step's expected globs are checked with
 `workflows.matchArtifacts {projectId, globs}` (read only, the same `fast-glob` match the run uses)
@@ -1722,6 +1734,38 @@ palette can offer them. Palette commands: Run: show changes / Run: show steps
 (`keybindings.runChanges`), Changes: this step only / every step (`keybindings.changesStepOnly`),
 Refresh changes, Changed file: <path> for each listed file, and Open changed file: <path> for
 the chosen one.
+
+After a loop (workflow branches spec 19) a step keeps the hashes of its latest attempt only, so
+the server compares steps in the order they last ended (`run.path`), not in list order: the
+step that ended last is marked with exactly what its latest attempt changed. `stepUnderReview`
+follows the same order when no gate asks (the step whose visit ended last, not the last step of
+the list), and "This step only" names the attempt ("deliver-work, attempt 2, 1"). A run without
+a path goes by the list as before.
+
+**Path tab and loops in the run view** (`path.ts`, `path-tab.tsx`; workflow branches spec 9, 18,
+19). Path is the tab after Steps (`?tab=path`): one row per entry of `run.path` in the order it
+happened, with the step, "attempt N", how the visit ended (Running, Done, Failed, Stopped), the
+engine's `reason` for the next move, the start time, the duration and a link to the step's one
+thread. `pathRows(run, workflow)` is pure and decides nothing. It adds three things to the
+reason: what was found when the list decided for a step with rules ("verdict approved: no rule
+held → next step", from the step's `facts`, which exist for its latest attempt only); "waiting
+for you" or "waiting for checks" for a last visit that ended while the run waits at its gate;
+and "limit reached, waiting for you" (later "waited for you") with the limit sentence when the
+visit has `limit`. A run from before paths says "No path kept".
+
+The web's `gateOf(run)` reads the gate as the engine's `pendingGate` does: with a path, the run
+waits after its current step only when that step's visit is the last one and nothing was
+decided after it; otherwise it waits before the step, even though the step has an end time from
+an earlier pass. `reviewedStepIndex(run)` for a gate before a step is the step the run came from
+(the last visit's `next`), else the step before in the list; the panel's `activeStep` uses it
+too. A step the run waits before reads Waiting, with the "Waiting for you" marker above it.
+When the step's gate is `waitingAtLimit`, `Gate.limit` holds the sentence: the gate bar says
+"deliver-work has run 3 times: the limit. Run once more starts it again; Stop ends the run.",
+its Approve button reads "Run once more" (still `workflowRun.continue` and
+`keybindings.gateApprove`; the palette says "Run: run once more"), Send back is not offered,
+and the step row repeats the sentence. After a step with rules the gate bar does not name the
+next step ("Approve lets its rules choose the next step"). Palette commands: Run: show path /
+Run: show steps (`keybindings.runPath`, Mod+Shift+Y, the same key both ways).
 
 ## Calendar view
 
@@ -2227,7 +2271,13 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   step, moves one by key, and reads the drawn diagram's boxes and arrow labels before and after
   saving, after an edit, and after the rule's step is deleted (marked, and refused by the
   server); a seeded workflow whose step name has quotes, brackets, markup and a line break must
-  be drawn with that name as text. That copy polls once a day, so the tests
+  be drawn with that name as text. The path test (`e2e/run-path.spec.ts`) makes a workflow from
+  the Bug template there, whose check-work step brings the rule back to deliver-work, runs it
+  with a mock review that asks for changes the first time and approves when asked again in the
+  same thread, and reads the four visits and their reasons in the Path tab ("a review sends the
+  work back and the run shows its path"); a seeded workflow whose review never approves
+  (`limit-e2e`) runs into the limit, where the gate bar offers "Run once more" and Stop. That
+  copy polls once a day, so the tests
   see only the reads that following a plan, starting a run and "Refresh now" start. CI runs `pnpm e2e` on
   `ubuntu-latest` and `windows-latest` (the `e2e` job) and keeps the traces of a failed run.
   Tests wait for what the page shows, never for time: no sleeps, polls or retries.

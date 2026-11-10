@@ -185,6 +185,7 @@ describe('run view at a gate', () => {
     const tabs = within(await screen.findByRole('tablist', { name: 'Run' }));
     expect(tabs.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'Steps',
+      'Path',
       'Changes',
       'Artifacts',
       'Pull request',
@@ -422,6 +423,7 @@ describe('review tab commands', () => {
   it('offers every tab but the one on screen', () => {
     expect(tabTitles({})).toEqual([
       'Run: show changes',
+      'Run: show path',
       'Run: show artifacts',
       'Run: show pull request',
       'Run: show ticket',
@@ -430,12 +432,14 @@ describe('review tab commands', () => {
     expect(tabTitles({ tab: 'ticket' })).toEqual([
       'Run: show changes',
       'Run: show steps',
+      'Run: show path',
       'Run: show artifacts',
       'Run: show pull request',
       'Run: show pages',
     ]);
     expect(tabTitles({ tab: 'changes' })).toEqual([
       'Run: show steps',
+      'Run: show path',
       'Run: show artifacts',
       'Run: show pull request',
       'Run: show ticket',

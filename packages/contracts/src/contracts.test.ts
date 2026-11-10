@@ -30,7 +30,10 @@ import {
   WorkflowStep,
   alwaysStopSkillDefaults,
   alwaysStops,
+  rulesForTemplate,
+  rulesFromTemplate,
   settingsRegistry,
+  type TemplateRule,
   type SettingDefinition,
 } from './index.js';
 
@@ -97,6 +100,14 @@ describe('workflow contracts', () => {
       true,
     );
   });
+});
+
+const templateStepWith = (skillName: string, rules?: TemplateRule[]) => ({
+  skillName,
+  gateBefore: false,
+  gateAfter: false,
+  expectedArtifacts: [],
+  ...(rules ? { rules } : {}),
 });
 
 describe('settings registry', () => {
@@ -174,6 +185,80 @@ describe('settings registry', () => {
         ],
       ],
     ]);
+  });
+
+  it('gives check-work of every default template the rule back to deliver-work (workflow branches spec 20)', () => {
+    const templates = settingsRegistry['workflows.templates'].default;
+    expect(templates.map((template) => template.kind)).toEqual(['bug', 'feature', 'initiative']);
+    for (const template of templates) {
+      const withRules = template.steps.filter((step) => step.rules !== undefined);
+      expect(withRules.map((step) => [step.skillName, step.rules])).toEqual([
+        [
+          'check-work',
+          [
+            {
+              when: { fact: 'verdict', is: 'changesRequested' },
+              goTo: { type: 'skill', skillName: 'deliver-work' },
+            },
+          ],
+        ],
+      ]);
+    }
+  });
+
+  it('reads a template stored before rules existed as it was stored', () => {
+    const stored = [
+      {
+        kind: 'bug',
+        name: 'Bug',
+        steps: [
+          { skillName: 'deliver-work', gateBefore: false, gateAfter: false, expectedArtifacts: [] },
+          { skillName: 'check-work', gateBefore: false, gateAfter: true, expectedArtifacts: [] },
+        ],
+      },
+    ];
+    expect(settingsRegistry['workflows.templates'].schema.parse(stored)).toEqual(stored);
+  });
+
+  it('turns the rules of a template into rules between steps and back', () => {
+    const when = { fact: 'verdict', is: 'changesRequested' } as const;
+    const template = [
+      templateStepWith('deliver-work'),
+      templateStepWith('check-work', [
+        { when, goTo: { type: 'skill', skillName: 'deliver-work' } },
+      ]),
+      templateStepWith('deliver-work'),
+      templateStepWith('check-work', [
+        { when, goTo: { type: 'skill', skillName: 'deliver-work' } },
+        { when: { fact: 'stepFailed' }, goTo: { type: 'end' } },
+        { when: { fact: 'verdict', is: 'blocked' }, goTo: { type: 'skill', skillName: 'gone' } },
+      ]),
+    ];
+    const ids = ['a', 'b', 'c', 'd'];
+    expect(rulesFromTemplate(template, ids, 0)).toEqual([]);
+    // The nearest step before with that skill.
+    expect(rulesFromTemplate(template, ids, 1)).toEqual([
+      { when, goTo: { type: 'step', stepId: 'a' } },
+    ]);
+    expect(rulesFromTemplate(template, ids, 3)).toEqual([
+      { when, goTo: { type: 'step', stepId: 'c' } },
+      { when: { fact: 'stepFailed' }, goTo: { type: 'end' } },
+    ]);
+
+    const steps = template.map((entry, index) => ({
+      id: ids[index] as string,
+      skillName: entry.skillName,
+      rules: rulesFromTemplate(template, ids, index),
+    }));
+    expect(rulesForTemplate(steps, 3)).toEqual(template[3]?.rules?.slice(0, 2));
+    // A step that its skill would not find again cannot be named in a template.
+    const far = [...steps];
+    far[3] = {
+      id: 'd',
+      skillName: 'check-work',
+      rules: [{ when, goTo: { type: 'step', stepId: 'a' } }],
+    };
+    expect(rulesForTemplate(far, 3)).toEqual([]);
   });
 
   it('refuses templates that share a kind', () => {

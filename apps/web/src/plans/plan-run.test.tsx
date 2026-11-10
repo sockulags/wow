@@ -216,6 +216,16 @@ describe('which plan run a plan shows', () => {
   });
 });
 
+const visit = (stepId: string, attempt: number, reason: string | null) => ({
+  stepId,
+  attempt,
+  startedAt: T0,
+  endedAt: reason === null ? null : T0,
+  ended: reason === null ? null : ('done' as const),
+  next: null,
+  reason,
+});
+
 describe('the plan run above the units', () => {
   it('starts a plan run with the only workflow for units', async () => {
     const sent = outbox();
@@ -282,6 +292,59 @@ describe('the plan run above the units', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
     await sent.dispatched;
     expect(commandsSent(sent)).toEqual([{ type: 'planRun.stop', planRunId: 'pr1' }]);
+  });
+
+  it('lists one run for a unit whose run looped twice (workflow branches spec 21)', async () => {
+    // The review sent the unit's work back twice; the third build runs.
+    const looped: WorkflowRun = {
+      ...unitRun('running'),
+      id: 'pr1.U1',
+      steps: [
+        {
+          stepId: 'build',
+          state: 'running',
+          threadId: 'pr1.U1.build',
+          attempt: 3,
+          artifactsFound: [],
+        },
+        {
+          stepId: 'review',
+          state: 'done',
+          threadId: 'pr1.U1.review',
+          attempt: 2,
+          artifactsFound: [],
+        },
+      ],
+      path: [
+        visit('build', 1, 'next step'),
+        visit('review', 1, 'verdict changes requested → deliver-work'),
+        visit('build', 2, 'next step'),
+        visit('review', 2, 'verdict changes requested → deliver-work'),
+        visit('build', 3, null),
+      ],
+    };
+    await renderApp(
+      '/plans/tea/2026-01-tea-timer',
+      runtimeWith({
+        ...base,
+        planRuns: [
+          planRun({
+            state: 'running',
+            units: [{ unitKey: 'U1', title: 'Count down', runId: 'pr1.U1', outcome: 'running' }],
+          }),
+        ],
+        workflows: [workflow('deliver', 'Deliver')],
+        workflowRuns: [looped],
+      }),
+    );
+    const region = await screen.findByRole('region', { name: 'Plan run' });
+    const units = within(region).getByTestId('plan-run-units').querySelectorAll('li');
+    expect([...units].map((item) => item.textContent)).toEqual(['U1 Count downRunning']);
+    expect(
+      within(region)
+        .getAllByRole('link')
+        .map((link) => link.getAttribute('href')),
+    ).toEqual(['/workflows/runs/pr1.U1']);
   });
 
   it('says why a plan run stopped after a failure', async () => {

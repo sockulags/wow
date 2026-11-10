@@ -243,12 +243,23 @@ const templateStep = (
   expectedArtifacts: string[] = [],
 ): WorkflowTemplateStep => ({ skillName, gateBefore: false, gateAfter, expectedArtifacts });
 
+// The review loops back to delivery until it approves (workflow branches spec 20).
+const checkWorkStep: WorkflowTemplateStep = {
+  ...templateStep('check-work', false),
+  rules: [
+    {
+      when: { fact: 'verdict', is: 'changesRequested' },
+      goTo: { type: 'skill', skillName: 'deliver-work' },
+    },
+  ],
+};
+
 // Behavior 25. The agent-os skill names appear only here, as editable defaults.
 export const defaultWorkflowTemplates: WorkflowTemplate[] = [
   {
     kind: 'bug',
     name: 'Bug',
-    steps: [templateStep('deliver-work', false), templateStep('check-work', false)],
+    steps: [templateStep('deliver-work', false), checkWorkStep],
   },
   {
     kind: 'feature',
@@ -257,7 +268,7 @@ export const defaultWorkflowTemplates: WorkflowTemplate[] = [
       templateStep('capture-intent', true, ['intents/*/intent.md', 'intents/*/spec.md']),
       templateStep('plan-work', true, ['intents/*/plan.md']),
       templateStep('deliver-work', false),
-      templateStep('check-work', false),
+      checkWorkStep,
     ],
   },
   {
@@ -268,7 +279,7 @@ export const defaultWorkflowTemplates: WorkflowTemplate[] = [
       templateStep('plan-work', true, ['intents/*/plan.md']),
       templateStep('shape-work', true),
       templateStep('deliver-work', false),
-      templateStep('check-work', false),
+      checkWorkStep,
     ],
   },
 ];
@@ -1314,6 +1325,11 @@ export const settingsRegistry = {
     'Run: show changes',
     'Switch the open workflow run between its steps and its Changes tab.',
     'Mod+Shift+D',
+  ),
+  'keybindings.runPath': keybinding(
+    'Run: show path',
+    'Switch the open workflow run between its steps and its Path tab.',
+    'Mod+Shift+Y',
   ),
   'keybindings.changesStepOnly': keybinding(
     'Changes: this step only',

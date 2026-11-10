@@ -358,13 +358,72 @@ export type RunEffect = z.infer<typeof RunEffect>;
 
 // A starting point offered by the builder (behavior 25). Templates carry no provider instance;
 // the user picks one per step when building from a template.
+// A template's steps have no ids, so a rule in a template names the step it goes to by its skill.
+export const TemplateRuleTarget = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('skill'), skillName: z.string().min(1) }),
+  z.object({ type: z.literal('end') }),
+]);
+export type TemplateRuleTarget = z.infer<typeof TemplateRuleTarget>;
+
+export const TemplateRule = z.object({ when: RuleCondition, goTo: TemplateRuleTarget });
+export type TemplateRule = z.infer<typeof TemplateRule>;
+
 export const WorkflowTemplateStep = z.object({
   skillName: z.string().min(1),
   gateBefore: z.boolean(),
   gateAfter: z.boolean(),
   expectedArtifacts: z.array(z.string().min(1)),
+  // Absent in templates stored before rules existed; they stay as they are.
+  rules: z.array(TemplateRule).optional(),
 });
 export type WorkflowTemplateStep = z.infer<typeof WorkflowTemplateStep>;
+
+// The rules of a template's step for a workflow made from it: each skill a rule names becomes
+// the step that runs it, the nearest one before the rule's step, else the first one in the list.
+// A rule whose skill no step runs is left out.
+export function rulesFromTemplate(
+  template: readonly WorkflowTemplateStep[],
+  stepIds: readonly string[],
+  index: number,
+): StepRule[] {
+  const rules: StepRule[] = [];
+  for (const { when, goTo } of template[index]?.rules ?? []) {
+    if (goTo.type === 'end') {
+      rules.push({ when, goTo });
+      continue;
+    }
+    const runs = (step: WorkflowTemplateStep) => step.skillName === goTo.skillName;
+    const before = template.slice(0, index).findLastIndex(runs);
+    const stepId = stepIds[before >= 0 ? before : template.findIndex(runs)];
+    if (stepId !== undefined) rules.push({ when, goTo: { type: 'step', stepId } });
+  }
+  return rules;
+}
+
+// The other way, for "Save as template": a rule keeps its place when the step it goes to can be
+// named by its skill and found again by `rulesFromTemplate`.
+export function rulesForTemplate(
+  steps: readonly Pick<WorkflowStep, 'id' | 'skillName' | 'rules'>[],
+  index: number,
+): TemplateRule[] {
+  const template = steps.map((step) => ({ skillName: step.skillName }));
+  const rules: TemplateRule[] = [];
+  for (const { when, goTo } of steps[index]?.rules ?? []) {
+    if (goTo.type === 'end') {
+      rules.push({ when, goTo });
+      continue;
+    }
+    const target = steps.findIndex((step) => step.id === goTo.stepId);
+    const skillName = steps[target]?.skillName;
+    if (skillName === undefined) continue;
+    const runs = (step: { skillName: string }) => step.skillName === skillName;
+    const before = template.slice(0, index).findLastIndex(runs);
+    if ((before >= 0 ? before : template.findIndex(runs)) === target) {
+      rules.push({ when, goTo: { type: 'skill', skillName } });
+    }
+  }
+  return rules;
+}
 
 export const WorkflowTemplate = z.object({
   kind: z.string().min(1),

@@ -22,9 +22,14 @@ export const gateStore = createStore<GateState>(() => ({ sendBack: undefined }))
 export const emptyNoteMessage = 'Write what should change before you send the step back.';
 
 // A step can be sent back when the run waits and a step has run: before the first step there is
-// nothing to do again.
-export const canSendBack = (run: WorkflowRun): boolean =>
-  gateOf(run) !== undefined && reviewedStep(run)?.threadId !== undefined;
+// nothing to do again. At the limit the answers are to run the step once more or to stop
+// (workflow branches spec 9).
+export function canSendBack(run: WorkflowRun): boolean {
+  const gate = gateOf(run);
+  return (
+    gate !== undefined && gate.limit === undefined && reviewedStep(run)?.threadId !== undefined
+  );
+}
 
 // The note field of this run, while it is open and the run still waits.
 export const sendBackDraft = (state: GateState, run: WorkflowRun): SendBackDraft | undefined =>

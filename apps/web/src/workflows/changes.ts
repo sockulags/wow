@@ -16,6 +16,7 @@ import { reviewedStep } from './model';
 // address; the others are what a gate asks the user to look at.
 export const runTabs = [
   { id: 'steps', label: 'Steps' },
+  { id: 'path', label: 'Path' },
   { id: 'changes', label: 'Changes' },
   { id: 'artifacts', label: 'Artifacts' },
   { id: 'pullRequest', label: 'Pull request' },
@@ -50,10 +51,16 @@ export function validateRunSearch(search: Record<string, unknown>): RunSearch {
   };
 }
 
-// The step whose changes are marked: the one a gate asks the user to review, else the last step
-// that ended with its file hashes stored.
+// The step whose changes are marked: the one a gate asks the user to review, else the step that
+// ended last with its file hashes stored. After a loop that is not the last step of the list,
+// and the server marks what that step's latest attempt changed (workflow branches spec 19).
 export function stepUnderReview(run: WorkflowRun): StepRun | undefined {
-  return reviewedStep(run) ?? run.steps.findLast((step) => step.fileHashes !== undefined);
+  const reviewed = reviewedStep(run);
+  if (reviewed) return reviewed;
+  const hashed = (stepId: string) =>
+    run.steps.find((step) => step.stepId === stepId && step.fileHashes !== undefined);
+  const visit = run.path?.findLast((entry) => entry.ended === 'done' && hashed(entry.stepId));
+  return visit ? hashed(visit.stepId) : run.steps.findLast((step) => step.fileHashes !== undefined);
 }
 
 export const changedByStep = (file: RunDiffFile, step: StepRun | undefined): boolean =>

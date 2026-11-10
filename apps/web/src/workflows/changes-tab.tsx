@@ -36,7 +36,7 @@ import {
   type DiffLine,
   type RunSearch,
 } from './changes';
-import { artifactPath } from './model';
+import { artifactPath, attemptLabel } from './model';
 
 const statusClass: Readonly<Record<RunDiffFile['status'], string>> = {
   added: 'text-state-done',
@@ -310,6 +310,8 @@ export function ChangesTab({
   const stepName =
     workflow?.steps.find((candidate) => candidate.id === step?.stepId)?.skillName ?? step?.stepId;
   const canMark = step?.fileHashes !== undefined;
+  // After a send back or a loop the marks are what the latest attempt changed.
+  const attempt = attemptLabel(step);
   const markedCount = files.filter((file) => changedByStep(file, step)).length;
   const total = files.length + list.omitted;
   return (
@@ -334,7 +336,7 @@ export function ChangesTab({
             {canMark && stepName !== undefined && (
               <span className="text-muted-foreground">
                 {' '}
-                ({stepName}, {markedCount})
+                ({[stepName, ...(attempt ? [attempt.toLowerCase()] : []), markedCount].join(', ')})
               </span>
             )}
           </Label>

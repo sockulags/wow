@@ -81,19 +81,27 @@ export interface WorkflowCommandData {
   readonly formatWhen?: (iso: string) => string;
 }
 
-// The review tabs beside Steps and Changes (review loop spec 14), and the way back to Steps from
-// one of them. Steps and Changes switch with `keybindings.runChanges` below.
+// The tabs beside Steps and Changes (review loop spec 14; Path: workflow branches spec 18), and
+// the way back to Steps from one of them. Steps and Changes switch with
+// `keybindings.runChanges` below, Steps and Path with `keybindings.runPath`.
 function tabCommands(runId: string, current: RunSearch): AppCommand[] {
   const to = '/workflows/runs/$runId' as const;
   const commands: AppCommand[] = [];
   for (const { id, label } of runTabs) {
     if (id === 'changes' || id === current.tab) continue;
     if (id === 'steps' && (current.tab === undefined || current.tab === 'changes')) continue;
+    // On Path the same key goes back to Steps, as `keybindings.runChanges` does on Changes.
+    const pathKey =
+      id === 'path' || (id === 'steps' && current.tab === 'path')
+        ? { keybinding: 'keybindings.runPath' as const }
+        : {};
     commands.push({
       id: `workflowRun.tab.${id}`,
       title: `Run: show ${label.toLowerCase()}`,
       group: 'Workflows',
-      keywords: ['tab', 'review', 'gate'],
+      keywords:
+        id === 'path' ? ['tab', 'visits', 'attempts', 'loop', 'why'] : ['tab', 'review', 'gate'],
+      ...pathKey,
       run: ({ navigate }) =>
         void navigate({
           to,
@@ -459,12 +467,14 @@ export function workflowCommands(data: WorkflowCommandData): AppCommand[] {
     const writing = sendBackRunId === runId && canSendBack(openRun);
     // While a note is being written the Approve key is off, so it cannot approve by accident;
     // the Send back key sends the note.
-    if (gateOf(openRun) && !writing) {
+    const gate = gateOf(openRun);
+    if (gate && !writing) {
       commands.push({
         id: 'workflowRun.approve',
-        title: 'Run: approve',
+        // At the limit of a loop, Approve lets the step run once more (workflow branches spec 9).
+        title: gate.limit === undefined ? 'Run: approve' : 'Run: run once more',
         group: 'Workflows',
-        keywords: ['gate', 'continue', 'next step', 'resume', 'accept'],
+        keywords: ['gate', 'continue', 'next step', 'resume', 'accept', 'limit', 'again'],
         keybinding: 'keybindings.gateApprove',
         run: ({ connection }) => {
           if (connection) void dispatch(connection, { type: 'workflowRun.continue', runId });

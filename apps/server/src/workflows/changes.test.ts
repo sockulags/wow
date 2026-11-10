@@ -274,6 +274,16 @@ describe('the changes of a run', () => {
   });
 });
 
+const visit = (stepId: string, attempt: number) => ({
+  stepId,
+  attempt,
+  startedAt: '2026-11-03T08:00:00.000Z',
+  endedAt: '2026-11-03T08:01:00.000Z',
+  ended: 'done' as const,
+  next: null,
+  reason: null,
+});
+
 describe('what a step changed', () => {
   it('marks only the files whose content changed during the step', async () => {
     const { repo, base } = await repository('steps', {
@@ -339,6 +349,52 @@ describe('what a step changed', () => {
     // Changed by s1, deleted by s4, put back as it was in the base by s5.
     expect(stepsThatChanged(run, 'a')).toEqual(['s1', 's4', 's5']);
     expect(stepsThatChanged(run, 'b')).toEqual([]);
+  });
+
+  it('marks what the latest attempt changed after a rule sent the run back (workflow branches spec 19)', () => {
+    const build = {
+      stepId: 'build',
+      state: 'done' as const,
+      artifactsFound: [],
+      attempt: 2,
+      // The second attempt changed `b` and left the rest as the review had it.
+      fileHashes: [
+        { path: 'a', hash: 'a1' },
+        { path: 'b', hash: 'b2' },
+        { path: 'notes', hash: 'n1' },
+      ],
+    };
+    const review = {
+      stepId: 'review',
+      state: 'done' as const,
+      artifactsFound: [],
+      // The review saw the first attempt and wrote `notes`.
+      fileHashes: [
+        { path: 'a', hash: 'a1' },
+        { path: 'b', hash: 'b1' },
+        { path: 'notes', hash: 'n1' },
+      ],
+    };
+    const run = {
+      baseFiles: [],
+      steps: [build, review],
+      path: [visit('build', 1), visit('review', 1), visit('build', 2)],
+    };
+    const changedBy = (step: string, from: typeof run) =>
+      ['a', 'b', 'notes'].filter((file) => stepsThatChanged(from, file).includes(step));
+    // Build ended last, so it is compared with what the review left, not with the base.
+    expect(changedBy('build', run)).toEqual(['b']);
+
+    // The review ran again and changed nothing.
+    const again = {
+      ...run,
+      steps: [build, { ...review, attempt: 2, fileHashes: build.fileHashes }],
+      path: [...run.path, visit('review', 2)],
+    };
+    expect(changedBy('review', again)).toEqual([]);
+    expect(stepsThatChanged(again, 'b')).toEqual(['build']);
+    // A run from before paths were kept goes by the list.
+    expect(changedBy('build', { ...run, path: [] })).toEqual(['a', 'b', 'notes']);
   });
 
   it('writes a new file as added lines', () => {

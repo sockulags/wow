@@ -10,6 +10,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CircleDashedIcon,
+  RepeatIcon,
   SquareIcon,
   Undo2Icon,
   XIcon,
@@ -55,7 +56,8 @@ const partStates: Readonly<Record<GatePartResult['state'], string>> = {
 // The run view shows it with what to review (the step's last message and the artifacts it
 // produced); a step's thread shows it above its composer, where the thread itself is what to
 // review. A gate with a condition that did not pass by itself says which part failed, or that
-// it waits for the pull request's checks (spec 55, 56).
+// it waits for the pull request's checks (spec 55, 56). At the limit of a loop the bar says the
+// limit sentence, and the answers are "Run once more" and Stop (workflow branches spec 9).
 export function GateBar({
   run,
   workflow,
@@ -82,6 +84,7 @@ export function GateBar({
   const gate = gateOf(run);
   if (!isLive(run)) return null;
   const reviewed = reviewedStep(run);
+  const atLimit = gate?.limit !== undefined;
   const standing = gateStanding(run);
   const reportError = (message: string | undefined) => {
     setError(message);
@@ -102,6 +105,7 @@ export function GateBar({
     <div
       role="region"
       aria-label={gate ? 'Gate' : 'Run controls'}
+      data-limit={atLimit ? '' : undefined}
       aria-live="polite"
       className={cn(
         'flex flex-col gap-2 rounded-md border px-3 py-2 text-sm',
@@ -113,14 +117,17 @@ export function GateBar({
           {gate ? gateMessage(gate, workflow) : 'The run is working on its current step.'}
         </span>
         {gate && (
-          <WithTooltip label="Approve and continue" binding={draft ? '' : approveBinding}>
+          <WithTooltip
+            label={atLimit ? 'Let the step run once more' : 'Approve and continue'}
+            binding={draft ? '' : approveBinding}
+          >
             <Button
               size="sm"
               disabled={busy || draft !== undefined}
               onClick={() => void act('workflowRun.continue')}
             >
-              <CheckIcon />
-              Approve
+              {atLimit ? <RepeatIcon /> : <CheckIcon />}
+              {atLimit ? 'Run once more' : 'Approve'}
             </Button>
           </WithTooltip>
         )}

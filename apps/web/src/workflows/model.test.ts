@@ -87,6 +87,31 @@ describe('workflow drafts', () => {
     ]);
   });
 
+  it('gives check-work of a workflow made from Feature the rule back to deliver-work (workflow branches spec 20)', () => {
+    const draft = draftFromTemplate(feature, instance.id, '');
+    const deliver = draft.steps[2];
+    expect(deliver?.skillName).toBe('deliver-work');
+    expect(draft.steps.map((step) => step.rules)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      [
+        {
+          when: { fact: 'verdict', is: 'changesRequested' },
+          goTo: { type: 'step', stepId: deliver?.id },
+        },
+      ],
+    ]);
+    // It is saved with the workflow, and a stored template without rules gives none.
+    expect(stepsOf(draft)[3]?.rules).toEqual(draft.steps[3]?.rules);
+    const stored = {
+      ...feature,
+      steps: feature.steps.map(({ rules: _rules, ...step }) => step),
+    };
+    const plain = draftFromTemplate(stored, instance.id, '');
+    expect(plain.steps.some((step) => step.rules !== undefined)).toBe(false);
+  });
+
   it('keeps a typed name when a template is applied', () => {
     expect(draftFromTemplate(feature, instance.id, 'Billing').name).toBe('Billing');
   });
@@ -383,6 +408,13 @@ describe('templates from the builder (E-05)', () => {
         { skillName: 'check-work' },
       ],
     });
+    // The rule goes with the template, naming its step by the skill.
+    expect(added.templates.at(-1)?.steps.map((step) => step.rules)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      feature.steps[3]?.rules,
+    ]);
     const replaced = saveAsTemplate(added.templates, { steps: draft.steps.slice(0, 1) }, 'feature');
     if (typeof replaced === 'string') throw new Error(replaced);
     expect(replaced.kind).toBe('feature');

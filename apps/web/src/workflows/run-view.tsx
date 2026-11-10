@@ -4,6 +4,7 @@ import {
   CalendarIcon,
   CheckCheckIcon,
   HourglassIcon,
+  RepeatIcon,
   ListTodoIcon,
   MessageSquareIcon,
   SearchXIcon,
@@ -25,6 +26,7 @@ import { ChangesTab } from './changes-tab';
 import { GateBar } from './gate-bar';
 import { PullRequestTab } from './pull-request-tab';
 import { PagesTab } from './pages-tab';
+import { PathTab } from './path-tab';
 import { ArtifactsTab } from './review-tabs';
 import { TicketTab } from './ticket-tab';
 import { WorkingCopyLine } from './working-copy-line';
@@ -49,6 +51,7 @@ function StepRow({
   folder,
   instanceName,
   waitsAfter,
+  waitsBefore,
 }: {
   runId: string;
   index: number;
@@ -59,16 +62,32 @@ function StepRow({
   instanceName: string | undefined;
   // The run waits right after this step: for the user, or for its pull request's checks.
   waitsAfter: 'user' | 'checks' | undefined;
+  // The run waits before this step, to start it (again).
+  waitsBefore: boolean;
 }) {
   const { when } = useDateFormat();
   const name = step?.skillName ?? stepRun.stepId;
-  const state = stepDisplayState(stepRun);
+  const state = stepDisplayState(stepRun, waitsBefore);
+  const limit = waitsBefore && stepRun.gate?.state === 'waitingAtLimit' ? stepRun.gate.detail : '';
   const duration = stepDurationMs(stepRun);
   const attempt = attemptLabel(stepRun);
   const passed = passedByItself(stepRun);
   const waitingLabel = waitsAfter === 'checks' ? 'Waiting for checks' : 'Waiting for you';
+  const marker = (
+    <li
+      aria-label={waitingLabel}
+      data-testid="gate-marker"
+      className="flex items-center gap-2 px-3 text-xs font-medium"
+    >
+      <HourglassIcon aria-hidden className="size-3.5 text-state-needs-you" />
+      {waitingLabel}
+      <span aria-hidden className="h-px flex-1 border-t border-dashed border-state-needs-you/60" />
+    </li>
+  );
   return (
     <>
+      {/* Nothing comes before the first step, so its marker has no row to follow. */}
+      {waitsBefore && index === 0 && marker}
       <li
         aria-label={`Step ${index + 1}: ${name}`}
         data-testid="run-step"
@@ -112,6 +131,15 @@ function StepRow({
             </Link>
           )}
         </div>
+        {limit && (
+          <p
+            data-testid="step-limit"
+            className="flex items-center gap-1.5 pl-4 text-xs font-medium"
+          >
+            <RepeatIcon aria-hidden className="size-3.5 text-state-needs-you" />
+            {limit}
+          </p>
+        )}
         {passed && (
           <div data-testid="step-gate" className="pl-4 text-xs">
             <p className="flex items-center gap-1.5 font-medium">
@@ -149,20 +177,7 @@ function StepRow({
           </div>
         )}
       </li>
-      {waitsAfter && (
-        <li
-          aria-label={waitingLabel}
-          data-testid="gate-marker"
-          className="flex items-center gap-2 px-3 text-xs font-medium"
-        >
-          <HourglassIcon aria-hidden className="size-3.5 text-state-needs-you" />
-          {waitingLabel}
-          <span
-            aria-hidden
-            className="h-px flex-1 border-t border-dashed border-state-needs-you/60"
-          />
-        </li>
-      )}
+      {waitsAfter && marker}
     </>
   );
 }
@@ -336,7 +351,11 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
           ))}
         </div>
       </header>
-      {tab === 'changes' ? (
+      {tab === 'path' ? (
+        <div role="tabpanel" aria-label="Path" className="min-h-0 flex-1">
+          <PathTab run={run} workflow={workflow} />
+        </div>
+      ) : tab === 'changes' ? (
         <div role="tabpanel" aria-label="Changes" className="min-h-0 flex-1">
           <ChangesTab run={run} workflow={workflow} project={project} search={search} />
         </div>
@@ -386,6 +405,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
                         : 'user'
                       : undefined
                   }
+                  waitsBefore={gate?.position === 'before' && gate.stepIndex === index}
                 />
               );
             })}

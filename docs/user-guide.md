@@ -411,9 +411,9 @@ the workflow has a name and a step.
 
 Templates are offered only for a new workflow. An existing one says which template it was based on;
 **Replace steps with template…** swaps its steps after you confirm, and nothing changes until you
-save. **Save as template…** stores the steps' skills, gates and expected artifacts as a template
-under the name you give (a template with that name is replaced), so new workflows can start from
-it; Settings → Workflows still has the full template list. **Delete** removes the workflow at once
+save. **Save as template…** stores the steps' skills, gates, expected artifacts and rules as a
+template under the name you give (a template with that name is replaced), so new workflows can
+start from it; Settings → Workflows still has the full template list. **Delete** removes the workflow at once
 and offers **Undo**. The templates (editable in
 `workflows.templates`):
 
@@ -421,6 +421,10 @@ and offers **Undo**. The templates (editable in
 - **Feature**: capture-intent (gate after) → plan-work (gate after) → deliver-work → check-work
 - **Initiative**: capture-intent (gate after) → plan-work (gate after) → shape-work (gate after) →
   deliver-work → check-work
+
+In all three, check-work has the rule "when the verdict is changes requested, go to deliver-work"
+(see "Rules, the limit and the path" below). Templates you changed yourself are left as they are;
+add the rule in Settings → Workflows or in a workflow's builder if you want it.
 
 Skills come from the folders in `skills.directories` (`~/.claude/skills`, `~/.codex/skills` and
 each project's `.claude/skills` and `.agents/skills` by default) and, with
@@ -449,6 +453,52 @@ instead is a side conversation and leaves the run waiting. **Stop** ends the run
 first, because a stopped run cannot be continued. The next step's prompt is its skill invocation, its extra prompt, and the handover from
 `workflows.handoverTemplate` (by default the previous step's final message and the expected
 artifact paths). Stopping a run keeps all its threads.
+
+### Rules, the limit and the path
+
+Without rules a run goes through its steps in order. A rule on a step sends the run somewhere
+else depending on how the step went. In the builder, open a step and look under **After this
+step**: **Add rule** (**Alt+R**, `keybindings.ruleAdd`) adds a row "When _fact_ is _value_, go to
+_step or End_". The facts are:
+
+- **the verdict**: the last line of the step's final message. `APPROVED`, `CHANGES_REQUESTED` and
+  `BLOCKED` are read as approved, changes requested and blocked (the lines are the settings
+  `workflows.verdictApprovedLine`, `workflows.verdictChangesRequestedLine` and
+  `workflows.verdictBlockedLine`); anything else is "not given".
+- **checks**: successful or failed, read from the run's pull request for the commit the step
+  left. While they run, the run waits for them.
+- **artifacts**: found or missing, for a step with expected artifacts.
+- **the step failed**: without such a rule a failed step fails the run.
+
+The rules are tried from the top and the first one that holds decides; move a rule with
+**Alt+Up** and **Alt+Down** (`keybindings.ruleMoveUp`, `keybindings.ruleMoveDown`) or its buttons.
+"Otherwise: the next step" is always last. The **Paths** diagram beside the steps draws every
+path a run can take. A rule that cannot be followed (its step is gone, artifacts on a step that
+expects none, the same condition twice) is marked, and the workflow is not saved until it is
+fixed. wow chooses from these facts itself; no model is asked where to go.
+
+A rule is followed after the step's gate has passed. Going to an earlier step runs it again in
+its own thread, as the next attempt, with a message that says which step sent the work back, why,
+and what that step wrote (`workflows.goBackTemplate`). The steps after it run again too, each in
+its own thread. Going to a later step leaves the steps in between "Skipped" for that pass. Steps
+whose skill is in `workflows.alwaysStopSkills` still always wait for you.
+
+**The limit.** A step starts at most three times in a run (`workflows.maxStepVisits`, per
+project). When a rule or the order of the steps would start it once more, the run waits for you
+before that step: the gate says, for example, "deliver-work has run 3 times: the limit", and the
+step's row says the same. **Run once more** (**Ctrl+Enter**, `keybindings.gateApprove`) lets the
+step start one more time; **Stop** (`keybindings.stopRun`) ends the run. The next step that has
+reached the limit asks again, so a loop never goes on without you.
+
+**The path.** A step has one row under **Steps** however often it ran; the row shows "Attempt 2"
+and so on. The **Path** tab (**Ctrl+Shift+Y**, `keybindings.runPath`; the same key goes back to
+Steps) lists every time a step started, in the order it happened: the step, the attempt, how it
+ended, and why the run went where it went next, for example "verdict changes requested →
+deliver-work", "verdict approved: no rule held → next step" or "limit reached, waited for you".
+**Open thread** on a row opens the step's conversation, which holds all its attempts. In the
+**Changes** tab, **This step only** marks what the latest attempt of the step changed.
+
+A plan run counts a unit's run as one run, however many times its steps repeat.
 
 ### Triggers
 

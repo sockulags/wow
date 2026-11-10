@@ -86,6 +86,40 @@ describe('SettingsService', () => {
     expect(settings.resolve('providers.model', at).value).toBe('p');
   });
 
+  it('gives the default templates the review loop and leaves stored templates as they are (workflow branches spec 20)', () => {
+    const rulesOf = () =>
+      settings
+        .get('workflows.templates')
+        .map((template) => [
+          template.kind,
+          template.steps.flatMap((step) =>
+            (step.rules ?? []).map((rule) => `${step.skillName}: ${JSON.stringify(rule)}`),
+          ),
+        ]);
+    const loop =
+      'check-work: {"when":{"fact":"verdict","is":"changesRequested"},"goTo":{"type":"skill","skillName":"deliver-work"}}';
+    expect(rulesOf()).toEqual([
+      ['bug', [loop]],
+      ['feature', [loop]],
+      ['initiative', [loop]],
+    ]);
+
+    // What a user who edited the templates before rules existed has stored.
+    const stored = [
+      {
+        kind: 'bug',
+        name: 'My bug',
+        steps: [
+          { skillName: 'deliver-work', gateBefore: false, gateAfter: false, expectedArtifacts: [] },
+          { skillName: 'check-work', gateBefore: false, gateAfter: true, expectedArtifacts: [] },
+        ],
+      },
+    ];
+    dispatch({ type: 'setting.set', key: 'workflows.templates', scope: 'global', value: stored });
+    expect(settings.get('workflows.templates')).toEqual(stored);
+    expect(rulesOf()).toEqual([['bug', []]]);
+  });
+
   it('takes effect on the next read and tells listeners', () => {
     const changes: string[] = [];
     settings.onChange((key, scope) => changes.push(`${scope} ${key}`));

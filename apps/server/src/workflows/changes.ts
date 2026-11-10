@@ -88,17 +88,33 @@ export async function readRunBase(
   return { baseSha: head.sha, files: (await snapshotChanges(folder, head.sha, options)) ?? [] };
 }
 
-type RunHashes = Pick<WorkflowRun, 'baseFiles' | 'steps'>;
+type RunHashes = Pick<WorkflowRun, 'baseFiles' | 'steps' | 'path'>;
 
-// The steps that changed the file, in run order: a step changed it when the file's hash at the
-// step's end is not the hash it had at the end of the step before (or, for the first step, when
-// the run began). A path missing from a list was the same as in the base commit then.
+// The steps with their hashes in the order they last ended. That is the order of the list
+// unless a rule sent the run back (workflow branches spec 19): a step keeps only the hashes of
+// its latest attempt, so it is compared with whichever step ended before that attempt.
+function inOrderEnded(run: RunHashes): WorkflowRun['steps'] {
+  const visits = run.path ?? [];
+  const lastEnded = (stepId: string) =>
+    visits.findLastIndex((visit) => visit.stepId === stepId && visit.ended === 'done');
+  return run.steps
+    .map((step, index) => ({ step, index, ended: lastEnded(step.stepId) }))
+    .toSorted((a, b) => a.ended - b.ended || a.index - b.index)
+    .map(({ step }) => step);
+}
+
+// The steps that changed the file, in the order they last ended: a step changed it when the
+// file's hash at the step's end is not the hash it had when the step that ended before it ended
+// (or when the run began, for the first of them). A path missing from a list was the same as in
+// the base commit then. After a loop the step that ended last is marked with exactly what its
+// latest attempt changed; a step that ended before it is compared with what is still known from
+// then.
 export function stepsThatChanged(run: RunHashes, relative: string): string[] {
   const hashAt = (files: readonly FileHash[]) =>
     files.find((entry) => entry.path === relative)?.hash;
   let before = hashAt(run.baseFiles ?? []);
   const steps: string[] = [];
-  for (const step of run.steps) {
+  for (const step of inOrderEnded(run)) {
     if (!step.fileHashes) continue;
     const after = hashAt(step.fileHashes);
     if (after !== before) steps.push(step.stepId);

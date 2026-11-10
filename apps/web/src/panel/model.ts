@@ -6,7 +6,7 @@ import {
   type WorkflowRun,
 } from '@wow/contracts';
 import { validateCalendarSearch } from '@/calendar/search';
-import { gateOf } from '@/workflows/model';
+import { reviewedStepIndex } from '@/workflows/model';
 
 // What the context panel shows (owner decision F-1), read from the route: the selection is the
 // URL (a thread, run, workflow or backlog item path, or the calendar's `item` search param), so a
@@ -67,12 +67,9 @@ export interface ActiveStep {
 // ended, or the one before a step that has not started), otherwise the current step, falling back
 // to the last step that has a thread.
 export function activeStep(run: WorkflowRun): ActiveStep | undefined {
-  const gate = gateOf(run);
-  if (gate) {
-    const index = gate.position === 'after' ? gate.stepIndex : gate.stepIndex - 1;
-    const step = run.steps[index];
-    if (step) return { index, threadId: step.threadId };
-  }
+  const reviewed = reviewedStepIndex(run);
+  const step = reviewed === undefined ? undefined : run.steps[reviewed];
+  if (reviewed !== undefined && step) return { index: reviewed, threadId: step.threadId };
   const current = run.steps[run.currentStep];
   if (current?.threadId !== undefined)
     return { index: run.currentStep, threadId: current.threadId };
