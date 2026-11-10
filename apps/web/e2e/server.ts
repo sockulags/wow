@@ -36,6 +36,10 @@ import {
   e2eCodexHome,
   e2eCodexInstanceId,
   e2eHome,
+  e2eEventBranch,
+  e2eEventIntentId,
+  e2eEventProjectId,
+  e2eEventWorkflowId,
   e2eHostBranch,
   e2eHostIntentId,
   e2eHostProjectId,
@@ -190,6 +194,16 @@ const gardenUnits = `## Units
 - [U5] Sell the tea -- blocked: the stall is not built
 
 ${['U1', 'U2', 'U3', 'U4', 'U5'].map((key) => `### ${key} Invented\n\nOutcome: invented for the tests.\n`).join('\n')}`;
+// The event trigger tests (review loop spec 48) follow this plan's one pull request.
+const leafRepo = path.join(home, 'tea-leaf');
+const leafUnits = `## Units
+
+- [U1] Pick the leaves
+
+### U1 Invented
+
+Outcome: invented for the tests.
+`;
 // The plan run tests (review loop spec 40, 41) run a workflow over the units of this plan.
 const potRepo = path.join(home, 'tea-pot');
 const potUnits = `## Units
@@ -667,6 +681,19 @@ if (home === e2eChangesHome) {
   })) {
     writeInRepo(potRepo, `intents/${e2ePlanRunIntentId}/${name}`, text);
   }
+  // The event trigger tests: a repository that has the branch of its plan's pull request, so
+  // the run an event starts gets a working copy on it.
+  seedTeaRepo(leafRepo);
+  git(leafRepo, 'config', 'core.autocrlf', 'false');
+  git(leafRepo, 'branch', e2eEventBranch);
+  const leaf = 'A tea leaf picker';
+  for (const [name, text] of Object.entries({
+    'intent.md': e2eIntentMd(e2eEventIntentId, leaf),
+    'spec.md': e2eSpecMd(e2eEventIntentId, leaf),
+    'plan.md': e2ePlanMd(e2eEventIntentId, leaf, leafUnits),
+  })) {
+    writeInRepo(leafRepo, `intents/${e2eEventIntentId}/${name}`, text);
+  }
 }
 await seedPlanFiles(home);
 const server = await startServer({
@@ -957,6 +984,20 @@ const gitHubHost = new MockGitHub({
 // the mock agent opens one per unit it is asked to deliver.
 const potHost = new MockGitHub({ owner: 'acme', repo: 'tea-pot', webUrl: `${trackerUrl}/web` });
 potHost.token = 'github-host-e2e-token';
+// The event trigger tests' repository on the same invented host: one open pull request.
+const leafHost = new MockGitHub({ owner: 'acme', repo: 'tea-leaf', webUrl: `${trackerUrl}/web` });
+leafHost.token = 'github-host-e2e-token';
+leafHost.pulls = [
+  {
+    number: 21,
+    title: 'Pick the leaves by hand',
+    body: `Invented.\n\nIntent-Unit: ${e2eEventIntentId}/U1`,
+    state: 'open',
+    branch: e2eEventBranch,
+    sha: 'd4d4d4d4d4d4',
+    checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }],
+  },
+];
 const unitLine = (key: string) => `Invented.\n\nIntent-Unit: ${e2eHostIntentId}/${key}`;
 gitHubHost.token = 'github-host-e2e-token';
 gitHubHost.pulls = [
@@ -1046,6 +1087,34 @@ if (home === e2eChangesHome) {
     steps: [{ ...teaStep('deliver', 'deliver-work', 'Deliver the plan unit.'), gateAfter: false }],
     forUnits: true,
   });
+  server.engine.dispatch('seed-leaf-project', {
+    type: 'project.create',
+    projectId: e2eEventProjectId,
+    name: 'Tea leaf',
+    cwd: leafRepo,
+  });
+  const leafScope = `project:${e2eEventProjectId}`;
+  const leafSettings: Record<string, unknown> = {
+    'trackers.github.repo': 'tea-leaf',
+    'trackers.github.token': await server.secrets.set(
+      `setting:${leafScope}:trackers.github.token`,
+      'github-host-e2e-token',
+    ),
+  };
+  for (const [key, value] of Object.entries(leafSettings)) {
+    server.engine.dispatch(`seed-leaf-${key}`, {
+      type: 'setting.set',
+      key,
+      scope: leafScope,
+      value,
+    });
+  }
+  server.engine.dispatch('seed-leaf-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eEventWorkflowId,
+    name: 'Tidy up after a merge',
+    steps: [{ ...teaStep('tidy', 'deliver-work', 'Tidy up after the merge.'), gateAfter: false }],
+  });
   await server.plans.refresh();
 }
 
@@ -1132,10 +1201,24 @@ const trackers = createServer((request, response) => {
     );
     return json(200, {});
   }
+  // Merges the pull request of the event trigger tests' plan.
+  if (url.pathname === '/github-leaf/merged' && request.method === 'PUT') {
+    leafHost.pulls = leafHost.pulls.map((pull) => ({
+      ...pull,
+      state: 'closed',
+      mergedAt: '2026-11-06T10:00:00Z',
+    }));
+    return json(200, {});
+  }
   if (request.method === 'GET' && url.pathname.startsWith('/github/')) {
     const asked = `${url.pathname.slice('/github'.length)}${url.search}`;
-    // Two invented repositories live on this host; a request names its own.
-    const repository = decodeURIComponent(asked).includes('acme/tea-pot') ? potHost : gitHubHost;
+    // Three invented repositories live on this host; a request names its own.
+    const named = decodeURIComponent(asked);
+    const repository = named.includes('acme/tea-pot')
+      ? potHost
+      : named.includes('acme/tea-leaf')
+        ? leafHost
+        : gitHubHost;
     const answer = repository.answer('GET', asked, request.headers.authorization ?? null);
     for (const [name, value] of Object.entries(answer.headers)) response.setHeader(name, value);
     return json(answer.status, answer.body);

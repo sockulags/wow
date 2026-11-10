@@ -80,6 +80,14 @@ export const e2eGateProjectId = 'tea-kettle';
 // port). Its workflow is marked "For units" and has one step without a gate; the mock agent
 // answers that step by opening the unit's pull request on the mock host. On the tracker port,
 // PUT /github-pot/merged?unit=U1 merges a unit's pull request.
+// The same server holds a sixth repository as project `tea-leaf` for the event trigger tests
+// (e2e/event-triggers.spec.ts): its plan has one unit with an open pull request on a third mock
+// GitHub repository (`acme/tea-leaf`), whose branch the repository has. Its workflow has one
+// step without a gate. On the tracker port, PUT /github-leaf/merged merges that pull request.
+export const e2eEventProjectId = 'tea-leaf';
+export const e2eEventWorkflowId = 'event-e2e';
+export const e2eEventIntentId = '2026-08-tea-leaf';
+export const e2eEventBranch = 'agent/U1-pick-the-leaves';
 export const e2ePlanRunProjectId = 'tea-pot';
 export const e2ePlanRunWorkflowId = 'plan-run-e2e';
 export const e2ePlanRunIntentId = '2026-07-tea-pot';
