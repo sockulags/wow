@@ -61,7 +61,7 @@ test.describe('chat', () => {
     await expect(idle.getByRole('link').first()).toContainText('Hello there');
   });
 
-  test('chat renders a table and a diagram', async ({ page }) => {
+  test('chat renders a table and a diagram @review-loop-1 @review-loop-2', async ({ page }) => {
     await startThread(page, 'Show a table and a diagram');
     const answer = conversation(page).getByTestId('item-assistant_text');
     await expect(answer.getByRole('heading', { name: 'Review of the login change' })).toBeVisible();
@@ -72,11 +72,15 @@ test.describe('chat', () => {
     await expect(answer.getByRole('cell', { name: 'src/login.test.ts' })).toBeVisible();
     await expect(answer.locator('.wow-code .shiki')).toContainText('export const retries = 3;');
 
-    // Only the https link is a link; it opens outside the app.
-    await expect(answer.getByRole('link')).toHaveCount(1);
+    // Only the https and mailto links are links; they open outside the app.
+    await expect(answer.getByRole('link')).toHaveCount(2);
     const guide = answer.getByRole('link', { name: 'the guide' });
     await expect(guide).toHaveAttribute('href', 'https://docs.example.test/login');
     await expect(guide).toHaveAttribute('target', '_blank');
+    const team = answer.getByRole('link', { name: 'the team' });
+    await expect(team).toHaveAttribute('href', 'mailto:team@example.test');
+    await expect(team).toHaveAttribute('target', '_blank');
+    await expect(answer.getByText('here', { exact: true })).toBeVisible();
 
     // The valid block is drawn by the real library; the invalid one shows its source and why.
     const diagram = answer.getByRole('img', { name: 'Diagram' });
@@ -99,7 +103,7 @@ test.describe('chat', () => {
     await expect(source).toHaveAttribute('aria-pressed', 'true');
   });
 
-  test('a diagram fetches nothing from another host', async ({ page }) => {
+  test('a diagram fetches nothing from another host @review-loop-2', async ({ page }) => {
     const asked: string[] = [];
     await page.route('https://elsewhere.example.test/**', (route) => {
       asked.push(new URL(route.request().url()).pathname);

@@ -2280,4 +2280,10 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   copy polls once a day, so the tests
   see only the reads that following a plan, starting a run and "Refresh now" start. CI runs `pnpm e2e` on
   `ubuntu-latest` and `windows-latest` (the `e2e` job) and keeps the traces of a failed run.
+  A case that covers a behavior the review loop's ground truth names carries the tag
+  `@review-loop-<n>` in its title, so `pnpm e2e --grep @review-loop` runs those and the report
+  lists them; `e2e/review-loop.spec.ts` (files only, no browser) fails when a named behavior has
+  no tagged case, when a sketch the spec's Interface names is missing, when the user guide leaves
+  out a setting of the groups the review loop added, or when `docs/windows-smoke.md` lacks its
+  three manual steps.
   Tests wait for what the page shows, never for time: no sleeps, polls or retries.

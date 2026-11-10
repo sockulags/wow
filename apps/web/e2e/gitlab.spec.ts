@@ -43,7 +43,7 @@ const unit = (page: Page, key: string) => page.getByTestId(`unit-${key}`);
 const status = (page: Page, key: string) => unit(page, key).getByTestId('unit-status');
 
 test.describe('gitlab', () => {
-  test('unit status from GitLab merge requests', async ({ page }) => {
+  test('unit status from GitLab merge requests @review-loop-23', async ({ page }) => {
     await page.goto(`/plans/${e2eGitLabProjectId}/${e2eGitLabIntentId}`);
     await expect(
       page.getByRole('heading', { name: /A tea field that weeds itself/ }),
@@ -78,7 +78,7 @@ test.describe('gitlab', () => {
     expect(requests.every((request) => request.startsWith(`/projects/${encoded}/`))).toBe(true);
   });
 
-  test('merge request beside a run', async ({ page }) => {
+  test('merge request beside a run @review-loop-28 @review-loop-31', async ({ page }) => {
     const query = new URLSearchParams({
       workflowId: e2eHostWorkflowId,
       projectId: e2eGitLabProjectId,

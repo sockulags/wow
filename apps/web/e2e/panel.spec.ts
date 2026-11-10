@@ -198,7 +198,10 @@ async function leaks(): Promise<string[]> {
 }
 
 test.describe('file viewer', () => {
-  test('an artifact opens in the side panel', async ({ page, context }) => {
+  test('an artifact opens in the side panel @review-loop-6 @review-loop-7', async ({
+    page,
+    context,
+  }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     // Every answer the page or a frame in it got from anywhere.
     const answered: string[] = [];

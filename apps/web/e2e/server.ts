@@ -141,6 +141,8 @@ const markdownAnswer = [
   '',
   'Read more in [the guide](https://docs.example.test/login) or [here](javascript:alert(1)).',
   '',
+  'Questions go to [the team](mailto:team@example.test).',
+  '',
   '```ts',
   'export const retries = 3;',
   '```',

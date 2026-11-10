@@ -39,7 +39,9 @@ const steps = (page: Page) => page.getByRole('list', { name: 'Run steps' }).getB
 const NOTE = 'Name the kettle in the bell and write it down.';
 
 test.describe('gate', () => {
-  test('approve and send back at a gate', async ({ page }) => {
+  test('approve and send back at a gate @review-loop-14 @review-loop-15 @review-loop-16', async ({
+    page,
+  }) => {
     await startRun('gate-e2e-run');
     await page.goto('/workflows/runs/gate-e2e-run');
 

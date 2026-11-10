@@ -51,7 +51,7 @@ async function startRun(runId: string, projectId: string, backlogItemId?: string
 }
 
 test.describe('pages', () => {
-  test('a Confluence page beside a run', async ({ page }) => {
+  test('a Confluence page beside a run @review-loop-31 @review-loop-35', async ({ page }) => {
     await startRun('pages-e2e-run', e2eHostProjectId, e2ePagesBacklogItemId);
     await page.goto('/workflows/runs/pages-e2e-run?tab=pages');
     const tab = page.getByRole('tabpanel', { name: 'Pages' });

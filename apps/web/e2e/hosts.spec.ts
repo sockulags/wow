@@ -53,7 +53,7 @@ const status = (page: Page, key: string) => unit(page, key).getByTestId('unit-st
 const planPath = `/plans/${e2eHostProjectId}/${e2eHostIntentId}`;
 
 test.describe('hosts', () => {
-  test('unit status from pull requests', async ({ page }) => {
+  test('unit status from pull requests @review-loop-23 @review-loop-31', async ({ page }) => {
     await page.goto(planPath);
     await expect(
       page.getByRole('heading', { name: /A tea garden that waters itself/ }),
@@ -117,7 +117,7 @@ test.describe('hosts', () => {
     await expect(page.getByTestId('host-error')).toHaveCount(0);
   });
 
-  test('pull request beside a run', async ({ page }) => {
+  test('pull request beside a run @review-loop-28 @review-loop-31', async ({ page }) => {
     await startRun('host-e2e-run');
     await page.goto('/workflows/runs/host-e2e-run?tab=pullRequest');
     const tab = page.getByRole('tabpanel', { name: 'Pull request' });

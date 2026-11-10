@@ -47,7 +47,7 @@ const refresh = (page: Page) =>
 // which takes several seconds on Windows: longer than an assertion waits by default.
 const unitRun = { timeout: 15_000 };
 
-test('a plan run works through ready units', async ({ page }) => {
+test('a plan run works through ready units @review-loop-40 @review-loop-41', async ({ page }) => {
   await page.goto(planPath);
   await expect(
     page.getByRole('heading', { name: /A tea pot that pours without dripping/ }),

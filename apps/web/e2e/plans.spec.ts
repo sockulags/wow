@@ -29,7 +29,7 @@ async function openTeaTimer(page: Page): Promise<void> {
 }
 
 test.describe('plans', () => {
-  test('plans view lists units', async ({ page }) => {
+  test('plans view lists units @review-loop-21', async ({ page }) => {
     await page.goto('/calendar');
     await page
       .getByRole('navigation', { name: 'Sections' })

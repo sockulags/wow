@@ -51,7 +51,7 @@ async function newTrigger(page: Page, event: string, workflow: string): Promise<
   await expect(dialog).toHaveCount(0);
 }
 
-test('a merged pull request starts a run', async ({ page }) => {
+test('a merged pull request starts a run @review-loop-48', async ({ page }) => {
   // The plan is followed, so its pull request is one wow reads: open, the unit claimed.
   await page.goto(planPath);
   await page.getByRole('switch', { name: 'Follow' }).click();

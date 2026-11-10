@@ -30,7 +30,7 @@ const projectStatus = () =>
   execFileSync('git', ['-C', projectFolder, 'status', '--porcelain'], { encoding: 'utf8' });
 
 test.describe('working copies', () => {
-  test('a run in its own working copy', async ({ page }) => {
+  test('a run in its own working copy @review-loop-36', async ({ page }) => {
     // The switch is in the builder and is stored with Save.
     await page.goto(`/workflows/${e2eCopyWorkflowId}`);
     const own = page.getByRole('switch', { name: 'Own working copy' });

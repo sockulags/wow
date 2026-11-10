@@ -46,7 +46,7 @@ const save = async (page: Page) => {
 };
 
 test.describe('gate conditions', () => {
-  test('a gate passes by itself', async ({ page }) => {
+  test('a gate passes by itself @review-loop-54 @review-loop-55', async ({ page }) => {
     // The gate after the check gets its condition in the builder, stored with Save.
     await page.goto(`/workflows/${e2eConditionWorkflowId}`);
     const verdict = condition(page).getByRole('checkbox', {
@@ -110,7 +110,7 @@ test.describe('gate conditions', () => {
     await expect(steps(page).nth(0).getByTestId('step-gate')).toHaveCount(0);
   });
 
-  test('a planning gate always stops', async ({ page }) => {
+  test('a planning gate always stops @review-loop-57', async ({ page }) => {
     // The builder offers no condition for the gate after plan-work, only the reason (spec 57).
     await page.goto(`/workflows/${e2ePlanningWorkflowId}`);
     await expect(page.getByTestId('gate-always-stops')).toHaveText(

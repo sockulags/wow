@@ -46,7 +46,7 @@ async function startRun(runId: string, backlogItemId?: string): Promise<void> {
 const issue = (key: string) => `GET /rest/api/2/issue/${key}`;
 
 test.describe('tickets', () => {
-  test('a Jira ticket beside a run', async ({ page }) => {
+  test('a Jira ticket beside a run @review-loop-31 @review-loop-33', async ({ page }) => {
     await startRun('ticket-e2e-run', e2eTicketBacklogItemId);
     await page.goto('/workflows/runs/ticket-e2e-run?tab=ticket');
     const tab = page.getByRole('tabpanel', { name: 'Ticket' });

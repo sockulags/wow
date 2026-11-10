@@ -55,7 +55,7 @@ async function untilReviewWaits(page: Page, runId: string): Promise<void> {
 }
 
 test.describe('changes', () => {
-  test('the Changes tab shows what a step changed', async ({ page }) => {
+  test('the Changes tab shows what a step changed @review-loop-11', async ({ page }) => {
     await startRun('changes-e2e-run');
     await page.goto('/workflows/runs/changes-e2e-run');
     await expect(gate(page)).toContainText('deliver-work finished');
