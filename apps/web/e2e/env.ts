@@ -58,6 +58,11 @@ export const e2eChangesOutlookControlPort = 4562;
 export const e2eChangesTrackerPort = 4563;
 export const e2eChangesWorkflowId = 'changes-e2e';
 export const e2eChangesProjectId = 'tea-timer';
+// The same server holds a second copy of that repository as project `tea-kettle` and a
+// three-step workflow that waits after every step, for the gate tests (e2e/gate.spec.ts): a run
+// of theirs reseeds only their own copy.
+export const e2eGateWorkflowId = 'gate-e2e';
+export const e2eGateProjectId = 'tea-kettle';
 
 // The folders those session files point at: two exist, one is gone.
 export const e2eWorkspace = (home: string, name: string) => path.join(home, 'workspaces', name);

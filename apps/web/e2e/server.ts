@@ -27,6 +27,8 @@ import {
   e2eChangesHome,
   e2eChangesProjectId,
   e2eChangesWorkflowId,
+  e2eGateProjectId,
+  e2eGateWorkflowId,
   e2eClaudeConfigDir,
   e2eCodexHome,
   e2eCodexInstanceId,
@@ -158,12 +160,16 @@ const reachingAnswer = [
 // repository of its own, and a mock agent that edits it the way a build step and a review step
 // would. Git runs here only to set the scene; the server under test reads the result.
 const changesRepo = path.join(home, 'tea-timer');
-const git = (...args: string[]) =>
+// The gate tests (review loop spec 14 to 16) get a copy of their own, so a run of theirs does not
+// reseed the folder the Changes tests are reading.
+const gateRepo = path.join(home, 'tea-kettle');
+const teaRepos = new Set([changesRepo, gateRepo]);
+const git = (repo: string, ...args: string[]) =>
   execFileSync(
     'git',
     [
       '-C',
-      changesRepo,
+      repo,
       '-c',
       'user.name=Invented Agent',
       '-c',
@@ -174,10 +180,10 @@ const git = (...args: string[]) =>
     ],
     { stdio: 'pipe' },
   );
-const inRepo = (relative: string) => path.join(changesRepo, ...relative.split('/'));
-function writeInRepo(relative: string, content: string | Uint8Array): void {
-  mkdirSync(path.dirname(inRepo(relative)), { recursive: true });
-  writeFileSync(inRepo(relative), content);
+const inRepo = (repo: string, relative: string) => path.join(repo, ...relative.split('/'));
+function writeInRepo(repo: string, relative: string, content: string | Uint8Array): void {
+  mkdirSync(path.dirname(inRepo(repo, relative)), { recursive: true });
+  writeFileSync(inRepo(repo, relative), content);
 }
 const timerSource = (ring: string) =>
   [
@@ -194,26 +200,31 @@ const guide = Array.from(
   (_, index) => `${index + 1}. Invented step ${index + 1} of making tea.`,
 ).join('\n');
 
-function seedChangesRepo(): void {
-  rmSync(changesRepo, { recursive: true, force: true });
-  mkdirSync(changesRepo, { recursive: true });
-  git('init', '-q', '-b', 'main');
-  writeInRepo('.gitignore', '*.log\n');
-  writeInRepo('README.md', '# Tea timer\n\nRings when the tea is ready.\n');
-  writeInRepo('src/timer.ts', timerSource('ring()'));
-  writeInRepo('src/bell.ts', "export const ring = (): void => console.log('ding');\n");
-  writeInRepo('src/legacy.ts', 'export const oldRing = (): void => undefined;\n');
-  writeInRepo('docs/howto.md', `# How to\n\n${guide}\n`);
-  git('add', '-A');
-  git('commit', '-q', '-m', 'Invented tea timer');
+function seedTeaRepo(repo: string): void {
+  rmSync(repo, { recursive: true, force: true });
+  mkdirSync(repo, { recursive: true });
+  git(repo, 'init', '-q', '-b', 'main');
+  writeInRepo(repo, '.gitignore', '*.log\n');
+  writeInRepo(repo, 'README.md', '# Tea timer\n\nRings when the tea is ready.\n');
+  writeInRepo(repo, 'src/timer.ts', timerSource('ring()'));
+  writeInRepo(repo, 'src/bell.ts', "export const ring = (): void => console.log('ding');\n");
+  writeInRepo(repo, 'src/legacy.ts', 'export const oldRing = (): void => undefined;\n');
+  writeInRepo(repo, 'docs/howto.md', `# How to\n\n${guide}\n`);
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'Invented tea timer');
 }
 
 // The build step: one committed change, then uncommitted ones of every kind the tab lists.
-function buildTeaTimer(): void {
-  writeInRepo('README.md', '# Tea timer\n\nRings twice when the tea is ready.\n');
-  git('commit', '-q', '-am', 'Say that it rings twice');
-  writeInRepo('src/timer.ts', timerSource('ringTwice()').replace('{ ring }', '{ ringTwice }'));
+function buildTeaTimer(repo: string): void {
+  writeInRepo(repo, 'README.md', '# Tea timer\n\nRings twice when the tea is ready.\n');
+  git(repo, 'commit', '-q', '-am', 'Say that it rings twice');
   writeInRepo(
+    repo,
+    'src/timer.ts',
+    timerSource('ringTwice()').replace('{ ring }', '{ ringTwice }'),
+  );
+  writeInRepo(
+    repo,
     'src/bell.ts',
     [
       "export const ring = (): void => console.log('ding');",
@@ -224,20 +235,43 @@ function buildTeaTimer(): void {
       '',
     ].join('\n'),
   );
-  git('mv', 'docs/howto.md', 'docs/guide.md');
-  rmSync(inRepo('src/legacy.ts'));
-  writeInRepo('src/chime.ts', "export const chime = 'soft';\n");
-  writeInRepo('assets/chime.bin', Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0, 1, 2, 3, 0xff, 0]));
-  writeInRepo('build.log', 'ignored by git\n');
+  git(repo, 'mv', 'docs/howto.md', 'docs/guide.md');
+  rmSync(inRepo(repo, 'src/legacy.ts'));
+  writeInRepo(repo, 'src/chime.ts', "export const chime = 'soft';\n");
+  writeInRepo(
+    repo,
+    'assets/chime.bin',
+    Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0, 1, 2, 3, 0xff, 0]),
+  );
+  writeInRepo(repo, 'build.log', 'ignored by git\n');
 }
 
 // The review step: its notes, and one fix to a file the build step left.
-function reviewTeaTimer(): void {
+function reviewTeaTimer(repo: string): void {
   writeInRepo(
+    repo,
     'review/notes.md',
     '# Review\n\n- The timer rings twice.\n- The chime was renamed for clarity.\n',
   );
-  renameSync(inRepo('src/chime.ts'), inRepo('src/soft-chime.ts'));
+  renameSync(inRepo(repo, 'src/chime.ts'), inRepo(repo, 'src/soft-chime.ts'));
+}
+
+// A step sent back at its gate (review loop spec 16): the second attempt names the kettle in a
+// new document and in the bell.
+function reworkTeaTimer(repo: string): void {
+  writeInRepo(repo, 'docs/kettle.md', '# Kettle\n\nThe timer starts when the kettle clicks off.\n');
+  writeInRepo(
+    repo,
+    'src/bell.ts',
+    [
+      "export const ring = (): void => console.log('ding, the kettle is done');",
+      'export const ringTwice = (): void => {',
+      '  ring();',
+      '  ring();',
+      '};',
+      '',
+    ].join('\n'),
+  );
 }
 
 function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): ProviderEvent[] {
@@ -248,13 +282,21 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     providerSessionId: command.resumeId ?? `mock-session-${threadId.slice(0, 8)}`,
   };
   const resumed = command.resumeId === undefined ? '' : `Resumed ${command.resumeId}. `;
+  // A send back names no step, and the note in it may say anything, so it is looked for first.
+  if (/sent it back/i.test(prompt)) {
+    if (teaRepos.has(command.cwd)) reworkTeaTimer(command.cwd);
+    return [
+      session,
+      ...finish(threadId, 'Second attempt: the bell and a new document name the kettle.'),
+    ];
+  }
   // The review step's prompt quotes the build step's answer, so it is looked for first.
   if (/review the tea timer/i.test(prompt)) {
-    if (command.cwd === changesRepo) reviewTeaTimer();
+    if (teaRepos.has(command.cwd)) reviewTeaTimer(command.cwd);
     return [session, ...finish(threadId, 'Reviewed the tea timer: one rename, notes written.')];
   }
   if (/build the tea timer/i.test(prompt)) {
-    if (command.cwd === changesRepo) buildTeaTimer();
+    if (teaRepos.has(command.cwd)) buildTeaTimer(command.cwd);
     return [session, ...finish(threadId, 'The tea timer rings twice now.')];
   }
   if (/approve/i.test(prompt)) {
@@ -532,7 +574,10 @@ if (home === e2ePanelHome) {
     ].join('\n'),
   );
 }
-if (home === e2eChangesHome) seedChangesRepo();
+if (home === e2eChangesHome) {
+  seedTeaRepo(changesRepo);
+  seedTeaRepo(gateRepo);
+}
 await seedPlanFiles(home);
 const server = await startServer({
   home,
@@ -771,6 +816,27 @@ if (home === e2eChangesHome) {
       teaStep('review', 'check-work', 'Review the tea timer.'),
     ],
   });
+  // The gate tests: the same agent in its own repository, with a third step so that Approve can
+  // be used by key, by button and from the palette.
+  server.engine.dispatch('seed-gate-project', {
+    type: 'project.create',
+    projectId: e2eGateProjectId,
+    name: 'Tea kettle',
+    cwd: gateRepo,
+  });
+  server.engine.dispatch('seed-gate-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eGateWorkflowId,
+    name: 'Build, review and wrap up',
+    steps: [
+      {
+        ...teaStep('build', 'deliver-work', 'Build the tea timer.'),
+        expectedArtifacts: ['docs/*.md'],
+      },
+      teaStep('review', 'check-work', 'Review the tea timer.'),
+      teaStep('wrap', 'learn-work', 'Note what the tea timer taught us.'),
+    ],
+  });
 }
 
 const received: { path: string; authorization: string | undefined; body: unknown }[] = [];
@@ -822,7 +888,8 @@ const trackers = createServer((request, response) => {
     if (!workflowId || !runId) return json(400, { error: 'workflowId and runId are needed' });
     const projectId = url.searchParams.get('projectId') ?? e2eProjectId;
     // Every run of the tea timer starts from the same invented commit.
-    if (projectId === e2eChangesProjectId) seedChangesRepo();
+    if (projectId === e2eChangesProjectId) seedTeaRepo(changesRepo);
+    if (projectId === e2eGateProjectId) seedTeaRepo(gateRepo);
     server.engine.dispatch(`run-${runId}`, {
       type: 'workflowRun.start',
       runId,
