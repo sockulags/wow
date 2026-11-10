@@ -8,13 +8,20 @@ import {
 } from '@wow/client-runtime';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime, type ViewerFile } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
 import { renderApp } from '@/test/render';
 import { viewerCommands } from './commands';
-import { fileLanguage, formatBytes, frameDocument, shownFile } from './viewer';
+import {
+  copyFilePath,
+  fileLanguage,
+  formatBytes,
+  frameDocument,
+  scriptedFrameDocument,
+  shownFile,
+} from './viewer';
 
 // The viewer's states in the context panel (review loop spec 6 to 9) against a fake server that
 // answers `files.read` from a table of invented files.
@@ -133,6 +140,7 @@ const fileAt = (path: string, from = route): ViewerFile => ({
   fullPath: `/home/me/demo/${path}`,
   from,
   fullSize: false,
+  read: undefined,
 });
 
 const viewer = () => screen.findByRole('region', { name: 'File viewer' });
@@ -215,6 +223,11 @@ describe('file viewer', () => {
       within(shown).getByRole('button', { name: 'Fit to panel' }).getAttribute('aria-pressed'),
     ).toBe('true');
     expect(picture.className).not.toContain('object-contain');
+    // The palette's commands act on what the server read, like the header's buttons.
+    expect(server.runtime.layout.getState().viewer?.read).toEqual({
+      kind: 'image',
+      absolutePath: '/real/demo/file',
+    });
   });
 
   it('shows HTML in a frame without an origin, and without scripts while the setting is off', async () => {
@@ -246,8 +259,8 @@ describe('file viewer', () => {
         'report.html': {
           kind: 'html',
           absolutePath: '/real/demo/file',
-          size: 15,
-          text: '<h1>Report</h1>',
+          size: 40,
+          text: '<h1>Report</h1><script>start()</script>',
         },
       },
       { viewer: 'report.html', settings: { 'viewer.htmlScripts': true } },
@@ -255,8 +268,11 @@ describe('file viewer', () => {
     await renderApp(route, server.runtime);
     const frame = await within(await viewer()).findByTitle('report.html');
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
-    expect(frame.getAttribute('srcdoc')).toContain("script-src 'unsafe-inline'");
-    expect(frame.getAttribute('srcdoc')).toContain("default-src 'none'");
+    const page = frame.getAttribute('srcdoc') ?? '';
+    expect(page).toMatch(/script-src 'sha256-[A-Za-z0-9+/]{43}=';/);
+    expect(page).not.toContain("script-src 'unsafe-inline'");
+    expect(page).toContain("default-src 'none'");
+    expect(page).toContain('<h1>Report</h1>');
   });
 
   it('shows any other text as code', async () => {
@@ -340,21 +356,48 @@ describe('viewer commands', () => {
     expect(
       viewerCommands({ viewer: undefined, pathname: route, openRun: undefined, projects: [] }),
     ).toEqual([]);
-    expect(titles(fileAt('review/notes.md')).slice(2)).toEqual([
-      'Back to conversation',
-      'Copy file path',
+    const actions = ['Back to conversation', 'Copy file path'];
+    expect(titles(fileAt('review/notes.md')).slice(2)).toEqual(actions);
+    // The size switch is for a file the server read as a picture, not for one named like one.
+    expect(titles(fileAt('review/screen.png')).slice(2)).toEqual(actions);
+    const markdown = { kind: 'markdown', absolutePath: '/real/demo/notes.md' } as const;
+    expect(titles({ ...fileAt('review/notes.md'), read: markdown }).slice(2)).toEqual(actions);
+    const picture = { kind: 'image', absolutePath: '/real/demo/screen.png' } as const;
+    expect(titles({ ...fileAt('review/screen.png'), read: picture }).slice(2)).toEqual([
+      ...actions,
       'Show picture at full size',
     ]);
-    expect(titles({ ...fileAt('review/screen.png'), fullSize: true }).at(-1)).toBe(
+    expect(titles({ ...fileAt('review/screen.png'), read: picture, fullSize: true }).at(-1)).toBe(
       'Fit picture to panel',
     );
     expect(titles(fileAt('review/notes.md', '/calendar'))).toHaveLength(2);
+  });
+
+  it('copies the path the server resolved, and the named path until it has answered', async () => {
+    const copied: string[] = [];
+    vi.stubGlobal('navigator', {
+      clipboard: { writeText: (text: string) => (copied.push(text), Promise.resolve()) },
+    });
+    const file = fileAt('review/notes.md');
+    const resolved = { kind: 'markdown', absolutePath: '/real/demo/review/notes.md' } as const;
+    for (const shown of [file, { ...file, read: resolved }]) {
+      await viewerCommands({ viewer: shown, pathname: route, openRun: run, projects: [project] })
+        .find((command) => command.id === 'viewer.copyPath')
+        ?.run(undefined as never);
+    }
+    copyFilePath({ ...file, read: resolved });
+    vi.unstubAllGlobals();
+    expect(copied).toEqual([
+      '/home/me/demo/review/notes.md',
+      '/real/demo/review/notes.md',
+      '/real/demo/review/notes.md',
+    ]);
   });
 });
 
 describe('frame document', () => {
   it('puts a policy that allows no network before everything the file brings', () => {
-    const page = frameDocument('<html><head><title>x</title></head><body>hi</body></html>', false);
+    const page = frameDocument('<html><head><title>x</title></head><body>hi</body></html>');
     expect(page.startsWith('<meta http-equiv="Content-Security-Policy"')).toBe(true);
     expect(page).toContain("default-src 'none'");
     expect(page).toContain("form-action 'none'");
@@ -365,12 +408,62 @@ describe('frame document', () => {
   });
 
   it('keeps a doctype first, so the page is not laid out in quirks mode', () => {
-    const page = frameDocument('\n<!DOCTYPE html>\n<p>hi</p>', true);
+    const page = frameDocument('\n<!DOCTYPE html>\n<p>hi</p>');
     expect(page.startsWith('\n<!DOCTYPE html><meta http-equiv="Content-Security-Policy"')).toBe(
       true,
     );
-    expect(page).toContain("script-src 'unsafe-inline'");
     expect(page.endsWith('\n<p>hi</p>')).toBe(true);
+  });
+
+  it('with scripts on, allows only the file’s own scripts, each closing WebRTC first', async () => {
+    const page = await scriptedFrameDocument(
+      [
+        '<!doctype html><title>x</title>',
+        '<script>one()</script>',
+        '<script src="https://invented.example/far.js"></script>',
+        '<button onclick="two()">Go</button>',
+        '<script type="module">three()</script>',
+      ].join(''),
+    );
+    expect(page.startsWith('<!doctype html><html><head><meta http-equiv=')).toBe(true);
+    expect(page).toContain("default-src 'none'");
+    expect(page).toContain('<base target="_blank">');
+    // No inline script without its hash: nothing in an attribute, in a nested frame's own
+    // markup or behind a javascript: address runs.
+    const policy = /content="([^"]*)"/.exec(page)?.[1] ?? '';
+    const sources = /script-src ([^;]*);/.exec(policy)?.[1]?.split(' ') ?? [];
+    expect(policy).not.toContain("script-src 'unsafe-inline'");
+    expect(sources).toHaveLength(2);
+    const parsed = new DOMParser().parseFromString(page, 'text/html');
+    const inline = [...parsed.querySelectorAll('script:not([src])')].map(
+      (script) => script.textContent ?? '',
+    );
+    expect(inline).toHaveLength(2);
+    for (const [index, text] of inline.entries()) {
+      expect(text).toMatch(
+        /^for\(const name of Object\.getOwnPropertyNames\(globalThis\)\)if\(.*RTC/,
+      );
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      expect(sources[index]).toBe(
+        `'sha256-${btoa(String.fromCharCode(...new Uint8Array(digest)))}'`,
+      );
+    }
+    expect(inline[0]?.endsWith('\none()')).toBe(true);
+    expect(inline[1]?.endsWith('\nthree()')).toBe(true);
+  });
+
+  it('with scripts on, leaves a script element that holds data as it is', async () => {
+    const page = await scriptedFrameDocument(
+      '<script type="application/json" id="data">{"a":1}</script><script>read()</script>',
+    );
+    expect(page).toContain('<script type="application/json" id="data">{"a":1}</script>');
+    expect(/script-src ([^;]*);/.exec(page)?.[1]?.split(' ')).toHaveLength(1);
+  });
+
+  it('with scripts on and no script in the file, allows none', async () => {
+    const page = await scriptedFrameDocument('<p onclick="go()">hi</p>');
+    expect(page).toContain("script-src 'none';");
+    expect(page.startsWith('<html><head><meta')).toBe(true);
   });
 });
 

@@ -791,7 +791,7 @@ export const settingsRegistry = {
     group: 'viewer',
     label: 'Run scripts in HTML files',
     description:
-      'Let an HTML file shown in the side panel run its own scripts. The page still cannot reach the app, the network or the disk.',
+      'Let an HTML file shown in the side panel run the scripts written in it. Scripts in attributes such as onclick stay off, and the page still cannot reach the app, the network or the disk.',
     default: false,
     scope: 'global',
   }),

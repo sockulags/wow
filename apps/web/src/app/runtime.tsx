@@ -38,8 +38,12 @@ export interface ViewerFile {
   readonly runId: string;
   // As the run names it: relative to its folder, with forward slashes.
   readonly path: string;
-  // The full path, for "Copy path".
+  // The full path as the client names it, for "Copy path" until the server has answered.
   readonly fullPath: string;
+  // What the server read, once it has: the kind it is shown as and the path it resolved.
+  readonly read:
+    | { readonly kind: 'markdown' | 'html' | 'text' | 'image'; readonly absolutePath: string }
+    | undefined;
   readonly from: string;
   // A picture at its own size instead of fitted to the panel.
   readonly fullSize: boolean;

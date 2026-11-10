@@ -974,27 +974,35 @@ topics the views read.
   item it belongs to.
 - No selection: a compact `EmptyState` that says what the view would show.
 - File viewer (`file-viewer.tsx`, `viewer.ts`; review loop spec 6 to 9): a state of the panel, not
-  a second panel. `openFile` stores `{runId, path, fullPath, from, fullSize}` as the layout
-  store's `viewer` and opens the panel; while `viewer.from` is the route on screen
+  a second panel. `openFile` stores `{runId, path, fullPath, from, fullSize, read}` as the layout
+  store's `viewer` and opens the panel; `read` is the kind and resolved path the server answered
+  (`noteFileRead`), so the palette acts on the same file the header does; while `viewer.from` is the route on screen
   (`shownFile`), `FileViewer` takes the place of the panel's body, so the main view stays put
   and leaving the view puts the file away. It is UI state like an open dialog; the content is
   asked from the server with `files.read` each time a file is opened and never kept. The header
-  has Back to conversation (also Escape), Copy path (the path the server resolved) and the
-  path; markdown goes through `Markdown`, a picture is a `data:` URL fitted to the panel with a
+  has Back to conversation (also Escape), Copy path (the path the server resolved, or the path
+  as named until it has answered) and the path; markdown goes through `Markdown`, a picture is a `data:` URL fitted to the panel with a
   Full size switch, other text is a `CodeBlock` colored by its extension up to
   `viewer.highlightMaxBytes`, and a refusal shows the server's sentence. HTML is shown in an
   `iframe` from a string (`frameDocument`): `sandbox` without `allow-same-origin` gives the
   page no origin, so it cannot read the app, its storage or the disk, open windows or leave the
   frame, and `allow-scripts` is added only while `viewer.htmlScripts` is on. A policy placed
   before the file's own markup (`default-src 'none'`, pictures, fonts and media from `data:`
-  only, inline styles, inline scripts only with the setting, no form targets, no `base`) stops
-  every fetch from inside the page, so files beside it do not load. The page could still
+  only, inline styles, no scripts, no form targets, no `base`) stops every fetch from inside
+  the page, so files beside it do not load. With the setting on the page is built by
+  `scriptedFrameDocument` instead. The content policy does not govern WebRTC, which could send
+  what the page holds to any address, so each inline script of the file gets a first line that
+  deletes every `RTC…` global, and the policy allows exactly those scripts by their SHA-256
+  hash, never `'unsafe-inline'`. A script in an attribute, behind a `javascript:` address, made
+  by another script or in a nested frame therefore does not run unless it is one of the
+  guarded ones, and a nested frame's window cannot be borrowed because it has another origin.
+  `script` elements of a non-script type (JSON data) are left alone. The page could still
   navigate its own frame to another address; `frame-src 'none'` in `apps/web/index.html` stops
   that (a `srcdoc` frame still loads), and the e2e test checks that the mock port the page
-  names gets no request. While the focus is inside the frame its keys stay there; a click
+  names gets no request and no datagram. While the focus is inside the frame its keys stay there; a click
   outside or Tab brings the app's shortcuts back. Palette commands (`viewerCommands`): "Open
   artifact: <path>" for every found file of the open run, and Back to conversation, Copy file
-  path and the picture's size switch while a file shows.
+  path while a file shows, and the picture's size switch once it is read as a picture.
 
 State (`panel-state.ts`). `appearance.contextPanel` stores whether it is open and
 `appearance.contextPanelWidth` its width (pixels, bounds `contextPanelWidthBounds` in
@@ -1223,8 +1231,8 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   after the step and a card tomorrow that runs it, started with `POST /fire?cardId=…` on its
   tracker port. The same copy holds the file viewer's fixtures: invented files of every kind in the
   project's `review` folder (the picture is drawn by the script, the HTML page tries to reach
-  the app, its storage and the tracker port) and a workflow whose step finds them, started with
-  `POST /run?workflowId=…&runId=…`; requests to `/leak…` on the tracker port are recorded, so a
+  the app, its storage and the tracker port, over HTTP and over WebRTC) and a workflow whose step finds them, started with
+  `POST /run?workflowId=…&runId=…`; requests to `/leak…` on the tracker port and datagrams to the same port are recorded, so a
   page that got out fails the test. The trigger tests start a third copy themselves
   (`e2eTriggersHome`, `e2eTriggersPort`) because they restart it: `WOW_E2E_KEEP_HOME=1` keeps the
   home across a restart and `WOW_E2E_CLOCK_OFFSET_SECONDS` runs the server's clock ahead, so a

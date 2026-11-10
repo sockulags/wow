@@ -163,7 +163,7 @@ export async function readViewerFile({
       : htmlExtensions.has(extension)
         ? 'html'
         : 'text';
-    return { kind, ...shown, text: text.replace(/^﻿/, '') };
+    return { kind, ...shown, text };
   }
   return refused('missing', `There is no file ${requested}.`);
 }

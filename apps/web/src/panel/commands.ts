@@ -48,8 +48,9 @@ export interface ViewerCommandData {
 }
 
 // The file viewer from the keyboard (review loop spec 6): every artifact the open run's steps
-// left is one "Open artifact" command, and an open file can be put away, copied as a path, and,
-// when it is a picture, shown at full size.
+// left is one "Open artifact" command, and an open file can be put away, copied as a path (the
+// one the server resolved, like the header's button), and, once it is read as a picture, shown
+// at full size.
 export function viewerCommands({
   viewer,
   pathname,
@@ -97,15 +98,17 @@ export function viewerCommands({
         detail: file.path,
         run: () => copyFilePath(file),
       },
-      {
+    );
+    if (file.read?.kind === 'image') {
+      commands.push({
         id: 'viewer.toggleFullSize',
         title: file.fullSize ? 'Fit picture to panel' : 'Show picture at full size',
         group: 'Workflows',
         keywords: ['viewer', 'image', 'zoom', 'fit'],
         detail: file.path,
         run: ({ layout }) => toggleFullSize(layout),
-      },
-    );
+      });
+    }
   }
   return commands;
 }

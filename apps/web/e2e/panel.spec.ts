@@ -281,8 +281,13 @@ test.describe('file viewer', () => {
     await expect(report.locator('#scripts')).toHaveText('Scripts: on');
     await expect(report.locator('#app')).toHaveText('App: blocked, storage: blocked');
     await expect(report.locator('#network')).toHaveText('Network: blocked');
-    // The page's picture, link and fetch all name the mock tracker port: the browser got no
-    // answer from it and nothing arrived there.
+    // WebRTC is not there for the page's script, a script in an attribute does not run, and a
+    // frame inside the page neither runs its own script nor lends its window.
+    await expect(report.locator('#webrtc')).toHaveText('WebRTC: blocked, from a frame: blocked');
+    await report.getByRole('button', { name: 'Handler: off' }).click();
+    await expect(report.getByRole('button', { name: 'Handler: off' })).toBeVisible();
+    // The page's picture, link, fetch and STUN address all name the mock tracker port: the
+    // browser got no answer from it and nothing arrived there, not a datagram either.
     await report.getByRole('link', { name: 'A link out' }).click();
     await expect(report.getByRole('heading', { name: 'Search panel report' })).toBeHidden();
     expect(answered.filter((url) => url.includes('/leak'))).toEqual([]);

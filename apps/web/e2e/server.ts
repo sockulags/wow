@@ -14,6 +14,7 @@ import {
   startServer,
   type MockScript,
 } from '@wow/server';
+import { createSocket } from 'node:dgram';
 import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage } from 'node:http';
@@ -350,10 +351,17 @@ function inventedPng(width: number, height: number): Buffer {
 
 // The panel server's project holds one invented file of each kind the viewer shows, and one it
 // refuses. The HTML page tries everything a page must not be able to do from the viewer: reach
-// the app, its storage and the network (the tracker port below records any request that arrives).
+// the app, its storage and the network (the tracker port below records any request that arrives,
+// and any datagram: WebRTC is the one way out that a content policy does not govern, so the page
+// asks for it from its own script, from a script in an attribute and from a frame inside it).
 if (home === e2ePanelHome) {
   const review = path.join(home, 'review');
   const leak = `http://127.0.0.1:${trackerPort}/leak`;
+  const connect = [
+    `const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:127.0.0.1:${trackerPort}' }] });`,
+    "peer.createDataChannel('leak');",
+    'peer.createOffer().then((offer) => peer.setLocalDescription(offer));',
+  ].join(' ');
   await mkdir(review, { recursive: true });
   await writeFile(
     path.join(review, 'notes.md'),
@@ -394,6 +402,9 @@ if (home === e2ePanelHome) {
       '<p id="scripts">Scripts: off</p>',
       '<p id="app">App: not tried</p>',
       '<p id="network">Network: not tried</p>',
+      '<p id="webrtc">WebRTC: not tried</p>',
+      `<button id="handler" onclick="${connect} this.textContent = 'Handler: ran';">Handler: off</button>`,
+      `<iframe title="Inner frame" srcdoc="<script>${connect}</script>"></iframe>`,
       `<img alt="" src="${leak}/image">`,
       `<a href="${leak}/link" target="_self">A link out</a>`,
       '<script>',
@@ -406,6 +417,15 @@ if (home === e2ePanelHome) {
       `  fetch('${leak}/fetch').then(() => 'reached', () => 'blocked').then((result) => {`,
       "    document.getElementById('network').textContent = 'Network: ' + result;",
       '  });',
+      "  const webrtc = document.getElementById('webrtc');",
+      "  let own = 'blocked';",
+      `  try { ${connect} own = 'open'; } catch {}`,
+      "  let borrowed = 'blocked';",
+      '  try {',
+      "    const inner = document.body.appendChild(document.createElement('iframe'));",
+      "    new inner.contentWindow.RTCPeerConnection(); borrowed = 'open';",
+      '  } catch {}',
+      "  webrtc.textContent = 'WebRTC: ' + own + ', from a frame: ' + borrowed;",
       '</script>',
       '</body></html>',
       '',
@@ -690,6 +710,12 @@ const trackers = createServer((request, response) => {
   return undefined;
 });
 await new Promise<void>((resolve) => trackers.listen(trackerPort, '127.0.0.1', resolve));
+// The same port for datagrams: a STUN request from the viewer's HTML page would arrive here.
+const datagrams = createSocket('udp4');
+datagrams.on('message', () => {
+  received.push({ path: '/leak/datagram', authorization: undefined, body: undefined });
+});
+await new Promise<void>((resolve) => datagrams.bind(trackerPort, '127.0.0.1', resolve));
 // Seeding again after a restart repeats the same command ids, which the server answers as
 // duplicates. The trigger tests wait for this line.
 process.stdout.write('wow e2e server ready\n');
@@ -697,6 +723,7 @@ process.stdout.write('wow e2e server ready\n');
 const stop = () => {
   control.close();
   trackers.close();
+  datagrams.close();
   void server.stop().then(() => process.exit(0));
 };
 process.on('SIGINT', stop);

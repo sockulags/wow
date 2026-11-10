@@ -23,6 +23,8 @@ import {
   fileLanguage,
   formatBytes,
   frameDocument,
+  noteFileRead,
+  scriptedFrameDocument,
   toggleFullSize,
 } from './viewer';
 
@@ -35,18 +37,24 @@ type FileState =
   | { readonly status: 'failed'; readonly message: string }
   | { readonly status: 'done'; readonly result: FileReadResult };
 
+interface FileRequest {
+  readonly runId: string;
+  readonly path: string;
+  readonly state: FileState;
+}
+
 function useFile(runId: string, path: string): FileState | undefined {
   const { connection } = useRuntime();
-  const [state, setState] = useState<FileState>({ status: 'loading' });
+  const [request, setRequest] = useState<FileRequest>();
   useEffect(() => {
     if (!connection) return undefined;
     let current = true;
-    setState({ status: 'loading' });
+    const answer = (state: FileState) => current && setRequest({ runId, path, state });
+    answer({ status: 'loading' });
     connection.request('files.read', { runId, path }).then(
-      (answer) => {
-        if (!current) return;
-        const result = FileReadResult.safeParse(answer);
-        setState(
+      (received) => {
+        const result = FileReadResult.safeParse(received);
+        answer(
           result.success
             ? { status: 'done', result: result.data }
             : {
@@ -55,13 +63,50 @@ function useFile(runId: string, path: string): FileState | undefined {
               },
         );
       },
-      (error: unknown) => current && setState({ status: 'failed', message: errorMessage(error) }),
+      (error: unknown) => answer({ status: 'failed', message: errorMessage(error) }),
     );
     return () => {
       current = false;
     };
   }, [connection, runId, path]);
-  return connection ? state : undefined;
+  if (!connection) return undefined;
+  // An answer for the file shown before is not this file's.
+  return request?.runId === runId && request.path === path ? request.state : { status: 'loading' };
+}
+
+// The page for the frame. With scripts on it is made from the file's parsed markup, which takes
+// a moment; until then there is nothing to show.
+function useFramePage(html: string, scripts: boolean): string | undefined {
+  const [scripted, setScripted] = useState<{ readonly html: string; readonly page: string }>();
+  useEffect(() => {
+    if (!scripts) return undefined;
+    let current = true;
+    void scriptedFrameDocument(html).then((page) => current && setScripted({ html, page }));
+    return () => {
+      current = false;
+    };
+  }, [html, scripts]);
+  if (!scripts) return frameDocument(html);
+  return scripted?.html === html ? scripted.page : undefined;
+}
+
+function HtmlPage({ file, html }: { readonly file: ViewerFile; readonly html: string }) {
+  const scripts = useSetting('viewer.htmlScripts');
+  const page = useFramePage(html, scripts);
+  if (page === undefined) return <LoadingState compact rows={6} label="Reading the file" />;
+  return (
+    // The sandbox gives the page no origin: it cannot read the app, its storage or the disk,
+    // open windows or leave the frame. Without allow-scripts nothing in it runs.
+    <iframe
+      key={String(scripts)}
+      title={file.path}
+      data-testid="viewer-html"
+      sandbox={scripts ? 'allow-scripts' : ''}
+      referrerPolicy="no-referrer"
+      srcDoc={page}
+      className="min-h-0 w-full flex-1 bg-white [color-scheme:light]"
+    />
+  );
 }
 
 const kindLabels: Readonly<Record<Exclude<FileReadResult['kind'], 'refused'>, string>> = {
@@ -86,7 +131,6 @@ function Shown({
   readonly file: ViewerFile;
   readonly result: Exclude<FileReadResult, { kind: 'refused' }>;
 }) {
-  const scripts = useSetting('viewer.htmlScripts');
   const highlightMax = useSetting('viewer.highlightMaxBytes');
   switch (result.kind) {
     case 'markdown':
@@ -112,19 +156,7 @@ function Shown({
         </div>
       );
     case 'html':
-      return (
-        // The sandbox gives the page no origin: it cannot read the app, its storage or the disk,
-        // open windows or leave the frame. Without allow-scripts nothing in it runs.
-        <iframe
-          key={String(scripts)}
-          title={file.path}
-          data-testid="viewer-html"
-          sandbox={scripts ? 'allow-scripts' : ''}
-          referrerPolicy="no-referrer"
-          srcDoc={frameDocument(result.text, scripts)}
-          className="min-h-0 w-full flex-1 bg-white [color-scheme:light]"
-        />
-      );
+      return <HtmlPage file={file} html={result.text} />;
     default:
       return (
         <div className="min-h-0 flex-1 overflow-auto p-3" data-testid="viewer-text">
@@ -173,6 +205,15 @@ export function FileViewer({ file }: { readonly file: ViewerFile }) {
   const state = useFile(file.runId, file.path);
   const result = state?.status === 'done' ? state.result : undefined;
   const read = result && result.kind !== 'refused' ? result : undefined;
+  const kind = read?.kind;
+  const absolutePath = read?.absolutePath;
+  useEffect(() => {
+    noteFileRead(
+      layout,
+      { runId: file.runId, path: file.path },
+      kind && absolutePath ? { kind, absolutePath } : undefined,
+    );
+  }, [layout, file, kind, absolutePath]);
   return (
     <section
       aria-label="File viewer"
@@ -201,11 +242,7 @@ export function FileViewer({ file }: { readonly file: ViewerFile }) {
               {file.fullSize ? <Minimize2Icon /> : <Maximize2Icon />}
             </IconButton>
           )}
-          <IconButton
-            label="Copy path"
-            size="icon-xs"
-            onClick={() => copyFilePath(file, read?.absolutePath)}
-          >
+          <IconButton label="Copy path" size="icon-xs" onClick={() => copyFilePath(file)}>
             <CopyIcon />
           </IconButton>
         </div>
