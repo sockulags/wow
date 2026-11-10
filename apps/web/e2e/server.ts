@@ -31,7 +31,9 @@ import {
   e2eCopyProjectId,
   e2eCopyWorkflowId,
   e2eGateProjectId,
+  e2eConditionWorkflowId,
   e2eGateWorkflowId,
+  e2ePlanningWorkflowId,
   e2eClaudeConfigDir,
   e2eCodexHome,
   e2eCodexInstanceId,
@@ -369,6 +371,22 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       session,
       ...finish(threadId, 'Second attempt: the bell and a new document name the kettle.'),
     ];
+  }
+  // The gate condition tests: a check that ends with a verdict line, as check-work does, and a
+  // plan that ends with the approved line although its gate must wait all the same. The step
+  // after the check quotes "APPROVED" in its handover, so it is answered before the approval
+  // prompt below can match.
+  if (/kettle taught us/i.test(prompt)) {
+    return [session, ...finish(threadId, 'Noted: descale the kettle monthly.')];
+  }
+  if (/check the kettle strictly/i.test(prompt)) {
+    return [session, ...finish(threadId, 'The lid is loose.\n\nCHANGES_REQUESTED')];
+  }
+  if (/check the kettle/i.test(prompt)) {
+    return [session, ...finish(threadId, 'The kettle whistles at the boil.\n\nAPPROVED')];
+  }
+  if (/plan the kettle/i.test(prompt)) {
+    return [session, ...finish(threadId, 'The plan: fill, boil, pour.\n\nAPPROVED')];
   }
   // The review step's prompt quotes the build step's answer, so it is looked for first.
   if (/review the tea timer/i.test(prompt)) {
@@ -969,6 +987,30 @@ if (home === e2eChangesHome) {
     steps: [
       teaStep('build', 'deliver-work', 'Build the tea timer.'),
       { ...teaStep('review', 'check-work', 'Review the tea timer.'), gateAfter: false },
+    ],
+  });
+  // The gate condition tests (e2e/gate-condition.spec.ts) run in the Demo project and touch no
+  // repository: a check whose gate the test gives a condition in the builder, and a plan whose
+  // gate can get none.
+  server.engine.dispatch('seed-condition-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eConditionWorkflowId,
+    name: 'Check and wrap up',
+    steps: [
+      teaStep('check', 'check-work', 'Check the kettle.'),
+      teaStep('wrap', 'learn-work', 'Note what the kettle taught us.'),
+    ],
+  });
+  server.engine.dispatch('seed-planning-workflow', {
+    type: 'workflow.create',
+    workflowId: e2ePlanningWorkflowId,
+    name: 'Plan and deliver',
+    steps: [
+      teaStep('plan', 'plan-work', 'Plan the kettle.'),
+      {
+        ...teaStep('deliver', 'deliver-work', 'Note what the kettle taught us.'),
+        gateAfter: false,
+      },
     ],
   });
 }

@@ -84,6 +84,13 @@ export const e2eGateProjectId = 'tea-kettle';
 // (e2e/event-triggers.spec.ts): its plan has one unit with an open pull request on a third mock
 // GitHub repository (`acme/tea-leaf`), whose branch the repository has. Its workflow has one
 // step without a gate. On the tracker port, PUT /github-leaf/merged merges that pull request.
+// The same server holds two workflows for the gate condition tests (e2e/gate-condition.spec.ts),
+// run in the Demo project: `condition-e2e` (a check whose mock agent ends its message with
+// APPROVED, or with CHANGES_REQUESTED when the step's extra prompt says "strictly", then a wrap
+// up step) and `planning-e2e` (plan-work with a gate after it, whose answer also ends with
+// APPROVED).
+export const e2eConditionWorkflowId = 'condition-e2e';
+export const e2ePlanningWorkflowId = 'planning-e2e';
 export const e2eEventProjectId = 'tea-leaf';
 export const e2eEventWorkflowId = 'event-e2e';
 export const e2eEventIntentId = '2026-08-tea-leaf';
