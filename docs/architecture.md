@@ -585,7 +585,8 @@ the working copy first and still the project folder).
   remote-tracking branch nor the start commit does (`readUnpushed`). With none, `git worktree
 remove` without `--force` removes the folder (git itself refuses if something is there after
   all) and the copy is `removed`. Otherwise it is `kept` with `unpushed {uncommittedFiles,
-unpushedCommits, newestSubject, branch}`. A removal that fails, for example a file locked on
+unpushedCommits, newestSubject, branch}`. Unpushed commits are counted from every commit `HEAD` has been on in
+  the copy (its reflog), so a commit made on no branch and then left still keeps the copy. A removal that fails, for example a file locked on
   Windows, is not retried: the copy is `kept` with the reason in `error`. Both arrive as
   `workflowRun.workingCopySettled`, which is refused for a live run.
 - **Remove working copy.** `workflowRuns.removeWorkingCopy {runId}` is the user's answer for a
@@ -1038,7 +1039,9 @@ poll interval while polling is on and the scheduler is not paused, once when a p
 or a run starts under the same conditions, and once for `hosts.refresh` whatever those settings
 and the host's request limit say (spec 30). Per project it resolves the GitHub settings and the
 folder's branch (`TrackerService.githubHost`; without a token nothing is asked and the reads
-say which setting is missing; a run with its own working copy is asked about the branch that
+say which setting is missing; the shared token goes only to a host the user chose, so when the
+API URL comes from the folder's git remote and is neither the stored `trackers.github.baseUrl`'s
+host nor paired with the project's own token, nothing is asked and the read names that setting; a run with its own working copy is asked about the branch that
 copy is on, read with `readCurrentBranch`, and about nothing while the copy is on no branch or
 gone), finds the plan's and the run's pull requests, and reads each pull
 request once a round; a pull request already stored as merged is not read again. The first

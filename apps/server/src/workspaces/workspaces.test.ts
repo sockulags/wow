@@ -396,6 +396,25 @@ describe('when the run ends (review loop spec 37)', () => {
     });
   });
 
+  it('keeps a working copy whose commit was made on no branch and then left', async () => {
+    agent = (cwd, prompt) => {
+      if (!prompt.startsWith('/build')) return;
+      const began = git(cwd, 'rev-parse', 'HEAD');
+      execFileSync('git', ['-C', cwd, 'mv', 'readme.md', 'left.md']);
+      git(cwd, 'commit', '-q', '-m', 'Invented commit left behind');
+      git(cwd, 'checkout', '-q', '--detach', began);
+    };
+    start();
+    await runBecomes((current) => current.state === 'waiting');
+    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
+    const kept = await runBecomes(copyIs('kept'));
+    expect(kept.workingCopy?.unpushed).toMatchObject({
+      uncommittedFiles: 0,
+      unpushedCommits: 1,
+      newestSubject: 'Invented commit left behind',
+    });
+  });
+
   it('keeps a working copy that only has a file git does not know yet', async () => {
     agent = (cwd) => {
       execFileSync('git', ['-C', cwd, 'mv', 'readme.md', 'moved.md']);

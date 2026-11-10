@@ -644,10 +644,18 @@ export async function readUnpushed(
   options: GitRunOptions,
 ): Promise<Unpushed | undefined> {
   const reached = ['--not', '--remotes', ...(startSha === null ? [] : [startSha])];
+  // Every commit HEAD has been on, not only where it is now: a working copy starts on no branch,
+  // so a commit made there and then left (by switching to another commit or branch) is reached
+  // by nothing but this folder's own history of HEAD, which goes away with the folder.
+  const visited = await runGit(folder, ['reflog', 'show', '--format=%H', 'HEAD'], options);
+  const tips = [
+    'HEAD',
+    ...new Set(visited.ok ? visited.stdout.split('\n').filter((sha) => sha !== '') : []),
+  ];
   const [status, count, newest, branch] = await Promise.all([
     runGit(folder, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], options),
-    runGit(folder, ['rev-list', '--count', 'HEAD', ...reached], options),
-    runGit(folder, ['log', '-n1', '--format=%s', 'HEAD', ...reached], options),
+    runGit(folder, ['rev-list', '--count', ...tips, ...reached], options),
+    runGit(folder, ['log', '-n1', '--format=%s', ...tips, ...reached], options),
     readCurrentBranch(folder, options),
   ]);
   if (!status.ok || !count.ok) return undefined;
