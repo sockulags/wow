@@ -124,8 +124,9 @@ const tokenSetting = 'trackers.gitlab.token';
 export function createGitLabHost(
   config: GitLabConfig,
   name: string,
-  options: GitLabHostOptions,
+  given: GitLabHostOptions,
 ): HostAdapter {
+  const options: GitLabHostOptions = { ...given, redirect: 'manual' };
   const project = `${gitLabApi(config.baseUrl)}/projects/${gitLabProjectId(config.projectPath)}`;
   const headers = gitLabHeaders(config.token);
   const clock = options.clock ?? (() => new Date());
@@ -138,7 +139,7 @@ export function createGitLabHost(
   const noteLimit = (answer: Headers): boolean => {
     const remaining = Number(answer.get('ratelimit-remaining') ?? Number.NaN);
     const reset = Number(answer.get('ratelimit-reset') ?? Number.NaN);
-    const retryAfter = Number(answer.get('retry-after') ?? Number.NaN);
+    const retryAfter = Number(answer.get('retry-after')?.trim() || Number.NaN);
     if (Number.isFinite(remaining) && reset > 0 && validTime(reset * 1000)) {
       left = { remaining, resetAt: new Date(reset * 1000) };
     }
@@ -232,11 +233,13 @@ export function createGitLabHost(
       () => [],
       list,
     );
-    if (jobs.length > 0) return jobs.flatMap((entry) => job(entry) ?? []);
+    const all = jobs.flatMap((entry) => job(entry) ?? []);
+    // The pipeline's own status also counts: a failure in a child pipeline or a job past the
+    // first page is not in the list, and a failed or running pipeline must not read as passing.
     const state = checkState(field(pipeline, 'status'), false);
-    return state
-      ? [{ name: `pipeline ${id}`, state, url: hostLink(field(pipeline, 'web_url')) }]
-      : [];
+    const seen = jobs.length > 0 && (state === 'success' || all.some((c) => c.state === state));
+    if (state === undefined || seen) return all;
+    return [...all, { name: `pipeline ${id}`, state, url: hostLink(field(pipeline, 'web_url')) }];
   };
 
   return {

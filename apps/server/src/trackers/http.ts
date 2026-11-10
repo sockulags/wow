@@ -17,6 +17,9 @@ export interface CreatedIssue {
 export interface RequestOptions {
   readonly timeoutMs: number;
   readonly fetch?: typeof fetch;
+  // 'manual': a redirect is not followed but turned down. For a token in a header of its own,
+  // which fetch would carry to whatever origin the redirect names (it only drops Authorization).
+  readonly redirect?: 'manual';
 }
 
 // The tracker refused the issue or could not be reached. The message is shown to the user as is.
@@ -86,6 +89,7 @@ async function requestJson(
       },
       ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(options.timeoutMs),
+      ...(options.redirect ? { redirect: options.redirect } : {}),
     });
   } catch (error) {
     const reason =
@@ -95,6 +99,15 @@ async function requestJson(
           ? error.message
           : String(error);
     throw new TrackerError(`${service} could not be reached: ${reason}`);
+  }
+  if (
+    options.redirect === 'manual' &&
+    (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400))
+  ) {
+    throw new TrackerError(
+      `${service} redirected to another address (${response.status}); wow does not send the token there. Check the URL in Settings → Trackers.`,
+      response.status,
+    );
   }
   const text = await response.text();
   const parsed = parseJson(text);

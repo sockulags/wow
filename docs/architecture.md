@@ -1265,7 +1265,9 @@ path keeps every nested group (`git@gitlab.example.test:group/sub/app.git` is `g
 and goes to the API URL-encoded as one project id (`group%2Fsub%2Fapp`). Such a remote names no
 GitHub repository, and the poller reads that project from GitLab instead of GitHub
 (`TrackerService.gitlabHost`, the poller's `resolveGitLab`). API v4 under `<site>/api/v4`, with
-the token in the `PRIVATE-TOKEN` header and nowhere else. Merge requests fill the role of pull
+the token in the `PRIVATE-TOKEN` header and nowhere else: GitLab requests do not follow redirects
+(fetch would carry that header to another origin), and a 3xx answer is `failed` and asks to check
+the URL. Merge requests fill the role of pull
 requests: a plan's are found with one
 `GET /projects/<id>/merge_requests?state=all&search="Intent-Unit: <intent-id>/"&in=description`,
 filtered to descriptions that really carry the line, falling back to the newest
@@ -1276,7 +1278,9 @@ closed; `draft` (or `work_in_progress` before version 14). Checks are the jobs o
 merge request pipeline on the head commit (`…/merge_requests/<iid>/pipelines`, then
 `/pipelines/<id>/jobs`): failed and canceled jobs fail, a failure the job is allowed passes,
 skipped and manual jobs are left out, anything still to run is pending, and a pipeline without
-jobs counts as one check. 403, 404, 410 and 501 there mean no checks (CI off). Notes are the
+jobs counts as one check. A failed, canceled or running pipeline whose listed jobs show no failure
+or nothing pending (a child pipeline, a job past the first page) adds a `pipeline <id>` check with
+its own state, so it never reads as passing. 403, 404, 410 and 501 there mean no checks (CI off). Notes are the
 review comments, without GitLab's system notes, linked as `<merge request>#note_<id>`. 401 and
 403 are `refused` and name `trackers.gitlab.token`, as does 404 on the project; a 429 with
 `Retry-After`, or `RateLimit-Remaining`/`RateLimit-Reset`, leaves the site alone like GitHub's

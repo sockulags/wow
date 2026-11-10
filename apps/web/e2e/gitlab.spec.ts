@@ -129,5 +129,12 @@ test.describe('gitlab', () => {
     await expect(gitlab.getByRole('status')).toHaveText(
       'Signed in as Mira Invented @mira on GitLab 17.5.2.',
     );
+
+    // A token the host turns down: its own message.
+    await fetch(`${control}/gitlab-host/failure?status=401`, { method: 'PUT' });
+    await gitlab.getByRole('button', { name: 'Test connection' }).click();
+    await expect(gitlab.getByRole('status')).toHaveText(
+      'GitLab answered 401: Invented GitLab error',
+    );
   });
 });

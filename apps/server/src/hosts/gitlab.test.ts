@@ -7,6 +7,9 @@ import type {
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import { execFileSync } from 'node:child_process';
+import { once } from 'node:events';
+import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,6 +18,9 @@ import { snapshot } from '../core/subscriptions.js';
 import { providerInstances } from '../db/schema.js';
 import { gitLabProjectOf, parseRemoteUrl } from '../projects/git.js';
 import { startServer, type RunningServer } from '../server.js';
+import { gitLabWhoAmI } from '../trackers/whoami.js';
+import { HostFailure } from './adapter.js';
+import { createGitLabHost } from './gitlab.js';
 import { MockGitHub } from './mock-github.js';
 import { MockGitLab, type MockMergeRequest } from './mock-gitlab.js';
 
@@ -241,6 +247,13 @@ describe('a project on a GitLab host (spec 34)', () => {
     expect(
       gitLabProjectOf(
         parseRemoteUrl('origin', 'https://example.test/gitlab/group/app.git'),
+        'https://example.test/gitlab',
+      ),
+    ).toEqual({ host: 'example.test', path: 'group/app' });
+    // Paths on the site compare without case, like its host name.
+    expect(
+      gitLabProjectOf(
+        parseRemoteUrl('origin', 'https://example.test/GitLab/group/app.git'),
         'https://example.test/gitlab',
       ),
     ).toEqual({ host: 'example.test', path: 'group/app' });
@@ -483,5 +496,98 @@ describe('Test connection to GitLab', () => {
       message: 'Fill in GitLab URL first.',
     });
     expect(asked()).toEqual([]);
+  });
+});
+
+describe('the pipeline’s own status (spec 34)', () => {
+  const host = (pipeline: MockMergeRequest['pipeline']) => {
+    const mock = new MockGitLab({ projectPath, webUrl: site });
+    mock.mergeRequests = [{ ...open, ...(pipeline ? { pipeline } : {}) }];
+    return createGitLabHost({ baseUrl: site, token: TOKEN, projectPath }, 'gitlab.example.test', {
+      timeoutMs: 1000,
+      listFallbackCount: 5,
+      fetch: mock.fetch(site),
+    });
+  };
+  const checksOf = async (pipeline: MockMergeRequest['pipeline']) => {
+    const adapter = host(pipeline);
+    const found = await adapter.findForBranch('agent/U2-bell');
+    if (!found) throw new Error('no merge request');
+    const { checkState, checks } = await adapter.read(found);
+    return { checkState, checks };
+  };
+  const pipelineUrl = `${site}/${projectPath}/-/pipelines/503`;
+
+  it('fails when the pipeline failed outside the listed jobs (a child pipeline)', async () => {
+    expect(
+      await checksOf({ id: 503, status: 'failed', jobs: [{ name: 'lint', status: 'success' }] }),
+    ).toEqual({
+      checkState: 'failure',
+      checks: [
+        { name: 'lint', state: 'success', url: `${site}/${projectPath}/-/jobs/50300` },
+        { name: 'pipeline 503', state: 'failure', url: pipelineUrl },
+      ],
+    });
+  });
+
+  it('stays pending while the pipeline still runs', async () => {
+    const { checkState, checks } = await checksOf({
+      id: 503,
+      status: 'running',
+      jobs: [{ name: 'lint', status: 'success' }],
+    });
+    expect(checkState).toBe('pending');
+    expect(checks.at(-1)).toEqual({ name: 'pipeline 503', state: 'pending', url: pipelineUrl });
+  });
+});
+
+describe('a GitLab site that redirects', () => {
+  let servers: Server[];
+  let elsewhere: IncomingHttpHeaders[];
+
+  const listen = async (listener: Server) => {
+    servers.push(listener);
+    listener.listen(0, '127.0.0.1');
+    await once(listener, 'listening');
+    return `http://127.0.0.1:${(listener.address() as AddressInfo).port}`;
+  };
+
+  beforeEach(() => {
+    servers = [];
+    elsewhere = [];
+  });
+  afterEach(async () => {
+    await Promise.all(
+      servers.map((each) => new Promise((resolve) => each.close(() => resolve(undefined)))),
+    );
+  });
+
+  it('sends the token to no other address and says to check the URL', async () => {
+    const other = await listen(
+      createServer((request, response) => {
+        elsewhere.push(request.headers);
+        response.writeHead(200, { 'content-type': 'application/json' }).end('[]');
+      }),
+    );
+    const gitlabSite = await listen(
+      createServer((request, response) => {
+        response.writeHead(302, { location: `${other}${request.url ?? '/'}` }).end();
+      }),
+    );
+    const config = { baseUrl: gitlabSite, token: TOKEN, projectPath };
+    const adapter = createGitLabHost(config, 'gitlab.example.test', {
+      timeoutMs: 5000,
+      listFallbackCount: 5,
+    });
+    const failed = await adapter.findForBranch('agent/U2-bell').catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(HostFailure);
+    expect(failed).toMatchObject({
+      kind: 'failed',
+      message: expect.stringContaining('gitlab.example.test redirected to another address (302)'),
+    });
+    await expect(gitLabWhoAmI(config, { timeoutMs: 5000 })).rejects.toThrow(
+      'GitLab redirected to another address (302)',
+    );
+    expect(elsewhere).toEqual([]);
   });
 });

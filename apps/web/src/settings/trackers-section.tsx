@@ -66,9 +66,8 @@ export function TestConnection({
   );
 }
 
-// Settings → Trackers in one section per host, each with its own "Test connection" (audit E-08),
-// in the host order of the review loop spec: GitHub Enterprise, Jira, GitLab. The Jira email
-// shows only for Jira Cloud sign-in, where it is used.
+// Settings → Trackers in one section per host, each with its own "Test connection" (audit E-08).
+// The Jira email shows only for Jira Cloud sign-in, where it is used.
 export function TrackersSection({ entries }: { entries: readonly SettingEntry[] }) {
   const authMode = useSetting('trackers.jira.authMode');
   const jira = entries.filter(

@@ -104,7 +104,7 @@ export function gitLabProjectOf(
   const prefix = cleanPath(site.pathname);
   const web = /^https?:\/\//i.test(remote.url);
   const projectPath =
-    web && prefix !== null && remote.path.startsWith(`${prefix}/`)
+    web && prefix !== null && remote.path.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)
       ? remote.path.slice(prefix.length + 1)
       : remote.path;
   const parts = projectPath.split('/');

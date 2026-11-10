@@ -46,10 +46,12 @@ export async function gitHubWhoAmI(config: GitHubConfig, options: RequestOptions
 // says which API wow is talking to (merge request search differs between versions).
 export async function gitLabWhoAmI(
   config: GitLabConfig,
-  options: RequestOptions,
+  given: RequestOptions,
 ): Promise<{ account: string; version: string | null }> {
   const api = gitLabApi(config.baseUrl);
   const headers = gitLabHeaders(config.token);
+  // The token is in its own header, which fetch would carry along a redirect to another origin.
+  const options: RequestOptions = { ...given, redirect: 'manual' };
   const user = await getJson('GitLab', `${api}/user`, headers, options);
   const username = field(user, 'username');
   const name = field(user, 'name');
