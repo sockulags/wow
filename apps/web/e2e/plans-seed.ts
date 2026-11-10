@@ -71,7 +71,7 @@ Acceptance:
 const kettleUnits = `## Units
 
 - [K-1] Boil to a chosen temperature
-- [K-2] Keep warm for ten minutes
+- [K-2] Keep warm for ten minutes -- depends on K-1 -- blocked: the thermostat is on order
 `;
 
 export const e2eLiveIntentId = '2026-04-compost-log';

@@ -165,16 +165,17 @@ function readPlan(
     keys.add(unit.key);
   }
   // With `source: issues` the issue tracker holds dependencies and contracts, so the plan file
-  // says key and title only.
+  // says key and title only. A `blocked:` note on the line is still kept: it decides the unit's
+  // status, and dropping it would report a blocked unit as unknown.
   if (source !== 'files') {
     return {
       source,
-      units: list.units.map(({ key, title, line }) => ({
+      units: list.units.map(({ key, title, line, blocked }) => ({
         key,
         title,
         line,
         dependsOn: [],
-        blocked: null,
+        blocked,
         contract: null,
       })),
     };

@@ -125,6 +125,9 @@ test.describe('plans', () => {
     await expect(page.getByTestId('plan-file-plan.md')).toContainText('units in issues');
     await expect(units.getByRole('button')).toHaveCount(0);
     await expect(units.getByTestId('unit-depends')).toHaveCount(0);
+    await expect(units.getByTestId('unit-blocked')).toHaveText(
+      'Blocked: the thermostat is on order',
+    );
   });
 
   test('lists a plan that cannot be read with its problem and line', async ({ page }) => {

@@ -49,10 +49,21 @@ export function plansByProject(
 export const validatePlanSearch = (search: Record<string, unknown>): { unit?: string } =>
   typeof search['unit'] === 'string' && search['unit'] !== '' ? { unit: search['unit'] } : {};
 
+// A hand-typed path can hold a broken escape such as `%zz`; that names no intent and must not
+// throw, because the shell reads the open plan on every route.
+function decodeSegment(segment: string): string | undefined {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+}
+
 // The intent a `/plans/<projectId>/<intentId>` path names.
 export function openPlan(pathname: string, intents: readonly PlanIntent[]): PlanIntent | undefined {
   const match = /^\/plans\/([^/]+)\/([^/]+)$/.exec(pathname);
   if (!match) return undefined;
-  const [, projectId = '', intentId = ''] = match.map(decodeURIComponent);
+  const [, projectId, intentId] = match.map(decodeSegment);
+  if (projectId === undefined || intentId === undefined) return undefined;
   return intents.find((intent) => intent.projectId === projectId && intent.intentId === intentId);
 }

@@ -186,7 +186,7 @@ describe('plan units', () => {
     expect(problems).toEqual([]);
   });
 
-  it('shows key and title only for source: issues', () => {
+  it('keeps key, title and the blocked note for source: issues', () => {
     const { units, source, problems } = tea({
       intent: intentText(),
       spec: specText(),
@@ -195,7 +195,14 @@ describe('plan units', () => {
     expect(source).toBe('issues');
     expect(units).toEqual([
       { key: 'U1', title: 'Count down', line: 13, dependsOn: [], blocked: null, contract: null },
-      { key: 'U2', title: 'Ring the bell', line: 14, dependsOn: [], blocked: null, contract: null },
+      {
+        key: 'U2',
+        title: 'Ring the bell',
+        line: 14,
+        dependsOn: [],
+        blocked: 'the bell is on order',
+        contract: null,
+      },
       {
         key: 'U3',
         title: 'Show the time left',
@@ -211,6 +218,12 @@ describe('plan units', () => {
   it('says what the files alone say about a unit', () => {
     const { units } = tea({ intent: intentText(), spec: specText(), plan: planText() });
     expect(units.map(fileStatus)).toEqual(['unknown', 'blocked', 'unknown']);
+    const inIssues = tea({
+      intent: intentText(),
+      spec: specText(),
+      plan: planText({ source: 'issues', sections: '' }),
+    });
+    expect(inIssues.units.map(fileStatus)).toEqual(['unknown', 'blocked', 'unknown']);
   });
 
   it('reports a plan without unit lines with the line of its heading', () => {

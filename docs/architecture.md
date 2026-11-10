@@ -741,8 +741,9 @@ spec for a plan); a unit is a `- [KEY] title` line under `## Units`, with notes 
 dash or `--` with spaces around, `depends on A, B` and `blocked: reason` read without regard to
 case; a unit's contract is its `### KEY` section, read into the nine agent-os fields. With
 `source: issues` the tracker holds dependencies and contracts, so units carry key and title only
-(spec 22); a `blocked:` note on such a line is not read either, so the unit's status is unknown
-until a host says more. A `rev` or `built_on` number too long to be held exactly is a bad one.
+(spec 22); a `blocked:` note on such a line is still kept, because it decides the unit's status
+(spec 23 and 24) and a blocked unit must not read as unknown. A `rev` or `built_on` number too
+long to be held exactly is a bad one.
 The package has no dependencies and does no I/O. Nothing throws: a file without frontmatter, a
 bad `rev`, `built_on` or `source`, a plan without `## Units` lines, a key that appears twice, an
 unknown dependency, a unit without its section and a folder name that is not an intent id each

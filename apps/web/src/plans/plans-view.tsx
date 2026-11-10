@@ -388,7 +388,8 @@ export function PlanView({
             ))}
             {intent.source === 'issues' && (
               <p className="text-xs text-muted-foreground">
-                This plan keeps dependencies and contracts in issues, so only keys and titles show.
+                This plan keeps dependencies and contracts in issues, so only keys, titles and
+                blocked notes show.
               </p>
             )}
             {intent.units.length > 0 && (

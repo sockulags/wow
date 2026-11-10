@@ -176,6 +176,43 @@ describe('plans service', () => {
     ]);
   });
 
+  it('shows a blocked unit as blocked when the plan keeps its units in issues', async () => {
+    const id = '2026-02-kettle';
+    await writeIntent('tea', id, {
+      intent: intentMd(id),
+      spec: specMd(id),
+      plan: planMd(
+        id,
+        '- [K-1] Boil\n- [K-2] Keep warm -- depends on K-1 -- blocked: no thermostat',
+        'issues',
+      ),
+    });
+    addProject('tea');
+    await server.plans.refresh();
+    expect(row(`tea:${id}`)?.units).toEqual([
+      {
+        key: 'K-1',
+        title: 'Boil',
+        line: 13,
+        dependsOn: [],
+        blocked: null,
+        contract: null,
+        status: 'unknown',
+        statusReason: noHostReason,
+      },
+      {
+        key: 'K-2',
+        title: 'Keep warm',
+        line: 14,
+        dependsOn: [],
+        blocked: 'no thermostat',
+        contract: null,
+        status: 'blocked',
+        statusReason: 'no thermostat',
+      },
+    ]);
+  });
+
   it('lists a plan that cannot be read with the problem and its line, and still shows other intents', async () => {
     const broken = '2026-01-tea-timer';
     await writeIntent('tea', broken, {

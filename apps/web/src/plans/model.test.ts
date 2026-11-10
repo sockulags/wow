@@ -90,6 +90,9 @@ describe('plans model', () => {
     expect(openPlan('/plans/b/2026-03-beds', rows)?.id).toBe('b:2026-03-beds');
     expect(openPlan('/plans', rows)).toBeUndefined();
     expect(openPlan('/plans/c/2026-03-beds', rows)).toBeUndefined();
+    expect(openPlan('/plans/b/%zz', rows)).toBeUndefined();
+    expect(openPlan('/plans/%E0%A4%A/2026-03-beds', rows)).toBeUndefined();
+    expect(openPlan('/plans/b/2026%2D03-beds', rows)?.id).toBe('b:2026-03-beds');
     expect(validatePlanSearch({ unit: 'U2' })).toEqual({ unit: 'U2' });
     expect(validatePlanSearch({ unit: 2 })).toEqual({});
     expect(validatePlanSearch({})).toEqual({});
