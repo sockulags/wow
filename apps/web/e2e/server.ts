@@ -37,6 +37,8 @@ import {
   e2eConditionWorkflowId,
   e2eGateWorkflowId,
   e2ePlanningWorkflowId,
+  e2eRulesWorkflowId,
+  e2eHostileSkillName,
   e2eClaudeConfigDir,
   e2eCodexHome,
   e2eCodexInstanceId,
@@ -1040,6 +1042,16 @@ if (home === e2eChangesHome) {
     steps: [
       teaStep('check', 'check-work', 'Check the kettle.'),
       teaStep('wrap', 'learn-work', 'Note what the kettle taught us.'),
+    ],
+  });
+  // The rules tests (e2e/workflow-rules.spec.ts): a step whose name is hostile to a diagram.
+  server.engine.dispatch('seed-rules-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eRulesWorkflowId,
+    name: 'A step with a strange name',
+    steps: [
+      { ...teaStep('build', 'deliver-work', 'Build the kettle.'), gateAfter: false },
+      { ...teaStep('strange', e2eHostileSkillName, 'Check the kettle.'), gateAfter: false },
     ],
   });
   server.engine.dispatch('seed-planning-workflow', {

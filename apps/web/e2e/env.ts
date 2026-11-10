@@ -91,6 +91,11 @@ export const e2eGateProjectId = 'tea-kettle';
 // APPROVED).
 export const e2eConditionWorkflowId = 'condition-e2e';
 export const e2ePlanningWorkflowId = 'planning-e2e';
+// The same server holds a workflow for the rules tests (e2e/workflow-rules.spec.ts) whose second
+// step is called something a diagram could read as syntax, a style or markup. The paths diagram
+// of the builder must show that name as text.
+export const e2eRulesWorkflowId = 'rules-e2e';
+export const e2eHostileSkillName = 'say "hi" [now]\n(url(x)) <b>{end}';
 export const e2eEventProjectId = 'tea-leaf';
 export const e2eEventWorkflowId = 'event-e2e';
 export const e2eEventIntentId = '2026-08-tea-leaf';
