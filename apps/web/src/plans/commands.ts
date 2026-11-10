@@ -1,4 +1,11 @@
-import type { ChangeRequest, PlanIntent, PlanRun, Project, Workflow } from '@wow/contracts';
+import {
+  changeRequestName,
+  type ChangeRequest,
+  type PlanIntent,
+  type PlanRun,
+  type Project,
+  type Workflow,
+} from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
 import { safeHref } from '@/components/markdown';
@@ -111,9 +118,9 @@ export function planCommands({
       if (!request || url === undefined) continue;
       commands.push({
         id: `plans.unit.${unit.key}.changeRequest`,
-        title: `Open pull request #${request.number} of ${unit.key} on the host`,
+        title: `Open ${changeRequestName(request).toLowerCase()} of ${unit.key} on the host`,
         group: 'Plans',
-        keywords: ['pull request', 'host', 'github', unit.key],
+        keywords: ['pull request', 'merge request', 'host', 'github', 'gitlab', unit.key],
         detail: 'Unit',
         run: () => void window.open(url, '_blank', 'noreferrer'),
       });

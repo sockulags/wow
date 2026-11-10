@@ -1,4 +1,5 @@
 import {
+  changeRequestName,
   gatePartLabels,
   type ChangeRequest,
   type Ticket,
@@ -167,9 +168,9 @@ function pullRequestCommands({
   if (pullRequest && url !== undefined) {
     commands.push({
       id: 'workflowRun.pullRequest.open',
-      title: `Run: open pull request #${pullRequest.number} on the host`,
+      title: `Run: open ${changeRequestName(pullRequest).toLowerCase()} on the host`,
       group: 'Workflows',
-      keywords: ['host', 'github', 'browser', 'review'],
+      keywords: ['host', 'github', 'gitlab', 'merge request', 'browser', 'review'],
       run: () => void window.open(url, '_blank', 'noreferrer'),
     });
   }

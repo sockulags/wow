@@ -3,8 +3,10 @@ import {
   SecretRef,
   settingsRegistry,
   type Project,
+  trackerConnectionLabels as titles,
+  type GitLabProject,
   type ResolvedTrackerSetting,
-  type TrackerService,
+  type TrackerConnection,
   type TrackerSuggestion,
   type TrackerValueSource,
 } from '@wow/contracts';
@@ -49,7 +51,7 @@ interface FieldSpec {
   readonly placeholder: string;
 }
 
-const fields: Readonly<Record<TrackerService, readonly FieldSpec[]>> = {
+const fields: Readonly<Record<TrackerConnection, readonly FieldSpec[]>> = {
   github: [
     { key: 'trackers.github.owner', label: 'Owner', placeholder: 'acme' },
     { key: 'trackers.github.repo', label: 'Repository', placeholder: 'widgets' },
@@ -60,13 +62,50 @@ const fields: Readonly<Record<TrackerService, readonly FieldSpec[]>> = {
     { key: 'trackers.jira.projectKey', label: 'Project key', placeholder: 'PROJ' },
     { key: 'trackers.jira.issueType', label: 'Issue type', placeholder: 'Task' },
   ],
+  gitlab: [
+    {
+      key: 'trackers.gitlab.baseUrl',
+      label: 'Site URL',
+      placeholder: 'https://gitlab.example.com',
+    },
+  ],
 };
 
-const titles: Readonly<Record<TrackerService, string>> = { github: 'GitHub', jira: 'Jira' };
-const tokenKeys: Readonly<Record<TrackerService, RegistryKey>> = {
+const tokenKeys: Readonly<Record<TrackerConnection, RegistryKey>> = {
   github: 'trackers.github.token',
   jira: 'trackers.jira.token',
+  gitlab: 'trackers.gitlab.token',
 };
+
+// Which GitLab project the project reads merge requests from: the one its git remote names on
+// the stored site. Without one the project's host is GitHub.
+function GitLabRemote({
+  projectId,
+  gitlab,
+  site,
+}: {
+  projectId: string;
+  gitlab: GitLabProject | null;
+  site: unknown;
+}) {
+  return (
+    <p
+      data-testid={`project-${projectId}-gitlab-project`}
+      className="text-xs text-muted-foreground"
+    >
+      {gitlab ? (
+        <>
+          Reads merge requests of <span className="font-mono text-foreground">{gitlab.path}</span>{' '}
+          on {gitlab.host}, from the git remote.
+        </>
+      ) : typeof site === 'string' && site !== '' ? (
+        'The git remote is not on this GitLab site, so pull requests are read from GitHub.'
+      ) : (
+        'Set the GitLab site to read merge requests for a project whose git remote is on it.'
+      )}
+    </p>
+  );
+}
 
 function useProjectSetting(projectId: string) {
   const { connection } = useRuntime();
@@ -209,7 +248,7 @@ function SignIn({
   resolved,
 }: {
   projectId: string;
-  service: TrackerService;
+  service: TrackerConnection;
   resolved: ReadonlyMap<string, ResolvedTrackerSetting>;
 }) {
   const key = tokenKeys[service];
@@ -263,7 +302,8 @@ function SignIn({
 }
 
 // Settings → Projects → a project's Trackers (owner decision F-4): the GitHub repository read from
-// the project's git remote, the Jira site and project key, each with where it came from, and the
+// the project's git remote, the Jira site and project key, the GitLab site and the project the
+// remote names on it, each with where it came from, and the
 // suggestions wow does not use until confirmed. Asked again whenever a setting changes.
 export function ProjectTrackersPanel({ project }: { project: Project }) {
   const { connection } = useRuntime();
@@ -307,7 +347,7 @@ export function ProjectTrackersPanel({ project }: { project: Project }) {
 
   return (
     <div className="flex flex-col gap-6" data-testid={`project-trackers-${project.id}`}>
-      {(['github', 'jira'] as const).map((service) => (
+      {(['github', 'jira', 'gitlab'] as const).map((service) => (
         <section
           key={service}
           aria-labelledby={`project-${project.id}-tracker-${service}`}
@@ -332,6 +372,13 @@ export function ProjectTrackersPanel({ project }: { project: Project }) {
                 hasRemote={hasRemote}
               />
             ) : null,
+          )}
+          {service === 'gitlab' && (
+            <GitLabRemote
+              projectId={project.id}
+              gitlab={answer.gitlab}
+              site={resolved.get('trackers.gitlab.baseUrl')?.value}
+            />
           )}
           <SignIn projectId={project.id} service={service} resolved={resolved} />
         </section>

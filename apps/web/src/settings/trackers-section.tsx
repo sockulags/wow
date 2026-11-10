@@ -1,4 +1,4 @@
-import { TrackerTestResult, type TrackerService } from '@wow/contracts';
+import { TrackerTestResult, trackerConnectionLabels, type TrackerConnection } from '@wow/contracts';
 import { CheckCircle2Icon, CircleAlertIcon, PlugZapIcon } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -9,13 +9,11 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { SettingsForm } from './setting-row';
 
-const titles: Readonly<Record<TrackerService, string>> = { jira: 'Jira', github: 'GitHub' };
-
 export function TestConnection({
   service,
   projectId,
 }: {
-  service: TrackerService;
+  service: TrackerConnection;
   // Tests the settings as they apply to this project instead of the defaults.
   projectId?: string | undefined;
 }) {
@@ -68,8 +66,9 @@ export function TestConnection({
   );
 }
 
-// Settings → Trackers in two sections, each with its own "Test connection" (audit E-08). The Jira
-// email shows only for Jira Cloud sign-in, where it is used.
+// Settings → Trackers in one section per host, each with its own "Test connection" (audit E-08),
+// in the host order of the review loop spec: GitHub Enterprise, Jira, GitLab. The Jira email
+// shows only for Jira Cloud sign-in, where it is used.
 export function TrackersSection({ entries }: { entries: readonly SettingEntry[] }) {
   const authMode = useSetting('trackers.jira.authMode');
   const jira = entries.filter(
@@ -77,12 +76,17 @@ export function TrackersSection({ entries }: { entries: readonly SettingEntry[] 
       key.startsWith('trackers.jira.') && !(key === 'trackers.jira.email' && authMode === 'pat'),
   );
   const github = entries.filter(([key]) => key.startsWith('trackers.github.'));
+  const gitlab = entries.filter(([key]) => key.startsWith('trackers.gitlab.'));
   const other = entries.filter(
-    ([key]) => !key.startsWith('trackers.jira.') && !key.startsWith('trackers.github.'),
+    ([key]) =>
+      !key.startsWith('trackers.jira.') &&
+      !key.startsWith('trackers.github.') &&
+      !key.startsWith('trackers.gitlab.'),
   );
-  const sections: [TrackerService, readonly SettingEntry[]][] = [
+  const sections: [TrackerConnection, readonly SettingEntry[]][] = [
     ['jira', jira],
     ['github', github],
+    ['gitlab', gitlab],
   ];
   const outlook = useTopic('outlookStatus')?.[0];
   const email = useSetting('trackers.jira.email');
@@ -98,13 +102,13 @@ export function TrackersSection({ entries }: { entries: readonly SettingEntry[] 
         >
           Settings → Projects
         </Link>
-        , where the GitHub repository is read from the project&apos;s git remote.
+        , where the GitHub repository or GitLab project is read from the project&apos;s git remote.
       </p>
       {sections.map(([service, rows]) => (
         <section key={service} aria-labelledby={`tracker-${service}`}>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
             <h3 id={`tracker-${service}`} className="text-sm font-semibold">
-              {titles[service]}
+              {trackerConnectionLabels[service]}
             </h3>
             <TestConnection service={service} />
           </div>
@@ -119,7 +123,7 @@ export function TrackersSection({ entries }: { entries: readonly SettingEntry[] 
       {other.length > 0 && (
         <section aria-labelledby="tracker-both">
           <h3 id="tracker-both" className="border-b border-border pb-2 text-sm font-semibold">
-            Both
+            Every tracker
           </h3>
           <SettingsForm entries={other} />
         </section>

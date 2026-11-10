@@ -100,6 +100,16 @@ export const e2ePlanRunWorkflowId = 'plan-run-e2e';
 export const e2ePlanRunIntentId = '2026-07-tea-pot';
 export const e2eCopyProjectId = 'tea-cup';
 export const e2eCopyWorkflowId = 'copy-e2e';
+// The same server holds a seventh repository as project `tea-field` for the GitLab tests
+// (e2e/gitlab.spec.ts): its git remote is on the mock GitLab under /gitlab on the tracker port
+// (project `tea/fields/tea-field`, nested groups), it is on the branch of an open merge request,
+// and its plan's units have merge requests there. On the tracker port, PUT
+// /gitlab-host/failure?status=… makes the mock GitLab fail, DELETE brings it back, GET
+// /gitlab-host/requests lists what it was asked.
+export const e2eGitLabProjectId = 'tea-field';
+export const e2eGitLabIntentId = '2026-09-tea-field';
+export const e2eGitLabBranch = 'agent/U2-weed-the-rows';
+export const e2eGitLabProjectPath = 'tea/fields/tea-field';
 export const e2eHostProjectId = 'tea-garden';
 export const e2eHostWorkflowId = 'host-e2e';
 export const e2eHostIntentId = '2026-06-tea-garden';

@@ -1,4 +1,10 @@
-import type { ChangeRequest, HostRead, WorkflowRun } from '@wow/contracts';
+import {
+  changeRequestName,
+  changeRequestRef,
+  type ChangeRequest,
+  type HostRead,
+  type WorkflowRun,
+} from '@wow/contracts';
 import { GitPullRequestIcon } from 'lucide-react';
 import { useTopic } from '@/chat/data';
 import { EmptyState } from '@/components/states';
@@ -53,11 +59,11 @@ export function PullRequestTab({ run }: { readonly run: WorkflowRun }) {
           className="h-auto flex-1"
         />
       ) : (
-        <article aria-label={`Pull request #${request.number}`} className="flex flex-col gap-4">
+        <article aria-label={changeRequestName(request)} className="flex flex-col gap-4">
           <header className="flex flex-col gap-1.5">
             <h3 className="text-sm font-medium">
               <HostLink href={request.url}>
-                #{request.number} {request.title}
+                {changeRequestRef(request)} {request.title}
               </HostLink>
             </h3>
             <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">

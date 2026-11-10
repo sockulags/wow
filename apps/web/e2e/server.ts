@@ -8,6 +8,7 @@ import type {
 import { MockOutlookSource, loadFixtures } from '@wow/outlook-bridge';
 import {
   MockGitHub,
+  MockGitLab,
   MockJira,
   MockProviderAdapter,
   createNpmRunner,
@@ -43,6 +44,10 @@ import {
   e2eEventIntentId,
   e2eEventProjectId,
   e2eEventWorkflowId,
+  e2eGitLabBranch,
+  e2eGitLabIntentId,
+  e2eGitLabProjectId,
+  e2eGitLabProjectPath,
   e2eHostBranch,
   e2eHostIntentId,
   e2eHostProjectId,
@@ -209,6 +214,16 @@ const leafUnits = `## Units
 
 Outcome: invented for the tests.
 `;
+// The GitLab tests (review loop spec 34) read this plan's merge requests from the mock GitLab.
+const fieldRepo = path.join(home, 'tea-field');
+const fieldUnits = `## Units
+
+- [U1] Plough the field
+- [U2] Weed the rows -- depends on U1
+- [U3] Plant the bushes -- depends on U1
+- [U4] Harvest -- depends on U2
+
+${['U1', 'U2', 'U3', 'U4'].map((key) => `### ${key} Invented\n\nOutcome: invented for the tests.\n`).join('\n')}`;
 // The plan run tests (review loop spec 40, 41) run a workflow over the units of this plan.
 const potRepo = path.join(home, 'tea-pot');
 const potUnits = `## Units
@@ -690,6 +705,19 @@ if (home === e2eChangesHome) {
   })) {
     writeInRepo(hostRepo, `intents/${e2eHostIntentId}/${name}`, text);
   }
+  // The GitLab tests: a repository whose remote is on the mock GitLab, on the branch of an open
+  // merge request, with a plan in it. Nothing fetches from the remote.
+  seedTeaRepo(fieldRepo);
+  git(fieldRepo, 'checkout', '-q', '-b', e2eGitLabBranch);
+  git(fieldRepo, 'remote', 'add', 'origin', `git@127.0.0.1:${e2eGitLabProjectPath}.git`);
+  const field = 'A tea field that weeds itself';
+  for (const [name, text] of Object.entries({
+    'intent.md': e2eIntentMd(e2eGitLabIntentId, field),
+    'spec.md': e2eSpecMd(e2eGitLabIntentId, field),
+    'plan.md': e2ePlanMd(e2eGitLabIntentId, field, fieldUnits),
+  })) {
+    writeInRepo(fieldRepo, `intents/${e2eGitLabIntentId}/${name}`, text);
+  }
   // The plan run tests: a repository whose plan has no pull request yet. Its unit runs work in
   // working copies, which share the repository's settings.
   seedTeaRepo(potRepo);
@@ -1076,6 +1104,46 @@ gitHubHost.pulls = [
     ],
   },
 ];
+// The GitLab the GitLab tests' project reads (GET /gitlab/api/v4/…), with a nested group path.
+const gitLabHost = new MockGitLab({
+  projectPath: e2eGitLabProjectPath,
+  webUrl: `${trackerUrl}/web`,
+});
+gitLabHost.token = 'gitlab-host-e2e-token';
+const fieldLine = (key: string) => `Invented.\n\nIntent-Unit: ${e2eGitLabIntentId}/${key}`;
+gitLabHost.mergeRequests = [
+  {
+    iid: 7,
+    title: 'Plough the field',
+    description: fieldLine('U1'),
+    state: 'merged',
+    mergedAt: '2026-11-02T10:00:00Z',
+    branch: 'agent/U1-plough-the-field',
+    sha: 'c3c3c3c3c3c3',
+    pipeline: { id: 301, status: 'success', jobs: [{ name: 'test', status: 'success' }] },
+  },
+  {
+    iid: 9,
+    title: 'Weed the rows by hand',
+    description: fieldLine('U2'),
+    state: 'opened',
+    branch: e2eGitLabBranch,
+    sha: 'e5e5e5e5e5e5',
+    pipeline: {
+      id: 302,
+      status: 'failed',
+      jobs: [
+        { name: 'lint', status: 'success' },
+        { name: 'test:windows', status: 'failed' },
+        { name: 'deploy:review', status: 'manual' },
+      ],
+    },
+    notes: [
+      { id: 701, author: 'gitlab-bot', body: 'added 2 commits', system: true },
+      { id: 702, author: 'mira', body: 'The weeds grow back by Friday.', path: 'src/weed.ts' },
+    ],
+  },
+];
 // The Jira the ticket tests read (GET /jira/rest/api/2/issue/<key>), signed in with the
 // seeded global Jira settings.
 const jiraHost = new MockJira();
@@ -1149,6 +1217,28 @@ if (home === e2eChangesHome) {
     name: 'Water the beds',
     steps: [{ ...teaStep('water', 'deliver-work', 'Water the beds.'), gateBefore: true }],
   });
+  server.engine.dispatch('seed-field-project', {
+    type: 'project.create',
+    projectId: e2eGitLabProjectId,
+    name: 'Tea field',
+    cwd: fieldRepo,
+  });
+  const fieldScope = `project:${e2eGitLabProjectId}`;
+  const fieldSettings: Record<string, unknown> = {
+    'trackers.gitlab.baseUrl': `${trackerUrl}/gitlab`,
+    'trackers.gitlab.token': await server.secrets.set(
+      `setting:${fieldScope}:trackers.gitlab.token`,
+      'gitlab-host-e2e-token',
+    ),
+  };
+  for (const [key, value] of Object.entries(fieldSettings)) {
+    server.engine.dispatch(`seed-field-${key}`, {
+      type: 'setting.set',
+      key,
+      scope: fieldScope,
+      value,
+    });
+  }
   server.engine.dispatch('seed-pot-project', {
     type: 'project.create',
     projectId: e2ePlanRunProjectId,
@@ -1275,6 +1365,26 @@ const trackers = createServer((request, response) => {
     gitHubHost.failure =
       request.method === 'PUT' ? { status, message: 'Invented server error' } : undefined;
     return json(200, {});
+  }
+  // The mock GitLab the GitLab tests' project reads, and its controls.
+  if (url.pathname === '/gitlab-host/requests' && request.method === 'GET') {
+    return json(200, gitLabHost.requests);
+  }
+  if (url.pathname === '/gitlab-host/failure') {
+    const status = Number(url.searchParams.get('status') ?? '500');
+    gitLabHost.failure =
+      request.method === 'PUT' ? { status, message: 'Invented GitLab error' } : undefined;
+    return json(200, {});
+  }
+  if (request.method === 'GET' && url.pathname.startsWith('/gitlab/api/v4/')) {
+    const token = request.headers['private-token'];
+    const answer = gitLabHost.answer(
+      'GET',
+      `${url.pathname.slice('/gitlab/api/v4'.length)}${url.search}`,
+      typeof token === 'string' ? token : null,
+    );
+    for (const [name, value] of Object.entries(answer.headers)) response.setHeader(name, value);
+    return json(answer.status, answer.body);
   }
   // The mock Jira the ticket tests read, and its controls.
   if (url.pathname === '/jira-host/requests' && request.method === 'GET') {

@@ -1,4 +1,10 @@
-import type { ChangeRequest, PlanFile, PlanIntent, PlanUnit } from '@wow/contracts';
+import {
+  changeRequestRef,
+  type ChangeRequest,
+  type PlanFile,
+  type PlanIntent,
+  type PlanUnit,
+} from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import { Link, Outlet, useNavigate } from '@tanstack/react-router';
 import {
@@ -284,7 +290,7 @@ function UnitRow({
               className="flex flex-wrap items-center gap-1.5 text-2xs text-muted-foreground"
             >
               <HostLink href={request.url}>
-                #{request.number} {request.title}
+                {changeRequestRef(request)} {request.title}
               </HostLink>
               <ChangeRequestState request={request} />
               <ChecksBadge request={request} />
