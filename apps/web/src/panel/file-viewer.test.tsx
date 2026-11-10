@@ -8,7 +8,8 @@ import {
 } from '@wow/client-runtime';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { loadMarkdown } from '../test/markdown';
 import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime, type ViewerFile } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
@@ -22,6 +23,8 @@ import {
   scriptedFrameDocument,
   shownFile,
 } from './viewer';
+
+beforeAll(loadMarkdown);
 
 // The viewer's states in the context panel (review loop spec 6 to 9) against a fake server that
 // answers `files.read` from a table of invented files.

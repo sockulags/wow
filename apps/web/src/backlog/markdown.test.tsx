@@ -1,6 +1,9 @@
 import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { loadMarkdown } from '../test/markdown';
 import { MarkdownPreview } from './markdown';
+
+beforeAll(loadMarkdown);
 
 describe('backlog body (review loop spec 5)', () => {
   it('renders a backlog item body through the shared renderer', async () => {

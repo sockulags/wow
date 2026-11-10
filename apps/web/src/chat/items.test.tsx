@@ -1,7 +1,10 @@
 import type { ThreadItem } from '@wow/contracts';
 import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { loadMarkdown } from '../test/markdown';
 import { ConversationItem, type ItemContext } from './items';
+
+beforeAll(loadMarkdown);
 
 const context: ItemContext = {
   cwd: '/work/demo',

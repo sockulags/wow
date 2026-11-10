@@ -1,10 +1,13 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadMarkdown } from '../test/markdown';
 import { Markdown } from './markdown';
 import { diagramView, scrubSvg, toggleDiagramSource } from './mermaid';
 import { MermaidDiagram } from './mermaid-diagram';
+
+beforeAll(loadMarkdown);
 
 // jsdom lacks the layout APIs mermaid draws with, so the library is replaced here; the real
 // drawing is covered by the e2e case "chat renders a table and a diagram".

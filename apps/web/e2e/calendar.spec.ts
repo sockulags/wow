@@ -238,6 +238,8 @@ test.describe('calendar', () => {
 
     await page.reload();
     await expect(card).toHaveAccessibleName('Focus block, 17:00–18:30');
+    // The reload opened the grid at now again.
+    await reveal(page, 14 * 60);
 
     // A click makes a card of the configured length; the dialog deletes it again.
     const slot = await pointAt(column, 15 * 60);

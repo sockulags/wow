@@ -1,6 +1,9 @@
 import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { loadMarkdown } from '../test/markdown';
 import { Markdown, safeHref, splitUnfinished } from './markdown';
+
+beforeAll(loadMarkdown);
 
 const message = [
   '# Result',
