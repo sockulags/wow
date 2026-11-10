@@ -14,6 +14,7 @@ export {
   type FoundChangeRequest,
   type HostAdapter,
   type HostChangeRequest,
+  type TicketAdapter,
 } from './hosts/adapter.js';
 export {
   MockGitHub,
@@ -21,6 +22,7 @@ export {
   type MockPullRequest,
   type MockReviewComment,
 } from './hosts/mock-github.js';
+export { MockJira, type MockIssue } from './hosts/mock-jira.js';
 export { HostPoller, type HostPollerDeps } from './hosts/poller.js';
 export {
   failureCommand,

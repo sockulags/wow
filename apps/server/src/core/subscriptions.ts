@@ -76,6 +76,8 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
           .all();
       case 'hostReads':
         return db.select().from(t.hostReads).orderBy(asc(t.hostReads.id)).all();
+      case 'ticketReads':
+        return db.select().from(t.ticketReads).orderBy(asc(t.ticketReads.id)).all();
       case 'settings':
         return db
           .select()

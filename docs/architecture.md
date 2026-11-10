@@ -172,12 +172,15 @@ plan_intents     id ('<projectId>:<intentId>'), projectId, intentId, title, hasI
                  units(json: PlanUnit[]), problems(json: PlanProblem[]), followed
                  -- what the files say; unit status also from the host while followed
 host_reads       id ('plan:<planIntentId>'|'run:<runId>'), projectId, scope ('plan'|'run'), host
-                 ('github'), hostName, branch?, changeRequestIds(json), fetchedAt?,
+                 ('github'|'jira'), hostName, branch?, changeRequestIds(json), fetchedAt?,
                  error(json: HostError)?   -- what was last read for a followed plan or a run
 change_requests  id ('<projectId>:<number>'), projectId, host, number, title, url, state ('open'|
                  'merged'|'closed'), draft, mergedAt?, headBranch, headSha, units(json: UnitRef[]),
                  checkState ('none'|'pending'|'success'|'failure'), checks(json: HostCheck[]),
                  comments(json: ReviewComment[]), newestCommentId?   -- pull requests as last read
+ticket_reads     id ('run:<runId>'), projectId, runId, host ('jira'), hostName, key?, source
+                 ('backlog'|'pullRequest'|'branch')?, ticket(json: Ticket)?, fetchedAt?,
+                 error(json: HostError)?   -- a run's Jira ticket as last read
 settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
 events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
@@ -1295,6 +1298,35 @@ finished run keeps its last read; it is just not asked about again. In the same 
 project's event triggers see what the pull requests just read show that the stored rows did
 not, and their runs start in the same commit (see "Scheduler and triggers").
 
+**Tickets** (review loop spec 33; `hosts/jira.ts`, `hosts/jira-wiki.ts`, `core/tickets.ts`).
+Jira (Cloud, Server and Data Center) is the ticket host. After a round has read a project's pull
+requests, the poller works out the ticket of each live run it asked about, in this order: the
+Jira issue the run's backlog item was published as; else the first `<KEY>-<number>` with the
+project's `trackers.jira.projectKey` (any case, not inside a longer word or number) in the title
+of the run's pull request; else in the name of its branch (the pull request's head, or the
+branch the run's folder is on). Followed plans have no ticket of their own: a unit's ticket is
+the ticket of its unit run. Each key is asked for once a round with
+`GET <base>/rest/api/2/issue/<key>?fields=summary,status,assignee,issuetype,description` (v2
+because Server and Data Center accept it), signed in the way a publish is (`pat` or
+`cloud-basic`, `jiraAuthorization` in `trackers/jira.ts`, settings from
+`TrackerService.jiraHost`). The Jira site is always a stored setting, never a git remote, so the
+token goes only there. The adapter (`TicketAdapter`, `createJiraHost`) answers a `Ticket`: key,
+summary, status, assignee, type, the description turned from wiki markup into markdown
+(`jiraToMarkdown`: headings, emphasis, monospace, lists, tables, quotes and code blocks; colours
+and panels lose their frame, pictures become `[picture: <name>]` and are never loaded, a link
+stays a link only for an http, https or mailto address, HTML stays text) and the
+`<base>/browse/<key>` link when that is a web address. 401 and 403 are `refused` and name
+`trackers.jira.token`, as is 404 ("shows no issue <key> to the Jira token"), which fails only that
+ticket; a 429 with `Retry-After` leaves the site alone until then; anything else and a timeout
+are `failed`, and after such a failure the site is not asked again that round. A project without
+a Jira site, token or (for `cloud-basic`) email, or without a project key when the run has no
+backlog issue, gets a `notSetUp` read naming the setting. The round ends in one internal
+`tickets.sync` command per project; `core/tickets.ts` stores `ticket_reads` rows through
+`tickets.synced` (topic `ticketReads`), keeping the last ticket and its time beside an error while
+the key stays the same, and the time an error was first seen while it repeats. A run with no
+key gets a row with `key: null` and no error, which the Ticket tab shows as "no ticket found".
+The rows go with their project.
+
 **Unit status** (`unitStatuses` in `packages/agent-os`, pure). The rule is agent-os's
 `dispatch-next`, in this order: `delivered` when a merged pull request carries the unit's line,
 `claimed` when an open one does, `blocked` when the unit's line has a `blocked:` note, `ready`
@@ -1433,8 +1465,15 @@ itself: <parts>" with each part's sentence in its row (`passedByItself`).
 **Review at a gate** (`gate.ts`, `gate-bar.tsx`, `review-tabs.tsx`; review loop spec 14 to 18).
 The run view's tabs are Steps, Changes, Artifacts, Pull request, Ticket and Pages (`runTabs`;
 `?tab=artifacts|pullRequest|ticket|pages` beside `changes`). Artifacts lists the found files of
-every step, each opening in the panel's viewer; Ticket and Pages have no source yet
-and say "Nothing to show yet", as does Artifacts for a run without found files. Pull request
+every step, each opening in the panel's viewer; Pages has no source yet and says "Nothing to
+show yet", as does Artifacts for a run without found files. Ticket (`ticket-tab.tsx`, review loop
+spec 33) shows the run's `ticketReads` row: key and summary linked to Jira, type, status,
+assignee, where the key was found, and the description through the shared `Markdown` renderer,
+under the same "Last fetched" line, error, "Refresh now" and "Open on host" as Pull request
+(`HostReadLine` takes either read). Without a ticket it says why: not asked yet, no ticket found,
+or Jira could not be read. Palette: "Run: refresh pull request and ticket now"
+(`hosts.refresh {runId}` reads both) and "Run: open ticket <key> on the host" when the link is a
+web address. Pull request
 (`pull-request-tab.tsx`, review loop spec 28) shows the run's `hostReads` row and the pull
 request it names: number and title linked to the host, state, checks, head branch and commit,
 the failing checks by name and the review comments (author, file, the text as plain text), each
@@ -1730,7 +1769,8 @@ has one and a tracker that is not set up, creates the issue (with the title edit
 and the item tags picked as labels, `trackers.publish {title?, labels?}`), and dispatches
 `backlog.published`
 with `{service, key, url}`; one publish per item runs at a time, so a double click creates one
-issue. Nothing is read back from the tracker afterwards. The payload is deliberately minimal:
+issue. Publishing reads nothing back; a run of the item shows the Jira issue in its Ticket tab
+(see "Hosts"). The payload is deliberately minimal:
 
 - **Jira**: `POST <baseUrl>/rest/api/2/issue` with `{fields: {project: {key}, issuetype: {name},
 summary, description, labels?}}`. v2 because Cloud, Server and Data Center accept the same field
@@ -1917,7 +1957,12 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   server tests use too) answers under `/github` on the tracker port, only this project has a
   GitHub token, and its workflow waits before its only step, so a run is live without the mock
   agent. `PUT` and `DELETE /github-host/failure` make the host fail and answer again, and
-  `GET /github-host/requests` lists what it was asked. The working copy tests
+  `GET /github-host/requests` lists what it was asked. The ticket tests (`e2e/tickets.spec.ts`)
+  run that project's workflow for a backlog item the copy seeds as already published to Jira;
+  `MockJira` (`apps/server/src/hosts/mock-jira.ts`) answers `GET /jira/rest/api/2/issue/<key>` on
+  the tracker port with the seeded global Jira sign-in, `PUT` and `DELETE /jira-host/failure` make
+  it refuse and answer again, `GET /jira-host/requests` lists what it was asked, and
+  `POST /run?…&backlogItemId=…` starts a run for an item. The working copy tests
   (`e2e/working-copy.spec.ts`) use the same copy too: a fourth repository, project `tea-cup`,
   and a workflow whose "Own working copy" switch the test turns on in the builder. The mock
   agent edits whatever folder its turn starts in when that is a tea repository or a folder

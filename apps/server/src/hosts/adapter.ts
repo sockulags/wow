@@ -1,4 +1,4 @@
-import type { ChangeRequest, HostErrorKind, HostKind, UnitRef } from '@wow/contracts';
+import type { ChangeRequest, HostErrorKind, HostKind, Ticket, UnitRef } from '@wow/contracts';
 
 // What the poller needs from a code host. One adapter per host kind; everything the host calls
 // its own way (pull or merge request, check run or pipeline, review comment or note) is
@@ -36,6 +36,17 @@ export interface HostAdapter {
   // How many requests this adapter has sent.
   readonly requests: number;
   // Set when the host said to leave it alone until then (its request limit is used up).
+  readonly waitUntil: Date | undefined;
+}
+
+// What the poller needs from a ticket host (Jira): one ticket by its key. Read only, like the
+// code hosts; the description comes back as markdown, whatever markup the host writes.
+export interface TicketAdapter {
+  readonly kind: HostKind;
+  // The host as the user knows it, such as jira.example.com.
+  readonly name: string;
+  read(key: string): Promise<Ticket>;
+  readonly requests: number;
   readonly waitUntil: Date | undefined;
 }
 

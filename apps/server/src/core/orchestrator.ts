@@ -4,6 +4,7 @@ import {
   type CalendarItem,
   type ChangeRequest,
   type HostRead,
+  type TicketRead,
   type MailItem,
   type OutlookStatus,
   type BacklogItem,
@@ -28,6 +29,7 @@ import {
 import { isDeepStrictEqual } from 'node:util';
 import { decideBacklog, isBacklogCommand } from './backlog.js';
 import { decideCalendar, isCalendarCommand } from './calendar.js';
+import { decideTickets } from './tickets.js';
 import { decideHosts, decidePlansSync, isHostCommand } from './hosts.js';
 import { decidePlanRun, isPlanRunCommand } from './plan-runs.js';
 import { decideProject, isProjectCommand } from './projects.js';
@@ -76,6 +78,8 @@ export interface ReadModel {
   // What was last read from the project's host, and the change requests those reads name.
   hostReads(projectId: string): HostRead[];
   changeRequests(projectId: string): ChangeRequest[];
+  // What was last read about the tickets of the project's runs.
+  ticketReads(projectId: string): TicketRead[];
   workflow(id: string): Workflow | undefined;
   run(id: string): WorkflowRun | undefined;
   // True while a run of this workflow is running or waiting at a gate.
@@ -121,6 +125,7 @@ export function decide(
   if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
   if (isBacklogCommand(command)) return decideBacklog(command, read, context);
   if (isHostCommand(command)) return decideHosts(command, read, context);
+  if (command.type === 'tickets.sync') return decideTickets(command, read);
   if (isPlanRunCommand(command)) return decidePlanRun(command, read, context);
   switch (command.type) {
     case 'setting.set': {

@@ -27,7 +27,14 @@ import {
   Workflow,
   WorkflowRun,
 } from './projections.js';
-import { ChangeRequest, HostKind, HostRead, HostReadOutcome } from './hosts.js';
+import {
+  ChangeRequest,
+  HostKind,
+  HostRead,
+  HostReadOutcome,
+  TicketRead,
+  TicketReadOutcome,
+} from './hosts.js';
 import {
   ApprovalDecision,
   ProviderEvent,
@@ -357,6 +364,14 @@ export const InternalCommand = z.discriminatedUnion('type', [
     reads: z.array(HostReadOutcome),
     changeRequests: z.array(ChangeRequest),
   }),
+  // What the host poller read about the tickets of one project's runs (review loop spec 33).
+  z.object({
+    type: z.literal('tickets.sync'),
+    projectId: Id,
+    at: Timestamp,
+    hostName: z.string(),
+    reads: z.array(TicketReadOutcome),
+  }),
   // Something a plan run depends on changed (its unit's run ended, or the plan's unit statuses
   // did): decide again what it does next. The plan runs service sends it.
   z.object({ type: z.literal('planRun.advance'), planRunId: Id }),
@@ -581,6 +596,12 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       changeRequests: z.array(ChangeRequest),
       removedChangeRequests: z.array(Id),
     }),
+  }),
+  // Ticket reads as they now are.
+  z.object({
+    kind: z.literal('tickets.synced'),
+    aggregate: Id,
+    payload: z.object({ projectId: Id, reads: z.array(TicketRead) }),
   }),
   z.object({
     kind: z.literal('planRun.changed'),

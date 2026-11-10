@@ -31,6 +31,8 @@ import type {
   StepRun,
   ThreadItemKind,
   ThreadState,
+  Ticket,
+  TicketSource,
   TriggerEvent,
   TriggerKind,
   TriggerState,
@@ -346,6 +348,20 @@ export const hostReads = sqliteTable('host_reads', {
   hostName: text().notNull(),
   branch: text(),
   changeRequestIds: json<string[]>().notNull(),
+  fetchedAt: text(),
+  error: json<HostError>(),
+});
+
+// What was last read about one run's ticket (`run:<id>`), with the ticket itself.
+export const ticketReads = sqliteTable('ticket_reads', {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  runId: text().notNull(),
+  host: text().$type<HostKind>().notNull(),
+  hostName: text().notNull(),
+  key: text(),
+  source: text().$type<TicketSource>(),
+  ticket: json<Ticket>(),
   fetchedAt: text(),
   error: json<HostError>(),
 });

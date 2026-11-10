@@ -15,6 +15,7 @@ import {
   calendarItems,
   changeRequests,
   hostReads,
+  ticketReads,
   mailItems,
   notifications,
   outlookStatus,
@@ -58,6 +59,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       tx.update(threads).set({ projectId: null }).where(eq(threads.projectId, id)).run();
       tx.delete(hostReads).where(eq(hostReads.projectId, id)).run();
       tx.delete(changeRequests).where(eq(changeRequests.projectId, id)).run();
+      tx.delete(ticketReads).where(eq(ticketReads.projectId, id)).run();
       // Its event triggers have nothing left to listen to. Card triggers have no project here;
       // the calendar cancels those.
       const gone = tx
@@ -70,7 +72,15 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         tx.delete(triggerEvents).where(inArray(triggerEvents.triggerId, gone)).run();
         tx.delete(triggers).where(inArray(triggers.id, gone)).run();
       }
-      return ['projects', 'settings', 'threads', 'hostReads', 'changeRequests', 'triggers'];
+      return [
+        'projects',
+        'settings',
+        'threads',
+        'hostReads',
+        'changeRequests',
+        'ticketReads',
+        'triggers',
+      ];
     }
     case 'setting.changed':
       tx.insert(settings)
@@ -129,6 +139,14 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       }
       return ['hostReads', 'changeRequests'];
     }
+    case 'tickets.synced':
+      for (const read of event.payload.reads) {
+        tx.insert(ticketReads)
+          .values(read)
+          .onConflictDoUpdate({ target: ticketReads.id, set: read })
+          .run();
+      }
+      return ['ticketReads'];
     case 'planRun.changed': {
       const { planRun } = event.payload;
       tx.insert(planRuns)
@@ -537,6 +555,8 @@ export function readModel(tx: DbOrTx): ReadModel {
         .find((row) => isLivePlanRunState(row.state)),
     hostReads: (projectId) =>
       tx.select().from(hostReads).where(eq(hostReads.projectId, projectId)).all(),
+    ticketReads: (projectId) =>
+      tx.select().from(ticketReads).where(eq(ticketReads.projectId, projectId)).all(),
     changeRequests: (projectId) =>
       tx.select().from(changeRequests).where(eq(changeRequests.projectId, projectId)).all(),
     workflow: (id) => tx.select().from(workflows).where(eq(workflows.id, id)).get(),

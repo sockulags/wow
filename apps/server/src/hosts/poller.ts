@@ -12,6 +12,8 @@ import {
   type HostReadOutcome,
   type HostRefreshParams,
   type PlanIntent,
+  type TicketReadOutcome,
+  type TicketSource,
   type WorkflowRun,
 } from '@wow/contracts';
 import { eq, inArray } from 'drizzle-orm';
@@ -19,14 +21,22 @@ import { randomUUID } from 'node:crypto';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
-import { changeRequests, hostReads, planIntents, planRuns, workflowRuns } from '../db/schema.js';
+import {
+  backlogItems,
+  changeRequests,
+  hostReads,
+  planIntents,
+  planRuns,
+  workflowRuns,
+} from '../db/schema.js';
 import type { BackgroundService } from '../hooks/index.js';
 import type { Logger } from '../logger.js';
 import type { SchedulerTimers } from '../scheduler/service.js';
 import type { SettingsService } from '../settings/service.js';
-import type { ProjectGitHubHost } from '../trackers/service.js';
+import type { ProjectGitHubHost, ProjectJiraHost } from '../trackers/service.js';
 import { HostFailure, type FoundChangeRequest, type HostAdapter } from './adapter.js';
 import { createGitHubHost } from './github.js';
+import { createJiraHost, jiraKeyIn, MissingTicket } from './jira.js';
 
 const realTimers: SchedulerTimers = {
   setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
@@ -48,6 +58,17 @@ export interface HostPollerDeps {
   readonly fetch?: typeof fetch;
   // Builds the host adapter; GitHub's unless a test gives its own.
   readonly adapter?: typeof createGitHubHost;
+  // The project's Jira settings as they apply (TrackerService.jiraHost). Without it no ticket is
+  // read.
+  readonly resolveJira?: (projectId: string) => Promise<ProjectJiraHost | undefined>;
+  // Builds the Jira adapter; the real one unless a test gives its own.
+  readonly jiraAdapter?: typeof createJiraHost;
+}
+
+// Where one run's ticket key was found, if anywhere.
+interface TicketKey {
+  readonly key: string | null;
+  readonly source: TicketSource | null;
 }
 
 // What one round asks about: the followed plans and the runs of one project.
@@ -391,6 +412,16 @@ export class HostPoller implements BackgroundService {
           error: error instanceof Error ? error.message : String(error),
         });
       }
+      // After the pull requests, whose titles and branches can name the ticket.
+      if (own.runs.length === 0) continue;
+      try {
+        await this.#readTickets(projectId, own.runs, asked);
+      } catch (error) {
+        this.#deps.logger.error('ticket read failed', {
+          projectId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
@@ -521,6 +552,134 @@ export class HostPoller implements BackgroundService {
     if (wait) this.#leaveAlone.set(host.name, wait);
     else this.#leaveAlone.delete(host.name);
     this.#store(projectId, host.name, outcomes, [...read.values()]);
+  }
+
+  // The ticket of each run (review loop spec 33): the Jira issue its backlog item was published
+  // as, else a key with the project's Jira key in the title of its pull request, else in the
+  // name of its branch. Only runs are asked about, never a whole Jira project.
+  async #ticketKey(run: WorkflowRun, host: ProjectJiraHost): Promise<TicketKey> {
+    const { db } = this.#deps;
+    const item = run.backlogItemId
+      ? db.select().from(backlogItems).where(eq(backlogItems.id, run.backlogItemId)).get()
+      : undefined;
+    if (item?.remote?.service === 'jira') return { key: item.remote.key, source: 'backlog' };
+    if (host.projectKey === '') return { key: null, source: null };
+    const read = db
+      .select()
+      .from(hostReads)
+      .where(eq(hostReads.id, hostReadId('run', run.id)))
+      .get();
+    const requestId = read?.changeRequestIds[0];
+    const request = requestId
+      ? db.select().from(changeRequests).where(eq(changeRequests.id, requestId)).get()
+      : undefined;
+    const fromTitle = request ? jiraKeyIn(request.title, host.projectKey) : undefined;
+    if (fromTitle) return { key: fromTitle, source: 'pullRequest' };
+    const copy = run.workingCopy;
+    const branch =
+      request?.headBranch ??
+      read?.branch ??
+      (!copy
+        ? await host.branch().catch(() => null)
+        : workingCopyOnDisk(copy)
+          ? ((await this.#deps.workingCopyBranch?.(copy.path).catch(() => null)) ?? null)
+          : null);
+    const fromBranch = branch ? jiraKeyIn(branch, host.projectKey) : undefined;
+    return fromBranch ? { key: fromBranch, source: 'branch' } : { key: null, source: null };
+  }
+
+  async #readTickets(projectId: string, runs: WorkflowRun[], asked: boolean): Promise<void> {
+    const { settings } = this.#deps;
+    const host = await this.#deps.resolveJira?.(projectId);
+    if (!host) return;
+    const leaveAlone = `jira:${host.name}`;
+    const until = this.#leaveAlone.get(leaveAlone);
+    if (!asked && until && until > this.#clock()) return;
+    const outcomes: TicketReadOutcome[] = [];
+    const config = host.jira.config;
+    const adapter = config
+      ? (this.#deps.jiraAdapter ?? createJiraHost)(config, host.name, {
+          timeoutMs: settings.get('trackers.requestTimeoutMs'),
+          clock: this.#clock,
+          ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
+        })
+      : undefined;
+    // One ticket is asked for once a round, however many runs name it. After a failure other
+    // than a missing ticket the host is not asked again this round.
+    const tickets = new Map<string, Promise<TicketReadOutcome['result']>>();
+    let failure: ErrorNow | undefined;
+    const ask = (key: string): Promise<TicketReadOutcome['result']> => {
+      const known = tickets.get(key);
+      if (known) return known;
+      const asking = (async (): Promise<TicketReadOutcome['result']> => {
+        if (failure) return { ok: false, error: failure };
+        try {
+          return { ok: true, ticket: (await adapter?.read(key)) ?? null };
+        } catch (error) {
+          const reason: ErrorNow =
+            error instanceof HostFailure
+              ? { kind: error.kind, message: error.message, setting: error.setting }
+              : {
+                  kind: 'failed',
+                  message: error instanceof Error ? error.message : String(error),
+                  setting: null,
+                };
+          if (!(error instanceof MissingTicket)) failure = reason;
+          this.#deps.logger.warn('ticket read failed', { projectId, host: host.name, ...reason });
+          return { ok: false, error: reason };
+        }
+      })();
+      tickets.set(key, asking);
+      return asking;
+    };
+    for (const run of runs) {
+      const { key, source } = await this.#ticketKey(run, host);
+      const missing = [
+        ...host.jira.missing,
+        ...(key === null && host.projectKey === '' ? ['trackers.jira.projectKey'] : []),
+      ];
+      if (missing.length > 0) {
+        outcomes.push({
+          runId: run.id,
+          key,
+          source,
+          result: {
+            ok: false,
+            error: {
+              kind: 'notSetUp',
+              message: `${hostKindLabels.jira} is not set up for this project: fill in ${missing.map(labelOf).join(', ')} in Settings → Trackers or in the project's own trackers`,
+              setting: missing[0] ?? null,
+            },
+          },
+        });
+        continue;
+      }
+      outcomes.push({
+        runId: run.id,
+        key,
+        source,
+        result: key === null ? { ok: true, ticket: null } : await ask(key),
+      });
+    }
+    const wait = adapter?.waitUntil;
+    if (wait) this.#leaveAlone.set(leaveAlone, wait);
+    else this.#leaveAlone.delete(leaveAlone);
+    if (outcomes.length === 0) return;
+    try {
+      this.#deps.engine.dispatch(`tickets.sync:${randomUUID()}`, {
+        type: 'tickets.sync',
+        projectId,
+        at: this.#clock().toISOString(),
+        hostName: host.name,
+        reads: outcomes,
+      });
+    } catch (error) {
+      if (error instanceof CommandRejected) {
+        this.#deps.logger.debug('ticket read dropped', { projectId, reason: error.message });
+      } else {
+        throw error;
+      }
+    }
   }
 
   #store(

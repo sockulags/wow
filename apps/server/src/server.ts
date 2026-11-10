@@ -227,6 +227,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     settings,
     logger,
     resolve: (projectId) => trackers.githubHost(projectId),
+    resolveJira: (projectId) => trackers.jiraHost(projectId),
     workingCopyBranch: (folder) =>
       readCurrentBranch(folder, { timeoutMs: settings.get('trackers.gitTimeoutMs') }),
     ...(options.clock ? { clock: options.clock } : {}),

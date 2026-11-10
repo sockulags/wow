@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RunDiff, RunDiffParams } from './diff.js';
 import { FileReadParams, FileReadResult } from './files.js';
-import { ChangeRequest, HostRead, HostRefreshParams } from './hosts.js';
+import { ChangeRequest, HostRead, HostRefreshParams, TicketRead } from './hosts.js';
 import {
   Approval,
   BacklogItem,
@@ -58,6 +58,7 @@ export const subscriptionTopics = {
   planRuns: { row: PlanRun, threadScoped: false },
   changeRequests: { row: ChangeRequest, threadScoped: false },
   hostReads: { row: HostRead, threadScoped: false },
+  ticketReads: { row: TicketRead, threadScoped: false },
   settings: { row: SettingRow, threadScoped: false },
 } as const;
 

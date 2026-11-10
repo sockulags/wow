@@ -7,11 +7,15 @@ import { z } from 'zod';
 const Id = z.string().min(1);
 const Timestamp = z.iso.datetime({ offset: true });
 
-// GitHub and GitHub Enterprise Server today; the other hosts join this list with their adapter.
-export const HostKind = z.enum(['github']);
+// GitHub and GitHub Enterprise Server for pull requests, Jira (Cloud, Server and Data Center) for
+// tickets; the other hosts join this list with their adapter.
+export const HostKind = z.enum(['github', 'jira']);
 export type HostKind = z.infer<typeof HostKind>;
 
-export const hostKindLabels: Readonly<Record<HostKind, string>> = { github: 'GitHub' };
+export const hostKindLabels: Readonly<Record<HostKind, string>> = {
+  github: 'GitHub',
+  jira: 'Jira',
+};
 
 export const ChangeRequestState = z.enum(['open', 'merged', 'closed']);
 export type ChangeRequestState = z.infer<typeof ChangeRequestState>;
@@ -116,6 +120,63 @@ export const HostReadOutcome = z.object({
   ]),
 });
 export type HostReadOutcome = z.infer<typeof HostReadOutcome>;
+
+// A ticket as last read (review loop spec 33): what the Ticket tab shows. Read only.
+export const Ticket = z.object({
+  key: z.string().min(1),
+  summary: z.string(),
+  status: z.string(),
+  // The assignee's display name; null while nobody is assigned.
+  assignee: z.string().nullable(),
+  type: z.string(),
+  // Markdown converted from the host's own markup by its adapter. Written by someone else: shown
+  // through the shared renderer, which never runs HTML, and never put into a prompt.
+  description: z.string(),
+  // The ticket on the host; null when the host's address is not a web address.
+  url: z.string().min(1).nullable(),
+});
+export type Ticket = z.infer<typeof Ticket>;
+
+// Where a run's ticket key came from, in the order it is looked for: the issue its backlog item
+// was published as, the title of its pull request, the branch its folder is on.
+export const TicketSource = z.enum(['backlog', 'pullRequest', 'branch']);
+export type TicketSource = z.infer<typeof TicketSource>;
+
+export const ticketSourceLabels: Readonly<Record<TicketSource, string>> = {
+  backlog: 'the issue its backlog item was published as',
+  pullRequest: 'the title of its pull request',
+  branch: 'the name of its branch',
+};
+
+// What was last read about one run's ticket. `key` is null when the run has none; a failed read
+// keeps the last ticket of the same key, with its time, beside the error (spec 31).
+export const TicketRead = z.object({
+  // `run:<runId>`.
+  id: Id,
+  projectId: Id,
+  runId: Id,
+  host: HostKind,
+  // The Jira site as the user knows it. Empty while not set up.
+  hostName: z.string(),
+  key: z.string().min(1).nullable(),
+  source: TicketSource.nullable(),
+  ticket: Ticket.nullable(),
+  fetchedAt: Timestamp.nullable(),
+  error: HostError.nullable(),
+});
+export type TicketRead = z.infer<typeof TicketRead>;
+
+// One run's ticket as one poll found it: no key, the ticket, or why it could not be read.
+export const TicketReadOutcome = z.object({
+  runId: Id,
+  key: z.string().min(1).nullable(),
+  source: TicketSource.nullable(),
+  result: z.discriminatedUnion('ok', [
+    z.object({ ok: z.literal(true), ticket: Ticket.nullable() }),
+    z.object({ ok: z.literal(false), error: HostError.omit({ at: true }) }),
+  ]),
+});
+export type TicketReadOutcome = z.infer<typeof TicketReadOutcome>;
 
 // "Refresh now": one plan, one run, or everything wow follows.
 export const HostRefreshParams = z.object({ planId: Id.optional(), runId: Id.optional() });

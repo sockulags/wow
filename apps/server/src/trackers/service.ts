@@ -36,6 +36,7 @@ import {
 import type { SettingsService } from '../settings/service.js';
 import { createGitHubIssue, type GitHubConfig } from './github.js';
 import { TrackerError, type NewIssue, type RequestOptions } from './http.js';
+import type { JiraSignIn } from '../hosts/jira.js';
 import { createJiraIssue, type JiraConfig } from './jira.js';
 import { publishTarget, resolveTrackerSettings, trackerSuggestions } from './resolve.js';
 import { gitHubWhoAmI, jiraWhoAmI } from './whoami.js';
@@ -77,6 +78,16 @@ export interface ProjectGitHubHost {
   // github.com or the Enterprise host; empty while the API URL is not set.
   readonly name: string;
   readonly branch: string | null;
+}
+
+export interface ProjectJiraHost {
+  readonly jira: Configured<JiraSignIn>;
+  // The Jira site's host; empty while the URL is not set.
+  readonly name: string;
+  // The project's Jira key, for finding ticket keys in titles and branch names. May be empty.
+  readonly projectKey: string;
+  // The branch the project folder is on, read only when it is needed.
+  readonly branch: () => Promise<string | null>;
 }
 
 const serviceNames: Readonly<Record<TrackerKind, string>> = { jira: 'Jira', github: 'GitHub' };
@@ -266,6 +277,27 @@ export class TrackerService {
       };
     }
     return { github: await this.#github(values), name, branch: git.branch };
+  }
+
+  // The project's Jira site as the poller reads tickets from it: the same sign-in a publish uses.
+  // The site is always one the user stored (a git remote never names it), so the token goes
+  // only there.
+  async jiraHost(projectId: string): Promise<ProjectJiraHost | undefined> {
+    const project = this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
+    if (!project) return undefined;
+    const values = new Map(this.#resolve(project.id, null).map((entry) => [entry.key, entry]));
+    const config = await this.#jiraConfig(values);
+    const missing = [
+      config.baseUrl === '' && 'trackers.jira.baseUrl',
+      config.authMode === 'cloud-basic' && config.email === '' && 'trackers.jira.email',
+      config.token === '' && 'trackers.jira.token',
+    ].filter((entry): entry is string => typeof entry === 'string');
+    return {
+      jira: missing.length === 0 ? { config, missing: [] } : { config: undefined, missing },
+      name: hostOf(config.baseUrl) ?? '',
+      projectKey: config.projectKey,
+      branch: async () => (await this.#folderGit(project.id, project.cwd)).branch,
+    };
   }
 
   // Whose settings apply to the item: see publishTarget.
