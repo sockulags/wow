@@ -7,6 +7,7 @@ import {
   e2eHostProjectId,
   e2eHostWorkflowId,
   e2eTicketBacklogItemId,
+  e2ePagesTicketKey,
   e2eTicketKey,
 } from './env';
 
@@ -94,14 +95,22 @@ test.describe('tickets', () => {
     await expect(tab.getByTestId('host-fetched')).toHaveText(fetched ?? '');
     await expect(ticket.getByTestId('ticket-status')).toHaveText('In Progress');
 
-    // Only GET requests for that one issue reached Jira.
+    // Only GET requests for a run's own issue reached Jira: this run's, and the page tests' run
+    // on the same server, which may have been read by now.
     const asked = (await (await fetch(`${control}/jira-host/requests`)).json()) as {
       method: string;
       path: string;
     }[];
+    const kinds = new Set(
+      asked.map((request) => `${request.method} ${request.path.split('?')[0]}`),
+    );
+    const issue = (key: string) => `GET /rest/api/2/issue/${key}`;
+    expect(kinds).toContain(issue(e2eTicketKey));
     expect(
-      new Set(asked.map((request) => `${request.method} ${request.path.split('?')[0]}`)),
-    ).toEqual(new Set([`GET /rest/api/2/issue/${e2eTicketKey}`]));
+      [...kinds].filter(
+        (kind) => kind !== issue(e2eTicketKey) && kind !== issue(e2ePagesTicketKey),
+      ),
+    ).toEqual([]);
   });
 
   test('a run without a ticket says so', async ({ page }) => {
