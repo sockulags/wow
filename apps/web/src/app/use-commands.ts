@@ -23,6 +23,7 @@ import { changesStore } from '@/workflows/changes';
 import { workflowCommands } from '@/workflows/commands';
 import { gateStore } from '@/workflows/gate';
 import { gateRunForThread } from '@/workflows/model';
+import { triggersPath } from '@/workflows/triggers';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
 import { updateCommands } from './updates';
 import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
@@ -127,6 +128,9 @@ export function useCommands(): {
             : undefined,
         sendBackRunId,
         formatWhen: when,
+        triggers,
+        projects,
+        onTriggers: pathname === triggersPath,
       }),
       ...planCommands({
         intents: planIntents ?? [],

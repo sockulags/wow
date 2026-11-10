@@ -26,6 +26,7 @@ import { NotFoundView } from '@/views/empty-views';
 import { EditWorkflowView, NewWorkflowView } from '@/workflows/builder';
 import { validateRunSearch } from '@/workflows/changes';
 import { RunView } from '@/workflows/run-view';
+import { TriggersTab } from '@/workflows/triggers-tab';
 import { WorkflowsHome, WorkflowsLayout } from '@/workflows/workflows-view';
 import { isSettingGroup, settingsByGroup } from './sections';
 import { Shell } from './shell';
@@ -108,6 +109,12 @@ const newWorkflowRoute = createRoute({
     const { template } = newWorkflowRoute.useSearch();
     return <NewWorkflowView key={template ?? ''} template={template} />;
   },
+});
+
+const triggersRoute = createRoute({
+  getParentRoute: () => workflowsRoute,
+  path: '/triggers',
+  component: TriggersTab,
 });
 
 const workflowRunRoute = createRoute({
@@ -215,6 +222,7 @@ const routeTree = rootRoute.addChildren([
   chatRoute.addChildren([chatIndexRoute, newThreadRoute, threadRoute]),
   workflowsRoute.addChildren([
     workflowsIndexRoute,
+    triggersRoute,
     newWorkflowRoute,
     workflowRunRoute,
     workflowRoute,

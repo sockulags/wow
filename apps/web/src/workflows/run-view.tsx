@@ -1,4 +1,4 @@
-import { runFolder, type StepRun, type WorkflowStep } from '@wow/contracts';
+import { runFolder, triggerEventLabels, type StepRun, type WorkflowStep } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import {
   CalendarIcon,
@@ -259,6 +259,18 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
             </Link>
           )}
         </div>
+        {run.event && (
+          <p data-testid="run-event" className="text-xs text-muted-foreground">
+            Started by an event: {triggerEventLabels[run.event.event].toLowerCase()} on pull request
+            #{run.event.number}
+            {run.event.branch !== '' && (
+              <>
+                {' '}
+                (<span className="font-mono">{run.event.branch}</span>)
+              </>
+            )}
+          </p>
+        )}
         {run.unit && (
           <p data-testid="run-unit" className="text-xs text-muted-foreground">
             Unit <span className="font-mono">{run.unit.unitKey}</span> {run.unit.title} of{' '}

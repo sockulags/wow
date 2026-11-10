@@ -1,4 +1,4 @@
-import { Link, Outlet } from '@tanstack/react-router';
+import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import { PlusIcon, WorkflowIcon } from 'lucide-react';
 import { useConnectionState, useSetting } from '@/app/runtime';
 import { DisconnectedState, EmptyState } from '@/components/states';
@@ -7,11 +7,16 @@ import { useTopic } from '@/chat/data';
 import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { runStateDotClass, runStateLabels, sortRuns } from './model';
+import { eventTriggers, triggersPath } from './triggers';
 
 function WorkflowList() {
   const workflows = useTopic('workflows') ?? [];
   const runs = useTopic('workflowRuns') ?? [];
   const projects = useTopic('projects') ?? [];
+  const triggerCount = eventTriggers(useTopic('triggers') ?? []).length;
+  const onTriggers = useRouterState({
+    select: (state) => state.location.pathname === triggersPath,
+  });
   const { when } = useDateFormat();
   const names = new Map(workflows.map((workflow) => [workflow.id, workflow.name]));
   const projectNames = new Map(projects.map((project) => [project.id, project.name]));
@@ -23,6 +28,29 @@ function WorkflowList() {
       aria-label="Workflows"
       className="flex w-64 shrink-0 flex-col border-r border-border bg-sidebar/50"
     >
+      <div role="tablist" aria-label="Workflows view" className="flex shrink-0 gap-0.5 px-2 pt-2">
+        <Button
+          asChild
+          role="tab"
+          size="xs"
+          variant={onTriggers ? 'ghost' : 'secondary'}
+          aria-selected={!onTriggers}
+        >
+          <Link to="/workflows">Workflows</Link>
+        </Button>
+        <Button
+          asChild
+          role="tab"
+          size="xs"
+          variant={onTriggers ? 'secondary' : 'ghost'}
+          aria-selected={onTriggers}
+        >
+          <Link to="/workflows/triggers">
+            Triggers
+            {triggerCount > 0 && <span className="opacity-70">{triggerCount}</span>}
+          </Link>
+        </Button>
+      </div>
       <div className="flex h-10 shrink-0 items-center px-2">
         <Button asChild variant="ghost" size="sm" className="w-full justify-start">
           <Link to="/workflows/new">

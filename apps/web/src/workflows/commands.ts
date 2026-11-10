@@ -2,6 +2,7 @@ import {
   type ChangeRequest,
   type Project,
   type RunDiffFile,
+  type Trigger,
   type Workflow,
   type WorkflowRun,
   type WorkflowTemplate,
@@ -19,6 +20,14 @@ import {
 } from './changes';
 import { cancelSendBack, canSendBack, confirmSendBack, openSendBack } from './gate';
 import { artifactPath, gateOf, isLive, runStateLabels, sortRuns } from './model';
+import {
+  openNewTrigger,
+  removeTrigger,
+  setTriggerEnabled,
+  triggerGroups,
+  triggersPath,
+  triggerTitle,
+} from './triggers';
 import { askRemoveWorkingCopy, canRemoveWorkingCopy, workingCopyStatus } from './working-copy';
 
 export interface WorkflowCommandData {
@@ -41,6 +50,11 @@ export interface WorkflowCommandData {
         readonly pullRequest?: ChangeRequest | undefined;
       }
     | undefined;
+  // Every trigger row and the projects, for the event triggers' commands; whether the Triggers
+  // tab is the open view.
+  readonly triggers?: readonly Trigger[] | undefined;
+  readonly projects?: readonly Project[] | undefined;
+  readonly onTriggers?: boolean | undefined;
   // The run whose send back note is being written, if any (from the gate store).
   readonly sendBackRunId?: string | undefined;
   // "14:39" for a run's start, in the calendar's zone.
@@ -95,6 +109,73 @@ function pullRequestCommands({
       keywords: ['host', 'github', 'browser', 'review'],
       run: () => void window.open(url, '_blank', 'noreferrer'),
     });
+  }
+  return commands;
+}
+
+// The Triggers tab (review loop spec 48): open it, make a trigger, and switch or delete each
+// one. A single trigger's commands are listed without typing only while the tab is open.
+function triggerCommands({
+  triggers = [],
+  projects = [],
+  workflows,
+  onTriggers = false,
+}: WorkflowCommandData): AppCommand[] {
+  const commands: AppCommand[] = [
+    {
+      id: 'workflows.triggers',
+      title: 'Go to event triggers',
+      group: 'Workflows',
+      keywords: ['trigger', 'event', 'pull request', 'merged', 'checks', 'review comment', 'tab'],
+      run: ({ navigate }) => void navigate({ to: triggersPath }),
+    },
+    {
+      id: 'trigger.new',
+      title: 'New event trigger',
+      group: 'Workflows',
+      keywords: ['trigger', 'event', 'pull request', 'merged', 'checks failed', 'review comment'],
+      run: ({ navigate }) => {
+        openNewTrigger();
+        void navigate({ to: triggersPath });
+      },
+    },
+  ];
+  for (const group of triggerGroups(triggers, projects, workflows)) {
+    for (const row of group.rows) {
+      const { trigger } = row;
+      const name = `${group.project} · ${triggerTitle(row)}`;
+      commands.push(
+        {
+          id: `trigger.toggle.${trigger.id}`,
+          title: `${trigger.enabled ? 'Turn off' : 'Turn on'} trigger: ${name}`,
+          value: `Trigger ${name} ${trigger.enabled ? 'off' : 'on'} ${trigger.id}`,
+          group: 'Workflows',
+          keywords: ['trigger', 'event', 'switch', 'enable', 'disable'],
+          detail: trigger.enabled ? 'Trigger is on' : 'Trigger is off',
+          searchOnly: !onTriggers,
+          run: ({ connection }) => {
+            if (!connection) return;
+            void setTriggerEnabled(
+              (command) => dispatch(connection, command),
+              trigger,
+              !trigger.enabled,
+            );
+          },
+        },
+        {
+          id: `trigger.delete.${trigger.id}`,
+          title: `Delete trigger: ${name}`,
+          value: `Delete trigger ${name} ${trigger.id}`,
+          group: 'Workflows',
+          keywords: ['trigger', 'event', 'remove'],
+          detail: 'Event trigger',
+          searchOnly: !onTriggers,
+          run: ({ connection }) => {
+            if (connection) void removeTrigger((command) => dispatch(connection, command), row);
+          },
+        },
+      );
+    }
   }
   return commands;
 }
@@ -194,15 +275,16 @@ function changesCommands({
 
 // Palette commands for workflows (spec 22): new workflow (blank or from a template), every
 // workflow and run, refresh skills, and Approve, Send back and Stop for the open run.
-export function workflowCommands({
-  workflows,
-  runs,
-  templates,
-  openRun,
-  runView,
-  sendBackRunId,
-  formatWhen = (iso) => iso,
-}: WorkflowCommandData): AppCommand[] {
+export function workflowCommands(data: WorkflowCommandData): AppCommand[] {
+  const {
+    workflows,
+    runs,
+    templates,
+    openRun,
+    runView,
+    sendBackRunId,
+    formatWhen = (iso) => iso,
+  } = data;
   const commands: AppCommand[] = [
     {
       id: 'workflows.new',
@@ -291,6 +373,7 @@ export function workflowCommands({
   }
 
   if (runView) commands.push(...changesCommands(runView), ...pullRequestCommands(runView));
+  commands.push(...triggerCommands(data));
 
   for (const workflow of workflows) {
     commands.push({
