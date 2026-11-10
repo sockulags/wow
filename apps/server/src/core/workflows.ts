@@ -2,6 +2,7 @@ import {
   alwaysStops,
   hostReadId,
   isLiveRunState,
+  ruleProblems,
   type AppNotification,
   type CardState,
   type ChangeRequest,
@@ -71,6 +72,7 @@ export function decideWorkflow(
         throw new CommandRejected('conflict', `Workflow ${command.workflowId} already exists`);
       }
       refuseConditions(command.steps, read, context);
+      refuseRules(command.steps);
       return [
         {
           kind: 'workflow.created',
@@ -82,6 +84,9 @@ export function decideWorkflow(
             steps: command.steps,
             ...(command.ownWorkingCopy ? { ownWorkingCopy: true } : {}),
             ...(command.forUnits ? { forUnits: true } : {}),
+            ...(typeof command.maxStepVisits === 'number'
+              ? { maxStepVisits: command.maxStepVisits }
+              : {}),
             createdAt: context.now,
             updatedAt: context.now,
           },
@@ -104,7 +109,15 @@ export function decideWorkflow(
           );
         }
         refuseConditions(command.steps, read, context);
+        refuseRules(command.steps);
         changes.steps = command.steps;
+      }
+      // Read when a step is about to start, so a run that is going follows the new number.
+      if (
+        command.maxStepVisits !== undefined &&
+        command.maxStepVisits !== (workflow.maxStepVisits ?? null)
+      ) {
+        changes.maxStepVisits = command.maxStepVisits;
       }
       // Runs that exist keep the folder they started in; the switch is read when a run starts.
       if (
@@ -144,6 +157,7 @@ export function decideWorkflow(
         throw new CommandRejected('conflict', `Workflow ${workflow.id} already exists`);
       }
       refuseConditions(workflow.steps, read, context);
+      refuseRules(workflow.steps);
       return [{ kind: 'workflow.created', aggregate: workflow.id, payload: workflow }];
     }
     case 'workflowRun.start':
@@ -200,7 +214,12 @@ export function decideWorkflow(
       return runInput(
         command.type,
         command.runId,
-        { type: 'stepFailed', stepId: command.stepId, error: command.error },
+        {
+          type: 'stepFailed',
+          stepId: command.stepId,
+          error: command.error,
+          stopped: command.stopped,
+        },
         read,
         context,
       );
@@ -276,6 +295,18 @@ function refuseConditions(
       );
     }
   }
+}
+
+// A workflow whose rules cannot be followed is not stored (workflow branches spec 16). The
+// reason names the step and the rule, the way the builder marks it.
+function refuseRules(steps: readonly WorkflowStep[]): void {
+  const [problem] = ruleProblems(steps);
+  if (!problem) return;
+  const step = steps.find((entry) => entry.id === problem.stepId);
+  throw new CommandRejected(
+    'rejected',
+    `Step ${step?.skillName ?? problem.stepId}, rule ${problem.rule + 1}: ${problem.reason}`,
+  );
 }
 
 // What the host showed about the checks of the run's pull request since the step ended. Null
@@ -521,6 +552,34 @@ function transitionEvents(
 ): DomainEvent[] {
   const { run, effects } = transition;
   if (before && effects.length === 0 && isDeepStrictEqual(before, run)) return [];
+  // A step that runs again gets its turn in its own thread in this commit. When the user asked
+  // for that (Approve, Send back) and the thread cannot take it, the command is refused. When a
+  // rule or the list got there by itself, nobody is there to refuse to: that step fails with
+  // the reason, so the run does not stay "running" without a turn.
+  const rerun = effects.find((effect) => effect.type === 'sendBack');
+  const refusal = rerun ? sendBackRefusal(rerun, read) : undefined;
+  if (rerun && refusal !== undefined) {
+    if (USER_CAUSES.has(cause)) throw new CommandRejected('rejected', refusal);
+    const engineContext = runContext(read, context, run.projectId, null);
+    const failed = engineCall(() =>
+      advance(
+        workflow,
+        run,
+        // No rule for a failed step is followed: it could send the run straight back here.
+        { type: 'stepFailed', stepId: rerun.stepId, error: refusal, stopped: true },
+        engineContext,
+      ),
+    );
+    const kept = effects.filter((effect) => effect !== rerun);
+    return transitionEvents(
+      cause,
+      workflow,
+      before,
+      { run: failed.run, effects: [...kept, ...failed.effects] },
+      read,
+      context,
+    );
+  }
   const events: DomainEvent[] = [];
   const later: RunEffect[] = [];
   for (const effect of effects) {
@@ -557,7 +616,24 @@ function transitionEvents(
   return events;
 }
 
-// The turn of a step sent back at its gate (review loop spec 16). It starts in the same commit as
+const USER_CAUSES: ReadonlySet<string> = new Set(['workflowRun.continue', 'workflowRun.sendBack']);
+
+// Why a step cannot run again in its thread right now, if it cannot.
+function sendBackRefusal(
+  effect: Extract<RunEffect, { type: 'sendBack' }>,
+  read: ReadModel,
+): string | undefined {
+  if (!read.thread(effect.threadId)) {
+    return `The thread of step ${effect.stepId} no longer exists, so it cannot be sent back`;
+  }
+  if (read.runningTurn(effect.threadId)) {
+    return "The step's thread is still answering a message. Wait for it or stop that turn, then send back.";
+  }
+  return undefined;
+}
+
+// The turn of a step that runs again in its own thread: sent back at its gate (review loop spec
+// 16), or reached again by a rule or the list (workflow branches spec 7, 8). It starts in the same commit as
 // the run change and in the step's own thread, which is never created again. A step is running
 // exactly while its own turn is, so the runner can take the next turn that ends in the thread as
 // the step's outcome: a message the user typed at the gate has ended by now or refuses the send
@@ -567,18 +643,8 @@ function sendBackTurn(
   read: ReadModel,
   context: DecideContext,
 ): DomainEvent[] {
-  if (!read.thread(effect.threadId)) {
-    throw new CommandRejected(
-      'rejected',
-      `The thread of step ${effect.stepId} no longer exists, so it cannot be sent back`,
-    );
-  }
-  if (read.runningTurn(effect.threadId)) {
-    throw new CommandRejected(
-      'rejected',
-      "The step's thread is still answering a message. Wait for it or stop that turn, then send back.",
-    );
-  }
+  const refusal = sendBackRefusal(effect, read);
+  if (refusal !== undefined) throw new CommandRejected('rejected', refusal);
   return decideThread(
     { type: 'thread.sendMessage', threadId: effect.threadId, text: effect.prompt },
     read,
@@ -650,10 +716,13 @@ function runNotifications(
     // A step sent back waits again as a new attempt, which is told again (review loop spec 19).
     const reviewed = reviewedStepIndex(run);
     const attempt = reviewed === undefined ? undefined : run.steps[reviewed]?.attempt;
+    // The limit can be reached again after the user let the step run once more.
+    const held = gate ? run.steps[gate.stepIndex] : undefined;
+    const limit = held?.gate?.state === 'waitingAtLimit' ? `:limit-${held.attempt ?? 1}` : '';
     const id = waiting
       ? `${run.id}:waiting:${notice.stepId ?? ''}:${gate?.position ?? ''}${
           attempt === undefined ? '' : `:attempt-${attempt}`
-        }`
+        }${limit}`
       : `${run.id}:failed`;
     const notification: AppNotification = {
       id,
@@ -714,7 +783,11 @@ function runContext(
     handoverTemplate: resolvedTemplate(HANDOVER_KEY, read, context, projectId),
     sendBackTemplate: resolvedTemplate(SEND_BACK_KEY, read, context, projectId),
     unitPromptTemplate: resolvedTemplate(UNIT_PROMPT_KEY, read, context, projectId),
+    goBackTemplate: resolvedTemplate(GO_BACK_KEY, read, context, projectId),
     verdictApprovedLine: resolvedTemplate(VERDICT_KEY, read, context, projectId),
+    verdictChangesRequestedLine: resolvedTemplate(CHANGES_REQUESTED_KEY, read, context, projectId),
+    verdictBlockedLine: resolvedTemplate(BLOCKED_KEY, read, context, projectId),
+    maxStepVisits: Number(resolvedSetting(MAX_VISITS_KEY, read, context, projectId)),
     alwaysStopSkills: stringList(resolvedSetting(ALWAYS_STOP_KEY, read, context, projectId)),
     gateChecksTimeoutMinutes: Number(resolvedSetting(CHECKS_TIMEOUT_KEY, read, context, projectId)),
     invocationFor: (step) => invocationFor(read, step),
@@ -726,7 +799,11 @@ const HANDOVER_KEY = 'workflows.handoverTemplate';
 const SEND_BACK_KEY = 'workflows.sendBackTemplate';
 const UNIT_PROMPT_KEY = 'workflows.unitPromptTemplate';
 
+const GO_BACK_KEY = 'workflows.goBackTemplate';
 const VERDICT_KEY = 'workflows.verdictApprovedLine';
+const CHANGES_REQUESTED_KEY = 'workflows.verdictChangesRequestedLine';
+const BLOCKED_KEY = 'workflows.verdictBlockedLine';
+const MAX_VISITS_KEY = 'workflows.maxStepVisits';
 const CHECKS_TIMEOUT_KEY = 'workflows.gateChecksTimeoutMinutes';
 
 // The setting as it applies to the project, or to all projects without one.

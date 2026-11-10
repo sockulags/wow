@@ -29,6 +29,7 @@ import type {
   SecretRef,
   SkillSource,
   PageLink,
+  PathVisit,
   StepRun,
   ThreadItemKind,
   ThreadState,
@@ -223,6 +224,7 @@ export const workflows = sqliteTable('workflows', {
   steps: json<WorkflowStep[]>().notNull(),
   ownWorkingCopy: bool().notNull().default(false),
   forUnits: bool().notNull().default(false),
+  maxStepVisits: integer(),
   createdAt: text().notNull(),
   updatedAt: text().notNull(),
 });
@@ -243,6 +245,7 @@ export const workflowRuns = sqliteTable('workflow_runs', {
   workingCopy: json<WorkingCopy>(),
   unit: json<RunUnit>(),
   event: json<RunEvent>(),
+  path: json<PathVisit[]>(),
 });
 
 // Plan runs: one row per "Run ready units", kept after it ended.

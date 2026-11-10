@@ -292,6 +292,7 @@ export const stepStateLabels: Readonly<Record<StepRunState, string>> = {
   waiting: 'Waiting',
   done: 'Done',
   failed: 'Failed',
+  skipped: 'Skipped',
 };
 
 export const runStateLabels: Readonly<Record<WorkflowRunState, string>> = {
@@ -308,6 +309,7 @@ export const stepStateDotClass: Readonly<Record<StepRunState, string>> = {
   waiting: 'bg-state-needs-you',
   done: 'bg-state-done',
   failed: 'bg-state-failed',
+  skipped: 'bg-muted-foreground/30',
 };
 
 export const runStateDotClass: Readonly<Record<WorkflowRunState, string>> = {

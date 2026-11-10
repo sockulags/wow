@@ -1,4 +1,5 @@
 import {
+  defaultGoBackTemplate,
   defaultHandoverTemplate,
   defaultSendBackTemplate,
   defaultUnitPromptTemplate,
@@ -50,6 +51,10 @@ const context = (overrides: Partial<EngineContext> = {}): EngineContext => ({
   sendBackTemplate: defaultSendBackTemplate,
   unitPromptTemplate: defaultUnitPromptTemplate,
   verdictApprovedLine: 'APPROVED',
+  verdictChangesRequestedLine: 'CHANGES_REQUESTED',
+  verdictBlockedLine: 'BLOCKED',
+  goBackTemplate: defaultGoBackTemplate,
+  maxStepVisits: 3,
   alwaysStopSkills: [],
   gateChecksTimeoutMinutes: 30,
   invocationFor: (s) =>
@@ -612,6 +617,7 @@ describe('step prompts and handover', () => {
       previousMessage: '',
       backlogBody: '',
       previousArtifacts: '',
+      previousError: '',
       expectedArtifacts: '- a.md',
       ...eventValues(null),
     };
@@ -627,6 +633,7 @@ describe('step prompts and handover', () => {
       previousMessage: '',
       backlogBody: '',
       previousArtifacts: '',
+      previousError: '',
       expectedArtifacts: '',
     };
     const event = {

@@ -286,6 +286,10 @@ export const defaultHandoverTemplate = [
   '{{#previousArtifacts}}Artifacts from earlier steps:',
   '{{previousArtifacts}}',
   '{{/previousArtifacts}}',
+  '{{#previousError}}The previous step ({{previousStep}}) failed with:',
+  '',
+  '{{previousError}}',
+  '{{/previousError}}',
   '{{#expectedArtifacts}}This step is expected to produce:',
   '{{expectedArtifacts}}',
   '{{/expectedArtifacts}}',
@@ -306,6 +310,18 @@ export const defaultSendBackTemplate = [
   '{{note}}',
   '',
   'Do the step ({{skill}}) again in this conversation with the note taken into account, and end with your result as before.',
+].join('\n');
+
+// What a step is told in its own thread when a rule of a later step sends the run back to it
+// (workflow branches spec 7).
+export const defaultGoBackTemplate = [
+  'The step {{fromStep}} sent the work back to this step: {{reason}}.',
+  '',
+  '{{#message}}What {{fromStep}} ended with:',
+  '',
+  '{{message}}',
+  '',
+  '{{/message}}Do the step ({{skill}}) again in this conversation with that taken into account, and end with your result as before.',
 ].join('\n');
 
 // What a plan run tells every step of a unit's run (review loop spec 40). The last line is how
@@ -667,6 +683,7 @@ export const settingsRegistry = {
         'previousMessage',
         'backlogBody',
         'previousArtifacts',
+        'previousError',
         'expectedArtifacts',
         'event',
         'pullRequestNumber',
@@ -690,6 +707,18 @@ export const settingsRegistry = {
     description:
       "The message a step gets in its own thread when you send it back at a gate. {{note}} is what you wrote, {{skill}} the step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
     default: defaultSendBackTemplate,
+    scope: 'project',
+  }),
+  'workflows.goBackTemplate': defineSetting({
+    schema: z.string().meta({
+      widget: 'template',
+      placeholders: ['fromStep', 'reason', 'message', 'skill', 'attempt'],
+    }),
+    group: 'workflows',
+    label: 'Go back text',
+    description:
+      "The message a step gets in its own thread when a rule of a later step sends the run back to it. {{fromStep}} is the step that sent it back, {{reason}} the fact that held, {{message}} that step's final message (or its error), {{skill}} this step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
+    default: defaultGoBackTemplate,
     scope: 'project',
   }),
   'workflows.unitPromptTemplate': defineSetting({
@@ -729,6 +758,33 @@ export const settingsRegistry = {
     description:
       'The line a step\'s final message must end with for the "Approved verdict" part of a gate\'s condition to hold. Only the last line that is not empty counts; backticks or bold around it are ignored.',
     default: 'APPROVED',
+    scope: 'project',
+  }),
+  'workflows.verdictChangesRequestedLine': defineSetting({
+    schema: z.string().trim().min(1),
+    group: 'workflows',
+    label: 'Changes requested verdict line',
+    description:
+      'The line a step\'s final message ends with for a rule on the verdict "changes requested" to hold. Read like the approved line: only the last line that is not empty counts.',
+    default: 'CHANGES_REQUESTED',
+    scope: 'project',
+  }),
+  'workflows.verdictBlockedLine': defineSetting({
+    schema: z.string().trim().min(1),
+    group: 'workflows',
+    label: 'Blocked verdict line',
+    description:
+      'The line a step\'s final message ends with for a rule on the verdict "blocked" to hold. Read like the approved line: only the last line that is not empty counts.',
+    default: 'BLOCKED',
+    scope: 'project',
+  }),
+  'workflows.maxStepVisits': defineSetting({
+    schema: z.number().int().min(1).max(50),
+    group: 'workflows',
+    label: 'Step starts before a run waits for you',
+    description:
+      'How often one step may start in a run. When a rule or the order of the steps would start it once more, the run waits for you there: Approve lets the step run once more, Stop ends the run. A workflow can set its own number.',
+    default: 3,
     scope: 'project',
   }),
   'workflows.alwaysStopSkills': defineSetting({

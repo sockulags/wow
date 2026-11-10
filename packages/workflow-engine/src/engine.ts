@@ -1,16 +1,22 @@
-import type {
-  FileHash,
-  GatePartResult,
-  MissedTriggerPolicy,
-  RunEffect,
-  RunEvent,
-  RunUnit,
-  StepGate,
-  StepRun,
-  TriggerState,
-  Workflow,
-  WorkflowRun,
-  WorkflowStep,
+import {
+  ruleConditionText,
+  type FileHash,
+  type GatePartResult,
+  type MissedTriggerPolicy,
+  type PathNext,
+  type PathVisit,
+  type RuleCondition,
+  type RunEffect,
+  type RunEvent,
+  type RunUnit,
+  type StepFacts,
+  type StepGate,
+  type StepRule,
+  type StepRun,
+  type TriggerState,
+  type Workflow,
+  type WorkflowRun,
+  type WorkflowStep,
 } from '@wow/contracts';
 import {
   artifactsPart,
@@ -27,11 +33,21 @@ import {
 import {
   bulletList,
   eventValues,
+  renderGoBack,
   renderHandover,
   renderSendBack,
   renderUnitPrompt,
   stepPrompt,
 } from './handover.js';
+import {
+  failedRule,
+  hasRules,
+  lastVisit,
+  limitSentence,
+  readVerdict,
+  ruleThatHolds,
+  type RuleSettings,
+} from './rules.js';
 
 // The workflow run state machine. Pure: every function takes the workflow, the run and an input
 // and returns the next run plus the effects the server performs after committing it.
@@ -48,6 +64,12 @@ import {
 // hold the run waits for the user as at any gate; while only the pull request's checks are
 // undecided the run waits for them, and `gateChecks` inputs decide it later. The step's `gate`
 // records which of these it is and what each part found.
+//
+// A step may carry rules (workflow branches spec 1 to 13). Once the step has ended and its gate,
+// if any, has passed, the first rule that holds decides the next step: an earlier one (it runs
+// again in its own thread), a later one (the steps between are skipped for this pass) or the end
+// of the run. Without a rule that holds the run goes to the next step in the list. `run.path`
+// records every start of a step and why the run went where it went next.
 
 export type RunInput =
   | {
@@ -68,7 +90,13 @@ export type RunInput =
       readonly baseSha: string;
       readonly files: readonly FileHash[];
     }
-  | { readonly type: 'stepFailed'; readonly stepId: string; readonly error: string }
+  | {
+      readonly type: 'stepFailed';
+      readonly stepId: string;
+      readonly error: string;
+      // The user stopped the step's turn: no rule is followed.
+      readonly stopped?: boolean | undefined;
+    }
   // The folder the run was to work in could not be made, so no step may begin.
   | { readonly type: 'setupFailed'; readonly error: string }
   // A look at a gate that waits for checks: what the host shows now, or null when nothing was
@@ -86,7 +114,7 @@ export type RunInput =
       readonly found: readonly { readonly stepId: string; readonly paths: readonly string[] }[];
     };
 
-export interface EngineContext extends GateSettings {
+export interface EngineContext extends GateSettings, RuleSettings {
   readonly now: string;
   // The `workflows.handoverTemplate` setting for the run's project.
   readonly handoverTemplate: string;
@@ -134,21 +162,49 @@ export interface PendingGate {
   readonly position: 'before' | 'after';
 }
 
-// Where a waiting run is stopped: after a finished step, or before one that has not started.
+// Where a waiting run is stopped: after a step that ended, or before one that is about to start.
+// A step that ran in an earlier pass keeps its last result while the run waits before it, so
+// the path tells the two apart: the run waits after a step when that step's visit is the last
+// one and nothing has decided where the run goes next. A run from before paths were kept has
+// only run each step once, and there an ended step can only be waited after.
 export function pendingGate(run: WorkflowRun): PendingGate | undefined {
   if (run.state !== 'waiting') return undefined;
   const step = run.steps[run.currentStep];
   if (!step) return undefined;
-  return { stepIndex: run.currentStep, position: step.endedAt ? 'after' : 'before' };
+  const last = lastVisit(run.path);
+  const after = run.path
+    ? last !== undefined && last.stepId === step.stepId && last.ended !== null && last.next === null
+    : Boolean(step.endedAt);
+  return { stepIndex: run.currentStep, position: after ? 'after' : 'before' };
+}
+
+interface Came {
+  readonly index: number;
+  readonly next: PathNext;
+}
+
+// The step the run came from when it waits before a step, and what sent it there. By the list
+// that is the step before; a rule can come from anywhere.
+function cameFrom(run: WorkflowRun, stepIndex: number): Came | undefined {
+  const target = run.steps[stepIndex];
+  const last = lastVisit(run.path);
+  if (last?.next && last.next.to.type === 'step' && last.next.to.stepId === target?.stepId) {
+    const index = run.steps.findIndex((entry) => entry.stepId === last.stepId);
+    if (index >= 0) return { index, next: last.next };
+  }
+  if (stepIndex === 0 || !target) return undefined;
+  return {
+    index: stepIndex - 1,
+    next: { to: { type: 'step', stepId: target.stepId }, by: 'list' },
+  };
 }
 
 // The step a gate asks the user to judge: the one that just ended for a gate after it, the one
-// before for a gate before the next step. Undefined before the first step, where nothing ran.
+// the run came from for a gate before a step. Undefined before the first step, where nothing ran.
 export function reviewedStepIndex(run: WorkflowRun): number | undefined {
   const gate = pendingGate(run);
   if (!gate) return undefined;
-  const index = gate.position === 'after' ? gate.stepIndex : gate.stepIndex - 1;
-  return index >= 0 ? index : undefined;
+  return gate.position === 'after' ? gate.stepIndex : cameFrom(run, gate.stepIndex)?.index;
 }
 
 export function startRun(workflow: Workflow, input: NewRun, context: EngineContext): Transition {
@@ -167,11 +223,12 @@ export function startRun(workflow: Workflow, input: NewRun, context: EngineConte
     endedAt: null,
     baseSha: null,
     baseFiles: null,
+    path: [],
     ...(input.unit ? { unit: input.unit } : {}),
     ...(input.event ? { event: input.event } : {}),
   };
   if (first.gateBefore) return waitBefore(run, 0, []);
-  return beginStep(workflow, run, 0, context, []);
+  return begin(workflow, run, { from: undefined, to: 0, by: 'list' }, context, []);
 }
 
 export function advance(
@@ -192,7 +249,7 @@ export function advance(
     case 'stepCompleted':
       return completeStep(workflow, run, input, context);
     case 'stepFailed':
-      return failStep(run, input.stepId, input.error, context);
+      return failStep(workflow, run, input, context);
     case 'setupFailed':
       return failSetup(run, input.error, context);
     case 'gateChecks':
@@ -227,13 +284,29 @@ export function missedTriggerOutcome(policy: MissedTriggerPolicy): MissedOutcome
 
 function completeStep(
   workflow: Workflow,
-  run: WorkflowRun,
+  before: WorkflowRun,
   input: Extract<RunInput, { type: 'stepCompleted' }>,
   context: EngineContext,
 ): Transition {
-  const index = runningStepIndex(run, input.stepId);
+  const index = runningStepIndex(before, input.stepId);
+  const run = endVisit(before, 'done', context.now);
   const current = run.steps[index] as StepRun;
   const step = workflow.steps[index] as WorkflowStep;
+  const missing =
+    input.artifactsMissing ?? (input.artifactsFound.length === 0 ? step.expectedArtifacts : []);
+  // The facts are read now and kept: the rules are followed once the gate has passed, which
+  // may be much later.
+  const facts: StepFacts | undefined = hasRules(step)
+    ? {
+        verdict: readVerdict(input.finalMessage, context),
+        artifacts:
+          step.expectedArtifacts.length > 0 &&
+          !step.expectedArtifacts.some((glob) => missing.includes(glob))
+            ? 'found'
+            : 'missing',
+        ...(input.headSha === undefined ? {} : { headSha: input.headSha }),
+      }
+    : undefined;
   const finished: StepRun = {
     ...current,
     endedAt: context.now,
@@ -242,15 +315,16 @@ function completeStep(
     state: step.gateAfter ? 'waiting' : 'done',
     ...(input.fileHashes ? { fileHashes: [...input.fileHashes] } : {}),
   };
-  // A step sent back is judged again from nothing.
+  // A step that runs again is judged again from nothing.
   delete finished.gate;
+  delete finished.error;
+  delete finished.facts;
+  if (facts) finished.facts = facts;
 
-  if (!step.gateAfter) return afterStep(workflow, run, index, finished, context);
+  if (!step.gateAfter) return route(workflow, run, index, finished, context, false);
   const condition = gateCondition(step, context);
   if (!condition) return waitForUser(run, index, finished);
 
-  const missing =
-    input.artifactsMissing ?? (input.artifactsFound.length === 0 ? step.expectedArtifacts : []);
   const parts = condition.map((part): GatePartResult => {
     switch (part) {
       case 'verdict':
@@ -282,12 +356,13 @@ function completeStep(
       effects: [],
     };
   }
-  return afterStep(
+  return route(
     workflow,
     run,
     index,
     { ...finished, state: 'done', gate: gate('passedByItself', parts) },
     context,
+    false,
   );
 }
 
@@ -302,26 +377,153 @@ function waitForUser(run: WorkflowRun, index: number, waiting: StepRun): Transit
   };
 }
 
-// What follows a step that is done with no gate after it left to answer: the end of the run,
-// the next step's own gate before it, or the next step.
-function afterStep(
+const stepIndexOf = (workflow: Workflow, stepId: string): number =>
+  workflow.steps.findIndex((entry) => entry.id === stepId);
+
+// A rule whose step is gone cannot be followed. Saving refuses such a rule, so this only keeps
+// a run from getting stuck on a workflow stored some other way.
+const followable = (workflow: Workflow, step: WorkflowStep): StepRule[] =>
+  (step.rules ?? []).filter(
+    ({ goTo }) => goTo.type === 'end' || stepIndexOf(workflow, goTo.stepId) >= 0,
+  );
+
+const targetName = (workflow: Workflow, rule: StepRule): string =>
+  rule.goTo.type === 'end'
+    ? 'End'
+    : (workflow.steps[stepIndexOf(workflow, rule.goTo.stepId)]?.skillName ?? rule.goTo.stepId);
+
+// What follows a step that is done with no gate after it left to answer (workflow branches
+// spec 1): where its first rule that holds says, else the next step in the list, else the end
+// of the run. `byUser`: the user just approved the gate after the step, which also passes the
+// next step's gate before when the run goes on by the list.
+function route(
   workflow: Workflow,
   run: WorkflowRun,
   index: number,
   done: StepRun,
   context: EngineContext,
+  byUser: boolean,
 ): Transition {
-  const steps = replaceStep(run.steps, index, done);
-  const threadId = done.threadId;
-  const next = workflow.steps[index + 1];
-  if (!next) {
-    return finish({ ...run, steps }, 'done', context, threadState(threadId, 'done'));
+  const step = workflow.steps[index] as WorkflowStep;
+  const held = done.facts ? ruleThatHolds(followable(workflow, step), done.facts) : 'none';
+  if (held === 'needsChecks') {
+    // A rule asks about the pull request's checks and nothing has read them: the run waits for
+    // them as a gate does (spec 3), and `gateChecks` inputs decide it.
+    const waiting: StepRun = {
+      ...done,
+      state: 'waiting',
+      gate: {
+        state: 'waitingForChecks',
+        parts: [checksNotReadYet()],
+        forRules: true,
+        since: context.now,
+        ...(done.facts?.headSha === undefined ? {} : { headSha: done.facts.headSha }),
+        at: context.now,
+      },
+    };
+    return {
+      run: { ...run, steps: replaceStep(run.steps, index, waiting), state: 'waiting' },
+      effects: byUser ? threadState(done.threadId, 'done') : [],
+    };
   }
-  if (next.gateBefore) {
-    // The previous step's thread is where the user sees that the run needs them.
-    return waitBefore({ ...run, steps }, index + 1, threadState(threadId, 'needs_you'));
+  const settled = { ...run, steps: replaceStep(run.steps, index, done) };
+  if (held === 'none') {
+    const to = index + 1;
+    const last = to >= workflow.steps.length;
+    const reason = hasRules(step)
+      ? `no rule held → ${last ? 'End' : 'next step'}`
+      : last
+        ? 'last step'
+        : 'next step';
+    if (last) return finish(settled, { to: { type: 'end' }, by: 'list' }, reason, context, []);
+    return moveTo(workflow, settled, { from: index, to, by: 'list' }, reason, context, [], byUser);
   }
-  return beginStep(workflow, { ...run, steps }, index + 1, context, threadState(threadId, 'done'));
+  const reason = `${ruleConditionText(held.when)} → ${targetName(workflow, held)}`;
+  if (held.goTo.type === 'end') {
+    return finish(settled, { to: held.goTo, by: 'rule', when: held.when }, reason, context, []);
+  }
+  const to = stepIndexOf(workflow, held.goTo.stepId);
+  return moveTo(
+    workflow,
+    settled,
+    { from: index, to, by: 'rule', when: held.when },
+    reason,
+    context,
+    [],
+    false,
+  );
+}
+
+interface Move {
+  // Undefined only for the first step of a run, which nothing comes before.
+  readonly from: number | undefined;
+  readonly to: number;
+  readonly by: PathNext['by'];
+  readonly when?: RuleCondition | undefined;
+}
+
+const nextOf = (workflow: Workflow, move: Move): PathNext => ({
+  to: { type: 'step', stepId: (workflow.steps[move.to] as WorkflowStep).id },
+  by: move.by,
+  ...(move.when ? { when: move.when } : {}),
+});
+
+// How often the step has started in this run.
+const startsOf = (step: StepRun | undefined): number => (step?.threadId ? (step.attempt ?? 1) : 0);
+
+// The thread of the step the run came from shows where the run stands, except a failed step's
+// thread, which keeps saying that it failed.
+const fromThread = (
+  from: StepRun | undefined,
+  state: Extract<RunEffect, { type: 'setThreadState' }>['state'],
+): RunEffect[] => (from && from.state !== 'failed' ? threadState(from.threadId, state) : []);
+
+// The run goes from one step to another: the steps a rule jumps over are skipped for this pass,
+// a step at its limit waits for the user (spec 9), a gate before the step waits as on its first
+// visit (spec 10), and otherwise the step starts.
+function moveTo(
+  workflow: Workflow,
+  run: WorkflowRun,
+  move: Move & { readonly from: number },
+  reason: string,
+  context: EngineContext,
+  effects: RunEffect[],
+  passGateBefore: boolean,
+): Transition {
+  const decided = decideVisit(run, nextOf(workflow, move), reason);
+  const steps = decided.steps.map((entry, at): StepRun =>
+    move.by === 'rule' && at > move.from && at < move.to ? { ...entry, state: 'skipped' } : entry,
+  );
+  const next = { ...decided, steps };
+  const target = workflow.steps[move.to] as WorkflowStep;
+  const from = steps[move.from];
+  const starts = startsOf(steps[move.to]);
+  if (starts >= (workflow.maxStepVisits ?? context.maxStepVisits)) {
+    const detail = limitSentence(target.skillName, starts);
+    const waiting: StepRun = {
+      ...(steps[move.to] as StepRun),
+      state: 'waiting',
+      gate: { state: 'waitingAtLimit', parts: [], detail, since: context.now, at: context.now },
+    };
+    return {
+      run: {
+        ...changeVisit(next, (visit) => ({ ...visit, limit: detail })),
+        steps: replaceStep(steps, move.to, waiting),
+        currentStep: move.to,
+        state: 'waiting',
+      },
+      effects: [
+        ...effects,
+        ...fromThread(from, 'needs_you'),
+        { type: 'notify', runId: run.id, stepId: target.id, reason: 'waiting' },
+      ],
+    };
+  }
+  if (target.gateBefore && !passGateBefore) {
+    // The thread of the step the run came from is where the user sees that the run needs them.
+    return waitBefore(next, move.to, [...effects, ...fromThread(from, 'needs_you')]);
+  }
+  return begin(workflow, next, move, context, [...effects, ...fromThread(from, 'done')]);
 }
 
 // A gate that waits for its pull request's checks is looked at again: with what the host shows
@@ -357,49 +559,108 @@ function decideChecks(
     const waiting: StepRun = { ...current, gate: { ...gate, parts } };
     return { run: { ...run, steps: replaceStep(run.steps, index, waiting) }, effects: [] };
   }
+  // What a rule on checks can go by: only a read that showed every check successful or one
+  // failing decides it. A wait that ran out or a host that is not set up leaves it undecided.
+  const fact: NonNullable<StepFacts['checks']> =
+    checks.state === 'held'
+      ? 'successful'
+      : input.reading?.state === 'failure'
+        ? 'failed'
+        : 'undecided';
+  const read: StepRun = current.facts
+    ? { ...current, facts: { ...current.facts, checks: fact } }
+    : current;
+  if (gate.forRules) {
+    if (fact === 'undecided') {
+      // Spec 3: after the wait the run waits for the user and says so.
+      return waitForUser(run, index, {
+        ...current,
+        gate: { ...gate, state: 'waitingForUser', parts, at: context.now },
+      });
+    }
+    // The wait was for the rules only; what it found is in the facts and on the path.
+    const { gate: _waited, ...decided } = read;
+    return route(workflow, run, index, { ...decided, state: 'done' }, context, false);
+  }
   if (checks.state === 'failed') {
     return waitForUser(run, index, {
-      ...current,
+      ...read,
       gate: { ...gate, state: 'waitingForUser', parts, at: context.now },
     });
   }
-  return afterStep(
+  return route(
     workflow,
     run,
     index,
     {
-      ...current,
+      ...read,
       state: 'done',
       gate: { ...gate, state: 'passedByItself', parts, at: context.now },
     },
     context,
+    false,
   );
 }
 
-function failStep(run: WorkflowRun, stepId: string, error: string, context: EngineContext) {
-  const index = runningStepIndex(run, stepId);
+function failStep(
+  workflow: Workflow,
+  before: WorkflowRun,
+  input: Extract<RunInput, { type: 'stepFailed' }>,
+  context: EngineContext,
+): Transition {
+  const index = runningStepIndex(before, input.stepId);
+  const run = endVisit(before, 'failed', context.now);
   const current = run.steps[index] as StepRun;
-  const steps = replaceStep(run.steps, index, {
-    ...current,
-    state: 'failed',
-    endedAt: context.now,
-    error,
-  });
-  return {
-    run: { ...run, steps, state: 'failed', endedAt: context.now },
-    effects: [
-      ...threadState(current.threadId, 'failed'),
-      { type: 'notify', runId: run.id, stepId, reason: 'failed' },
-    ],
-  } satisfies Transition;
+  const step = workflow.steps[index] as WorkflowStep;
+  const failed: StepRun = { ...current, state: 'failed', endedAt: context.now, error: input.error };
+  delete failed.gate;
+  delete failed.facts;
+  const steps = replaceStep(run.steps, index, failed);
+  const marked = threadState(current.threadId, 'failed');
+  // Spec 5: a failed step follows its rule for that; a step the user stopped never does.
+  const rule = input.stopped ? undefined : failedRule(followable(workflow, step));
+  if (!rule) {
+    return {
+      run: {
+        ...decideVisit({ ...run, steps }, null, 'step failed'),
+        state: 'failed',
+        endedAt: context.now,
+      },
+      effects: [
+        ...marked,
+        { type: 'notify', runId: run.id, stepId: input.stepId, reason: 'failed' },
+      ],
+    };
+  }
+  const reason = `${ruleConditionText(rule.when)} → ${targetName(workflow, rule)}`;
+  if (rule.goTo.type === 'end') {
+    return finish(
+      { ...run, steps },
+      { to: rule.goTo, by: 'rule', when: rule.when },
+      reason,
+      context,
+      marked,
+    );
+  }
+  const to = stepIndexOf(workflow, rule.goTo.stepId);
+  return moveTo(
+    workflow,
+    { ...run, steps },
+    { from: index, to, by: 'rule', when: rule.when },
+    reason,
+    context,
+    marked,
+    false,
+  );
 }
 
 // The run fails at the step it is on, whether that step waits at its gate or was about to get
 // its prompt. Setup is over before any turn starts, so there is nothing to interrupt.
-function failSetup(run: WorkflowRun, error: string, context: EngineContext): Transition {
-  if (run.state !== 'running' && run.state !== 'waiting') {
-    throw new RunRejected(`Run ${run.id} is already ${run.state}`);
+function failSetup(before: WorkflowRun, error: string, context: EngineContext): Transition {
+  if (before.state !== 'running' && before.state !== 'waiting') {
+    throw new RunRejected(`Run ${before.id} is already ${before.state}`);
   }
+  const run = endVisit(before, 'failed', context.now);
   const current = run.steps[run.currentStep] as StepRun;
   const steps = replaceStep(run.steps, run.currentStep, {
     ...current,
@@ -422,24 +683,44 @@ function continueRun(workflow: Workflow, run: WorkflowRun, context: EngineContex
   const current = run.steps[gate.stepIndex] as StepRun;
 
   if (gate.position === 'after') {
-    const steps = replaceStep(run.steps, gate.stepIndex, {
+    // Approving while the checks are still undecided (or after the wait for them ran out) is
+    // the user's answer to them: no rule on checks holds, and they are not waited for again.
+    const checksLeft =
+      current.facts !== undefined &&
+      current.facts.checks === undefined &&
+      (current.gate?.state === 'waitingForChecks' || current.gate?.forRules === true);
+    const done: StepRun = {
       ...current,
       state: 'done',
       // A gate with a condition records that the user passed it.
       ...(current.gate
         ? { gate: { ...current.gate, state: 'passedByUser' as const, at: context.now } }
         : {}),
-    });
-    const released = threadState(current.threadId, 'done');
-    const nextIndex = gate.stepIndex + 1;
-    if (nextIndex >= workflow.steps.length) {
-      return finish({ ...run, steps }, 'done', context, released);
-    }
-    return beginStep(workflow, { ...run, steps }, nextIndex, context, released);
+      ...(current.facts && checksLeft
+        ? { facts: { ...current.facts, checks: 'undecided' as const } }
+        : {}),
+    };
+    return route(workflow, run, gate.stepIndex, done, context, true);
   }
 
-  const previous = run.steps[gate.stepIndex - 1];
-  return beginStep(workflow, run, gate.stepIndex, context, threadState(previous?.threadId, 'done'));
+  // Before a step: its own gate before, or the limit (Approve lets it run once more).
+  const came = cameFrom(run, gate.stepIndex);
+  return begin(
+    workflow,
+    run,
+    { from: came?.index, to: gate.stepIndex, by: came?.next.by ?? 'list', when: came?.next.when },
+    context,
+    fromThread(came ? run.steps[came.index] : undefined, 'done'),
+  );
+}
+
+// A step the run waited before does not start after all: one that ran in an earlier pass goes
+// back to how that pass left it.
+function backToRest(entry: StepRun): StepRun {
+  if (!entry.threadId) return { ...entry, state: 'not_started' };
+  const rested: StepRun = { ...entry, state: entry.error === undefined ? 'done' : 'failed' };
+  if (rested.gate?.state === 'waitingAtLimit') delete rested.gate;
+  return rested;
 }
 
 function sendBack(
@@ -468,10 +749,12 @@ function sendBack(
   const rerun: StepRun = { ...reviewed, state: 'running', startedAt: context.now, attempt };
   delete rerun.endedAt;
   delete rerun.gate;
+  delete rerun.facts;
+  delete rerun.error;
   const steps = run.steps.map((entry, at): StepRun => {
     if (at === index) return rerun;
-    // A step that waited before its gate goes back to not started while the one before reruns.
-    if (at === gate.stepIndex) return { ...entry, state: 'not_started' };
+    // A step that waited before its gate goes back to rest while the one before reruns.
+    if (at === gate.stepIndex) return backToRest(entry);
     return entry;
   });
   const rendered = renderSendBack(context.sendBackTemplate, {
@@ -481,8 +764,18 @@ function sendBack(
   });
   // A template emptied in the settings still sends what the reviewer wrote.
   const prompt = rendered === '' ? text : rendered;
+  const sent = decideVisit(
+    run,
+    { to: { type: 'step', stepId: step.id }, by: 'user' },
+    'you sent it back',
+  );
   return {
-    run: { ...run, steps, currentStep: index, state: 'running' },
+    run: {
+      ...startVisit(sent, step.id, attempt, context.now),
+      steps,
+      currentStep: index,
+      state: 'running',
+    },
     effects: [{ type: 'sendBack', runId: run.id, stepId: step.id, threadId, attempt, prompt }],
   };
 }
@@ -492,6 +785,7 @@ function stopRun(run: WorkflowRun, context: EngineContext): Transition {
     throw new RunRejected(`Run ${run.id} is already ${run.state}`);
   }
   const effects: RunEffect[] = [];
+  const gate = pendingGate(run);
   // The threads are kept (behavior 13); a running turn is interrupted and its step marked failed.
   const steps = run.steps.map((step): StepRun => {
     if (step.state === 'running') {
@@ -500,21 +794,26 @@ function stopRun(run: WorkflowRun, context: EngineContext): Transition {
       return { ...step, state: 'failed', endedAt: context.now, error: 'Stopped' };
     }
     if (step.state === 'waiting') {
-      if (step.endedAt) {
+      if (gate?.position === 'after') {
         effects.push(...threadState(step.threadId, 'done'));
         // A gate nobody passed leaves no record of how it was passed.
         const { gate: _unanswered, ...ended } = step;
         return { ...ended, state: 'done' };
       }
-      return { ...step, state: 'not_started' };
+      return backToRest(step);
     }
     return step;
   });
-  const gate = pendingGate(run);
   if (gate?.position === 'before') {
-    effects.push(...threadState(run.steps[gate.stepIndex - 1]?.threadId, 'done'));
+    const came = cameFrom(run, gate.stepIndex);
+    effects.push(...fromThread(came ? run.steps[came.index] : undefined, 'done'));
   }
-  return { run: { ...run, steps, state: 'stopped', endedAt: context.now }, effects };
+  const stopped = changeVisit(run, (visit) => ({
+    ...visit,
+    ...(visit.ended === null ? { ended: 'stopped' as const, endedAt: context.now } : {}),
+    reason: visit.reason ?? 'you stopped the run',
+  }));
+  return { run: { ...stopped, steps, state: 'stopped', endedAt: context.now }, effects };
 }
 
 // The first base stands: a run has one starting point, whatever is reported later.
@@ -543,26 +842,81 @@ function recordArtifacts(
   return { run: { ...run, steps }, effects: [] };
 }
 
-function beginStep(
+// The step starts. The first time it gets its own thread and the step prompt. A step that has
+// run before in this run runs again in the thread it has (spec 7, 8), as its next attempt: with
+// `workflows.goBackTemplate` when a rule sent the run back to it, else with the step prompt.
+function begin(
   workflow: Workflow,
   run: WorkflowRun,
-  index: number,
+  move: Move,
   context: EngineContext,
   effects: RunEffect[],
 ): Transition {
+  const index = move.to;
   const step = workflow.steps[index] as WorkflowStep;
-  const threadId = stepThreadId(run.id, step.id);
-  const prompt = renderStepPrompt(workflow, run, index, context);
-  const steps = replaceStep(run.steps, index, {
-    stepId: step.id,
-    state: 'running',
-    threadId,
-    startedAt: context.now,
-    artifactsFound: [],
-  });
+  const existing = run.steps[index] as StepRun;
+  const stepPromptText = () => renderStepPrompt(workflow, run, index, context, move.from);
+  if (!existing.threadId) {
+    const threadId = stepThreadId(run.id, step.id);
+    const steps = replaceStep(run.steps, index, {
+      stepId: step.id,
+      state: 'running',
+      threadId,
+      startedAt: context.now,
+      artifactsFound: [],
+    });
+    return {
+      run: {
+        ...startVisit(run, step.id, 1, context.now),
+        steps,
+        currentStep: index,
+        state: 'running',
+      },
+      effects: [
+        ...effects,
+        { type: 'startStep', runId: run.id, stepId: step.id, threadId, prompt: stepPromptText() },
+      ],
+    };
+  }
+  const attempt = startsOf(existing) + 1;
+  // The last result stays on the step until the new turn ends and replaces it.
+  const rerun: StepRun = { ...existing, state: 'running', startedAt: context.now, attempt };
+  delete rerun.endedAt;
+  delete rerun.gate;
+  delete rerun.facts;
+  delete rerun.error;
+  const from = move.from === undefined ? undefined : run.steps[move.from];
+  const fromStep = move.from === undefined ? undefined : workflow.steps[move.from];
+  const wentBack =
+    move.by === 'rule' && move.from !== undefined && move.to <= move.from && from && fromStep
+      ? renderGoBack(context.goBackTemplate, {
+          fromStep: fromStep.skillName,
+          reason: move.when ? ruleConditionText(move.when) : '',
+          message: (from.state === 'failed' ? from.error : from.finalMessage) ?? '',
+          skill: step.skillName,
+          attempt: String(attempt),
+        })
+      : '';
+  // A template emptied in the settings still tells the step what the run came with.
+  const prompt = wentBack === '' ? stepPromptText() : wentBack;
   return {
-    run: { ...run, steps, currentStep: index, state: 'running' },
-    effects: [...effects, { type: 'startStep', runId: run.id, stepId: step.id, threadId, prompt }],
+    run: {
+      ...startVisit(run, step.id, attempt, context.now),
+      steps: replaceStep(run.steps, index, rerun),
+      currentStep: index,
+      state: 'running',
+    },
+    effects: [
+      ...effects,
+      {
+        type: 'sendBack',
+        runId: run.id,
+        stepId: step.id,
+        threadId: existing.threadId,
+        attempt,
+        prompt,
+      },
+    ],
   };
 }
 
@@ -580,29 +934,70 @@ function waitBefore(run: WorkflowRun, index: number, effects: RunEffect[]): Tran
 
 function finish(
   run: WorkflowRun,
-  state: 'done',
+  next: PathNext,
+  reason: string,
   context: EngineContext,
   effects: RunEffect[],
 ): Transition {
+  const from = run.steps[run.currentStep];
   return {
-    run: { ...run, state, endedAt: context.now },
-    effects: [...effects, { type: 'notify', runId: run.id, stepId: null, reason: state }],
+    run: { ...decideVisit(run, next, reason), state: 'done', endedAt: context.now },
+    effects: [
+      ...effects,
+      ...fromThread(from, 'done'),
+      { type: 'notify', runId: run.id, stepId: null, reason: 'done' },
+    ],
   };
 }
 
+// The path is kept for runs that have one. A run from before paths were kept goes on without.
+function changeVisit(run: WorkflowRun, change: (visit: PathVisit) => PathVisit): WorkflowRun {
+  const last = lastVisit(run.path);
+  if (!run.path || !last) return run;
+  return { ...run, path: [...run.path.slice(0, -1), change(last)] };
+}
+
+function startVisit(run: WorkflowRun, stepId: string, attempt: number, now: string): WorkflowRun {
+  if (!run.path) return run;
+  const visit: PathVisit = {
+    stepId,
+    attempt,
+    startedAt: now,
+    endedAt: null,
+    ended: null,
+    next: null,
+    reason: null,
+  };
+  return { ...run, path: [...run.path, visit] };
+}
+
+const endVisit = (run: WorkflowRun, ended: NonNullable<PathVisit['ended']>, now: string) =>
+  changeVisit(run, (visit) => (visit.ended === null ? { ...visit, ended, endedAt: now } : visit));
+
+const decideVisit = (run: WorkflowRun, next: PathNext | null, reason: string): WorkflowRun =>
+  changeVisit(run, (visit) => {
+    const { limit: _waited, ...rest } = visit;
+    return { ...rest, next, reason };
+  });
+
+// The prompt of a step that starts in a thread of its own. `fromIndex` is the step the run came
+// from: the one before in the list unless a rule sent the run here.
 export function renderStepPrompt(
   workflow: Workflow,
   run: WorkflowRun,
   index: number,
   context: EngineContext,
+  fromIndex: number | undefined = index - 1,
 ): string {
   const step = workflow.steps[index] as WorkflowStep;
-  const previousStep = index > 0 ? workflow.steps[index - 1] : undefined;
-  const previousRun = index > 0 ? run.steps[index - 1] : undefined;
+  const previousStep = fromIndex >= 0 ? workflow.steps[fromIndex] : undefined;
+  const previousRun = fromIndex >= 0 ? run.steps[fromIndex] : undefined;
+  const failed = previousRun?.state === 'failed';
   const earlierArtifacts = run.steps.slice(0, index).flatMap((entry) => entry.artifactsFound);
   const handover = renderHandover(context.handoverTemplate, {
     previousStep: previousStep?.skillName ?? '',
-    previousMessage: previousRun?.finalMessage ?? '',
+    previousMessage: failed ? '' : (previousRun?.finalMessage ?? ''),
+    previousError: failed ? (previousRun.error ?? '') : '',
     backlogBody: context.backlogBody ?? '',
     previousArtifacts: bulletList([...new Set(earlierArtifacts)]),
     expectedArtifacts: bulletList(step.expectedArtifacts),

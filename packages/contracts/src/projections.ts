@@ -10,7 +10,14 @@ import {
   ThreadState,
 } from './provider.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
-import { FileHash, StepRun, WorkflowRunState, WorkflowStep, WorkingCopy } from './workflow.js';
+import {
+  FileHash,
+  PathVisit,
+  StepRun,
+  WorkflowRunState,
+  WorkflowStep,
+  WorkingCopy,
+} from './workflow.js';
 
 // Row shapes of the projection tables in docs/architecture.md, as clients receive them through
 // subscriptions. Absent optional columns arrive as null, because that is what SQLite stores.
@@ -306,6 +313,9 @@ export const Workflow = z.object({
   // "For units": a plan run may run this workflow once per unit of a plan (review loop spec 40).
   // Absent means off.
   forUnits: z.boolean().optional(),
+  // How often one step may start in a run before the run waits for the user (workflow branches
+  // spec 9). Absent or null: the `workflows.maxStepVisits` setting.
+  maxStepVisits: z.number().int().min(1).max(50).nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -375,6 +385,9 @@ export const WorkflowRun = z.object({
   unit: RunUnit.nullable().optional(),
   // Absent or null for a run no event trigger started.
   event: RunEvent.nullable().optional(),
+  // Every step visit in the order it happened, with why the run went where it went next
+  // (workflow branches spec 18). Absent or null for a run from before paths were kept.
+  path: z.array(PathVisit).nullable().optional(),
 });
 export type WorkflowRun = z.infer<typeof WorkflowRun>;
 

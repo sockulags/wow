@@ -1,4 +1,5 @@
 import {
+  defaultGoBackTemplate,
   defaultHandoverTemplate,
   defaultSendBackTemplate,
   defaultUnitPromptTemplate,
@@ -52,6 +53,10 @@ const context = (overrides: Partial<EngineContext> = {}): EngineContext => ({
   sendBackTemplate: defaultSendBackTemplate,
   unitPromptTemplate: defaultUnitPromptTemplate,
   verdictApprovedLine: 'APPROVED',
+  verdictChangesRequestedLine: 'CHANGES_REQUESTED',
+  verdictBlockedLine: 'BLOCKED',
+  goBackTemplate: defaultGoBackTemplate,
+  maxStepVisits: 3,
   alwaysStopSkills: [],
   gateChecksTimeoutMinutes: 30,
   invocationFor: (s) => `/${s.skillName}`,

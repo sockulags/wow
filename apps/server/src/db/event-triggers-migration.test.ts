@@ -156,8 +156,14 @@ describe('migration 0011_event_triggers', () => {
       'offer_run_now',
     ]);
     old.prepare('attach database ? as today').run(path.join(today, databaseFileName));
+    // Only the columns the previous schema has: today's tables have gained some since.
     for (const table of ['projects', 'provider_instances', 'workflows', 'calendar_items']) {
-      old.exec(`insert into ${table} select * from today.${table}`);
+      const had = (
+        old.prepare(`select name from pragma_table_info('${table}')`).all() as { name: string }[]
+      )
+        .map((column) => `"${column.name}"`)
+        .join(', ');
+      old.exec(`insert into ${table} (${had}) select ${had} from today.${table}`);
     }
     old.exec(
       `insert into triggers (${columns.join(', ')}) select ${columns.join(', ')} from today.triggers`,

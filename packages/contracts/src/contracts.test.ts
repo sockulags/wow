@@ -21,7 +21,12 @@ import {
   ProviderEvent,
   RpcResponse,
   ServerMessage,
+  PathVisit,
+  StepGate,
   StepRun,
+  StepRunState,
+  ruleConditionText,
+  ruleProblems,
   WorkflowStep,
   alwaysStopSkillDefaults,
   alwaysStops,
@@ -522,5 +527,115 @@ describe('gate conditions (review loop spec 54 to 57)', () => {
     const check = { type: 'workflowRun.checkGate', runId: 'r1', stepId: 'check' };
     expect(InternalCommand.safeParse(check).success).toBe(true);
     expect(Command.safeParse(check).success).toBe(false);
+  });
+});
+
+const reviewStep = {
+  id: 'review',
+  skillName: 'check-work',
+  providerInstanceId: 'claude-work',
+  gateBefore: false,
+  gateAfter: false,
+  expectedArtifacts: [],
+};
+const toBuild = { type: 'step' as const, stepId: 'build' };
+const withRule = (when: unknown) =>
+  WorkflowStep.safeParse({ ...reviewStep, rules: [{ when, goTo: toBuild }] });
+
+describe('rules on a step (workflow branches spec 1 to 18)', () => {
+  it('takes a step with rules and still takes one without', () => {
+    expect(WorkflowStep.safeParse(reviewStep).success).toBe(true);
+    const rules = [
+      { when: { fact: 'verdict', is: 'changesRequested' }, goTo: toBuild },
+      { when: { fact: 'checks', is: 'failed' }, goTo: toBuild },
+      { when: { fact: 'artifacts', is: 'missing' }, goTo: { type: 'end' } },
+      { when: { fact: 'stepFailed' }, goTo: { type: 'end' } },
+    ];
+    expect(WorkflowStep.safeParse({ ...reviewStep, rules }).success).toBe(true);
+  });
+
+  it('refuses a fact or value wow does not read', () => {
+    expect(withRule({ fact: 'changeSize', is: 'large' }).success).toBe(false);
+    expect(withRule({ fact: 'verdict', is: 'maybe' }).success).toBe(false);
+    expect(withRule({ fact: 'checks', is: 'undecided' }).success).toBe(false);
+  });
+
+  it('names what is wrong with rules: a missing step, no expected artifacts, one condition twice', () => {
+    const step = WorkflowStep.parse({
+      ...reviewStep,
+      rules: [
+        {
+          when: { fact: 'verdict', is: 'changesRequested' },
+          goTo: { type: 'step', stepId: 'gone' },
+        },
+        { when: { fact: 'artifacts', is: 'missing' }, goTo: { type: 'end' } },
+        { when: { fact: 'verdict', is: 'changesRequested' }, goTo: { type: 'end' } },
+      ],
+    });
+    expect(ruleProblems([step])).toEqual([
+      {
+        stepId: 'review',
+        rule: 0,
+        reason: 'The rule "verdict changes requested" goes to a step that no longer exists',
+      },
+      {
+        stepId: 'review',
+        rule: 1,
+        reason: 'The rule "artifacts missing" needs expected artifacts, and this step names none',
+      },
+      {
+        stepId: 'review',
+        rule: 2,
+        reason: 'The step already has a rule for "verdict changes requested"',
+      },
+    ]);
+    expect(ruleProblems([WorkflowStep.parse(reviewStep)])).toEqual([]);
+  });
+
+  it('says a condition in words', () => {
+    expect(ruleConditionText({ fact: 'verdict', is: 'none' })).toBe('no verdict');
+    expect(ruleConditionText({ fact: 'checks', is: 'successful' })).toBe('checks successful');
+    expect(ruleConditionText({ fact: 'stepFailed' })).toBe('step failed');
+  });
+
+  it('has skipped as a step state, the limit as a gate state and a path on a run', () => {
+    expect(StepRunState.safeParse('skipped').success).toBe(true);
+    const at = '2026-11-03T09:00:00.000Z';
+    expect(
+      StepGate.safeParse({
+        state: 'waitingAtLimit',
+        parts: [],
+        detail: 'deliver-work has run 3 times: the limit',
+        since: at,
+        at,
+      }).success,
+    ).toBe(true);
+    expect(
+      PathVisit.safeParse({
+        stepId: 'review',
+        attempt: 2,
+        startedAt: at,
+        endedAt: at,
+        ended: 'done',
+        next: { to: toBuild, by: 'rule', when: { fact: 'verdict', is: 'changesRequested' } },
+        reason: 'verdict changes requested → deliver-work',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('takes a limit of its own on a workflow, and null to take it away', () => {
+    const update = { type: 'workflow.update', workflowId: 'w' };
+    expect(Command.safeParse({ ...update, maxStepVisits: 2 }).success).toBe(true);
+    expect(Command.safeParse({ ...update, maxStepVisits: null }).success).toBe(true);
+    expect(Command.safeParse({ ...update, maxStepVisits: 0 }).success).toBe(false);
+  });
+
+  it('registers the settings rules use, with their defaults', () => {
+    expect(settingsRegistry['workflows.maxStepVisits'].default).toBe(3);
+    expect(settingsRegistry['workflows.verdictChangesRequestedLine'].default).toBe(
+      'CHANGES_REQUESTED',
+    );
+    expect(settingsRegistry['workflows.verdictBlockedLine'].default).toBe('BLOCKED');
+    expect(settingsRegistry['workflows.goBackTemplate'].default).toContain('{{fromStep}}');
   });
 });

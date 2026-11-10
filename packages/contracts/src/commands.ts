@@ -192,6 +192,7 @@ export const Command = z.discriminatedUnion('type', [
     steps: WorkflowSteps,
     ownWorkingCopy: z.boolean().optional(),
     forUnits: z.boolean().optional(),
+    maxStepVisits: Workflow.shape.maxStepVisits,
   }),
   z.object({
     type: z.literal('workflow.update'),
@@ -201,6 +202,8 @@ export const Command = z.discriminatedUnion('type', [
     steps: WorkflowSteps.optional(),
     ownWorkingCopy: z.boolean().optional(),
     forUnits: z.boolean().optional(),
+    // Null takes the workflow's own number away, so the setting applies again.
+    maxStepVisits: Workflow.shape.maxStepVisits,
   }),
   z.object({ type: z.literal('workflow.delete'), workflowId: Id }),
   // Undo of a delete: puts the row the client still holds back as it was.
@@ -414,6 +417,8 @@ export const InternalCommand = z.discriminatedUnion('type', [
     runId: Id,
     stepId: Id,
     error: z.string(),
+    // The user interrupted the step's turn. Such a step follows no rule.
+    stopped: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('workflowRun.artifactsFound'),
@@ -521,6 +526,7 @@ export const WorkflowChanges = Workflow.pick({
   steps: true,
   ownWorkingCopy: true,
   forUnits: true,
+  maxStepVisits: true,
 })
   .partial()
   .extend({ updatedAt: Workflow.shape.updatedAt });

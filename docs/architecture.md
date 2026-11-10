@@ -148,13 +148,16 @@ outlook_status   singleton: lastSyncAt, lastError?, unavailableSince?, unreadCou
                  profile(json: OutlookProfile)?
 backlog_items    id, title, body, tags(json), state, runId?, remote(json: service,key,url)?, createdAt
 workflows        id, name, templateKind?, steps(json: WorkflowStep[]), ownWorkingCopy, forUnits,
+                 maxStepVisits?,   -- the workflow's own limit on step starts
                  createdAt, updatedAt
 workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, state ('running'|
                  'waiting'|'done'|'failed'|'stopped'), currentStep, steps(json: StepRun[]),
                  startedAt, endedAt, baseSha?, baseFiles(json: FileHash[])?,
                  workingCopy(json: WorkingCopy)?,   -- null for a run in the project folder
                  unit(json: RunUnit)?,   -- the unit a plan run started the run for
-                 event(json: RunEvent)?   -- what started the run, when an event trigger did
+                 event(json: RunEvent)?,   -- what started the run, when an event trigger did
+                 path(json: PathVisit[])?   -- every step visit and why the run went on as it did;
+                                            -- null for a run from before paths were kept
 plan_runs        id, planId ('<projectId>:<intentId>'), projectId, intentId, workflowId, state
                  ('running'|'waiting'|'done'|'failed'|'stopped'), units(json: PlanRunUnit[]),
                  waitingFor(json: string[]), message?, startedAt, endedAt?
@@ -472,8 +475,11 @@ with prompt, notify, finish). The server performs them. The step prompt is:
 
 `workflows.handoverTemplate` is a setting (project scope). `{{name}}` is replaced and
 `{{#name}}…{{/name}}` is dropped when the value is empty; the values are `previousStep`,
-`previousMessage`, `backlogBody`, `previousArtifacts` (found by earlier steps) and
-`expectedArtifacts` (this step's globs). Artifact detection runs `fast-glob` with the step's
+`previousMessage`, `backlogBody`, `previousArtifacts` (found by earlier steps),
+`expectedArtifacts` (this step's globs) and `previousError` (the error of the step the run came
+from, when that step failed and a rule sent the run on; then `previousMessage` is empty). "The
+previous step" is the step the run came from: the one before in the list unless a rule sent
+the run here. Artifact detection runs `fast-glob` with the step's
 `expectedArtifacts` in the run's folder (`runFolder`: its own working copy when it has one, else
 the project `cwd`) when the step completes and on run view open
 (`workflowRuns.detectArtifacts`).
@@ -552,13 +558,93 @@ since a workflow belongs to no project) and a condition on a step without `gateA
 engine applies the list of the run's project again when the step ends and ignores the
 condition of such a step, so its gate waits for the user whatever was stored.
 
+Rules (workflow branches spec 1 to 13; `rules.ts` in the engine). A step's `rules` is an ordered
+list of `StepRule {when, goTo}`: `when` is a `RuleCondition` on one of four facts (`verdict` is
+`approved`, `changesRequested`, `blocked` or `none`; `checks` is `successful` or `failed`;
+`artifacts` is `found` or `missing`; `stepFailed`) and `goTo` is a step of the workflow or the
+end of the run. A step without rules behaves as it always did. wow reads the facts itself and no
+model is asked:
+
+- The facts are read when the step ends and kept on the step (`StepRun.facts`), because the
+  rules are followed only after the gate after the step has passed, by itself or by Approve,
+  which can be much later. `verdict` is the last non-empty line of the final message compared
+  with `workflows.verdictApprovedLine`, `workflows.verdictChangesRequestedLine` and
+  `workflows.verdictBlockedLine`, read exactly as the gate's verdict part reads it; anything
+  else is `none`. `artifacts` is `found` when every expected glob found a file. The runner
+  reports `artifactsMissing` and `headSha` when a condition or a rule asks for them
+  (`ruleAsksAbout`).
+- Once the gate has passed (or at once without a gate) `route` takes the first rule that holds.
+  None holds: the next step in the list, or the end after the last step. While a gate after the
+  step waits for the user no rule is followed, and Send back by hand works as before.
+- A rule on `checks` that is reached before any rule that holds needs a read of the pull
+  request's checks. A gate whose condition has the checks part has made it already
+  (`facts.checks`). Otherwise the step waits for checks exactly as such a gate does: `gate.state`
+  `waitingForChecks` with `gate.forRules`, the same host read, the same commit rule and the same
+  `workflowRun.checkGate` timer. A read that shows success or a failing check decides the fact
+  and the rules are followed; the record is then dropped. After
+  `workflows.gateChecksTimeoutMinutes` (or with a host that is not set up) the run waits for the
+  user and says so; Approve then, or while the checks are still waited for, leaves the fact
+  `undecided`, so no rule on checks holds and the checks are not waited for again.
+- `stepFailed`: when the step's turn fails and the step has such a rule, the step is `failed`
+  with its error, the run stays live and goes where the rule says, with no failure
+  notification. Without the rule the run fails as before. A step the user stopped never follows
+  it: Stop ends the run, and an interrupted turn arrives as `workflowRun.stepFailed {stopped}`.
+  A failed step has no gate; its rule is followed at once.
+
+Where a rule or the list goes (`moveTo`):
+
+- A later step: the steps a rule jumps over get the step state `skipped` for this pass; a later
+  pass can still run them.
+- A step that has not run in this run starts as always, in a new thread with the step prompt.
+- A step that has run before runs again in its own thread as its next attempt
+  (`StepRun.attempt`), through the same `sendBack` effect a send back by hand uses, so the
+  thread is never created twice and the turn starts in the commit of the run change. When a
+  rule sent the run back to it (the target is the step itself or an earlier one) the message is
+  `workflows.goBackTemplate` (project scope) rendered with `fromStep`, `reason` (the condition
+  in words, `ruleConditionText`), `message` (the sending step's final message, or its error),
+  `skill` and `attempt`. Reached again by the list, or with the template emptied, it gets the
+  step prompt with the handover of the step the run came from.
+- The limit (spec 9). A step that has started `workflows.maxStepVisits` times in the run (project
+  scope, default 3; `Workflow.maxStepVisits` wins when set) does not start again by a rule or
+  the list: the run waits at it with `gate.state` `waitingAtLimit` and `gate.detail` "<skill>
+  has run 3 times: the limit", the step it came from shows "needs you" and the waiting
+  notification is sent. Approve starts it once more (and the next time it waits again); Stop
+  ends the run and the step goes back to how its last pass left it. A send back by hand is the
+  user's own decision and is not held back by the limit, though it counts as a start.
+- A gate before the target waits as on its first visit (spec 10). Only a list move right after
+  the user approved the gate after the previous step passes it, as before.
+- When the thread of the step to run again is gone or still answering a message the user typed
+  there, an Approve or Send back is refused with the reason. When a rule or the list got there
+  with nobody asking, that step fails with the reason and so does the run, instead of staying
+  "running" without a turn.
+
+The path (spec 18). `WorkflowRun.path` is a list of `PathVisit {stepId, attempt, startedAt,
+endedAt, ended, next, reason, limit?}`: one entry per start of a step, in the order it happened.
+`ended` is `done`, `failed` or `stopped`; `next` is where the run went and who decided (`by`
+`rule` with its `when`, `list`, or `user` for a send back by hand); `reason` is that in words
+("verdict changes requested → deliver-work", "no rule held → next step", "you sent it back");
+`limit` holds the limit sentence when the run waited there. `StepRun` stays one row per step
+with its attempt count, so everything that reads steps by position still works. A step that
+ran in an earlier pass keeps its last result while the run waits before it, so
+`pendingGate(run)` uses the path to tell "after" from "before": the run waits after a step when
+that step's visit is the last one and nothing has decided where the run goes next. Runs from
+before this change have no path, never get one, and only run workflows without rules (steps
+cannot change under a live run), so they continue as they always did.
+
+`workflow.create`, `workflow.update` and `workflow.restore` refuse rules that cannot be followed
+(spec 16), from `ruleProblems(steps)` in `packages/contracts`, which the builder can use for
+the same marks: a rule that goes to a step the workflow does not have, a rule on artifacts for
+a step without expected artifacts, and a second rule with a condition the step already has. The
+reason names the step and the rule ("Step check-work, rule 2: …"). `workflow.create` and
+`workflow.update` take `maxStepVisits` (null in an update takes the workflow's own number away).
+
 Commands: `workflow.create|update|delete`, `workflowRun.start|continue|sendBack|stop` and
 `planRun.start|stop` (see "Plan runs") from clients, and
 `skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded|checkGate` and
 `workflowRun.workingCopyReady|workingCopyFailed|workingCopySettled` as `InternalCommand`s from
 the server. The orchestrator calls `startRun`/`advance` and stores one `workflowRun.changed` event
 (the run plus the effects to perform), an idle `thread.created` with `runId` and `stepId` for each
-started step (model, effort and permission mode from the step, then the provider instance
+step started for the first time (model, effort and permission mode from the step, then the provider instance
 defaults) and `thread.stateChanged` for gates. Step changes and deletes are refused while a run of
 the workflow is live, because a run follows its steps by position. Thread ids are
 `<runId>.<stepId>`. The step's invocation comes from the skills projection, matched by name
@@ -894,7 +980,10 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - workflows: `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`,
   `workflows.unitPromptTemplate`, `workflows.planRunOnFailure` (the last two are project-scoped,
   see "Plan runs"), `workflows.verdictApprovedLine`, `workflows.alwaysStopSkills`,
-  `workflows.gateChecksTimeoutMinutes` (project-scoped, see "Gates that pass by themselves")
+  `workflows.gateChecksTimeoutMinutes` (project-scoped, see "Gates that pass by themselves"),
+  `workflows.verdictChangesRequestedLine`, `workflows.verdictBlockedLine`,
+  `workflows.goBackTemplate`, `workflows.maxStepVisits` (project-scoped, see "Rules" under
+  "Workflow engine")
 - skills: `skills.directories`, `skills.includeClaudePlugins`
 - plans: `plans.intentsDirectory` (project-scoped), `plans.writeSettleMs` (see "Plans")
 - trackers: `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),

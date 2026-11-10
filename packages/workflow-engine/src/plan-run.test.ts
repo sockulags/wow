@@ -1,4 +1,5 @@
 import {
+  defaultGoBackTemplate,
   defaultHandoverTemplate,
   defaultSendBackTemplate,
   defaultUnitPromptTemplate,
@@ -365,6 +366,10 @@ describe('the unit in the step prompt (spec 40)', () => {
     sendBackTemplate: defaultSendBackTemplate,
     unitPromptTemplate: defaultUnitPromptTemplate,
     verdictApprovedLine: 'APPROVED',
+    verdictChangesRequestedLine: 'CHANGES_REQUESTED',
+    verdictBlockedLine: 'BLOCKED',
+    goBackTemplate: defaultGoBackTemplate,
+    maxStepVisits: 3,
     alwaysStopSkills: [],
     gateChecksTimeoutMinutes: 30,
     invocationFor: (s: { skillName: string }) => `/${s.skillName}`,

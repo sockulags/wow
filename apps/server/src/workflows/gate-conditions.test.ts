@@ -2,6 +2,7 @@ import {
   type AppNotification,
   type ProviderInstance,
   type ServerCommand,
+  type StepRule,
   type WorkflowRun,
   type WorkflowStep,
 } from '@wow/contracts';
@@ -12,7 +13,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CommandRejected } from '../core/orchestrator.js';
-import { notifications, providerInstances, workflowRuns } from '../db/schema.js';
+import {
+  notifications,
+  providerInstances,
+  threads,
+  workflowRuns,
+  workflows,
+} from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { MockGitHub, type MockCheckRun, type MockPullRequest } from '../hosts/mock-github.js';
 import { startServer, type RunningServer } from '../server.js';
@@ -221,6 +228,10 @@ beforeEach(async () => {
             const { threadId, prompt } = command;
             prompts.push(prompt);
             const skill = Object.keys(answers).find((name) => prompt.startsWith(`/${name}`));
+            // A message the test sends beside the run and that is never answered.
+            if (prompt === 'hang') return [];
+            const failure = /^fails: (.*)$/.exec(answers[skill ?? ''] ?? '');
+            if (failure) return [{ type: 'turnFailed', threadId, error: failure[1] ?? '' }];
             return [
               {
                 type: 'textDelta',
@@ -585,5 +596,306 @@ describe('skills that always stop (spec 57)', () => {
     await start();
     expect(run().state).toBe('waiting');
     expect(gate()).toBeUndefined();
+  });
+});
+
+// Workflow branches spec 1 to 17 on the server: rules followed through the runner, the wait for
+// checks a rule asks for, what saving refuses, and a run from before paths were kept.
+const goTo = (when: StepRule['when'], stepId: string): StepRule => ({
+  when,
+  goTo: { type: 'step', stepId },
+});
+const changesRequested: StepRule['when'] = { fact: 'verdict', is: 'changesRequested' };
+const checksFailed: StepRule['when'] = { fact: 'checks', is: 'failed' };
+const createRules = (steps: WorkflowStep[], maxStepVisits?: number) =>
+  dispatch({
+    type: 'workflow.create',
+    workflowId: 'review',
+    name: 'Build and review',
+    steps,
+    ...(maxStepVisits === undefined ? {} : { maxStepVisits }),
+  });
+const states = () => run().steps.map((entry) => entry.state);
+const visits = () =>
+  (run().path ?? []).map((visit) => `${visit.stepId}#${visit.attempt}: ${visit.reason}`);
+const skills = () => prompts.map((prompt) => prompt.split(/\s/)[0]);
+
+const storedLimit = () =>
+  db()
+    .select()
+    .from(workflows)
+    .all()
+    .find((row) => row.id === 'review')?.maxStepVisits;
+
+describe('rules on a step (workflow branches)', () => {
+  it('sends the work back to build until the limit, then waits for the user, in two threads', async () => {
+    answers = { build: 'Built.', 'check-work': 'Still rings twice.\n\nCHANGES_REQUESTED' };
+    createRules([
+      step('build'),
+      step('check-work', { rules: [goTo(changesRequested, 'build')] }),
+      step('wrap'),
+    ]);
+    await start();
+
+    expect(run()).toMatchObject({ state: 'waiting', currentStep: 0 });
+    expect(run().steps[0]).toMatchObject({
+      state: 'waiting',
+      attempt: 3,
+      gate: { state: 'waitingAtLimit', detail: 'build has run 3 times: the limit' },
+    });
+    expect(run().steps[1]).toMatchObject({ state: 'done', attempt: 3 });
+    // Each step ran three times in its one thread.
+    expect(
+      db()
+        .select()
+        .from(threads)
+        .all()
+        .map((thread) => thread.id)
+        .toSorted(),
+    ).toEqual(['r1.build', 'r1.check-work']);
+    expect(prompts).toHaveLength(6);
+    expect(prompts[2]).toBe(
+      [
+        'The step check-work sent the work back to this step: verdict changes requested.',
+        '',
+        'What check-work ended with:',
+        '',
+        'Still rings twice.',
+        '',
+        'CHANGES_REQUESTED',
+        '',
+        'Do the step (build) again in this conversation with that taken into account, and end with your result as before.',
+      ].join('\n'),
+    );
+    expect(prompts[3]).toBe('/check-work\n\nThe previous step (build) ended with:\n\nDone');
+    expect(waitingNotices()).toHaveLength(1);
+    expect(visits().at(-1)).toBe('check-work#3: verdict changes requested → build');
+    expect(run().path?.at(-1)?.limit).toBe('build has run 3 times: the limit');
+
+    // Approve lets build run once more; the review approves this time and the run finishes.
+    answers['check-work'] = 'One ring.\n\nAPPROVED';
+    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
+    await settle();
+    expect(run()).toMatchObject({ state: 'waiting', currentStep: 1 });
+    expect(run().steps[1]?.gate?.detail).toBe('check-work has run 3 times: the limit');
+    expect(waitingNotices()).toHaveLength(2);
+    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
+    await settle();
+    expect(run().state).toBe('done');
+    expect(states()).toEqual(['done', 'done', 'done']);
+    expect(skills().at(-1)).toBe('/wrap');
+  });
+
+  it("stops at the workflow's own limit, and Stop ends the run there", async () => {
+    answers = { build: 'Built.', 'check-work': 'CHANGES_REQUESTED' };
+    createRules(
+      [step('build'), step('check-work', { rules: [goTo(changesRequested, 'build')] })],
+      1,
+    );
+    await start();
+    expect(run().steps[0]?.gate?.detail).toBe('build has run 1 time: the limit');
+    expect(prompts).toHaveLength(2);
+    dispatch({ type: 'workflowRun.stop', runId: 'r1' });
+    await settle();
+    expect(run().state).toBe('stopped');
+    expect(states()).toEqual(['done', 'done']);
+  });
+
+  it('waits for checks a rule asks about and follows the "failed" rule when a read shows a failure', async () => {
+    host.pulls = [checks(going('test'))];
+    createRules([
+      step('check-work', { rules: [goTo(checksFailed, 'fix')] }),
+      step('wrap'),
+      step('fix'),
+    ]);
+    await start();
+    expect(run().state).toBe('waiting');
+    expect(gate()).toMatchObject({
+      state: 'waitingForChecks',
+      forRules: true,
+      parts: [{ part: 'checks', state: 'pending' }],
+    });
+    expect(waitingNotices()).toEqual([]);
+
+    host.pulls = [checks(failed('test'))];
+    await poll();
+    expect(run().state).toBe('done');
+    expect(states()).toEqual(['done', 'skipped', 'done']);
+    expect(skills()).toEqual(['/check-work', '/fix']);
+    expect(run().steps[0]?.facts?.checks).toBe('failed');
+    expect(visits()[0]).toBe('check-work#1: checks failed → fix');
+  });
+
+  it('does not take a failure of another commit as the answer to a rule on checks', async () => {
+    host.pulls = [{ ...checks(failed('test')), sha: 'a1a1a1a' }];
+    createRules([
+      step('check-work', { rules: [goTo(checksFailed, 'fix')] }),
+      step('wrap'),
+      step('fix'),
+    ]);
+    await start();
+    expect(gate()?.state).toBe('waitingForChecks');
+    host.pulls = [checks(passed('test'))];
+    await poll();
+    expect(skills()).toEqual(['/check-work', '/wrap', '/fix']);
+    expect(visits()[0]).toBe('check-work#1: no rule held → next step');
+  });
+
+  it('waits for the user after the wait for checks ran out, and Approve then follows the list', async () => {
+    host.pulls = [checks(going('test'))];
+    createRules([
+      step('check-work', { rules: [goTo(checksFailed, 'fix')] }),
+      step('wrap'),
+      step('fix'),
+    ]);
+    await start();
+    const timer = timers.findLast((entry) => entry.delayMs === 30 * 60_000);
+    expect(timer).toBeDefined();
+    minutes(30);
+    timer?.callback();
+    await settle();
+    expect(run().state).toBe('waiting');
+    expect(gate()?.state).toBe('waitingForUser');
+    expect(gate()?.parts[0]?.detail).toContain('Checks were not successful within 30 minutes');
+    expect(waitingNotices()).toHaveLength(1);
+
+    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
+    await settle();
+    expect(skills()).toEqual(['/check-work', '/wrap', '/fix']);
+    expect(run().steps[0]?.facts?.checks).toBe('undecided');
+  });
+
+  it('follows a rule on artifacts with what the runner found per glob', async () => {
+    createRules([
+      step('check-work', {
+        expectedArtifacts: ['docs/*.md', 'readme.md'],
+        rules: [{ when: { fact: 'artifacts', is: 'missing' }, goTo: { type: 'end' } }],
+      }),
+      step('wrap'),
+    ]);
+    await start();
+    expect(run().state).toBe('done');
+    expect(states()).toEqual(['done', 'not_started']);
+    expect(visits()).toEqual(['check-work#1: artifacts missing → End']);
+  });
+
+  it("starts the step a failed turn's rule names, with the error in its handover", async () => {
+    answers = { build: 'fails: out of tea', diagnose: 'It was the kettle.' };
+    createRules([
+      step('build', { rules: [goTo({ fact: 'stepFailed' }, 'diagnose')] }),
+      step('diagnose'),
+    ]);
+    await start();
+    expect(run().state).toBe('done');
+    expect(states()).toEqual(['failed', 'done']);
+    expect(prompts[1]).toBe('/diagnose\n\nThe previous step (build) failed with:\n\nout of tea');
+    expect(notices().filter((notice) => notice.kind === 'failed')).toEqual([]);
+  });
+
+  it('fails the run on a failed turn without such a rule', async () => {
+    answers = { build: 'fails: out of tea' };
+    createRules([step('build'), step('diagnose')]);
+    await start();
+    expect(run().state).toBe('failed');
+    expect(states()).toEqual(['failed', 'not_started']);
+  });
+
+  it('refuses Approve while the thread of the step to go back to is answering, and fails that step when nobody asked', async () => {
+    answers = { build: 'Built.', 'check-work': 'CHANGES_REQUESTED' };
+    host.pulls = [checks(going('test'))];
+    createRules([
+      step('build'),
+      step('check-work', {
+        gateAfter: true,
+        gateAfterCondition: ['checks'],
+        rules: [goTo(changesRequested, 'build')],
+      }),
+    ]);
+    await start();
+    expect(run().steps[1]?.gate?.state).toBe('waitingForChecks');
+    dispatch({ type: 'thread.sendMessage', threadId: 'r1.build', text: 'hang' });
+
+    expect(() => dispatch({ type: 'workflowRun.continue', runId: 'r1' })).toThrow(
+      "The step's thread is still answering a message",
+    );
+    expect(run().state).toBe('waiting');
+
+    // The checks pass, so the gate passes by itself and the rule sends the run back to build.
+    host.pulls = [checks(passed('test'))];
+    await poll();
+    expect(run().state).toBe('failed');
+    expect(run().steps[0]).toMatchObject({ state: 'failed' });
+    expect(run().steps[0]?.error).toContain("The step's thread is still answering a message");
+    expect(notices().filter((notice) => notice.kind === 'failed')).toHaveLength(1);
+  });
+
+  it('refuses a workflow whose rule names a missing step, with the reason', () => {
+    const missing = [step('build', { rules: [goTo(changesRequested, 'gone')] })];
+    expect(() => createRules(missing)).toThrow(
+      'Step build, rule 1: The rule "verdict changes requested" goes to a step that no longer exists',
+    );
+    createRules([step('build'), step('wrap')]);
+    expect(() =>
+      dispatch({ type: 'workflow.update', workflowId: 'review', steps: missing }),
+    ).toThrow(CommandRejected);
+  });
+
+  it('refuses a rule on artifacts for a step without expected artifacts', () => {
+    const rules: StepRule[] = [
+      { when: { fact: 'artifacts', is: 'missing' }, goTo: { type: 'end' } },
+    ];
+    expect(() => createRules([step('build', { rules })])).toThrow(
+      'Step build, rule 1: The rule "artifacts missing" needs expected artifacts, and this step names none',
+    );
+    createRules([step('build', { rules, expectedArtifacts: ['docs/*.md'] })]);
+    expect(() =>
+      dispatch({
+        type: 'workflow.update',
+        workflowId: 'review',
+        steps: [step('build', { rules })],
+      }),
+    ).toThrow('needs expected artifacts');
+  });
+
+  it('refuses two rules with one condition on a step', () => {
+    const twice = [
+      step('build'),
+      step('check-work', {
+        rules: [goTo(changesRequested, 'build'), goTo(changesRequested, 'check-work')],
+      }),
+    ];
+    expect(() => createRules(twice)).toThrow(
+      'Step check-work, rule 2: The step already has a rule for "verdict changes requested"',
+    );
+    createRules([step('build'), step('check-work')]);
+    expect(() => dispatch({ type: 'workflow.update', workflowId: 'review', steps: twice })).toThrow(
+      'already has a rule',
+    );
+  });
+
+  it('continues and finishes a run stored before paths were kept, in a workflow without rules', async () => {
+    createWorkflow({});
+    await start();
+    expect(run().state).toBe('waiting');
+    // As the store held such a run before this change: no path.
+    db().update(workflowRuns).set({ path: null }).run();
+    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
+    await settle();
+    expect(run().state).toBe('done');
+    expect(states()).toEqual(['done', 'done']);
+    expect(run().path).toBeNull();
+    expect(skills()).toEqual(['/check-work', '/wrap']);
+    expect(
+      run().steps.every((entry) => entry.facts === undefined && entry.attempt === undefined),
+    ).toBe(true);
+  });
+
+  it("stores a workflow's own limit and takes it away again", () => {
+    createRules([step('build')], 2);
+    expect(storedLimit()).toBe(2);
+    dispatch({ type: 'workflow.update', workflowId: 'review', maxStepVisits: 5 });
+    expect(storedLimit()).toBe(5);
+    dispatch({ type: 'workflow.update', workflowId: 'review', maxStepVisits: null });
+    expect(storedLimit()).toBeNull();
   });
 });

@@ -39,6 +39,60 @@ export function alwaysStops(skillName: string, listed: readonly string[]): boole
   return [...alwaysStopSkillDefaults, ...listed].some((name) => bareSkillName(name) === bare);
 }
 
+// What a rule can ask about a step that ended (workflow branches spec 2 to 5). wow reads each of
+// them itself; no model decides.
+export const Verdict = z.enum(['approved', 'changesRequested', 'blocked', 'none']);
+export type Verdict = z.infer<typeof Verdict>;
+
+export const ChecksFact = z.enum(['successful', 'failed']);
+export type ChecksFact = z.infer<typeof ChecksFact>;
+
+export const ArtifactsFact = z.enum(['found', 'missing']);
+export type ArtifactsFact = z.infer<typeof ArtifactsFact>;
+
+export const RuleCondition = z.discriminatedUnion('fact', [
+  z.object({ fact: z.literal('verdict'), is: Verdict }),
+  z.object({ fact: z.literal('checks'), is: ChecksFact }),
+  z.object({ fact: z.literal('artifacts'), is: ArtifactsFact }),
+  // The step's turn failed. A step the user stopped never counts.
+  z.object({ fact: z.literal('stepFailed') }),
+]);
+export type RuleCondition = z.infer<typeof RuleCondition>;
+
+export const RuleTarget = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('step'), stepId: z.string().min(1) }),
+  // The run finishes as done.
+  z.object({ type: z.literal('end') }),
+]);
+export type RuleTarget = z.infer<typeof RuleTarget>;
+
+// "When <fact> is <value>, go to <step or End>". After a step's gate has passed, the first of
+// its rules whose condition holds decides the next step; when none holds the run goes to the
+// next step in the list.
+export const StepRule = z.object({ when: RuleCondition, goTo: RuleTarget });
+export type StepRule = z.infer<typeof StepRule>;
+
+const verdictWords: Readonly<Record<Verdict, string>> = {
+  approved: 'verdict approved',
+  changesRequested: 'verdict changes requested',
+  blocked: 'verdict blocked',
+  none: 'no verdict',
+};
+
+// A condition in a few words, as the path of a run and a go-back message name it.
+export function ruleConditionText(when: RuleCondition): string {
+  switch (when.fact) {
+    case 'verdict':
+      return verdictWords[when.is];
+    case 'checks':
+      return `checks ${when.is}`;
+    case 'artifacts':
+      return `artifacts ${when.is}`;
+    case 'stepFailed':
+      return 'step failed';
+  }
+}
+
 export const WorkflowStep = z.object({
   id: z.string().min(1),
   skillName: z.string().min(1),
@@ -53,11 +107,54 @@ export const WorkflowStep = z.object({
   gateAfterCondition: GateCondition.optional(),
   extraPrompt: z.string().optional(),
   expectedArtifacts: z.array(z.string().min(1)),
+  // Where the run goes after this step, in the order they are tried. Absent or empty: the next
+  // step in the list, as always.
+  rules: z.array(StepRule).optional(),
 });
 export type WorkflowStep = z.infer<typeof WorkflowStep>;
 
-// Spec behavior 26: not started, running, waiting, done or failed.
-export const StepRunState = z.enum(['not_started', 'running', 'waiting', 'done', 'failed']);
+export interface RuleProblem {
+  readonly stepId: string;
+  // The rule's place in the step's list, from 0.
+  readonly rule: number;
+  readonly reason: string;
+}
+
+// What is wrong with the rules of a list of steps (workflow branches spec 16): a rule that goes
+// to a step the list does not have, a rule on artifacts for a step that expects none, and a
+// second rule with a condition the step already has. The server refuses such a workflow and the
+// builder marks the rule.
+export function ruleProblems(steps: readonly WorkflowStep[]): RuleProblem[] {
+  const ids = new Set(steps.map((step) => step.id));
+  const problems: RuleProblem[] = [];
+  for (const step of steps) {
+    const seen = new Set<string>();
+    (step.rules ?? []).forEach(({ when, goTo }, rule) => {
+      const text = ruleConditionText(when);
+      const problem = (reason: string) => problems.push({ stepId: step.id, rule, reason });
+      if (goTo.type === 'step' && !ids.has(goTo.stepId)) {
+        problem(`The rule "${text}" goes to a step that no longer exists`);
+      }
+      if (when.fact === 'artifacts' && step.expectedArtifacts.length === 0) {
+        problem(`The rule "${text}" needs expected artifacts, and this step names none`);
+      }
+      if (seen.has(text)) problem(`The step already has a rule for "${text}"`);
+      seen.add(text);
+    });
+  }
+  return problems;
+}
+
+// Spec behavior 26: not started, running, waiting, done or failed. `skipped`: a rule went past
+// the step in this pass (workflow branches spec 11); a later pass can still run it.
+export const StepRunState = z.enum([
+  'not_started',
+  'running',
+  'waiting',
+  'done',
+  'failed',
+  'skipped',
+]);
 export type StepRunState = z.infer<typeof StepRunState>;
 
 // What one file looked like at a moment of a run: the SHA-256 of its content in the working
@@ -80,10 +177,23 @@ export type GatePartResult = z.infer<typeof GatePartResult>;
 // A gate with a condition, as it stands (review loop spec 54 to 58). `waitingForChecks`: the
 // other parts hold and the pull request's checks are not finished. `waitingForUser`: a part did
 // not hold, or the checks took too long. `passedByItself`: every part held and the run went on.
-// `passedByUser`: the user approved it.
+// `passedByUser`: the user approved it. `waitingAtLimit` is not about the step's result: the step
+// has started as often as the limit allows and waits for the user before it starts again
+// (workflow branches spec 9).
 export const StepGate = z.object({
-  state: z.enum(['waitingForChecks', 'waitingForUser', 'passedByItself', 'passedByUser']),
+  state: z.enum([
+    'waitingForChecks',
+    'waitingForUser',
+    'passedByItself',
+    'passedByUser',
+    'waitingAtLimit',
+  ]),
   parts: z.array(GatePartResult),
+  // One sentence for the user; set at the limit ("deliver-work has run 3 times: the limit").
+  detail: z.string().optional(),
+  // The checks are waited for because a rule of the step asks about them, after the gate itself
+  // has passed (or without one).
+  forRules: z.boolean().optional(),
   // When the step ended: checks count only when read after this, and the wait for them is
   // measured from it.
   since: z.iso.datetime(),
@@ -94,6 +204,19 @@ export const StepGate = z.object({
   at: z.iso.datetime(),
 });
 export type StepGate = z.infer<typeof StepGate>;
+
+// The facts of a step with rules, read when it ended and kept until its rules are followed,
+// which can be much later when a gate waits for the user in between.
+export const StepFacts = z.object({
+  verdict: Verdict,
+  artifacts: ArtifactsFact,
+  // Absent until the checks were read. `undecided`: the wait ran out or the user ended it, so no
+  // rule on checks holds.
+  checks: z.enum(['successful', 'failed', 'undecided']).optional(),
+  // The commit the run's folder was on when the step ended; only checks of it count.
+  headSha: z.string().optional(),
+});
+export type StepFacts = z.infer<typeof StepFacts>;
 
 export const StepRun = z.object({
   stepId: z.string().min(1),
@@ -111,10 +234,42 @@ export const StepRun = z.object({
   // How many times the step has run: absent for the first time, 2 after one send back (review
   // loop spec 16).
   attempt: z.number().int().min(2).optional(),
-  // How the gate after the step stands or was passed. Only a gate with a condition has one.
+  // How the gate after the step stands or was passed. Only a gate with a condition has one. A
+  // step also has one while it waits for checks a rule asks about, and while it waits at the
+  // limit.
   gate: StepGate.optional(),
+  // Only a step with rules has them.
+  facts: StepFacts.optional(),
 });
 export type StepRun = z.infer<typeof StepRun>;
+
+// Where a run went after a visit and who decided: one of the step's rules, the order of the
+// list, or the user sending the step back.
+export const PathNext = z.object({
+  to: RuleTarget,
+  by: z.enum(['rule', 'list', 'user']),
+  when: RuleCondition.optional(),
+});
+export type PathNext = z.infer<typeof PathNext>;
+
+// One start of a step in a run (workflow branches spec 18). `StepRun` stays one row per step;
+// the path has one entry per time a step ran, in the order it happened.
+export const PathVisit = z.object({
+  stepId: z.string().min(1),
+  attempt: z.number().int().min(1),
+  startedAt: z.iso.datetime(),
+  endedAt: z.iso.datetime().nullable(),
+  // How the visit ended; null while the step runs.
+  ended: z.enum(['done', 'failed', 'stopped']).nullable(),
+  // Where the run went next, null until that is decided and for a run that ended without a
+  // next move (failed, stopped).
+  next: PathNext.nullable(),
+  // Why, in a few words: "verdict changes requested → deliver-work", "no rule held → next step".
+  reason: z.string().nullable(),
+  // Set when the next step had reached the limit and the run waited for the user there.
+  limit: z.string().optional(),
+});
+export type PathVisit = z.infer<typeof PathVisit>;
 
 // 'waiting' is "waiting for you" at a gate (behavior 9); 'stopped' is the user pressing Stop.
 export const WorkflowRunState = z.enum(['running', 'waiting', 'done', 'failed', 'stopped']);

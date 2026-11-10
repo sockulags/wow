@@ -8,6 +8,7 @@ import {
 } from '@wow/contracts';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { ruleAsksAbout } from '@wow/workflow-engine';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
@@ -267,6 +268,8 @@ export class WorkflowRunner {
           turn.state === 'interrupted'
             ? 'The turn was interrupted'
             : (this.#errorOf(turn.id) ?? 'The turn failed'),
+        // An interrupted turn is the user stopping the step: no rule is followed for it.
+        ...(turn.state === 'interrupted' ? { stopped: true } : {}),
       });
       return;
     }
@@ -278,9 +281,16 @@ export class WorkflowRunner {
       step && folder !== undefined
         ? await this.#deps.detectArtifacts(folder, step.expectedArtifacts)
         : [];
-    // Which globs found nothing, for a gate whose condition asks for every expected artifact.
+    // The facts a gate's condition or a rule of the step asks about are read now, at the step's
+    // end. Which globs found nothing, when every expected artifact is asked for:
+    const asksArtifacts =
+      step !== undefined &&
+      (step.gateAfterCondition?.includes('artifacts') === true || ruleAsksAbout(step, 'artifacts'));
+    const asksChecks =
+      step !== undefined &&
+      (step.gateAfterCondition?.includes('checks') === true || ruleAsksAbout(step, 'checks'));
     const artifactsMissing: string[] = [];
-    if (step && folder !== undefined && step.gateAfterCondition?.includes('artifacts')) {
+    if (step && folder !== undefined && asksArtifacts) {
       for (const glob of step.expectedArtifacts) {
         if ((await this.#deps.detectArtifacts(folder, [glob])).length === 0) {
           artifactsMissing.push(glob);
@@ -288,7 +298,7 @@ export class WorkflowRunner {
       }
     }
     const headSha =
-      folder !== undefined && step?.gateAfterCondition?.includes('checks')
+      folder !== undefined && asksChecks
         ? await this.#deps.changes.head?.(folder).catch(() => undefined)
         : undefined;
     const { baseSha } = run;
@@ -305,7 +315,7 @@ export class WorkflowRunner {
       stepId,
       finalMessage: this.#lastText(turn.id, 'assistant_text', 'text') ?? '',
       artifactsFound,
-      ...(step?.gateAfterCondition?.includes('artifacts') ? { artifactsMissing } : {}),
+      ...(asksArtifacts ? { artifactsMissing } : {}),
       ...(fileHashes ? { fileHashes } : {}),
       ...(headSha === undefined ? {} : { headSha }),
     });

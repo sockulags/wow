@@ -9,6 +9,8 @@ export interface HandoverValues {
   readonly previousMessage: string;
   readonly backlogBody: string;
   readonly previousArtifacts: string;
+  // The error of the step the run came from, when that step failed and a rule sent the run on.
+  readonly previousError: string;
   readonly expectedArtifacts: string;
   // For a run an event trigger started: what happened and on which pull request. Empty
   // otherwise. A review comment is named by its link and author, never by its text.
@@ -68,6 +70,19 @@ export interface SendBackValues {
 }
 
 export const renderSendBack = (template: string, values: SendBackValues): string =>
+  renderTemplate(template, { ...values });
+
+// What `workflows.goBackTemplate` can name: the step whose rule sent the run back, the fact that
+// held, what that step ended with, and this step's skill and attempt.
+export interface GoBackValues {
+  readonly fromStep: string;
+  readonly reason: string;
+  readonly message: string;
+  readonly skill: string;
+  readonly attempt: string;
+}
+
+export const renderGoBack = (template: string, values: GoBackValues): string =>
   renderTemplate(template, { ...values });
 
 // What `workflows.unitPromptTemplate` can name: the unit a plan run started the run for.
