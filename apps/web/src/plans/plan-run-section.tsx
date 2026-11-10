@@ -1,4 +1,10 @@
-import type { PlanIntent, PlanRun, Workflow, WorkflowRun } from '@wow/contracts';
+import {
+  isLivePlanRunState,
+  type PlanIntent,
+  type PlanRun,
+  type Workflow,
+  type WorkflowRun,
+} from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { PlayIcon, SquareIcon } from 'lucide-react';
 import { useState } from 'react';
@@ -26,8 +32,6 @@ import {
   startPlanRun,
 } from './plan-run';
 
-const live = (planRun: PlanRun) => planRun.state === 'running' || planRun.state === 'waiting';
-
 function PlanRunCard({
   planRun,
   workflow,
@@ -54,7 +58,7 @@ function PlanRunCard({
           {workflow?.name ?? 'Workflow'} · started {when(planRun.startedAt)}
           {planRun.endedAt ? ` · ended ${when(planRun.endedAt)}` : ''}
         </span>
-        {live(planRun) && (
+        {isLivePlanRunState(planRun.state) && (
           <Button
             type="button"
             size="sm"
@@ -172,7 +176,7 @@ export function PlanRunSection({ intent }: { intent: PlanIntent }) {
         {offered.length === 1 && workflow && (
           <span className="text-xs text-muted-foreground">with {workflow.name}</span>
         )}
-        {blocked !== undefined && !(planRun && live(planRun)) && (
+        {blocked !== undefined && !(planRun && isLivePlanRunState(planRun.state)) && (
           <span data-testid="plan-run-blocked" className="text-xs text-muted-foreground">
             {blocked}.
           </span>

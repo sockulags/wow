@@ -69,11 +69,12 @@ const labelOf = (key: string) =>
 
 // Asks the hosts about what wow follows (review loop spec 27 to 32): the pull requests of
 // followed plans and of plans a plan run is live on, found with one search per plan, and the
-// pull request of each live run's branch. Never a whole repository. It asks every `hosts.pollSeconds` while `hosts.polling` is
-// on and the scheduler is not paused, once when a plan is followed or a run starts under the
-// same conditions, and once on "Refresh now" whatever the settings say. What it reads goes
-// through the engine as `hosts.sync`; a read that fails is stored as the error beside the last
-// data. It only reads from the hosts.
+// pull request of each live run's branch. Never a whole repository. It asks every
+// `hosts.pollSeconds` while `hosts.polling` is on and the scheduler is not paused, once when a
+// plan is followed or a run starts under the same conditions, and once on "Refresh now" or when
+// a plan run's unit run ends, whatever the settings say. What it reads goes through the engine
+// as `hosts.sync`; a read that fails is stored as the error beside the last data. It only reads
+// from the hosts.
 export class HostPoller implements BackgroundService {
   readonly #deps: HostPollerDeps;
   readonly #clock: () => Date;
@@ -83,8 +84,6 @@ export class HostPoller implements BackgroundService {
   readonly #leaveAlone = new Map<string, Date>();
   // The scopes seen so far, to tell a newly followed plan or a new run from the rest.
   #seen = new Set<string>();
-  // Unit runs whose end was already followed by a read of their plan.
-  readonly #unitRunsEnded = new Set<string>();
   #tail: Promise<unknown> = Promise.resolve();
   #timer: unknown;
   #running = false;
@@ -109,11 +108,6 @@ export class HostPoller implements BackgroundService {
           commit.topics.has('planRuns')
         ) {
           this.#noticed();
-        }
-        for (const { event } of commit.events) {
-          if (event.kind !== 'workflowRun.changed') continue;
-          const { run } = event.payload;
-          if (run.unit && !isLiveRunState(run.state)) this.#unitRunEnded(run.id, run.unit.planId);
         }
       }),
     );
@@ -140,6 +134,18 @@ export class HostPoller implements BackgroundService {
       return ids.length === 0
         ? []
         : this.#deps.db.select().from(hostReads).where(inArray(hostReads.id, ids)).all();
+    });
+  }
+
+  // Asks once about one open plan, for a plan run whose unit's run has just ended: that run has
+  // most likely opened its pull request, and someone else may have claimed the next unit. The
+  // user started the plan run, so this read does not depend on the polling settings; a host
+  // whose request limit is used up is still left alone. Settles when the read is stored.
+  readPlan(planId: string): Promise<void> {
+    return this.#enqueue(async () => {
+      if (!this.#running) return;
+      const plan = this.#openPlans().find((candidate) => candidate.id === planId);
+      if (plan) await this.#read(new Map([[plan.projectId, { plans: [plan], runs: [] }]]), false);
     });
   }
 
@@ -205,20 +211,6 @@ export class HostPoller implements BackgroundService {
     this.#background(
       this.#enqueue(async () => {
         if (this.#automatic()) await this.#read(targets, false);
-      }),
-    );
-  }
-
-  // A unit's run that ended has most likely opened its pull request, so its plan is asked about
-  // at once: the plan run then says what it really waits for.
-  #unitRunEnded(runId: string, planId: string): void {
-    if (this.#unitRunsEnded.has(runId)) return;
-    this.#unitRunsEnded.add(runId);
-    this.#background(
-      this.#enqueue(async () => {
-        if (!this.#automatic()) return;
-        const plan = this.#openPlans().find((candidate) => candidate.id === planId);
-        if (plan) await this.#read(new Map([[plan.projectId, { plans: [plan], runs: [] }]]), false);
       }),
     );
   }

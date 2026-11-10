@@ -209,7 +209,6 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     ...(options.watchPlans ? { watch: options.watchPlans } : {}),
   });
-  const planRuns = new PlanRuns({ db: database.db, engine, logger });
   const trackers = new TrackerService({
     db: database.db,
     engine,
@@ -229,6 +228,12 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.hostTimers ? { timers: options.hostTimers } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
+  const planRuns = new PlanRuns({
+    db: database.db,
+    engine,
+    logger,
+    readPlan: (planId) => hosts.readPlan(planId),
   });
   const handlers = createHandlers({
     engine,

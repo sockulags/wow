@@ -24,7 +24,7 @@ import { startServer, type RunningServer } from '../server.js';
 // U8 ground truth (review loop spec 40 to 47): a plan run over an invented plan, with a mock
 // provider as the agent, an invented GitHub host and a temporary repository with a bare remote
 // for the working copies. Nothing sleeps: a test waits for the commit that makes a row match,
-// and a host round runs when the test fires the poller's timer.
+// and a host round runs when the test fires the poller's timer or a unit's run ends.
 
 const api = 'https://ghe.example.invalid/api/v3';
 const TOKEN = 'ghp-invented-token-for-tests';
@@ -424,6 +424,44 @@ describe('a unit someone else claims (spec 42)', () => {
     expect(run('pr1.U1')).toBeUndefined();
     expect(planRun()?.units.map((unit) => unit.unitKey)).toEqual(['U3']);
   });
+
+  it('skips a unit someone else claimed on the host while the unit before it was running', async () => {
+    agent = (prompt) => {
+      if (prompt.includes('Unit: U1 ')) host.pulls = [...host.pulls, pull('U3')];
+      return opensPullRequest(prompt);
+    };
+    await follow();
+    expect(statuses()).toEqual({ U1: 'ready', U2: 'waiting', U3: 'ready' });
+    start();
+    const waiting = await planRunBecomes((row) => row.state === 'waiting');
+    expect(waiting.units.map((unit) => [unit.unitKey, unit.outcome])).toEqual([['U1', 'done']]);
+    expect(statuses()).toEqual({ U1: 'claimed', U2: 'waiting', U3: 'claimed' });
+    expect(runs().map((row) => row.id)).toEqual(['pr1.U1']);
+    expect(host.pulls.filter((entry) => entry.body.endsWith('/U3'))).toHaveLength(1);
+  });
+});
+
+describe('a plan run while the hosts are not polled (spec 30, 41)', () => {
+  it('still asks about the plan once when a unit run ends, so it says what it really waits for', async () => {
+    await follow();
+    set('hosts.polling', false);
+    start();
+    const waiting = await planRunBecomes(
+      (row) => row.state === 'waiting' && row.units.every((unit) => unit.outcome === 'done'),
+    );
+    expect(waiting.waitingFor).toEqual([
+      'U1 waits for its pull request to merge',
+      'U2 waits for U1 to merge',
+      'U3 waits for its pull request to merge',
+    ]);
+    expect(runs().map((row) => row.id)).toEqual(['pr1.U1', 'pr1.U3']);
+
+    // The interval still asks nothing while polling is off.
+    merge('U1');
+    await poll();
+    expect(statuses()).toMatchObject({ U1: 'claimed' });
+    expect(run('pr1.U2')).toBeUndefined();
+  });
 });
 
 describe('a unit run that fails (spec 43)', () => {
@@ -471,7 +509,7 @@ describe('a unit run that fails (spec 43)', () => {
     start('gated');
     await runBecomes('pr1.U1', (row) => row.state === 'waiting');
     dispatch({ type: 'workflowRun.stop', runId: 'pr1.U1' });
-    expect(planRun()).toMatchObject({
+    expect(await planRunBecomes((row) => row.state !== 'running')).toMatchObject({
       state: 'failed',
       message: 'The run for U1 was stopped, so no further unit was started',
     });

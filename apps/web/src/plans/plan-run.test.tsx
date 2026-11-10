@@ -5,7 +5,7 @@ import {
   type Connection,
   type ConnectionState,
 } from '@wow/client-runtime';
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createStore } from 'zustand';
 import type { CommandContext } from '@/app/commands';
@@ -113,15 +113,32 @@ interface Sent {
   readonly params: unknown;
 }
 
+// What a test's connection was asked to do. `dispatched` settles when a command has been sent,
+// so a test waits for the event and not for time.
+interface Outbox {
+  readonly sent: Sent[];
+  readonly dispatched: Promise<void>;
+  readonly noteDispatch: () => void;
+}
+
+function outbox(): Outbox {
+  const box = { sent: [] as Sent[], noteDispatch: () => undefined as void };
+  const dispatched = new Promise<void>((resolve) => {
+    box.noteDispatch = resolve;
+  });
+  return { ...box, dispatched, noteDispatch: () => box.noteDispatch() };
+}
+
 function runtimeWith(
   topics: Readonly<Record<string, unknown[]>>,
-  sent: Sent[],
+  box: Outbox = outbox(),
   refuse?: string,
 ): Runtime {
   const connection: Connection = {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
     request: (method: string, params: unknown) => {
-      sent.push({ method, params });
+      box.sent.push({ method, params });
+      if (method === 'dispatch') box.noteDispatch();
       return refuse !== undefined && method === 'dispatch'
         ? Promise.reject(new Error(refuse))
         : Promise.resolve({ commandId: 'c', seqs: [], duplicate: false });
@@ -143,7 +160,7 @@ function runtimeWith(
   };
 }
 
-const commandsSent = (sent: Sent[]) =>
+const commandsSent = ({ sent }: Outbox) =>
   sent
     .filter((entry) => entry.method === 'dispatch')
     .map((entry) => (entry.params as { command: Record<string, unknown> }).command);
@@ -201,7 +218,7 @@ describe('which plan run a plan shows', () => {
 
 describe('the plan run above the units', () => {
   it('starts a plan run with the only workflow for units', async () => {
-    const sent: Sent[] = [];
+    const sent = outbox();
     await renderApp(
       '/plans/tea/2026-01-tea-timer',
       runtimeWith(
@@ -210,11 +227,10 @@ describe('the plan run above the units', () => {
       ),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Run ready units' }));
-    await waitFor(() =>
-      expect(commandsSent(sent)).toEqual([
-        expect.objectContaining({ type: 'planRun.start', planId, workflowId: 'deliver' }),
-      ]),
-    );
+    await sent.dispatched;
+    expect(commandsSent(sent)).toEqual([
+      expect.objectContaining({ type: 'planRun.start', planId, workflowId: 'deliver' }),
+    ]);
     expect(screen.queryByTestId('plan-run')).toBeNull();
   });
 
@@ -223,7 +239,7 @@ describe('the plan run above the units', () => {
       '/plans/tea/2026-01-tea-timer',
       runtimeWith(
         { ...base, planRuns: [], workflows: [workflow('deliver', 'Deliver')], workflowRuns: [] },
-        [],
+        undefined,
         'Not started: plan.md is stale (built on spec@1, spec.md is at rev 2)',
       ),
     );
@@ -234,7 +250,7 @@ describe('the plan run above the units', () => {
   });
 
   it('shows the state, what it waits for and the unit runs with links, and stops after asking', async () => {
-    const sent: Sent[] = [];
+    const sent = outbox();
     await renderApp(
       '/plans/tea/2026-01-tea-timer',
       runtimeWith(
@@ -264,31 +280,27 @@ describe('the plan run above the units', () => {
     fireEvent.click(within(region).getByRole('button', { name: 'Stop' }));
     expect(commandsSent(sent)).toEqual([]);
     fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
-    await waitFor(() =>
-      expect(commandsSent(sent)).toEqual([{ type: 'planRun.stop', planRunId: 'pr1' }]),
-    );
+    await sent.dispatched;
+    expect(commandsSent(sent)).toEqual([{ type: 'planRun.stop', planRunId: 'pr1' }]);
   });
 
   it('says why a plan run stopped after a failure', async () => {
     await renderApp(
       '/plans/tea/2026-01-tea-timer',
-      runtimeWith(
-        {
-          ...base,
-          planRuns: [
-            planRun({
-              state: 'failed',
-              waitingFor: [],
-              message: 'The run for U1 failed, so no further unit was started',
-              units: [{ unitKey: 'U1', title: 'Count down', runId: 'pr1.U1', outcome: 'failed' }],
-              endedAt: '2026-11-03T09:30:00.000Z',
-            }),
-          ],
-          workflows: [workflow('deliver', 'Deliver')],
-          workflowRuns: [],
-        },
-        [],
-      ),
+      runtimeWith({
+        ...base,
+        planRuns: [
+          planRun({
+            state: 'failed',
+            waitingFor: [],
+            message: 'The run for U1 failed, so no further unit was started',
+            units: [{ unitKey: 'U1', title: 'Count down', runId: 'pr1.U1', outcome: 'failed' }],
+            endedAt: '2026-11-03T09:30:00.000Z',
+          }),
+        ],
+        workflows: [workflow('deliver', 'Deliver')],
+        workflowRuns: [],
+      }),
     );
     const region = await screen.findByRole('region', { name: 'Plan run' });
     expect(within(region).getByTestId('plan-run-state').textContent).toBe(
@@ -331,7 +343,7 @@ describe('palette commands for a plan run', () => {
     stop?.run({} as CommandContext);
     expect(planRunStore.getState().stopping).toBe('pr1');
 
-    const sent: Sent[] = [];
+    const sent = outbox();
     const { connection } = runtimeWith({}, sent);
     const start = planCommands({
       ...data,
@@ -340,15 +352,14 @@ describe('palette commands for a plan run', () => {
     }).find((command) => command.id === 'plans.planRun.start.deliver');
     expect(start?.title).toBe('Plan: run ready units with Deliver');
     start?.run({ connection } as CommandContext);
-    await waitFor(() =>
-      expect(commandsSent(sent)).toEqual([
-        expect.objectContaining({ type: 'planRun.start', planId, workflowId: 'deliver' }),
-      ]),
-    );
+    await sent.dispatched;
+    expect(commandsSent(sent)).toEqual([
+      expect.objectContaining({ type: 'planRun.start', planId, workflowId: 'deliver' }),
+    ]);
   });
 
   it('switches "For units" of a workflow from the palette', async () => {
-    const sent: Sent[] = [];
+    const sent = outbox();
     const { connection } = runtimeWith({}, sent);
     const command = workflowCommands({
       workflows: [workflow('deliver', 'Deliver', false)],
@@ -358,10 +369,9 @@ describe('palette commands for a plan run', () => {
     }).find((entry) => entry.id === 'workflow.forUnits.deliver');
     expect(command?.title).toBe('Deliver: use for plan units');
     command?.run({ connection } as CommandContext);
-    await waitFor(() =>
-      expect(commandsSent(sent)).toEqual([
-        { type: 'workflow.update', workflowId: 'deliver', forUnits: true },
-      ]),
-    );
+    await sent.dispatched;
+    expect(commandsSent(sent)).toEqual([
+      { type: 'workflow.update', workflowId: 'deliver', forUnits: true },
+    ]);
   });
 });

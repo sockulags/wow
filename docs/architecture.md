@@ -660,7 +660,12 @@ planId, intentId, unitKey, title}`) and has the id `<planRunId>.<unitKey>`.
   is one `planRun.changed` event with the whole row.
 - **What moves it** (`plans/plan-runs.ts`, `PlanRuns`). The service listens to commits and
   sends `planRun.advance` when a run with a `unit` has ended and when `plans.synced` touches
-  the plan of a live plan run. That second one is how a host poll reaches a plan run: the
+  the plan of a live plan run. After a unit's run ends it first has the poller read the plan
+  once (`HostPoller.readPlan`) and sends the command when that read is stored or has failed,
+  so the next unit is picked from what the host shows now and a unit someone else claimed
+  while the run was going is skipped (spec 42). That read is a consequence of the plan run the
+  user started, so it happens whatever the polling settings say; a host whose request limit
+  is used up is still left alone. `plans.synced` is how a host poll reaches a plan run: the
   poller's `hosts.sync` changes unit statuses, the orchestrator stores them as `plans.synced`,
   and the waiting plan run starts the unit that became ready (spec 41). A plan whose folder is
   gone fails its plan run. At startup `recover()` sends it for every live plan run, after the
@@ -669,9 +674,7 @@ planId, intentId, unitKey, title}`) and has the id `<planRunId>.<unitKey>`.
   it (`planIsOpen` in `core/hosts.ts`, and the poller's `#openPlans`). Unfollowing during a
   plan run keeps the read and the unit statuses; when the plan run ends on a plan that is not
   followed, the read is forgotten and the units show what the files say, in the same commit
-  (`closePlanEvents`). The poller also asks about the plan once when a unit's run ends, under
-  the same conditions as its timer, because that run has most likely just opened its pull
-  request.
+  (`closePlanEvents`).
 - **Prompt.** `renderStepPrompt` adds the unit text to every step of a unit's run:
   `workflows.unitPromptTemplate` (project scope) rendered with `intentId`, `unitKey` and
   `unitTitle`. The default also asks for the `Intent-Unit: <intent-id>/<unit-key>` line in the
@@ -1124,10 +1127,12 @@ a comment must have an id. A `Retry-After` or reset that gives no valid date is 
 
 **Poller** (`apps/server/src/hosts/poller.ts`, started with the scheduler and stopped right
 after it). A round asks only about open plans (followed, or with a live plan run, see "Plan
-runs") and live runs (running or waiting), grouped by project; a project with neither is not asked about and its git is not read. It runs at every
-poll interval while polling is on and the scheduler is not paused, once when a plan is followed
-or a run starts under the same conditions, and once for `hosts.refresh` whatever those settings
-and the host's request limit say (spec 30). Per project it resolves the GitHub settings and the
+runs") and live runs (running or waiting), grouped by project; a project with neither is not
+asked about and its git is not read. It runs at every poll interval while polling is on and the
+scheduler is not paused, once when a plan is followed or a run starts under the same
+conditions, and once for `hosts.refresh` whatever those settings and the host's request limit
+say (spec 30). `readPlan` asks about one open plan when a plan run's unit run has ended,
+whatever those settings say but not past a used-up request limit (see "Plan runs"). Per project it resolves the GitHub settings and the
 folder's branch (`TrackerService.githubHost`; without a token nothing is asked and the reads
 say which setting is missing; the shared token goes only to a host the user chose, so when the
 API URL comes from the folder's git remote and is neither the stored `trackers.github.baseUrl`'s

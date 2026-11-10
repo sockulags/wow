@@ -881,7 +881,7 @@ export const settingsRegistry = {
     group: 'hosts',
     label: 'Ask the hosts on a timer',
     description:
-      'Read pull requests of followed plans and live runs from their host at every interval. Off: nothing is asked until you press Refresh now. A paused scheduler also stops it.',
+      'Read pull requests of followed plans and live runs from their host at every interval. Off: nothing is asked until you press Refresh now, except once when a unit run of a plan run ends. A paused scheduler also stops it.',
     default: true,
     scope: 'global',
   }),
