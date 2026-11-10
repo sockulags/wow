@@ -37,6 +37,7 @@ import {
   e2eConditionWorkflowId,
   e2eGateWorkflowId,
   e2ePlanningWorkflowId,
+  e2eLimitWorkflowId,
   e2eRulesWorkflowId,
   e2eHostileSkillName,
   e2eClaudeConfigDir,
@@ -394,6 +395,17 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       session,
       ...finish(threadId, 'Second attempt: the bell and a new document name the kettle.'),
     ];
+  }
+  // The path tests (e2e/run-path.spec.ts): a rule of the review sent the work back to the build
+  // step, which is told so in its own thread; and a review that asks for changes the first time
+  // it looks and approves when it is asked again in the same thread.
+  if (/sent the work back/i.test(prompt)) {
+    return [session, ...finish(threadId, 'Second look: the lid is tight now.')];
+  }
+  if (/check the kettle until it holds/i.test(prompt)) {
+    return command.resumeId === undefined
+      ? [session, ...finish(threadId, 'The lid is loose.\n\nCHANGES_REQUESTED')]
+      : [session, ...finish(threadId, 'The lid holds.\n\nAPPROVED')];
   }
   // The gate condition tests: a check that ends with a verdict line, as check-work does, and a
   // plan that ends with the approved line although its gate must wait all the same. The step
@@ -1055,6 +1067,26 @@ if (home === e2eChangesHome) {
     steps: [
       { ...teaStep('build', 'deliver-work', 'Build the kettle.'), gateAfter: false },
       { ...teaStep('strange', e2eHostileSkillName, 'Check the kettle.'), gateAfter: false },
+    ],
+  });
+  // The limit test (e2e/run-path.spec.ts): a review that never approves and a rule that sends
+  // the work back to the build step every time.
+  server.engine.dispatch('seed-limit-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eLimitWorkflowId,
+    name: 'Build until the review passes',
+    steps: [
+      { ...teaStep('build', 'deliver-work', 'Build the kettle.'), gateAfter: false },
+      {
+        ...teaStep('review', 'check-work', 'Check the kettle strictly.'),
+        gateAfter: false,
+        rules: [
+          {
+            when: { fact: 'verdict', is: 'changesRequested' },
+            goTo: { type: 'step', stepId: 'build' },
+          },
+        ],
+      },
     ],
   });
   server.engine.dispatch('seed-planning-workflow', {

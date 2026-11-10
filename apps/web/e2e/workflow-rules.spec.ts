@@ -7,7 +7,8 @@ import { sketchPath, sketching, sketchUse } from './sketch';
 
 // Workflow branches U2 ground truth (spec 14 to 17) against the Changes copy of the e2e server:
 // rules under "After this step" in the builder and the diagram of the paths a run can take.
-// The workflow is made from the Initiative template; nothing is run here.
+// The workflow is made from the Initiative template; nothing is run here (e2e/run-path.spec.ts
+// runs a workflow with a loop).
 
 if (sketching) test.use(sketchUse);
 
@@ -52,6 +53,21 @@ test.describe('workflow rules', () => {
   test('build a workflow with a loop', async ({ page }) => {
     await page.goto('/workflows/new?template=initiative');
     await builder(page).getByLabel('Workflow name').fill('Initiative with a loop');
+
+    // The template brings the review loop: check-work goes back to deliver-work when the
+    // verdict is changes requested (spec 20).
+    await expect(rulesOf(stepAt(page, 5), 5).getByRole('listitem')).toHaveText([
+      /the verdict is.*changes requested.*go to.*4\. deliver-work/,
+      'Otherwise: the next step (this is the last step, so the run ends)',
+    ]);
+    await expect(arrowWords(page)).toHaveText([
+      'gate',
+      'gate',
+      'gate',
+      'verdict changes requested',
+      'otherwise',
+    ]);
+    await stepAt(page, 5).getByRole('button', { name: 'Remove step 5 rule 1' }).click();
 
     // Without rules the diagram is a straight line: the steps in list order between Start and
     // End, and the three gates of the template (spec 15, 17).

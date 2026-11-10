@@ -96,6 +96,12 @@ export const e2ePlanningWorkflowId = 'planning-e2e';
 // of the builder must show that name as text.
 export const e2eRulesWorkflowId = 'rules-e2e';
 export const e2eHostileSkillName = 'say "hi" [now]\n(url(x)) <b>{end}';
+// The same server holds a workflow for the limit test (e2e/run-path.spec.ts), run in the Demo
+// project: a build step and a review whose mock agent always ends with CHANGES_REQUESTED and
+// whose rule sends the work back to the build step, so a run reaches `workflows.maxStepVisits`.
+// The mock agent answers a step with the extra prompt "Check the kettle until it holds." with
+// CHANGES_REQUESTED the first time and with APPROVED when it is asked again in the same thread.
+export const e2eLimitWorkflowId = 'limit-e2e';
 export const e2eEventProjectId = 'tea-leaf';
 export const e2eEventWorkflowId = 'event-e2e';
 export const e2eEventIntentId = '2026-08-tea-leaf';
