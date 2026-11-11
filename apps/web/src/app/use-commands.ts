@@ -37,7 +37,7 @@ import { gateRunForThread } from '@/workflows/model';
 import { triggersPath } from '@/workflows/triggers';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
 import { updateCommands } from './updates';
-import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
+import { eventToBinding, normalizeBinding, worksInTextFields } from './keybindings';
 import { useLayout, useRuntime, useSetting, useUpdateState } from './runtime';
 
 // While the first-start gate is up only the step is on screen, so the palette offers only what
@@ -138,6 +138,7 @@ export function useCommands(gated = false): {
         running: runningTurn(turns ?? []) !== undefined,
         approval: pendingApproval(approvals ?? []),
         inChat: pathname.startsWith('/chat'),
+        projects: projects ?? [],
       }),
       ...workflowCommands({
         workflows: workflows ?? [],
@@ -295,8 +296,9 @@ export function useGlobalKeybindings(
         );
       });
       if (!command) return;
-      // Plain keys stay with text fields; shortcuts with Ctrl, Alt or Cmd work everywhere.
-      if (isEditable(event.target) && !hasCommandModifier(pressed)) return;
+      // Plain keys stay with text fields; shortcuts with Ctrl, Alt or Cmd, and F-keys, which type
+      // nothing, work everywhere.
+      if (isEditable(event.target) && !worksInTextFields(pressed)) return;
       // A held key is still claimed (Ctrl+= must not fall through to the browser's page zoom),
       // but only repeatable commands run again.
       event.preventDefault();

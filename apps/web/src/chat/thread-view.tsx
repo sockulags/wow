@@ -44,10 +44,10 @@ import {
   permissionOptions,
   runLabel,
   runningTurn,
-  threadTitle,
   type ContextUsage,
 } from './model';
 import { ThreadSettings } from './thread-settings';
+import { ThreadTitle } from './thread-title';
 import {
   groupQuestions,
   groupToolCalls,
@@ -103,7 +103,7 @@ function ThreadHeader({
           aria-hidden
           className={cn('size-2 shrink-0 rounded-full', stateDotClass[thread.state])}
         />
-        <h2 className="min-w-0 truncate text-sm font-medium">{threadTitle(thread)}</h2>
+        <ThreadTitle thread={thread} />
         <span className="sr-only">State:</span>
         <span data-testid="thread-state" className="shrink-0 text-xs text-muted-foreground">
           {threadStateLabels[thread.state]}

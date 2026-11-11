@@ -1,7 +1,8 @@
-import type { Approval, ApprovalDecision, ProviderInstance, Thread } from '@wow/contracts';
+import type { Approval, ApprovalDecision, Project, ProviderInstance, Thread } from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
-import { canMarkDone, threadTitle } from './model';
+import { canMarkDone } from './model';
+import { threadListCommands } from './thread-commands';
 import { providerLabel } from './view-model';
 
 export interface ChatCommandData {
@@ -14,15 +15,8 @@ export interface ChatCommandData {
   readonly approval?: Approval | undefined;
   // The chat view is open: its contextual commands (switch provider) only exist there.
   readonly inChat?: boolean;
+  readonly projects?: readonly Project[];
 }
-
-const stateDetail: Readonly<Record<Thread['state'], string>> = {
-  needs_you: 'Needs you',
-  working: 'Working',
-  idle: 'Idle',
-  failed: 'Failed',
-  done: 'Done',
-};
 
 const approvalCommands: ReadonlyArray<{
   readonly decision: ApprovalDecision;
@@ -47,6 +41,7 @@ export function chatCommands({
   running,
   approval,
   inChat = openThread !== undefined,
+  projects = [],
 }: ChatCommandData): AppCommand[] {
   const commands: AppCommand[] = [
     {
@@ -150,26 +145,20 @@ export function chatCommands({
       id: 'chat.markDone',
       title: 'Mark thread done',
       group: 'Chat',
-      keywords: ['done', 'finish', 'complete', 'archive'],
+      keywords: ['done', 'finish', 'complete'],
       run: ({ connection }) => {
         if (connection) void dispatch(connection, { type: 'thread.setDone', threadId, done: true });
       },
     });
   }
 
-  for (const thread of threads) {
-    commands.push({
-      id: `thread.${thread.id}`,
-      title: threadTitle(thread),
-      value: `${threadTitle(thread)} ${thread.id}`,
-      group: 'Threads',
-      keywords: ['thread', thread.state.replace('_', ' '), thread.model],
-      detail: `Thread · ${stateDetail[thread.state]}`,
-      needsYou: thread.state === 'needs_you',
-      recentAt: thread.updatedAt,
-      run: ({ navigate }) =>
-        void navigate({ to: '/chat/$threadId', params: { threadId: thread.id } }),
-    });
-  }
+  commands.push(
+    ...threadListCommands({
+      threads,
+      projects,
+      openThread,
+      inChat: inChat || openThread !== undefined,
+    }),
+  );
   return commands;
 }

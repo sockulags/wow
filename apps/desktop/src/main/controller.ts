@@ -12,7 +12,14 @@ import {
   readDesktopSettings,
   type DesktopSettings,
 } from './desktop-settings.js';
-import { runNotices, runStates, type Notice, type RunStates } from './notifications.js';
+import {
+  chatNotices,
+  runNotices,
+  runStates,
+  type ChatNotice,
+  type Notice,
+  type RunStates,
+} from './notifications.js';
 import type { RpcClient } from './rpc-client.js';
 import type { ServerEndpoint, ServerProcess } from './server-process.js';
 import {
@@ -32,7 +39,11 @@ export interface DesktopShell {
   // Destroys the window, for example because the server it was connected to is gone.
   closeWindow(): void;
   setTray(entries: TrayEntry[], tooltip: string): void;
-  notify(notice: Notice, onClick: () => void): void;
+  // `actions` become buttons where the system shows them; clicking the notification itself
+  // always runs `onClick`.
+  notify(notice: Notice, onClick: () => void, actions?: readonly NoticeAction[]): void;
+  // The route the window shows while it has the focus, else undefined.
+  focusedRoute(): string | undefined;
   setLoginItem(openAtLogin: boolean): void;
   askRestart(message: string): Promise<boolean>;
   // Hands the update state to the web app (the preload bridge).
@@ -41,6 +52,11 @@ export interface DesktopShell {
   confirmUpdateRestart(message: string): Promise<boolean>;
   exit(code: number): void;
   log(level: 'info' | 'warn' | 'error', message: string, error?: unknown): void;
+}
+
+export interface NoticeAction {
+  readonly label: string;
+  readonly run: () => void;
 }
 
 export interface ControllerOptions {
@@ -86,6 +102,7 @@ export class DesktopController {
   #threads: readonly Thread[] = [];
   #triggers: readonly Trigger[] = [];
   #items: readonly CalendarItem[] = [];
+  #notificationIds: Set<string> | undefined;
   #quitting: Promise<void> | undefined;
   readonly #updates: UpdateManager | undefined;
   #installing = false;
@@ -270,6 +287,11 @@ export class DesktopController {
         this.#items = rows;
         this.#renderTray();
       });
+      await client.subscribe('notifications', (rows) => {
+        const fresh = chatNotices(this.#notificationIds, rows);
+        this.#notificationIds = new Set(rows.map((row) => row.id));
+        for (const notice of fresh) this.#notifyChat(notice);
+      });
     } catch (error) {
       this.#client?.close();
       this.#client = undefined;
@@ -309,6 +331,38 @@ export class DesktopController {
     for (const notice of notices) this.#options.shell.notify(notice, () => this.open(notice.path));
   }
 
+  // Not while the window shows that thread and has the focus (spec 64). Allow once and Deny
+  // answer the approval like the buttons in the thread; the click opens the thread.
+  #notifyChat(notice: ChatNotice): void {
+    if (this.#options.shell.focusedRoute() === notice.path) return;
+    const { approvalId } = notice;
+    const answer = (decision: 'allowOnce' | 'deny') => () =>
+      void this.#answer(approvalId, decision);
+    this.#options.shell.notify(
+      notice,
+      () => this.open(notice.path),
+      approvalId === undefined
+        ? []
+        : [
+            { label: 'Allow once', run: answer('allowOnce') },
+            { label: 'Deny', run: answer('deny') },
+          ],
+    );
+  }
+
+  async #answer(approvalId: string | undefined, decision: 'allowOnce' | 'deny'): Promise<void> {
+    const client = this.#client;
+    if (client === undefined || approvalId === undefined) return;
+    try {
+      await client.request('dispatch', {
+        commandId: this.#options.newCommandId(),
+        command: { type: 'approval.answer', approvalId, decision },
+      });
+    } catch (error) {
+      this.#options.shell.log('warn', 'could not answer the approval', error);
+    }
+  }
+
   async #serverLost(message: string): Promise<void> {
     if (this.#quitting !== undefined) return;
     this.#options.shell.log('error', message);
@@ -316,6 +370,7 @@ export class DesktopController {
     this.#client = undefined;
     this.#server = undefined;
     this.#runStates = undefined;
+    this.#notificationIds = undefined;
     this.#options.shell.closeWindow();
     this.#renderTray();
     if (!(await this.#options.shell.askRestart(message))) {
@@ -353,6 +408,7 @@ export class DesktopController {
     this.#installing = false;
     this.#quitting = undefined;
     this.#runStates = undefined;
+    this.#notificationIds = undefined;
     try {
       await this.#launch();
       this.open(updatesPath);
