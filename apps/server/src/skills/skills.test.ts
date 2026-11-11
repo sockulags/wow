@@ -470,11 +470,106 @@ describe('own skills (spec 5, 6, 7)', () => {
     expect(groupOf('tidy', 'yours')?.text).toBe('Sort the imports.');
   });
 
+  it('answers a refresh overtaken by an own-skill commit with the list after that commit', async () => {
+    dispatch({ type: 'skill.create', skill: tidy });
+    await server.skills.refresh();
+    await mkdir(path.join(userHome, '.claude', 'skills', 'broken'), { recursive: true });
+    await writeFile(
+      path.join(userHome, '.claude', 'skills', 'broken', 'SKILL.md'),
+      '---\nname: [unclosed\n---\n',
+    );
+    let updated = false;
+    onLog = (line) => {
+      if (updated || !line.includes('skipped skill file')) return;
+      updated = true;
+      dispatch({ type: 'skill.update', skill: { ...tidy, text: 'Sort the imports.' } });
+    };
+    const list = await server.skills.refresh();
+    expect(updated).toBe(true);
+    expect(list.find((skill) => skill.source === 'yours' && skill.name === 'tidy')?.text).toBe(
+      'Sort the imports.',
+    );
+  });
+
   it('lists a file added under wow home by hand after a refresh', async () => {
     await writeSkill(path.join(wowHome, 'skills'), 'by-hand', 'Written by hand.');
     expect(groupOf('by-hand', 'yours')).toBeUndefined();
     await server.skills.refresh();
     expect(groupOf('by-hand', 'yours')).toMatchObject({ text: 'Written by hand.' });
+  });
+});
+
+const handDir = () => path.join(wowHome, 'skills', 'My_Skill');
+const handPath = () => path.join(handDir(), 'SKILL.md');
+
+describe('an own skill written by hand (spec 6)', () => {
+  // A name and a folder the editor would refuse, no text, and frontmatter wow does not own.
+  const handFile = [
+    '---',
+    '# mine',
+    'name: My Skill',
+    'description: "By hand"',
+    'allowed-tools: Read, Grep',
+    'disable-model-invocation: true',
+    '---',
+    '',
+  ].join('\n');
+
+  beforeEach(async () => {
+    await mkdir(handDir(), { recursive: true });
+    await writeFile(handPath(), handFile);
+    await server.skills.refresh();
+  });
+
+  it('lists it with its file, and Undo of a delete puts that file back exactly', async () => {
+    const listed = groupOf('My Skill', 'yours');
+    expect(listed).toMatchObject({ text: '', manualOnly: true, file: handFile });
+    dispatch({ type: 'skill.delete', name: 'My Skill' });
+    expect(existsSync(handPath())).toBe(false);
+    expect(
+      await rpcDispatch({ type: 'skill.restore', folder: 'My_Skill', file: handFile }),
+    ).not.toHaveProperty('error');
+    expect(await readFile(handPath(), 'utf8')).toBe(handFile);
+    expect(groupOf('My Skill', 'yours')).toEqual(listed);
+    await server.skills.refresh();
+    expect(groupOf('My Skill', 'yours')).toEqual(listed);
+  });
+
+  it('keeps every other frontmatter key on an update, and Undo puts the file back exactly', async () => {
+    const listed = groupOf('My Skill', 'yours');
+    dispatch({
+      type: 'skill.update',
+      skill: { name: 'My Skill', description: 'By hand', text: 'Now with a text.' },
+    });
+    expect(await readFile(handPath(), 'utf8')).toBe(`${handFile}\nNow with a text.\n`);
+    await server.skills.refresh();
+    expect(groupOf('My Skill', 'yours')).toMatchObject({
+      text: 'Now with a text.',
+      manualOnly: true,
+    });
+    dispatch({ type: 'skill.restore', folder: 'My_Skill', file: handFile });
+    expect(await readFile(handPath(), 'utf8')).toBe(handFile);
+    await server.skills.refresh();
+    expect(groupOf('My Skill', 'yours')).toEqual(listed);
+  });
+
+  it('refuses a restore over a SKILL.md the list does not show, and one outside the folder', async () => {
+    await mkdir(path.join(wowHome, 'skills', 'broken'), { recursive: true });
+    await writeFile(path.join(wowHome, 'skills', 'broken', 'SKILL.md'), '---\nname: [x\n---\n');
+    expect(
+      await rpcDispatch({ type: 'skill.restore', folder: 'broken', file: handFile }),
+    ).toMatchObject({
+      error: {
+        code: 'rejected',
+        message: `${path.join(wowHome, 'skills', 'broken', 'SKILL.md')} is already there. Rename or remove it first.`,
+      },
+    });
+    expect(() => dispatch({ type: 'skill.restore', folder: '..', file: handFile })).toThrow(
+      '.. is not a folder name',
+    );
+    expect(() =>
+      dispatch({ type: 'skill.restore', folder: path.join('a', 'b'), file: handFile }),
+    ).toThrow('is not a folder name');
   });
 });
 

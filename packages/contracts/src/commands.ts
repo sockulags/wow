@@ -278,12 +278,14 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('workflow.delete'), workflowId: Id }),
   // Undo of a delete: puts the row the client still holds back as it was.
   z.object({ type: z.literal('workflow.restore'), workflow: Workflow }),
-  // Own skills (wow skills spec 5, 6): a file under wow's home each. Undo sends the opposite
-  // command with what the client still holds: delete for a create, update with the old text,
-  // create for a delete.
+  // Own skills (wow skills spec 5, 6): a file under wow's home each. Undo of a create is the
+  // delete; Undo of an update or a delete is `skill.restore` with the folder and the file the
+  // client still holds (`Skill.file`), so a hand-written file comes back exactly as it was, even
+  // one whose name or text the editor would refuse.
   z.object({ type: z.literal('skill.create'), skill: OwnSkill }),
   z.object({ type: z.literal('skill.update'), skill: OwnSkill }),
   z.object({ type: z.literal('skill.delete'), name: z.string().min(1) }),
+  z.object({ type: z.literal('skill.restore'), folder: z.string().min(1), file: z.string() }),
   z.object({
     type: z.literal('workflowRun.start'),
     runId: Id,

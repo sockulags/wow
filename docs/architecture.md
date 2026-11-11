@@ -542,10 +542,19 @@ previous}` or `skill.deleted {skill}` in the skills projection at once; `SkillsS
   and the reason (`writeFailure(commandId)`); the command has committed, and the rescan puts the
   list back to what is on disk. Scans run one after another, and a scan that began before an
   own-skill commit sends no `skills.sync` (the one that commit queued does), so it cannot undo
-  the save. Undo is the opposite
-  command with what the client holds: delete for a create, update with the old text, create for
-  a delete. From the assistant all three are proposals (see "Assistant"); a setup file carries
-  own skills (see "Setup file").
+  the save, and `refresh()` called during it answers with that newer scan's list.
+  The projection keeps an own skill's whole file as `Skill.file` (column `skills.file`, migration
+  0025_skill_files; absent in events stored before it). `skill.update` changes only `name`,
+  `description` and the text (`changedOwnSkillFile`): other frontmatter keys keep their place and
+  value, and `manualOnly` stays. Undo of a create is the delete; Undo of an update or a delete is
+  `skill.restore {folder, file}` with the folder name and the file the client holds, which writes
+  the file back byte for byte. It is not checked against the name rule or for a text, since the
+  file was listed before; it refuses a folder that is not one plain name, a frontmatter that is
+  not YAML, a name starting with `wow-`, and (`SkillsService.refusal`) a `SKILL.md` in that
+  folder the list does not show. The assistant's and the setup file's change records keep the
+  folder and the file (`skillFolder`, `skillFile`, not shown) so their undo sends the same
+  restore. From the assistant create, update and delete are proposals and restore is refused
+  (see "Assistant"); a setup file carries own skills (see "Setup file").
 
 **Settings → Skills** (`apps/web/src/settings/skills.ts`, `skills-section.tsx`; wow skills spec
 3, 5). Above the folder settings: "Your skills" (the `skills` topic's group `yours`) with New
@@ -580,7 +589,9 @@ Tidy the imports.
 ```
 
 and keeps invocations and the tail that follow each other on one line, as a step's invocation and
-extra prompt always were. `promptShown` is the same without the texts: what the thread shows.
+extra prompt always were. The name is written with `&`, `"`, `<` and `>` as entities, and a
+`<skill` or `</skill` in the text gets its `<` as `&lt;`, so a hand-written skill cannot end the
+block early or open another one. `promptShown` is the same without the texts: what the thread shows.
 
 Chat: `thread.sendMessage {threadId, text, skills?: SkillRef[]}` sends the skills in their order
 before the text (`text` may be empty when there are skills), built-in ones filled with the project's verdict lines (no artifacts, no unit).

@@ -543,6 +543,9 @@ export const Skill = z.object({
   // A wow skill's text: a built-in skill's template, filled in when it is sent, or an own
   // skill's text as written. Absent for skills from other folders.
   text: z.string().optional(),
+  // An own skill's SKILL.md as it is on disk, every frontmatter key included, so an Undo can
+  // put the file back exactly. Absent for other skills and in events stored before it.
+  file: z.string().optional(),
 });
 export type Skill = z.infer<typeof Skill>;
 

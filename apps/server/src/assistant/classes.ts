@@ -391,6 +391,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'skill.create': 'proposal',
   'skill.update': (command, read) => ownSkillClass(command.skill.name, read),
   'skill.delete': (command, read) => ownSkillClass(command.name, read),
+  'skill.restore': refused('Only an Undo puts a skill file back as it was.'),
   'plans.sync': serverOnly,
   'hosts.sync': serverOnly,
   'tickets.sync': serverOnly,

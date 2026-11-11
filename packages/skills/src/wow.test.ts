@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   builtInSkillsDir,
+  changedOwnSkillFile,
   fillBuiltInSkill,
   ownSkillDir,
   ownSkillFile,
@@ -124,6 +125,7 @@ describe('own skill files (spec 5, 6)', () => {
       manualOnly: false,
       invocations: { claude: '/tidy', codex: '$tidy' },
       text: 'Tidy the imports.',
+      file: ownSkillFile(tidy),
     });
   });
 
@@ -153,5 +155,42 @@ describe('own skill files (spec 5, 6)', () => {
         message: 'Names starting with wow- are kept for the skills wow ships',
       },
     ]);
+  });
+
+  it('changes only the name, description and text of a hand-written file', () => {
+    const file = [
+      '---',
+      '# kept by hand',
+      'name: My Skill',
+      'allowed-tools: Read, Grep',
+      'description: "Old"',
+      'disable-model-invocation: true',
+      '---',
+      '',
+      'Old text.',
+      '',
+    ].join('\n');
+    const same = { name: 'My Skill', description: 'Old', text: 'Old text.' };
+    expect(changedOwnSkillFile(file, same)).toBe(file);
+    expect(changedOwnSkillFile(file, { ...same, text: 'New text.' })).toBe(
+      file.replace('Old text.', 'New text.'),
+    );
+    expect(changedOwnSkillFile(file, { ...same, description: 'New' })).toBe(
+      [
+        '---',
+        '# kept by hand',
+        'name: My Skill',
+        'allowed-tools: Read, Grep',
+        'description: "New"',
+        'disable-model-invocation: true',
+        '---',
+        '',
+        'Old text.',
+        '',
+      ].join('\n'),
+    );
+    expect(changedOwnSkillFile('Only a body.\n', { name: 'x', description: '', text: 'B' })).toBe(
+      '---\nname: x\n---\n\nB\n',
+    );
   });
 });

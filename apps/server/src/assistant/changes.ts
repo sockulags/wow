@@ -20,6 +20,7 @@ import {
   type CalendarItem,
   type WorkflowStep,
 } from '@wow/contracts';
+import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import type { DecideContext, ReadModel } from '../core/orchestrator.js';
@@ -39,7 +40,13 @@ const eventLabel = (event: TriggerEvent, projectId: string, read: ReadModel): st
 
 // A row's own bookkeeping, which says nothing about what the user or the assistant changed.
 // A card's next fire time follows its trigger, and its past series follow its changes.
-const bookkeeping: ReadonlySet<string> = new Set(['updatedAt', 'nextAt', 'pastSeries']);
+const bookkeeping: ReadonlySet<string> = new Set([
+  'updatedAt',
+  'nextAt',
+  'pastSeries',
+  'skillFolder',
+  'skillFile',
+]);
 
 // The patterns of `assistant.secretPatterns` as stored, or the registry's when none is stored.
 export function patternsOf(read: ReadModel, context: DecideContext): RegExp[] {
@@ -127,10 +134,20 @@ export function snapshot(target: AssistantTarget, read: ReadModel): Row | null {
   return row ? { ...row } : null;
 }
 
-// An own skill as a change or a proposal holds it: what the user wrote, not where wow keeps it.
+// An own skill as a change or a proposal holds it: what the user wrote, and, kept only for an
+// undo, its folder and the whole file, so a hand-written file comes back exactly.
 function ownSkillRow(read: ReadModel, name: string): Row | undefined {
   const skill = read.skills().find((entry) => entry.source === 'yours' && entry.name === name);
-  return skill && { name: skill.name, description: skill.description, text: skill.text ?? '' };
+  return (
+    skill && {
+      name: skill.name,
+      description: skill.description,
+      text: skill.text ?? '',
+      ...(skill.file === undefined
+        ? {}
+        : { skillFolder: path.basename(skill.dir), skillFile: skill.file }),
+    }
+  );
 }
 
 const skillsPlace: AssistantPlace = { label: 'Settings → Skills', path: '/settings/skills' };
@@ -521,14 +538,16 @@ function inverseOf(command: Command, before: Row | null, changed: readonly strin
         ];
       case 'skill.create':
         return [{ type: 'skill.delete', name: command.skill.name }];
-      // The whole skill as it was: an update names every field of it.
+      // The whole skill as it was: the file itself when it is known, else every field of it.
       case 'skill.update':
       case 'skill.delete':
         return [
-          {
-            type: command.type === 'skill.update' ? 'skill.update' : 'skill.create',
-            skill: pick(before ?? {}, ['name', 'description', 'text']),
-          },
+          typeof before?.['skillFile'] === 'string'
+            ? { type: 'skill.restore', folder: before['skillFolder'], file: before['skillFile'] }
+            : {
+                type: command.type === 'skill.update' ? 'skill.update' : 'skill.create',
+                skill: pick(before ?? {}, ['name', 'description', 'text']),
+              },
         ];
       default:
         throw new Error(`${command.type} has no inverse`);

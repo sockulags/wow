@@ -20,6 +20,8 @@ import { writeSetup } from './write.js';
 // its one Undo.
 
 const now = '2026-11-11T09:00:00.000Z';
+// Invented; it only has the shape of a GitLab token.
+const lookalike = 'glpat-abcdefghijklmnopqrstuvwxyz0123';
 const kettleText = 'Boil the water first.\nThen pour it over the leaves and wait three minutes.';
 
 let root: string;
@@ -205,6 +207,30 @@ describe('own skills in a setup file (wow skills spec 8)', () => {
     expect(ownSkills(other)[0]?.text).toBe('Old text.');
   });
 
+  it('replaces a hand-written skill keeping its other frontmatter, and Undo puts the file back exactly', async () => {
+    const dir = ownSkillDir(home('other'), 'kettle-check');
+    const handWritten = [
+      '---',
+      'name: kettle-check',
+      'allowed-tools: Read',
+      'disable-model-invocation: true',
+      '---',
+      '',
+    ].join('\n');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'SKILL.md'), handWritten);
+    await other.skills.refresh();
+    const { text } = save(source);
+    await write(other, { type: 'setup.apply', applicationId: 'a3', name: 'team.yaml', text });
+    const applied = await readFile(path.join(dir, 'SKILL.md'), 'utf8');
+    expect(applied).toContain('allowed-tools: Read\ndisable-model-invocation: true\n');
+    expect(applied).toContain(kettleText);
+    expect(ownSkills(other)[0]).toMatchObject({ text: kettleText, manualOnly: true });
+    await write(other, { type: 'setup.undo', applicationId: 'a3' });
+    expect(await readFile(path.join(dir, 'SKILL.md'), 'utf8')).toBe(handWritten);
+    expect(ownSkills(other)[0]).toMatchObject({ text: '', file: handWritten });
+  });
+
   it('marks no workflow whose step follows a skill the same file brings', () => {
     on(source, {
       type: 'workflow.create',
@@ -307,6 +333,42 @@ describe('own skills in a setup file (wow skills spec 8)', () => {
       { workflow: 'Own named, folder there', reason: 'skill not installed: kettle-check' },
       { workflow: 'Folder named, own there', reason: 'skill not installed: pour' },
     ]);
+  });
+
+  it('leaves an own skill whose text looks like a secret out of the saved file and names it', async () => {
+    await write(source, {
+      type: 'skill.create',
+      skill: { name: 'pour', description: 'When tea is poured.', text: `Log in with ${lookalike}` },
+    });
+    const saved = save(source);
+    expect(saved.text).not.toContain(lookalike);
+    expect((parse(saved.text) as { skills?: { name: string }[] }).skills).toEqual([
+      expect.objectContaining({ name: 'kettle-check' }),
+    ]);
+    expect(saved.leftOut).toEqual([
+      { what: 'Skill "pour"', reason: 'it looks like it holds a secret' },
+    ]);
+  });
+
+  it('refuses a file whose skill text looks like a secret, with its line', () => {
+    const text = [
+      'version: 1',
+      'skills:',
+      '  - name: pour',
+      '    description: When tea is poured.',
+      `    text: Log in with ${lookalike}`,
+      '',
+    ].join('\n');
+    expect(preview(other, text, 'other')).toEqual({
+      outcome: 'refused',
+      problems: [
+        {
+          line: 5,
+          reason:
+            'This looks like a secret (a GitLab token); a setup file never holds one. Put the value in its field in Settings instead',
+        },
+      ],
+    });
   });
 
   it('refuses a skill whose name wow keeps for its own, with the line', () => {

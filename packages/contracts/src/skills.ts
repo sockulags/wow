@@ -132,9 +132,19 @@ export type PromptSkillPart =
   | { readonly kind: 'text'; readonly name: string; readonly text: string }
   | { readonly kind: 'invoke'; readonly invocation: string };
 
+const markName = (name: string): string =>
+  name
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+
+// A hand-written name or text could otherwise end the block early or open another one.
+const markText = (text: string): string => text.replace(/<(?=\/?skill(?![\w-]))/gi, '&lt;');
+
 // A wow skill's text in a prompt, marked with its name (spec 10).
 export const skillTextBlock = (name: string, text: string): string =>
-  `<skill name="${name}">\n${text.trim()}\n</skill>`;
+  `<skill name="${markName(name)}">\n${markText(text.trim())}\n</skill>`;
 
 // The skills in their order, then `tail` (a step's extra prompt, a chat message). A wow skill's
 // text is a block of its own; invocations and the tail that follow each other share a line, as

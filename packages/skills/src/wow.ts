@@ -2,8 +2,8 @@ import { fillTemplate, type BuiltInSkillValues, type OwnSkill } from '@wow/contr
 import { mkdirSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stringify as stringifyYaml } from 'yaml';
-import { skillFileName } from './parse.js';
+import { Document, isMap, parseDocument, stringify as stringifyYaml } from 'yaml';
+import { parseSkillFile, skillBody, skillFileName, splitSkillFile } from './parse.js';
 import type { SkillRoot } from './scan.js';
 
 // wow's own skills (wow skills spec 1 to 6). The built-in ones are files shipped with this
@@ -34,9 +34,41 @@ export function ownSkillFile(skill: OwnSkill): string {
   return `---\n${frontmatter}\n---\n\n${skill.text.trim()}\n`;
 }
 
+// An own skill's file with the name, description and text changed to the skill's, and
+// everything else as it was: other frontmatter keys in their order, and the file untouched
+// where those three already hold.
+export function changedOwnSkillFile(file: string, skill: OwnSkill): string {
+  const { yaml, rest } = splitSkillFile(file);
+  const before = parseSkillFile(file);
+  const description = skill.description.trim();
+  const text = skill.text.trim();
+  const parsed = yaml === undefined ? undefined : parseDocument(yaml);
+  const doc = parsed && isMap(parsed.contents) ? parsed : new Document({});
+  let frontmatterChanged = false;
+  if (before.name !== skill.name) {
+    doc.set('name', skill.name);
+    frontmatterChanged = true;
+  }
+  if (before.description !== description) {
+    doc.set('description', description);
+    frontmatterChanged = true;
+  }
+  const bodyChanged = skillBody(file) !== text;
+  if (!frontmatterChanged && !bodyChanged) return file;
+  const header = file.slice(0, file.length - rest.length);
+  const head = frontmatterChanged ? `---\n${doc.toString().trimEnd()}\n---\n` : header;
+  const body = bodyChanged ? `${head.trim() === '' ? '' : '\n'}${text}\n` : rest;
+  return head + body;
+}
+
 export function writeOwnSkill(dir: string, skill: OwnSkill): void {
+  writeOwnSkillFile(dir, ownSkillFile(skill));
+}
+
+// Writes the file as given, byte for byte.
+export function writeOwnSkillFile(dir: string, file: string): void {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, skillFileName), ownSkillFile(skill), 'utf8');
+  writeFileSync(path.join(dir, skillFileName), file, 'utf8');
 }
 
 // Removes the skill's file, and its folder when nothing else was put there.
