@@ -767,8 +767,8 @@ Tracker settings come in two places:
 
 - **Settings → Trackers** holds the defaults for every project. Jira: site URL, sign-in (Jira
   Cloud with email and API token, or a personal access token on Server or Data Center), project
-  key, issue type. GitHub: API URL (`https://api.github.com`, or `https://<host>/api/v3` for
-  Enterprise Server), token, owner, repository, labels. Tokens saved here are shared: one GitHub
+  key, issue type. GitHub: API URL (`https://api.github.com`, or `https://api.<name>.ghe.com` for
+  `<name>.ghe.com`, or `https://<host>/api/v3` for Enterprise Server), token, owner, repository, labels. Tokens saved here are shared: one GitHub
   token and one Jira token serve all projects. While the Jira email is empty, wow signs in with
   the address Outlook uses.
 - **Settings → Projects → Trackers** on each project (also "Trackers for project …" in the
@@ -782,8 +782,9 @@ wow fills in what it can find, and never changes anything in the repository:
 
 - GitHub owner, repository and API URL come from the project folder's git remote (`origin`, or
   the first GitHub remote when there is no `origin`). HTTPS and SSH remotes both work; a host
-  other than github.com is taken to be GitHub Enterprise Server, so its API URL is
-  `https://<host>/api/v3`. GitLab, Bitbucket and Azure DevOps remotes are not used.
+  `<name>.ghe.com` (GitHub Enterprise Cloud with data residency) gets the API URL
+  `https://api.<name>.ghe.com`, and any other host than github.com is taken to be GitHub
+  Enterprise Server, so its API URL is `https://<host>/api/v3`. GitLab, Bitbucket and Azure DevOps remotes are not used.
 - The Jira project key is only suggested: wow looks for references such as `ABC-123` in the
   branch names and the latest commits (how many is **Commits searched for Jira keys**) and offers
   **Use ABC**. Likewise a project without a Jira site is offered the one another project uses.

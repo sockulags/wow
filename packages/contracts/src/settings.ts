@@ -934,7 +934,7 @@ export const settingsRegistry = {
     group: 'trackers',
     label: 'GitHub API URL',
     description:
-      "https://api.github.com for github.com, or https://<host>/api/v3 for GitHub Enterprise Server. A project whose git remote is on a GitHub host uses that host's instead.",
+      "https://api.github.com for github.com, https://api.<name>.ghe.com for <name>.ghe.com, or https://<host>/api/v3 for GitHub Enterprise Server. A project whose git remote is on a GitHub host uses that host's instead.",
     default: 'https://api.github.com',
     scope: 'project',
   }),

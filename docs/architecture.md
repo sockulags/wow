@@ -1242,7 +1242,8 @@ PATH it reads `<folder>/.git/config` and `HEAD` itself (`gitUnavailable` when th
 folder that is gone is `folderMissing`. `parseRemoteUrl` reads https, ssh://, git:// and scp-like
 `user@host:path` remotes and local paths, drops user names and passwords from https URLs, and
 names a GitHub repository for `owner/repo` paths: github.com (also `ssh.github.com`) gives
-`https://api.github.com`, any other host is taken as GitHub Enterprise Server with
+`https://api.github.com`, `<name>.ghe.com` (GitHub Enterprise Cloud with data residency) gives
+`https://api.<name>.ghe.com`, any other host is taken as GitHub Enterprise Server with
 `https://<host>/api/v3`; deeper paths (GitLab subgroups), local paths and known other hosts
 (GitLab, Bitbucket, Azure DevOps, Codeberg) give none. The primary remote is `origin`, else the
 first GitHub one, else the first. `projects.git` answers `ProjectGit` for every project

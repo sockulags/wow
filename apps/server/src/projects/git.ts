@@ -27,6 +27,14 @@ const otherHosts = new Set([
 
 const GITHUB = 'github.com';
 
+// GitHub Enterprise Cloud with data residency serves <name>.ghe.com and its API at
+// api.<name>.ghe.com; GitHub Enterprise Server serves its API under /api/v3 on its own host.
+const apiBaseUrlOf = (host: string): string => {
+  if (host === GITHUB) return 'https://api.github.com';
+  if (/^[a-z0-9-]+\.ghe\.com$/.test(host)) return `https://api.${host}`;
+  return `https://${host}/api/v3`;
+};
+
 const githubOf = (host: string | null, repoPath: string | null): GitHubRemote | null => {
   if (!host || !repoPath) return null;
   const lower = host.toLowerCase();
@@ -42,7 +50,7 @@ const githubOf = (host: string | null, repoPath: string | null): GitHubRemote | 
     owner,
     repo,
     host: normalized,
-    apiBaseUrl: enterprise ? `https://${normalized}/api/v3` : 'https://api.github.com',
+    apiBaseUrl: apiBaseUrlOf(normalized),
     enterprise,
   };
 };

@@ -70,6 +70,24 @@ describe('parseRemoteUrl', () => {
     }
   });
 
+  it('gives a <name>.ghe.com remote the API of GitHub Enterprise Cloud with data residency', () => {
+    for (const url of [
+      'https://octo.ghe.com/platform/billing.git',
+      'git@Octo.ghe.com:platform/billing.git',
+    ]) {
+      expect({ url, github: parseRemoteUrl('origin', url).github }).toEqual({
+        url,
+        github: {
+          owner: 'platform',
+          repo: 'billing',
+          host: 'octo.ghe.com',
+          apiBaseUrl: 'https://api.octo.ghe.com',
+          enterprise: true,
+        },
+      });
+    }
+  });
+
   it('drops user names and passwords from https remotes', () => {
     const remote = parseRemoteUrl('origin', 'https://me:s3cret@github.com/acme/widgets.git');
     expect(remote.url).toBe('https://github.com/acme/widgets.git');
