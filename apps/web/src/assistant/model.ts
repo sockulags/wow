@@ -2,10 +2,12 @@ import {
   settingsRegistry,
   ProjectWorkOffer,
   SecretFieldRequest,
+  SecretVariableRequest,
   TokenGuide,
   ToolCallItemPayload,
   assistantProjectWorkTool,
   assistantSecretFieldTool,
+  assistantSecretVariableTool,
   assistantToolOf,
   findSecret,
   secretPatterns,
@@ -89,6 +91,7 @@ export type Ask =
       // secret that is not a host token.
       readonly guide: TokenGuide | null;
     }
+  | { readonly kind: 'secretVariable'; readonly request: SecretVariableRequest }
   | { readonly kind: 'projectWork'; readonly offer: ProjectWorkOffer };
 
 // What the tool answered, read from the stored tool result: wow's tools answer JSON.
@@ -123,6 +126,13 @@ export function askOf(item: ThreadItem): Ask | null {
         }
       : null;
   }
+  if (tool === assistantSecretVariableTool) {
+    const request = SecretVariableRequest.safeParse(payload.data.input);
+    const answer = FieldShown.safeParse(answerOf(payload.data.output));
+    return request.success && answer.success
+      ? { kind: 'secretVariable', request: request.data }
+      : null;
+  }
   if (tool === assistantProjectWorkTool) {
     const offer = ProjectWorkOffer.safeParse(payload.data.input);
     const answer = WorkOffered.safeParse(answerOf(payload.data.output));
@@ -131,38 +141,63 @@ export function askOf(item: ThreadItem): Ask | null {
   return null;
 }
 
-// The secret fields the agent asked for in the conversation, newest last.
-export const askedFields = (items: readonly ThreadItem[]): SecretFieldRequest[] =>
+// The secret fields and variables the agent asked for in the conversation, newest last.
+export const askedFields = (
+  items: readonly ThreadItem[],
+): (SecretFieldRequest | SecretVariableRequest)[] =>
   items.flatMap((item) => {
     const ask = askOf(item);
-    return ask?.kind === 'secretField' ? [ask.request] : [];
+    return ask?.kind === 'secretField' || ask?.kind === 'secretVariable' ? [ask.request] : [];
   });
+
+export const isVariable = (
+  request: SecretFieldRequest | SecretVariableRequest,
+): request is SecretVariableRequest => 'variable' in request;
+
+// What a variable's field is called: the variable's name and its instance's.
+export const variableLabel = (request: SecretVariableRequest, instanceName: string | undefined) =>
+  `${request.variable} (${instanceName ?? request.providerInstanceId})`;
+
+export type HeldField =
+  | (SecretFieldRequest & { readonly label: string })
+  | (SecretVariableRequest & { readonly label: string });
 
 export interface Held {
   readonly text: string;
   readonly match: SecretMatch;
   // The field the value most likely belongs in, or null when none is known.
-  readonly field: (SecretFieldRequest & { readonly label: string }) | null;
+  readonly field: HeldField | null;
 }
 
 // A message that looks like a secret is held before it is sent (spec 17). Its field is the one
-// the kind of token names (a field the agent asked for keeps its project), or else the field
-// the agent asked for last.
+// the kind of token names (a field the agent asked for keeps its project), or else the field or
+// provider variable the agent asked for last.
 export function holdMessage(
   text: string,
   sources: readonly string[],
-  asked: readonly SecretFieldRequest[],
+  asked: readonly (SecretFieldRequest | SecretVariableRequest)[],
   definitions: Readonly<Record<string, SettingDefinition>> = registry,
+  instanceName: (providerInstanceId: string) => string | undefined = () => undefined,
 ): Held | null {
   const match = findSecret(text, secretPatterns(sources));
   if (match === null) return null;
-  const latest = asked.findLast((request) => definitions[request.key]?.secret === true);
-  const request: SecretFieldRequest | undefined =
-    match.settingKey === null
-      ? latest
-      : (asked.findLast((entry) => entry.key === match.settingKey) ?? { key: match.settingKey });
-  const label = request ? definitions[request.key]?.label : undefined;
-  return { text, match, field: request && label ? { ...request, label } : null };
+  if (match.settingKey === null) {
+    const latest = asked.findLast(
+      (request) => isVariable(request) || definitions[request.key]?.secret === true,
+    );
+    if (latest && isVariable(latest)) {
+      const label = variableLabel(latest, instanceName(latest.providerInstanceId));
+      return { text, match, field: { ...latest, label } };
+    }
+    const label = latest ? definitions[latest.key]?.label : undefined;
+    return { text, match, field: latest && label ? { ...latest, label } : null };
+  }
+  const { settingKey } = match;
+  const request = asked.findLast(
+    (entry): entry is SecretFieldRequest => !isVariable(entry) && entry.key === settingKey,
+  ) ?? { key: settingKey };
+  const label = definitions[request.key]?.label;
+  return { text, match, field: label ? { ...request, label } : null };
 }
 
 // The message with the secret taken out, for the composer after the value went to its field:

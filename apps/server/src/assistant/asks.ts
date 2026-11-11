@@ -2,8 +2,10 @@ import {
   ProjectWorkOffer,
   SecretFieldRequest,
   SecretRef,
+  SecretVariableRequest,
   assistantProjectWorkTool,
   assistantSecretFieldTool,
+  assistantSecretVariableTool,
   settingGroupTitles,
 } from '@wow/contracts';
 import { eq } from 'drizzle-orm';
@@ -55,6 +57,28 @@ export const asks = {
       };
     },
   } satisfies Reader<typeof SecretFieldRequest>,
+  [assistantSecretVariableTool]: {
+    description:
+      'Shows the user a field for a provider instance\'s secret environment variable (such as an API key the CLI reads), with Save. Use it whenever such a value is needed: never ask for one in the conversation. providerInstanceId is the instance (read_providers), variable the variable\'s name. The value goes to the secret store and you never see it; you only learn "set" or "not set" (read_providers lists its variables).',
+    input: SecretVariableRequest,
+    read: async ({ providerInstanceId, variable }, deps) => {
+      const instance = deps.db
+        .select()
+        .from(t.providerInstances)
+        .where(eq(t.providerInstances.id, providerInstanceId))
+        .get();
+      if (!instance) throw new RpcFault('not_found', `No provider instance ${providerInstanceId}`);
+      const parsed = SecretRef.safeParse(instance.env[variable]);
+      const set = parsed.success && (await deps.secrets.names()).includes(parsed.data.secretRef);
+      return {
+        outcome: 'shown',
+        variable: { providerInstanceId, name: variable },
+        target: `Settings → Providers → ${instance.name}`,
+        secret: set ? 'set' : 'not set',
+        note: 'The user sees the field in the conversation. Say where to create the value and which rights it needs, then wait for them. When they say it is saved, read the providers; the instance is tested again after a change.',
+      };
+    },
+  } satisfies Reader<typeof SecretVariableRequest>,
   [assistantProjectWorkTool]: {
     description:
       "For a request that is not about operating wow (write code, explain an error in a project, review a file): shows the user a button that opens a new thread in the chat view with text. Give the user's request as text. Do not attempt the work yourself.",

@@ -166,6 +166,49 @@ describe('the secret field tool (spec 14, 16)', () => {
     ).toMatchObject({ isError: true, content: { outcome: 'invalid input' } });
   });
 
+  it("shows a field for a provider instance's secret environment variable (spec 14), says only set or not set, and refuses anything else", async () => {
+    const shown = await call('show_secret_variable', {
+      providerInstanceId: 'claude-work',
+      variable: 'ANTHROPIC_API_KEY',
+    });
+    expect(shown).toMatchObject({
+      isError: false,
+      content: {
+        outcome: 'shown',
+        variable: { providerInstanceId: 'claude-work', name: 'ANTHROPIC_API_KEY' },
+        target: 'Settings → Providers → Claude at work',
+        secret: 'not set',
+      },
+    });
+    // What the card does: the value goes to the secret store, the instance holds its reference.
+    const ref = await server.secrets.set('provider:claude-work:env:ANTHROPIC_API_KEY', savedSecret);
+    dispatch({
+      type: 'providerInstance.update',
+      providerInstanceId: 'claude-work',
+      env: { ANTHROPIC_API_KEY: ref },
+    });
+    const set = await call('show_secret_variable', {
+      providerInstanceId: 'claude-work',
+      variable: 'ANTHROPIC_API_KEY',
+    });
+    expect(set.content).toMatchObject({ secret: 'set' });
+    expect(set.text).not.toContain(savedSecret);
+
+    for (const args of [
+      { providerInstanceId: 'gone', variable: 'ANTHROPIC_API_KEY' },
+      { providerInstanceId: 'claude-work', variable: 'not a name' },
+    ]) {
+      expect(await call('show_secret_variable', args)).toMatchObject({ isError: true });
+    }
+    expect(
+      await call('show_secret_variable', {
+        providerInstanceId: 'claude-work',
+        variable: 'ANTHROPIC_API_KEY',
+        value: 'x',
+      }),
+    ).toMatchObject({ isError: true, content: { outcome: 'invalid input' } });
+  });
+
   it('a value saved in the field reaches no message, tool result, stored event or log line; the agent learns set and the test result', async () => {
     dispatch({
       type: 'setting.set',

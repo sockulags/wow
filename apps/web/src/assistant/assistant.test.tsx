@@ -3,6 +3,7 @@ import {
   hiddenText,
   type AssistantChange,
   type AssistantProposal,
+  type ProviderInstance,
   type ThreadItem,
   type TokenGuide,
 } from '@wow/contracts';
@@ -23,7 +24,7 @@ import { Composer, type ComposerHandle } from '@/chat/composer';
 import { ConversationItem, type ItemContext } from '@/chat/items';
 import { createTestRuntime, renderApp } from '@/test/render';
 import { HeldLine } from './assistant-view';
-import { SecretFieldCard } from './cards';
+import { SecretFieldCard, SecretVariableCard } from './cards';
 import { assistantCommands } from './commands';
 import { askOf, askedFields, holdMessage, placeRows, withoutSecret } from './model';
 import { ChangeRow, ProposalCard } from './rows';
@@ -33,6 +34,8 @@ import { ChangeRow, ProposalCard } from './rows';
 
 const at = '2026-11-10T08:00:00.000Z';
 const githubToken = 'ghp_abcdefghijklmnopqrstuvwxyz012345';
+// Invented; may reach nothing but the secret store request.
+const savedValue = 'wow-marked-variable-value-55c2';
 
 const change = (extra: Partial<AssistantChange> = {}): AssistantChange => ({
   id: 'assistant-c1',
@@ -354,6 +357,118 @@ describe('a secret field card (spec 14)', () => {
   it('draws nothing for a setting that is not secret', async () => {
     await show(<SecretFieldCard request={{ key: 'trackers.gitlab.baseUrl' }} />);
     expect(screen.queryByRole('region')).toBeNull();
+  });
+});
+
+const instance = (env: ProviderInstance['env']): ProviderInstance => ({
+  id: 'claude-work',
+  kind: 'claude',
+  name: 'Claude at work',
+  binaryPath: 'claude',
+  configDir: '',
+  env,
+  launchArgs: [],
+  defaultModel: null,
+  defaultEffort: null,
+  defaultPermissionMode: null,
+  status: 'ready',
+  account: 'ada@example.com',
+  version: '2.1.0',
+  statusMessage: null,
+  update: null,
+  updateRun: null,
+});
+
+// A connection that answers the providerInstances topic and records what is asked.
+function providerConnection(env: ProviderInstance['env']) {
+  const asked: { method: string; params: unknown }[] = [];
+  const connection: Connection = {
+    state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
+    request: (method, params) => {
+      asked.push({ method, params });
+      if (method === 'secrets.set') return Promise.resolve({ secretRef: 'stored-ref' });
+      if (method === 'dispatch') {
+        const { commandId } = params as { commandId: string };
+        return Promise.resolve({ commandId, seqs: [1], duplicate: false });
+      }
+      return Promise.resolve({ ok: true, account: null, version: null, message: null });
+    },
+    subscribe(topic, _params, onData) {
+      onData(topic === 'providerInstances' ? [instance(env)] : []);
+      return () => undefined;
+    },
+    retry: () => undefined,
+    close: () => undefined,
+  };
+  return { asked, runtime: { ...createTestRuntime(), connection } };
+}
+
+describe("a secret field card for a provider's environment variable (spec 14)", () => {
+  it('is read from the call the server answered', () => {
+    const request = { providerInstanceId: 'claude-work', variable: 'ANTHROPIC_API_KEY' };
+    expect(
+      askOf(toolCall('mcp__wow__show_secret_variable', request, '{"outcome":"shown"}')),
+    ).toEqual({ kind: 'secretVariable', request });
+    expect(
+      askOf(toolCall('mcp__wow__show_secret_variable', request, '{"outcome":"refused"}')),
+    ).toBeNull();
+  });
+
+  it('names the variable and its instance, and Save stores the value and only its reference in the instance', async () => {
+    const user = userEvent.setup();
+    const { asked, runtime } = providerConnection({ PATH_EXTRA: '/opt/bin' });
+    render(
+      <RuntimeProvider runtime={runtime}>
+        <SecretVariableCard
+          request={{ providerInstanceId: 'claude-work', variable: 'ANTHROPIC_API_KEY' }}
+        />
+      </RuntimeProvider>,
+    );
+    const card = screen.getByRole('region', {
+      name: 'Secret field: ANTHROPIC_API_KEY (Claude at work)',
+    });
+    expect(within(card).getByTestId('assistant-secret-target').textContent).toContain(
+      'Settings → Providers → Claude at work',
+    );
+    expect(within(card).getByTestId('assistant-secret-state').textContent).toBe('Not set');
+    const field = within(card).getByLabelText('ANTHROPIC_API_KEY (Claude at work)');
+    expect(field.getAttribute('type')).toBe('password');
+    await user.type(field, savedValue);
+    await user.click(within(card).getByRole('button', { name: 'Save' }));
+    expect(asked[0]).toEqual({
+      method: 'secrets.set',
+      params: { name: 'provider:claude-work:env:ANTHROPIC_API_KEY', value: savedValue },
+    });
+    expect(asked[1]).toMatchObject({
+      method: 'dispatch',
+      params: {
+        command: {
+          type: 'providerInstance.update',
+          providerInstanceId: 'claude-work',
+          env: { PATH_EXTRA: '/opt/bin', ANTHROPIC_API_KEY: { secretRef: 'stored-ref' } },
+        },
+      },
+    });
+    expect(JSON.stringify(asked.slice(1))).not.toContain(savedValue);
+    expect(asked[2]).toEqual({
+      method: 'provider.test',
+      params: { providerInstanceId: 'claude-work' },
+    });
+  });
+
+  it('is where a held message goes when the assistant asked for the variable last', () => {
+    const asked = [
+      { key: 'trackers.confluence.token' },
+      { providerInstanceId: 'claude-work', variable: 'ANTHROPIC_API_KEY' },
+    ];
+    const password = 'password: Zq81mXp0Lw3vKe7RtY2uBn5s';
+    expect(
+      holdMessage(password, defaultSecretPatterns, asked, undefined, () => 'Claude at work')?.field,
+    ).toEqual({
+      providerInstanceId: 'claude-work',
+      variable: 'ANTHROPIC_API_KEY',
+      label: 'ANTHROPIC_API_KEY (Claude at work)',
+    });
   });
 });
 

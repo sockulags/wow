@@ -850,7 +850,10 @@ commands from the assistant.
 The assistant never asks you to type a token in the conversation. It puts the setting's field in
 the conversation instead, with the token guide's steps above it (see below); **Save** writes the
 value straight to the secret store and **Test connection** checks it. The assistant learns only
-"set" or "not set" and the test's result.
+"set" or "not set" and the test's result. A provider's secret environment variable (an API key
+the CLI reads) gets the same kind of card, named after the variable and its instance: Save puts
+the value in the secret store, the instance keeps only its reference, and the instance is tested
+again.
 
 A message you are about to send that looks like a secret (a known token prefix, a private key, a
 long random string after "token", "password" or "key") is held: a line above the composer says

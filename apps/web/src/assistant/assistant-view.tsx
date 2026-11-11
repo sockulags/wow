@@ -19,11 +19,18 @@ import { useTopicState } from '@/app/topic-state';
 import { Button } from '@/components/ui/button';
 import { ConnectAgentStep } from '@/providers/connect-step';
 import { storeSecretSetting } from '@/settings/secret-field';
-import { ProjectWorkCard, SecretFieldCard, useStoredRef } from './cards';
+import {
+  ProjectWorkCard,
+  SecretFieldCard,
+  SecretVariableCard,
+  storeSecretVariable,
+  useStoredRef,
+} from './cards';
 import {
   askOf,
   askedFields,
   holdMessage,
+  isVariable,
   placeRows,
   withoutSecret,
   type Held,
@@ -118,8 +125,15 @@ export function HeldLine({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   // A field that holds a value already has it replaced; the line says so before the press.
+  const field = held.field;
+  const setting = field && !isVariable(field) ? field : undefined;
+  const variable = field && isVariable(field) ? field : undefined;
+  const storedSetting = useStoredRef(setting?.key ?? '', setting?.projectId);
+  const instance = useTopic('providerInstances')?.find(
+    (entry) => entry.id === variable?.providerInstanceId,
+  );
   const replaces = SecretRef.safeParse(
-    useStoredRef(held.field?.key ?? '', held.field?.projectId),
+    variable ? instance?.env[variable.variable] : storedSetting,
   ).success;
   return (
     <div
@@ -220,6 +234,7 @@ export function AssistantView() {
     return (
       <div className="flex flex-col gap-2">
         {ask?.kind === 'secretField' && <SecretFieldCard request={ask.request} guide={ask.guide} />}
+        {ask?.kind === 'secretVariable' && <SecretVariableCard request={ask.request} />}
         {ask?.kind === 'projectWork' && <ProjectWorkCard offer={ask.offer} />}
         {placed && <Rows placed={placed} patterns={patterns} />}
       </div>
@@ -234,16 +249,23 @@ export function AssistantView() {
   };
 
   const putInField = (current: Held) => async (replaces: boolean) => {
-    if (!current.field) return;
-    await storeSecretSetting(
-      { connection, settings: runtime.settings },
-      current.field.key,
-      current.field.projectId,
-      current.match.value,
-    );
+    const { field } = current;
+    if (!field) return;
+    if (isVariable(field)) {
+      const owner = instances.find((entry) => entry.id === field.providerInstanceId);
+      if (!owner) throw new Error(`No provider instance ${field.providerInstanceId}`);
+      await storeSecretVariable(connection, field, owner.env, current.match.value);
+    } else {
+      await storeSecretSetting(
+        { connection, settings: runtime.settings },
+        field.key,
+        field.projectId,
+        current.match.value,
+      );
+    }
     setHeld(undefined);
     setSaved(
-      `Saved in ${current.field.label}${replaces ? ' in place of the value it held' : ''}. It was taken out of your message.`,
+      `Saved in ${field.label}${replaces ? ' in place of the value it held' : ''}. It was taken out of your message.`,
     );
     composer.current?.setText(withoutSecret(current, composer.current.text()));
   };
@@ -290,7 +312,13 @@ export function AssistantView() {
           placeholder: 'Tell the assistant what to set up or change in wow',
           beforeSend: (text) => {
             setSaved(undefined);
-            const found = holdMessage(text, patterns, asks);
+            const found = holdMessage(
+              text,
+              patterns,
+              asks,
+              undefined,
+              (id) => instances.find((entry) => entry.id === id)?.name,
+            );
             setHeld(found ?? undefined);
             return found === null;
           },

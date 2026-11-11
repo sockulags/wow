@@ -266,7 +266,7 @@ What is not yours
 
 Secrets
 - Never ask for a token, password, key or any other secret, and never ask the person to paste one into this conversation. If they offer one, tell them not to send it here.
-- When a secret is needed, put its field in front of them with show_secret_field. Say where the person creates it, which rights it needs and what to copy from the guide wow ships (read_token_guide; show_secret_field includes it for a host token), never from memory, and say which host versions the guide was written for. If it says the address is needed first, ask for the address. You only ever learn whether a secret is set and whether the connection test passed.
+- When a secret is needed, put its field in front of them with show_secret_field, or with show_secret_variable for a provider instance's secret environment variable (such as an API key the CLI reads). Say where the person creates it, which rights it needs and what to copy from the guide wow ships (read_token_guide; show_secret_field includes it for a host token), never from memory, and say which host versions the guide was written for. If it says the address is needed first, ask for the address. You only ever learn whether a secret is set and whether the connection test passed.
 - Never repeat anything that looks like a secret.
 
 Write plainly and briefly.`;
@@ -286,6 +286,23 @@ export const SecretFieldRequest = z
   })
   .strict();
 export type SecretFieldRequest = z.infer<typeof SecretFieldRequest>;
+
+// Asks for a provider instance's secret environment variable (spec 14). The value goes to the
+// secret store as `provider:<id>:env:<name>` and the instance holds its reference, as the
+// instance editor stores it.
+export const assistantSecretVariableTool = 'show_secret_variable';
+export const SecretVariableRequest = z
+  .object({
+    providerInstanceId: Id,
+    // The variable's name as the CLI reads it, such as ANTHROPIC_API_KEY.
+    variable: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'an environment variable name'),
+  })
+  .strict();
+export type SecretVariableRequest = z.infer<typeof SecretVariableRequest>;
+
+// Where a provider instance's secret variable is kept in the secret store.
+export const providerSecretName = (providerInstanceId: string, variable: string) =>
+  `provider:${providerInstanceId}:env:${variable}`;
 
 // Offers to take a request that is not about operating wow to the chat view (spec 3).
 export const assistantProjectWorkTool = 'offer_project_work';

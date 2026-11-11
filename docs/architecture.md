@@ -1682,6 +1682,10 @@ three kinds and nothing else.
   the card from the tool call's own input. `show_secret_field {key, projectId?}`
   (`assistantSecretFieldTool`) accepts only a setting marked `secret` and a project that
   exists, and answers the setting's label, where the value goes and `set` or `not set`.
+  `show_secret_variable {providerInstanceId, variable}` (`assistantSecretVariableTool`,
+  `SecretVariableRequest`) does the same for a provider instance's secret environment variable
+  (spec 14): an instance that exists and a variable name, answering where it goes
+  (Settings → Providers → <instance>) and `set` or `not set`.
   `offer_project_work {text}` (`assistantProjectWorkTool`) is for a request that is not about
   operating wow (spec 3) and answers that the button is shown. No tool name has "thread",
   "message", "file", "content" or "chat" in it, so the U1 test that no tool reads a thread or a
@@ -1886,6 +1890,13 @@ the chat view is copied. The `$` skill picker is off there.
   (`TokenGuideSteps`) from the tool's stored answer (`askOf` reads `guide`), with links out to
   the host and, while the address is missing, a link to where it is filled in. It says "Set" from the `settings` topic once a
   reference is stored at that scope.
+- Secret variable card (`SecretVariableCard`), after a `show_secret_variable` call the server
+  answered: "<VARIABLE> (<instance>)", where the value goes, a password field and Save
+  (`storeSecretVariable`: `secrets.set` as `provider:<id>:env:<name>` (`providerSecretName`),
+  then `providerInstance.update` with the instance's env and the reference, then
+  `provider.test`, as the instance editor does), "Set" once the instance holds a reference for
+  it, and the instance's last test. A held message whose field is unknown goes to the field or
+  variable the assistant asked for last.
 - Project work card (`ProjectWorkCard`), after `offer_project_work`: "Open in Chat" puts the
   text in the draft store (`DraftState.text`) and opens `/chat/new`, whose composer takes it.
 - Held message. Before a message is sent or queued, `holdMessage` runs `findSecret` from

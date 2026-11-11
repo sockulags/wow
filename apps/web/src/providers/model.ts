@@ -1,5 +1,6 @@
 import {
   ProviderTestResult,
+  providerSecretName,
   providerSetup,
   type ProviderModel,
   type Thread,
@@ -86,8 +87,7 @@ export const parseLaunchArgs = (text: string): string[] =>
     .map((line) => line.trim())
     .filter((line) => line !== '');
 
-export const secretName = (providerInstanceId: string, key: string) =>
-  `provider:${providerInstanceId}:env:${key}`;
+export const secretName = providerSecretName;
 
 export function draftIssues(draft: InstanceDraft): string[] {
   const issues: string[] = [];
