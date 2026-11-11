@@ -101,6 +101,8 @@ export const skillSourceLabels: Readonly<Record<Skill['source'], string>> = {
   'project-claude': 'Project .claude',
   'project-agents': 'Project .agents',
   custom: 'Custom folder',
+  wow: 'Built into wow',
+  yours: 'Your skills',
 };
 
 // The muted source label of one picker row: the plugin's name, or where it was found.

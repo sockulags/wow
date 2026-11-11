@@ -7,6 +7,7 @@ import {
   type DomainEvent,
   type Project,
   type ProviderUpdateRun,
+  type Skill,
   type SubscriptionTopic,
 } from '@wow/contracts';
 import { and, asc, count, desc, eq, gt, inArray, isNull, max, ne, sql } from 'drizzle-orm';
@@ -48,6 +49,12 @@ const threadTopics: SubscriptionTopic[] = ['threads', 'assistantThread'];
 
 // Applies one event to the projection tables inside the caller's transaction and says which
 // subscription topics changed.
+// A skill as stored: a folder skill has no text, which the row keeps as null.
+export function skillOf(row: typeof skills.$inferSelect): Skill {
+  const { text, ...rest } = row;
+  return text === null ? rest : { ...rest, text };
+}
+
 export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
   switch (event.kind) {
     case 'project.created':
@@ -108,6 +115,15 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(and(eq(settings.key, event.payload.key), eq(settings.scope, event.payload.scope)))
         .run();
       return ['settings'];
+    case 'skill.saved': {
+      const { skill } = event.payload;
+      const row = { ...skill, text: skill.text ?? null };
+      tx.insert(skills).values(row).onConflictDoUpdate({ target: skills.id, set: row }).run();
+      return ['skills'];
+    }
+    case 'skill.deleted':
+      tx.delete(skills).where(eq(skills.id, event.payload.skill.id)).run();
+      return ['skills'];
     case 'skills.synced':
       for (const skill of event.payload.upserted) {
         tx.insert(skills).values(skill).onConflictDoUpdate({ target: skills.id, set: skill }).run();
@@ -671,7 +687,7 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(settings)
         .where(eq(settings.key, key))
         .all(),
-    skills: () => tx.select().from(skills).all(),
+    skills: () => tx.select().from(skills).all().map(skillOf),
     planIntents: () => tx.select().from(planIntents).all(),
     planRun: (id) => tx.select().from(planRuns).where(eq(planRuns.id, id)).get(),
     livePlanRun: (planId) =>

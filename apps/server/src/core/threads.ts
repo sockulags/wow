@@ -1,6 +1,7 @@
 import type {
   DomainEvent,
   ProviderEvent,
+  SentSkill,
   ServerCommand,
   Thread,
   ThreadChanges,
@@ -28,6 +29,7 @@ import {
   storedGreeting,
 } from '../assistant/thread.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
+import { messageWithSkills } from './skills.js';
 
 // Decisions for provider instances, threads, turns, approvals and questions. Provider events
 // arrive as `provider.events` commands from the provider service and become thread items here, so
@@ -44,6 +46,7 @@ type ThreadCommand = Extract<
       | 'thread.openAssistant'
       | 'thread.greetAssistant'
       | 'thread.sendMessage'
+      | 'thread.sendPrepared'
       | 'thread.answerQuestions'
       | 'thread.interrupt'
       | 'thread.configure'
@@ -100,11 +103,13 @@ function turnStarted(
     prompt,
     assistant,
     answers,
+    skills,
   }: {
     text: string;
     prompt: string;
     assistant: boolean;
     answers?: { askItemId: string; replies: QuestionReply[] };
+    skills?: SentSkill[] | undefined;
   },
 ): DomainEvent {
   const index = read.turnCount(thread.id);
@@ -128,7 +133,11 @@ function turnStarted(
         turnId: id,
         index: read.nextItemIndex(thread.id),
         kind: 'user',
-        payload: answers ? { text, answers } : { text },
+        payload: {
+          text,
+          ...(answers ? { answers } : {}),
+          ...(skills && skills.length > 0 ? { skills } : {}),
+        },
         streaming: false,
       },
       providerInstanceId: thread.providerInstanceId,
@@ -322,12 +331,39 @@ export function decideThread(
           )
         : [];
       const note = notes.length === 0 ? null : notes.join('\n\n');
+      const picked = command.skills ?? [];
+      // The assistant has its own instruction text and takes no skills (wow skills spec 20).
+      if (assistant && picked.length > 0) {
+        throw new CommandRejected('rejected', 'The assistant takes no skills');
+      }
+      const withSkills =
+        picked.length > 0
+          ? messageWithSkills(read, context, thread, picked, command.text)
+          : { prompt: command.text, skills: undefined };
       return [
         ...(assistant?.events ?? []),
         turnStarted(read, thread, now, {
           text: command.text,
-          prompt: note ? `${note}\n\n${command.text}` : command.text,
+          prompt: note ? `${note}\n\n${withSkills.prompt}` : withSkills.prompt,
           assistant: assistant !== undefined,
+          skills: withSkills.skills,
+        }),
+      ];
+    }
+    case 'thread.sendPrepared': {
+      const thread = requireThread(read, command.threadId);
+      if (thread.kind === 'assistant') {
+        throw new CommandRejected('rejected', 'Workflow steps do not run in the assistant thread');
+      }
+      if (read.runningTurn(thread.id)) {
+        throw new CommandRejected('rejected', `Thread ${thread.id} already has a running turn`);
+      }
+      return [
+        turnStarted(read, thread, now, {
+          text: command.text,
+          prompt: command.prompt,
+          assistant: false,
+          skills: command.skills,
         }),
       ];
     }

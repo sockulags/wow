@@ -243,6 +243,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
     'The greeting is sent by wow when the user finishes the first-start step.',
   ),
   'thread.sendMessage': chatOnly,
+  'thread.sendPrepared': serverOnly,
   'thread.answerQuestions': refused(
     'Only the user answers your questions, on their card. End your turn and wait for the answer.',
   ),
@@ -355,6 +356,17 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'outlook.sync': serverOnly,
   'outlook.fail': serverOnly,
   'skills.sync': serverOnly,
+  // The assistant's own skills are proposals in a later delivery (wow skills spec 22); until
+  // then they are changed by the user only.
+  'skill.create': refused(
+    'Your skills are written, changed and removed by the user in Settings → Skills.',
+  ),
+  'skill.update': refused(
+    'Your skills are written, changed and removed by the user in Settings → Skills.',
+  ),
+  'skill.delete': refused(
+    'Your skills are written, changed and removed by the user in Settings → Skills.',
+  ),
   'plans.sync': serverOnly,
   'hosts.sync': serverOnly,
   'tickets.sync': serverOnly,

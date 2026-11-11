@@ -202,6 +202,7 @@ describe('skills projection', () => {
       .select()
       .from(skills)
       .all()
+      .filter((row) => row.source !== 'wow')
       .map((row) => row.name);
     expect(names).toEqual(['capture-intent']);
   });
@@ -225,6 +226,7 @@ describe('skills projection', () => {
         .select()
         .from(skills)
         .all()
+        .filter((row) => row.source !== 'wow')
         .map((row) => row.name),
     ).toEqual(['capture-intent']);
   });
@@ -282,7 +284,19 @@ describe('workflow runs', () => {
         type: 'startTurn',
         threadId: 'r1.s1',
         cwd: projectDir,
-        prompt: '/capture-intent\n\nThis step is expected to produce:\n- intents/*/spec.md',
+        // The step expects an artifact, so wow-artifacts says so instead of the handover's
+        // sentence (wow skills spec 12, 13).
+        prompt: [
+          '/capture-intent',
+          '',
+          '<skill name="wow-artifacts">',
+          'Before you end, write every artifact this step is expected to produce, each at the path it is expected at. A missing file counts as not done.',
+          '',
+          'The expected paths (a * stands for any name):',
+          '',
+          '- intents/*/spec.md',
+          '</skill>',
+        ].join('\n'),
         model: 'opus',
         effort: 'high',
         permissionMode: 'default',
@@ -440,7 +454,23 @@ describe('workflow runs', () => {
       .where(eq(threadItems.threadId, 'r1.s1'))
       .orderBy(threadItems.index)
       .get();
-    expect(first).toMatchObject({ kind: 'user', payload: { text: startTurns()[0]?.prompt } });
+    // The thread shows the prompt without the skill's text, and names the skill with its text
+    // reachable (wow skills spec 14).
+    expect(first).toMatchObject({
+      kind: 'user',
+      payload: {
+        text: '/capture-intent',
+        skills: [
+          { name: 'capture-intent', source: 'user-claude', invocation: '/capture-intent' },
+          {
+            name: 'wow-artifacts',
+            source: 'wow',
+            reason: 'this step expects artifacts',
+            text: expect.stringContaining('- intents/*/spec.md'),
+          },
+        ],
+      },
+    });
 
     // A message the user sends at the gate is not the step's outcome.
     const ended = new Promise<void>((resolve) => {

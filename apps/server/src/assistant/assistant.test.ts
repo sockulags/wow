@@ -292,6 +292,8 @@ describe('read tools', () => {
       bridgeVersion: 'test',
       profile: null,
     });
+    // A scan the project list started must not replace the skills set below.
+    await server.skills.refresh();
     asUser({
       type: 'backlog.create',
       backlogItemId: 'b1',
@@ -383,7 +385,8 @@ describe('read tools', () => {
       { id: 'gated', name: 'Gated' },
     ]);
     expect((await list('read_templates')).length).toBeGreaterThan(0);
-    expect(await list('read_skills')).toEqual([
+    // wow's built-in skills are listed too (wow skills spec 1).
+    expect((await list('read_skills')).filter((skill) => skill['source'] !== 'wow')).toEqual([
       {
         id: 'skill-1',
         name: 'deliver-work',

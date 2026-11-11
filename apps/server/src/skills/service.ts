@@ -8,10 +8,13 @@ import {
   type SkillRoot,
   type SkillWatcher,
   type WatchFactory,
+  removeOwnSkill,
+  wowSkillRoots,
+  writeOwnSkill,
 } from '@wow/skills';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import type { Engine } from '../core/engine.js';
+import type { Commit, Engine } from '../core/engine.js';
 import type { Db } from '../db/database.js';
 import { projects } from '../db/schema.js';
 import type { Logger } from '../logger.js';
@@ -24,12 +27,16 @@ export interface SkillsServiceDeps {
   readonly logger: Logger;
   // The folder "~" stands for in skills.directories; Claude plugins are read from <home>/.claude.
   readonly userHome: string;
+  // wow's own folder: own skills are files under <wowHome>/skills (wow skills spec 6).
+  readonly wowHome: string;
   readonly watch?: WatchFactory;
 }
 
 // Keeps the skills projection in step with the skill folders on disk: a scan at start, another
 // whenever a watched folder changes, and one on request (the builder's refresh). The watched
-// folders follow the skills settings and the project list.
+// folders follow the skills settings and the project list. wow's built-in skills and the user's
+// own skills are read like any other folder; an own skill saved or deleted by command has its
+// file written or removed here once the command has committed.
 export class SkillsService {
   readonly #deps: SkillsServiceDeps;
   readonly #unsubscribe: (() => void)[] = [];
@@ -49,7 +56,8 @@ export class SkillsService {
         if (key.startsWith('skills.')) this.#rootsMayHaveChanged();
       }),
       this.#deps.engine.onCommit((commit) => {
-        if (commit.topics.has('projects')) this.#rootsMayHaveChanged();
+        if (this.#writeOwnSkills(commit.events)) this.#rootsMayHaveChanged();
+        else if (commit.topics.has('projects')) this.#rootsMayHaveChanged();
       }),
     );
     await this.refresh();
@@ -76,6 +84,27 @@ export class SkillsService {
     this.#watcher = undefined;
   }
 
+  // Synchronous, so the file is there when the command's answer reaches the client.
+  #writeOwnSkills(events: Commit['events']): boolean {
+    let wrote = false;
+    for (const { event } of events) {
+      try {
+        if (event.kind === 'skill.saved') {
+          const { skill, previous } = event.payload;
+          writeOwnSkill(skill.dir, { ...skill, text: skill.text ?? '' });
+          if (previous && previous.dir !== skill.dir) removeOwnSkill(previous.dir);
+          wrote = true;
+        } else if (event.kind === 'skill.deleted') {
+          removeOwnSkill(event.payload.skill.dir);
+          wrote = true;
+        }
+      } catch (error) {
+        this.#deps.logger.error('writing an own skill failed', error);
+      }
+    }
+    return wrote;
+  }
+
   #rootsMayHaveChanged(): void {
     this.refresh().catch((error: unknown) => this.#deps.logger.error('skill scan failed', error));
   }
@@ -87,7 +116,10 @@ export class SkillsService {
       .from(projects)
       .all()
       .map((row) => row.cwd);
-    const roots = skillRoots(settings.get('skills.directories'), { userHome, projectDirs });
+    const roots = [
+      ...wowSkillRoots(this.#deps.wowHome),
+      ...skillRoots(settings.get('skills.directories'), { userHome, projectDirs }),
+    ];
     if (settings.get('skills.includeClaudePlugins')) {
       roots.push(...(await claudePluginRoots(path.join(userHome, '.claude'))));
     }
@@ -98,7 +130,11 @@ export class SkillsService {
     if (this.#stopped) return [];
     const roots = await this.#roots();
     await this.#watch(roots);
-    const { skills, problems } = await scanSkills(roots);
+    const scanned = await scanSkills(roots);
+    const { problems } = scanned;
+    // A built-in skill switched off is in no list (wow skills spec 3).
+    const off = new Set<string>(this.#deps.settings.get('skills.builtInOff'));
+    const skills = scanned.skills.filter((skill) => skill.source !== 'wow' || !off.has(skill.name));
     for (const problem of problems) {
       this.#deps.logger.warn(`skipped skill file ${problem.file}`, problem.message);
     }

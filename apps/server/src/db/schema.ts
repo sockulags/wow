@@ -271,6 +271,7 @@ export const workflowRuns = sqliteTable('workflow_runs', {
   event: json<RunEvent>(),
   occurrence: json<RunOccurrence>(),
   path: json<PathVisit[]>(),
+  wowSkills: bool(),
 });
 
 // Plan runs: one row per "Run ready units", kept after it ended.
@@ -402,6 +403,8 @@ export const skills = sqliteTable('skills', {
   source: text().$type<SkillSource>().notNull(),
   manualOnly: bool().notNull(),
   invocations: json<{ claude: string; codex: string }>().notNull(),
+  // A wow skill's text (built-in template or own text); null for skills from other folders.
+  text: text(),
 });
 
 // One row per intent folder of a project, as its files read (packages/agent-os).

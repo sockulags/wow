@@ -1,5 +1,6 @@
 import {
   WorkflowRun,
+  inListOrder,
   runFolder,
   settingsRegistry,
   type Command,
@@ -131,7 +132,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       protection: deps.secrets.protection,
       names: await deps.secrets.names(),
     }),
-    'skills.refresh': async () => ({ skills: await deps.skills.refresh() }),
+    'skills.refresh': async () => ({ skills: inListOrder(await deps.skills.refresh()) }),
     'plans.refresh': async () => ({ intents: await deps.plans.refresh() }),
     'hosts.refresh': async (params) => ({ reads: await deps.hosts.refresh(params) }),
     'projects.git': async () => ({ projects: await deps.trackers.projectsGit() }),

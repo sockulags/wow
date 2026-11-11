@@ -34,12 +34,12 @@ import {
   type RunInput,
   type Transition,
 } from '@wow/workflow-engine';
-import { invocationsFor } from '@wow/skills';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveStored } from '../settings/service.js';
 import { backlogFollowsRun } from './backlog.js';
+import { folderSkillInvocation, skillToSend } from './skills.js';
 import { decideThread } from './threads.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 
@@ -676,11 +676,26 @@ function sendBackTurn(
 ): DomainEvent[] {
   const refusal = sendBackRefusal(effect, read);
   if (refusal !== undefined) throw new CommandRejected('rejected', refusal);
-  return decideThread(
-    { type: 'thread.sendMessage', threadId: effect.threadId, text: effect.prompt },
-    read,
-    context,
-  );
+  return decideThread(stepMessage(effect), read, context);
+}
+
+// A step's turn: the prompt as the engine made it. A prompt made with skills goes with the text
+// the thread shows and the skills (wow skills spec 14); a run from before sends it as typed.
+export function stepMessage(
+  effect: Pick<
+    Extract<RunEffect, { type: 'startStep' }>,
+    'threadId' | 'prompt' | 'shown' | 'skills'
+  >,
+): Extract<ServerCommand, { type: 'thread.sendMessage' | 'thread.sendPrepared' }> {
+  return effect.skills === undefined
+    ? { type: 'thread.sendMessage', threadId: effect.threadId, text: effect.prompt }
+    : {
+        type: 'thread.sendPrepared',
+        threadId: effect.threadId,
+        text: effect.shown ?? effect.prompt,
+        prompt: effect.prompt,
+        skills: effect.skills,
+      };
 }
 
 // The held turn of a step goes to its thread once the turn the user started there has ended.
@@ -867,7 +882,11 @@ function runContext(
     maxStepVisits: Number(resolvedSetting(MAX_VISITS_KEY, read, context, projectId)),
     alwaysStopSkills: stringList(resolvedSetting(ALWAYS_STOP_KEY, read, context, projectId)),
     gateChecksTimeoutMinutes: Number(resolvedSetting(CHECKS_TIMEOUT_KEY, read, context, projectId)),
-    invocationFor: (step) => invocationFor(read, step),
+    invocationFor: (step) =>
+      folderSkillInvocation(read.skills(), step.skillName, providerKindOf(read, step)),
+    skillFor: (step, ref, values) =>
+      skillToSend(read.skills(), ref, providerKindOf(read, step), values),
+    attachBuiltInSkills: resolvedSetting(ATTACH_KEY, read, context, projectId) !== false,
     backlogBody,
   };
 }
@@ -882,6 +901,7 @@ const CHANGES_REQUESTED_KEY = 'workflows.verdictChangesRequestedLine';
 const BLOCKED_KEY = 'workflows.verdictBlockedLine';
 const MAX_VISITS_KEY = 'workflows.maxStepVisits';
 const CHECKS_TIMEOUT_KEY = 'workflows.gateChecksTimeoutMinutes';
+const ATTACH_KEY = 'workflows.attachBuiltInSkills';
 
 // The setting as it applies to the project, or to all projects without one.
 function resolvedSetting(
@@ -905,24 +925,12 @@ function resolvedTemplate(key: string, read: ReadModel, context: DecideContext, 
 const stringList = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : [];
 
-// The step's skill as its provider invokes it. A step names a skill by its name, or a Claude
-// plugin skill by plugin:name. Skills are matched by name; with several of that name the
-// plugin's own wins. Unknown skills get the plain forms, so a workflow still runs on a machine
-// where the skill lives somewhere wow does not scan.
-function invocationFor(read: ReadModel, step: WorkflowStep): string {
+function providerKindOf(read: ReadModel, step: WorkflowStep) {
   const instance = read.providerInstance(step.providerInstanceId);
   if (!instance) {
     throw new CommandRejected('not_found', `No provider instance ${step.providerInstanceId}`);
   }
-  const separator = step.skillName.indexOf(':');
-  const plugin = separator > 0 ? step.skillName.slice(0, separator) : undefined;
-  const name = plugin === undefined ? step.skillName : step.skillName.slice(separator + 1);
-  const expected = invocationsFor(name, plugin);
-  const named = read.skills().filter((skill) => skill.name === name);
-  const skill =
-    named.find((entry) => isDeepStrictEqual(entry.invocations, expected)) ??
-    (plugin === undefined ? named[0] : undefined);
-  return (skill?.invocations ?? expected)[instance.kind];
+  return instance.kind;
 }
 
 function backlogBodyOf(read: ReadModel, backlogItemId: string | null): string | null {

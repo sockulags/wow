@@ -17,7 +17,7 @@ packages/
   provider-claude/   Claude Agent SDK adapter → ProviderEvent / ProviderCommand.
   provider-codex/    codex app-server JSON-RPC adapter → the same types.
   outlook-bridge/    PowerShell COM bridge + mock adapter + fixtures.
-  skills/        SKILL.md discovery.
+  skills/        SKILL.md discovery, the built-in wow skills (builtin/) and own skill files.
   workflow-engine/   workflow definitions, runs, gates, step handover. Pure; the server wires it.
   agent-os/      reads agent-os intent, spec and plan files from their text, and unit status
                  from pull requests. Pure; no I/O.
@@ -189,7 +189,8 @@ trigger_events   triggerId, eventId, runId?, at (the events an event trigger has
 notifications    id, at, kind ('started'|'waiting'|'failed'), title, body, path, runId?,
                  calendarItemId?
 skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
-                 'project-agents'|'custom'), manualOnly, invocations(json: {claude, codex})
+                 'project-agents'|'custom'|'wow'|'yours'), manualOnly, invocations(json: {claude,
+                 codex}), text? (a wow skill's text; null for folder skills)
 plan_intents     id ('<projectId>:<intentId>'), projectId, intentId, title, hasIntent, status?, rev?,
                  spec(json: PlanFile)?, plan(json: PlanFile)?, source ('files'|'issues')?,
                  units(json: PlanUnit[]), problems(json: PlanProblem[]), followed
@@ -227,9 +228,10 @@ events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
 ```
 
-`WorkflowStep = {id, skillName, providerInstanceId, model?, effort?, permissionMode?, gateBefore,
+`WorkflowStep = {id, skillName, skillSource?: 'wow'|'yours', alsoFollow?: SkillRef[], leaveOut?:
+BuiltInSkillName[], providerInstanceId, model?, effort?, permissionMode?, gateBefore,
 gateAfter, gateAfterCondition?: ('verdict'|'checks'|'artifacts')[], extraPrompt?,
-expectedArtifacts: string[]}`. `StepRun = {stepId, state, threadId?, startedAt?, endedAt?,
+expectedArtifacts: string[]}` (the skill fields: see "wow skills"). `StepRun = {stepId, state, threadId?, startedAt?, endedAt?,
 artifactsFound: string[], finalMessage?, error?, fileHashes?, attempt?, gate?}`. `gate` is
 `StepGate = {state: 'waitingForChecks'|'waitingForUser'|'passedByItself'|'passedByUser', parts:
 {part, state: 'held'|'failed'|'pending', detail}[], since, at}` and only a gate with a condition
@@ -495,6 +497,65 @@ skills settings or the project list change, and on `skills.refresh`; scans run o
 burst of changes shares one queued scan. It sends the result as a `skills.sync` command, which
 stores only the differences.
 
+### wow skills
+
+Two more sources sit beside the folders (wow skills spec 1 to 15). Both are read by the same scan,
+from `wowSkillRoots(wowHome)` in `packages/skills`, and carry their text in `Skill.text`:
+
+- `wow` (group "wow"): the built-in skills `wow-verdict`, `wow-artifacts`, `wow-pull-request` and
+  `wow-handover`, shipped as `packages/skills/builtin/<name>/SKILL.md` and found with
+  `new URL('../builtin', import.meta.url)`, so the desktop build copies the folder next to the
+  server bundle. They come with the app version and cannot be changed: `skill.update` and
+  `skill.delete` refuse them. `skills.builtInOff` lists the ones switched off; `SkillsService`
+  leaves those out of `skills.sync`, so they are in no list and attached nowhere. Their text is a
+  template filled by `fillBuiltInSkill` (`fillTemplate` in `packages/contracts`, the same
+  `{{name}}`/`{{#name}}…{{/name}}` rules as the workflow texts) with `BuiltInSkillValues`:
+  `approvedLine`, `changesRequestedLine`, `blockedLine` (the verdict line settings of the project),
+  `expectedArtifacts` (the step's globs as a list), `intentId`, `unitKey`, `unitTitle` and
+  `intentUnitLine` (`Intent-Unit: <intent>/<unit>`). A value not known for the send is empty and
+  drops its section.
+- `yours` (group "Yours"): own skills, one folder per skill under `<WOW_HOME>/skills`, in the
+  same `SKILL.md` format (`ownSkillFile`: YAML frontmatter with `name` and `description`, then the
+  text). A file put there by hand is read like any skill folder; one whose name starts with `wow-`
+  is reported and skipped. Commands `skill.create {skill: {name, description, text}}`,
+  `skill.update {skill}` and `skill.delete {name}` (`core/skills.ts`) check the name with
+  `ownSkillNameProblem` (lower case letters, digits and single hyphens, at most 64 characters,
+  not starting with `wow-`, not taken by another wow skill) and store `skill.saved {skill,
+previous}` or `skill.deleted {skill}` in the skills projection at once; `SkillsService` writes
+  or removes the file synchronously in its commit listener and rescans. Undo is the opposite
+  command with what the client holds: delete for a create, update with the old text, create for
+  a delete. The assistant's class table refuses the three commands for now.
+
+`skillGroupOf(skill)` in `packages/contracts` gives a skill's `SkillGroup` (`yours`, `wow`,
+`project`, `user`, `plugins`, `other`) and `inListOrder` sorts by that group and then by name;
+the `skills` topic is sent in that order, so Yours comes first in every list.
+
+A step or a message names a skill with `SkillRef {name, source?}`. Without `source` it is a
+folder skill, invoked as before (`plugin:name` for a Claude plugin's), or a built-in one by its
+reserved name; `source: 'yours'` keeps an own skill apart from a folder skill of the same name,
+and each is listed with its own group. `skillToSend(skills, ref, providerKind, values)` answers a
+wow skill's text (a built-in one filled) or a folder skill's invocation, or nothing for a wow
+skill that is not in the list. `promptWithSkills(parts, tail)` puts each wow skill's text as its
+own block marked with its name:
+
+```text
+<skill name="tidy">
+Tidy the imports.
+</skill>
+```
+
+and keeps invocations and the tail that follow each other on one line, as a step's invocation and
+extra prompt always were. `promptShown` is the same without the texts: what the thread shows.
+
+Chat: `thread.sendMessage {threadId, text, skills?: SkillRef[]}` sends the skills in their order
+before the text, built-in ones filled with the project's verdict lines (no artifacts, no unit).
+A skill that is gone refuses the message with its name; the assistant thread takes no skills.
+
+Every user message item stores `TextItemPayload.skills?: SentSkill[]` (`{name, source, text?,
+invocation?, reason?}`): the text that was sent for a wow skill, the invocation for a folder
+skill, and why wow attached a built-in one. `text` is what the user typed, or for a step the
+prompt without the wow skills' texts. Older items have no `skills`.
+
 ## Workflow engine
 
 `packages/workflow-engine` is pure: given a workflow, a run and an event (step completed, gate
@@ -502,7 +563,8 @@ answered, trigger fired) it returns the next run state and the effects to perfor
 with prompt, notify, finish). The server performs them. The step prompt is:
 
 ```text
-<skill invocation for the step's provider>  <extraPrompt>
+<the step's skills: the one it runs, its alsoFollow skills, then the built-in skills attached
+ by themselves, each as text or invocation (see "wow skills")>  <extraPrompt>
 
 <unit text: workflows.unitPromptTemplate rendered with the run's unit; only in a run that a
  plan run started for a unit, see "Plan runs">
@@ -510,6 +572,28 @@ with prompt, notify, finish). The server performs them. The step prompt is:
 <handover: workflows.handoverTemplate rendered with previous step's final assistant message,
  the backlog item body if any, and the expected artifact paths>
 ```
+
+Skills of a step (wow skills spec 10 to 15). `stepPromptFor` makes the prompt and answers
+`{prompt, shown?, skills?, missing?}`; `renderStepPrompt` is its `prompt`. A run started since wow
+skills has `WorkflowRun.wowSkills: true` (column `wow_skills`). For it the engine asks
+`EngineContext.skillFor(step, ref, values)` for the skill the step runs (`skillName` with
+`skillSource`) and each `alsoFollow` entry, in that order. Then, while
+`workflows.attachBuiltInSkills` is on, it adds the built-in skills of `automaticSkills(step,
+run.unit)` that the step does not name and does not `leaveOut`, with the reason:
+`wow-verdict` when the gate after the step has the verdict part or a rule reads the verdict,
+`wow-artifacts` when the step expects artifacts, `wow-pull-request` when the run is for a unit.
+A built-in skill switched off is not found, so it is not attached. Each of wow's own sentences
+for these purposes is sent once: with `wow-artifacts` in the prompt the handover gets an empty
+`expectedArtifacts`, and with `wow-pull-request` the unit text gets an empty `intentUnitLine`.
+A skill the step names that `skillFor` does not find fails the step before it starts (no
+thread, no turn, no rule followed) with "The skill <name> no longer exists, so the step cannot
+start. …". The `startStep` and `sendBack` effects carry `shown` and `skills`; the runner and the
+orchestrator then send `thread.sendPrepared {threadId, text: shown, prompt, skills}` (internal)
+instead of `thread.sendMessage`, so the thread shows the prompt without the skills' texts and
+names the skills. A run stored before (no `wowSkills`), or an engine context without
+`skillFor`, keeps the old prompt: `invocationFor(step)`, the expected artifacts in the handover
+and the Intent-Unit line in the unit text. A step held while the user's own turn runs keeps only
+its prompt (`heldPrompt`), so that turn's item has no `skills`.
 
 `workflows.handoverTemplate` is a setting (project scope). `{{name}}` is replaced and
 `{{#name}}…{{/name}}` is dropped when the value is empty; the values are `previousStep`,
@@ -710,12 +794,13 @@ the server. The orchestrator calls `startRun`/`advance` and stores one `workflow
 step started for the first time (model, effort and permission mode from the step, then the provider instance
 defaults) and `thread.stateChanged` for gates. Step changes and deletes are refused while a run of
 the workflow is live, because a run follows its steps by position. Thread ids are
-`<runId>.<stepId>`. The step's invocation comes from the skills projection, matched by name
+`<runId>.<stepId>`. A folder skill's invocation comes from the skills projection, matched by name
 (`plugin:name` picks a Claude plugin's skill); `invocationsFor` in `packages/skills` formats both
-the scanned skills and unknown ones.
+the scanned skills and unknown ones, so an unknown folder skill is still invoked by name.
 
 `WorkflowRunner` performs the effects after commit through the thread commands: `startStep`
-dispatches `thread.sendMessage` with the rendered prompt, so the provider service starts the turn
+dispatches `thread.sendMessage` with the rendered prompt (`thread.sendPrepared` for a prompt made
+with skills, see "Skills of a step"), so the provider service starts the turn
 like any other, and `interrupt` dispatches `thread.interrupt`. A step ends when the persisted
 `turn.ended` of its thread does: completed becomes `workflowRun.stepCompleted` with the turn's
 last assistant text as the final message, the artifacts found and the step's file hashes (see
@@ -926,9 +1011,12 @@ planId, intentId, unitKey, title}`) and has the id `<planRunId>.<unitKey>`.
   followed, the read is forgotten and the units show what the files say, in the same commit
   (`closePlanEvents`).
 - **Prompt.** `renderStepPrompt` adds the unit text to every step of a unit's run:
-  `workflows.unitPromptTemplate` (project scope) rendered with `intentId`, `unitKey` and
-  `unitTitle`. The default also asks for the `Intent-Unit: <intent-id>/<unit-key>` line in the
-  pull request body, which is how wow finds the pull request afterwards. A send back message
+  `workflows.unitPromptTemplate` (project scope) rendered with `intentId`, `unitKey`,
+  `unitTitle` and `intentUnitLine`. The `Intent-Unit: <intent-id>/<unit-key>` line in the pull
+  request body is how wow finds the pull request afterwards; a step that gets the built-in skill
+  `wow-pull-request` is asked for it there, so `intentUnitLine` is empty and the default leaves
+  its sentence out. A run from before wow skills, or one with automatic attaching off, gets the
+  sentence as before. A send back message
   does not repeat it; the thread already has it.
 
 ## Scheduler and triggers
@@ -1151,8 +1239,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `workflows.gateChecksTimeoutMinutes` (project-scoped, see "Gates that pass by themselves"),
   `workflows.verdictChangesRequestedLine`, `workflows.verdictBlockedLine`,
   `workflows.goBackTemplate`, `workflows.maxStepVisits` (project-scoped, see "Rules" under
-  "Workflow engine")
-- skills: `skills.directories`, `skills.includeClaudePlugins`
+  "Workflow engine"), `workflows.attachBuiltInSkills` (project-scoped, see "Skills of a step")
+- skills: `skills.directories`, `skills.includeClaudePlugins`, `skills.builtInOff` (see "wow
+  skills")
 - plans: `plans.intentsDirectory` (project-scoped), `plans.writeSettleMs` (see "Plans")
 - trackers: `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
   `trackers.jira.email`, `trackers.jira.token` (secret), `trackers.jira.projectKey`,

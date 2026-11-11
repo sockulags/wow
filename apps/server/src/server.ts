@@ -216,6 +216,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     settings,
     logger,
     userHome: options.userHome ?? homedir(),
+    wowHome: home,
     ...(options.watchSkills ? { watch: options.watchSkills } : {}),
   });
   const plans = new PlansService({

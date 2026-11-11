@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { ruleAsksAbout } from '@wow/workflow-engine';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
+import { stepMessage } from '../core/workflows.js';
 import type { Db } from '../db/database.js';
 import { projects, threadItems, threads, turns, workflowRuns, workflows } from '../db/schema.js';
 import type { Logger } from '../logger.js';
@@ -242,11 +243,7 @@ export class WorkflowRunner {
       });
       return;
     }
-    const sent = this.#dispatch(`workflow:${runId}:${stepId}:start`, {
-      type: 'thread.sendMessage',
-      threadId,
-      text: effect.prompt,
-    });
+    const sent = this.#dispatch(`workflow:${runId}:${stepId}:start`, stepMessage(effect));
     if (!sent.ok) {
       this.#dispatch(`workflow:${runId}:${stepId}:failed`, {
         type: 'workflowRun.stepFailed',

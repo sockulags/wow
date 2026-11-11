@@ -773,7 +773,24 @@ describe('rules on a step (workflow branches)', () => {
         'Do the step (build) again in this conversation with that taken into account, and end with your result as before.',
       ].join('\n'),
     );
-    expect(prompts[3]).toBe('/check-work\n\nThe previous step (build) ended with:\n\nDone');
+    // A rule of check-work reads the verdict, so it gets wow-verdict (wow skills spec 12).
+    expect(prompts[3]).toBe(
+      [
+        '/check-work',
+        '',
+        '<skill name="wow-verdict">',
+        'End your final message with exactly one of these lines, alone on the last line and with nothing after it:',
+        '',
+        'APPROVED when the work is done and acceptable as it is.',
+        'CHANGES_REQUESTED when it needs changes before it can go on.',
+        "BLOCKED when it cannot go on without someone's help.",
+        '</skill>',
+        '',
+        'The previous step (build) ended with:',
+        '',
+        'Done',
+      ].join('\n'),
+    );
     expect(waitingNotices()).toHaveLength(1);
     expect(visits().at(-1)).toBe('check-work#3: verdict changes requested → build');
     expect(run().path?.at(-1)?.limit).toBe('build has run 3 times: the limit');
