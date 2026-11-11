@@ -260,7 +260,7 @@ thread it maps to, since the app-server has no request that unloads one.
   one `questionAsked` per question; `model/list` feeds the picker and `account/read` the "Test"
   action. Method names and types are generated, not written from memory:
   `scripts/generate-protocol.mjs` runs `codex app-server generate-ts` for the installed codex and
-  keeps the methods the adapter uses (currently codex 0.166.0). It also writes a protocol
+  keeps the methods the adapter uses (currently codex 0.167.1). It also writes a protocol
   fingerprint (`src/protocol/generated/fingerprint.ts`): for each method, the fields the adapter
   sends and reads (`FIELDS` in the script) with their types, read from
   `codex app-server generate-json-schema`. `initialize` reports the codex version only inside
