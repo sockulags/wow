@@ -16,6 +16,7 @@ import { projectCommands } from '@/projects/commands';
 import { connectCommands, providerCommands } from '@/providers/commands';
 import { connectStore } from '@/providers/connect-step';
 import { setupCommands } from '@/settings/setup';
+import { skillCommands } from '@/settings/skills';
 import { formatWhen } from '@/lib/format';
 import { panelCommands, viewerCommands } from '@/panel/commands';
 import { panelSelection } from '@/panel/model';
@@ -79,6 +80,7 @@ export function useCommands(gated = false): {
   const assistantChanges = useTopic('assistantChanges');
   const assistantProposals = useTopic('assistantProposals');
   const setupApplications = useTopic('setupApplications');
+  const skills = useTopic('skills');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
@@ -158,6 +160,7 @@ export function useCommands(gated = false): {
             ? openRun.id
             : undefined,
         rules: { builder: ruleBuilder, at: ruleAt, focus: undefined },
+        skills: skills ?? [],
         formatWhen: when,
         triggers,
         projects,
@@ -182,6 +185,7 @@ export function useCommands(gated = false): {
         proposals: assistantProposals ?? [],
       }),
       ...setupCommands(setupApplications ?? []),
+      ...skillCommands(skills ?? []),
       ...panelCommands(panelSelection(pathname, locationSearch)),
       ...viewerCommands({
         viewer,
@@ -225,6 +229,7 @@ export function useCommands(gated = false): {
     assistantChanges,
     assistantProposals,
     setupApplications,
+    skills,
     viewer,
     page,
     pageReads,

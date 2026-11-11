@@ -468,7 +468,10 @@ Workflows → New workflow (or "New workflow from template" in the palette). Giv
 from **Blank** or a template, then add steps. Each step is one line (number, skill, provider,
 model); open it to edit:
 
-- a skill from the installed list (Refresh skills re-reads the skill folders),
+- a skill from the list (Refresh skills re-reads the skill folders); each choice says its group:
+  Yours, wow, Project, User or Plugins,
+- **Also follow**: more skills the step's agent follows after its own skill, in the order listed
+  (see "Skills of a step" below),
 - a provider instance, model, effort and permission mode,
 - an optional extra prompt,
 - optional expected artifacts: paths or globs, one per line, such as `intents/*/spec.md`. With a
@@ -500,6 +503,36 @@ Skills come from the folders in `skills.directories` (`~/.claude/skills`, `~/.co
 each project's `.claude/skills` and `.agents/skills` by default) and, with
 `skills.includeClaudePlugins`, from installed Claude plugins. Skills marked
 `disable-model-invocation: true` are offered too, because wow invokes them explicitly.
+
+### Skills of a step
+
+Settings → Skills has **Your skills**: skills you write in wow. **New skill** asks for a name (lower
+case letters, digits and hyphens, not starting with `wow-`), when to use it, and the text the agent
+is told. **Edit** changes the description and the text; **Delete** removes the skill at once. Each
+of the three offers **Undo**. A name that is not allowed or already taken is refused with the
+reason, and nothing is saved. wow keeps each skill as a `SKILL.md` file under its home folder
+(`~/.wow/skills/<name>/SKILL.md`); a file you put there by hand is listed after **Refresh skills**.
+Your skills come first in every skill list. The palette has **New skill**, and **Edit skill** and
+**Delete skill** for each of yours.
+
+Below them are the skills wow ships: `wow-verdict` (end with exactly one verdict line),
+`wow-artifacts` (write each expected artifact where the step expects it), `wow-pull-request` (put
+the `Intent-Unit` line in the pull request) and `wow-handover` (end with what was done, what is left
+and what the next step needs). They are read-only; **Show the text** shows what they say, and the
+parts in braces are filled in from your settings and the run when they are sent. List one in
+`skills.builtInOff` to switch it off.
+
+A wow skill (yours or built in) is sent to the agent as its text, the same way on Claude Code and on
+Codex. A skill from a folder is invoked as before (`/name` or `$name`).
+
+In the builder, **Also follow** under a step's skill adds any other skill, from every group, as a
+chip; the cross on a chip removes it. Below it, **Attached automatically** lists the built-in skills
+wow gives the step by itself and why: `wow-verdict` when the gate after the step or one of its
+rules reads the verdict, `wow-artifacts` when the step expects artifacts, and `wow-pull-request`
+when a plan run delivers a unit with the workflow. **Leave out** keeps one away from that step
+(**Attach again** undoes it). `workflows.attachBuiltInSkills` turns automatic attaching off. The
+palette has the same actions for the step you are editing: "Also follow <skill> in step N", "Stop
+following <skill> in step N" and "Leave <skill> out of step N".
 
 ### Running one
 
@@ -913,14 +946,17 @@ A change that lets wow do more on its own shows as a proposal card with exactly 
 until you press Yes: a step's permission mode, a gate condition, a step's rules, an event
 trigger, "for units" or "own working copy" on a workflow, resuming the scheduler, the missed
 policy `run`, `hosts.polling` or `triggers.eventsEnabled` on, `viewer.htmlScripts` on, any
-change to `triggers.forkPullRequests`, and
+change to `triggers.forkPullRequests`, writing, changing or removing one of your own skills (the
+card shows the text, or what changes), and
 starting a run ("Start <workflow> in <project>"). A card with a workflow that starts sooner than
 `assistant.startSoonMinutes` (15) from now is a proposal too. A value longer than `assistant.valueLength` (160) characters is cut
 short on its line; "show all of it" under the line opens the whole of it. The palette has Yes and No for every
 waiting proposal and Undo for every change.
 
 It never answers a gate: approving, sending back or stopping a run is yours, and wow refuses those
-commands from the assistant.
+commands from the assistant. It can read the list of skills and the text of a wow skill, and can
+give a step "Also follow" skills as part of changing a workflow, but it cannot change the skills
+wow ships or skills in other folders.
 
 ### Secrets
 
@@ -944,7 +980,8 @@ shown is replaced by "[hidden]".
 ### A setup to share
 
 Settings → Advanced (and the palette) has **Save setup to a file**: a YAML file with the global
-settings that differ from their default, tracker and host settings, and workflows and templates.
+settings that differ from their default, tracker and host settings, workflows and templates, and
+your own skills with their text.
 It holds no secret value (each secret that was set is listed under `toFillIn`), no project folder,
 no account name and nothing from the calendar, backlog, threads or runs. Settings that belong to
 this machine or this person (work hours, the calendar's zone, desktop settings, first start) stay
@@ -952,7 +989,8 @@ out too.
 
 **Start from a setup file** (Settings → Advanced, the palette, or the first-start step) shows a
 preview with what would be added and what would replace a value you have, and applies it as one
-step you can undo. A file with an unknown key, a wrong type or a secret value is refused with the
+step you can undo. A skill in the file is listed as added, or as replacing one of yours with the
+same name, and **Show all of it** opens its whole text before you apply. A file with an unknown key, a wrong type or a secret value is refused with the
 line and the reason; a workflow naming a skill that is not installed is applied and marked "skill
 not installed". The row of an applied file under Settings → Advanced keeps those marks and lists
 the secrets still to fill in, each with a link to its field, until they are set. A file larger
@@ -1051,6 +1089,7 @@ Everything is in `~/.wow` (`%USERPROFILE%\.wow` on Windows), or in the folder `W
 | `secrets.json` | Encrypted tokens and secret environment values                        |
 | `server.json`  | Port and token of the running server; removed on a clean stop         |
 | `desktop.log`  | The desktop app's log and the server's output                         |
+| `skills/`      | Your own skills, one `<name>/SKILL.md` each                           |
 
 Back up `wow.sqlite` and `secrets.json` together. Secrets are encrypted for your Windows user and
 cannot be read on another machine or account.

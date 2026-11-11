@@ -459,6 +459,10 @@ export const sortRuns = (runs: readonly WorkflowRun[]): WorkflowRun[] =>
 // effort and permission mode, because those belong to the instance it left.
 export function applyStepChanges(step: DraftStep, changes: Partial<DraftStep>): DraftStep {
   const next: DraftStep = { ...step, ...changes };
+  // A field set to undefined is taken away, so the step is saved without it.
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === undefined) delete next[key as keyof DraftStep];
+  }
   if (
     changes.providerInstanceId !== undefined &&
     changes.providerInstanceId !== step.providerInstanceId

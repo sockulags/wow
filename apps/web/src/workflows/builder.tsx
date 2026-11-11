@@ -21,7 +21,9 @@ import {
   ReplaceIcon,
   BookmarkPlusIcon,
   SearchXIcon,
+  SparklesIcon,
   Trash2Icon,
+  XIcon,
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
@@ -34,6 +36,7 @@ import { FormField } from '@/components/form-field';
 import { IconButton, WithTooltip } from '@/components/hint';
 import { MermaidDiagram } from '@/components/mermaid-diagram';
 import { EmptyState } from '@/components/states';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -74,26 +77,21 @@ import {
 import { diagramText, pathsDiagram } from './paths-diagram';
 import { draftRuleProblems, rulesStore, withRules } from './rules';
 import { StepRules } from './step-rules';
+import {
+  attachedSkills,
+  refKey,
+  skillChoices,
+  stepSkillRef,
+  toggledLeaveOut,
+  withAlsoFollow,
+  withoutAlsoFollow,
+  withStepSkill,
+} from './step-skills';
 
 // New steps run on the first instance whose test passed, else the first (audit C-03). A
 // workflow outlives any one chat, so the last thread's instance is not a good guess here.
 function preferredInstance(instances: readonly ProviderInstance[]): string {
   return instances.find((instance) => instance.status === 'ready')?.id ?? instances[0]?.id ?? '';
-}
-
-// The value a step stores for a skill: its name, or plugin:name for a Claude plugin's skill.
-const skillValue = (skill: Skill): string => skill.invocations.claude.replace(/^\//, '');
-
-function skillChoices(skills: readonly Skill[]): Skill[] {
-  const seen = new Set<string>();
-  return skills
-    .toSorted((a, b) => skillValue(a).localeCompare(skillValue(b)))
-    .filter((skill) => {
-      const value = skillValue(skill);
-      if (seen.has(value)) return false;
-      seen.add(value);
-      return true;
-    });
 }
 
 function Problems({ problems }: { problems: readonly DraftProblem[] }) {
@@ -279,6 +277,10 @@ interface StepEditorProps {
   readonly dragging: boolean;
   readonly expanded: boolean;
   readonly runProject: { readonly id: string; readonly name: string } | undefined;
+  // The workflow's "For units" and the `workflows.attachBuiltInSkills` setting, for the built-in
+  // skills wow attaches by itself.
+  readonly forUnits: boolean;
+  readonly attachBuiltIn: boolean;
   onToggle(): void;
   onChange(stepId: string, changes: Partial<DraftStep>): void;
   onRemove(stepId: string): void;
@@ -299,6 +301,8 @@ function StepEditor({
   dragging,
   expanded,
   runProject,
+  forUnits,
+  attachBuiltIn,
   onToggle,
   onChange,
   onRemove,
@@ -316,7 +320,13 @@ function StepEditor({
   useStepDefaults(step, instance, change);
   const choices = skillChoices(skills);
   const known = skillKnown(step.skillName, skills);
-  const selected = choices.find((skill) => skillValue(skill) === step.skillName);
+  const current = refKey(stepSkillRef(step));
+  const selected = choices.find((choice) => choice.value === current);
+  const following = step.alsoFollow ?? [];
+  const followable = choices.filter(
+    (choice) => choice.value !== current && !following.some((ref) => refKey(ref) === choice.value),
+  );
+  const attached = attachedSkills(step, { on: attachBuiltIn, forUnits, skills });
   const globs = parseGlobs(step.artifactsText);
   const matches = useArtifactMatches(globs, runProject?.id);
   const label = `Step ${index + 1}`;
@@ -428,23 +438,104 @@ function StepEditor({
               label={`${label} skill`}
               size="sm"
               className="w-full max-w-sm"
-              value={step.skillName}
+              value={current}
               placeholder="Pick a skill…"
               searchPlaceholder="Search skills…"
               emptyText="No matching skill."
               choices={[
                 ...(step.skillName !== '' && !known
-                  ? [{ value: step.skillName, label: step.skillName, detail: 'Not found' }]
+                  ? [{ value: current, label: step.skillName, detail: 'Not found' }]
                   : []),
-                ...choices.map((skill) => ({
-                  value: skillValue(skill),
-                  label: skillValue(skill),
-                  ...(skill.manualOnly ? { detail: 'Manual only' } : {}),
-                })),
+                ...choices,
               ]}
-              onValueChange={(skillName) => change({ skillName })}
+              onValueChange={(value) => {
+                const picked = choices.find((choice) => choice.value === value);
+                if (picked) change(withStepSkill(picked.ref));
+              }}
             />
           </FormField>
+          <FormField
+            id={`${id}-also`}
+            label="Also follow"
+            help="Sent after the step's skill, in this order, before the extra prompt."
+            group
+          >
+            <div className="flex flex-wrap items-center gap-1.5" data-testid="also-follow">
+              {following.map((ref) => (
+                <Badge key={refKey(ref)} variant="outline" className="gap-1 pr-0.5">
+                  <span className="font-mono">{ref.name}</span>
+                  <span className="text-muted-foreground">
+                    {choices.find((choice) => choice.value === refKey(ref))?.detail ?? 'Not found'}
+                  </span>
+                  <IconButton
+                    label={`Stop following ${ref.name} in ${label.toLowerCase()}`}
+                    size="icon-xs"
+                    onClick={() => change(withoutAlsoFollow(step, ref))}
+                  >
+                    <XIcon />
+                  </IconButton>
+                </Badge>
+              ))}
+              <Combobox
+                label={`${label} also follow`}
+                size="sm"
+                className="w-auto"
+                value=""
+                placeholder="Add a skill…"
+                searchPlaceholder="Search skills…"
+                emptyText="No other skill."
+                choices={followable}
+                onValueChange={(value) => {
+                  const picked = followable.find((choice) => choice.value === value);
+                  if (picked) change(withAlsoFollow(step, picked.ref));
+                }}
+              />
+            </div>
+          </FormField>
+          {attached.length > 0 && (
+            <section
+              aria-label={`${label} skills attached by wow`}
+              data-testid="attached-skills"
+              className="flex flex-col gap-1"
+            >
+              <h4 className="text-xs font-medium">Attached automatically</h4>
+              <ul className="flex flex-col gap-1 text-xs">
+                {attached.map((skill) => (
+                  <li
+                    key={skill.name}
+                    data-testid="attached-skill"
+                    data-left={skill.left || undefined}
+                    className="flex flex-wrap items-center gap-2"
+                  >
+                    <Badge variant={skill.left ? 'outline' : 'secondary'}>
+                      <SparklesIcon />
+                      <span className={cn('font-mono', skill.left && 'line-through')}>
+                        {skill.name}
+                      </span>
+                    </Badge>
+                    <span className="text-muted-foreground">
+                      {skill.left
+                        ? `Left out; wow would attach it because ${skill.reason}.`
+                        : `Because ${skill.reason}.`}
+                    </span>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="ghost"
+                      aria-label={
+                        skill.left
+                          ? `Attach ${skill.name} to ${label.toLowerCase()} again`
+                          : `Leave ${skill.name} out of ${label.toLowerCase()}`
+                      }
+                      onClick={() => change(toggledLeaveOut(step, skill.name))}
+                    >
+                      {skill.left ? 'Attach again' : 'Leave out'}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <FormField id={`${id}-agent`} label="Agent" group>
             <div className="flex flex-wrap items-center gap-1.5">
               <ChoiceSelect
@@ -474,11 +565,7 @@ function StepEditor({
             </div>
           </FormField>
           <div className="grid gap-4 md:grid-cols-2">
-            <FormField
-              id={`${id}-prompt`}
-              label="Extra prompt"
-              help="Sent after the skill invocation."
-            >
+            <FormField id={`${id}-prompt`} label="Extra prompt" help="Sent after the skills.">
               <Textarea
                 aria-label={`${label} extra prompt`}
                 rows={2}
@@ -587,6 +674,7 @@ function Builder({
   const problems = validateDraft(draft, instances, skills);
   const shown = attempted ? problems : problems.filter((problem) => problem.warning);
   const alwaysStop = useSetting('workflows.alwaysStopSkills');
+  const attachBuiltIn = useSetting('workflows.attachBuiltInSkills');
   const steps = stepsOf(draft, alwaysStop);
   const ownWorkingCopy = draft.ownWorkingCopy ?? false;
   // The palette switches it on the stored workflow; the draft follows so Save does not undo it.
@@ -652,8 +740,10 @@ function Builder({
     setExpanded((current) => (current.has(stepId) ? current : new Set([...current, stepId])));
   });
   useEffect(() => {
-    rulesStore.setState({ builder: { steps: draft.steps, setRules } });
-  }, [draft.steps, setRules]);
+    rulesStore.setState({
+      builder: { steps: draft.steps, setRules, changeStep, forUnits, attachBuiltIn },
+    });
+  }, [draft.steps, setRules, changeStep, forUnits, attachBuiltIn]);
   useEffect(
     () => () => rulesStore.setState({ builder: undefined, at: undefined, focus: undefined }),
     [],
@@ -1110,6 +1200,8 @@ function Builder({
                       dragging={dragIndex === index}
                       expanded={expanded.has(step.id)}
                       runProject={runProject}
+                      forUnits={forUnits}
+                      attachBuiltIn={attachBuiltIn}
                       onToggle={() => toggle(step.id)}
                       onChange={changeStep}
                       onRemove={(stepId) =>
