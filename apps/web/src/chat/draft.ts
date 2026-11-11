@@ -8,6 +8,16 @@ export interface DraftState {
   readonly cwd: string | undefined;
   // The first message's text, put in the composer when the draft opens.
   readonly text?: string | undefined;
+  // The model, effort and mode to start with on this instance instead of the usual defaults
+  // (`/clear` starts the new thread as the old one was, agent workbench spec 59).
+  readonly settings?:
+    | {
+        readonly providerInstanceId: string;
+        readonly model: string;
+        readonly effort: string;
+        readonly permissionMode: string;
+      }
+    | undefined;
 }
 
 export type DraftStore = StoreApi<DraftState>;

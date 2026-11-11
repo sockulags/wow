@@ -6,7 +6,7 @@ import {
   type Skill,
   type SkillRef,
 } from '@wow/contracts';
-import { ArrowUpIcon, ClockIcon, SquareIcon, XIcon } from 'lucide-react';
+import { ArrowUpIcon, SlashIcon, SquareIcon, TerminalIcon } from 'lucide-react';
 import {
   useEffect,
   useId,
@@ -18,6 +18,7 @@ import {
   type ReactNode,
   type Ref,
 } from 'react';
+import { useStore } from 'zustand';
 import { useSetting } from '@/app/runtime';
 import { WithTooltip } from '@/components/hint';
 import { Button } from '@/components/ui/button';
@@ -25,6 +26,7 @@ import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui
 import { cn } from '@/lib/utils';
 import { showSkillComposer } from './composer-store';
 import { errorMessage, useTopic } from './data';
+import { readDraft, writeDraft, type ComposerDraft } from './drafts';
 import {
   filterSkills,
   skillQuery,
@@ -34,6 +36,16 @@ import {
   type SkillQuery,
 } from './model';
 import { ComposerSkillChip, SkillMark } from './skill-chip';
+import {
+  paletteCommandsStore,
+  providerCommandPicks,
+  providerCommandText,
+  runPaletteCommand,
+  useProviderCommands,
+  wowCommandPicks,
+  type CommandPick,
+  type CommandSource,
+} from './slash-commands';
 import { skillGroup, skillGroups, skillSourceLabel } from './view-model';
 
 export interface ComposerHandle {
@@ -42,11 +54,15 @@ export interface ComposerHandle {
   setText(text: string): void;
   // Adds a skill as a chip, as a pick from the list does (a starter).
   addSkill(skill: Skill): void;
-  // Sends what the box holds now the way Send does (queued while a turn runs, as the answer to a
-  // waiting question) without asking `beforeSend`: the Assistant view's "Send anyway".
+  // Sends what the box holds now the way Send does (queued by the server while a turn runs, as
+  // the answer to a waiting question) without asking `beforeSend`: the Assistant view's "Send
+  // anyway".
   sendUnchecked(): void;
   // What the box holds now.
   text(): string;
+  // A message taken back off the queue (Edit, agent workbench spec 52): its text before what the
+  // box holds, its skills as chips.
+  putBack(text: string, skills: readonly SkillRef[]): void;
 }
 
 export interface ComposerProps {
@@ -70,15 +86,44 @@ export interface ComposerProps {
   readonly notice?: ReactNode;
   // The model bar at the box's bottom edge, left of Stop and Send (agent workbench spec 1).
   readonly bar?: ReactNode;
+  // Where the text and chips are kept until sent (agent workbench spec 49): one key per thread.
+  // Without one nothing is kept (the Assistant view, whose text may hold a secret).
+  readonly draftKey?: string | undefined;
+  // The open thread's provider and folder: `/` then lists commands above the skills (spec 58 to
+  // 60). Without it the list holds skills only.
+  readonly commandSource?: CommandSource | undefined;
   // The bar's keys while the box has the focus; true when the key was used.
   onBarKey?(event: KeyboardEvent<HTMLTextAreaElement>): boolean;
 }
 
-// The skill list (wow skills spec 16): a cmdk list grouped like every skill list. The focus stays
-// in the text box, so the composer moves the selection itself and cmdk only renders it.
+// A row of the `/` list: a command (spec 58, 60) or a skill.
+type ListPick = CommandPick | { readonly kind: 'skill'; readonly skill: Skill };
+
+const pickValue = (pick: ListPick): string =>
+  pick.kind === 'skill'
+    ? pick.skill.id
+    : pick.kind === 'wow'
+      ? `command:${pick.entry.name}`
+      : `provider:${pick.command.name}`;
+
+const groupClass =
+  '[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-2xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground';
+
+const commandRow = (name: string, description: string, icon: ReactNode, hint?: string) => (
+  <span className="flex w-full items-baseline gap-2 [&>svg]:size-3 [&>svg]:self-center">
+    {icon}
+    <span className="font-mono font-medium">/{name}</span>
+    {hint && <span className="font-mono text-2xs text-muted-foreground">{hint}</span>}
+    <span className="min-w-0 truncate text-xs text-muted-foreground">{description}</span>
+  </span>
+);
+
+// The skill list (wow skills spec 16) with wow's and the provider's commands above it: a cmdk
+// list grouped like every skill list. The focus stays in the text box, so the composer moves the
+// selection itself and cmdk only renders it.
 function SkillPicker({
   id,
-  skills,
+  picks,
   all,
   active,
   kind,
@@ -86,66 +131,100 @@ function SkillPicker({
   onHover,
 }: {
   id: string;
-  skills: readonly Skill[];
+  picks: readonly ListPick[];
   // Every skill, to tell which own skills share a name.
   all: readonly Skill[];
-  active: Skill | undefined;
+  active: ListPick | undefined;
   kind: ProviderKind;
-  onPick(skill: Skill): void;
-  onHover(skill: Skill): void;
+  onPick(pick: ListPick): void;
+  onHover(pick: ListPick): void;
 }) {
+  const wow = picks.filter((pick) => pick.kind === 'wow');
+  const provider = picks.filter((pick) => pick.kind === 'provider');
+  const skills = picks.flatMap((pick) => (pick.kind === 'skill' ? [pick.skill] : []));
+  const item = (pick: ListPick, children: ReactNode) => (
+    <CommandItem
+      key={pickValue(pick)}
+      value={pickValue(pick)}
+      // Keep the focus in the text box.
+      onMouseDown={(event) => event.preventDefault()}
+      onPointerMove={() => onHover(pick)}
+      onSelect={() => onPick(pick)}
+      className="flex-col items-start gap-0.5"
+    >
+      {children}
+    </CommandItem>
+  );
   return (
     <div className="absolute bottom-full left-0 z-10 mb-1 w-full overflow-hidden rounded-md border border-border shadow-md">
-      <Command
-        shouldFilter={false}
-        value={active?.id ?? ''}
-        className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-2xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground"
-      >
+      <Command shouldFilter={false} value={active ? pickValue(active) : ''} className={groupClass}>
         <CommandList id={id} label="Skills" className="max-h-72">
-          {skills.length === 0 && (
+          {picks.length === 0 && (
             <p className="px-3 py-2 text-xs text-muted-foreground">No matching skills.</p>
+          )}
+          {wow.length > 0 && (
+            <CommandGroup heading="Commands">
+              {wow.map((pick) =>
+                item(
+                  pick,
+                  pick.kind === 'wow' &&
+                    commandRow(pick.entry.name, pick.entry.description, <SlashIcon aria-hidden />),
+                ),
+              )}
+            </CommandGroup>
+          )}
+          {provider.length > 0 && (
+            <CommandGroup heading={`${kind === 'claude' ? 'Claude Code' : 'Provider'} commands`}>
+              {provider.map((pick) =>
+                item(
+                  pick,
+                  pick.kind === 'provider' &&
+                    commandRow(
+                      pick.command.name,
+                      pick.command.description,
+                      <TerminalIcon aria-hidden />,
+                      pick.command.argumentHint,
+                    ),
+                ),
+              )}
+            </CommandGroup>
           )}
           {skillGroups.map((group) => {
             const members = skills.filter((skill) => skillGroup(skill) === group);
             if (members.length === 0) return null;
             return (
               <CommandGroup key={group} heading={skillGroupLabels[group]}>
-                {members.map((skill) => (
-                  <CommandItem
-                    key={skill.id}
-                    value={skill.id}
-                    // Keep the focus in the text box.
-                    onMouseDown={(event) => event.preventDefault()}
-                    onPointerMove={() => onHover(skill)}
-                    onSelect={() => onPick(skill)}
-                    className="flex-col items-start gap-0.5"
-                  >
-                    <span className="flex w-full items-baseline gap-2 [&>svg]:size-3 [&>svg]:self-center">
-                      <SkillMark group={group} />
-                      <span className="font-medium">{skill.name}</span>
-                      {skill.source === 'yours' &&
-                        ambiguousOwnSkill(all, skill.name) !== undefined && (
+                {members.map((skill) =>
+                  item(
+                    { kind: 'skill', skill },
+                    <>
+                      <span className="flex w-full items-baseline gap-2 [&>svg]:size-3 [&>svg]:self-center">
+                        <SkillMark group={group} />
+                        <span className="font-medium">{skill.name}</span>
+                        {skill.source === 'yours' &&
+                          ambiguousOwnSkill(all, skill.name) !== undefined && (
+                            <span className="font-mono text-2xs text-muted-foreground">
+                              in {ownSkillFolder(skill)}
+                            </span>
+                          )}
+                        {/* A wow skill goes as its text; only a folder skill has an invocation. */}
+                        {skill.text === undefined && (
                           <span className="font-mono text-2xs text-muted-foreground">
-                            in {ownSkillFolder(skill)}
+                            {skill.invocations[kind]}
                           </span>
                         )}
-                      {/* A wow skill goes as its text; only a folder skill has an invocation. */}
-                      {skill.text === undefined && (
-                        <span className="font-mono text-2xs text-muted-foreground">
-                          {skill.invocations[kind]}
+                        <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
+                          {skillSourceLabel(skill)}
+                        </span>
+                      </span>
+                      {skill.description !== '' && (
+                        <span className="line-clamp-2 text-xs text-muted-foreground">
+                          {skill.description}
                         </span>
                       )}
-                      <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
-                        {skillSourceLabel(skill)}
-                      </span>
-                    </span>
-                    {skill.description !== '' && (
-                      <span className="line-clamp-2 text-xs text-muted-foreground">
-                        {skill.description}
-                      </span>
-                    )}
-                  </CommandItem>
-                ))}
+                    </>,
+                  ),
+                )}
               </CommandGroup>
             );
           })}
@@ -167,6 +246,11 @@ interface Message {
   readonly text: string;
   readonly skills: readonly Skill[];
 }
+
+const sameRef = (skill: Skill, ref: SkillRef): boolean => {
+  const own = skillRefOf(skill);
+  return own.name === ref.name && own.source === ref.source;
+};
 
 // The text the input event typed, or null for a paste, a drop or a deletion: only a typed
 // trigger character opens the list (wow skills spec 19).
@@ -191,35 +275,74 @@ export function Composer({
   notice,
   bar,
   onBarKey,
+  draftKey,
+  commandSource,
 }: ComposerProps) {
   const pickerId = useId();
   const composerId = useId();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const chipElements = useRef<(HTMLSpanElement | null)[]>([]);
-  const [text, setText] = useState('');
+  // The draft of the thread on screen (agent workbench spec 49), read once per thread.
+  const [initial] = useState<ComposerDraft>(() =>
+    draftKey === undefined ? { text: '', skills: [] } : readDraft(draftKey),
+  );
+  const [text, setText] = useState(initial.text);
+  // Which draft the text and chips belong to: they are written back only to their own.
+  const [draftFor, setDraftFor] = useState(draftKey);
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   // Where the list was opened by a typed trigger character; undefined while it is closed.
   const [openAt, setOpenAt] = useState<number>();
-  const [chips, setChips] = useState<readonly Skill[]>([]);
+  const [chips, setChips] = useState<readonly Skill[]>(initial.skills);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
-  // A message written while a turn runs; it goes when the turn ends (C-09).
-  const [queued, setQueued] = useState<Message>();
   const [activeDescendant, setActiveDescendant] = useState<string>();
   const pendingCaret = useRef<number>(undefined);
   const skills = useTopic('skills');
   const stopBinding = useSetting('keybindings.stopTurn');
   const trigger = useSetting('chat.skillTrigger');
+  const palette = useStore(paletteCommandsStore, (state) => state.commands);
   const takesSkills = providerKind !== undefined;
 
   const query: SkillQuery | undefined = takesSkills
     ? skillQuery(text, caret, openAt, trigger)
     : undefined;
-  const matches = query ? inPickerOrder(filterSkills(skills ?? [], query.query)) : [];
   const pickerOpen = query !== undefined && providerKind !== undefined;
-  const activeIndex = Math.min(active, Math.max(0, matches.length - 1));
-  const activeSkill = matches[activeIndex];
+  const offersCommands = pickerOpen && commandSource !== undefined;
+  const providerCommands = useProviderCommands(commandSource, offersCommands);
+  const wowPicks = offersCommands && query ? wowCommandPicks(palette, query.query) : [];
+  const picks: ListPick[] = query
+    ? [
+        ...wowPicks,
+        ...(offersCommands
+          ? providerCommandPicks(providerCommands, wowPicks, skills ?? [], query.query)
+          : []),
+        ...inPickerOrder(filterSkills(skills ?? [], query.query)).map((skill): ListPick => ({
+          kind: 'skill',
+          skill,
+        })),
+      ]
+    : [];
+  const activeIndex = Math.min(active, Math.max(0, picks.length - 1));
+  const activePick = picks[activeIndex];
+
+  // Another thread on screen: its own draft comes in, and nothing of this one goes with it.
+  useLayoutEffect(() => {
+    if (draftKey === draftFor) return;
+    const draft = draftKey === undefined ? { text: '', skills: [] } : readDraft(draftKey);
+    setDraftFor(draftKey);
+    setText(draft.text);
+    setChips(draft.skills);
+    setCaret(draft.text.length);
+    setOpenAt(undefined);
+    setError(undefined);
+    pendingCaret.current = draft.text.length;
+  }, [draftKey, draftFor]);
+
+  useEffect(() => {
+    if (draftKey === undefined || draftFor !== draftKey) return;
+    writeDraft(draftKey, { text, skills: chips });
+  }, [draftKey, draftFor, text, chips]);
 
   useLayoutEffect(() => {
     const at = pendingCaret.current;
@@ -229,39 +352,14 @@ export function Composer({
   }, [text, chips]);
 
   // cmdk names its options itself; the text box points at the selected one.
+  const activeValue = activePick ? pickValue(activePick) : undefined;
   useLayoutEffect(() => {
     if (!pickerOpen) return setActiveDescendant(undefined);
     const selected = document
       .getElementById(pickerId)
       ?.querySelector('[cmdk-item][aria-selected="true"]');
     setActiveDescendant(selected?.id || undefined);
-  }, [pickerOpen, pickerId, activeSkill?.id, matches.length]);
-
-  const deliver = (message: Message, onDone?: () => void) => {
-    setSending(true);
-    setError(undefined);
-    const refs = message.skills.map(skillRefOf);
-    (refs.length > 0 ? onSend(message.text, refs) : onSend(message.text)).then(
-      () => {
-        setSending(false);
-        onDone?.();
-      },
-      (reason: unknown) => {
-        setSending(false);
-        setError(errorMessage(reason));
-      },
-    );
-  };
-
-  // The turn ended: what was queued goes now.
-  useEffect(() => {
-    if (running || queued === undefined || sending) return;
-    const message = queued;
-    setQueued(undefined);
-    deliver(message);
-    // deliver only reads props that change with `running`.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, queued, sending]);
+  }, [pickerOpen, pickerId, activeValue, picks.length]);
 
   const update = (value: string, at: number, opened = openAt) => {
     setText(value);
@@ -277,6 +375,25 @@ export function Composer({
     setChips([]);
   };
 
+  const deliver = (message: Message) => {
+    setSending(true);
+    setError(undefined);
+    const refs = message.skills.map(skillRefOf);
+    const sentFrom = draftFor;
+    (refs.length > 0 ? onSend(message.text, refs) : onSend(message.text)).then(
+      () => {
+        setSending(false);
+        // Sent from a thread that is no longer on screen: only its stored draft goes.
+        if (sentFrom === draftKey) clear();
+        else if (sentFrom !== undefined) writeDraft(sentFrom, { text: '', skills: [] });
+      },
+      (reason: unknown) => {
+        setSending(false);
+        setError(errorMessage(reason));
+      },
+    );
+  };
+
   const focusText = (at: number) => {
     pendingCaret.current = at;
     setCaret(at);
@@ -284,13 +401,35 @@ export function Composer({
     textarea.current?.setSelectionRange(at, at);
   };
 
-  const pick = (skill: Skill) => {
+  const pickSkill = (skill: Skill) => {
     if (!query || !providerKind) return;
     const next = withoutQuery(text, query, caret);
     pendingCaret.current = next.caret;
     update(next.text, next.caret, undefined);
     setChips((current) => withSkill(current, skill));
     textarea.current?.focus();
+  };
+
+  // A wow command runs as its palette command, the typed `/word` taken out of the text; a
+  // provider command goes into the text and is sent as typed (spec 58, 60).
+  const choose = (pick: ListPick) => {
+    if (pick.kind === 'skill') {
+      pickSkill(pick.skill);
+      return;
+    }
+    if (!query) return;
+    const next = withoutQuery(text, query, caret);
+    if (pick.kind === 'provider') {
+      const inserted = providerCommandText(pick.command);
+      const value = `${next.text.slice(0, next.caret)}${inserted}${next.text.slice(next.caret)}`;
+      pendingCaret.current = next.caret + inserted.length;
+      update(value, next.caret + inserted.length, undefined);
+      textarea.current?.focus();
+      return;
+    }
+    pendingCaret.current = next.caret;
+    update(next.text, next.caret, undefined);
+    runPaletteCommand(pick.command);
   };
 
   // From a focused chip the caret goes to the start of the text, next to where the chip was;
@@ -314,6 +453,22 @@ export function Composer({
     textarea.current?.focus();
   };
 
+  // A queued message back in the box: its text first, then what was typed since; its skills as
+  // chips where they are still listed.
+  const putBack = (value: string, refs: readonly SkillRef[]) => {
+    const joined = [value, text].filter((part) => part.trim() !== '').join('\n\n');
+    pendingCaret.current = value.length;
+    update(joined, value.length, undefined);
+    if (takesSkills) {
+      const found = refs.flatMap((wanted) =>
+        (skills ?? []).filter((skill) => sameRef(skill, wanted)),
+      );
+      setChips((current) => found.reduce(withSkill, [...current]));
+    }
+    textarea.current?.focus();
+  };
+
+  // While a turn runs the server queues the message (agent workbench spec 50).
   const send = (checked = true) => {
     const message = text.trim();
     if ((message === '' && chips.length === 0) || disabled || sending) return;
@@ -322,19 +477,7 @@ export function Composer({
       return;
     }
     if (checked && beforeSend && !beforeSend(message)) return;
-    if (running) {
-      setQueued(
-        queued === undefined
-          ? { text: message, skills: chips }
-          : {
-              text: [queued.text, message].filter((part) => part !== '').join('\n\n'),
-              skills: chips.reduce(withSkill, [...queued.skills]),
-            },
-      );
-      clear();
-      return;
-    }
-    deliver({ text: message, skills: chips }, clear);
+    deliver({ text: message, skills: chips });
   };
 
   // Built on every render, so sendUnchecked sends the text and state of this render.
@@ -352,14 +495,15 @@ export function Composer({
     },
     sendUnchecked: () => send(false),
     text: () => text,
+    putBack,
   }));
 
   // The palette reaches the composer on screen that takes skills. It registers once per chip
   // list, not per keystroke, so the palette's commands are not rebuilt while the writer types;
   // the registered actions reach this render's text and caret through a ref.
-  const actions = useRef({ openSkills, removeChip });
+  const actions = useRef({ openSkills, removeChip, putBack });
   useLayoutEffect(() => {
-    actions.current = { openSkills, removeChip };
+    actions.current = { openSkills, removeChip, putBack };
   });
   const chipNames = chips.map((chip) => chip.name).join('\n');
   useEffect(() => {
@@ -369,6 +513,7 @@ export function Composer({
       chips: chipNames === '' ? [] : chipNames.split('\n'),
       openSkills: () => actions.current.openSkills(),
       removeSkill: (index: number) => actions.current.removeChip(index),
+      putBack: (value, refs) => actions.current.putBack(value, refs),
     });
   }, [takesSkills, disabled, composerId, chipNames]);
 
@@ -377,7 +522,7 @@ export function Composer({
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         const step = event.key === 'ArrowDown' ? 1 : -1;
-        const count = Math.max(1, matches.length);
+        const count = Math.max(1, picks.length);
         setActive((activeIndex + step + count) % count);
         return;
       }
@@ -386,9 +531,9 @@ export function Composer({
         !event.shiftKey &&
         !event.nativeEvent.isComposing
       ) {
-        if (activeSkill) {
+        if (activePick) {
           event.preventDefault();
-          pick(activeSkill);
+          choose(activePick);
           return;
         }
       }
@@ -462,49 +607,23 @@ export function Composer({
   return (
     <div className="flex flex-col gap-1.5">
       {notice}
-      {queued !== undefined && (
-        <div
-          data-testid="queued-message"
-          className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-1.5 text-xs"
-        >
-          <ClockIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate">
-            <span className="text-muted-foreground">Sent when the turn ends: </span>
-            {[...queued.skills.map((skill) => `${trigger}${skill.name}`), queued.text]
-              .filter((part) => part !== '')
-              .join(' ')}
-          </span>
-          {onStop && (
-            <Button size="xs" variant="outline" onClick={onStop}>
-              Send now
-            </Button>
-          )}
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Cancel queued message"
-            onClick={() => {
-              update(queued.text, queued.text.length, undefined);
-              setChips(queued.skills);
-              pendingCaret.current = queued.text.length;
-              setQueued(undefined);
-              textarea.current?.focus();
-            }}
-          >
-            <XIcon />
-          </Button>
-        </div>
-      )}
       <div className="relative rounded-lg border border-input bg-background focus-within:border-ring dark:bg-input/30">
         {pickerOpen && (
           <SkillPicker
             id={pickerId}
-            skills={matches}
+            picks={picks}
             all={skills ?? []}
-            active={activeSkill}
+            active={activePick}
             kind={providerKind}
-            onPick={pick}
-            onHover={(skill) => setActive(Math.max(0, matches.indexOf(skill)))}
+            onPick={choose}
+            onHover={(pick) =>
+              setActive(
+                Math.max(
+                  0,
+                  picks.findIndex((candidate) => pickValue(candidate) === pickValue(pick)),
+                ),
+              )
+            }
           />
         )}
         {takesSkills && chips.length > 0 && (

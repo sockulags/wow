@@ -32,6 +32,7 @@ import {
   BackgroundIndicator,
   ChatQuestions,
   ConversationItem,
+  QueuedMessageItem,
   ToolCallGroup,
   WorkingIndicator,
   type ItemContext,
@@ -318,6 +319,14 @@ export function ThreadConversation({
       ...(skills ? { skills: [...skills] } : {}),
     });
   const stop = () => void send({ type: 'thread.interrupt', threadId });
+  const cancelQueued = () => send({ type: 'thread.cancelQueued', threadId });
+  // Off the queue first, so a message the server sent meanwhile is not put back as unsent.
+  const editQueued = async () => {
+    const queued = thread.queued;
+    if (!queued) return;
+    await cancelQueued();
+    composer.current?.putBack(queued.text, queued.skills ?? []);
+  };
   const approval = pendingApproval(approvals);
   const question = pendingQuestion(questions, items ?? [], running);
   const gateRun = gateRunForThread(thread, runs);
@@ -448,6 +457,13 @@ export function ThreadConversation({
               );
             })}
             {extras?.end && <li>{extras.end}</li>}
+            {thread.queued && (
+              <QueuedMessageItem
+                queued={thread.queued}
+                onCancel={cancelQueued}
+                onEdit={editQueued}
+              />
+            )}
           </ol>
           {running && thread.state === 'working' && (
             <div className="mt-3">
@@ -485,6 +501,13 @@ export function ThreadConversation({
           notice={extras?.notice}
           bar={modelBar}
           onBarKey={barKeys}
+          // The Assistant view keeps no draft (its text may hold a secret) and lists no commands.
+          draftKey={extras ? undefined : threadId}
+          commandSource={
+            extras || compact || !instance
+              ? undefined
+              : { providerInstanceId: instance.id, cwd: thread.cwd, threadId }
+          }
           {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
           footer={
             (showMeter && context) || (canResume && !errorId) ? (

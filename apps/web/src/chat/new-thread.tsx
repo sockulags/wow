@@ -113,7 +113,15 @@ export function NewThreadView() {
     instances?.find((candidate) => candidate.status === 'ready') ??
     instances?.[0];
   const { models } = useModels(instance?.id);
-  const defaults = instance && threadDefaults(instance, models, last);
+  const seeded =
+    picked.settings && picked.settings.providerInstanceId === instance?.id
+      ? picked.settings
+      : undefined;
+  const defaults =
+    instance &&
+    (seeded
+      ? { model: seeded.model, effort: seeded.effort, permissionMode: seeded.permissionMode }
+      : threadDefaults(instance, models, last));
 
   // Nothing picked yet: the last thread's project, or its folder when it had none.
   const untouched = picked.projectId === undefined && picked.cwd === undefined;
@@ -180,7 +188,12 @@ export function NewThreadView() {
       text,
       ...(chosen ? { skills: [...chosen] } : {}),
     });
-    draft.setState({ projectId: undefined, cwd: undefined, providerInstanceId: undefined });
+    draft.setState({
+      projectId: undefined,
+      cwd: undefined,
+      providerInstanceId: undefined,
+      settings: undefined,
+    });
     await navigate({ to: '/chat/$threadId', params: { threadId } });
   };
 

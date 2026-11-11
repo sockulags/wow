@@ -1,6 +1,8 @@
-import type { Skill, Thread, ThreadItem, WorkflowRun } from '@wow/contracts';
-import { describe, expect, it } from 'vitest';
+import type { ProviderInstance, Skill, Thread, ThreadItem, WorkflowRun } from '@wow/contracts';
+import { describe, expect, it, vi } from 'vitest';
+import type { CommandContext } from '@/app/commands';
 import { chatCommands } from './commands';
+import { createDraftStore } from './draft';
 import {
   canMarkDone,
   effortOptions,
@@ -234,5 +236,77 @@ describe('done threads', () => {
         canMarkDone({ state }),
       ),
     ).toEqual([true, true, false, false, false]);
+  });
+});
+
+const instance: ProviderInstance = {
+  id: 'claude',
+  kind: 'claude',
+  name: 'Claude',
+  binaryPath: 'claude',
+  configDir: '',
+  env: {},
+  launchArgs: [],
+  defaultModel: null,
+  defaultEffort: null,
+  defaultPermissionMode: null,
+  status: 'ready',
+  account: null,
+  version: null,
+  statusMessage: null,
+  update: null,
+  updateRun: null,
+};
+
+const ids = (running: boolean, changes: Partial<Thread> = {}) =>
+  chatCommands({
+    threads: [],
+    instances: [instance],
+    openThread: thread('a', changes),
+    running,
+  })
+    .map((command) => command.id)
+    .filter((id) => ['chat.compact', 'chat.editQueued', 'chat.cancelQueued'].includes(id));
+
+// Agent workbench spec 58, 59: the palette commands behind `/clear` and `/compact`.
+describe('clear and compact', () => {
+  it('starts a new thread with the same instance, model, effort, mode and folder', () => {
+    const open = thread('a', {
+      projectId: 'kettle',
+      cwd: '/work/kettle-branch',
+      model: 'opus',
+      effort: 'high',
+      permissionMode: 'plan',
+    });
+    const clear = chatCommands({
+      threads: [open],
+      instances: [instance],
+      openThread: open,
+      running: false,
+    }).find((command) => command.id === 'chat.clear');
+    const draft = createDraftStore();
+    const navigate = vi.fn<(to: unknown) => Promise<void>>(() => Promise.resolve());
+    clear?.run({ navigate, draft } as unknown as CommandContext);
+    expect(draft.getState()).toMatchObject({
+      providerInstanceId: 'claude',
+      projectId: 'kettle',
+      cwd: '/work/kettle-branch',
+      settings: {
+        providerInstanceId: 'claude',
+        model: 'opus',
+        effort: 'high',
+        permissionMode: 'plan',
+      },
+    });
+    expect(navigate).toHaveBeenCalledWith({ to: '/chat/new' });
+  });
+
+  it('offers Compact only while no turn runs, and the queue commands while one waits', () => {
+    expect(ids(false)).toEqual(['chat.compact']);
+    expect(
+      ids(true, {
+        queued: { id: 'q', text: 'Then this', queuedAt: '2026-11-02T08:00:00Z' },
+      }),
+    ).toEqual(['chat.editQueued', 'chat.cancelQueued']);
   });
 });

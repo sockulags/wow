@@ -439,8 +439,13 @@ Either way, the thread moves to "Needs you" in the sidebar until you answer. Whe
 workflow step, its run says "Waiting for an answer" in the lists of runs, the run view and the context panel.
 
 While a turn runs, the thread shows how long it has been working. You can write the next message
-meanwhile: Enter queues it, and it is sent when the turn ends. **Send now** stops the turn and
-sends it; the cross puts it back in the composer. A failed turn shows **Retry** (sends your last
+meanwhile: Enter queues it with the server, and the conversation shows it as "Queued · sent when
+the turn ends". A second message joins it. It stays queued when you switch threads or restart
+wow, and the server sends it when the turn ends. **Edit** puts it back in the composer and
+**Cancel** takes it off; both are in the palette too. On Claude Code the message goes into the
+running turn at once, as in Claude Code itself, and shows as "Sent during the turn". What you type
+and have not sent stays with its thread: switch threads or restart wow and it is still there. A
+failed turn shows **Retry** (sends your last
 message again; in a workflow step's thread it sends the last message exactly as it went, the
 step's skills and their texts included) and **Resume** (sends `chat.resumePrompt`) in the error row.
 
@@ -458,7 +463,11 @@ grouped by where they come from (Yours, wow, Project, User, Plugins, Other), eac
 its group and the source on the right. Keep typing to filter, move with the arrow keys, and press
 Enter or Tab (or click) to pick one; Escape closes the list. The palette's "Pick a skill for the
 message" opens the same list. The character is the setting `chat.skillTrigger` (`/` by default);
-set it to `$` if you prefer the old key. A slash anywhere else (a path such as `src/app`, a date
+set it to `$` if you prefer the old key. In a thread, the list starts with "Commands": `/model`,
+`/effort`, `/plan`, `/compact`, `/clear`, `/done`, `/stop` and the others that apply to the
+thread, each running the palette command of that name. `/clear` starts a new thread with the same
+provider, model, effort, mode and folder. Below them come Claude Code's own commands; picking one
+puts `/name` in the message, sent as typed. Codex reports none. A slash anywhere else (a path such as `src/app`, a date
 such as `2026/11/12`) or in pasted text opens nothing.
 
 A picked skill becomes a chip in front of the text: its name with the mark of its group. Backspace
