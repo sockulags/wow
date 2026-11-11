@@ -793,15 +793,20 @@ unpushedCommits, newestSubject, branch}`. Unpushed commits are counted from ever
   its run ("The server stopped while the working copy was being made"), and a `ready` copy
   whose run ended while the server was down is settled.
 
-- **On a pull request's branch.** A run that an event trigger started (see "Scheduler and
-  triggers") is the one case of a copy on a branch, so the agent adds to the pull request:
-  `WorkingCopy.branch` names it. After the same fetch, `createWorkingCopy` checks out the
-  local branch when the repository has it, else makes a local branch that follows the
-  remote's (`git worktree add --track -b`). When git refuses because another folder is on the
-  branch, the copy is on the branch's commit and on no branch; when the branch is nowhere (a
-  merged pull request's branch is often deleted, a fork's is not on this remote) the copy
-  starts at the default branch as usual. `note` says which. A branch name git would read as
-  an option is not used.
+- **On a pull request's head.** A run that an event trigger started (see "Scheduler and
+  triggers") is the one case of a copy at a pull request: `RunEvent.headSha` is the head commit
+  when the event was seen and `RunEvent.headRef` the base repository's ref for it
+  (`refs/pull/<n>/head` on GitHub, `refs/merge-requests/<n>/head` on GitLab). After the usual
+  fetch, `createWorkingCopy` fetches that ref (when `workspaces.fetchBeforeCreate` is on) and
+  checks out the head commit by sha, never by branch name alone: a fork's branch may be called
+  like a branch here. The copy is on the branch `WorkingCopy.branch` names only when this
+  repository's branch (the local one when there is one, else the remote's, followed with
+  `git worktree add --track -b`) is at the head commit, so the agent adds to the pull request.
+  Otherwise, or when git refuses because another folder is on the branch, the copy is on the
+  head commit and on no branch. When the head commit is not here even after the fetch, the
+  copy starts at the default branch as usual. `note` says which. A branch name git would read
+  as an option, or a head that is not a commit name, is not used. A run from before heads were
+  kept has no `headSha` and starts at the default branch.
 - **Shared.** When the pull request already has a working copy, the event's run gets the same
   `path` with state `ready` and a note naming the run that made it; nothing is made. The
   folder is therefore judged per folder, not per run: it is settled once no run that names it
@@ -944,10 +949,10 @@ There are no webhooks: an event is something a read from the host shows.
   trigger itself is off, nothing starts. The stored pull request moves on all the same, so
   the event is not seen again and nothing starts for it later (spec 52).
 - **The run.** It is an ordinary run with `WorkflowRun.event` (`RunEvent`: trigger, event,
-  pull request id, number, link and branch, and for a comment its link and author). The
-  handover template's `event`, `pullRequestNumber`, `pullRequestUrl`, `pullRequestBranch`,
-  `commentUrl` and `commentAuthor` placeholders carry it into every step's prompt
-  (`eventValues` in the workflow engine). The comment's text is never copied: it is someone
+  pull request id, number, link, branch, head commit and head ref, and for a comment its link
+  and author). The handover template's `event`, `pullRequestNumber`, `pullRequestUrl`,
+  `pullRequestBranch`, `commentUrl` and `commentAuthor` placeholders carry it into every step's
+  prompt (`eventValues` in the workflow engine). The comment's text is never copied: it is someone
   else's text and must not become an instruction in a prompt wow writes, so the agent reads it
   at the link (spec 51). The author is cut down to the characters account names use. A
   project that stored its own handover template gets these lines only after adding the
@@ -955,7 +960,7 @@ There are no webhooks: an event is something a read from the host shows.
 - **Its folder.** An event's run always works in a working copy. When a run whose last read
   from the host names the pull request has one on disk (the run is still going, or its copy
   was kept), the event's run works in that same folder; otherwise it gets a new one on the
-  pull request's branch (see "Working copies").
+  pull request's head commit (see "Working copies").
 - **Failing.** A run that cannot start (the workflow is gone, say) stores the event as seen
   without a run and a `failed` notification "Trigger failed" that opens the Triggers tab
   (spec 53); it is not tried again. A started run stores "Workflow run started". The trigger

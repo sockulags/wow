@@ -570,6 +570,23 @@ export async function fetchRemote(
   );
 }
 
+// Fetches one ref of the remote (a pull request's `refs/pull/<n>/head`) without storing it under
+// a name, so its commit can be checked out by sha.
+export async function fetchRemoteRef(
+  folder: string,
+  remote: string,
+  ref: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(
+      folder,
+      ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', '--end-of-options', remote, ref],
+      options,
+    ),
+  );
+}
+
 // The branch the remote calls its default (`refs/remotes/<remote>/HEAD`, which a clone sets), or
 // null when the repository does not say.
 export async function readRemoteDefaultBranch(

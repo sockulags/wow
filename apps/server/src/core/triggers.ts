@@ -519,6 +519,11 @@ function fireEvent(
     number: request.number,
     url: request.url,
     branch: request.headBranch,
+    ...(request.headSha === '' ? {} : { headSha: request.headSha }),
+    headRef:
+      request.host === 'gitlab'
+        ? `refs/merge-requests/${request.number}/head`
+        : `refs/pull/${request.number}/head`,
     // The comment's text stays out: only where it is and who wrote it (spec 51).
     commentUrl: comment?.url ?? null,
     commentAuthor: comment?.author ?? null,

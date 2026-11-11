@@ -1175,7 +1175,11 @@ leafHost.pulls = [
     body: `Invented.\n\nIntent-Unit: ${e2eEventIntentId}/U1`,
     state: 'open',
     branch: e2eEventBranch,
-    sha: 'd4d4d4d4d4d4',
+    // The run's working copy starts at the pull request's head commit.
+    sha:
+      home === e2eChangesHome
+        ? git(leafRepo, 'rev-parse', e2eEventBranch).toString().trim()
+        : 'd4d4d4d4d4d4',
     checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }],
   },
 ];

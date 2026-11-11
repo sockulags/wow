@@ -630,7 +630,9 @@ trigger" in the palette) asks for the project, the event and the workflow:
 
 When polling first sees the event, one run of the workflow starts with the pull request's link,
 number, branch and the event in its handover, in the pull request's working copy when one exists
-and in a new working copy on its branch otherwise. The same event seen again starts nothing, and
+and otherwise in a new working copy at the pull request's head commit, on its branch when this
+repository's branch is at that commit (a fork's pull request whose branch is named like one here
+gets its own commit, on no branch). The same event seen again starts nothing, and
 what was already true when you created the trigger or followed the plan starts nothing either;
 only later changes do. For a review comment the run gets the comment's link and author, never its
 text: the agent reads it with its own tools. Comments by accounts in

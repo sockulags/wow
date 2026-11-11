@@ -47,7 +47,7 @@ let server: RunningServer;
 let host: MockGitHub;
 let now: Date;
 // What the invented agent was started with, and the branch its folder was on then.
-let turns: { cwd: string; prompt: string; branch: string }[];
+let turns: { cwd: string; prompt: string; branch: string; sha: string }[];
 const ceiling = process.env['GIT_CEILING_DIRECTORIES'];
 
 const git = (dir: string, ...args: string[]) =>
@@ -116,20 +116,9 @@ const notices = (): AppNotification[] => db().select().from(notifications).all()
 const body = (key: string) =>
   ['Invented for the tests.', '', `Intent-Unit: ${intentId}/${key}`].join('\n');
 
-const bell: MockPullRequest = {
-  number: 14,
-  title: 'Ring the bell at zero',
-  body: body('U2'),
-  state: 'open',
-  branch: bellBranch,
-  sha: 'b2b2b2b',
-  checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }],
-};
-const mergedBell: MockPullRequest = {
-  ...bell,
-  state: 'closed',
-  mergedAt: '2026-11-03T09:30:00Z',
-};
+// The pull request's head is the tip of its branch on the remote, set once that commit is made.
+let bell: MockPullRequest;
+let mergedBell: MockPullRequest;
 const failing = (sha: string): MockPullRequest => ({
   ...bell,
   sha,
@@ -194,8 +183,21 @@ beforeEach(async () => {
   await writeFile(path.join(seed, 'bell.md'), 'Ring\n');
   git(seed, 'add', '-A');
   git(seed, 'commit', '-q', '-m', 'Invented bell');
+  const bellSha = git(seed, 'rev-parse', 'HEAD');
   git(seed, 'checkout', '-q', 'main');
   git(root, 'clone', '-q', '--bare', seed, remote);
+  // As GitHub keeps every pull request's head in the base repository.
+  git(remote, 'update-ref', 'refs/pull/14/head', bellSha);
+  bell = {
+    number: 14,
+    title: 'Ring the bell at zero',
+    body: body('U2'),
+    state: 'open',
+    branch: bellBranch,
+    sha: bellSha,
+    checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }],
+  };
+  mergedBell = { ...bell, state: 'closed', mergedAt: '2026-11-03T09:30:00Z' };
   git(root, 'clone', '-q', '-c', 'core.autocrlf=false', remote, project);
 
   const folder = path.join(project, 'intents', intentId);
@@ -242,7 +244,12 @@ beforeEach(async () => {
           new MockProviderAdapter(row.kind, (command) => {
             if (command.type !== 'startTurn') return [];
             const { threadId, cwd, prompt } = command;
-            turns.push({ cwd, prompt, branch: git(cwd, 'rev-parse', '--abbrev-ref', 'HEAD') });
+            turns.push({
+              cwd,
+              prompt,
+              branch: git(cwd, 'rev-parse', '--abbrev-ref', 'HEAD'),
+              sha: git(cwd, 'rev-parse', 'HEAD'),
+            });
             return [
               { type: 'textDelta', threadId, itemId: `${threadId}-a`, delta: 'Done' },
               { type: 'turnCompleted', threadId },
@@ -287,6 +294,8 @@ describe('a run started by an event (spec 48)', () => {
       number: 14,
       url: bellUrl,
       branch: bellBranch,
+      headSha: bell.sha,
+      headRef: 'refs/pull/14/head',
       commentUrl: null,
       commentAuthor: null,
     });
@@ -354,17 +363,54 @@ describe('a run started by an event (spec 48)', () => {
     );
   });
 
-  it('starts at the default branch and says so when the branch is gone', async () => {
+  it("starts at the pull request's head commit on no branch when its branch is gone", async () => {
     await follow();
     createTrigger('merged');
-    // Merged and deleted, as hosts do by default.
+    // Merged and deleted, as hosts do by default; the pull request's own ref keeps its head.
     host.pulls = [{ ...mergedBell, branch: 'agent/U2-deleted' }];
     await poll();
     const run = await eventRunEnds();
     expect(run.workingCopy?.note).toBe(
-      'Branch agent/U2-deleted was not found, so the working copy starts at the tip of the default branch, on no branch.',
+      "Branch agent/U2-deleted was not found, so the working copy is on the pull request's head commit and on no branch.",
+    );
+    expect(run.workingCopy?.startSha).toBe(bell.sha);
+    expect(turns.map((turn) => [turn.branch, turn.sha])).toEqual([['HEAD', bell.sha]]);
+  });
+
+  it("checks out a fork's head commit, not the branch here that has the same name", async () => {
+    // A fork's pull request whose branch is called like this repository's own branch.
+    const seed = path.join(root, 'seed');
+    git(seed, 'checkout', '-q', '-b', 'fork-bell', 'main');
+    await writeFile(path.join(seed, 'fork.md'), 'From a fork\n');
+    git(seed, 'add', '-A');
+    git(seed, 'commit', '-q', '-m', 'Invented fork bell');
+    const forkSha = git(seed, 'rev-parse', 'HEAD');
+    git(remote, 'fetch', '-q', seed, `+fork-bell:refs/pull/14/head`);
+    await follow();
+    createTrigger('merged');
+    host.pulls = [{ ...mergedBell, sha: forkSha }];
+    await poll();
+    const run = await eventRunEnds();
+    expect(git(project, 'rev-parse', `origin/${bellBranch}`)).toBe(bell.sha);
+    expect(run.workingCopy?.startSha).toBe(forkSha);
+    expect(run.workingCopy?.note).toBe(
+      `Branch ${bellBranch} here is not at the pull request's head commit (the pull request may come from a fork, or the branch moved since), so the working copy is on that commit and on no branch.`,
+    );
+    expect(turns.map((turn) => [turn.branch, turn.sha])).toEqual([['HEAD', forkSha]]);
+  });
+
+  it('starts at the default branch and says so when the head commit cannot be found', async () => {
+    await follow();
+    createTrigger('merged');
+    host.pulls = [{ ...mergedBell, sha: 'e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5' }];
+    git(remote, 'update-ref', '-d', 'refs/pull/14/head');
+    await poll();
+    const run = await eventRunEnds();
+    expect(run.workingCopy?.note).toMatch(
+      /^The pull request's head commit e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5 was not found \(fetching refs\/pull\/14\/head from origin failed: .+\), so the working copy starts at the tip of the default branch, on no branch\.$/,
     );
     expect(turns.map((turn) => turn.branch)).toEqual(['HEAD']);
+    expect(turns[0]?.sha).toBe(git(project, 'rev-parse', 'origin/main'));
   });
 });
 

@@ -349,6 +349,11 @@ export const RunEvent = z.object({
   number: z.number().int().positive(),
   url: z.string().min(1),
   branch: z.string(),
+  // The pull request's head commit when the event was seen, and the ref of the base repository
+  // it is fetched from (`refs/pull/<n>/head`, `refs/merge-requests/<n>/head`). The run's working
+  // copy starts there, never at a branch name that a fork may share. Absent on runs from before.
+  headSha: z.string().min(1).optional(),
+  headRef: z.string().min(1).optional(),
   commentUrl: z.string().min(1).nullable(),
   commentAuthor: z.string().nullable(),
 });

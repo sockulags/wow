@@ -179,6 +179,10 @@ export class Workspaces {
             projectFolder,
             target,
             branch,
+            head:
+              run.event?.headSha && run.event.headRef
+                ? { sha: run.event.headSha, ref: run.event.headRef }
+                : undefined,
             fetch:
               this.#deps.settings.resolve('workspaces.fetchBeforeCreate', {
                 projectId: run.projectId,
