@@ -122,6 +122,57 @@ function scenario(text: string, trackerUrl: string): Scenario {
         'That is work in your project, which the chat view is for. Open it there with the button.',
     };
   }
+  // The assistant's question tool (questions spec 9 to 11): two questions that belong together,
+  // and one that asks for a token, which wow refuses.
+  if (/morning brief/i.test(text)) {
+    return {
+      steps: [
+        {
+          tool: 'ask_questions',
+          args: {
+            questions: [
+              {
+                question: 'When should the morning brief run?',
+                header: 'Time',
+                options: [
+                  { label: '08:30', description: 'Before stand-up', recommended: true },
+                  { label: '09:00', description: 'After stand-up' },
+                ],
+                multiSelect: false,
+              },
+              {
+                question: 'Which projects should it read?',
+                header: 'Projects',
+                options: [
+                  { label: 'Demo', description: 'The demo project' },
+                  { label: 'Tea timer', description: 'The invented one' },
+                ],
+                multiSelect: true,
+              },
+            ],
+          },
+        },
+      ],
+      answer: 'Two things first; they are on the card above.',
+    };
+  }
+  if (/ask me for the token/i.test(text)) {
+    return {
+      steps: [
+        {
+          tool: 'ask_questions',
+          args: {
+            questions: [{ question: 'What is your GitLab token?', header: 'GitLab', options: [] }],
+          },
+        },
+      ],
+      answer: '',
+      reply: (results) => {
+        const { reason } = JSON.parse(results[0] ?? '{}') as { reason?: string };
+        return `wow refused that question: ${reason ?? 'no reason given'}`;
+      },
+    };
+  }
   const approve = /approve the run (\S+)/i.exec(text);
   if (approve?.[1]) {
     // wow offers no tool for a gate (spec 11); even the real command, sent as the assistant's,
@@ -143,6 +194,7 @@ interface FillIn {
 }
 
 const firstStartLine = 'The first-start step just finished';
+const answeredLine = '[From wow] The user answered your questions';
 
 // The lines of a note's section, from its heading to the next line without a "- ".
 function section(note: string, heading: RegExp): string[] {
@@ -256,6 +308,20 @@ export class AssistantMockAgent implements ProviderAdapter {
   }
 
   async #turn(threadId: string, prompt: string): Promise<void> {
+    // The answer from the question card: say what arrived, as a real agent would go on with it.
+    const card = prompt.indexOf(answeredLine);
+    if (card !== -1) {
+      this.#emit({ type: 'session', threadId, providerSessionId: `assistant-session-${threadId}` });
+      const lines = prompt.slice(card).split('\n').slice(1);
+      this.#emit({
+        type: 'textDelta',
+        threadId,
+        itemId: `${threadId}-reply-${++made}`,
+        delta: `Thanks. You answered:\n\n${lines.join('\n')}`,
+      });
+      this.#emit({ type: 'turnCompleted', threadId });
+      return;
+    }
     const text = userText(prompt);
     const note = noteOf(prompt);
     const greeting = note?.includes(firstStartLine) ? this.#greeting(note) : undefined;

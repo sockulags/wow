@@ -285,6 +285,43 @@ describe('an agent question in a chat thread (spec 1 to 8)', () => {
     ).toMatch(/can no longer be answered/);
     expect(rows<Question>('questions', 'tea').map((row) => row.answer)).toEqual([null, null]);
   });
+
+  it('takes a message after a stopped question, and a later question resumes the work once answered', async () => {
+    await chatThread('tea', twoQuestions);
+    const stopped = committed('turn.ended', 'tea');
+    dispatch({ type: 'thread.interrupt', threadId: 'tea' });
+    await stopped;
+    expect(rows<{ state: string }>('threads')[0]?.state).toBe('idle');
+
+    script = quiet;
+    const ended = committed('turn.ended', 'tea');
+    dispatch({ type: 'thread.sendMessage', threadId: 'tea', text: 'Hello again' });
+    await ended;
+    expect(startTurns().at(-1)?.prompt).toContain('Hello again');
+    expect(rows<{ state: string }>('threads')[0]?.state).toBe('idle');
+
+    script = ({ threadId }) => [
+      {
+        type: 'questionAsked',
+        threadId,
+        questionId: 'ask-2:0',
+        askId: 'ask-2',
+        question: 'Which mug?',
+        options: [{ label: 'Blue mug' }, { label: 'White mug' }],
+        multiSelect: false,
+      },
+    ];
+    const asked = committed('question.asked', 'tea');
+    dispatch({ type: 'thread.sendMessage', threadId: 'tea', text: 'Pick a mug' });
+    await asked;
+    expect(rows<{ state: string }>('threads')[0]?.state).toBe('needs_you');
+    // The two questions left by the stopped turn wait for nothing, so one answer resumes the work.
+    dispatch({
+      type: 'question.answer',
+      answers: [{ questionId: 'tea:ask-2:0', reply: { picked: ['Blue mug'], text: '' } }],
+    });
+    expect(rows<{ state: string }>('threads')[0]?.state).toBe('working');
+  });
 });
 
 // The assistant's question tool, called the way the mock agent calls it: the tool's answer is
@@ -431,6 +468,69 @@ describe("the assistant's question tool (spec 9 to 12)", () => {
     ).toBe(
       'These questions were not answered before the next message, so they can no longer be answered.',
     );
+  });
+
+  it('refuses a second ask in one turn, and an ask in a stopped turn takes no answer', async () => {
+    const first = await call('ask_questions', morning);
+    script = ({ threadId }) => [
+      { type: 'session', threadId, providerSessionId: 'assistant-session' },
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'ask',
+        name: 'mcp__wow__ask_questions',
+        input: morning,
+      },
+      { type: 'toolCallOutput', threadId, itemId: 'ask', output: first.text },
+      { type: 'toolCallCompleted', threadId, itemId: 'ask', status: 'ok' },
+    ];
+    dispatch({ type: 'thread.openAssistant' });
+    const asked = new Promise<void>((resolve) => {
+      const off = server.engine.onCommit(() => {
+        const done = rows<ThreadItem>('threadItems', assistantThreadId).some(
+          (entry) =>
+            entry.kind === 'tool_call' && (entry.payload as { status?: string }).status === 'ok',
+        );
+        if (!done) return;
+        off();
+        resolve();
+      });
+    });
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: assistantThreadId,
+      text: 'Set up my mornings',
+    });
+    await asked;
+    // The turn still runs: a second card in it is refused.
+    const second = await call('ask_questions', {
+      questions: [{ question: 'What should the brief be called?', header: 'Name', options: [] }],
+    });
+    expect(second.isError).toBe(true);
+    expect(second.content).toMatchObject({ outcome: 'refused' });
+    expect(String(second.content['reason'])).toMatch(/already asked in this turn/);
+
+    const stopped = committed('turn.ended', assistantThreadId);
+    dispatch({ type: 'thread.interrupt', threadId: assistantThreadId });
+    await stopped;
+    const item = rows<ThreadItem>('threadItems', assistantThreadId).find(
+      (entry) => entry.kind === 'tool_call',
+    );
+    expect(
+      refusal(() =>
+        dispatch({
+          type: 'thread.answerQuestions',
+          threadId: assistantThreadId,
+          itemId: item?.id ?? '',
+          replies: [
+            { picked: ['08:30'], text: '' },
+            { picked: ['Kettle'], text: '' },
+          ],
+        }),
+      ),
+    ).toBe('The turn that asked these questions was stopped, so they can no longer be answered.');
+    // Once no turn runs, asking is open again.
+    expect((await call('ask_questions', morning)).content).toMatchObject({ outcome: 'asked' });
   });
 
   it('takes a question with no choices, and refuses five questions and a choice "Other"', async () => {

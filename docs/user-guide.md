@@ -385,8 +385,17 @@ how much of the context window the thread uses, with a Compact action for Claude
   work at once; they are in Settings → Keybindings and in the palette. The tool row reads "waiting
   for approval" meanwhile.
 - **Questions**: when the agent asks (Claude's `AskUserQuestion`, Codex's user input request), the
-  options show as buttons. To answer in your own words, type in the composer (or the answer box
-  under the options). The answer continues the same turn.
+  thread shows a question card: each question with its header as a small chip, its choices (the
+  one the agent recommends first, marked **Recommended**) and a last choice **Other** with a text
+  field for your own words. Pick a choice, type, or both; where the agent lets you pick several,
+  pick as many as you like. When the agent asks several questions at once, they are on one card
+  and are sent together with **Send answers**. From the keyboard: the arrow keys move, the digit
+  next to a choice picks it, typing goes to **Other**, and Enter sends. **Alt+Q**
+  (`keybindings.questionFocus`) puts the keyboard on the card, and the palette has "Question: pick
+  …", "Question: type your own answer" and "Question: send the answer". Typing in the composer
+  also answers, as **Other**. The answer continues the same turn. A question that was still open
+  when its turn ended or was stopped says "Not answered" and takes no answer any more; an answered
+  one keeps showing what you answered.
 
 Either way, the thread moves to "Needs you" in the sidebar until you answer.
 
@@ -880,6 +889,18 @@ It can read settings (secret ones only as "set" or "not set"), projects, provide
 templates and skills, calendar cards and meeting times and titles, the backlog, runs, triggers,
 notifications and connection tests. It cannot read a chat thread or a file in a project. Ask it
 for project work ("fix this test") and it offers to open a new thread in Chat with your text.
+
+### When the assistant asks
+
+When a few answers are likely, the assistant asks with the same question card a chat thread
+shows: up to four questions, each with a header, its choices (the recommended one first) and
+**Other** for your own words. Its turn ends there. Your answer, sent with **Send answer**, is your
+next message, and the assistant reads it as the answer to those questions. If you write a message
+instead, the card says "Not answered" and takes no answer any more. A typed answer that looks
+like a secret is held exactly like a typed message ("Put it in …", "Send anyway"). The assistant
+never asks for a token, password or key on the card: its tool refuses such a question and tells
+it to show the secret's field instead. The words it looks for are `assistant.askRefusedWords`
+(Settings → Assistant).
 
 ### Changes, proposals and Undo
 

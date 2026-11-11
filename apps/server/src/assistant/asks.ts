@@ -4,14 +4,16 @@ import {
   SecretFieldRequest,
   SecretRef,
   SecretVariableRequest,
+  askedQuestionsOf,
   askedSecretWord,
   assistantAskTool,
   assistantProjectWorkTool,
   assistantSecretFieldTool,
   assistantSecretVariableTool,
+  assistantThreadId,
   settingGroupTitles,
 } from '@wow/contracts';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import * as t from '../db/schema.js';
 import { RpcFault } from '../rpc/router.js';
 import { guideFor, serviceOfToken } from './guides.js';
@@ -118,6 +120,26 @@ export const asks = {
             `"${question.question}" has a choice "Other"; the card always has one, so leave it out.`,
           );
         }
+      }
+      // Only one card per turn: the answer is the next message, which closes any other card.
+      const turn = deps.db
+        .select({ id: t.turns.id })
+        .from(t.turns)
+        .where(and(eq(t.turns.threadId, assistantThreadId), eq(t.turns.state, 'running')))
+        .get();
+      const earlier =
+        turn &&
+        deps.db
+          .select()
+          .from(t.threadItems)
+          .where(eq(t.threadItems.turnId, turn.id))
+          .all()
+          .some((item) => askedQuestionsOf(item) !== null);
+      if (earlier) {
+        throw new RpcFault(
+          'rejected',
+          'You already asked in this turn. End your turn now; put every question for the user on one card (at most four).',
+        );
       }
       return {
         outcome: 'asked',

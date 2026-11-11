@@ -5,6 +5,7 @@ import type {
   ProviderInstance,
   ProviderTestResult,
 } from '@wow/contracts';
+import { replyText } from '@wow/contracts';
 import { MockOutlookSource, loadFixtures } from '@wow/outlook-bridge';
 import {
   MockConfluence,
@@ -479,6 +480,41 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       },
     ];
   }
+  // Two questions in one ask, as Claude Code asks them: a header each, a recommended choice
+  // marked the provider's way, and one that takes several picks (questions spec 1 to 3).
+  if (/two questions/i.test(prompt)) {
+    return [
+      session,
+      {
+        type: 'questionAsked',
+        threadId,
+        questionId: `${threadId}${separator}ask${separator}0`,
+        askId: `${threadId}-ask`,
+        header: 'Kettle',
+        question: 'Which kettle should the tea timer start?',
+        options: [
+          { label: 'Glass kettle', description: 'You can see the water' },
+          { label: 'Steel kettle (Recommended)', description: 'Boils faster', recommended: true },
+          { label: 'Travel kettle', description: 'Small, for one cup' },
+        ],
+        multiSelect: false,
+      },
+      {
+        type: 'questionAsked',
+        threadId,
+        questionId: `${threadId}${separator}ask${separator}1`,
+        askId: `${threadId}-ask`,
+        header: 'Teas',
+        question: 'Which teas go on the timer list?',
+        options: [
+          { label: 'Green', description: 'Three minutes' },
+          { label: 'Black', description: 'Five minutes' },
+          { label: 'Oolong', description: 'Four minutes' },
+        ],
+        multiSelect: true,
+      },
+    ];
+  }
   if (/question/i.test(prompt)) {
     return [
       session,
@@ -486,6 +522,8 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
         type: 'questionAsked',
         threadId,
         questionId: `${threadId}${separator}question`,
+        askId: `${threadId}-question`,
+        header: 'Color',
         question: 'Which color should the button be?',
         options: [
           { label: 'Red', description: 'Warm and loud' },
@@ -524,6 +562,9 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
 
 const threadOf = (id: string) => id.split(separator)[0] ?? id;
 
+// What the first question of a two-question ask was answered, per thread, until the second is.
+const answered = new Map<string, string[]>();
+
 const chatScript: MockScript = (command) => {
   switch (command.type) {
     case 'startTurn':
@@ -537,8 +578,17 @@ const chatScript: MockScript = (command) => {
         ...finish(threadId, allowed ? 'The command ran.' : 'The command was denied.', 'after'),
       ];
     }
-    case 'answerQuestion':
-      return finish(threadOf(command.questionId), `You chose ${command.answer}.`, 'after');
+    case 'answerQuestion': {
+      // The questions of one ask are answered together; the agent goes on after the last.
+      const threadId = threadOf(command.questionId);
+      const given = [...(answered.get(threadId) ?? []), replyText(command.answer)];
+      if (command.questionId.endsWith(`${separator}ask${separator}0`)) {
+        answered.set(threadId, given);
+        return [];
+      }
+      answered.delete(threadId);
+      return finish(threadId, `You chose ${given.join(' and ')}.`, 'after');
+    }
     case 'interrupt':
       return [{ type: 'turnInterrupted', threadId: command.threadId }];
     default:

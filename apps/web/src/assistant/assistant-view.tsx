@@ -1,5 +1,6 @@
 import {
   SecretRef,
+  askedQuestionsOf,
   assistantThreadId,
   heldSecretSentence,
   rpcMethods,
@@ -11,6 +12,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
 import type { ComposerHandle } from '@/chat/composer';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
+import type { QuestionHold } from '@/chat/question-card';
 import { ThreadConversation } from '@/chat/thread-view';
 import { providerLabel } from '@/chat/view-model';
 import { Banner } from '@/components/banner';
@@ -36,6 +38,7 @@ import {
   type Held,
   type Placed,
 } from './model';
+import { AssistantQuestions, askState } from './questions';
 import { ChangeRow, ProposalCard } from './rows';
 
 // The Assistant section (app assistant spec 1, 3, 7 to 18): the one assistant conversation,
@@ -197,6 +200,7 @@ export function AssistantView() {
   const thread = threads?.[0];
   const instances = useTopic('providerInstances') ?? [];
   const items = useTopic('threadItems', thread ? assistantThreadId : undefined);
+  const turns = useTopic('turns', thread ? assistantThreadId : undefined);
   const changes = useTopic('assistantChanges') ?? [];
   const proposals = useTopic('assistantProposals') ?? [];
   const patterns = useSetting('assistant.secretPatterns');
@@ -227,12 +231,60 @@ export function AssistantView() {
   const { after, rest } = placeRows(items ?? [], changes, proposals);
   const asks = askedFields(items ?? []);
 
+  const holdOf = (text: string) =>
+    holdMessage(
+      text,
+      patterns,
+      asks,
+      undefined,
+      (id) => instances.find((entry) => entry.id === id)?.name,
+    );
+
+  // Typed answers on a card go through the same check as a typed message (questions spec 10).
+  const questionHold: QuestionHold<Held> = {
+    check: (replies) => {
+      setSaved(undefined);
+      for (const reply of replies.values()) {
+        const found = holdOf(reply.text);
+        if (found) return found;
+      }
+      return null;
+    },
+    render: (current, controls) => (
+      <HeldLine
+        held={current}
+        onPut={
+          current.field
+            ? async (replaces) => {
+                const message = await storeHeld(current, replaces);
+                controls.replaceText((text) => withoutSecret(current, text));
+                controls.dismiss();
+                setSaved(message);
+              }
+            : undefined
+        }
+        onSend={controls.sendAnyway}
+        onDismiss={controls.dismiss}
+      />
+    ),
+  };
+
   const extraAfter = (item: ThreadItem): ReactNode => {
     const ask = askOf(item);
+    const questions = askedQuestionsOf(item);
     const placed = after.get(item.id);
-    if (!ask && !placed) return null;
+    if (!ask && !placed && !questions) return null;
     return (
       <div className="flex flex-col gap-2">
+        {questions && (
+          <AssistantQuestions
+            item={item}
+            request={questions}
+            state={askState(item, items ?? [], turns ?? [])}
+            check={questionHold.check}
+            renderHold={questionHold.render}
+          />
+        )}
         {ask?.kind === 'secretField' && <SecretFieldCard request={ask.request} guide={ask.guide} />}
         {ask?.kind === 'secretVariable' && <SecretVariableCard request={ask.request} />}
         {ask?.kind === 'projectWork' && <ProjectWorkCard offer={ask.offer} />}
@@ -248,9 +300,10 @@ export function AssistantView() {
     composer.current?.sendUnchecked();
   };
 
-  const putInField = (current: Held) => async (replaces: boolean) => {
+  // Puts the held value in its field and says so; the caller takes it out of what was typed.
+  const storeHeld = async (current: Held, replaces: boolean): Promise<string> => {
     const { field } = current;
-    if (!field) return;
+    if (!field) throw new Error('No field for this value');
     if (isVariable(field)) {
       const owner = instances.find((entry) => entry.id === field.providerInstanceId);
       if (!owner) throw new Error(`No provider instance ${field.providerInstanceId}`);
@@ -263,10 +316,14 @@ export function AssistantView() {
         current.match.value,
       );
     }
+    return `Saved in ${field.label}${replaces ? ' in place of the value it held' : ''}. It was taken out of your message.`;
+  };
+
+  const putInField = (current: Held) => async (replaces: boolean) => {
+    if (!current.field) return;
+    const message = await storeHeld(current, replaces);
     setHeld(undefined);
-    setSaved(
-      `Saved in ${field.label}${replaces ? ' in place of the value it held' : ''}. It was taken out of your message.`,
-    );
+    setSaved(message);
     composer.current?.setText(withoutSecret(current, composer.current.text()));
   };
 
@@ -312,16 +369,11 @@ export function AssistantView() {
           placeholder: 'Tell the assistant what to set up or change in wow',
           beforeSend: (text) => {
             setSaved(undefined);
-            const found = holdMessage(
-              text,
-              patterns,
-              asks,
-              undefined,
-              (id) => instances.find((entry) => entry.id === id)?.name,
-            );
+            const found = holdOf(text);
             setHeld(found ?? undefined);
             return found === null;
           },
+          questionHold,
           notice,
         }}
       />

@@ -8,6 +8,8 @@ import { backlogCommands } from '@/backlog/commands';
 import { calendarCommands } from '@/calendar/commands';
 import { validateCalendarSearch } from '@/calendar/search';
 import { chatCommands } from '@/chat/commands';
+import { questionCommands } from '@/chat/question-commands';
+import { activeQuestionCard, questionStore } from '@/chat/question-store';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
@@ -95,6 +97,7 @@ export function useCommands(gated = false): {
   const ruleAt = useStore(rulesStore, (state) => state.at);
   const staticCommands = useMemo(() => buildCommands(), []);
   const connectShown = useStore(connectStore, (state) => state.shown > 0);
+  const questionCard = useStore(questionStore, activeQuestionCard);
   const all = useMemo(() => {
     const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
@@ -173,6 +176,7 @@ export function useCommands(gated = false): {
         items: backlogItems ?? [],
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
       }),
+      ...questionCommands(questionCard),
       ...assistantCommands({
         changes: assistantChanges ?? [],
         proposals: assistantProposals ?? [],
@@ -234,6 +238,7 @@ export function useCommands(gated = false): {
     ruleBuilder,
     ruleAt,
     connectShown,
+    questionCard,
   ]);
   const commands = useMemo(
     () => (gated ? all.filter((command) => gateCommand(command.id)) : all),

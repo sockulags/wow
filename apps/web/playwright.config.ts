@@ -37,6 +37,8 @@ const browser = {
   ...(executablePath ? { launchOptions: { executablePath } } : {}),
 };
 const sharedHosts = /[\\/](?:hosts|gitlab|tickets|pages)\.spec\.ts$/;
+// Both talk to the one assistant conversation of the assistant's server copy.
+const sharedAssistant = /[\\/](?:assistant|questions)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: './e2e',
@@ -52,7 +54,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: sharedHosts,
+      testIgnore: [sharedHosts, sharedAssistant],
       use: browser,
     },
     {
@@ -62,6 +64,14 @@ export default defineConfig({
       // suite still runs beside them.
       name: 'hosts',
       testMatch: sharedHosts,
+      workers: 1,
+      use: browser,
+    },
+    {
+      // Each file waits for its own message's answer as the last row of the conversation, so
+      // the two files must not write to it at the same time.
+      name: 'assistant',
+      testMatch: sharedAssistant,
       workers: 1,
       use: browser,
     },

@@ -19,7 +19,6 @@ import {
   CircleDashedIcon,
   CircleDotIcon,
   CircleIcon,
-  HelpCircleIcon,
   RotateCcwIcon,
   ShieldQuestionIcon,
   WrenchIcon,
@@ -30,10 +29,14 @@ import { WithTooltip } from '@/components/hint';
 import { Markdown } from '@/components/markdown';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { errorMessage, useDispatch } from './data';
+import {
+  QuestionCard,
+  type CardQuestion,
+  type QuestionHold,
+  type QuestionStatus,
+} from './question-card';
 import { formatCost, formatTokens } from './model';
 import { failedToolCalls, formatElapsed } from './view-model';
 
@@ -77,6 +80,14 @@ function Unreadable({ item }: { item: ThreadItem }) {
 }
 
 function UserMessage({ payload, context }: { payload: TextItemPayload; context: ItemContext }) {
+  // The answer to the assistant's questions shows on their card; here only that it was sent.
+  if (payload.answers) {
+    return (
+      <p data-testid="answered-note" className="text-right text-xs text-muted-foreground">
+        Answered the questions above.
+      </p>
+    );
+  }
   return (
     <div className="group flex flex-col items-end gap-0.5">
       <div className="w-fit max-w-[85%] rounded-lg bg-secondary px-3 py-2 text-sm whitespace-pre-wrap text-secondary-foreground">
@@ -330,125 +341,56 @@ function ApprovalRow({
   );
 }
 
-function QuestionRow({
-  payload,
-  question,
+// An agent's questions in a chat thread or a step: one card for the questions of one ask
+// (questions spec 3, 6). A question whose turn ended without an answer is closed (spec 5).
+export function ChatQuestions({
+  items,
+  questions,
+  turnEnded,
+  hold,
 }: {
-  payload: QuestionItemPayload;
-  question: Question | undefined;
+  items: readonly ThreadItem[];
+  questions: readonly Question[];
+  turnEnded: boolean;
+  hold?: QuestionHold | undefined;
 }) {
   const send = useDispatch();
-  const [chosen, setChosen] = useState<readonly string[]>([]);
-  const [text, setText] = useState('');
-  const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
-  const answered = question?.answer ?? null;
-  const submit = (answer: string) => {
-    if (answer.trim() === '') return;
-    setBusy(true);
-    setError(undefined);
-    send({ type: 'question.answer', questionId: payload.questionId, answer }).then(
-      () => setBusy(false),
-      (reason: unknown) => {
-        setBusy(false);
-        setError(errorMessage(reason));
-      },
-    );
-  };
-  const disabled = busy || !question;
+  const asked = items.flatMap((item) => {
+    const parsed = QuestionItemPayload.safeParse(item.payload);
+    return parsed.success ? [{ item, payload: parsed.data }] : [];
+  });
+  const first = asked[0];
+  if (!first) return null;
+  const cardQuestions: CardQuestion[] = asked.map(({ payload }) => {
+    const row = questions.find((entry) => entry.id === payload.questionId);
+    const status: QuestionStatus =
+      row && row.answer !== null
+        ? { kind: 'answered', reply: payload.reply ?? row.answer }
+        : row && !turnEnded
+          ? { kind: 'open' }
+          : { kind: 'closed' };
+    return {
+      key: payload.questionId,
+      question: payload.question,
+      header: payload.header,
+      options: payload.options,
+      multiSelect: payload.multiSelect,
+      status,
+    };
+  });
   return (
-    <section
-      aria-label="Question"
-      className={cn(
-        'flex flex-col gap-2 rounded-md border p-3 text-sm',
-        answered === null ? 'border-state-needs-you/60' : 'border-border',
-      )}
-    >
-      <div className="flex items-start gap-2">
-        <HelpCircleIcon className="mt-0.5 size-4 shrink-0 text-state-needs-you" />
-        <p className="font-medium">{payload.question}</p>
-      </div>
-      {answered !== null ? (
-        <p className="text-xs text-muted-foreground">Answered: {answered}</p>
-      ) : (
-        <>
-          {payload.multiSelect ? (
-            <div role="group" aria-label="Options" className="flex flex-col gap-1.5">
-              {payload.options.map((option) => (
-                <label key={option.label} className="flex items-start gap-2 text-sm">
-                  <Checkbox
-                    checked={chosen.includes(option.label)}
-                    disabled={disabled}
-                    onCheckedChange={(checked) =>
-                      setChosen((current) =>
-                        checked === true
-                          ? [...current, option.label]
-                          : current.filter((label) => label !== option.label),
-                      )
-                    }
-                  />
-                  <span>
-                    {option.label}
-                    {option.description && (
-                      <span className="block text-xs text-muted-foreground">
-                        {option.description}
-                      </span>
-                    )}
-                  </span>
-                </label>
-              ))}
-              <Button
-                size="sm"
-                className="w-fit"
-                disabled={disabled || chosen.length === 0}
-                onClick={() => submit(chosen.join(', '))}
-              >
-                Answer
-              </Button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {payload.options.map((option) => (
-                <Button
-                  key={option.label}
-                  size="sm"
-                  variant="outline"
-                  title={option.description}
-                  disabled={disabled}
-                  onClick={() => submit(option.label)}
-                >
-                  {option.label}
-                </Button>
-              ))}
-            </div>
-          )}
-          <form
-            className="flex gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              submit(text);
-            }}
-          >
-            <Input
-              aria-label="Your answer"
-              placeholder="Or type an answer"
-              value={text}
-              disabled={disabled}
-              onChange={(event) => setText(event.target.value)}
-              className="h-8 text-sm"
-            />
-            <Button size="sm" type="submit" variant="secondary" disabled={disabled || !text.trim()}>
-              Send
-            </Button>
-          </form>
-        </>
-      )}
-      {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
-    </section>
+    <QuestionCard
+      id={first.item.id}
+      questions={cardQuestions}
+      closedReason="the turn ended before an answer was sent."
+      onSend={(replies) =>
+        send({
+          type: 'question.answer',
+          answers: [...replies].map(([questionId, reply]) => ({ questionId, reply })),
+        })
+      }
+      {...(hold ? { check: hold.check, renderHold: hold.render } : {})}
+    />
   );
 }
 
@@ -597,8 +539,7 @@ function ItemBody({
     case 'question': {
       const parsed = QuestionItemPayload.safeParse(item.payload);
       if (!parsed.success) return <Unreadable item={item} />;
-      const question = questions.find((row) => row.id === parsed.data.questionId);
-      return <QuestionRow payload={parsed.data} question={question} />;
+      return <ChatQuestions items={[item]} questions={questions} turnEnded={context.turnEnded} />;
     }
     case 'task_list': {
       const parsed = TaskListItemPayload.safeParse(item.payload);

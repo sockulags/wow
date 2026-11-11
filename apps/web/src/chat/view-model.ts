@@ -1,4 +1,5 @@
 import {
+  QuestionItemPayload,
   TextItemPayload,
   ToolCallItemPayload,
   type Approval,
@@ -9,6 +10,7 @@ import {
   type Skill,
   type Thread,
   type ThreadItem,
+  type Turn,
 } from '@wow/contracts';
 import { threadTitle } from './model';
 
@@ -130,8 +132,19 @@ export function starterSkills(skills: readonly Skill[], count: number): Skill[] 
 export const pendingApproval = (approvals: readonly Approval[]): Approval | undefined =>
   approvals.find((approval) => approval.decision === null);
 
-export const pendingQuestion = (questions: readonly Question[]): Question | undefined =>
-  questions.find((question) => question.answer === null);
+// Only a question of the running turn waits: once its turn ends it takes no answer (spec 5), and
+// the composer goes back to sending messages.
+export const pendingQuestion = (
+  questions: readonly Question[],
+  items: readonly ThreadItem[],
+  running: Turn | undefined,
+): Question | undefined => {
+  if (!running) return undefined;
+  const turnOf = new Map(items.map((item) => [item.id, item.turnId]));
+  return questions.find(
+    (question) => question.answer === null && turnOf.get(question.itemId) === running.id,
+  );
+};
 
 function lastText(items: readonly ThreadItem[], kind: ThreadItem['kind']): string | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1) {
@@ -157,7 +170,52 @@ export const lastErrorId = (items: readonly ThreadItem[]): string | undefined =>
 // One entry of the conversation list: an item as it is, or a run of tool calls drawn as one row.
 export type ConversationEntry =
   | { readonly kind: 'item'; readonly item: ThreadItem }
-  | { readonly kind: 'tools'; readonly id: string; readonly items: readonly ThreadItem[] };
+  | { readonly kind: 'tools'; readonly id: string; readonly items: readonly ThreadItem[] }
+  | { readonly kind: 'questions'; readonly id: string; readonly items: readonly ThreadItem[] };
+
+const askIdOf = (item: ThreadItem): string | undefined => {
+  if (item.kind !== 'question') return undefined;
+  const parsed = QuestionItemPayload.safeParse(item.payload);
+  return parsed.success ? parsed.data.askId : undefined;
+};
+
+// The questions of one ask are one card (questions spec 3): consecutive question items of the
+// same turn with the same ask become one entry. A question from before the card has no ask and
+// stays alone.
+export function groupQuestions(entries: readonly ConversationEntry[]): ConversationEntry[] {
+  const out: ConversationEntry[] = [];
+  for (const entry of entries) {
+    const previous = out.at(-1);
+    const askId = entry.kind === 'item' ? askIdOf(entry.item) : undefined;
+    if (entry.kind !== 'item' || askId === undefined) {
+      out.push(entry);
+      continue;
+    }
+    const last =
+      previous?.kind === 'questions'
+        ? previous.items.at(-1)
+        : previous?.kind === 'item'
+          ? previous.item
+          : undefined;
+    if (
+      previous &&
+      previous.kind !== 'tools' &&
+      last !== undefined &&
+      askIdOf(last) === askId &&
+      last.turnId === entry.item.turnId
+    ) {
+      const items = previous.kind === 'questions' ? previous.items : [previous.item];
+      out[out.length - 1] = {
+        kind: 'questions',
+        id: items[0]?.id ?? entry.item.id,
+        items: [...items, entry.item],
+      };
+      continue;
+    }
+    out.push(entry);
+  }
+  return out;
+}
 
 // Consecutive tool calls of one turn become one entry, so a turn that reads ten things does not
 // fill the screen before its answer. Any other item breaks the run, and so does a row the view

@@ -70,6 +70,12 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
 - [ ] The turn ends with usage (tokens and cost).
 - [ ] Type `$` in the composer: installed skills are listed; picking one inserts `/name`.
 - [ ] Start a long answer and press Ctrl+. : the turn stops and the partial text stays.
+- [ ] Ask Claude to ask you two questions with choices at once ("Ask me, with your question tool,
+      which test runner and which folders to test"). One card shows both, each with its header
+      chip and **Other**. Pick a choice on the first, type text in **Other** of the second, Send
+      answers. Write down what Claude says it received for each: expected the picked label for
+      the first and your typed text for the second. Ask once more and answer with a choice and
+      typed text together: expected "<label>, <your text>".
 
 ## 4. Codex turn
 
@@ -81,6 +87,12 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       one, and answering it continues the turn.
 - [ ] The turn ends with usage.
 - [ ] Type `$`: picking a skill inserts `$name`.
+- [ ] Ask Codex to ask you a question with choices with its user input tool (this may need
+      Codex's plan mode or collaboration mode; write down how you got it to ask). Answer with a
+      choice and typed text in **Other** together. Write down what Codex says it received:
+      expected both the label and the text as separate answers. If Codex ignores the typed text
+      when the question has choices, note it: wow sends it as an answer of its own because
+      the protocol has no separate "other" field.
 - [ ] The assistant on Codex. With only the Codex instance connected and "Let the assistant run
       on Codex" off (Settings → Assistant, the default), the assistant says it does not run on
       Codex and why, and no codex turn starts. Turn the setting on and send the assistant a

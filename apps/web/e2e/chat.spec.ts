@@ -276,9 +276,9 @@ test.describe('chat', () => {
   test('answers a question with free text', async ({ page }) => {
     await startThread(page, 'Ask me another question');
     const question = conversation(page).getByRole('region', { name: 'Question' });
-    await expect(question.getByRole('button', { name: 'Red' })).toBeVisible();
-    await question.getByLabel('Your answer').fill('Green, please');
-    await question.getByLabel('Your answer').press('Enter');
+    await expect(question.getByRole('radio', { name: /Red/ })).toBeVisible();
+    await question.getByRole('textbox', { name: 'Other' }).fill('Green, please');
+    await question.getByRole('textbox', { name: 'Other' }).press('Enter');
     await expect(question).toContainText('Answered: Green, please');
     await expect(conversation(page).getByText('You chose Green, please.')).toBeVisible();
   });
@@ -287,7 +287,8 @@ test.describe('chat', () => {
     await startThread(page, 'Ask me a question');
     const question = conversation(page).getByRole('region', { name: 'Question' });
     await expect(question).toContainText('Which color should the button be?');
-    await question.getByRole('button', { name: 'Blue' }).click();
+    await question.getByRole('radio', { name: /Blue/ }).click();
+    await question.getByRole('button', { name: 'Send answer' }).click();
     await expect(question).toContainText('Answered: Blue');
     await expect(conversation(page).getByText('You chose Blue.')).toBeVisible();
   });
