@@ -653,11 +653,15 @@ endedAt, ended, next, reason, limit?}`: one entry per start of a step, in the or
 ("verdict changes requested → deliver-work", "no rule held → next step", "you sent it back");
 `limit` holds the limit sentence when the run waited there. `StepRun` stays one row per step
 with its attempt count, so everything that reads steps by position still works. A step that
-ran in an earlier pass keeps its last result while the run waits before it, so
-`pendingGate(run)` uses the path to tell "after" from "before": the run waits after a step when
-that step's visit is the last one and nothing has decided where the run goes next. Runs from
-before this change have no path, never get one, and only run workflows without rules (steps
-cannot change under a live run), so they continue as they always did.
+ran in an earlier pass keeps its last result while the run waits before it, so the engine
+stores which side the run waits on: the step it waits at has `StepRun.waits` `before` (its
+gate before, or the limit) or `after` (its gate after, or checks), and no other step has it.
+`pendingGate(run)` and the web app's `gateOf` read that field and never decide from the end
+time. A run stored before the field has none until its next wait; for it `pendingGate` falls
+back to the path (the run waits after a step when that step's visit is the last one and nothing
+has decided where the run goes next) and, without a path, to the step's end time, where a wait
+at the limit is always before the step. Runs from before paths were kept never get one; their
+workflow can still gain rules, since only its steps cannot change under a live run.
 
 Templates (spec 20). A template's steps have no ids, so a rule in a template (`TemplateRule`,
 `WorkflowTemplateStep.rules?`) names the step it goes to by its skill: `{type: 'skill',

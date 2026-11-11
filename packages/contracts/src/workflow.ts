@@ -244,6 +244,10 @@ export const StepRun = z.object({
   // its thread is still answering a message the user typed there. It is sent when that turn
   // ends; until then the step is running without a turn of its own.
   heldPrompt: z.string().optional(),
+  // Where the run waits at this step while it does: after the step ended, or before the step
+  // starts (its gate before, or the limit). Set by the engine, so a step that ran before and
+  // keeps its end time is not read as waited after. Absent on runs stored without it.
+  waits: z.enum(['before', 'after']).optional(),
 });
 export type StepRun = z.infer<typeof StepRun>;
 

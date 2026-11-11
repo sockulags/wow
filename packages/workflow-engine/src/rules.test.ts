@@ -715,6 +715,68 @@ describe('the path of a run (spec 18)', () => {
   });
 });
 
+describe('where a run waits, as the engine says it', () => {
+  it('reads a wait at the limit in a run from before paths, whose workflow gained a rule, as a wait before the step', () => {
+    // A run stored before paths were kept: build done, review running, no `path`. The workflow
+    // has gained a rule that sends review's changes back to build, with a limit of one start.
+    const stored: WorkflowRun = {
+      id: 'old',
+      workflowId: 'wf1',
+      projectId: 'p1',
+      calendarItemId: null,
+      backlogItemId: null,
+      state: 'running',
+      currentStep: 1,
+      steps: [
+        {
+          stepId: 'build',
+          state: 'done',
+          threadId: 'old.build',
+          startedAt: T0,
+          endedAt: T0,
+          artifactsFound: [],
+          finalMessage: 'built',
+        },
+        {
+          stepId: 'review',
+          state: 'running',
+          threadId: 'old.review',
+          startedAt: T0,
+          artifactsFound: [],
+        },
+        { stepId: 'ship', state: 'not_started', artifactsFound: [] },
+      ],
+      startedAt: T0,
+      endedAt: null,
+      baseSha: null,
+      baseFiles: null,
+    };
+    const gained = loop({ maxStepVisits: 1 });
+    const { run } = advance(gained, stored, completed('review', 'CHANGES_REQUESTED'), context());
+    expect(run.steps[0]).toMatchObject({ state: 'waiting', waits: 'before' });
+    expect(run.steps[0]?.gate?.state).toBe('waitingAtLimit');
+    expect(pendingGate(run)).toEqual({ stepIndex: 0, position: 'before' });
+    // Run once more starts build again, rather than passing a gate after it.
+    const again = advance(gained, run, { type: 'continue' }, context());
+    expect(again.run).toMatchObject({ state: 'running', currentStep: 0 });
+    expect(again.run.steps[0]).toMatchObject({ state: 'running', attempt: 2 });
+    expect(again.run.steps[0]?.waits).toBeUndefined();
+    expect(effectOf(again.effects, 'sendBack')).toMatchObject({ stepId: 'build', attempt: 2 });
+  });
+
+  it('marks the step the run waits at with the side it waits on, and only while it waits', () => {
+    const gated = workflow([step('build', { gateBefore: true, gateAfter: true }), step('ship')]);
+    const before = play(gated, []);
+    expect(before.run.steps[0]?.waits).toBe('before');
+    const after = advance(gated, before.run, { type: 'continue' }, context());
+    expect(after.run.steps[0]?.waits).toBeUndefined();
+    const ended = advance(gated, after.run, completed('build'), context());
+    expect(ended.run.steps[0]?.waits).toBe('after');
+    const passed = advance(gated, ended.run, { type: 'continue' }, context());
+    expect(passed.run.steps.map((entry) => entry.waits)).toEqual([undefined, undefined]);
+  });
+});
+
 describe('runs and workflows from before rules (spec 17)', () => {
   const plain = workflow([step('build', { gateAfter: true }), step('review'), step('ship')]);
 

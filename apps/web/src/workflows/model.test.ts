@@ -273,6 +273,24 @@ describe('run view helpers', () => {
     expect(gateOf(run({ state: 'running' }))).toBeUndefined();
   });
 
+  it('takes the side of the wait from the server, also for a step that ran before', () => {
+    const ended = {
+      stepId: 's1',
+      state: 'waiting' as const,
+      threadId: 'run-1.s1',
+      startedAt: '2026-11-02T08:00:00.000Z',
+      endedAt: '2026-11-02T08:05:00.000Z',
+      artifactsFound: [],
+    };
+    // A rule sent the run back to s1, which ran before and keeps its end time.
+    const again = run({ steps: [{ ...ended, waits: 'before' }, run().steps[1]!] });
+    expect(gateOf(again)).toEqual({ stepIndex: 0, position: 'before' });
+    expect(stepDisplayState(again.steps[0]!)).toBe('waiting');
+    const after = run({ steps: [{ ...ended, waits: 'after' }, run().steps[1]!] });
+    expect(gateOf(after)).toEqual({ stepIndex: 0, position: 'after' });
+    expect(stepDisplayState(after.steps[0]!)).toBe('done');
+  });
+
   it('sorts live runs first, then the newest', () => {
     const done = run({ id: 'a', state: 'done', startedAt: '2026-11-02T09:00:00.000Z' });
     const old = run({ id: 'b', state: 'done', startedAt: '2026-11-01T09:00:00.000Z' });

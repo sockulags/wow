@@ -171,10 +171,11 @@ export function pendingGate(run: WorkflowRun): PendingGate | undefined {
   if (run.state !== 'waiting') return undefined;
   const step = run.steps[run.currentStep];
   if (!step) return undefined;
+  if (step.waits) return { stepIndex: run.currentStep, position: step.waits };
   const last = lastVisit(run.path);
   const after = run.path
     ? last !== undefined && last.stepId === step.stepId && last.ended !== null && last.next === null
-    : Boolean(step.endedAt);
+    : Boolean(step.endedAt) && step.gate?.state !== 'waitingAtLimit';
   return { stepIndex: run.currentStep, position: after ? 'after' : 'before' };
 }
 
@@ -231,7 +232,33 @@ export function startRun(workflow: Workflow, input: NewRun, context: EngineConte
   return begin(workflow, run, { from: undefined, to: 0, by: 'list' }, context, []);
 }
 
+// Only the step the run waits at says where it waits; every other step forgets it.
+function settleWaits({ run, effects }: Transition): Transition {
+  if (
+    !run.steps.some(
+      (entry, at) => entry.waits && (run.state !== 'waiting' || at !== run.currentStep),
+    )
+  ) {
+    return { run, effects };
+  }
+  const steps = run.steps.map((entry, at): StepRun => {
+    if (!entry.waits || (run.state === 'waiting' && at === run.currentStep)) return entry;
+    const { waits: _left, ...rest } = entry;
+    return rest;
+  });
+  return { run: { ...run, steps }, effects };
+}
+
 export function advance(
+  workflow: Workflow,
+  run: WorkflowRun,
+  input: RunInput,
+  context: EngineContext,
+): Transition {
+  return settleWaits(transit(workflow, run, input, context));
+}
+
+function transit(
   workflow: Workflow,
   run: WorkflowRun,
   input: RunInput,
@@ -350,7 +377,7 @@ function completeStep(
   if (parts.some((part) => part.state === 'pending')) {
     // Nobody is asked yet: the run waits for the host, and the user is told when it is their
     // turn after all.
-    const waiting: StepRun = { ...finished, gate: gate('waitingForChecks', parts) };
+    const waiting: StepRun = { ...finished, waits: 'after', gate: gate('waitingForChecks', parts) };
     return {
       run: { ...run, steps: replaceStep(run.steps, index, waiting), state: 'waiting' },
       effects: [],
@@ -367,7 +394,8 @@ function completeStep(
 }
 
 // The run waits for the user after the step, as at any gate after a step.
-function waitForUser(run: WorkflowRun, index: number, waiting: StepRun): Transition {
+function waitForUser(run: WorkflowRun, index: number, stepRun: StepRun): Transition {
+  const waiting: StepRun = { ...stepRun, waits: 'after' };
   return {
     run: { ...run, steps: replaceStep(run.steps, index, waiting), state: 'waiting' },
     effects: [
@@ -412,6 +440,7 @@ function route(
     const waiting: StepRun = {
       ...done,
       state: 'waiting',
+      waits: 'after',
       gate: {
         state: 'waitingForChecks',
         parts: [checksNotReadYet()],
@@ -503,6 +532,7 @@ function moveTo(
     const waiting: StepRun = {
       ...(steps[move.to] as StepRun),
       state: 'waiting',
+      waits: 'before',
       gate: { state: 'waitingAtLimit', parts: [], detail, since: context.now, at: context.now },
     };
     return {
@@ -926,7 +956,7 @@ function begin(
 
 function waitBefore(run: WorkflowRun, index: number, effects: RunEffect[]): Transition {
   const current = run.steps[index] as StepRun;
-  const steps = replaceStep(run.steps, index, { ...current, state: 'waiting' });
+  const steps = replaceStep(run.steps, index, { ...current, state: 'waiting', waits: 'before' });
   return {
     run: { ...run, steps, currentStep: index, state: 'waiting' },
     effects: [

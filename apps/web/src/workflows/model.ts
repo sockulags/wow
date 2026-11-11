@@ -344,18 +344,23 @@ export interface Gate {
   readonly limit?: string;
 }
 
-// The same reading as the engine's pendingGate. A run that keeps a path waits after its current
-// step only when that step's visit is the last one and nothing was decided after it: a step
-// that ran before keeps its end time while the run waits before it again. A run from before
-// paths goes by whether the current step has ended.
+// Where the run waits, as the server stored it on the step (`waits`). Runs stored before it
+// did are read as the engine's pendingGate reads them: a run that keeps a path waits after its
+// current step only when that step's visit is the last one and nothing was decided after it; a
+// run from before paths goes by whether the current step has ended and is not at the limit.
 export function gateOf(run: WorkflowRun): Gate | undefined {
   if (run.state !== 'waiting') return undefined;
   const step = run.steps[run.currentStep];
   if (!step) return undefined;
   const last = run.path?.at(-1);
-  const after = run.path
-    ? last !== undefined && last.stepId === step.stepId && last.ended !== null && last.next === null
-    : Boolean(step.endedAt);
+  const after = step.waits
+    ? step.waits === 'after'
+    : run.path
+      ? last !== undefined &&
+        last.stepId === step.stepId &&
+        last.ended !== null &&
+        last.next === null
+      : Boolean(step.endedAt) && step.gate?.state !== 'waitingAtLimit';
   const limit = step.gate?.state === 'waitingAtLimit' ? (step.gate.detail ?? '') : undefined;
   return {
     stepIndex: run.currentStep,
@@ -505,9 +510,12 @@ export function gateRunForThread(
 
 // What a step row says. A step that finished and now waits at its gate is done; the gate marker
 // after it says that the run waits for you. A step the run waits before, to run it again, is
-// waiting although its last attempt has ended.
+// waiting although its last attempt has ended. `waitsBefore` is for runs stored before the
+// server said which side the run waits on.
 export function stepDisplayState(stepRun: StepRun, waitsBefore = false): StepRunState {
-  return stepRun.state === 'waiting' && stepRun.endedAt && !waitsBefore ? 'done' : stepRun.state;
+  if (stepRun.state !== 'waiting') return stepRun.state;
+  const after = stepRun.waits ? stepRun.waits === 'after' : stepRun.endedAt && !waitsBefore;
+  return after ? 'done' : 'waiting';
 }
 
 // How long a step took; undefined while it has not ended.
