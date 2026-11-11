@@ -113,3 +113,51 @@ describe('a run of tool calls is one row', () => {
     expect(within(row).getByTestId('tool-group-failed').textContent).toBe('1 failed');
   });
 });
+
+const user = (payload: unknown): ThreadItem => ({
+  id: id(4),
+  threadId: id(2),
+  turnId: id(3),
+  index: 0,
+  kind: 'user',
+  payload,
+  streaming: false,
+});
+
+describe('the skills a message was sent with (wow skills spec 14, 18)', () => {
+  it('shows each skill as a chip with its group, and its text opens from the chip', async () => {
+    show(
+      user({
+        text: 'the login fix',
+        skills: [
+          { name: 'tidy-notes', source: 'yours', text: 'Tidy the notes of the run.' },
+          { name: 'deliver-work', source: 'user-claude', invocation: '/deliver-work' },
+          {
+            name: 'wow-verdict',
+            source: 'wow',
+            text: 'End with one verdict line.',
+            reason: 'a rule of this step reads the verdict',
+          },
+        ],
+      }),
+    );
+    const row = within(screen.getByTestId('item-user'));
+    expect(row.getAllByTestId('skill-chip').map((chip) => chip.getAttribute('aria-label'))).toEqual(
+      ['tidy-notes, Yours skill', 'deliver-work, User skill', 'wow-verdict, wow skill'],
+    );
+    // The text is not in the conversation itself.
+    expect(row.queryByText('Tidy the notes of the run.')).toBeNull();
+    expect(row.getByText('the login fix')).toBeTruthy();
+    fireEvent.click(row.getByRole('button', { name: 'wow-verdict, wow skill' }));
+    const card = await screen.findByRole('dialog', { name: 'Skill wow-verdict' });
+    expect(within(card).getByTestId('skill-text').textContent).toBe('End with one verdict line.');
+    expect(card.textContent).toContain('Attached by wow: a rule of this step reads the verdict.');
+  });
+
+  it('shows a message stored before chips, with $name in its text, as it was', () => {
+    show(user({ text: '$check-work the release' }));
+    const row = within(screen.getByTestId('item-user'));
+    expect(row.queryAllByTestId('skill-chip')).toEqual([]);
+    expect(screen.getByTestId('item-user').textContent).toBe('$check-work the release');
+  });
+});

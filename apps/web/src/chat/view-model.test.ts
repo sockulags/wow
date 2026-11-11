@@ -90,10 +90,12 @@ describe('chat labels', () => {
   });
 
   it('groups skills by where they come from (C-07)', () => {
-    expect(skillGroup(skill('a', 'project-agents'))).toBe('Project');
-    expect(skillGroup(skill('b', 'user-codex'))).toBe('User');
-    expect(skillGroup(skill('c', 'user-claude', '/agent-os:c'))).toBe('Plugins');
-    expect(skillGroup(skill('d', 'custom'))).toBe('Other');
+    expect(skillGroup(skill('a', 'project-agents'))).toBe('project');
+    expect(skillGroup(skill('b', 'user-codex'))).toBe('user');
+    expect(skillGroup(skill('c', 'user-claude', '/agent-os:c'))).toBe('plugins');
+    expect(skillGroup(skill('d', 'custom'))).toBe('other');
+    expect(skillGroup(skill('e', 'yours'))).toBe('yours');
+    expect(skillGroup(skill('wow-verdict', 'wow'))).toBe('wow');
     expect(skillSourceLabel(skill('c', 'user-claude', '/agent-os:c'))).toBe('Plugin agent-os');
   });
 

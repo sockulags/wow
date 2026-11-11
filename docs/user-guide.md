@@ -406,10 +406,26 @@ message again) and **Resume** (sends `chat.resumePrompt`) in the error row.
 
 ### Skills
 
-Type `$` in the composer to list installed skills with their descriptions, grouped by where they
-come from (Project, User, Plugins) with the source on the right. Keep typing to filter, move with
-the arrow keys, and press Enter or Tab (or click) to insert one; Escape closes the list. wow inserts
-the form the thread's provider understands: `/name` for Claude and `$name` for Codex.
+Type `/` at the start of a message or after a space to list skills with their descriptions,
+grouped by where they come from (Yours, wow, Project, User, Plugins, Other), each with a mark for
+its group and the source on the right. Keep typing to filter, move with the arrow keys, and press
+Enter or Tab (or click) to pick one; Escape closes the list. The palette's "Pick a skill for the
+message" opens the same list. The character is the setting `chat.skillTrigger` (`/` by default);
+set it to `$` if you prefer the old key. A slash anywhere else (a path such as `src/app`, a date
+such as `2026/11/12`) or in pasted text opens nothing.
+
+A picked skill becomes a chip in front of the text: its name with the mark of its group. Backspace
+at the start of the text removes the last chip whole, the left arrow steps onto the chips and the
+right arrow back into the text, and Backspace or Delete on a chip (or its cross, or the palette's
+"Remove skill <name> from the message") removes it. A message can be only chips. The starters
+under a new thread's composer add their skill as a chip too.
+
+When you send, wow sends each skill the way it works on the thread's provider: the text of a wow
+skill (Yours or wow), and `/name` for Claude or `$name` for Codex for a skill from a folder. The
+message in the thread shows the same chips above your text; click one to read the text that was
+sent (or the invocation), and, on a step's prompt, why wow attached a built-in skill. Messages
+sent before chips existed show their text as it was, `$name` included. The Assistant's composer
+takes no skills.
 
 ### How answers look
 
@@ -1099,7 +1115,7 @@ None are known right now; the rest of this guide describes the intended behavior
 Scroll to the end of the thread; the approval or question row is the last one. If the server was
 restarted mid-turn, the turn is marked failed; send a new message or press Resume.
 
-**Skills are missing in the `$` list or the builder**
+**Skills are missing in the skill list or the builder**
 
 Check `skills.directories`, then press "Refresh skills" in the builder or the palette. A
 `SKILL.md` whose frontmatter does not parse is skipped and logged in `desktop.log`.
