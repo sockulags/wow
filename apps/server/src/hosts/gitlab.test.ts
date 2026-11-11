@@ -431,6 +431,41 @@ describe('a project on a GitLab host (spec 34)', () => {
   });
 });
 
+describe("a GitLab project's git data before any read", () => {
+  it('names GitLab as its code host by the rule the poller picks GitLab by, before any read', async () => {
+    const codeHost = async () =>
+      (await server.trackers.projectsGit()).find((entry) => entry.projectId === 'tea')?.codeHost;
+    expect(await codeHost()).toBe('gitlab');
+    expect((await server.trackers.projectTrackers('tea')).git.codeHost).toBe('gitlab');
+    set('trackers.gitlab.baseUrl', 'https://gitlab.other.test');
+    expect(await codeHost()).toBe('github');
+    set('trackers.gitlab.baseUrl', '');
+    expect(await codeHost()).toBe('github');
+  });
+
+  it('words a refused duplicate trigger as a merge request before any read', async () => {
+    await server.trackers.idle();
+    expect(server.trackers.codeHost('tea')).toBe('gitlab');
+    expect(rows<HostRead>('hostReads')).toEqual([]);
+    dispatch({ type: 'workflow.create', workflowId: 'wf', name: 'Follow up', steps: [] });
+    const create = (triggerId: string) =>
+      dispatch({
+        type: 'trigger.create',
+        triggerId,
+        projectId: 'tea',
+        event: 'merged',
+        workflowId: 'wf',
+      });
+    create('first');
+    expect(() => create('second')).toThrow(
+      'Tea already has a trigger that starts Follow up for "Merge request merged"',
+    );
+    set('trackers.gitlab.baseUrl', 'https://gitlab.other.test');
+    await server.trackers.idle();
+    expect(() => create('third')).toThrow('for "Pull request merged"');
+  });
+});
+
 describe('GitLab refusing or not answering (spec 31, 32)', () => {
   it('names the GitLab token on 401 and never shows or logs the token', async () => {
     gitlab.token = 'glpat-another-token';

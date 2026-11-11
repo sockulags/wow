@@ -403,12 +403,20 @@ how much of the context window the thread uses, with a Compact action for Claude
   one keeps showing what you answered.
 
 Either way, the thread moves to "Needs you" in the sidebar until you answer. When the thread is a
-workflow step, its run says "Waiting for an answer" in the list of runs and in the run view.
+workflow step, its run says "Waiting for an answer" in the lists of runs, the run view and the context panel.
 
 While a turn runs, the thread shows how long it has been working. You can write the next message
 meanwhile: Enter queues it, and it is sent when the turn ends. **Send now** stops the turn and
 sends it; the cross puts it back in the composer. A failed turn shows **Retry** (sends your last
-message again) and **Resume** (sends `chat.resumePrompt`) in the error row.
+message again; in a workflow step's thread it sends the last message exactly as it went, the
+step's skills and their texts included) and **Resume** (sends `chat.resumePrompt`) in the error row.
+
+When Claude starts work in the background (a background agent or command) and ends its turn to
+wait for it, the thread says "Waiting for background work" and names it. When that work ends,
+Claude goes on by itself: the new turn appears in the thread as it runs, without a message from
+you, its usage is counted, **Stop** stops it, and the thread is marked as after any turn. Should
+the server stop while Claude waits, the waiting line goes away; only a workflow step that waited
+for a background agent shows a failed turn (send a message to go on).
 
 ### Skills
 
@@ -544,6 +552,10 @@ is told. **Edit** changes the description and the text; **Delete** removes the s
 of the three offers **Undo**. A name that is not allowed or already taken is refused with the
 reason, and nothing is saved. wow keeps each skill as a `SKILL.md` file under its home folder
 (`~/.wow/skills/<name>/SKILL.md`); a file you put there by hand is listed after **Refresh skills**.
+Editing such a file changes only its name, description and text and keeps every other line of its
+frontmatter, and **Undo** of an edit or a delete puts the file back exactly as it was. When two
+folders name a skill the same, both are listed with their folder beside the name, and wow sends,
+runs, edits and deletes neither until you rename one in its `SKILL.md`; it says which folders.
 Your skills come first in every skill list. The palette has **New skill**, and **Edit skill** and
 **Delete skill** for each of yours.
 
@@ -590,6 +602,14 @@ instead is a side conversation and leaves the run waiting. **Stop** ends the run
 first, because a stopped run cannot be continued. The next step's prompt is its skill invocation, its extra prompt, and the handover from
 `workflows.handoverTemplate` (by default the previous step's final message and the expected
 artifact paths). Stopping a run keeps all its threads.
+
+A step whose turn ends while a background agent of Claude's still runs is not done yet: it ends
+with the turn Claude starts by itself once that agent ends, and that turn's last message is the
+step's. A step does not wait for a background command such as a dev server or a watcher, which may
+never end. If the agent ends and Claude does not go on, or Claude's session is closed, the step
+ends with its last turn. When
+the background work ends before Claude ends its turn, wow cannot tell that Claude will go on, and
+the step ends with the first turn.
 
 ### Reviewing at a gate
 

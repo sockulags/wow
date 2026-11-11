@@ -309,7 +309,7 @@ function triggers(deps: ReaderDeps, limit: number, names: Names): DiagnosisProbl
       ? [
           {
             kind: 'trigger' as const,
-            what: `Trigger "${triggerEventLabel(trigger.event, projectCodeHost(reads, trigger.projectId))}" for ${names.workflows.get(trigger.workflowId) ?? trigger.workflowId} in ${names.projects.get(trigger.projectId) ?? trigger.projectId}`,
+            what: `Trigger "${triggerEventLabel(trigger.event, projectCodeHost(reads, trigger.projectId, deps.trackers.codeHost(trigger.projectId)))}" for ${names.workflows.get(trigger.workflowId) ?? trigger.workflowId} in ${names.projects.get(trigger.projectId) ?? trigger.projectId}`,
             reason: `It could not start a run: ${body}`,
             place: triggersPlace,
           },

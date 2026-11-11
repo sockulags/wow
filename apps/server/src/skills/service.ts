@@ -8,11 +8,12 @@ import {
   type SkillRoot,
   type SkillWatcher,
   type WatchFactory,
+  ownSkillFile,
   ownSkillsDir,
   removeOwnSkill,
   skillFileName,
   wowSkillRoots,
-  writeOwnSkill,
+  writeOwnSkillFile,
 } from '@wow/skills';
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
@@ -21,6 +22,7 @@ import path from 'node:path';
 import type { Commit, Engine } from '../core/engine.js';
 import { alreadyThere } from '../core/skills.js';
 import type { Db } from '../db/database.js';
+import { readModel } from '../core/projector.js';
 import { projects } from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import type { SettingsService } from '../settings/service.js';
@@ -73,16 +75,18 @@ export class SkillsService {
   }
 
   // Scans now. Calls that arrive while a scan is waiting to start share that scan, so a burst of
-  // file changes costs one more scan, not one each.
+  // file changes costs one more scan, not one each. A scan overtaken by an own-skill commit
+  // answers with the scan that commit queued, so no caller gets the list from before it.
   refresh(): Promise<Skill[]> {
     if (this.#queued) return this.#queued;
     const scan = this.#tail.then(() => {
       this.#queued = undefined;
       return this.#scan();
     });
-    this.#queued = scan;
     this.#tail = scan.catch(() => undefined);
-    return scan;
+    const answer = scan.then(({ skills, overtaken }) => (overtaken ? this.refresh() : skills));
+    this.#queued = answer;
+    return answer;
   }
 
   async stop(): Promise<void> {
@@ -97,6 +101,7 @@ export class SkillsService {
   // the scan skipped, or on Windows one whose name differs only in case), so it is not
   // overwritten. The orchestrator does no I/O, so this runs before the command is decided.
   async refusal(command: Command): Promise<string | undefined> {
+    if (command.type === 'skill.restore') return this.#restoreRefusal(command.folder);
     if (command.type !== 'skill.create') return undefined;
     const dir = ownSkillsDir(this.#deps.wowHome);
     const names = await readdir(dir).catch(() => [] as string[]);
@@ -105,6 +110,17 @@ export class SkillsService {
       (name) => name.toLowerCase() === wanted && existsSync(path.join(dir, name, skillFileName)),
     );
     return found === undefined ? undefined : alreadyThere(path.join(dir, found));
+  }
+
+  // A restore puts a file back where the list has that skill, or where nothing is; never over
+  // a SKILL.md the list does not show.
+  #restoreRefusal(folder: string): string | undefined {
+    const dir = path.resolve(ownSkillsDir(this.#deps.wowHome), folder);
+    if (!existsSync(path.join(dir, skillFileName))) return undefined;
+    const listed = readModel(this.#deps.db)
+      .skills()
+      .some((skill) => skill.source === 'yours' && skill.dir.toLowerCase() === dir.toLowerCase());
+    return listed ? undefined : alreadyThere(dir);
   }
 
   // Why the file of the own skill a command saved or deleted could not be written or removed.
@@ -123,7 +139,10 @@ export class SkillsService {
       try {
         if (event.kind === 'skill.saved') {
           const { skill, previous } = event.payload;
-          writeOwnSkill(skill.dir, { ...skill, text: skill.text ?? '' });
+          writeOwnSkillFile(
+            skill.dir,
+            skill.file ?? ownSkillFile({ ...skill, text: skill.text ?? '' }),
+          );
           if (previous && previous.dir !== skill.dir) removeOwnSkill(previous.dir);
         } else {
           removeOwnSkill(dir);
@@ -160,8 +179,8 @@ export class SkillsService {
     return roots;
   }
 
-  async #scan(): Promise<Skill[]> {
-    if (this.#stopped) return [];
+  async #scan(): Promise<{ skills: Skill[]; overtaken: boolean }> {
+    if (this.#stopped) return { skills: [], overtaken: false };
     const generation = this.#ownGeneration;
     const roots = await this.#roots();
     await this.#watch(roots);
@@ -174,9 +193,10 @@ export class SkillsService {
       this.#deps.logger.warn(`skipped skill file ${problem.file}`, problem.message);
     }
     // An own skill committed since this scan began: the scan its commit queued sends the list.
-    if (this.#stopped || generation !== this.#ownGeneration) return skills;
+    if (this.#stopped) return { skills, overtaken: false };
+    if (generation !== this.#ownGeneration) return { skills, overtaken: true };
     this.#deps.engine.dispatch(`skills.sync:${randomUUID()}`, { type: 'skills.sync', skills });
-    return skills;
+    return { skills, overtaken: false };
   }
 
   async #watch(roots: readonly SkillRoot[]): Promise<void> {

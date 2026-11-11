@@ -1027,6 +1027,43 @@ describe('CodexAdapter', () => {
     expect(resolved.launches[0]?.env['OPENAI_API_KEY']).toBe('sk-test');
   });
 
+  // Should codex go on with a thread by itself, its turn is a turn of the thread like Claude's.
+  it('reports a turn codex starts without a turn/start', async () => {
+    const { adapter, take, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(startTurn);
+    current().emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'codex-thread',
+        turn: { id: 'turn-1', status: 'completed', error: null },
+      },
+    });
+    take();
+    current().emit({
+      method: 'turn/started',
+      params: {
+        threadId: 'codex-thread',
+        turn: { id: 'turn-2', status: 'inProgress', error: null },
+      },
+    });
+    current().emit({
+      method: 'item/agentMessage/delta',
+      params: { threadId: 'codex-thread', turnId: 'turn-2', itemId: 'm2', delta: 'Done.' },
+    });
+    current().emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'codex-thread',
+        turn: { id: 'turn-2', status: 'completed', error: null },
+      },
+    });
+    expect(take()).toEqual([
+      { type: 'turnStartedByProvider', threadId: 'thread-1' },
+      { type: 'textDelta', threadId: 'thread-1', itemId: 'm2', delta: 'Done.' },
+      { type: 'turnCompleted', threadId: 'thread-1' },
+    ]);
+  });
+
   it('ignores lines that are not JSON-RPC and notifications for other threads', async () => {
     const { adapter, take, current } = setup(() => new ScriptedCodex(baseAnswers));
     await adapter.send(startTurn);

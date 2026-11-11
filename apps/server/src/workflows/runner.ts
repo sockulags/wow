@@ -1,5 +1,6 @@
 import {
   runFolder,
+  type BackgroundTask,
   type FileHash,
   type RunEffect,
   type ServerCommand,
@@ -41,6 +42,9 @@ export interface RunnerDeps {
   readonly logger: Logger;
 }
 
+const waitsForBackground = (tasks: readonly BackgroundTask[]): boolean =>
+  tasks.some((task) => task.agent === true);
+
 interface EndedTurn {
   readonly id: string;
   readonly state: Exclude<TurnState, 'running'>;
@@ -65,6 +69,9 @@ export class WorkflowRunner {
         } else if (event.kind === 'turn.ended') {
           const { threadId, turnId, state } = event.payload;
           this.#track(() => this.#turnEnded(threadId, { id: turnId, state }));
+        } else if (event.kind === 'thread.backgroundChanged') {
+          const { threadId } = event.payload;
+          this.#track(() => this.#backgroundChanged(threadId));
         }
       }
     });
@@ -274,6 +281,9 @@ export class WorkflowRunner {
       });
       return;
     }
+    // Claude Code goes on by itself once a background agent ends; the step ends with that turn.
+    // A background shell command (a dev server, a watcher) may never end, so no step waits for it.
+    if (turn.state === 'completed' && waitsForBackground(thread.backgroundTasks)) return;
     const commandId = `workflow:${turn.id}:ended`;
     if (turn.state !== 'completed') {
       this.#dispatch(commandId, {
@@ -339,6 +349,28 @@ export class WorkflowRunner {
       ...(fileHashes ? { fileHashes } : {}),
       ...(headSha === undefined ? {} : { headSha }),
     });
+  }
+
+  // The background agents a step waited for are gone and no turn followed: they ended without
+  // Claude Code going on, or its session was closed or released. The step ends with its last turn.
+  async #backgroundChanged(threadId: string): Promise<void> {
+    const { db } = this.#deps;
+    const thread = db.select().from(threads).where(eq(threads.id, threadId)).get();
+    if (!thread?.runId || !thread.stepId || waitsForBackground(thread.backgroundTasks)) return;
+    const stepId = thread.stepId;
+    const stepRun = this.#run(thread.runId)?.steps.find((entry) => entry.stepId === stepId);
+    if (stepRun?.state !== 'running' || stepRun.threadId !== threadId) return;
+    if (stepRun.heldPrompt !== undefined) return;
+    const last = db
+      .select({ id: turns.id, state: turns.state, startedAt: turns.startedAt })
+      .from(turns)
+      .where(eq(turns.threadId, threadId))
+      .orderBy(desc(turns.index))
+      .get();
+    // A turn of an earlier visit of the step is not this visit's outcome.
+    if (!last || last.state === 'running') return;
+    if (stepRun.startedAt !== undefined && last.startedAt < stepRun.startedAt) return;
+    await this.#turnEnded(threadId, { id: last.id, state: last.state });
   }
 
   #errorOf(turnId: string): string | undefined {

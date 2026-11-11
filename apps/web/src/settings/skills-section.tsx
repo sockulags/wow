@@ -1,4 +1,4 @@
-import type { Skill } from '@wow/contracts';
+import { ambiguousOwnSkill, ownSkillFolder, type Skill } from '@wow/contracts';
 import { BookOpenIcon, PencilIcon, PlusIcon, SparklesIcon, Trash2Icon } from 'lucide-react';
 import { useId } from 'react';
 import { useStore } from 'zustand';
@@ -51,7 +51,16 @@ function SkillText({ skill }: { skill: Skill }) {
   );
 }
 
-function OwnSkillRow({ skill, offline }: { skill: Skill; offline: boolean }) {
+function OwnSkillRow({
+  skill,
+  offline,
+  shared,
+}: {
+  skill: Skill;
+  offline: boolean;
+  // Why this skill cannot be used: another of your folders names a skill the same.
+  shared: string | undefined;
+}) {
   const { connection } = useRuntime();
   return (
     <li
@@ -61,10 +70,18 @@ function OwnSkillRow({ skill, offline }: { skill: Skill; offline: boolean }) {
     >
       <div className="flex min-w-0 items-center gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="font-mono text-sm font-medium">{skill.name}</span>
+          <span className="flex items-baseline gap-2">
+            <span className="font-mono text-sm font-medium">{skill.name}</span>
+            {shared !== undefined && (
+              <span className="font-mono text-2xs text-muted-foreground">
+                in {ownSkillFolder(skill)}
+              </span>
+            )}
+          </span>
           <span className="text-xs text-muted-foreground">
             {skill.description || 'No description'}
           </span>
+          {shared !== undefined && <span className="text-xs text-warning">{shared}</span>}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Button
@@ -211,7 +228,12 @@ export function SkillsSection() {
         ) : (
           <ul className="flex flex-col">
             {own.map((skill) => (
-              <OwnSkillRow key={skill.id} skill={skill} offline={offline} />
+              <OwnSkillRow
+                key={skill.id}
+                skill={skill}
+                offline={offline}
+                shared={ambiguousOwnSkill(own, skill.name)}
+              />
             ))}
           </ul>
         )}

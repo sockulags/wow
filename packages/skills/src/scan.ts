@@ -125,6 +125,7 @@ async function readSkill(dir: string, root: SkillRoot): Promise<Skill | ScanProb
     manualOnly: frontmatter.disableModelInvocation || allowImplicit === false,
     invocations: invocationsFor(name, root.plugin),
     ...(wow ? { text: skillBody(content) } : {}),
+    ...(root.source === 'yours' ? { file: content } : {}),
   };
 }
 

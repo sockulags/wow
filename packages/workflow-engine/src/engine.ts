@@ -147,6 +147,8 @@ export interface EngineContext extends GateSettings, RuleSettings {
 
 export type ResolvedSkill =
   | { readonly kind: 'text'; readonly name: string; readonly source: string; readonly text: string }
+  // A skill wow will not send, with the sentence that says why (two own skills share its name).
+  | { readonly kind: 'refused'; readonly name: string; readonly reason: string }
   | {
       readonly kind: 'invoke';
       readonly name: string;
@@ -161,6 +163,8 @@ export interface StepPrompt {
   readonly shown?: string;
   readonly skills?: SentSkill[];
   readonly missing?: string;
+  // Why the skill `missing` names cannot be sent, when it is there but cannot be told apart.
+  readonly refused?: string;
 }
 
 export interface Transition {
@@ -956,7 +960,7 @@ function begin(
         startedAt: context.now,
         artifactsFound: [],
       };
-      return missingSkill(workflow, run, index, starting, 1, first.missing, context, effects);
+      return missingSkill(workflow, run, index, starting, 1, first, context, effects);
     }
     const threadId = stepThreadId(run.id, step.id);
     const steps = replaceStep(run.steps, index, {
@@ -1008,7 +1012,7 @@ function begin(
   // A template emptied in the settings still tells the step what the run came with.
   const again = wentBack === '' ? made() : { prompt: wentBack };
   if (again.missing !== undefined) {
-    return missingSkill(workflow, run, index, rerun, attempt, again.missing, context, effects);
+    return missingSkill(workflow, run, index, rerun, attempt, again, context, effects);
   }
   return {
     run: {
@@ -1045,7 +1049,7 @@ function missingSkill(
   index: number,
   starting: StepRun,
   attempt: number,
-  name: string,
+  { missing: name, refused }: StepPrompt,
   context: EngineContext,
   effects: RunEffect[],
 ): Transition {
@@ -1062,7 +1066,10 @@ function missingSkill(
     {
       type: 'stepFailed',
       stepId: step.id,
-      error: `The skill ${name} no longer exists, so the step cannot start. Pick another skill for it, or make the skill again.`,
+      error:
+        refused === undefined
+          ? `The skill ${name ?? ''} no longer exists, so the step cannot start. Pick another skill for it, or make the skill again.`
+          : `The step cannot start. ${refused}`,
       stopped: true,
     },
     context,
@@ -1202,10 +1209,11 @@ export function stepPromptFor(
     { name: step.skillName, ...(step.skillSource ? { source: step.skillSource } : {}) },
     ...(step.alsoFollow ?? []),
   ];
-  const chosen: { skill: ResolvedSkill; reason?: string }[] = [];
+  const chosen: { skill: Exclude<ResolvedSkill, { kind: 'refused' }>; reason?: string }[] = [];
   for (const ref of named) {
     const skill = skillFor(step, ref, values);
     if (!skill) return { prompt: '', missing: ref.name };
+    if (skill.kind === 'refused') return { prompt: '', missing: ref.name, refused: skill.reason };
     chosen.push({ skill });
   }
   const builtIn = (name: string) =>
@@ -1215,7 +1223,7 @@ export function stepPromptFor(
       if (step.leaveOut?.includes(auto.name) || builtIn(auto.name)) continue;
       // A built-in skill switched off in the settings is attached nowhere (spec 3).
       const skill = skillFor(step, { name: auto.name, source: 'wow' }, values);
-      if (skill) chosen.push({ skill, reason: auto.reason });
+      if (skill && skill.kind !== 'refused') chosen.push({ skill, reason: auto.reason });
     }
   }
   const attached = new Set(

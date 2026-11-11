@@ -545,6 +545,20 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   if (/reaches out/i.test(prompt)) {
     return [session, ...finish(threadId, reachingAnswer)];
   }
+  if (/in the background/i.test(prompt)) {
+    // Claude Code ends the turn with an agent still running; the control port's
+    // /background-done ends it, and the agent goes on by itself in a turn wow did not start.
+    backgroundThreads.push(threadId);
+    return [
+      session,
+      {
+        type: 'backgroundTasks',
+        threadId,
+        tasks: [{ id: 'bg-1', description: 'Count the tea leaves', agent: true }],
+      },
+      ...finish(threadId, 'I asked a background agent to count them.'),
+    ];
+  }
   if (/wait/i.test(prompt)) {
     return [session, { type: 'textDelta', threadId, itemId: 'partial', delta: 'Working on it' }];
   }
@@ -564,6 +578,11 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
 }
 
 const threadOf = (id: string) => id.split(separator)[0] ?? id;
+
+// Threads whose turn left background work running, oldest first, and a Claude mock adapter to
+// send what follows through (the provider service takes a thread's events from any adapter).
+const backgroundThreads: string[] = [];
+let claudeMock: MockProviderAdapter | undefined;
 
 // What the first question of a two-question ask was answered, per thread, until the second is.
 const answered = new Map<string, string[]>();
@@ -598,6 +617,8 @@ const chatScript: MockScript = (command) => {
       return [];
   }
 };
+
+const chatClaude = () => (claudeMock = new MockProviderAdapter('claude', chatScript));
 
 // "Update Codex" (settings tests): a Codex instance named "... differs" tests as a compatible
 // other version, one named "... incompatible" as incompatible with an npm update until the fake
@@ -871,7 +892,7 @@ const server = await startServer({
                 server.engine.dispatch(`assistant-mock-${++assistantActs}`, command, 'assistant'),
               `http://127.0.0.1:${trackerPort}`,
             )
-          : new MockProviderAdapter('claude', chatScript),
+          : chatClaude(),
       codex: (instance) => new MockProviderAdapter('codex', chatScript, codexTest(instance)),
     },
     outlook: (mode, context) => {
@@ -887,6 +908,17 @@ const control = createServer((request, response) => {
     outlook.setUnavailable(url.searchParams.get('message') ?? 'Outlook is not running');
   } else if (url.pathname === '/unavailable' && request.method === 'DELETE') {
     outlook.setUnavailable(null);
+  } else if (url.pathname === '/background-done' && request.method === 'PUT') {
+    const threadId = backgroundThreads.shift();
+    if (!threadId || !claudeMock) {
+      response.statusCode = 409;
+    } else {
+      claudeMock.emit([
+        { type: 'backgroundTasks', threadId, tasks: [] },
+        { type: 'turnStartedByProvider', threadId },
+        ...finish(threadId, 'The background agent counted 42 leaves.', 'counted'),
+      ]);
+    }
   } else if (url.pathname === '/opened' && request.method === 'GET') {
     response.setHeader('content-type', 'application/json');
     response.end(JSON.stringify(outlook.opened));

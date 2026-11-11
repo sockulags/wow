@@ -3,6 +3,7 @@ import {
   type CommandOrigin,
   type DispatchResult,
   type DomainEvent,
+  type HostKind,
   type ServerCommand,
   type SettingDefinition,
   type SubscriptionTopic,
@@ -34,6 +35,8 @@ export interface EngineOptions {
   readonly clock?: () => Date;
   // wow's own folder, for decisions that name a path inside it.
   readonly home?: string;
+  // The code host a project's git data names, while no host read says (see DecideContext).
+  readonly codeHost?: (projectId: string) => HostKind | undefined;
   readonly onListenerError?: (error: unknown) => void;
 }
 
@@ -55,6 +58,7 @@ export class Engine {
   readonly #registry: Readonly<Record<string, SettingDefinition>>;
   readonly #clock: () => Date;
   readonly #home: string | undefined;
+  readonly #codeHost: ((projectId: string) => HostKind | undefined) | undefined;
   readonly #onListenerError: (error: unknown) => void;
   readonly #listeners = new Set<CommitListener>();
 
@@ -63,6 +67,7 @@ export class Engine {
     this.#registry = options.registry ?? settingsRegistry;
     this.#clock = options.clock ?? (() => new Date());
     this.#home = options.home;
+    this.#codeHost = options.codeHost;
     // A failing listener must not undo or hide a committed command.
     this.#onListenerError =
       options.onListenerError ??
@@ -104,6 +109,7 @@ export class Engine {
         now: at,
         registry: this.#registry,
         home: this.#home,
+        codeHost: this.#codeHost,
         origin,
       });
       const stored: StoredEvent[] = [];

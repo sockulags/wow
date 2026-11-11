@@ -6,6 +6,8 @@ import {
   isCardTrigger,
   inListOrder,
   skillGroupOf,
+  ambiguousOwnSkill,
+  ownSkillFolder,
   type CalendarOccurrence,
   type ProviderModel,
   type SettingDefinition,
@@ -208,20 +210,26 @@ export const readers = {
     description:
       'Every skill a workflow step or a message can use, in list order: your own skills ("yours") first, then the skills wow ships ("wow"), then skills from folders. A wow skill (group yours or wow) is sent as its text; read it with read_skill. Your own skills can be written, changed and removed with create_skill, update_skill and delete_skill; the others cannot be changed.',
     input: none,
-    read: (_args, deps) =>
-      inListOrder(deps.db.select().from(t.skills).all()).map((skill) => ({
-        id: skill.id,
-        name: skill.name,
-        description: skill.description,
-        group: skillGroupOf(skill),
-        source: skill.source,
-        manualOnly: skill.manualOnly,
-        // A step names a wow skill with this source, so it is not taken for a folder skill of
-        // the same name.
-        ...(skill.source === 'wow' || skill.source === 'yours'
-          ? { skillSource: skill.source }
-          : {}),
-      })),
+    read: (_args, deps) => {
+      const all = deps.db.select().from(t.skills).all();
+      return inListOrder(all).map((skill) => {
+        const shared = skill.source === 'yours' ? ambiguousOwnSkill(all, skill.name) : undefined;
+        return {
+          id: skill.id,
+          name: skill.name,
+          description: skill.description,
+          group: skillGroupOf(skill),
+          source: skill.source,
+          manualOnly: skill.manualOnly,
+          // A step names a wow skill with this source, so it is not taken for a folder skill of
+          // the same name.
+          ...(skill.source === 'wow' || skill.source === 'yours'
+            ? { skillSource: skill.source }
+            : {}),
+          ...(shared === undefined ? {} : { folder: ownSkillFolder(skill), cannotUse: shared }),
+        };
+      });
+    },
   }),
   read_skill: reader({
     description:

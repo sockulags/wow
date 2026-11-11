@@ -470,11 +470,156 @@ describe('own skills (spec 5, 6, 7)', () => {
     expect(groupOf('tidy', 'yours')?.text).toBe('Sort the imports.');
   });
 
+  it('answers a refresh overtaken by an own-skill commit with the list after that commit', async () => {
+    dispatch({ type: 'skill.create', skill: tidy });
+    await server.skills.refresh();
+    await mkdir(path.join(userHome, '.claude', 'skills', 'broken'), { recursive: true });
+    await writeFile(
+      path.join(userHome, '.claude', 'skills', 'broken', 'SKILL.md'),
+      '---\nname: [unclosed\n---\n',
+    );
+    let updated = false;
+    onLog = (line) => {
+      if (updated || !line.includes('skipped skill file')) return;
+      updated = true;
+      dispatch({ type: 'skill.update', skill: { ...tidy, text: 'Sort the imports.' } });
+    };
+    const list = await server.skills.refresh();
+    expect(updated).toBe(true);
+    expect(list.find((skill) => skill.source === 'yours' && skill.name === 'tidy')?.text).toBe(
+      'Sort the imports.',
+    );
+  });
+
   it('lists a file added under wow home by hand after a refresh', async () => {
     await writeSkill(path.join(wowHome, 'skills'), 'by-hand', 'Written by hand.');
     expect(groupOf('by-hand', 'yours')).toBeUndefined();
     await server.skills.refresh();
     expect(groupOf('by-hand', 'yours')).toMatchObject({ text: 'Written by hand.' });
+  });
+});
+
+const handDir = () => path.join(wowHome, 'skills', 'My_Skill');
+const handPath = () => path.join(handDir(), 'SKILL.md');
+
+describe('an own skill written by hand (spec 6)', () => {
+  // A name and a folder the editor would refuse, no text, and frontmatter wow does not own.
+  const handFile = [
+    '---',
+    '# mine',
+    'name: My Skill',
+    'description: "By hand"',
+    'allowed-tools: Read, Grep',
+    'disable-model-invocation: true',
+    '---',
+    '',
+  ].join('\n');
+
+  beforeEach(async () => {
+    await mkdir(handDir(), { recursive: true });
+    await writeFile(handPath(), handFile);
+    await server.skills.refresh();
+  });
+
+  it('lists it with its file, and Undo of a delete puts that file back exactly', async () => {
+    const listed = groupOf('My Skill', 'yours');
+    expect(listed).toMatchObject({ text: '', manualOnly: true, file: handFile });
+    dispatch({ type: 'skill.delete', name: 'My Skill' });
+    expect(existsSync(handPath())).toBe(false);
+    expect(
+      await rpcDispatch({ type: 'skill.restore', folder: 'My_Skill', file: handFile }),
+    ).not.toHaveProperty('error');
+    expect(await readFile(handPath(), 'utf8')).toBe(handFile);
+    expect(groupOf('My Skill', 'yours')).toEqual(listed);
+    await server.skills.refresh();
+    expect(groupOf('My Skill', 'yours')).toEqual(listed);
+  });
+
+  it('keeps every other frontmatter key on an update, and Undo puts the file back exactly', async () => {
+    const listed = groupOf('My Skill', 'yours');
+    dispatch({
+      type: 'skill.update',
+      skill: { name: 'My Skill', description: 'By hand', text: 'Now with a text.' },
+    });
+    expect(await readFile(handPath(), 'utf8')).toBe(`${handFile}\nNow with a text.\n`);
+    await server.skills.refresh();
+    expect(groupOf('My Skill', 'yours')).toMatchObject({
+      text: 'Now with a text.',
+      manualOnly: true,
+    });
+    dispatch({ type: 'skill.restore', folder: 'My_Skill', file: handFile });
+    expect(await readFile(handPath(), 'utf8')).toBe(handFile);
+    await server.skills.refresh();
+    expect(groupOf('My Skill', 'yours')).toEqual(listed);
+  });
+
+  it('refuses a restore over a SKILL.md the list does not show, and one outside the folder', async () => {
+    await mkdir(path.join(wowHome, 'skills', 'broken'), { recursive: true });
+    await writeFile(path.join(wowHome, 'skills', 'broken', 'SKILL.md'), '---\nname: [x\n---\n');
+    expect(
+      await rpcDispatch({ type: 'skill.restore', folder: 'broken', file: handFile }),
+    ).toMatchObject({
+      error: {
+        code: 'rejected',
+        message: `${path.join(wowHome, 'skills', 'broken', 'SKILL.md')} is already there. Rename or remove it first.`,
+      },
+    });
+    expect(() => dispatch({ type: 'skill.restore', folder: '..', file: handFile })).toThrow(
+      '.. is not a folder name',
+    );
+    expect(() =>
+      dispatch({ type: 'skill.restore', folder: path.join('a', 'b'), file: handFile }),
+    ).toThrow('is not a folder name');
+  });
+});
+
+// An own skill named brew in a folder of its own, as written by hand.
+const twin = (folder: string, text: string) =>
+  writeSkill(path.join(wowHome, 'skills'), folder, text).then(() =>
+    writeFile(
+      path.join(wowHome, 'skills', folder, 'SKILL.md'),
+      `---\nname: brew\ndescription: ${folder}\n---\n\n${text}\n`,
+    ),
+  );
+describe('two hand-made folders with the same skill name', () => {
+  const refusal =
+    'Two of your skills are named brew, in the folders brew-a and brew-b. Rename one in its SKILL.md so wow knows which to use.';
+
+  beforeEach(async () => {
+    await twin('brew-a', 'Brew green tea.');
+    await twin('brew-b', 'Brew black tea.');
+    await server.skills.refresh();
+  });
+
+  it('lists both but sends, runs, changes and deletes neither, naming both folders', async () => {
+    expect(skillList().filter((skill) => skill.name === 'brew')).toHaveLength(2);
+    createThread('t1', 'claude-work');
+    expect(() =>
+      dispatch({
+        type: 'thread.sendMessage',
+        threadId: 't1',
+        text: 'Go',
+        skills: [{ name: 'brew', source: 'yours' }],
+      }),
+    ).toThrow(refusal);
+    expect(() =>
+      dispatch({
+        type: 'skill.update',
+        skill: { name: 'brew', description: 'Either', text: 'Brew any tea.' },
+      }),
+    ).toThrow(refusal);
+    expect(() => dispatch({ type: 'skill.delete', name: 'brew' })).toThrow(refusal);
+
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'wf',
+      name: 'Brew',
+      steps: [step('brew', { skillName: 'brew', skillSource: 'yours' })],
+    });
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf', projectId: 'p1' });
+    const failed = await runBecomes('r1', (row) => row.state !== 'running');
+    expect(failed.steps[0]?.error).toBe(`The step cannot start. ${refusal}`);
+    expect(startTurns()).toEqual([]);
   });
 });
 
@@ -601,6 +746,32 @@ describe('built-in skills attached by themselves (spec 12, 13)', () => {
       ['wow-artifacts', 'this step expects artifacts'],
       ['wow-pull-request', 'this run delivers unit U2 of demo'],
     ]);
+  });
+
+  it("sends a step's thread its message again on Retry as the step sent it, not as chat skills", async () => {
+    const prompt = await startStep({}, true);
+    expect(prompt).toContain('Intent-Unit: demo/U2');
+    const sentBefore = (firstItem('r1.ship')?.payload as TextItemPayload | undefined)?.skills;
+    expect(sentBefore?.map((skill) => skill.name)).toContain('wow-pull-request');
+    dispatch({ type: 'thread.retry', threadId: 'r1.ship' });
+    const prompts = startTurns()
+      .filter((turn) => turn.threadId === 'r1.ship')
+      .map((turn) => turn.prompt);
+    expect(prompts).toEqual([prompt, prompt]);
+    const items = server.database.db
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, 'r1.ship'))
+      .all()
+      .filter((item) => item.kind === 'user');
+    expect(items.map((item) => (item.payload as TextItemPayload).skills)).toEqual([
+      sentBefore,
+      sentBefore,
+    ]);
+    createThread('chat', 'claude-work');
+    expect(() => dispatch({ type: 'thread.retry', threadId: 'chat' })).toThrow(
+      "Only a workflow step's thread is retried this way",
+    );
   });
 
   it('attaches nothing with the setting off, and keeps the sentences wow added before', async () => {

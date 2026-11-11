@@ -101,7 +101,17 @@ const failedItems: ThreadItem[] = [
   },
 ];
 
-function setup({ assistant = false, failed = false } = {}) {
+function setup({
+  assistant = false,
+  failed = false,
+  shown = thread,
+  topics: extra = {},
+}: {
+  assistant?: boolean;
+  failed?: boolean;
+  shown?: Thread;
+  topics?: Record<string, unknown>;
+} = {}) {
   const request = vi.fn<(method: string, params: unknown) => Promise<unknown>>(() =>
     Promise.resolve({
       commandId: '00000000-0000-4000-8000-000000000000',
@@ -113,6 +123,7 @@ function setup({ assistant = false, failed = false } = {}) {
     skills,
     turns: failed ? [failedTurn] : [],
     threadItems: failed ? failedItems : [],
+    ...extra,
   };
   const connection: Connection = {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
@@ -134,7 +145,7 @@ function setup({ assistant = false, failed = false } = {}) {
       }}
     >
       <ThreadConversation
-        thread={thread}
+        thread={shown}
         instance={instance}
         {...(assistant ? { extras: { placeholder: 'Message' } } : {})}
       />
@@ -181,5 +192,73 @@ describe('the thread sends skills (wow skills spec 18, 20)', () => {
     await user.type(box, '/tidy');
     expect(list()).toBeNull();
     expect(activeSkillComposer(skillComposerStore.getState())).toBeUndefined();
+  });
+});
+
+describe("a step's thread and a waiting question (wow skills spec 14, 18)", () => {
+  it('sends the step its message again as the step sent it on Retry', async () => {
+    const { sent, user } = setup({
+      failed: true,
+      shown: { ...thread, runId: 'run-1', stepId: 'build' },
+    });
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(sent()).toEqual([{ type: 'thread.retry', threadId: thread.id }]);
+  });
+
+  it("names a plugin skill's sent chip by its own name, with the plugins mark", () => {
+    setup({
+      topics: {
+        threadItems: [
+          {
+            ...failedItems[0],
+            payload: {
+              text: 'brew',
+              skills: [{ name: 'kettle:brew', source: 'user-claude', invocation: '/kettle:brew' }],
+            },
+          },
+        ],
+      },
+    });
+    expect(screen.getByRole('button', { name: 'brew, Plugins skill' }).textContent).toBe('brew');
+  });
+
+  it('refuses an answer with a chip and sends nothing', async () => {
+    const running: Turn = { ...failedTurn, state: 'running', endedAt: null };
+    const { box, sent, user } = setup({
+      topics: {
+        turns: [running],
+        threadItems: [
+          {
+            id: 'ask-1',
+            threadId: thread.id,
+            turnId: running.id,
+            index: 0,
+            kind: 'question',
+            payload: {
+              questionId: 'question-1',
+              question: 'Which kettle?',
+              options: [{ label: 'Blue' }],
+              multiSelect: false,
+            },
+            streaming: false,
+          },
+        ],
+        questions: [
+          {
+            id: 'question-1',
+            threadId: thread.id,
+            itemId: 'ask-1',
+            request: null,
+            answer: null,
+            answeredAt: null,
+          },
+        ],
+      },
+    });
+    await user.type(box, '/tidy');
+    await user.keyboard('{Enter}');
+    await user.type(box, 'the blue one{Enter}');
+    await screen.findByText('An answer takes no skills. Remove the chip, or answer on the card.');
+    expect(sent()).toEqual([]);
   });
 });

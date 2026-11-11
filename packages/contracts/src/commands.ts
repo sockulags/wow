@@ -41,6 +41,7 @@ import {
 } from './hosts.js';
 import {
   ApprovalDecision,
+  BackgroundTask,
   ProviderEvent,
   ProviderKind,
   ProviderTestResult,
@@ -175,6 +176,10 @@ export const Command = z.discriminatedUnion('type', [
     itemId: Id,
     replies: z.array(QuestionReply).min(1),
   }),
+  // Retry in a workflow step's thread: the last message the thread was sent goes again as it
+  // was sent (its prompt, text and skills), as a step sends its turn. A chat's Retry sends the
+  // message again with `thread.sendMessage` instead.
+  z.object({ type: z.literal('thread.retry'), threadId: Id }),
   // Stops the running turn; what it produced so far stays (spec 23).
   z.object({ type: z.literal('thread.interrupt'), threadId: Id }),
   z.object({
@@ -274,12 +279,14 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('workflow.delete'), workflowId: Id }),
   // Undo of a delete: puts the row the client still holds back as it was.
   z.object({ type: z.literal('workflow.restore'), workflow: Workflow }),
-  // Own skills (wow skills spec 5, 6): a file under wow's home each. Undo sends the opposite
-  // command with what the client still holds: delete for a create, update with the old text,
-  // create for a delete.
+  // Own skills (wow skills spec 5, 6): a file under wow's home each. Undo of a create is the
+  // delete; Undo of an update or a delete is `skill.restore` with the folder and the file the
+  // client still holds (`Skill.file`), so a hand-written file comes back exactly as it was, even
+  // one whose name or text the editor would refuse.
   z.object({ type: z.literal('skill.create'), skill: OwnSkill }),
   z.object({ type: z.literal('skill.update'), skill: OwnSkill }),
   z.object({ type: z.literal('skill.delete'), name: z.string().min(1) }),
+  z.object({ type: z.literal('skill.restore'), folder: z.string().min(1), file: z.string() }),
   z.object({
     type: z.literal('workflowRun.start'),
     runId: Id,
@@ -865,6 +872,17 @@ export const DomainEvent = z.discriminatedUnion('kind', [
         kind: ThreadKind.optional(),
       }),
     }),
+  }),
+  // A turn the provider started by itself, so there is no user message and nothing to send.
+  z.object({
+    kind: z.literal('turn.startedByProvider'),
+    aggregate: Id,
+    payload: z.object({ turn: Turn }),
+  }),
+  z.object({
+    kind: z.literal('thread.backgroundChanged'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, tasks: z.array(BackgroundTask), updatedAt: Timestamp }),
   }),
   z.object({
     kind: z.literal('turn.interruptRequested'),

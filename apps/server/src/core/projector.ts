@@ -4,7 +4,8 @@ import {
   isLivePlanRunState,
   isLiveRunState,
   touchPageRead,
-  type DomainEvent,
+  DomainEvent,
+  TextItemPayload,
   type Project,
   type ProviderUpdateRun,
   type Skill,
@@ -22,6 +23,7 @@ import {
   calendarItems,
   cardOccurrences,
   changeRequests,
+  events,
   hostReads,
   ticketReads,
   pageReads,
@@ -51,8 +53,8 @@ const threadTopics: SubscriptionTopic[] = ['threads', 'assistantThread'];
 // subscription topics changed.
 // A skill as stored: a folder skill has no text, which the row keeps as null.
 export function skillOf(row: typeof skills.$inferSelect): Skill {
-  const { text, ...rest } = row;
-  return text === null ? rest : { ...rest, text };
+  const { text, file, ...rest } = row;
+  return { ...rest, ...(text === null ? {} : { text }), ...(file === null ? {} : { file }) };
 }
 
 export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
@@ -117,7 +119,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       return ['settings'];
     case 'skill.saved': {
       const { skill } = event.payload;
-      const row = { ...skill, text: skill.text ?? null };
+      const row = { ...skill, text: skill.text ?? null, file: skill.file ?? null };
       tx.insert(skills).values(row).onConflictDoUpdate({ target: skills.id, set: row }).run();
       return ['skills'];
     }
@@ -126,7 +128,8 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       return ['skills'];
     case 'skills.synced':
       for (const skill of event.payload.upserted) {
-        tx.insert(skills).values(skill).onConflictDoUpdate({ target: skills.id, set: skill }).run();
+        const row = { ...skill, file: skill.file ?? null };
+        tx.insert(skills).values(row).onConflictDoUpdate({ target: skills.id, set: row }).run();
       }
       if (event.payload.removed.length > 0) {
         tx.delete(skills).where(inArray(skills.id, event.payload.removed)).run();
@@ -332,6 +335,21 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .run();
       return ['turns', 'threadItems', ...threadTopics];
     }
+    case 'turn.startedByProvider': {
+      const { turn } = event.payload;
+      tx.insert(turns).values(turn).run();
+      tx.update(threads)
+        .set({ state: 'working', updatedAt: turn.startedAt })
+        .where(eq(threads.id, turn.threadId))
+        .run();
+      return ['turns', ...threadTopics];
+    }
+    case 'thread.backgroundChanged':
+      tx.update(threads)
+        .set({ backgroundTasks: event.payload.tasks, updatedAt: event.payload.updatedAt })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
     case 'turn.interruptRequested':
       return [];
     case 'turn.usageRecorded':
@@ -790,6 +808,28 @@ export function readModel(tx: DbOrTx): ReadModel {
       tx.select().from(turns).where(eq(turns.threadId, threadId)).orderBy(desc(turns.index)).get(),
     turnCount: (threadId) =>
       tx.select({ n: count() }).from(turns).where(eq(turns.threadId, threadId)).get()?.n ?? 0,
+    // The prompt is only in the stored event, which says what the provider was sent.
+    lastSent: (threadId) => {
+      const started = tx
+        .select({ kind: events.kind, aggregate: events.aggregate, payload: events.payload })
+        .from(events)
+        .where(and(eq(events.kind, 'turn.started'), eq(events.aggregate, threadId)))
+        .orderBy(desc(events.seq))
+        .all();
+      for (const row of started) {
+        const event = DomainEvent.safeParse(row);
+        if (!event.success || event.data.kind !== 'turn.started') continue;
+        const { item, start } = event.data.payload;
+        if (item.kind !== 'user') continue;
+        const payload = TextItemPayload.safeParse(item.payload);
+        if (!payload.success) continue;
+        const { text, skills: sent } = payload.data;
+        if (text.trim() !== '' || (sent ?? []).length > 0) {
+          return { text, prompt: start.prompt, skills: sent };
+        }
+      }
+      return undefined;
+    },
     nextItemIndex: (threadId) => {
       const last = tx
         .select({ index: max(threadItems.index) })

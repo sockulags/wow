@@ -147,7 +147,9 @@ provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env
                  updateRun(json)?   -- the last "Update Codex": state, command, output, times
 threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessionId?, title, model,
                  effort, permissionMode, state ('idle'|'working'|'needs_you'|'done'|'failed'),
-                 pinned, runId?, stepId?, createdAt, updatedAt
+                 pinned, runId?, stepId?, backgroundTasks(json: BackgroundTask[]), createdAt,
+                 updatedAt   -- backgroundTasks: the agent's work still running in the background,
+                 [] when none (migration 0026_background_tasks)
 turns            id, threadId, index, state, startedAt, endedAt, usage(json)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
@@ -254,7 +256,34 @@ ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode
 ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | toolCallStarted |
                  toolCallOutput | toolCallCompleted | approvalRequested | questionAsked |
                  taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
+                 | turnStartedByProvider | backgroundTasks {tasks [{id, description, agent?}]}
 ```
+
+**Turns the provider starts.** Claude Code goes on with a thread by itself when background work
+it started (a background subagent or shell command) ends: the open `query()` stream carries more
+output and a second `result` without a prompt from wow. The adapter reports that turn with
+`turnStartedByProvider` at its first top-level `stream_event`, `assistant` or `result` message
+while no turn runs, and ends it with the usual `turnCompleted`, `turnFailed` or `turnInterrupted`;
+`interrupt` stops it like any turn. A `system/task_notification` for a background agent
+(`task_type` `local_agent`) while no turn runs starts that turn at once, because Claude Code
+answers it and the agent leaves the background list before the turn's first output. The
+orchestrator makes it turn `<threadId>:turn:<n>` with no
+user item (`turn.startedByProvider`): the thread goes to `working`, its items, usage and end are
+stored as for any turn, and the thread ends `idle`, `needs_you` or `failed` the same way. While a
+turn wow started runs, `turnStartedByProvider` is ignored and the output stays in that turn. A
+message sent while Claude Code's own turn runs goes into its input queue; Claude Code answers it
+after (or within) that turn. `backgroundTasks` is the SDK's level signal
+(`system/background_tasks_changed`, Claude Code's own `ambient` tasks left out; `agent: true`
+marks a `local_agent` task), stored as the thread's `backgroundTasks` (`thread.backgroundChanged`); the chat shows "Waiting for background
+work" while it is not empty and no turn runs. When Claude Code exits with background work and no
+turn running, the adapter reports a started and failed turn. At startup `recover()` fails such a
+turn only for a thread of a running workflow step that still lists a background agent; every other
+thread only gets its list cleared and keeps its state. When `ProviderService` releases an adapter
+(its instance edited or deleted), it clears the list of the instance's threads, since the disposed
+adapter reports nothing more; `closeThread` clears it in the adapter. Codex: the generated app-server schema
+does not say whether codex starts turns by itself; the adapter treats a `turn/started` it did not
+ask for (no `turn/start` on its way, no running turn) as `turnStartedByProvider`, and reports no
+background work.
 
 `closeThread` ends the adapter's live session for a thread without a turn event (the provider's
 stored conversation stays): Claude closes that thread's `query()`, Codex forgets which codex
@@ -542,10 +571,20 @@ previous}` or `skill.deleted {skill}` in the skills projection at once; `SkillsS
   and the reason (`writeFailure(commandId)`); the command has committed, and the rescan puts the
   list back to what is on disk. Scans run one after another, and a scan that began before an
   own-skill commit sends no `skills.sync` (the one that commit queued does), so it cannot undo
-  the save. Undo is the opposite
-  command with what the client holds: delete for a create, update with the old text, create for
-  a delete. From the assistant all three are proposals (see "Assistant"); a setup file carries
-  own skills (see "Setup file").
+  the save, and `refresh()` called during it answers with that newer scan's list.
+  The projection keeps an own skill's whole file as `Skill.file` (column `skills.file`, migration
+  0025_skill_files; absent in events stored before it). `skill.update` changes only `name`,
+  `description` and the text (`changedOwnSkillFile`): other frontmatter keys keep their place and
+  value, and `manualOnly` stays. Undo of a create is the delete; Undo of an update or a delete is
+  `skill.restore {folder, file}` with the folder name and the file the client holds, which writes
+  the file back byte for byte. It is not checked against the name rule or for a text, since the
+  file was listed before; it refuses a folder that is not one plain name, a frontmatter that is
+  not YAML, a name starting with `wow-`, and (`SkillsService.refusal`) a `SKILL.md` in that
+  folder the list does not show. The assistant's and the setup file's change records keep the
+  folder and the file (`skillFolder`, `skillFile`, not shown) so their undo sends the same
+  restore; the record's `expect` holds the file the change left, so a hand edit of any line since
+  refuses the undo ("its SKILL.md is not the file this change left"). From the assistant create, update and delete are proposals and restore is refused
+  (see "Assistant"); a setup file carries own skills (see "Setup file").
 
 **Settings → Skills** (`apps/web/src/settings/skills.ts`, `skills-section.tsx`; wow skills spec
 3, 5). Above the folder settings: "Your skills" (the `skills` topic's group `yours`) with New
@@ -570,7 +609,13 @@ folder skill, invoked as before (`plugin:name` for a Claude plugin's), or a buil
 reserved name; `source: 'yours'` keeps an own skill apart from a folder skill of the same name,
 and each is listed with its own group. `skillToSend(skills, ref, providerKind, values)` answers a
 wow skill's text (a built-in one filled) or a folder skill's invocation, or nothing for a wow
-skill that is not in the list. `promptWithSkills(parts, tail)` puts each wow skill's text as its
+skill that is not in the list. Two hand-written folders can give own skills the same name, and a
+`SkillRef` names a skill by name only, so for such a name it answers `refused` with
+`ambiguousOwnSkill` (contracts `skills.ts`), the sentence that names every folder: the message is
+refused with it, a step fails before it starts with it, and `skill.update` and `skill.delete` of
+that name are refused. Every skill list shows the folder beside such a skill
+(`sharedOwnSkillFolders`; the builder's one choice names both folders, and `read_skills` gives
+`folder` and `cannotUse`). `promptWithSkills(parts, tail)` puts each wow skill's text as its
 own block marked with its name:
 
 ```text
@@ -580,7 +625,9 @@ Tidy the imports.
 ```
 
 and keeps invocations and the tail that follow each other on one line, as a step's invocation and
-extra prompt always were. `promptShown` is the same without the texts: what the thread shows.
+extra prompt always were. The name is written with `&`, `"`, `<` and `>` as entities, and a
+`<skill` or `</skill` in the text gets its `<` as `&lt;`, so a hand-written skill cannot end the
+block early or open another one. `promptShown` is the same without the texts: what the thread shows.
 
 Chat: `thread.sendMessage {threadId, text, skills?: SkillRef[]}` sends the skills in their order
 before the text (`text` may be empty when there are skills), built-in ones filled with the project's verdict lines (no artifacts, no unit).
@@ -654,7 +701,13 @@ names the skills. A run stored before (no `wowSkills`), or an engine context wit
 `skillFor`, keeps the old prompt: `invocationFor(step)`, the expected artifacts in the handover
 and the Intent-Unit line in the unit text. A step held while the user's own turn runs keeps its
 prompt (`heldPrompt`) with `heldShown` and `heldSkills`, and goes as `thread.sendPrepared` like
-any step's turn. A `workflows.unitPromptTemplate` stored before wow skills that spells out
+any step's turn. Retry in a step's thread (a thread with a `stepId`) sends `thread.retry
+{threadId}`: the orchestrator reads the thread's last `turn.started` whose user item has text or
+skills from the event store (the prompt is not projected) and starts a turn with the same text,
+prompt and skills, so a step's skills are not resolved again as chat skills; it is refused for
+any other thread, whose Retry sends `thread.sendMessage`. A sent chip of a Claude plugin skill
+(stored as `plugin:name`) shows `name` with the plugins mark, as the composer's chip does. A
+`workflows.unitPromptTemplate` stored before wow skills that spells out
 `Intent-Unit: {{intentId}}/{{unitKey}}` itself keeps the line; `wow-pull-request` then gets an
 empty `intentUnitLine`, so the line is still sent once.
 
@@ -866,7 +919,15 @@ dispatches `thread.sendMessage` with the rendered prompt (`thread.sendPrepared` 
 with skills, see "Skills of a step"), so the provider service starts the turn
 like any other, and `interrupt` dispatches `thread.interrupt`. A step ends when the persisted
 `turn.ended` of its thread does: completed becomes `workflowRun.stepCompleted` with the turn's
-last assistant text as the final message, the artifacts found and the step's file hashes (see
+last assistant text as the final message (a completed turn that leaves a background agent in the thread's
+`backgroundTasks` does not end the step: the step ends with the turn Claude Code starts
+once that work ends, and its final message, gate, verdict and artifacts are read then; a step
+waits only for background agents, never for a background shell command such as a dev server or a
+watcher, which may never end, though the chat shows both; when the list loses its last agent and no
+turn runs, because the agent ended without Claude Code going on or the session was closed or
+released, the runner ends the step with its last completed turn on `thread.backgroundChanged`;
+background work that ends before the turn's result leaves no signal, so a turn Claude Code starts
+after such a result is shown in the thread but is not the step's outcome), the artifacts found and the step's file hashes (see
 "Run base and changes"), failed (with the turn's error
 item) or interrupted becomes `workflowRun.stepFailed`. Command ids derive from the turn, so a
 repeated report is a duplicate. A step with no model, effort or permission mode fails instead of
@@ -1199,7 +1260,10 @@ start, end}` is a drag in the calendar (spec 11): the occurrence must stay on it
   `skip_card_occurrence` sends `card.skipOccurrence`; `card.moveOccurrence` is refused for the
   assistant (it changes the time with `update_card`). A card's change row and proposal say the
   rule in words with its time (`Repeats` line). Whether a card waits for a yes looks at the
-  next occurrence that is not taken: a proposal when it starts within
+  next occurrence that is not taken, worked out by the scheduler's `nextOccurrence` over the
+  card as the change leaves it, its past series included (`pastSeriesAfter` in
+  `core/calendar.ts`), so a series moved from a later day is judged by when it fires next: a
+  proposal when it starts within
   `assistant.startSoonMinutes` (or is past), ordinary otherwise, and ordinary for a series with
   nothing left to run. `read_calendar` lists for a repeating card its rule, the rule in words,
   `nextAt`, the skipped days and its occurrences in the range with what happened at them, and
@@ -1507,7 +1571,9 @@ names a GitHub repository for `owner/repo` paths: github.com (also `ssh.github.c
 `https://<host>/api/v3`; deeper paths (GitLab subgroups), local paths and known other hosts
 (GitLab, Bitbucket, Azure DevOps, Codeberg) give none. The primary remote is `origin`, else the
 first GitHub one, else the first. `projects.git` answers `ProjectGit` for every project
-(`{projectId, status, remotes, primary, branch, message}`); it is read on demand, not projected,
+(`{projectId, status, remotes, primary, branch, message, codeHost}`; `codeHost` is `gitlab` when
+the primary remote is on the stored GitLab site, the rule the host poller picks its adapter by,
+else `github`); it is read on demand, not projected,
 because it is live I/O on the user's files. `guessJiraKeys` counts distinct `KEY-123` references
 in the branch names and the last `trackers.jira.keyScanCommits` commit messages (`git log
 --format=%s%n%b`), skipping look-alikes such as `UTF-8` and `SHA-256`.
@@ -1744,8 +1810,15 @@ merged", and so do the gate's checks part (`ChecksReading.host`), an event run's
 notification and handover (`runEventHost`, `triggerEventLabel`), and the Pull request tab's name
 and empty text, which read "Merge request" on a run whose host read is GitLab
 (`pullRequestTabLabel`). The Triggers tab's rows, its palette commands and New trigger's event
-choices say "Merge request merged" for a project whose newest host read is GitLab
-(`projectCodeHost` in `apps/web/src/workflows/triggers.ts`), and the default handover names
+choices say "Merge request merged" for a project whose newest host read is GitLab, or, before
+any read, whose `ProjectGit.codeHost` is (`projectCodeHost(reads, projectId, unread)` in
+`packages/contracts/src/hosts.ts`, used from `apps/web/src/workflows/triggers.ts`; the web's
+`useProjectsGit` asks `projects.git` again when a stored `trackers.gitlab.baseUrl` changes). The
+server words the same way before any read: `TrackerService` caches each project's
+`ProjectGit.codeHost` (`codeHost(projectId)`, read at start, when a project is made or moved and
+when a GitLab site is stored), the engine hands it to `DecideContext.codeHost`, and `codeHostOf`
+(`core/orchestrator.ts`) is used by the duplicate-trigger refusal and the assistant's change rows
+and proposals; the assistant's diagnosis reads the cache directly. The default handover names
 the event's request with `pullRequestName` ("Merge request !12" or "Pull request #14"). GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
 GitLab the server tests and the e2e server share.
 
@@ -2719,9 +2792,10 @@ each part on the stored workflow (`workflow.gateCondition.<workflowId>.<stepId>.
 by search). At a gate that did not pass, the gate bar says "Did not pass by itself: <parts>" or
 "Waiting for checks" and lists every part with what it found (`gateStanding`); while a run
 waits for checks its run view says "Waiting for checks" instead of "Waiting for you"; while a
-running run's current step thread is `needs_you` (a question or an approval) the run view and the
-Workflows list of runs say "Waiting for an answer" (`runStateLabel(run, threads)`; the run stays
-`running`, questions-and-models spec 7). Other lists keep the run state's own words. A step
+running run's current step thread is `needs_you` (a question or an approval) the run view, the
+Workflows list of runs, the builder's "Runs of this workflow" and the run and workflow panels say
+"Waiting for an answer" (`runStateLabel(run, threads)`; the run stays `running`,
+questions-and-models spec 7). Other lists keep the run state's own words. A step
 whose gate passed by itself shows "Passed by itself: <parts>" with each part's sentence in its
 row (`passedByItself`).
 

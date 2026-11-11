@@ -111,6 +111,8 @@ interface ThreadState {
   // Started with a toolset: only the app's tools, for as long as the thread lives.
   readonly toolsOnly: boolean;
   turnId: string | null;
+  // A turn/start request of wow is on its way: a turn/started now is that turn's.
+  starting: boolean;
   lastFinishedTurnId: string | null;
   lastError: string | null;
   usageTotal: TokenUsage | null;
@@ -472,7 +474,11 @@ export class CodexAdapter implements ProviderAdapter {
         params.sandboxPolicy = sandboxPolicy(mode.sandbox);
         thread.sandbox = mode.sandbox;
       }
-      const { turn } = await connection.request('turn/start', params);
+      thread.starting = true;
+      const started = thread;
+      const { turn } = await connection
+        .request('turn/start', params)
+        .finally(() => (started.starting = false));
       if (turn.id !== thread.lastFinishedTurnId) thread.turnId = turn.id;
       return { providerSessionId: thread.codexId, turnId: turn.id };
     } catch (error) {
@@ -535,6 +541,7 @@ export class CodexAdapter implements ProviderAdapter {
       sandbox,
       toolsOnly,
       turnId: null,
+      starting: false,
       lastFinishedTurnId: null,
       lastError: null,
       usageTotal: previous?.usageTotal ?? null,
@@ -888,6 +895,14 @@ export class CodexAdapter implements ProviderAdapter {
     const threadId = thread.wowId;
     switch (message.method) {
       case 'turn/started':
+        // A turn codex started without a turn/start of wow is still a turn of the thread.
+        if (
+          thread.turnId === null &&
+          !thread.starting &&
+          message.params.turn.id !== thread.lastFinishedTurnId
+        ) {
+          this.#emit({ type: 'turnStartedByProvider', threadId });
+        }
         thread.turnId = message.params.turn.id;
         thread.usageBaseline = thread.usageTotal;
         return;

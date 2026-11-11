@@ -28,6 +28,7 @@ import { Composer, type ComposerHandle } from './composer';
 import type { QuestionHold } from './question-card';
 import { useDispatch, useTopic } from './data';
 import {
+  BackgroundIndicator,
   ChatQuestions,
   ConversationItem,
   ToolCallGroup,
@@ -346,8 +347,12 @@ export function ThreadConversation({
           ? {
               ...(retry
                 ? {
+                    // A step's message goes again as the step sent it, its skills' texts
+                    // filled in for the run, not as skills picked in a chat.
                     onRetry: () =>
-                      void message(retry.text, retry.skills.length > 0 ? retry.skills : undefined),
+                      void (thread.stepId !== null
+                        ? send({ type: 'thread.retry', threadId })
+                        : message(retry.text, retry.skills.length > 0 ? retry.skills : undefined)),
                   }
                 : {}),
               onResume: () => void message(resumePrompt),
@@ -433,6 +438,11 @@ export function ThreadConversation({
           {running && thread.state === 'working' && (
             <div className="mt-3">
               <WorkingIndicator startedAt={running.startedAt} />
+            </div>
+          )}
+          {!running && thread.backgroundTasks && thread.backgroundTasks.length > 0 && (
+            <div className="mt-3">
+              <BackgroundIndicator tasks={thread.backgroundTasks} />
             </div>
           )}
         </div>

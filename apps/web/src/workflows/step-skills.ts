@@ -1,6 +1,7 @@
 import {
   automaticSkills,
   isBuiltInSkillName,
+  sharedOwnSkillFolders,
   skillGroupLabels,
   skillGroupOf,
   type BuiltInSkillName,
@@ -48,6 +49,14 @@ export interface SkillChoice extends ComboboxChoice {
   readonly description: string;
 }
 
+// Own skills whose name two folders share are one choice here; it names every folder, and the
+// server refuses to run either until one is renamed.
+function sharedFolders(skills: readonly Skill[], skill: Skill): string {
+  if (skill.source !== 'yours') return '';
+  const folders = sharedOwnSkillFolders(skills, skill.name);
+  return folders.length > 1 ? `In ${folders.join(', ')}: rename one` : '';
+}
+
 // Every skill a step can name, in list order (Yours first), each once, with its group.
 export function skillChoices(skills: readonly Skill[]): SkillChoice[] {
   const seen = new Set<string>();
@@ -62,7 +71,11 @@ export function skillChoices(skills: readonly Skill[]): SkillChoice[] {
       ref,
       description: skill.description,
       label: ref.name,
-      detail: [skillGroupLabels[skillGroupOf(skill)], skill.manualOnly ? 'Manual only' : '']
+      detail: [
+        skillGroupLabels[skillGroupOf(skill)],
+        skill.manualOnly ? 'Manual only' : '',
+        sharedFolders(skills, skill),
+      ]
         .filter(Boolean)
         .join(' · '),
     });

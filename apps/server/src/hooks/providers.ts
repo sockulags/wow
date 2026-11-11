@@ -89,6 +89,12 @@ export class MockProviderAdapter implements ProviderAdapter {
     return Promise.resolve({ ok: true });
   }
 
+  // Events the provider sends without a command: a turn it starts by itself after its
+  // background work ends.
+  emit(events: readonly ProviderEvent[]): void {
+    for (const event of events) for (const listener of this.#listeners) listener(event);
+  }
+
   onEvent(listener: (event: ProviderEvent) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);

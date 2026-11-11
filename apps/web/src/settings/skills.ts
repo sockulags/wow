@@ -92,6 +92,13 @@ export function draftProblem(
 
 const send = (connection: Connection, command: Command) => dispatch(connection, command);
 
+// What puts the skill back as it is now: its file exactly, when the list has it (a file written
+// by hand keeps its other frontmatter, and its name and text need not pass the editor's rules).
+const putBack = (skill: Skill): Command =>
+  skill.file === undefined
+    ? { type: 'skill.create', skill: asOwn(skill) }
+    : { type: 'skill.restore', folder: skill.dir.split(/[\\/]/).at(-1) ?? '', file: skill.file };
+
 // Saves the open editor's skill and offers Undo: a new skill is deleted again, a changed one
 // gets its old text back.
 export async function saveSkill(connection: Connection, skills: readonly Skill[]): Promise<void> {
@@ -119,7 +126,13 @@ export async function saveSkill(connection: Connection, skills: readonly Skill[]
         ? {
             message: `Skill ${skill.name} saved`,
             undoneMessage: `Skill ${skill.name} is as it was`,
-            undo: () => send(connection, { type: 'skill.update', skill: asOwn(previous) }),
+            undo: () =>
+              send(
+                connection,
+                previous.file === undefined
+                  ? { type: 'skill.update', skill: asOwn(previous) }
+                  : putBack(previous),
+              ),
           }
         : {
             message: `Skill ${skill.name} written`,
@@ -137,13 +150,13 @@ export async function saveSkill(connection: Connection, skills: readonly Skill[]
   }
 }
 
-// Deleted at once; Undo writes it again with the same text.
+// Deleted at once; Undo puts the file back as it was.
 export async function deleteSkill(connection: Connection, skill: Skill): Promise<void> {
   await send(connection, { type: 'skill.delete', name: skill.name });
   offerUndo({
     message: `Skill ${skill.name} deleted`,
     undoneMessage: `Skill ${skill.name} restored`,
-    undo: () => send(connection, { type: 'skill.create', skill: asOwn(skill) }),
+    undo: () => send(connection, putBack(skill)),
   });
 }
 

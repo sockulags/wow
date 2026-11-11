@@ -3,7 +3,6 @@ import {
   isCardTrigger,
   isEventTrigger,
   isLiveRunState,
-  projectCodeHost,
   triggerEventLabel,
   type AppNotification,
   type CalendarItem,
@@ -26,7 +25,7 @@ import { startingBetween, type Occurrence } from '../scheduler/occurrences.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveStored } from '../settings/service.js';
-import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
+import { CommandRejected, codeHostOf, type DecideContext, type ReadModel } from './orchestrator.js';
 import {
   isRepeating,
   liveRunOf,
@@ -570,7 +569,7 @@ export function decideTrigger(
       if (same) {
         throw new CommandRejected(
           'conflict',
-          `${project.name} already has a trigger that starts ${workflow.name} for "${triggerEventLabel(command.event, projectCodeHost(read.hostReads(project.id), project.id))}"`,
+          `${project.name} already has a trigger that starts ${workflow.name} for "${triggerEventLabel(command.event, codeHostOf(read, context, project.id))}"`,
         );
       }
       return [

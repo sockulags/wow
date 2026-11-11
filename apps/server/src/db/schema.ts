@@ -7,6 +7,7 @@ import type {
   AssistantTarget,
   ApprovalDecision,
   ApprovalKind,
+  BackgroundTask,
   BacklogRemote,
   BacklogState,
   CalendarItemSource,
@@ -114,6 +115,7 @@ export const threads = sqliteTable(
     pinned: bool().notNull(),
     runId: text(),
     stepId: text(),
+    backgroundTasks: json<BackgroundTask[]>().notNull().default([]),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },
@@ -407,6 +409,8 @@ export const skills = sqliteTable('skills', {
   invocations: json<{ claude: string; codex: string }>().notNull(),
   // A wow skill's text (built-in template or own text); null for skills from other folders.
   text: text(),
+  // An own skill's SKILL.md as it is on disk; null for other skills.
+  file: text(),
 });
 
 // One row per intent folder of a project, as its files read (packages/agent-os).

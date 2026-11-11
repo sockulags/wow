@@ -4,7 +4,6 @@ import {
   SecretPattern,
   gatePartLabels,
   hideSecretsDeep,
-  projectCodeHost,
   repeatRuleWords,
   ruleConditionText,
   secretPatterns,
@@ -20,9 +19,10 @@ import {
   type CalendarItem,
   type WorkflowStep,
 } from '@wow/contracts';
+import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
-import type { DecideContext, ReadModel } from '../core/orchestrator.js';
+import { codeHostOf, type DecideContext, type ReadModel } from '../core/orchestrator.js';
 import { triggersPath } from '../core/triggers.js';
 import { resolveStored } from '../settings/service.js';
 
@@ -34,12 +34,22 @@ import { resolveStored } from '../settings/service.js';
 type Row = Record<string, unknown>;
 
 // An event's label in the words of the project's code host.
-const eventLabel = (event: TriggerEvent, projectId: string, read: ReadModel): string =>
-  triggerEventLabel(event, projectCodeHost(read.hostReads(projectId), projectId));
+const eventLabel = (
+  event: TriggerEvent,
+  projectId: string,
+  read: ReadModel,
+  context: DecideContext,
+): string => triggerEventLabel(event, codeHostOf(read, context, projectId));
 
 // A row's own bookkeeping, which says nothing about what the user or the assistant changed.
 // A card's next fire time follows its trigger, and its past series follow its changes.
-const bookkeeping: ReadonlySet<string> = new Set(['updatedAt', 'nextAt', 'pastSeries']);
+const bookkeeping: ReadonlySet<string> = new Set([
+  'updatedAt',
+  'nextAt',
+  'pastSeries',
+  'skillFolder',
+  'skillFile',
+]);
 
 // The patterns of `assistant.secretPatterns` as stored, or the registry's when none is stored.
 export function patternsOf(read: ReadModel, context: DecideContext): RegExp[] {
@@ -127,10 +137,20 @@ export function snapshot(target: AssistantTarget, read: ReadModel): Row | null {
   return row ? { ...row } : null;
 }
 
-// An own skill as a change or a proposal holds it: what the user wrote, not where wow keeps it.
+// An own skill as a change or a proposal holds it: what the user wrote, and, kept only for an
+// undo, its folder and the whole file, so a hand-written file comes back exactly.
 function ownSkillRow(read: ReadModel, name: string): Row | undefined {
   const skill = read.skills().find((entry) => entry.source === 'yours' && entry.name === name);
-  return skill && { name: skill.name, description: skill.description, text: skill.text ?? '' };
+  return (
+    skill && {
+      name: skill.name,
+      description: skill.description,
+      text: skill.text ?? '',
+      ...(skill.file === undefined
+        ? {}
+        : { skillFolder: path.basename(skill.dir), skillFile: skill.file }),
+    }
+  );
 }
 
 const skillsPlace: AssistantPlace = { label: 'Settings → Skills', path: '/settings/skills' };
@@ -281,7 +301,7 @@ function nameOf(
     case 'trigger': {
       const event = TriggerEvent.safeParse(row['event']);
       const projectId = String(row['projectId'] ?? '');
-      return `Trigger "${event.success ? eventLabel(event.data, projectId, read) : target.id}"`;
+      return `Trigger "${event.success ? eventLabel(event.data, projectId, read, context) : target.id}"`;
     }
     case 'skill':
       return `Skill "${target.id}"`;
@@ -521,14 +541,16 @@ function inverseOf(command: Command, before: Row | null, changed: readonly strin
         ];
       case 'skill.create':
         return [{ type: 'skill.delete', name: command.skill.name }];
-      // The whole skill as it was: an update names every field of it.
+      // The whole skill as it was: the file itself when it is known, else every field of it.
       case 'skill.update':
       case 'skill.delete':
         return [
-          {
-            type: command.type === 'skill.update' ? 'skill.update' : 'skill.create',
-            skill: pick(before ?? {}, ['name', 'description', 'text']),
-          },
+          typeof before?.['skillFile'] === 'string'
+            ? { type: 'skill.restore', folder: before['skillFolder'], file: before['skillFile'] }
+            : {
+                type: command.type === 'skill.update' ? 'skill.update' : 'skill.create',
+                skill: pick(before ?? {}, ['name', 'description', 'text']),
+              },
         ];
       default:
         throw new Error(`${command.type} has no inverse`);
@@ -589,12 +611,20 @@ export function changeOf(
     commandType: command.type,
     ...shown,
     target,
-    expect:
-      after === null ? null : before === null ? without(after, bookkeeping) : pick(after, changed),
+    expect: expectOf(before, after, changed),
     inverse: inverseOf(command, before, changed),
     state: 'applied',
     undoneAt: null,
   };
+}
+
+// What the target holds right after the change, for undoRefusal. An own skill's Undo puts its
+// whole file back, so the file the change left is held too: a hand edit of any other line since
+// refuses the Undo.
+function expectOf(before: Row | null, after: Row | null, changed: readonly string[]): Row | null {
+  if (after === null) return null;
+  const held = before === null ? without(after, bookkeeping) : pick(after, changed);
+  return typeof after['skillFile'] === 'string' ? { ...held, skillFile: after['skillFile'] } : held;
 }
 
 // Why a change cannot be undone any more: the thing no longer holds what the change left
@@ -618,7 +648,9 @@ export function undoRefusal(
     const now = moved.map((key) =>
       key === 'value'
         ? `it is now ${show(key, current[key], read)}`
-        : `${key} is now ${show(key, current[key], read)}`,
+        : key === 'skillFile'
+          ? 'its SKILL.md is not the file this change left'
+          : `${key} is now ${show(key, current[key], read)}`,
     );
     return `it changed again since (${now.join('; ')})`;
   })();
@@ -988,7 +1020,7 @@ export function proposalOf(
           title: `New event trigger in ${projectName(command.projectId)}`,
           lines: [
             {
-              what: `When "${eventLabel(command.event, command.projectId, read)}"`,
+              what: `When "${eventLabel(command.event, command.projectId, read, context)}"`,
               from: null,
               to: `start ${workflowName(command.workflowId)}`,
             },
@@ -998,7 +1030,7 @@ export function proposalOf(
       case 'trigger.setEnabled': {
         const trigger = read.trigger(command.triggerId);
         const event = trigger?.event
-          ? eventLabel(trigger.event, trigger.projectId ?? '', read)
+          ? eventLabel(trigger.event, trigger.projectId ?? '', read, context)
           : command.triggerId;
         return {
           title: `Turn on the trigger "${event}"`,

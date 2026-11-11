@@ -156,6 +156,14 @@ describe('the skill choices of a step', () => {
       'kettle-check User',
     ]);
   });
+
+  it('names both folders of two own skills that share a name, in their one choice', () => {
+    const twin = { ...skill('kettle-check', 'yours'), id: 'b', dir: '/skills/yours/kettle-b' };
+    const first = { ...skill('kettle-check', 'yours'), dir: '/skills/yours/kettle-a' };
+    expect(skillChoices([first, twin]).map(({ value, detail }) => `${value} ${detail}`)).toEqual([
+      'yours/kettle-check Yours · In kettle-a, kettle-b: rename one',
+    ]);
+  });
 });
 
 describe('the built-in skills wow attaches to a step (spec 12)', () => {

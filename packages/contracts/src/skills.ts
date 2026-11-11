@@ -71,6 +71,34 @@ export const SkillRef = z.object({
 });
 export type SkillRef = z.infer<typeof SkillRef>;
 
+// The folder an own skill lives in: the last part of its dir, whichever separator it has.
+export const ownSkillFolder = (skill: { readonly dir: string }): string =>
+  skill.dir.split(/[\\/]/).findLast((part) => part !== '') ?? skill.dir;
+
+// Every folder of the own skills that share this name, sorted; one entry or none when the name
+// is not shared. Two folders written by hand can name the same skill, and a ref by name cannot
+// tell them apart, so lists show the folder and wow sends neither.
+export function sharedOwnSkillFolders(
+  skills: readonly { readonly name: string; readonly source: string; readonly dir: string }[],
+  name: string,
+): string[] {
+  return skills
+    .filter((skill) => skill.source === 'yours' && skill.name === name)
+    .map(ownSkillFolder)
+    .toSorted();
+}
+
+// Why an own skill of this name cannot be sent, run, changed or deleted, or undefined.
+export function ambiguousOwnSkill(
+  skills: readonly { readonly name: string; readonly source: string; readonly dir: string }[],
+  name: string,
+): string | undefined {
+  const folders = sharedOwnSkillFolders(skills, name);
+  if (folders.length < 2) return undefined;
+  const listed = `${folders.slice(0, -1).join(', ')} and ${folders.at(-1) ?? ''}`;
+  return `${folders.length === 2 ? 'Two' : String(folders.length)} of your skills are named ${name}, in the folders ${listed}. Rename one in its SKILL.md so wow knows which to use.`;
+}
+
 const ownNamePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const ownSkillNameMaxLength = 64;
 
@@ -132,9 +160,19 @@ export type PromptSkillPart =
   | { readonly kind: 'text'; readonly name: string; readonly text: string }
   | { readonly kind: 'invoke'; readonly invocation: string };
 
+const markName = (name: string): string =>
+  name
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+
+// A hand-written name or text could otherwise end the block early or open another one.
+const markText = (text: string): string => text.replace(/<(?=\/?skill(?![\w-]))/gi, '&lt;');
+
 // A wow skill's text in a prompt, marked with its name (spec 10).
 export const skillTextBlock = (name: string, text: string): string =>
-  `<skill name="${name}">\n${text.trim()}\n</skill>`;
+  `<skill name="${markName(name)}">\n${markText(text.trim())}\n</skill>`;
 
 // The skills in their order, then `tail` (a step's extra prompt, a chat message). A wow skill's
 // text is a block of its own; invocations and the tail that follow each other share a line, as

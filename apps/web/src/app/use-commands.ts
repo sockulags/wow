@@ -15,6 +15,7 @@ import { skillComposerCommands } from '@/chat/skill-commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
+import { useProjectsGit } from '@/projects/project-git';
 import { connectCommands, providerCommands } from '@/providers/commands';
 import { connectStore } from '@/providers/connect-step';
 import { setupCommands } from '@/settings/setup';
@@ -77,6 +78,7 @@ export function useCommands(gated = false): {
   const planRuns = useTopic('planRuns');
   const changeRequests = useTopic('changeRequests');
   const hostReads = useTopic('hostReads');
+  const projectsGit = useProjectsGit(projects);
   const ticketReads = useTopic('ticketReads');
   const pageReads = useTopic('pageReads');
   const assistantChanges = useTopic('assistantChanges');
@@ -168,6 +170,7 @@ export function useCommands(gated = false): {
         triggers,
         projects,
         hostReads,
+        projectsGit,
         onTriggers: pathname === triggersPath,
       }),
       ...planCommands({
@@ -241,6 +244,7 @@ export function useCommands(gated = false): {
     planRuns,
     changeRequests,
     hostReads,
+    projectsGit,
     ticketReads,
     changedFiles,
     sendBackAt,

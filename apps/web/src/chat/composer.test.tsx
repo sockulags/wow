@@ -9,7 +9,7 @@ import {
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand';
 import { createLayoutStore, RuntimeProvider } from '@/app/runtime';
 import { activeSkillComposer, skillComposerStore } from './composer-store';
@@ -38,11 +38,17 @@ const skills: Skill[] = [
   skill('check-work', 'user-claude', 'Review delivered work'),
 ];
 
+// Skills a test adds to the list for itself.
+let extra: Skill[] = [];
+afterEach(() => {
+  extra = [];
+});
+
 const connection: Connection = {
   state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
   request: () => Promise.resolve(null),
   subscribe(topic, _params, onData) {
-    onData(topic === 'skills' ? skills : []);
+    onData(topic === 'skills' ? [...skills, ...extra] : []);
     return () => undefined;
   },
   retry: () => undefined,
@@ -110,6 +116,23 @@ describe('the skill list opens on the trigger (spec 16)', () => {
     await user.clear(box);
     await user.type(box, 'please /che');
     expect(list()).not.toBeNull();
+  });
+
+  it('shows the folder beside two own skills that share a name', async () => {
+    extra = [
+      { ...skill('brew', 'yours'), id: 'a', dir: '/skills/brew-green' },
+      { ...skill('brew', 'yours'), id: 'b', dir: '/skills/brew-black' },
+    ];
+    const { box, user } = setup();
+    await user.type(box, '/brew');
+    const opened = list();
+    if (!opened) throw new Error('no list');
+    expect(
+      within(opened)
+        .getAllByRole('option')
+        .map((option) => within(option).getByText(/^in /).textContent),
+    ).toEqual(['in brew-green', 'in brew-black']);
+    expect(within(opened).queryByText('in tidy-notes')).toBeNull();
   });
 
   it('opens nothing on $ while the trigger is /', async () => {
@@ -293,6 +316,16 @@ describe('the palette reaches the composer (spec 16, 17)', () => {
     );
     act(() => remove?.run({} as never));
     expect(chips()).toEqual([]);
+  });
+  it('registers once while the writer types and moves the caret', async () => {
+    const { box, user } = setup();
+    const registered = activeSkillComposer(skillComposerStore.getState());
+    expect(registered).toBeDefined();
+    await user.type(box, 'hello there');
+    await user.keyboard('{ArrowLeft}{ArrowLeft}');
+    expect(activeSkillComposer(skillComposerStore.getState())).toBe(registered);
+    act(() => registered?.openSkills());
+    expect(box.value).toBe('hello the /re');
   });
 });
 
