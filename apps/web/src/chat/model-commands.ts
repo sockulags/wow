@@ -3,6 +3,7 @@ import { createStore } from 'zustand';
 import type { AppCommand } from '@/app/commands';
 import { permissionOptions } from './model';
 import {
+  effortChoiceText,
   effortChoices,
   modelChoiceText,
   modelChoices,
@@ -32,12 +33,22 @@ interface ModelBarsState {
 
 export const modelBarStore = createStore<ModelBarsState>(() => ({ bars: [] }));
 
-export function showModelBar(bar: ActiveModelBar): () => void {
-  modelBarStore.setState((state) => ({
-    bars: [...state.bars.filter((entry) => entry.id !== bar.id), bar],
-  }));
-  return () =>
-    modelBarStore.setState((state) => ({ bars: state.bars.filter((entry) => entry !== bar) }));
+// Adds a new bar in front, or updates a registered one where it stands: only the focus
+// (`frontModelBar`) changes which bar is in front, never a re-render of another conversation.
+export function showModelBar(bar: ActiveModelBar): void {
+  modelBarStore.setState((state) => {
+    const at = state.bars.findIndex((entry) => entry.id === bar.id);
+    if (at === -1) return { bars: [...state.bars, bar] };
+    return { bars: state.bars.map((entry, index) => (index === at ? bar : entry)) };
+  });
+}
+
+export function hideModelBar(id: string): void {
+  modelBarStore.setState((state) =>
+    state.bars.some((entry) => entry.id === id)
+      ? { bars: state.bars.filter((entry) => entry.id !== id) }
+      : state,
+  );
 }
 
 // Puts a registered bar in front, when its composer takes the focus.
@@ -68,7 +79,7 @@ export function modelBarCommands(bar: ActiveModelBar | undefined): AppCommand[] 
   const efforts = effortChoices(kind, bar.models, value.model, value.effort, bar.defaults).map(
     (choice): AppCommand => ({
       id: `modelBar.effort.${choice.id}`,
-      title: `Effort: ${choice.label}${choice.isDefault ? ' (default)' : ''}`,
+      title: `Effort: ${effortChoiceText(choice)}`,
       group: 'Chat',
       keywords: ['effort', 'reasoning', 'thinking', choice.id],
       detail: current(choice.id === value.effort),

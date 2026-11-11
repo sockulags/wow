@@ -91,6 +91,8 @@ export interface ModelsState {
   readonly error: string | undefined;
 }
 
+const noModels: ModelsState = { models: [], error: undefined };
+
 export function useModels(providerInstanceId: string | undefined): ModelsState {
   const { connection } = useRuntime();
   const [state, setState] = useState<ModelsState & { readonly for: string | undefined }>({
@@ -110,5 +112,5 @@ export function useModels(providerInstanceId: string | undefined): ModelsState {
       current = false;
     };
   }, [connection, providerInstanceId]);
-  return state.for === providerInstanceId ? state : { models: [], error: undefined };
+  return state.for === providerInstanceId ? state : noModels;
 }

@@ -260,8 +260,9 @@ export interface ConversationExtras {
   // The same check for what is typed on an agent's question card.
   readonly questionHold?: QuestionHold;
   readonly notice?: ReactNode;
-  // Its own composer bar (the assistant's settings); without one the conversation has none.
-  readonly modelBar?: Omit<ModelBarProps, 'ref' | 'returnFocus'>;
+  // Its own composer bar (the assistant's settings), or null for none; left out, the thread's
+  // own bar, so extras for another reason never drop it.
+  readonly modelBar?: Omit<ModelBarProps, 'ref' | 'returnFocus'> | null;
 }
 
 // A thread's conversation, its gate bar and its composer: the chat view's thread and, narrower,
@@ -390,15 +391,16 @@ export function ThreadConversation({
 
   // A chat or step thread picks its model, effort and mode in the bar; the pick applies to the
   // next turn (agent workbench spec 1, 2, 5).
-  const barProps: Omit<ModelBarProps, 'ref' | 'returnFocus'> | undefined = extras
-    ? extras.modelBar
-    : instance && {
-        providerInstanceId: instance.id,
-        kind: instance.kind,
-        value: thread,
-        defaults: { model: instance.defaultModel, effort: instance.defaultEffort },
-        onChange: (changes) => void send({ type: 'thread.configure', threadId, ...changes }),
-      };
+  const barProps: Omit<ModelBarProps, 'ref' | 'returnFocus'> | null | undefined =
+    extras?.modelBar !== undefined
+      ? extras.modelBar
+      : instance && {
+          providerInstanceId: instance.id,
+          kind: instance.kind,
+          value: thread,
+          defaults: { model: instance.defaultModel, effort: instance.defaultEffort },
+          onChange: (changes) => void send({ type: 'thread.configure', threadId, ...changes }),
+        };
   const modelBar = barProps && (
     <ModelBar id={barId} ref={bar} {...barProps} returnFocus={() => composer.current?.focus()} />
   );

@@ -248,7 +248,19 @@ export function AssistantView() {
       effort: storedEffort,
       allowCodex,
     },
-    write: (key, value) => void runtime.settings.write(key, value),
+    write: (key, value) =>
+      runtime.settings.write(key, value).then(
+        (result) => {
+          if (!result.ok) setSaved(`Could not save ${key}: ${result.issues.join('; ')}`);
+          return result.ok;
+        },
+        (error: unknown) => {
+          setSaved(
+            `Could not save ${key}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return false;
+        },
+      ),
   });
   const { after, rest } = placeRows(items ?? [], changes, proposals);
   const asks = askedFields(items ?? []);
@@ -395,7 +407,7 @@ export function AssistantView() {
           },
           questionHold,
           notice,
-          ...(modelBar ? { modelBar } : {}),
+          modelBar: modelBar ?? null,
         }}
       />
     </div>
@@ -420,10 +432,11 @@ export function assistantBar({
     readonly effort: string;
     readonly allowCodex: boolean;
   };
+  // Whether the setting was saved; the caller tells the user when it was not.
   write(
     key: 'assistant.providerInstanceId' | 'assistant.model' | 'assistant.effort',
     value: string,
-  ): void;
+  ): Promise<boolean>;
 }): Omit<ModelBarProps, 'ref' | 'returnFocus'> | undefined {
   const allowed = instances.filter((entry) => entry.kind === 'claude' || stored.allowCodex);
   const instance =
@@ -446,14 +459,18 @@ export function assistantBar({
       value: instance.id,
       onChange: (id) => {
         if (id === instance.id) return;
-        write('assistant.providerInstanceId', id);
-        write('assistant.model', '');
-        write('assistant.effort', '');
+        // The instance last, so the assistant is never opened on the new instance with the old
+        // instance's model.
+        void (async () => {
+          if (!(await write('assistant.model', ''))) return;
+          if (!(await write('assistant.effort', ''))) return;
+          await write('assistant.providerInstanceId', id);
+        })();
       },
     },
     onChange: (changes) => {
-      if (changes.model !== undefined) write('assistant.model', changes.model);
-      if (changes.effort !== undefined) write('assistant.effort', changes.effort);
+      if (changes.model !== undefined) void write('assistant.model', changes.model);
+      if (changes.effort !== undefined) void write('assistant.effort', changes.effort);
     },
   };
 }

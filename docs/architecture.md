@@ -371,9 +371,9 @@ thread it maps to, since the app-server has no request that unloads one.
   (`plan`, `edits`, `danger`) colours it; a `danger` mode (Bypass permissions, Full access) is
   never in `modeCycle`, and `nextPermissionMode(kind, current)` starts the cycle again from a mode
   outside it, so the bar, the palette and the key read one list (a contracts test holds this).
-  Models and their efforts come from `provider.listModels`: `ProviderModel {id, label,
-description, efforts, defaultEffort?, isDefault?, imageInput?}`. The three optional fields are
-  set only when the provider reports them: Codex's `model/list` gives `defaultReasoningEffort`,
+  Models and their efforts come from `provider.listModels`:
+  `ProviderModel {id, label, description, efforts, defaultEffort?, isDefault?, imageInput?}`. The
+  three optional fields are set only when the provider reports them: Codex's `model/list` gives `defaultReasoningEffort`,
   `isDefault` and `inputModalities` (`imageInput` is whether it holds `image`; an older codex
   without the field leaves it out, marked as coped with in the protocol fingerprint), and hidden
   models are left out; Claude Code's `supportedModels()` gives none of them, so they stay absent.
@@ -2308,7 +2308,8 @@ shows the `problem` sentence in a banner with links to Settings → Providers an
 Assistant (the composer is blocked with the same sentence); with no thread yet it shows only
 the sentence. The conversation is the chat view's `ThreadConversation` with
 `ConversationExtras` (`chat/thread-view.tsx`): rows after an item, rows at the end, the
-composer's ref, placeholder, blocked reason, a check before send and a notice line. Nothing of
+composer's ref, placeholder, blocked reason, a check before send, a notice line and its own
+composer bar (`modelBar`; `null` for none, left out for the thread's own bar). Nothing of
 the chat view is copied. The skill list and chips are off there (no `providerKind`). With `chat.groupToolCalls` on (the
 default), `groupToolCalls` (`chat/view-model.ts`) draws consecutive tool calls of one turn as one
 row (`ToolCallGroup`): the latest call, the count and how many failed; any other item, a new turn,
@@ -2708,18 +2709,21 @@ provider flags while the instance names no default; an image icon where `imageIn
 caller's `onChange`: a thread sends `thread.configure` (unchanged), the draft keeps it until
 `thread.create`, the Assistant view writes `assistant.providerInstanceId`, `assistant.model` and
 `assistant.effort` through the settings store (`assistantBar` in `assistant/assistant-view.tsx`;
-a new instance empties the other two) and asks `assistant.open` again so the thread follows;
+a new instance empties the other two first and is written last, and a refused write shows in the
+view's notice line) and asks `assistant.open` again so the thread follows;
 its mode shows `modeLocked` ("Read only") and has no list. `threadDefaults` starts a new thread
 on the provider's default model and that model's default effort when neither the last thread nor
 the instance names one. Keys while the composer has the focus (`useModelBarKeys`, `barKeyOf`):
 `keybindings.composerModel` (Mod+Shift+M) and `keybindings.composerEffort` (Mod+Shift+E) open the
-lists, `keybindings.composerModeCycle` (Shift+Tab) moves to `nextPermissionMode`, and
+lists, `keybindings.composerModeCycle` (Shift+Tab) moves to `nextPermissionMode` (from the mode it last
+sent while the thread has not shown it yet, so a quick second press goes one further), and
 `keybindings.composerLeave` (Escape, after the skill list's own Escape) focuses what comes before
 the composer, since Shift+Tab no longer leaves it. They are matched in the composer's key handler,
 not by the global keybinding listener, so they do nothing elsewhere. A list that closes returns
 the focus to the composer unless the user already moved on. The palette reaches the bar on screen
 through `modelBarStore` (`chat/model-commands.ts`; the bar whose conversation had the focus last
-is in front): "Model: <label>", "Effort: <level>" and "Permission mode: <label>", the current one
+is in front, and only the focus or a newly shown bar changes that: a re-render updates a bar in
+place, and the bar writes the store only when its model, effort, mode or defaults change): "Model: <label>", "Effort: <level>" and "Permission mode: <label>", the current one
 with detail "Current", and "Choose model…" / "Choose effort…", which open the lists. The
 assistant's bar has no mode commands. Tests: `apps/web/src/chat/model-bar.test.tsx` (keys, cycle,
 colours, lists, palette, new thread, step thread, the assistant's bar),

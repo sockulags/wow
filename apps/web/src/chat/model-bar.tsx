@@ -33,7 +33,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { useModels } from './data';
-import { showModelBar } from './model-commands';
+import { hideModelBar, showModelBar } from './model-commands';
 import { permissionOptions } from './model';
 import {
   effortChoices,
@@ -197,9 +197,25 @@ export function ModelBar({
     setOpen(undefined);
     onChange(changes);
   };
+  // The modes sent since the thread last showed one of them: a second Shift+Tab before the first
+  // echoes cycles on from what was sent, not from the mode still on screen.
+  const pending = useRef<{ readonly from: string; readonly sent: readonly string[] }>(undefined);
   const cycleMode = () => {
     if (modeLocked !== undefined || disabled) return false;
-    onChange({ permissionMode: nextPermissionMode(kind, value.permissionMode) });
+    const shown = value.permissionMode;
+    const before = pending.current;
+    const last = before?.sent.at(-1);
+    const waiting =
+      before !== undefined &&
+      last !== undefined &&
+      last !== shown &&
+      (shown === before.from || before.sent.includes(shown));
+    const next = nextPermissionMode(kind, waiting ? last : shown);
+    pending.current =
+      waiting && before
+        ? { from: before.from, sent: [...before.sent, next] }
+        : { from: shown, sent: [next] };
+    onChange({ permissionMode: next });
     return true;
   };
 
@@ -215,20 +231,43 @@ export function ModelBar({
   useLayoutEffect(() => {
     latest.current = { onChange, open: setOpen };
   });
+  // Keyed on the values, not on the objects callers build each render, so a streamed item does not
+  // write the registry (or rebuild the palette) when nothing in the bar changed.
+  const { model: shownModel, effort: shownEffort, permissionMode: shownMode } = value;
+  const hasDefaults = defaults !== undefined;
+  const defaultModel = defaults?.model ?? null;
+  const defaultEffort = defaults?.effort ?? null;
+  const locked = modeLocked !== undefined;
   useEffect(() => {
-    if (disabled) return undefined;
-    return showModelBar({
+    if (disabled) return;
+    showModelBar({
       id,
       kind,
       models,
-      value,
-      defaults,
-      modeLocked: modeLocked !== undefined,
+      value: { model: shownModel, effort: shownEffort, permissionMode: shownMode },
+      defaults: hasDefaults ? { model: defaultModel, effort: defaultEffort } : undefined,
+      modeLocked: locked,
       apply: (changes) => latest.current.onChange(changes),
       openModels: () => latest.current.open('model'),
       openEfforts: () => latest.current.open('effort'),
     });
-  }, [id, kind, models, value, defaults, modeLocked, disabled]);
+  }, [
+    id,
+    kind,
+    models,
+    shownModel,
+    shownEffort,
+    shownMode,
+    hasDefaults,
+    defaultModel,
+    defaultEffort,
+    locked,
+    disabled,
+  ]);
+  useEffect(() => {
+    if (disabled) return undefined;
+    return () => hideModelBar(id);
+  }, [id, disabled]);
 
   const toggle = (part: Part) => (next: boolean) => setOpen(next ? part : undefined);
   const instance = instances?.choices.find((choice) => choice.id === instances.value);
@@ -412,10 +451,14 @@ export function focusBefore(element: HTMLElement): boolean {
   const all = [...element.ownerDocument.querySelectorAll<HTMLElement>(tabbable)].filter(
     (candidate) => candidate.tabIndex >= 0 && !candidate.closest('[inert], [hidden]'),
   );
-  const before = all[all.indexOf(element) - 1];
-  if (!before) return false;
-  before.focus();
-  return true;
+  // A candidate that is hidden by style cannot take the focus; try the one before it.
+  for (let at = all.indexOf(element) - 1; at >= 0; at -= 1) {
+    const before = all[at];
+    if (!before) continue;
+    before.focus();
+    if (element.ownerDocument.activeElement === before) return true;
+  }
+  return false;
 }
 
 // The composer's handler for the bar's keys: true when the key was the bar's and was used.
