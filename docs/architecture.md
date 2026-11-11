@@ -2372,7 +2372,8 @@ between them only from a guidance text it ships; nothing about models comes from
   (the largest, a balanced one, the smallest), never versions.
 - **What the assistant writes** (`checkStepModels`, spec 15, 16). `create_workflow` and an
   `update_workflow` with steps check every step before the command is dispatched: the instance
-  exists, its models can be read now, the step names one of them, and an effort that model takes
+  exists, it is connected (its last test passed; otherwise the refusal gives the reason
+  `read_models` gives), its models can be read now, the step names one of them, and an effort that model takes
   (when it takes any). Each refusal says what is offered ("Codex at work does not offer the
   model codex-ultra (Step 1 (plan-work)). It offers: codex-max, codex-mini."). The user's own
   commands are not checked against the list, since the builder offers only the list. A change

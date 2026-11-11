@@ -287,6 +287,27 @@ describe('the workflows the assistant writes (spec 15, 16)', () => {
     );
   });
 
+  it('refuses a step on an instance read_models reports as not connected, with the same reason (spec 16)', async () => {
+    const read = ModelsRead.parse(
+      (await call('read_models', { providerInstanceId: 'codex-home' })).content,
+    );
+    const reason = read.instances[0]?.reason;
+    expect(reason).toContain('Not signed in');
+    const result = await call('create_workflow', {
+      name: 'Review loop',
+      steps: [
+        step('plan-work', { providerInstanceId: 'codex-home', model: 'codex-max', effort: 'low' }),
+      ],
+    });
+    expect(result).toEqual({
+      isError: true,
+      content: {
+        outcome: 'refused',
+        reason: `Codex at home is not connected, so wow cannot check Step 1 (plan-work): ${reason}`,
+      },
+    });
+  });
+
   it('has an instruction text that names the tools, says to give the reason and when to ask', () => {
     expect(defaultAssistantInstructions).toContain('read_models');
     expect(defaultAssistantInstructions).toContain('read_model_guidance');
