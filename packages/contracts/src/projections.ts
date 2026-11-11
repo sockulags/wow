@@ -6,10 +6,10 @@ import {
   ProviderKind,
   ProviderUpdate,
   ProviderUpdateRun,
-  QuestionOption,
   TaskStatus,
   ThreadState,
 } from './provider.js';
+import { QuestionOption, QuestionReply } from './questions.js';
 import { CardOccurrence, LocalDay, RepeatRule } from './repeat.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
 import {
@@ -136,7 +136,12 @@ export const ThreadItem = z.object({
 export type ThreadItem = z.infer<typeof ThreadItem>;
 
 // What `payload` holds per item kind, as the server's thread orchestrator writes it.
-export const TextItemPayload = z.object({ text: z.string() });
+export const TextItemPayload = z.object({
+  text: z.string(),
+  // A user message that answers the assistant's questions (questions spec 9): the tool call
+  // that asked them and what was answered, one reply per question.
+  answers: z.object({ askItemId: Id, replies: z.array(QuestionReply) }).optional(),
+});
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 
 export const ToolCallItemPayload = z.object({
@@ -157,8 +162,13 @@ export type ApprovalItemPayload = z.infer<typeof ApprovalItemPayload>;
 export const QuestionItemPayload = z.object({
   questionId: Id,
   question: z.string(),
+  header: z.string().optional(),
+  askId: z.string().optional(),
   options: z.array(QuestionOption),
   multiSelect: z.boolean(),
+  // What was answered, from the card. A question answered before the card has only the row's
+  // `answer` text.
+  reply: QuestionReply.optional(),
 });
 export type QuestionItemPayload = z.infer<typeof QuestionItemPayload>;
 

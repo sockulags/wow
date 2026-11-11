@@ -83,6 +83,7 @@ export class AssistantRedactor {
           out.push({
             ...event,
             question: hideSecrets(event.question, compiled),
+            ...(event.header === undefined ? {} : { header: hideSecrets(event.header, compiled) }),
             options: event.options.map((option) => ({
               ...option,
               label: hideSecrets(option.label, compiled),

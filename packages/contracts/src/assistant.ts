@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ProviderInstance } from './projections.js';
+import { AskedQuestion } from './questions.js';
 import { TrackerConnection } from './trackers.js';
 
 // The app assistant (intent 2026-11-app-assistant): what it changed, what it proposed, and the
@@ -257,6 +258,7 @@ What you can do
 - A message can start with a note from wow saying what the person answered to your proposals and which changes they undid since your last turn. Take it into account; the person did not type it.
 - After a change, say what changed and where it lives in wow (for example Settings → Calendar, the workflow, the card).
 - For anything that recurs (every weekday, every week, every month), make one repeating card with a repeat rule, never a card per day or one card per occurrence. Say how it repeats and when it fires next. To leave out one occurrence, skip that occurrence instead of changing the rule.
+- When a few answers are likely, ask with ask_questions: each question with a short header, its choices (the one you recommend first, marked recommended) and whether several may be picked; the person can always type their own answer instead. Ask one thing at a time unless the questions belong together, at most four at once. Then end your turn: the answer comes as the person's next message, marked as the answer to your questions. Never ask for a secret with it.
 - When the person asks why something does not work, run diagnose_setup and say each thing that fails, its reason and the place to fix it, as wow gave them. When it finds nothing, say so.
 - When wow's note says the first-start step just finished, greet the person: say what is set up and what a first run still needs, from the note's lists. Then go through its "To fill in" list in order, one thing per answer: a secret through show_secret_field, and anything else (work hours, project folders) by asking and then making the change. Move on when the person has answered or says to skip it. When a note says the person applied a setup file, go through its "To fill in" list the same way.
 
@@ -304,6 +306,51 @@ export type SecretVariableRequest = z.infer<typeof SecretVariableRequest>;
 // Where a provider instance's secret variable is kept in the secret store.
 export const providerSecretName = (providerInstanceId: string, variable: string) =>
   `provider:${providerInstanceId}:env:${variable}`;
+
+// Asks the user one to four questions with the question card (questions spec 9 to 11). The
+// assistant's turn ends there; the answer arrives as the user's next message.
+export const assistantAskTool = 'ask_questions';
+export const AskQuestionsRequest = z
+  .object({ questions: z.array(AskedQuestion).min(1).max(4) })
+  .strict();
+export type AskQuestionsRequest = z.infer<typeof AskQuestionsRequest>;
+
+// The words in a question that make the tool refuse it (spec 11), each matched as a whole word
+// or phrase without regard to case. A net, not a proof.
+export function askedSecretWord(
+  request: AskQuestionsRequest,
+  words: readonly string[],
+): string | null {
+  const texts = request.questions.flatMap((question) => [
+    question.question,
+    question.header,
+    ...question.options.flatMap((option) => [option.label, option.description ?? '']),
+  ]);
+  for (const word of words) {
+    const trimmed = word.trim();
+    if (trimmed === '') continue;
+    const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu');
+    if (texts.some((text) => pattern.test(text))) return trimmed;
+  }
+  return null;
+}
+
+export const defaultAskRefusedWords: readonly string[] = [
+  'token',
+  'tokens',
+  'password',
+  'passwords',
+  'passwd',
+  'passphrase',
+  'secret',
+  'secrets',
+  'key',
+  'keys',
+  'api key',
+  'credential',
+  'credentials',
+];
 
 // Offers to take a request that is not about operating wow to the chat view (spec 3).
 export const assistantProjectWorkTool = 'offer_project_work';

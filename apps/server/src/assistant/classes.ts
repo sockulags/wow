@@ -77,6 +77,7 @@ const moreOnItsOwn: Readonly<Record<string, (next: unknown, current: unknown) =>
 // fork's pull request may start a run whose agent the fork's files steer.
 const guardSettings: ReadonlySet<string> = new Set([
   'assistant.secretPatterns',
+  'assistant.askRefusedWords',
   'assistant.allowCodex',
   'triggers.forkPullRequests',
 ]);
@@ -242,6 +243,9 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
     'The greeting is sent by wow when the user finishes the first-start step.',
   ),
   'thread.sendMessage': chatOnly,
+  'thread.answerQuestions': refused(
+    'Only the user answers your questions, on their card. End your turn and wait for the answer.',
+  ),
   'thread.interrupt': chatOnly,
   'thread.configure': chatOnly,
   'thread.setPinned': chatOnly,

@@ -15,8 +15,10 @@ import type {
   ProviderInstance,
   ProviderModel,
   ProviderTestResult,
+  QuestionReply,
   TaskStatus,
 } from '@wow/contracts';
+import { markRecommended, replyText } from '@wow/contracts';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
 import { AsyncQueue } from './queue.js';
@@ -67,6 +69,7 @@ const AskUserQuestionInput = z.object({
     .array(
       z.object({
         question: z.string().min(1),
+        header: z.string().optional(),
         options: z.array(
           z.object({ label: z.string().min(1), description: z.string().optional() }),
         ),
@@ -167,7 +170,7 @@ export class ClaudeAdapter implements ProviderAdapter {
   readonly #baseEnv: Record<string, string | undefined>;
   readonly #sessions = new Map<string, Session>();
   readonly #approvals = new Map<string, Pending<ApprovalDecision>>();
-  readonly #questions = new Map<string, Pending<string>>();
+  readonly #questions = new Map<string, Pending<QuestionReply>>();
   readonly #listeners = new Set<Listener>();
 
   constructor(
@@ -638,7 +641,9 @@ export class ClaudeAdapter implements ProviderAdapter {
   }
 
   // AskUserQuestion asks one or more questions at once; each becomes a question in the thread and
-  // the tool runs with the answers once all are answered.
+  // the tool runs with the answers once all are answered. Claude Code takes one text per
+  // question: picked labels separated by commas, and typed text the way its own "Other" sends
+  // it, as the text itself (after the labels when both are given).
   async #ask(
     session: Session,
     input: Record<string, unknown>,
@@ -658,10 +663,14 @@ export class ClaudeAdapter implements ProviderAdapter {
             threadId: session.threadId,
             questionId,
             question: question.question,
+            ...(question.header?.trim() ? { header: question.header.trim() } : {}),
+            askId: options.toolUseID,
             options: question.options.map((option) =>
-              option.description === undefined
-                ? { label: option.label }
-                : { label: option.label, description: option.description },
+              markRecommended(
+                option.description === undefined
+                  ? { label: option.label }
+                  : { label: option.label, description: option.description },
+              ),
             ),
             multiSelect: question.multiSelect ?? false,
           }),
@@ -676,7 +685,10 @@ export class ClaudeAdapter implements ProviderAdapter {
       updatedInput: {
         ...input,
         answers: Object.fromEntries(
-          questions.map((question, index) => [question.question, answers[index] ?? '']),
+          questions.map((question, index) => {
+            const answer = answers[index];
+            return [question.question, answer ? replyText(answer) : ''];
+          }),
         ),
       },
     };

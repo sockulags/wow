@@ -233,11 +233,14 @@ describe('provider service', () => {
     );
     await stored;
     expect(thread()).toMatchObject({ state: 'needs_you' });
-    dispatch({ type: 'question.answer', questionId: 't1:ask1:0', answer: 'README.md' });
+    dispatch({
+      type: 'question.answer',
+      answers: [{ questionId: 't1:ask1:0', reply: { picked: ['README.md'], text: '' } }],
+    });
     expect(adapter.sent.at(-1)).toEqual({
       type: 'answerQuestion',
       questionId: 'ask1:0',
-      answer: 'README.md',
+      answer: { picked: ['README.md'], text: '' },
     });
     expect(rows('questions')[0]).toMatchObject({ answer: 'README.md' });
 
@@ -313,6 +316,7 @@ describe('provider service', () => {
           question: 'Which file?',
           options: [{ label: 'README.md' }, { label: 'src' }],
           multiSelect: false,
+          reply: { picked: ['README.md'], text: '' },
         },
         streaming: false,
       },

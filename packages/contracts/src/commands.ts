@@ -46,6 +46,7 @@ import {
   ProviderUpdate,
   ThreadState,
 } from './provider.js';
+import { QuestionReply } from './questions.js';
 import { CardOccurrence, LocalDay, RepeatRule } from './repeat.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
 import { SetupApplication } from './setup.js';
@@ -155,6 +156,15 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('thread.greetAssistant') }),
   // Starts a turn with the thread's current model, effort and permission mode (spec 14, 17).
   z.object({ type: z.literal('thread.sendMessage'), threadId: Id, text: z.string().min(1) }),
+  // The user's answer to the questions the assistant asked with its tool (questions spec 9):
+  // `itemId` is that tool call, with one reply per question. It is sent as the user's next
+  // message, marked as the answer. Only the assistant's thread has such questions.
+  z.object({
+    type: z.literal('thread.answerQuestions'),
+    threadId: Id,
+    itemId: Id,
+    replies: z.array(QuestionReply).min(1),
+  }),
   // Stops the running turn; what it produced so far stays (spec 23).
   z.object({ type: z.literal('thread.interrupt'), threadId: Id }),
   z.object({
@@ -170,7 +180,12 @@ export const Command = z.discriminatedUnion('type', [
   // needs the user; reopening puts it back under Idle, and a new message reopens it too.
   z.object({ type: z.literal('thread.setDone'), threadId: Id, done: z.boolean() }),
   z.object({ type: z.literal('approval.answer'), approvalId: Id, decision: ApprovalDecision }),
-  z.object({ type: z.literal('question.answer'), questionId: Id, answer: z.string() }),
+  // Answers to an agent's questions, sent together when one ask holds several (questions
+  // spec 3). Refused for a question whose turn ended.
+  z.object({
+    type: z.literal('question.answer'),
+    answers: z.array(z.object({ questionId: Id, reply: QuestionReply })).min(1),
+  }),
   // A local card (spec 5). Times are instants; `zone` is the zone they were entered in. Cards
   // never reach Outlook.
   z.object({
@@ -882,7 +897,9 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       threadId: Id,
       providerInstanceId: Id,
       providerQuestionId: Id,
+      // The answer as one line; events from before the card hold only this.
       answer: z.string(),
+      reply: QuestionReply.optional(),
       answeredAt: Timestamp,
     }),
   }),

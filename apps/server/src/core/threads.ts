@@ -9,7 +9,17 @@ import type {
   ThreadState,
   Turn,
 } from '@wow/contracts';
-import { assistantThreadId } from '@wow/contracts';
+import {
+  QuestionOption,
+  askAnswerPrompt,
+  askAnswerText,
+  askedQuestionsOf,
+  assistantThreadId,
+  replyProblem,
+  replyText,
+  type QuestionReply,
+} from '@wow/contracts';
+import { z } from 'zod';
 import {
   assistantAnswersNote,
   assistantThreadEvents,
@@ -34,6 +44,7 @@ type ThreadCommand = Extract<
       | 'thread.openAssistant'
       | 'thread.greetAssistant'
       | 'thread.sendMessage'
+      | 'thread.answerQuestions'
       | 'thread.interrupt'
       | 'thread.configure'
       | 'thread.setPinned'
@@ -57,6 +68,13 @@ export const approvalRowId = (threadId: string, providerId: string) => `${thread
 export const questionRowId = approvalRowId;
 const providerIdOf = (threadId: string, rowId: string) => rowId.slice(threadId.length + 1);
 
+// What a question row keeps of the question, to check an answer against its choices.
+const StoredQuestion = z.object({
+  question: z.string(),
+  options: z.array(QuestionOption),
+  multiSelect: z.boolean(),
+});
+
 // A turn with the user's line as its first item. The prompt can carry a note from wow before the
 // line; the conversation shows only the line.
 // The greeting turn: wow's note of what is set up, then the user's line.
@@ -77,7 +95,17 @@ function turnStarted(
   read: ReadModel,
   thread: Thread,
   now: string,
-  { text, prompt, assistant }: { text: string; prompt: string; assistant: boolean },
+  {
+    text,
+    prompt,
+    assistant,
+    answers,
+  }: {
+    text: string;
+    prompt: string;
+    assistant: boolean;
+    answers?: { askItemId: string; replies: QuestionReply[] };
+  },
 ): DomainEvent {
   const index = read.turnCount(thread.id);
   const id = turnId(thread.id, index);
@@ -100,7 +128,7 @@ function turnStarted(
         turnId: id,
         index: read.nextItemIndex(thread.id),
         kind: 'user',
-        payload: { text },
+        payload: answers ? { text, answers } : { text },
         streaming: false,
       },
       providerInstanceId: thread.providerInstanceId,
@@ -303,6 +331,60 @@ export function decideThread(
         }),
       ];
     }
+    case 'thread.answerQuestions': {
+      const stored = requireThread(read, command.threadId);
+      if (stored.kind !== 'assistant') {
+        throw new CommandRejected(
+          'rejected',
+          "Only the assistant's questions are answered this way; an agent's question is answered on its card.",
+        );
+      }
+      if (read.runningTurn(stored.id)) {
+        throw new CommandRejected(
+          'rejected',
+          'The assistant is still working. Answer its questions when its turn has ended.',
+        );
+      }
+      const item = read.threadItem(command.itemId);
+      const ask = item && item.threadId === stored.id ? askedQuestionsOf(item) : null;
+      if (!item || !ask) {
+        throw new CommandRejected(
+          'not_found',
+          `The assistant asked no questions in ${command.itemId}`,
+        );
+      }
+      // The next message ends the questions: answered, or left for something the user wrote.
+      if (read.lastTurn(stored.id)?.id !== item.turnId) {
+        throw new CommandRejected(
+          'conflict',
+          'These questions were not answered before the next message, so they can no longer be answered.',
+        );
+      }
+      if (command.replies.length !== ask.questions.length) {
+        throw new CommandRejected(
+          'rejected',
+          `Answer every question: ${ask.questions.length} asked, ${command.replies.length} answered.`,
+        );
+      }
+      ask.questions.forEach((question, index) => {
+        const problem = replyProblem(question, command.replies[index] ?? { picked: [], text: '' });
+        if (problem) throw new CommandRejected('rejected', `"${question.question}": ${problem}`);
+      });
+      const opened = assistantThreadEvents(read, context);
+      const notes = [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
+        (entry): entry is string => entry !== null,
+      );
+      const answer = askAnswerPrompt(ask, command.replies);
+      return [
+        ...opened.events,
+        turnStarted(read, opened.thread, now, {
+          text: askAnswerText(ask, command.replies),
+          prompt: [...notes, answer].join('\n\n'),
+          assistant: true,
+          answers: { askItemId: item.id, replies: command.replies },
+        }),
+      ];
+    }
     case 'thread.interrupt': {
       const thread = requireThread(read, command.threadId);
       const turn = read.runningTurn(thread.id);
@@ -404,14 +486,42 @@ export function decideThread(
       ];
     }
     case 'question.answer': {
-      const question = read.question(command.questionId);
-      if (!question) throw new CommandRejected('not_found', `No question ${command.questionId}`);
-      if (question.answer !== null) {
-        throw new CommandRejected('conflict', `Question ${question.id} was already answered`);
+      const ids = command.answers.map((entry) => entry.questionId);
+      if (new Set(ids).size !== ids.length) {
+        throw new CommandRejected('rejected', 'A question is answered twice');
       }
-      const thread = requireThread(read, question.threadId);
+      const answered = command.answers.map(({ questionId, reply }) => {
+        const question = read.question(questionId);
+        if (!question) throw new CommandRejected('not_found', `No question ${questionId}`);
+        if (question.answer !== null) {
+          throw new CommandRejected('conflict', `Question ${question.id} was already answered`);
+        }
+        const asked = StoredQuestion.safeParse(question.request);
+        const problem = replyProblem(
+          asked.success ? asked.data : { options: [], multiSelect: true },
+          reply,
+        );
+        if (problem) throw new CommandRejected('rejected', problem);
+        return { question, reply, text: asked.data?.question ?? question.id };
+      });
+      const threadIds = new Set(answered.map((entry) => entry.question.threadId));
+      const [threadId] = threadIds;
+      if (threadIds.size !== 1 || threadId === undefined) {
+        throw new CommandRejected('rejected', 'Questions of different threads are answered apart');
+      }
+      const thread = requireThread(read, threadId);
+      // Once its turn has ended (or was stopped), nobody waits for the answer (spec 5).
+      const running = read.runningTurn(thread.id);
+      for (const { question, text } of answered) {
+        if (!running || read.threadItem(question.itemId)?.turnId !== running.id) {
+          throw new CommandRejected(
+            'rejected',
+            `"${text}" was not answered before its turn ended, so it can no longer be answered.`,
+          );
+        }
+      }
       return [
-        {
+        ...answered.map(({ question, reply }): DomainEvent => ({
           kind: 'question.answered',
           aggregate: thread.id,
           payload: {
@@ -419,11 +529,12 @@ export function decideThread(
             threadId: thread.id,
             providerInstanceId: thread.providerInstanceId,
             providerQuestionId: providerIdOf(thread.id, question.id),
-            answer: command.answer,
+            answer: replyText(reply),
+            reply,
             answeredAt: now,
           },
-        },
-        ...resumeWork(read, thread.id, thread.state, now),
+        })),
+        ...resumeWork(read, thread.id, thread.state, now, answered.length),
       ];
     }
     case 'provider.events':
@@ -443,8 +554,9 @@ function resumeWork(
   threadId: string,
   state: ThreadState,
   now: string,
+  answered = 1,
 ): DomainEvent[] {
-  if (state !== 'needs_you' || read.openRequests(threadId) > 1) return [];
+  if (state !== 'needs_you' || read.openRequests(threadId) > answered) return [];
   return [stateChanged(threadId, 'working', now)];
 }
 
@@ -626,6 +738,8 @@ function decideProviderEvents(
         if (read.question(id)) break;
         const request = {
           question: event.question,
+          ...(event.header === undefined ? {} : { header: event.header }),
+          ...(event.askId === undefined ? {} : { askId: event.askId }),
           options: event.options,
           multiSelect: event.multiSelect,
         };

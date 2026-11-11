@@ -389,12 +389,28 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       tx.insert(questions).values(event.payload.question).run();
       tx.insert(threadItems).values(event.payload.item).run();
       return ['questions', 'threadItems'];
-    case 'question.answered':
+    case 'question.answered': {
       tx.update(questions)
         .set({ answer: event.payload.answer, answeredAt: event.payload.answeredAt })
         .where(eq(questions.id, event.payload.questionId))
         .run();
-      return ['questions'];
+      // The card shows what was picked and typed from its item; an answer from before the card
+      // has only the row's text.
+      const { reply } = event.payload;
+      if (reply === undefined) return ['questions'];
+      const row = tx
+        .select()
+        .from(questions)
+        .where(eq(questions.id, event.payload.questionId))
+        .get();
+      const item = row && tx.select().from(threadItems).where(eq(threadItems.id, row.itemId)).get();
+      if (!item || typeof item.payload !== 'object' || item.payload === null) return ['questions'];
+      tx.update(threadItems)
+        .set({ payload: { ...item.payload, reply } })
+        .where(eq(threadItems.id, item.id))
+        .run();
+      return ['questions', 'threadItems'];
+    }
     case 'card.created': {
       // The history and the next time are not the card's to set: they follow its occurrences
       // and its trigger.
@@ -766,6 +782,7 @@ export function readModel(tx: DbOrTx): ReadModel {
         .get()?.index;
       return last === null || last === undefined ? 0 : last + 1;
     },
+    threadItem: (id) => tx.select().from(threadItems).where(eq(threadItems.id, id)).get(),
     itemExists: (id) =>
       tx.select({ id: threadItems.id }).from(threadItems).where(eq(threadItems.id, id)).get() !==
       undefined,

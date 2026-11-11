@@ -229,7 +229,7 @@ export class ProviderService {
           this.#send(event.payload.providerInstanceId, event.payload.threadId, false, {
             type: 'answerQuestion',
             questionId: event.payload.providerQuestionId,
-            answer: event.payload.answer,
+            answer: event.payload.reply ?? { picked: [], text: event.payload.answer },
           });
           break;
         // The adapter was made from the old instance row; the next use makes one from the new.

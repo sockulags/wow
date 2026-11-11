@@ -1,8 +1,11 @@
 import {
+  AskQuestionsRequest,
   ProjectWorkOffer,
   SecretFieldRequest,
   SecretRef,
   SecretVariableRequest,
+  askedSecretWord,
+  assistantAskTool,
   assistantProjectWorkTool,
   assistantSecretFieldTool,
   assistantSecretVariableTool,
@@ -88,6 +91,41 @@ export const asks = {
       note: 'The user sees a button that opens a new chat thread with this text. Say that the chat view is for this work; there is nothing more for you to do with it.',
     }),
   } satisfies Reader<typeof ProjectWorkOffer>,
+  [assistantAskTool]: {
+    description:
+      'Asks the user one to four questions on a card in the conversation, answered together. Each question has a header of a word or two (shown as a chip), its choices (label and an optional description; mark the one you recommend with recommended: true and it is listed first) and multiSelect when several may be picked. The card always has a field "Other" for the user\'s own text, so do not add an "Other" choice; with no choices the card is that field alone. Use it when a few answers are likely; ask one thing at a time unless the questions belong together. After calling it, end your turn: the answer comes as the user\'s next message, marked as the answer to these questions. Never ask for a token, password, key or other secret with it; show the secret\'s field instead.',
+    input: AskQuestionsRequest,
+    read: (request, deps) => {
+      const words = deps.settings.resolve('assistant.askRefusedWords', {}).value;
+      const word = askedSecretWord(
+        request,
+        Array.isArray(words) ? words.filter((entry) => typeof entry === 'string') : [],
+      );
+      if (word !== null) {
+        throw new RpcFault(
+          'rejected',
+          `A question never asks for a secret, and this one says "${word}". To get a token, password or key, show its field with show_secret_field (or show_secret_variable for a provider instance's variable) instead.`,
+        );
+      }
+      for (const question of request.questions) {
+        const labels = question.options.map((option) => option.label.trim().toLowerCase());
+        if (new Set(labels).size !== labels.length) {
+          throw new RpcFault('rejected', `"${question.question}" has two choices with one label.`);
+        }
+        if (labels.includes('other')) {
+          throw new RpcFault(
+            'rejected',
+            `"${question.question}" has a choice "Other"; the card always has one, so leave it out.`,
+          );
+        }
+      }
+      return {
+        outcome: 'asked',
+        questions: request.questions.length,
+        note: 'The user sees the questions on a card. End your turn now and do not answer them yourself: their answer comes as their next message, marked as the answer to these questions.',
+      };
+    },
+  } satisfies Reader<typeof AskQuestionsRequest>,
 } as const;
 
 export type AskName = keyof typeof asks;

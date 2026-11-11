@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { QuestionOption, QuestionReply } from './questions.js';
 
 // The normalized provider protocol. Adapters translate their own wire format to and from these
 // types; orchestration and the UI never see provider-specific shapes.
@@ -56,7 +57,7 @@ export const ProviderCommand = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('answerQuestion'),
     questionId: z.string().min(1),
-    answer: z.string(),
+    answer: QuestionReply,
   }),
   z.object({ type: z.literal('setModel'), threadId: z.string().min(1), model: Model }),
   z.object({
@@ -71,12 +72,6 @@ export type ProviderCommand = z.infer<typeof ProviderCommand>;
 
 export const ApprovalKind = z.enum(['command', 'fileChange', 'tool']);
 export type ApprovalKind = z.infer<typeof ApprovalKind>;
-
-export const QuestionOption = z.object({
-  label: z.string().min(1),
-  description: z.string().optional(),
-});
-export type QuestionOption = z.infer<typeof QuestionOption>;
 
 export const TaskStatus = z.enum(['pending', 'in_progress', 'completed']);
 export type TaskStatus = z.infer<typeof TaskStatus>;
@@ -129,6 +124,10 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     ...ThreadScoped,
     questionId: z.string().min(1),
     question: z.string().min(1),
+    // The chip above the question, when the provider gave one.
+    header: z.string().min(1).optional(),
+    // Questions asked together share it; the card answers them together.
+    askId: z.string().min(1).optional(),
     options: z.array(QuestionOption),
     multiSelect: z.boolean(),
   }),

@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { SecretPattern, defaultAssistantInstructions, defaultSecretPatterns } from './assistant.js';
+import {
+  SecretPattern,
+  defaultAskRefusedWords,
+  defaultAssistantInstructions,
+  defaultSecretPatterns,
+} from './assistant.js';
 import {
   alwaysStopSkillDefaults,
   WorkflowTemplate,
@@ -1333,6 +1338,15 @@ export const settingsRegistry = {
     default: [...defaultSecretPatterns],
     scope: 'global',
   }),
+  'assistant.askRefusedWords': defineSetting({
+    schema: z.array(z.string().trim().min(1)),
+    group: 'assistant',
+    label: 'Words a question may not ask for',
+    description:
+      "The assistant's question tool refuses a question whose text, header or choices hold one of these words or phrases (whole words, without regard to case), and tells the assistant to show the secret's field instead. A net for mistakes: a question never collects a secret.",
+    default: [...defaultAskRefusedWords],
+    scope: 'global',
+  }),
   'appearance.theme': defineSetting({
     schema: Theme,
     group: 'appearance',
@@ -1533,6 +1547,11 @@ export const settingsRegistry = {
     'Approval: deny',
     'Deny the request the open thread waits for.',
     'D',
+  ),
+  'keybindings.questionFocus': keybinding(
+    'Question: go to the card',
+    'Put the keyboard on the question card that waits for an answer, in a chat thread or the Assistant view. There the arrow keys or digits pick, typing goes to "Other" and Enter sends.',
+    'Alt+Q',
   ),
   'advanced.port': defineSetting({
     personal: 'machine',

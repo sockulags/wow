@@ -158,7 +158,7 @@ describe('@wow/provider-claude', () => {
         void h.adapter.send({
           type: 'answerQuestion',
           questionId: event.questionId,
-          answer: 'README.md',
+          answer: { picked: ['README.md'], text: '' },
         });
       }
     });
@@ -194,6 +194,8 @@ describe('@wow/provider-claude', () => {
         threadId: 't1',
         questionId: 'toolu_ask:0',
         question: 'Which file should I open?',
+        header: 'File',
+        askId: 'toolu_ask',
         options: [
           { label: 'README.md', description: 'The readme' },
           { label: 'src', description: 'The sources' },
@@ -256,6 +258,85 @@ describe('@wow/provider-claude', () => {
         updatedInput: expect.objectContaining({
           answers: { 'Which file should I open?': 'README.md' },
         }),
+      },
+    ]);
+  });
+
+  // Questions spec 6: Claude Code takes one text per question, the picked labels and then the
+  // typed text, as its own "Other" sends it; a "(Recommended)" choice is marked and keeps its label.
+  it.each([
+    ['a choice', { picked: ['Vitest (Recommended)'], text: '' }, 'Vitest (Recommended)'],
+    [
+      'typed text',
+      { picked: [], text: ' node:test, no extra package ' },
+      'node:test, no extra package',
+    ],
+    [
+      'a choice and typed text',
+      { picked: ['Jest'], text: 'only for the old package' },
+      'Jest, only for the old package',
+    ],
+    ['several choices', { picked: ['Unit', 'End to end'], text: '' }, 'Unit, End to end'],
+  ])('answers AskUserQuestion by %s, exactly', async (_name, reply, sent) => {
+    const several = reply.picked.includes('Unit');
+    const question = several
+      ? {
+          question: 'Which tests should run?',
+          header: 'Tests',
+          options: [
+            { label: 'Unit', description: 'Fast' },
+            { label: 'End to end', description: 'Slow' },
+          ],
+          multiSelect: true,
+        }
+      : {
+          question: 'Which test runner?',
+          header: 'Runner',
+          options: [
+            { label: 'Jest', description: 'Older' },
+            { label: 'Vitest (Recommended)', description: 'Fits Vite' },
+          ],
+          multiSelect: false,
+        };
+    const input = { questions: [question] };
+    const h = harness(
+      [
+        [
+          initStep(),
+          assistantToolUse('toolu_q', 'AskUserQuestion', input),
+          { permission: { toolName: 'AskUserQuestion', input, toolUseID: 'toolu_q' } },
+          result(0.01),
+        ],
+      ],
+      (event) => {
+        if (event.type === 'questionAsked') {
+          void h.adapter.send({
+            type: 'answerQuestion',
+            questionId: event.questionId,
+            answer: reply,
+          });
+        }
+      },
+    );
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    const asked = h.events.find((event) => event.type === 'questionAsked');
+    expect(asked).toMatchObject({
+      header: question.header,
+      askId: 'toolu_q',
+      multiSelect: several,
+      options: several
+        ? question.options
+        : [
+            { label: 'Jest', description: 'Older' },
+            { label: 'Vitest (Recommended)', description: 'Fits Vite', recommended: true },
+          ],
+    });
+    expect(h.queries[0]?.permissionResults).toEqual([
+      {
+        behavior: 'allow',
+        updatedInput: { ...input, answers: { [question.question]: sent } },
       },
     ]);
   });

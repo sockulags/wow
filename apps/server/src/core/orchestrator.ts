@@ -26,6 +26,7 @@ import {
   type PlanRun,
   type Skill,
   type Thread,
+  type ThreadItem,
   type Trigger,
   type Turn,
   type Workflow,
@@ -72,6 +73,7 @@ export interface ReadModel {
   // Index the next item of the thread gets.
   nextItemIndex(threadId: string): number;
   itemExists(id: string): boolean;
+  threadItem(id: string): ThreadItem | undefined;
   approval(id: string): Approval | undefined;
   question(id: string): Question | undefined;
   // Approvals and questions of the thread that are still waiting for an answer.
