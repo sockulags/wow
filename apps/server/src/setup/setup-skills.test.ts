@@ -20,6 +20,8 @@ import { writeSetup } from './write.js';
 // its one Undo.
 
 const now = '2026-11-11T09:00:00.000Z';
+// Invented; it only has the shape of a GitLab token.
+const lookalike = 'glpat-abcdefghijklmnopqrstuvwxyz0123';
 const kettleText = 'Boil the water first.\nThen pour it over the leaves and wait three minutes.';
 
 let root: string;
@@ -307,6 +309,42 @@ describe('own skills in a setup file (wow skills spec 8)', () => {
       { workflow: 'Own named, folder there', reason: 'skill not installed: kettle-check' },
       { workflow: 'Folder named, own there', reason: 'skill not installed: pour' },
     ]);
+  });
+
+  it('leaves an own skill whose text looks like a secret out of the saved file and names it', async () => {
+    await write(source, {
+      type: 'skill.create',
+      skill: { name: 'pour', description: 'When tea is poured.', text: `Log in with ${lookalike}` },
+    });
+    const saved = save(source);
+    expect(saved.text).not.toContain(lookalike);
+    expect((parse(saved.text) as { skills?: { name: string }[] }).skills).toEqual([
+      expect.objectContaining({ name: 'kettle-check' }),
+    ]);
+    expect(saved.leftOut).toEqual([
+      { what: 'Skill "pour"', reason: 'it looks like it holds a secret' },
+    ]);
+  });
+
+  it('refuses a file whose skill text looks like a secret, with its line', () => {
+    const text = [
+      'version: 1',
+      'skills:',
+      '  - name: pour',
+      '    description: When tea is poured.',
+      `    text: Log in with ${lookalike}`,
+      '',
+    ].join('\n');
+    expect(preview(other, text, 'other')).toEqual({
+      outcome: 'refused',
+      problems: [
+        {
+          line: 5,
+          reason:
+            'This looks like a secret (a GitLab token); a setup file never holds one. Put the value in its field in Settings instead',
+        },
+      ],
+    });
   });
 
   it('refuses a skill whose name wow keeps for its own, with the line', () => {
