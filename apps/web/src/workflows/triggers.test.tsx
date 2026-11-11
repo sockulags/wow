@@ -319,7 +319,7 @@ describe('Triggers tab', () => {
     expect(dialog.queryByText(/pull request/)).toBeNull();
   });
 
-  it('words New trigger for GitLab before the first read, from the project\'s git data', async () => {
+  it("words New trigger for GitLab before the first read, from the project's git data", async () => {
     const user = userEvent.setup();
     const { runtime } = fake([], { git: [gitlabGit('kettle')] });
     await renderApp(route, runtime);

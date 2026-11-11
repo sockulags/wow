@@ -606,7 +606,8 @@ describe('built-in skills attached by themselves (spec 12, 13)', () => {
   it("sends a step's thread its message again on Retry as the step sent it, not as chat skills", async () => {
     const prompt = await startStep({}, true);
     expect(prompt).toContain('Intent-Unit: demo/U2');
-    const sentBefore = (firstItem('r1.ship')?.payload as TextItemPayload).skills;
+    const sentBefore = (firstItem('r1.ship')?.payload as TextItemPayload | undefined)?.skills;
+    expect(sentBefore?.map((skill) => skill.name)).toContain('wow-pull-request');
     dispatch({ type: 'thread.retry', threadId: 'r1.ship' });
     const prompts = startTurns()
       .filter((turn) => turn.threadId === 'r1.ship')

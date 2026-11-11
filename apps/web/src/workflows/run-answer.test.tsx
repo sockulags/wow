@@ -137,9 +137,9 @@ describe('a run whose step waits for an answer (spec 7)', () => {
   });
 });
 
-describe('the other lists of runs (spec 7)', () => {
-  const panel = () => screen.getByRole('complementary', { name: 'Context panel' });
+const panel = () => screen.getByRole('complementary', { name: 'Context panel' });
 
+describe('the other lists of runs (spec 7)', () => {
   it("says so in the run's panel", async () => {
     await renderApp('/workflows/runs/run-1', fake([thread('needs_you')]));
     await screen.findByTestId('panel-run');

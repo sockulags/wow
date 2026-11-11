@@ -46,8 +46,8 @@ function NewTriggerDialog() {
   const error = useStore(triggersStore, (state) => state.draftError);
   const busy = useStore(triggersStore, (state) => state.busy);
   const chosen = draft ? chosenDraft(draft, projects, workflows) : undefined;
-  const projectId = chosen?.projectId ?? '';
-  const host = projectCodeHost(reads, projectId, git?.get(projectId)?.codeHost);
+  const chosenProject = chosen?.projectId ?? '';
+  const host = projectCodeHost(reads, chosenProject, git?.get(chosenProject)?.codeHost);
   const noun = changeRequestNoun(host);
   const submit = (event: FormEvent) => {
     event.preventDefault();

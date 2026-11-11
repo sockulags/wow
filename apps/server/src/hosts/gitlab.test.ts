@@ -434,7 +434,7 @@ describe('a project on a GitLab host (spec 34)', () => {
 describe("a GitLab project's git data before any read", () => {
   it('names GitLab as its code host by the rule the poller picks GitLab by, before any read', async () => {
     const codeHost = async () =>
-      (await server.trackers.projectsGit()).find((git) => git.projectId === 'tea')?.codeHost;
+      (await server.trackers.projectsGit()).find((entry) => entry.projectId === 'tea')?.codeHost;
     expect(await codeHost()).toBe('gitlab');
     expect((await server.trackers.projectTrackers('tea')).git.codeHost).toBe('gitlab');
     set('trackers.gitlab.baseUrl', 'https://gitlab.other.test');
