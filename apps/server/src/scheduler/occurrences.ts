@@ -255,7 +255,8 @@ function wallPlus(at: number, length: number, zone: string): number {
 
 // A repeating card's series over time (recurring cards spec 10, 11): each earlier series sets
 // its days from `from` up to `until`, where a later one took over, and the last part has no
-// `until`. Days are in each part's own zone.
+// `until`. Days are in each part's own zone, so after a change of zone a part also takes over
+// only at the instant its predecessor's `until` day began: no day or instant is set twice.
 export interface SchedulePart {
   readonly series: Series;
   readonly from?: string | undefined;
@@ -269,12 +270,19 @@ function* scheduled(schedule: Schedule, from?: number | string): Generator<Occur
     yield* occurrences(schedule, from);
     return;
   }
+  let takesOver: number | undefined;
   for (const part of schedule) {
+    const after = takesOver;
+    takesOver =
+      part.until === undefined
+        ? undefined
+        : instantOf({ ...parseDay(part.until), hour: 0, minute: 0, second: 0 }, part.series.zone);
     if (part.until !== undefined && part.from !== undefined && part.until <= part.from) continue;
     if (typeof from === 'string' && part.until !== undefined && from >= part.until) continue;
     for (const occurrence of occurrences(part.series, from, part.from)) {
       if (part.until !== undefined && occurrence.date >= part.until) break;
       if (part.from !== undefined && occurrence.date < part.from) continue;
+      if (after !== undefined && Date.parse(occurrence.start) < after) continue;
       yield occurrence;
     }
   }

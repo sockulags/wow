@@ -156,6 +156,7 @@ function seriesTriggerEvents(
   context: DecideContext,
   alsoTaken: ReadonlySet<string> = new Set(),
   runId?: string,
+  handled = false,
 ): DomainEvent[] {
   const existing = read.trigger(triggerIdFor(card.id));
   const lastRunId = runId ?? existing?.runId ?? null;
@@ -191,6 +192,8 @@ function seriesTriggerEvents(
   if (next && !isDeepStrictEqual(next, existing)) events.push(triggerSet(next));
   // A card that has run shows how its newest run went; one that has not waits for its first,
   // and once every remaining occurrence was skipped it is finished as a last occurrence leaves it.
+  // An occurrence this decision handled (missed, failed, started) has set the state already.
+  if (handled) return events;
   if (card.runId === null && runId === undefined && upcoming) {
     events.push(...cardState(card, 'scheduled', null, context));
   } else if (
@@ -393,7 +396,10 @@ function fireSeries(
       started = fired.runId;
     }
   }
-  return [...events, ...seriesTriggerEvents(card, read, context, reached, started)];
+  return [
+    ...events,
+    ...seriesTriggerEvents(card, read, context, reached, started, latest !== undefined),
+  ];
 }
 
 function startSeriesRun(

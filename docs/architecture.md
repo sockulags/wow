@@ -1029,7 +1029,11 @@ alike. The card stays one row.
   `until`, the first day it no longer sets), for the days before the first occurrence that has
   not started, or for a moved occurrence the days before its date. Entries are oldest first;
   each sets the days from the entry before's `until` to its own, and the card's series the days
-  from the last `until` on. A later change from an earlier day cuts the entries back to it.
+  from the last `until` on. Days are in each entry's own zone, so after a change of zone a part
+  also takes over only from the instant the `until` day began in the zone before: no day and no
+  instant is set twice. A later change from an earlier day cuts the entries back to it. A card
+  that stops repeating keeps only the entries for days that have started, and one that repeats
+  again drops entries whose `until` is after its first day.
   `scheduleOf(card)` in `core/series.ts` is that schedule, and the trigger, the range read,
   skip and move all read it, so after a move the days before the moved one, past or still to
   come, keep their time. Cards stored before have none (`[]`). A

@@ -424,7 +424,10 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           >
             <span className="font-medium">Repeating cards could not be read.</span>{' '}
             <span className="text-muted-foreground">
-              {rangeRead.error.replace(/\.$/, '')}. Their occurrences are not shown.
+              {rangeRead.error.replace(/\.$/, '')}.{' '}
+              {rangeRead.range === undefined
+                ? 'Their occurrences are not shown.'
+                : 'The occurrences shown may be out of date.'}
             </span>
           </Banner>
         )}

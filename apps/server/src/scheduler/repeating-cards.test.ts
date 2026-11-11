@@ -525,6 +525,31 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
     expect(card()).toMatchObject({ state: 'scheduled', nextAt: at('2026-11-05') });
   });
 
+  it.each(['mark', 'skip'] as const)(
+    '%s: a last occurrence that was missed leaves the card missed, not done',
+    async (value) => {
+      policy(value);
+      createCard({ repeat: { ...weekdays, end: { kind: 'after', count: 3 } } });
+      await restart(at('2026-11-06', 60));
+      expect(records().map((record) => [record.outcome, record.offerRunNow])).toEqual([
+        ['missed', false],
+        ['missed', false],
+        ['missed', value === 'mark'],
+      ]);
+      expect(trigger()?.state).toBe('cancelled');
+      expect(card()).toMatchObject({ state: 'missed', nextAt: null, runId: null });
+    },
+  );
+
+  it('a last occurrence whose run cannot start leaves the card failed, not done', () => {
+    createCard({ repeat: { ...weekdays, end: { kind: 'after', count: 1 } } });
+    dispatch({ type: 'workflow.delete', workflowId: 'quick' });
+    tickAt(at('2026-11-04', 5));
+    expect(runs()).toEqual([]);
+    expect(records().map((record) => record.outcome)).toEqual(['failed']);
+    expect(card()).toMatchObject({ state: 'failed', nextAt: null, runId: null });
+  });
+
   it('moves the series from the moved occurrence on, and keeps the days before it', () => {
     createCard();
     dispatch({
@@ -617,6 +642,53 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
     expect(() =>
       dispatch({ type: 'card.skipOccurrence', cardId: 'c1', date: '2026-11-05' }),
     ).toThrow(/already started/);
+  });
+
+  it('forgets a later move once the card stops repeating, and repeats again from its new day', () => {
+    createCard();
+    dispatch({
+      type: 'card.moveOccurrence',
+      cardId: 'c1',
+      date: '2026-11-20',
+      start: at('2026-11-20', 60),
+      end: at('2026-11-20', 90),
+    });
+    dispatch({ type: 'card.update', cardId: 'c1', repeat: null });
+    dispatch({
+      type: 'card.update',
+      cardId: 'c1',
+      start: at('2026-11-09', 60),
+      end: at('2026-11-09', 90),
+    });
+    dispatch({ type: 'card.update', cardId: 'c1', repeat: weekdays });
+    expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at('2026-11-09', 60) });
+    const found = range(at('2026-11-04', -60), at('2026-11-21')).occurrences;
+    expect(found.map((occurrence) => occurrence.start)).toEqual(
+      ['09', '10', '11', '12', '13', '16', '17', '18', '19', '20'].map((day) =>
+        at(`2026-11-${day}`, 60),
+      ),
+    );
+  });
+
+  it('sets each instant once when a started card changes its zone', () => {
+    // 08:30 in Los Angeles from Monday 2 November; Monday and Tuesday have gone by.
+    createCard({
+      projectId: undefined,
+      workflowId: undefined,
+      start: '2026-11-02T16:30:00.000Z',
+      end: '2026-11-02T17:00:00.000Z',
+      zone: 'America/Los_Angeles',
+    });
+    dispatch({ type: 'card.update', cardId: 'c1', zone: 'Pacific/Auckland' });
+    // The same instant is 05:30 the next day in Auckland. Wednesday the 4th there began before
+    // the change took over (Wednesday the 4th in Los Angeles), so it is not set again.
+    const found = range('2026-11-02T00:00:00.000Z', '2026-11-06T00:00:00.000Z').occurrences;
+    expect(found.map((occurrence) => [occurrence.date, occurrence.start])).toEqual([
+      ['2026-11-02', '2026-11-02T16:30:00.000Z'],
+      ['2026-11-03', '2026-11-03T16:30:00.000Z'],
+      ['2026-11-05', '2026-11-04T16:30:00.000Z'],
+      ['2026-11-06', '2026-11-05T16:30:00.000Z'],
+    ]);
   });
 
   it('needs stopRun to delete a series whose run is live', async () => {

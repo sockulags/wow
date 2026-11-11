@@ -209,16 +209,22 @@ function updateEvents(
 ): DomainEvent[] {
   if (Object.keys(proposed).length === 0) return [];
   const changes: CardChanges = { ...proposed };
-  if (
-    isRepeating(card) &&
-    isRepeating(Object.assign({ ...card }, changes)) &&
-    seriesFields.some((field) => field in changes)
-  ) {
-    const past = pastSeriesBefore(card, from ?? firstOpenDay(card, context));
-    if (!isDeepStrictEqual(past, card.pastSeries ?? [])) changes.pastSeries = past;
-  }
-  const after: CalendarItem = Object.assign({ ...card }, changes);
   if (changes.zone !== undefined) checkZone(changes.zone);
+  const proposedCard: CalendarItem = Object.assign({ ...card }, changes);
+  let past = card.pastSeries ?? [];
+  if (isRepeating(card) && !isRepeating(proposedCard)) {
+    // A card that stops repeating keeps only the days that have started, so a move of an
+    // occurrence that has not happened cannot govern a series it gets again.
+    past = pastSeriesBefore(card, firstOpenDay(card, context));
+  } else if (isRepeating(card) && seriesFields.some((field) => field in changes)) {
+    past = pastSeriesBefore(card, from ?? firstOpenDay(card, context));
+  } else if (!isRepeating(card) && isRepeating(proposedCard)) {
+    // A card that starts repeating again takes over from its own first day.
+    const first = localDay(proposedCard.start, proposedCard.zone);
+    past = past.filter((series) => series.until <= first);
+  }
+  if (!isDeepStrictEqual(past, card.pastSeries ?? [])) changes.pastSeries = past;
+  const after: CalendarItem = Object.assign({ ...card }, changes);
   checkRepeat(after);
   const events: DomainEvent[] = [
     {

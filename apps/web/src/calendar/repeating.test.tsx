@@ -137,6 +137,9 @@ const single: CalendarItem = {
   nextAt: null,
 };
 
+// What the server pushes on a topic; a test sends the same rows again to ask for a new read.
+const pushes = new Map<string, Set<(rows: unknown[]) => void>>();
+
 function runtimeWith(answer: Answer, box: Outbox<Sent>): Runtime {
   const topics: Readonly<Record<string, unknown[]>> = {
     calendarItems: [card, single],
@@ -153,8 +156,11 @@ function runtimeWith(answer: Answer, box: Outbox<Sent>): Runtime {
       return Promise.resolve({ commandId: 'c', seqs: [], duplicate: false });
     },
     subscribe(topic: string, _params: unknown, onData: (rows: unknown[]) => void) {
+      pushes.set(topic, (pushes.get(topic) ?? new Set()).add(onData));
       onData(topics[topic] ?? []);
-      return () => undefined;
+      return () => {
+        pushes.get(topic)?.delete(onData);
+      };
     },
     retry: () => undefined,
     close: () => undefined,
@@ -366,6 +372,18 @@ describe('occurrences in the week', () => {
       5,
     );
     expect(screen.queryByTestId('occurrences-failed')).toBeNull();
+
+    // A later read that fails keeps what was drawn, and says it may be out of date.
+    answer = restarting;
+    const held = reads();
+    act(() => {
+      for (const push of pushes.get('calendarItems') ?? []) push([card, single]);
+    });
+    await act(() => box.until(() => reads() > held));
+    expect((await screen.findByTestId('occurrences-failed')).textContent).toContain(
+      'Server is restarting. The occurrences shown may be out of date.',
+    );
+    expect(within(grid).getAllByRole('button', { name: /^Standup notes, / })).toHaveLength(5);
   });
 
   it('says when a card has more occurrences than are shown', async () => {
