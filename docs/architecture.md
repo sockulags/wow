@@ -580,7 +580,9 @@ Tidy the imports.
 ```
 
 and keeps invocations and the tail that follow each other on one line, as a step's invocation and
-extra prompt always were. `promptShown` is the same without the texts: what the thread shows.
+extra prompt always were. The name is written with `&`, `"`, `<` and `>` as entities, and a
+`<skill` or `</skill` in the text gets its `<` as `&lt;`, so a hand-written skill cannot end the
+block early or open another one. `promptShown` is the same without the texts: what the thread shows.
 
 Chat: `thread.sendMessage {threadId, text, skills?: SkillRef[]}` sends the skills in their order
 before the text (`text` may be empty when there are skills), built-in ones filled with the project's verdict lines (no artifacts, no unit).
