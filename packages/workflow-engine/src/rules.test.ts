@@ -338,6 +338,11 @@ describe('a rule for a failed step (spec 5)', () => {
   });
 });
 
+const hashed = (stepId: string, hash: string, message = `${stepId} finished`): Completed => ({
+  ...completed(stepId, message),
+  fileHashes: [{ path: 'a', hash }],
+});
+
 describe('going back (spec 7, 8)', () => {
   const sendsBack = completed('review', 'The bell rings twice.\n\nCHANGES_REQUESTED');
 
@@ -392,10 +397,6 @@ describe('going back (spec 7, 8)', () => {
   });
 
   it('keeps with each attempt the changed files as the step before it left them', () => {
-    const hashed = (stepId: string, hash: string, message = `${stepId} finished`): Completed => ({
-      ...completed(stepId, message),
-      fileHashes: [{ path: 'a', hash }],
-    });
     const base = advance(
       loop(),
       startRun(loop(), newRun, context()).run,
