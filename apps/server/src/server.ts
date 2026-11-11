@@ -285,6 +285,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       }),
     outlook: () => outlook,
     info: { version, home },
+    clock: options.clock ?? (() => new Date()),
   });
 
   const token = randomBytes(32).toString('base64url');

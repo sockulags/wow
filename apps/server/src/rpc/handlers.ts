@@ -13,6 +13,7 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { openAssistantThread } from '../assistant/thread.js';
 import type { Engine } from '../core/engine.js';
+import { readModel } from '../core/projector.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
 import { projects, workflowRuns } from '../db/schema.js';
@@ -30,6 +31,8 @@ import { detectArtifacts } from '../workflows/artifacts.js';
 import { changesOptions, readRunDiff } from '../workflows/changes.js';
 import type { WorkflowRunner } from '../workflows/runner.js';
 import { WorkspaceRefused, type Workspaces } from '../workspaces/service.js';
+import { planSetup } from '../setup/plan.js';
+import { writeSetup } from '../setup/write.js';
 import { RpcFault, type Handlers } from './router.js';
 
 // One per WebSocket. Subscriptions it opened end with it.
@@ -57,6 +60,7 @@ export interface HandlerDeps {
   // Undefined until the Outlook service has started, or when the server runs without one.
   readonly outlook: () => OutlookService | undefined;
   readonly info: { readonly version: string; readonly home: string };
+  readonly clock: () => Date;
 }
 
 function requireOutlook(deps: HandlerDeps): OutlookService {
@@ -183,6 +187,23 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();
       if (!run) throw new RpcFault('not_found', `No run ${runId}`);
       return WorkflowRun.parse(run);
+    },
+    'setup.save': () =>
+      writeSetup(readModel(deps.db), {
+        now: deps.clock().toISOString(),
+        registry: settingsRegistry,
+        version: deps.info.version,
+      }),
+    // The same reading `setup.apply` does, without storing anything.
+    'setup.preview': ({ text }) => {
+      const plan = planSetup(text, readModel(deps.db), {
+        now: deps.clock().toISOString(),
+        registry: settingsRegistry,
+        home: deps.info.home,
+      });
+      return plan.outcome === 'ready'
+        ? { outcome: 'ready', preview: plan.preview }
+        : { outcome: 'refused', problems: [...plan.problems] };
     },
     'workflowRuns.detectArtifacts': async ({ runId }) => {
       await deps.workflows.detectArtifacts(runId);

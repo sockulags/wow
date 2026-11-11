@@ -54,7 +54,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   sources and suggestions), `trackers.test` (`{service, projectId?}`, signs in with the tracker
   settings as they apply and answers `{ok, account, message, missing}`), and `trackers.preview`
   (`{backlogItemId, service, projectId?}`) and `trackers.publish` (`{backlogItemId, service,
-projectId?, title?, labels?}`). Error codes are `RpcErrorCode`.
+projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see "Setup file").
+  Error codes are `RpcErrorCode`.
   The same port answers plain HTTP on one path, `/assistant/mcp`, for the assistant's tools
   (see "Assistant"); every other HTTP request gets 426. That path has a token of its own.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
@@ -203,6 +204,10 @@ assistant_proposals id (the command's id), at, commandType, title, lines(json: {
                  place(json), command(json: Command), basis(json)?, state
                  ('pending'|'accepted'|'declined'), answeredAt?, reason?   -- commands of the
                  assistant that wait for the user's yes, with the state they were proposed for
+setup_applications id (the command's id), at, name, added(json), replaced(json), marked(json),
+                 toFillIn(json), parts(json: AssistantChangeRecord[]), state
+                 ('applied'|'undone'), undoneAt?   -- setup files applied here, with what Undo
+                 puts back (migration 0019_setup_applications)
 settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
 events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
@@ -973,6 +978,8 @@ same toaster carries the app's own feedback (see "Look").
 group, label, description, default, scope: 'global'|'project'|'provider', restartRequired?,
 secret?, unit?, options?, radio?}`. `unit` (`ms`, `seconds`, `minutes`, `days`, `pixels`,
 `percent`, `bytes`) is shown as a suffix after a number field, so labels carry no unit;
+`personal` (`account`, `machine` or `person`) keeps a value out of a setup file (see "Setup
+file");
 milliseconds are shown and typed as seconds, bytes as kilobytes. `options` names each enum value (`{label, description?}`), so the page
 never shows a raw id; `radio` shows the choices as a radio group with their descriptions. The server validates writes against it; the settings UI renders groups and fields from
 it (text, number, boolean, enum, list, key-value with secret flag, keybinding). Adding a setting is
@@ -1836,6 +1843,84 @@ the chat view is copied. The `$` skill picker is off there.
 - Palette (`assistant/commands.ts`): Yes and No for every waiting proposal (Yes under "Needs
   you"), Undo for every applied change (the newest before typing). A refusal from the palette
   is a toast with the reason. The sidebar counts waiting proposals as "need you".
+
+## Setup file
+
+Behavior lives in `intents/2026-11-app-assistant/spec.md` (21 to 23). A setup file is what one
+person sends another so their wow starts from the same settings and workflows. It is sent once;
+nothing keeps two installs in step. `apps/server/src/setup` reads and writes it; the server never
+writes it to disk, the app hands the text to the user as a download and reads a picked file's
+text back.
+
+**The file** (`SetupFile` in `packages/contracts/src/setup.ts`) is YAML, read and written with
+the `yaml` package, with a version key: `version` (`setupFileVersion`, 1), `wow` (the version
+that wrote it), `settings` (key → value), `toFillIn` (secret setting keys) and `workflows`. A
+workflow is the stored one without dates, and each step names its provider by kind (`provider:
+claude`) instead of an instance id, which is this install's own. No path, project or line ending
+form is in it, so a file made on Windows reads the same on Linux; a byte order mark and CRLF are
+read as plain text (tested).
+
+**Save** (`setup/write.ts`, `writeSetup`, RPC `setup.save` → `SetupSaved {text, fileName,
+toFillIn, leftOut}`). It takes every global setting that is stored, passes its schema and differs
+from its default: this includes the trackers, hosts and `workflows.templates` settings. A secret
+setting is never read, and a stored reference only puts its key under `toFillIn`; the secret store
+is not asked. A setting whose registry entry has `personal` stays out: `account` for the Jira and
+Confluence email, `machine` for folders and ids that fit one computer (`skills.directories`,
+`workspaces.root`, `assistant.providerInstanceId`, `advanced.port`, `desktop.autostart`,
+`appearance.paletteRecent`), `person` for what only that person can say (`calendar.zone`,
+`calendar.firstDayOfWeek`, `calendar.workHours`). Projects, cards, backlog items, threads and runs
+are not read at all, so no project folder is in it. A value or workflow that the secret net
+(`assistant.secretPatterns`) matches is left out and named in `leftOut`; so is a workflow whose
+step names an instance that no longer exists.
+
+**Read and preview** (`setup/file.ts`, `setup/plan.ts`, `planSetup`, RPC `setup.preview {text}` →
+`SetupRead`). `parseSetup` keeps a line counter, so every problem has the line of its key. The
+order: YAML errors; an empty file or one that is not a mapping; the version (a missing version
+refuses; a newer one refuses with "needs wow <wow> or newer" before any other check, since a
+newer file may hold keys this wow does not know); the strict schema (an unknown key or a wrong
+type, with where it is: "Workflow "Delivery", step 2: …"); then each setting against its
+registry schema, a secret setting with any value, a `personal` setting, a `toFillIn` key that is
+not secret, and any string the secret net matches. Then the commands are built: `setting.set`
+at global scope for each value that differs from what is stored (or the default), and for each
+workflow `workflow.update` of the one with its id, else of the only one with its name, or
+`workflow.create` with the file's id. A step keeps the instance it already uses when that is of
+the file's kind, else takes the first instance of that kind, so a file read where it was written
+changes nothing. Each command is decided once on the projections without storing anything, so a
+command the app would refuse (rules that point nowhere, a workflow with a live run) refuses the
+file with its line. The preview (`SetupPreview`) has `added` (nothing stored or a new workflow)
+and `replaced` (a stored value or an existing workflow), each a `{what, from, to}` line; `marked`
+for a workflow whose skill is not installed ("skill not installed: brew-report") or whose
+provider kind has no instance here; and `toFillIn` with label and place, without the secrets
+this install already has. A file saved and read back on the same install previews nothing.
+
+**Apply and Undo** (`setup/apply.ts`, `decideSetup`, commands `setup.apply {applicationId,
+name, text}` and `setup.undo {applicationId}`). `decideInSteps` decides them in steps in one
+transaction, like the assistant's answer commands. Apply reads the text again with
+`planSetup` (the preview is never trusted), decides each command as the user's, and records
+each one's change with `changeOf` from `assistant/changes.ts`: the values it left (`expect`) and
+the commands that take it back (`inverse`). The event `setup.applied` stores them as `parts` of
+the `SetupApplicationRecord`; the `setupApplications` topic row (`SetupApplication`) leaves them
+out. Undo checks every part with `undoRefusal` first and is refused, changing nothing, with what
+changed when any thing the file set changed again; otherwise it decides every inverse, newest
+part first, and `setup.undone` marks the row. A step that refuses rolls back the whole
+transaction. Both commands are refused from the assistant in the class table: the user reads the
+preview and presses Apply.
+
+**The view** (`apps/web/src/settings/setup.ts`, `setup-section.tsx`). Settings → Advanced has a
+"Setup file" section: "Save setup to a file" (download through a blob link, a toast that says
+how many secrets are listed to fill in and what was left out), "Start from a setup file" (a file
+input; its text goes to `setup.preview`), the preview dialog with the lists Added, Replaced,
+Marked and To fill in afterwards and Apply, or the problems with their lines, and a row per
+applied file with Undo or "Undone". The palette has "Save setup to a file", "Start from a setup
+file" (opens Settings → Advanced and its file picker, through `setupStore.pickWanted`) and "Undo
+setup from <name>" for every applied file (the newest before typing). No keybinding: these are
+rare.
+
+Tests: `apps/server/src/setup/setup.test.ts` (two whole servers: save on one with marked
+secret, folder, email, card, backlog item and thread, which the file must not contain; preview
+and apply on the other, Undo, refused Undo, CRLF and byte order mark, each refusal with its
+line, a newer version, a missing skill, the round trip, the assistant's refusal, and the RPC
+methods); `apps/web/src/settings/setup.test.tsx`; `apps/web/e2e/setup-file.spec.ts`.
 
 ## Chat view
 

@@ -112,8 +112,9 @@ const clip = (text: string): string => (text.length > 160 ? `${text.slice(0, 159
 const stepNames = (steps: readonly WorkflowStep[]): string =>
   steps.map((step) => step.skillName).join(', ');
 
-// One value in words. Ids of things the user named are shown by their names.
-function show(key: string, value: unknown, read: ReadModel): string {
+// One value in words. Ids of things the user named are shown by their names. A setup preview
+// says its values the same way.
+export function show(key: string, value: unknown, read: ReadModel): string {
   if (value === null || value === undefined || value === '') return 'none';
   if (typeof value === 'boolean') return value ? 'on' : 'off';
   if (typeof value === 'number') return String(value);
@@ -190,7 +191,7 @@ function nameOf(
   }
 }
 
-function settingPlace(key: string, scope: string, context: DecideContext): AssistantPlace {
+export function settingPlace(key: string, scope: string, context: DecideContext): AssistantPlace {
   if (scope.startsWith('project:'))
     return { label: 'Settings → Projects', path: '/settings/projects' };
   if (scope.startsWith('provider:')) {

@@ -134,6 +134,13 @@
       "when": 1794344000451,
       "tag": "0018_thread_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1794359390991,
+      "tag": "0019_setup_applications",
+      "breakpoints": true
     }
   ]
 }

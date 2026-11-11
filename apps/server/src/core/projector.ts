@@ -13,6 +13,7 @@ import {
   approvals,
   assistantChanges,
   assistantProposals,
+  setupApplications,
   backlogItems,
   calendarItems,
   changeRequests,
@@ -430,6 +431,15 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(assistantChanges.id, event.payload.changeId))
         .run();
       return ['assistantChanges'];
+    case 'setup.applied':
+      tx.insert(setupApplications).values(event.payload).run();
+      return ['setupApplications'];
+    case 'setup.undone':
+      tx.update(setupApplications)
+        .set({ state: 'undone', undoneAt: event.payload.at })
+        .where(eq(setupApplications.id, event.payload.applicationId))
+        .run();
+      return ['setupApplications'];
     case 'assistant.proposed':
       tx.insert(assistantProposals).values(event.payload).run();
       return ['assistantProposals'];
@@ -611,6 +621,12 @@ export function readModel(tx: DbOrTx): ReadModel {
     changeRequests: (projectId) =>
       tx.select().from(changeRequests).where(eq(changeRequests.projectId, projectId)).all(),
     workflow: (id) => tx.select().from(workflows).where(eq(workflows.id, id)).get(),
+    workflows: () =>
+      tx
+        .select()
+        .from(workflows)
+        .orderBy(sql`rowid`)
+        .all(),
     run: (id) => tx.select().from(workflowRuns).where(eq(workflowRuns.id, id)).get(),
     hasLiveRun: (workflowId) =>
       tx
@@ -622,6 +638,8 @@ export function readModel(tx: DbOrTx): ReadModel {
     backlogItem: (id) => tx.select().from(backlogItems).where(eq(backlogItems.id, id)).get(),
     assistantChange: (id) =>
       tx.select().from(assistantChanges).where(eq(assistantChanges.id, id)).get(),
+    setupApplication: (id) =>
+      tx.select().from(setupApplications).where(eq(setupApplications.id, id)).get(),
     assistantProposal: (id) =>
       tx.select().from(assistantProposals).where(eq(assistantProposals.id, id)).get(),
     assistantAnswers: (since) => ({

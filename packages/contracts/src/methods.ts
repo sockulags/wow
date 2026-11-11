@@ -33,6 +33,7 @@ import {
   ProviderTestResult,
 } from './provider.js';
 import { SecretRef } from './settings.js';
+import { SetupApplication, SetupRead, SetupSaved } from './setup.js';
 import {
   ProjectGit,
   ProjectTrackers,
@@ -71,6 +72,8 @@ export const subscriptionTopics = {
   settings: { row: SettingRow, threadScoped: false },
   assistantChanges: { row: AssistantChange, threadScoped: false },
   assistantProposals: { row: AssistantProposal, threadScoped: false },
+  // Setup files applied here, in the order applied, with their Undo state.
+  setupApplications: { row: SetupApplication, threadScoped: false },
 } as const;
 
 export type SubscriptionTopic = keyof typeof subscriptionTopics;
@@ -313,6 +316,18 @@ export const rpcMethods = {
   'trackers.publish': {
     params: TrackerPublishParams,
     result: BacklogRemote,
+  },
+  // "Save setup to a file" (app assistant spec 21): the setup as YAML. Nothing is written on
+  // the server; the app hands the text to the user as a file.
+  'setup.save': {
+    params: NoParams,
+    result: SetupSaved,
+  },
+  // Reads a setup file and says what applying it would add and replace, or why it is refused
+  // (spec 22, 23). Nothing is stored; `setup.apply` reads the text again.
+  'setup.preview': {
+    params: z.object({ text: z.string() }),
+    result: SetupRead,
   },
 } as const satisfies Record<string, { params: z.ZodType; result: z.ZodType }>;
 

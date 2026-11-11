@@ -9,10 +9,12 @@ import {
   undoRefusal,
 } from '../assistant/changes.js';
 import { classOf } from '../assistant/classes.js';
+import { decideSetup } from '../setup/apply.js';
 import {
   CommandRejected,
   decide,
   isAssistantCommand,
+  isSetupCommand,
   type DecideContext,
   type ReadModel,
 } from './orchestrator.js';
@@ -67,6 +69,12 @@ export function* decideInSteps(
       context,
     );
     if (change) yield [{ kind: 'assistant.changed', aggregate: commandId, payload: change }];
+    return;
+  }
+
+  // A setup file is applied and undone in steps too, one command at a time.
+  if (isSetupCommand(command)) {
+    yield* decideSetup(command, read, context);
     return;
   }
 

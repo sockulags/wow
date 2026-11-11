@@ -107,7 +107,13 @@ export interface SettingDefinition<S extends z.ZodType = z.ZodType> {
   readonly options?: Readonly<Record<string, SettingOption>>;
   // Show the choices as a radio group with descriptions instead of a select.
   readonly radio?: boolean;
+  // Why a setup file leaves the value out (app assistant spec 21): an account name, a value
+  // that only fits this computer, or one only this person can say. Absent: it travels.
+  readonly personal?: SettingPersonal;
 }
+
+export const SettingPersonal = z.enum(['account', 'machine', 'person']);
+export type SettingPersonal = z.infer<typeof SettingPersonal>;
 
 const defineSetting = <S extends z.ZodType>(definition: SettingDefinition<S>) => definition;
 
@@ -450,6 +456,7 @@ export const settingsRegistry = {
     scope: 'global',
   }),
   'calendar.zone': defineSetting({
+    personal: 'person',
     schema: TimeZoneSetting,
     group: 'calendar',
     label: 'Time zone',
@@ -459,6 +466,7 @@ export const settingsRegistry = {
     scope: 'global',
   }),
   'calendar.firstDayOfWeek': defineSetting({
+    personal: 'person',
     schema: WeekdaySetting,
     group: 'calendar',
     label: 'First day of the week',
@@ -469,6 +477,7 @@ export const settingsRegistry = {
     options: weekdayOptions,
   }),
   'calendar.workHours': defineSetting({
+    personal: 'person',
     schema: WorkHoursSetting,
     group: 'calendar',
     label: 'Work hours',
@@ -622,6 +631,7 @@ export const settingsRegistry = {
     scope: 'global',
   }),
   'desktop.autostart': defineSetting({
+    personal: 'machine',
     schema: z.boolean(),
     group: 'desktop',
     label: 'Start at sign-in',
@@ -810,6 +820,7 @@ export const settingsRegistry = {
     unit: 'minutes',
   }),
   'skills.directories': defineSetting({
+    personal: 'machine',
     schema: z.array(z.string().min(1)),
     group: 'skills',
     label: 'Skill directories',
@@ -874,6 +885,7 @@ export const settingsRegistry = {
     },
   }),
   'trackers.jira.email': defineSetting({
+    personal: 'account',
     schema: z.string().trim(),
     group: 'trackers',
     label: 'Jira email',
@@ -1000,6 +1012,7 @@ export const settingsRegistry = {
     },
   }),
   'trackers.confluence.email': defineSetting({
+    personal: 'account',
     schema: z.string().trim(),
     group: 'trackers',
     label: 'Confluence email',
@@ -1141,6 +1154,7 @@ export const settingsRegistry = {
     scope: 'global',
   }),
   'workspaces.root': defineSetting({
+    personal: 'machine',
     schema: z.string().trim().min(1),
     group: 'workspaces',
     label: 'Folder for working copies',
@@ -1169,6 +1183,7 @@ export const settingsRegistry = {
     unit: 'ms',
   }),
   'assistant.providerInstanceId': defineSetting({
+    personal: 'machine',
     schema: z.string(),
     group: 'assistant',
     label: 'Provider',
@@ -1277,6 +1292,7 @@ export const settingsRegistry = {
     options: { comfortable: { label: 'Comfortable' }, compact: { label: 'Compact' } },
   }),
   'appearance.paletteRecent': defineSetting({
+    personal: 'machine',
     schema: z.number().int().min(0).max(20),
     group: 'appearance',
     label: 'Recent items in the palette',
@@ -1435,6 +1451,7 @@ export const settingsRegistry = {
     'D',
   ),
   'advanced.port': defineSetting({
+    personal: 'machine',
     schema: z.number().int().min(0).max(65535),
     group: 'advanced',
     label: 'Server port',

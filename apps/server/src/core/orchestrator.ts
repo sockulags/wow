@@ -19,6 +19,7 @@ import {
   type RpcErrorCode,
   type ServerCommand,
   type SettingDefinition,
+  type SetupApplicationRecord,
   type SettingScopeRef,
   type PlanIntent,
   type PlanRun,
@@ -91,6 +92,8 @@ export interface ReadModel {
   // What was last read about the pages the texts of the project's runs link to.
   pageReads(projectId: string): PageRead[];
   workflow(id: string): Workflow | undefined;
+  // Every workflow, in the order they were made.
+  workflows(): Workflow[];
   run(id: string): WorkflowRun | undefined;
   // True while a run of this workflow is running or waiting at a gate.
   hasLiveRun(workflowId: string): boolean;
@@ -104,6 +107,7 @@ export interface ReadModel {
   backlogItemHasLiveRun(id: string): boolean;
   assistantChange(id: string): AssistantChangeRecord | undefined;
   assistantProposal(id: string): AssistantProposalRecord | undefined;
+  setupApplication(id: string): SetupApplicationRecord | undefined;
   // What the user answered to the assistant after `since` (every answer without it), in the
   // order answered: proposals they said Yes or No to, and changes they undid.
   assistantAnswers(since: string | undefined): {
@@ -126,6 +130,11 @@ type AssistantCommand = Extract<ServerCommand, { type: `assistant.${string}` }>;
 
 export const isAssistantCommand = (command: ServerCommand): command is AssistantCommand =>
   command.type.startsWith('assistant.');
+
+type SetupCommand = Extract<ServerCommand, { type: `setup.${string}` }>;
+
+export const isSetupCommand = (command: ServerCommand): command is SetupCommand =>
+  command.type.startsWith('setup.');
 
 export class CommandRejected extends Error {
   constructor(
@@ -154,7 +163,7 @@ export function decide(
   if (command.type === 'tickets.sync') return decideTickets(command, read);
   if (command.type === 'pages.sync') return decidePages(command, read);
   if (isPlanRunCommand(command)) return decidePlanRun(command, read, context);
-  if (isAssistantCommand(command)) {
+  if (isAssistantCommand(command) || isSetupCommand(command)) {
     // They apply other commands step by step, each on what the one before left behind.
     throw new Error(`${command.type} is decided in steps; dispatch it through the engine`);
   }

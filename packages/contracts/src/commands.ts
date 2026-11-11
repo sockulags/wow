@@ -47,6 +47,7 @@ import {
   ThreadState,
 } from './provider.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
+import { SetupApplication } from './setup.js';
 import { FileHash, RunEffect, UnpushedWork, WorkflowStep } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
@@ -298,6 +299,16 @@ export const Command = z.discriminatedUnion('type', [
   // Takes back one change the assistant made (spec 8). Refused when the thing changed again
   // since, with what changed.
   z.object({ type: z.literal('assistant.undo'), changeId: Id }),
+  // "Start from a setup file" (app assistant spec 22): the file's text is read again, checked
+  // and applied as one step that `setup.undo` takes back. `name` is the file's name as picked.
+  z.object({
+    type: z.literal('setup.apply'),
+    applicationId: Id,
+    name: z.string().trim().min(1),
+    text: z.string(),
+  }),
+  // Takes back every change one setup file made, or none when something it set changed since.
+  z.object({ type: z.literal('setup.undo'), applicationId: Id }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command['type'];
@@ -321,6 +332,15 @@ export const AssistantProposalRecord = AssistantProposal.extend({
   basis: z.record(z.string(), z.unknown()).nullable(),
 });
 export type AssistantProposalRecord = z.infer<typeof AssistantProposalRecord>;
+
+// The server's whole record of an applied setup file: beside what Settings shows, one change
+// record per thing it set, each with the values it left and the commands that take it back.
+// Undo is refused while any of them no longer holds; it then takes back every one, newest
+// first. These hold real values, so they are not part of the topic's rows.
+export const SetupApplicationRecord = SetupApplication.extend({
+  parts: z.array(AssistantChangeRecord),
+});
+export type SetupApplicationRecord = z.infer<typeof SetupApplicationRecord>;
 
 // One Outlook calendar row as the sync delivers it; the server fills in the local-only fields.
 export const OutlookCalendarRow = CalendarItem.pick({
@@ -861,6 +881,12 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
   // An ordinary change the assistant made, stored in the same commit as the change itself.
   z.object({ kind: z.literal('assistant.changed'), aggregate: Id, payload: AssistantChangeRecord }),
+  z.object({ kind: z.literal('setup.applied'), aggregate: Id, payload: SetupApplicationRecord }),
+  z.object({
+    kind: z.literal('setup.undone'),
+    aggregate: Id,
+    payload: z.object({ applicationId: Id, at: Timestamp }),
+  }),
   z.object({
     kind: z.literal('assistant.changeUndone'),
     aggregate: Id,

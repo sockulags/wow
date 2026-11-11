@@ -1,4 +1,5 @@
 import type {
+  AssistantChangeRecord,
   AssistantChangeState,
   AssistantPlace,
   AssistantProposalLine,
@@ -33,6 +34,9 @@ import type {
   RunEvent,
   RunUnit,
   SecretRef,
+  SetupApplicationState,
+  SetupFillIn,
+  SetupMark,
   SkillSource,
   PageLink,
   PathVisit,
@@ -342,6 +346,21 @@ export const assistantProposals = sqliteTable('assistant_proposals', {
   state: text().$type<AssistantProposalState>().notNull(),
   answeredAt: text(),
   reason: text(),
+});
+
+// Setup files applied here (app assistant spec 22), with what Undo puts back, in the order
+// applied.
+export const setupApplications = sqliteTable('setup_applications', {
+  id: text().primaryKey(),
+  at: text().notNull(),
+  name: text().notNull(),
+  added: json<AssistantProposalLine[]>().notNull(),
+  replaced: json<AssistantProposalLine[]>().notNull(),
+  marked: json<SetupMark[]>().notNull(),
+  toFillIn: json<SetupFillIn[]>().notNull(),
+  parts: json<AssistantChangeRecord[]>().notNull(),
+  state: text().$type<SetupApplicationState>().notNull(),
+  undoneAt: text(),
 });
 
 export const skills = sqliteTable('skills', {

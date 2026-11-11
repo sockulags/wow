@@ -122,6 +122,7 @@ describe('Outlook service', () => {
       discoverProjects: () => Promise.resolve([]),
       outlook: () => service,
       info: { version: '0.0.0', home: '/nowhere' },
+      clock: () => new Date(),
     });
     const connection: Connection = { push: () => {}, subscriptionIds: new Set() };
     const call = (method: string, params: unknown) =>

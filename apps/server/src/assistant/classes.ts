@@ -283,6 +283,12 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'assistant.proposal.accept': usersAnswer,
   'assistant.proposal.decline': usersAnswer,
   'assistant.undo': usersAnswer,
+  // A file can change many settings and workflows at once, autonomy included; the user reads
+  // its preview and applies it, and only the user takes it back.
+  'setup.apply': refused(
+    'Only the user starts from a setup file, in Settings → Advanced, after reading its preview.',
+  ),
+  'setup.undo': refused('Only the user undoes a setup file, in Settings → Advanced.'),
   'provider.events': serverOnly,
   'providerInstance.recordTest': serverOnly,
   'providerInstance.recordUpdate': serverOnly,
