@@ -39,6 +39,16 @@ function localDay(days = 0): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+// The first day from today on, today included, that is Monday to Friday. The recurring fixtures
+// sit on weekdays, so a case that needs one must not depend on the day it runs.
+function weekday(): string {
+  for (let days = 0; ; days += 1) {
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    if (date.getDay() !== 0 && date.getDay() !== 6) return localDay(days);
+  }
+}
+
 const calendar = (page: Page) => page.getByRole('region', { name: 'Calendar' });
 
 async function runPaletteCommand(page: Page, title: string) {
@@ -183,7 +193,7 @@ test.describe('calendar', () => {
   test('shows no mail rail, count or command, and the grid spans the width', async ({ page }) => {
     const anyMention = /mail|unread/i;
     for (const view of ['day', 'week']) {
-      await page.goto(`/calendar?view=${view}&date=${localDay()}`);
+      await page.goto(`/calendar?view=${view}&date=${weekday()}`);
       const grid = calendar(page);
       await expect(grid.getByRole('button', { name: /^Team standup/ }).first()).toBeVisible();
       await expect(page.getByRole('complementary')).toHaveCount(0);
@@ -383,9 +393,10 @@ test.describe('calendar', () => {
     const card = view.getByRole('button', { name: /^Write the release notes for lantern-web, / });
     await expect(card).toHaveAccessibleName('Write the release notes for lantern-web, 10:45–11:45');
 
-    // The invented meetings from 10:00 to 12:00 and the card; the standup on weekdays sits apart.
+    // The invented meetings from 10:00 to 12:00 and the card. The weekday meetings (the standup,
+    // and the 1:1 on Thursdays) sit apart and are there or not depending on the day.
     const blocks = view.locator('[data-item]').filter({
-      hasNotText: 'Team standup',
+      hasNotText: /Team standup|1:1 with Bo/,
     });
     await expect(blocks).toHaveCount(6);
     const columnBox = await column.boundingBox();
