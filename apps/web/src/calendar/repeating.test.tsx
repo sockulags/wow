@@ -121,9 +121,25 @@ interface Sent {
 // The range read's answer: a range, or what the connection does instead.
 type Answer = CalendarRange | (() => Promise<unknown>);
 
+// A single card beside the series, on the Wednesday of the week shown.
+const single: CalendarItem = {
+  ...card,
+  id: 'write-report',
+  title: 'Write report',
+  start: '2026-11-18T09:00:00.000Z',
+  end: '2026-11-18T10:00:00.000Z',
+  projectId: null,
+  workflowId: null,
+  runId: null,
+  state: 'scheduled',
+  repeat: null,
+  skippedDates: [],
+  nextAt: null,
+};
+
 function runtimeWith(answer: Answer, box: Outbox<Sent>): Runtime {
   const topics: Readonly<Record<string, unknown[]>> = {
-    calendarItems: [card],
+    calendarItems: [card, single],
     workflowRuns: [run],
     triggers: [],
   };
@@ -370,17 +386,71 @@ describe('Delete on an occurrence', () => {
   });
 });
 
+// Runs a palette command the way the owner does: open the palette, type, pick it.
+function runFromPalette(runtime: Runtime, title: string) {
+  act(() => runtime.layout.setState({ paletteOpen: true }));
+  fireEvent.change(screen.getByPlaceholderText('Type a command or search…'), {
+    target: { value: title },
+  });
+  fireEvent.click(screen.getByRole('option', { name: new RegExp(`^${title}`) }));
+}
+
 describe('the new actions', () => {
   it('have palette commands, and Delete a keybinding setting', () => {
     const ids = calendarCommands({
       search: undefined,
-      cards: [card],
+      cards: [card, single],
       triggers: [],
       schedulerPaused: false,
     }).map((command) => command.id);
     expect(ids).toContain(`card.skipNext.${card.id}`);
     expect(ids).toContain(`card.deleteSeries.${card.id}`);
+    expect(ids).toContain(`card.delete.${single.id}`);
+    expect(ids).not.toContain(`card.skipNext.${single.id}`);
+    expect(ids).not.toContain(`card.delete.${card.id}`);
     expect(settingsRegistry['keybindings.calendarDeleteCard'].default).toBe('Delete');
+  });
+
+  it('skips the next occurrence from the palette, and Undo puts the skipped days back', async () => {
+    const { runtime, box } = await showWeek();
+    runFromPalette(runtime, 'Skip next occurrence: Standup notes');
+    await act(() => box.until(() => commandsSent(box).length === 1));
+    expect(commandsSent(box)).toEqual([
+      { type: 'card.skipOccurrence', cardId: card.id, date: '2026-11-17' },
+    ]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+    await act(() => box.until(() => commandsSent(box).length === 2));
+    expect(commandsSent(box)[1]).toEqual({
+      type: 'card.update',
+      cardId: card.id,
+      skippedDates: ['2026-11-13'],
+    });
+  });
+
+  it('asks which to delete from "Delete series", and deletes the series', async () => {
+    const { runtime, box } = await showWeek();
+    runFromPalette(runtime, 'Delete series: Standup notes');
+    const choice = await screen.findByRole('alertdialog', { name: 'Delete which?' });
+    // Opened from the palette, not from a day, so there is no one occurrence to skip.
+    expect(within(choice).queryByRole('button', { name: 'This occurrence' })).toBeNull();
+    expect(commandsSent(box)).toEqual([]);
+    fireEvent.click(within(choice).getByRole('button', { name: 'The whole series' }));
+    await act(() => box.until(() => commandsSent(box).length === 1));
+    expect(commandsSent(box)).toEqual([{ type: 'card.delete', cardId: card.id }]);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('deletes a single card from "Delete card", after asking', async () => {
+    const { runtime, box } = await showWeek();
+    runFromPalette(runtime, 'Delete card: Write report');
+    const question = await screen.findByRole('alertdialog', { name: 'Delete the card?' });
+    expect(commandsSent(box)).toEqual([]);
+    fireEvent.click(within(question).getByRole('button', { name: 'Delete card' }));
+    await act(() => box.until(() => commandsSent(box).length === 1));
+    expect(commandsSent(box)).toEqual([{ type: 'card.delete', cardId: single.id }]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+    await act(() => box.until(() => commandsSent(box).length === 2));
+    expect(commandsSent(box)[1]).toMatchObject({ type: 'card.create', cardId: single.id });
   });
 
   it('name each occurrence by its card and day', () => {

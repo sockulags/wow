@@ -2809,7 +2809,8 @@ Palette commands: today, next, previous, day view, week view, zoom in, zoom out 
 (on the calendar only, with their keys), hide or show weekends,
 New card, Refresh Outlook, one "Edit card" entry per card, and for a repeating card "Skip next
 occurrence: <title>" (the day of its `nextAt` in the card's zone, with Undo) and "Delete series:
-<title>" (opens the form at the delete question).
+<title>", for any other card "Delete card: <title>"; both open the form at the delete question,
+as the Delete key does.
 
 ## Context panel
 

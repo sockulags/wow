@@ -346,7 +346,8 @@ one card; wow works out its occurrences.
   that day only; the whole series deletes the card, and asks first whether to stop a run that is
   going. **Undo** brings back either, a series with its rule and skipped days.
 - **Palette**: "Skip next occurrence: <title>" skips the day the card fires next, and "Delete
-  series: <title>" opens the same choice.
+  series: <title>" opens the same choice. A single card has "Delete card: <title>", which asks
+  before it deletes.
 
 A repeating trigger starts one run per occurrence, named with its day. If the run of an earlier
 occurrence is still going, the occurrence starts nothing and a notification says it was skipped.
