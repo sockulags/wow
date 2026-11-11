@@ -327,6 +327,9 @@ const workflowStep = (extra: Record<string, unknown> = {}) => ({
   id: 'brew',
   skillName: 'tidy-up',
   providerInstanceId: 'claude-work',
+  // What the mock provider offers: the assistant's tools refuse any other model or effort.
+  model: 'mock-model',
+  effort: 'high',
   gateBefore: false,
   gateAfter: true,
   expectedArtifacts: [],
