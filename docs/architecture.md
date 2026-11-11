@@ -530,7 +530,10 @@ that waited before its gate goes back to `not_started`. The step keeps its last 
 artifacts and file hashes until the new turn ends and replaces them, and the run then waits at the
 same gate again, because the step ends through the same `stepCompleted` path as the first time.
 The message is `workflows.sendBackTemplate` (project scope) rendered with `note`, `skill` and
-`attempt`; an emptied template sends the note alone. The engine refuses an empty note, a run that
+`attempt`; an emptied template sends the note alone, and a template that does not name
+`{{note}}` gets the note after its own text, so a reviewer's note is never dropped. Templates
+collapse runs of blank lines in their own text only: a value (the note, a step's final message)
+is put in afterwards and keeps its blank lines as written. The engine refuses an empty note, a run that
 is not waiting (with its state in the reason) and a gate before the first step, where nothing has
 run. The engine's `sendBack` effect is not performed by the runner: the orchestrator turns it into
 the thread's `turn.started` in the same commit as the run change (the `thread.sendMessage`
@@ -2292,8 +2295,10 @@ the gate bar without changing `appearance.contextPanel` (the layout store's `con
 see "Context panel"); it stays for that run until the user closes it or leaves the view. The run
 view's own gate bar shows only while the panel does not show the conversation (closed, or showing
 a file), so there is one gate bar on screen. Send back opens a note field in the gate bar. The
-note being written is view state in `gateStore` (`{runId, note, busy, error}`), so the button,
-the palette and the key act on the same field; nothing about the run is kept there. Confirming
+note being written is view state in `gateStore` (`{runId, gate, note, busy, error}`), so the
+button, the palette and the key act on the same field; nothing about the run is kept there.
+`gate` names the wait it was written at (where the run waits, its path length, and the attempt
+and end of the reviewed step), so a note left unsent is not offered at the run's next gate. Confirming
 (the field's "Send it back", or the Send back key again) dispatches `workflowRun.sendBack`; an
 empty note is refused in place with the server's sentence and sends nothing, a server refusal
 shows its reason and keeps the note, Escape or Cancel puts the field away. While a note is open

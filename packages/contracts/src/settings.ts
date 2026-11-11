@@ -728,7 +728,7 @@ export const settingsRegistry = {
     group: 'workflows',
     label: 'Send back text',
     description:
-      "The message a step gets in its own thread when you send it back at a gate. {{note}} is what you wrote, {{skill}} the step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
+      "The message a step gets in its own thread when you send it back at a gate. {{note}} is what you wrote (added after the text when the template does not name it), {{skill}} the step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
     default: defaultSendBackTemplate,
     scope: 'project',
   }),

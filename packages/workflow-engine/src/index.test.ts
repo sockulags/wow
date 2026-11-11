@@ -519,6 +519,23 @@ describe('send back at a gate (review loop spec 16 to 18)', () => {
       prompt: 'Try 2 of a: Shorter.',
     });
     expect(prompt('')).toMatchObject({ prompt: 'Shorter.' });
+    // A template that does not name the note still sends it, after the template's own text.
+    expect(prompt('Attempt {{attempt}} of {{skill}}.')).toMatchObject({
+      prompt: 'Attempt 2 of a.\n\nShorter.',
+    });
+  });
+
+  it('keeps the blank lines the reviewer wrote in the note', () => {
+    const definition = workflow(A({ gateAfter: true }), B());
+    const waiting = play(definition, [completed('a')]);
+    const note = 'First:\n\n\n\n```\nkeep\n\n\n\nthis\n```';
+    const { effects } = advance(
+      definition,
+      waiting.run,
+      sendBack(note),
+      context({ sendBackTemplate: 'Again.\n\n\n\n{{note}}\n\n\n{{#missing}}x{{/missing}}' }),
+    );
+    expect(effects[0]).toMatchObject({ prompt: `Again.\n\n${note}` });
   });
 });
 

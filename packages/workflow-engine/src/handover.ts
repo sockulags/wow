@@ -95,14 +95,25 @@ export interface UnitPromptValues {
 export const renderUnitPrompt = (template: string, values: UnitPromptValues): string =>
   renderTemplate(template, { ...values });
 
+// Each value goes in after the template's own blank lines are tidied, so what a value says
+// (a note or a message with several blank lines, a code block) arrives as it was written.
+const SLOT = /\uE000(\d+)\uE001/g;
+
 function renderTemplate(template: string, values: TemplateValues): string {
   const sections = template.replace(SECTION, (_match, name: string, body: string) =>
     valueOf(values, name).trim() === '' ? '' : body,
   );
-  return sections
-    .replace(PLACEHOLDER, (_match, name: string) => valueOf(values, name))
+  const filled: string[] = [];
+  const slotted = sections.replace(PLACEHOLDER, (_match, name: string) => {
+    const value = valueOf(values, name);
+    if (value === '') return '';
+    filled.push(value);
+    return `\uE000${filled.length - 1}\uE001`;
+  });
+  return slotted
     .replace(/\n{3,}/g, '\n\n')
-    .trim();
+    .trim()
+    .replace(SLOT, (_match, index: string) => filled[Number(index)] ?? '');
 }
 
 export const bulletList = (lines: readonly string[]): string =>

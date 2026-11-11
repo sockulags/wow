@@ -473,8 +473,10 @@ and the gate, and the run view's tabs (**Changes**, **Artifacts**, **Pull reques
 (**Ctrl+Enter**, `keybindings.gateApprove`) in the panel, the run view or the step's thread to
 start the next step. Press **Send back** (**Ctrl+Shift+Enter**, `keybindings.gateSendBack`) to
 write what is wrong; **Send it back** (or the same key again) runs the step again in the same
-thread with your note (`workflows.sendBackTemplate`), the step shows "Attempt 2", and the run
-waits at the same gate with the new result. A note is needed. A message you type in the thread
+thread with your note (`workflows.sendBackTemplate`; a template without `{{note}}` gets your note
+after its text), the step shows "Attempt 2", and the run waits at the same gate with the new
+result. A note is needed. A note you leave unsent belongs to that gate and is not offered at the
+next one. A message you type in the thread
 instead is a side conversation and leaves the run waiting. **Stop** ends the run; Stop asks
 first, because a stopped run cannot be continued. The next step's prompt is its skill invocation, its extra prompt, and the handover from
 `workflows.handoverTemplate` (by default the previous step's final message and the expected

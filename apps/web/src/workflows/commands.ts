@@ -508,7 +508,7 @@ export function workflowCommands(data: WorkflowCommandData): AppCommand[] {
         group: 'Workflows',
         keywords: ['gate', 'reject', 'again', 'retry', 'note', 'changes requested'],
         keybinding: 'keybindings.gateSendBack',
-        run: () => openSendBack(runId),
+        run: () => openSendBack(openRun),
       });
     }
     commands.push({

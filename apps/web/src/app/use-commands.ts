@@ -25,7 +25,7 @@ import { useCalendarPrefs } from '@/calendar/prefs';
 import { pendingApproval } from '@/chat/view-model';
 import { changesStore } from '@/workflows/changes';
 import { workflowCommands } from '@/workflows/commands';
-import { gateStore } from '@/workflows/gate';
+import { gateStore, sendBackDraft } from '@/workflows/gate';
 import { rulesStore } from '@/workflows/rules';
 import { gateRunForThread } from '@/workflows/model';
 import { triggersPath } from '@/workflows/triggers';
@@ -87,7 +87,10 @@ export function useCommands(gated = false): {
   const changedFiles = useStore(changesStore, (state) =>
     state.runId === openRunId ? state.files : undefined,
   );
-  const sendBackRunId = useStore(gateStore, (state) => state.sendBack?.runId);
+  // Which run and gate the open note belongs to; the note's text is not needed here.
+  const sendBackAt = useStore(gateStore, (state) =>
+    state.sendBack ? `${state.sendBack.runId}:${state.sendBack.gate}` : undefined,
+  );
   const ruleBuilder = useStore(rulesStore, (state) => state.builder);
   const ruleAt = useStore(rulesStore, (state) => state.at);
   const staticCommands = useMemo(() => buildCommands(), []);
@@ -147,7 +150,10 @@ export function useCommands(gated = false): {
                 ticket: runTicketRead(ticketReads ?? [], openRunId)?.ticket ?? undefined,
               }
             : undefined,
-        sendBackRunId,
+        sendBackRunId:
+          sendBackAt !== undefined && openRun && sendBackDraft(gateStore.getState(), openRun)
+            ? openRun.id
+            : undefined,
         rules: { builder: ruleBuilder, at: ruleAt, focus: undefined },
         formatWhen: when,
         triggers,
@@ -223,7 +229,7 @@ export function useCommands(gated = false): {
     hostReads,
     ticketReads,
     changedFiles,
-    sendBackRunId,
+    sendBackAt,
     ruleBuilder,
     ruleAt,
     connectShown,

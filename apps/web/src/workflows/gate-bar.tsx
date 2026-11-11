@@ -139,7 +139,7 @@ export function GateBar({
               disabled={busy}
               aria-expanded={draft !== undefined}
               aria-controls={draft ? noteId : undefined}
-              onClick={() => (draft ? cancelSendBack() : openSendBack(run.id))}
+              onClick={() => (draft ? cancelSendBack() : openSendBack(run))}
             >
               <Undo2Icon />
               Send back

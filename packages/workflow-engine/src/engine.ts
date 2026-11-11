@@ -765,6 +765,8 @@ function backToRest(entry: StepRun): StepRun {
   return rested;
 }
 
+const NOTE_PLACEHOLDER = /\{\{note\}\}/;
+
 function sendBack(
   workflow: Workflow,
   run: WorkflowRun,
@@ -804,8 +806,14 @@ function sendBack(
     skill: step.skillName,
     attempt: String(attempt),
   });
-  // A template emptied in the settings still sends what the reviewer wrote.
-  const prompt = rendered === '' ? text : rendered;
+  // A template emptied in the settings, or one that does not name the note, still sends what the
+  // reviewer wrote.
+  const prompt =
+    rendered === ''
+      ? text
+      : NOTE_PLACEHOLDER.test(context.sendBackTemplate)
+        ? rendered
+        : `${rendered}\n\n${text}`;
   const sent = decideVisit(
     run,
     { to: { type: 'step', stepId: step.id }, by: 'user' },

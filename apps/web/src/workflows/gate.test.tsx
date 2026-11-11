@@ -15,7 +15,14 @@ import { createDraftStore } from '@/chat/draft';
 import { renderApp } from '@/test/render';
 import { validateRunSearch } from './changes';
 import { workflowCommands } from './commands';
-import { canSendBack, cancelSendBack, emptyNoteMessage, gateStore, openSendBack } from './gate';
+import {
+  canSendBack,
+  cancelSendBack,
+  emptyNoteMessage,
+  gateStore,
+  openSendBack,
+  sendBackDraft,
+} from './gate';
 
 // Review at a gate (review loop spec 14 to 18) against a fake server that records the commands
 // it is sent. The data is invented.
@@ -409,12 +416,33 @@ describe('Send back (spec 16 to 18)', () => {
     ]);
   });
 
-  it('keeps one note per run', () => {
-    openSendBack('run-1');
+  it('keeps one note per gate of a run', () => {
+    openSendBack(run);
     gateStore.setState((state) => ({ sendBack: { ...state.sendBack!, note: 'kept' } }));
-    openSendBack('run-1');
+    openSendBack(run);
     expect(gateStore.getState().sendBack?.note).toBe('kept');
-    openSendBack('run-2');
+    expect(sendBackDraft(gateStore.getState(), run)?.note).toBe('kept');
+    // Approved without sending: the run now waits after the next step, and the note written at
+    // the first gate is not this gate's.
+    const later: WorkflowRun = {
+      ...run,
+      currentStep: 1,
+      steps: [
+        { ...run.steps[0]!, state: 'done' },
+        {
+          stepId: 'review',
+          state: 'waiting',
+          threadId: 'run-1.review',
+          startedAt: '2026-11-02T08:06:00.000Z',
+          endedAt: '2026-11-02T08:09:00.000Z',
+          artifactsFound: [],
+        },
+      ],
+    };
+    expect(sendBackDraft(gateStore.getState(), later)).toBeUndefined();
+    openSendBack(later);
+    expect(gateStore.getState().sendBack).toMatchObject({ runId: 'run-1', note: '' });
+    openSendBack({ ...run, id: 'run-2' });
     expect(gateStore.getState().sendBack).toMatchObject({ runId: 'run-2', note: '' });
   });
 });
