@@ -152,7 +152,9 @@ interface Message {
 // trigger character opens the list (wow skills spec 19).
 function typedText(event: Event): string | null {
   const input = event as Partial<InputEvent>;
-  return input.inputType === 'insertText' ? (input.data ?? null) : null;
+  return input.inputType === 'insertText' || input.inputType === 'insertCompositionText'
+    ? (input.data ?? null)
+    : null;
 }
 
 export function Composer({
@@ -269,9 +271,12 @@ export function Composer({
     textarea.current?.focus();
   };
 
-  const removeChip = (index: number) => {
+  // From a focused chip the caret goes to the start of the text, next to where the chip was;
+  // from its cross or the palette it stays where the writer left it.
+  const removeChip = (index: number, fromChip = false) => {
     setChips((current) => current.filter((_, at) => at !== index));
-    focusText(0);
+    if (fromChip) focusText(0);
+    else textarea.current?.focus();
   };
 
   // The palette's "Pick a skill": the trigger character at the caret opens the list as typing it
@@ -335,11 +340,11 @@ export function Composer({
       id: composerId,
       chips: chipNames === '' ? [] : chipNames.split('\n'),
       openSkills,
-      removeSkill: removeChip,
+      removeSkill: (index: number) => removeChip(index),
     });
     // openSkills and removeChip read the state of the render that registered them.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [takesSkills, disabled, composerId, chipNames, text, caret]);
+  }, [takesSkills, disabled, composerId, chipNames, text, caret, trigger]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (pickerOpen) {
@@ -350,7 +355,11 @@ export function Composer({
         setActive((activeIndex + step + count) % count);
         return;
       }
-      if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
+      if (
+        (event.key === 'Enter' || event.key === 'Tab') &&
+        !event.shiftKey &&
+        !event.nativeEvent.isComposing
+      ) {
         if (activeSkill) {
           event.preventDefault();
           pick(activeSkill);
@@ -398,9 +407,12 @@ export function Composer({
       else focusText(0);
     } else if (event.key === 'Backspace' || event.key === 'Delete') {
       event.preventDefault();
-      removeChip(index);
+      removeChip(index, true);
     } else if (event.key === 'Escape') {
       event.preventDefault();
+      focusText(0);
+    } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      // A letter typed on a chip goes into the text, at its start.
       focusText(0);
     }
   };

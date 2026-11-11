@@ -144,13 +144,27 @@ describe('a slash in text opens nothing (spec 19)', () => {
   });
 
   it('makes no chip and opens no list for pasted text with a slash', async () => {
-    const { box, user } = setup();
+    const { box, user, onSend } = setup();
     await user.click(box);
     await user.paste('/deliver-work now');
     expect(list()).toBeNull();
     await user.keyboard('{Enter}');
     expect(chips()).toEqual([]);
     expect(box.value).toBe('');
+    expect(onSend).toHaveBeenLastCalledWith('/deliver-work now');
+  });
+
+  it('opens the list for a trigger an input method types', () => {
+    const { box } = setup();
+    box.focus();
+    // React reads a change only when the value is set past its own tracker.
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(box, '/');
+    box.setSelectionRange(1, 1);
+    fireEvent(
+      box,
+      new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText', data: '/' }),
+    );
+    expect(list()).not.toBeNull();
   });
 });
 
@@ -206,8 +220,22 @@ describe('a picked skill is a chip (spec 17)', () => {
   it('removes a chip with a click', async () => {
     const { box, user } = setup();
     await pickTidy(user, box);
+    await user.type(box, 'hello world');
     await user.click(screen.getByRole('button', { name: 'Remove tidy-notes' }));
     expect(chips()).toEqual([]);
+    // The caret stays where the writer left it.
+    expect(document.activeElement).toBe(box);
+    expect(box.selectionStart).toBe(11);
+  });
+
+  it('puts a letter typed on a chip into the text', async () => {
+    const { box, user } = setup();
+    await pickTidy(user, box);
+    await user.keyboard('{ArrowLeft}');
+    expect(document.activeElement).toBe(screen.getByTestId('skill-chip'));
+    await user.keyboard('x');
+    expect(document.activeElement).toBe(box);
+    expect(box.value).toBe('x');
   });
 
   it('adds a starter as a chip', () => {

@@ -7,6 +7,7 @@ import {
   formatElapsed,
   groupToolCalls,
   lastUsedThread,
+  lastUserSent,
   listTitle,
   providerLabel,
   recentFolders,
@@ -227,5 +228,59 @@ describe('tool calls in a run are one row', () => {
         item('c', 'tool_call', 'turn-1', 'running'),
       ]),
     ).toBe(1);
+  });
+});
+
+const user = (id: string, payload: unknown): ThreadItem => ({
+  id,
+  threadId: 'thread',
+  turnId: id,
+  index: 0,
+  kind: 'user',
+  payload,
+  streaming: false,
+});
+
+describe('Retry resends the last message as it was sent (wow skills spec 18)', () => {
+  it('gives the text and the skills, wow and own by source, folder and plugin ones by name', () => {
+    const items = [
+      user('old', { text: 'an older message' }),
+      user('last', {
+        text: 'fix the login',
+        skills: [
+          { name: 'wow-handover', source: 'wow', text: 'End with a handover.' },
+          { name: 'tidy-notes', source: 'yours', text: 'Tidy.' },
+          { name: 'deliver-work', source: 'user-claude', invocation: '/deliver-work' },
+          { name: 'kit:review', source: 'plugin', invocation: '/kit:review' },
+        ],
+      }),
+      item('answer', 'assistant_text'),
+    ];
+    expect(lastUserSent(items)).toEqual({
+      text: 'fix the login',
+      skills: [
+        { name: 'wow-handover', source: 'wow' },
+        { name: 'tidy-notes', source: 'yours' },
+        { name: 'deliver-work' },
+        { name: 'kit:review' },
+      ],
+    });
+  });
+
+  it('gives a message that is only chips, and an old message with $name as plain text', () => {
+    expect(
+      lastUserSent([user('only', { text: '', skills: [{ name: 'tidy-notes', source: 'yours' }] })]),
+    ).toEqual({ text: '', skills: [{ name: 'tidy-notes', source: 'yours' }] });
+    expect(lastUserSent([user('old', { text: '$deliver-work now' })])).toEqual({
+      text: '$deliver-work now',
+      skills: [],
+    });
+  });
+
+  it('skips empty and unreadable user items and gives nothing without a user message', () => {
+    expect(
+      lastUserSent([user('a', { text: 'first' }), user('b', { text: '  ' }), user('c', 42)]),
+    ).toEqual({ text: 'first', skills: [] });
+    expect(lastUserSent([item('answer', 'assistant_text')])).toBeUndefined();
   });
 });
