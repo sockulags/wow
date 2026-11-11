@@ -2725,9 +2725,10 @@ each part on the stored workflow (`workflow.gateCondition.<workflowId>.<stepId>.
 by search). At a gate that did not pass, the gate bar says "Did not pass by itself: <parts>" or
 "Waiting for checks" and lists every part with what it found (`gateStanding`); while a run
 waits for checks its run view says "Waiting for checks" instead of "Waiting for you"; while a
-running run's current step thread is `needs_you` (a question or an approval) the run view and the
-Workflows list of runs say "Waiting for an answer" (`runStateLabel(run, threads)`; the run stays
-`running`, questions-and-models spec 7). Other lists keep the run state's own words. A step
+running run's current step thread is `needs_you` (a question or an approval) the run view, the
+Workflows list of runs, the builder's "Runs of this workflow" and the run and workflow panels say
+"Waiting for an answer" (`runStateLabel(run, threads)`; the run stays `running`,
+questions-and-models spec 7). Other lists keep the run state's own words. A step
 whose gate passed by itself shows "Passed by itself: <parts>" with each part's sentence in its
 row (`passedByItself`).
 

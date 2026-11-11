@@ -112,7 +112,10 @@ function fake(threads: readonly Thread[]): Runtime {
     layout: createLayoutStore(),
     draft: createDraftStore(),
     settings: createSettingsStore(
-      createMemorySettingsSource(undefined, { 'providers.offerSetup': false }),
+      createMemorySettingsSource(undefined, {
+        'providers.offerSetup': false,
+        'appearance.contextPanel': true,
+      }),
     ),
   };
 }
@@ -131,5 +134,24 @@ describe('a run whose step waits for an answer (spec 7)', () => {
       .getAllByRole('link', { name: /Brew the tea/ })
       .find((link) => link.getAttribute('href') === '/workflows/runs/run-1');
     expect(row && within(row).getByText('Waiting for an answer')).toBeTruthy();
+  });
+});
+
+describe('the other lists of runs (spec 7)', () => {
+  const panel = () => screen.getByRole('complementary', { name: 'Context panel' });
+
+  it("says so in the run's panel", async () => {
+    await renderApp('/workflows/runs/run-1', fake([thread('needs_you')]));
+    await screen.findByTestId('panel-run');
+    expect(within(panel()).getByText(/^Waiting for an answer · Demo · /)).toBeTruthy();
+  });
+
+  it('says so in "Runs of this workflow" and in the workflow\'s panel', async () => {
+    await renderApp('/workflows/w', fake([thread('needs_you')]));
+    const section = await screen.findByRole('region', { name: 'Runs of this workflow' });
+    expect(within(section).getByText('Waiting for an answer')).toBeTruthy();
+    const runs = within(await screen.findByTestId('panel-workflow'));
+    expect(runs.getByText(/^Waiting for an answer · /)).toBeTruthy();
+    expect(runs.queryByText(/^Running · /)).toBeNull();
   });
 });
