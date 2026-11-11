@@ -239,6 +239,7 @@ let made = 0;
 
 export class AssistantMockAgent implements ProviderAdapter {
   readonly kind = 'claude' as const;
+  readonly requiresModel = false;
   readonly #ordinary: ProviderAdapter;
   readonly #tools: () => AssistantToolsLike;
   readonly #act: AssistantAct;

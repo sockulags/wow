@@ -20,6 +20,7 @@ import { asks } from './asks.js';
 import { alwaysRefused } from './classes.js';
 import { diagnosisReaders } from './diagnosis.js';
 import { guideReaders } from './guides.js';
+import { checkStepModels, modelReaders } from './models.js';
 import { readers, type Reader, type ReaderDeps } from './readers.js';
 
 // The assistant's tools (app assistant spec 4 to 13). A read tool is a reader. A change tool
@@ -89,12 +90,12 @@ export const changeTools = {
     type: 'workflow.create',
     newId: 'workflowId',
     description:
-      'Creates a workflow from steps. A step with a permission mode, a gate condition or rules, and the switches "for units" and "own working copy", make it a proposal.',
+      'Creates a workflow from steps. Every step names providerInstanceId, model and effort from what read_models lists for that instance; another model or effort is refused. A step with a permission mode, a gate condition or rules, and the switches "for units" and "own working copy", make it a proposal.',
   },
   update_workflow: {
     type: 'workflow.update',
     description:
-      'Changes a workflow. Give steps as the whole new list. Changing a permission mode, a gate, a gate condition, rules, "for units" or "own working copy" makes it a proposal; so does changing the skill, extra prompt, provider or model of a step that has a permission mode or a gate that passes by itself.',
+      'Changes a workflow. Give steps as the whole new list; every step names providerInstanceId, model and effort from what read_models lists. Changing a permission mode, a gate, a gate condition, rules, "for units" or "own working copy" makes it a proposal; so does changing the skill, extra prompt, provider or model of a step that has a permission mode or a gate that passes by itself.',
   },
   delete_workflow: {
     type: 'workflow.delete',
@@ -206,6 +207,7 @@ const looks: Readonly<Record<string, Reader>> = {
   ...readers,
   ...guideReaders,
   ...diagnosisReaders,
+  ...modelReaders,
   ...asks,
 };
 
@@ -287,6 +289,7 @@ export class AssistantTools {
     const made = tool.newId ? { [tool.newId]: randomUUID() } : {};
     const command = Command.parse({ ...args, ...made, type: tool.type });
     await checkProjectFolder(command);
+    await checkStepModels(command, this.#deps);
     const commandId = `assistant-${randomUUID()}`;
     this.#deps.engine.dispatch(commandId, command, 'assistant');
     const { db } = this.#deps;

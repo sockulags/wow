@@ -20,7 +20,8 @@ export function* decideSetup(
   read: ReadModel,
   context: DecideContext,
 ): Generator<DomainEvent[], void> {
-  const asUser: DecideContext = { ...context, origin: 'user' };
+  // A step without a model its provider needs is applied marked, and an undo puts it back.
+  const asUser: DecideContext = { ...context, origin: 'user', keepStepsWithoutModel: true };
   switch (command.type) {
     case 'setup.apply': {
       const id = command.applicationId;

@@ -302,6 +302,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     clock: options.clock ?? (() => new Date()),
     registry: settingsRegistry,
+    listModels: (providerInstanceId) => providerService.listModels(providerInstanceId),
   });
   const mcp = createMcpHandler({ tools: assistantTools, token: assistantToken, version, logger });
   // One port for both: the WebSocket upgrade for the app, and plain HTTP for the assistant's

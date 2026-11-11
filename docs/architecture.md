@@ -1180,7 +1180,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,
   `assistant.effort`, `assistant.instructions`, `assistant.greeting`,
   `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.valueLength`,
-  `assistant.secretPatterns`, `assistant.askRefusedWords` (see "Assistant" and "Question card")
+  `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance` (see
+  "Assistant", "Question card" and "Models for steps")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -1906,6 +1907,9 @@ options, multiSelect}`) puts the question card under the call (see "Question car
   09:00 (Europe/Stockholm)". A failed trigger's reason exists only as a notification, so with
   `scheduler.notifications` off it is not found.
 
+- Models (`assistant/models.ts`, `read_models`, `read_model_guidance`) answer what each
+  instance offers and wow's guidance on choosing; see "Models for steps".
+
 Every result passes `hideSecretsDeep` with the patterns of `assistant.secretPatterns` before it
 leaves `call`, so text that looks like a secret arrives as `[hidden]` (spec 18). The net
 (`hideSecrets` in contracts) also always takes a user name and password out of any
@@ -2302,6 +2306,65 @@ Tests: `packages/provider-claude/src/index.test.ts` and `packages/provider-codex
 ("answers … by a choice, typed text, both"), `packages/contracts/src/questions.test.ts`,
 `apps/server/src/assistant/questions.test.ts`, `apps/web/src/chat/question-card.test.tsx`,
 `apps/web/src/assistant/questions.test.tsx`, `apps/web/e2e/questions.spec.ts`.
+
+## Models for steps
+
+Behavior lives in `intents/2026-11-questions-and-models/spec.md` (13 to 20). wow learns which
+models an instance offers only from the installed provider (`listModels`), and how to choose
+between them only from a guidance text it ships; nothing about models comes from the internet.
+`packages/contracts/src/models.ts` holds the shapes and the sentences both sides show.
+
+- **Which providers need a model.** It is a fact of the adapter: `ProviderAdapter.requiresModel`
+  is false for Claude Code (it picks a model itself) and true for Codex (every `turn/start`
+  carries the thread's model). A decision and the web app cannot ask an adapter, so
+  `providerChatOptions[kind].requiresModel` holds the same fact, and each adapter package has a
+  test that the two agree (`providerRequiresModel(kind)` reads it).
+- **The rule on the server** (`withRequiredModels` in `core/workflows.ts`, spec 17).
+  `workflow.create` and a `workflow.update` that changes the steps give a step on such a provider
+  that names no model the instance's `defaultModel`; without one the command is refused with
+  `missingModelSentence` ("Step check-work runs on Codex (Codex bare), which needs a model on
+  every step, and Codex bare has no default model: choose a model for the step."). A step whose
+  instance is not here yet (a setup file's kind as its id) is judged by that kind. A Claude Code
+  step without a model is stored as before. Old data keeps working (spec 19): `workflow.restore`
+  stores the row as it was, an update that leaves the steps alone does not look at them, a run
+  starts as it did (the step's thread falls back to the instance's and the project's default
+  model, and the runner fails a step whose model is still empty), and `DecideContext.keepStepsWithoutModel`
+  lets a setup file's apply and preview and every undo (`setup.undo`, `assistant.undo`) store
+  such a step as it is, since they put back or bring in what was stored elsewhere.
+- **Marks** (`modelMark`, spec 19, 20). A setup file's preview and its `setupApplications` row
+  mark a step left without a model and without a default to take ("step check-work has no
+  model, which Codex needs; choose one in the workflow, or the step fails when it starts"), as
+  for a missing skill. `diagnose_setup` names every stored step without a model its provider
+  needs as a problem of kind `model`, with the workflow as its place; with a default the reason
+  says it runs on that default until one is chosen.
+- **`read_models`** (`assistant/models.ts`, `assistantModelsTool`, `ReadModelsRequest
+{providerInstanceId?}` → `ModelsRead {instances: InstanceModels[], note}`). Per instance: kind,
+  `connected`, `reason`, `requiresModel`, the default model and effort, and `models` (`OfferedModel
+{id, label, description, efforts, isDefault}`). An instance is connected when its last test
+  passed (`status: ready`) and its provider listed its models; otherwise it is listed with no
+  models and the reason, and its provider is not asked. A model's `efforts` are
+  `offeredEfforts(kind, model)`: its own levels plus the effort that leaves the choice to the
+  provider (`default` on Claude Code). `ReaderDeps.listModels` is the provider service's.
+- **`read_model_guidance`** (`assistantGuidanceTool` → `ModelGuidance {text, edited, note}`)
+  returns `assistant.modelGuidance` as it is resolved at that call, so an edited text is what the
+  next call reads. The default (`defaultModelGuidance`) covers planning and specification,
+  building, reviewing and mechanical steps for Claude Code and Codex, and names kinds of model
+  (the largest, a balanced one, the smallest), never versions.
+- **What the assistant writes** (`checkStepModels`, spec 15, 16). `create_workflow` and an
+  `update_workflow` with steps check every step before the command is dispatched: the instance
+  exists, its models can be read now, the step names one of them, and an effort that model takes
+  (when it takes any). Each refusal says what is offered ("Codex at work does not offer the
+  model codex-ultra (Step 1 (plan-work)). It offers: codex-max, codex-mini."). The user's own
+  commands are not checked against the list, since the builder offers only the list. A change
+  row says each step with its instance, model and effort ("2 steps: plan-work (Codex at work,
+  codex-max, high), deliver-work (Claude at work, small-claude, default)") and is not cut at
+  `assistant.valueLength`; a proposal already has one line per step field. The instruction text
+  names both tools, says to recommend from them with the reason in a sentence, and to ask with
+  `ask_questions` when two choices differ in a way the person would care about.
+
+Tests: `apps/server/src/assistant/models.test.ts` (a case per acceptance line of the unit),
+`packages/provider-claude/src/index.test.ts` and `packages/provider-codex/src/adapter.test.ts`
+("requires a model").
 
 ## Chat view
 

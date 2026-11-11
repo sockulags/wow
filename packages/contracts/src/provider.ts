@@ -171,6 +171,10 @@ export interface ProviderChatOptions {
   readonly compactPrompt: string | null;
   // The mode the assistant thread is stored with: the one that asks for nothing and allows least.
   readonly assistantPermissionMode: string;
+  // Whether a workflow step on this provider must name a model (questions and models spec 13,
+  // 17). The adapter owns the fact (`ProviderAdapter.requiresModel`); this copy is what a
+  // decision and the web app read, since neither can ask an adapter.
+  readonly requiresModel: boolean;
 }
 
 export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOptions>> = {
@@ -186,6 +190,7 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
     defaultEffort: 'default',
     compactPrompt: '/compact',
     assistantPermissionMode: 'dontAsk',
+    requiresModel: false,
   },
   codex: {
     permissionModes: [
@@ -197,6 +202,7 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
     defaultEffort: null,
     compactPrompt: null,
     assistantPermissionMode: 'read-only',
+    requiresModel: true,
   },
 };
 
@@ -354,6 +360,8 @@ export interface ProviderAdapterContext {
 // turns the events they emit into thread commands; nothing outside an adapter sees its wire format.
 export interface ProviderAdapter {
   readonly kind: ProviderKind;
+  // A step on this provider must name a model: Claude Code picks one itself, Codex needs one.
+  readonly requiresModel: boolean;
   send(command: ProviderCommand): Promise<unknown>;
   onEvent(listener: (event: ProviderEvent) => void): () => void;
   dispose(): Promise<void>;

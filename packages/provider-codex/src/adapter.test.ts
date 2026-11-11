@@ -1,5 +1,5 @@
 import type { ProviderEvent, ProviderInstance } from '@wow/contracts';
-import { ProviderEvent as ProviderEventSchema } from '@wow/contracts';
+import { ProviderEvent as ProviderEventSchema, providerChatOptions } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   CodexAdapter,
@@ -446,6 +446,14 @@ const withOptions = (method: 'thread/start' | 'thread/resume') => {
 };
 
 describe('CodexAdapter', () => {
+  // Questions and models spec 13, 17: every step on Codex names a model, and the copy of that
+  // fact in contracts agrees.
+  it('requires a model on a step', () => {
+    const { adapter } = setup(() => new ScriptedCodex(baseAnswers));
+    expect(adapter.requiresModel).toBe(true);
+    expect(providerChatOptions.codex.requiresModel).toBe(adapter.requiresModel);
+  });
+
   it('passes Test with the account, version and paged models', async () => {
     const { adapter } = setup(
       () =>

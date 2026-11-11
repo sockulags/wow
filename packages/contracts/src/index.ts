@@ -6,6 +6,7 @@ export * from './diff.js';
 export * from './files.js';
 export * from './hosts.js';
 export * from './methods.js';
+export * from './models.js';
 export * from './projections.js';
 export * from './provider.js';
 export * from './questions.js';

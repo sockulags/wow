@@ -203,6 +203,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         now: deps.clock().toISOString(),
         registry: settingsRegistry,
         home: deps.info.home,
+        keepStepsWithoutModel: true,
       });
       return plan.outcome === 'ready'
         ? { outcome: 'ready', preview: plan.preview }

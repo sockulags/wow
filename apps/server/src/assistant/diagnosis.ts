@@ -2,6 +2,10 @@ import {
   OutlookProfile,
   SecretRef,
   assistantDiagnosisTool,
+  awaitedProviderKind,
+  lacksRequiredModel,
+  modelMark,
+  providerKindLabels,
   isEventTrigger,
   isLiveRunState,
   projectCodeHost,
@@ -212,6 +216,41 @@ function skills(
         reason: `It runs the skill ${step.skillName}, which is not installed on this machine. Install the skill or pick another one for the step.`,
         place: workflowPlace(workflow.id, workflow.name),
       })),
+  );
+}
+
+// Steps stored without a model their provider needs (questions and models spec 19), from
+// before wow refused them or applied from a setup file.
+function models(
+  deps: ReaderDeps,
+  workflows: readonly (typeof t.workflows.$inferSelect)[],
+): DiagnosisProblem[] {
+  const instances = new Map(
+    deps.db
+      .select()
+      .from(t.providerInstances)
+      .all()
+      .map((instance) => [instance.id, instance]),
+  );
+  return workflows.flatMap((workflow) =>
+    workflow.steps.flatMap((step) => {
+      const instance = instances.get(step.providerInstanceId);
+      const kind = instance?.kind ?? awaitedProviderKind(step.providerInstanceId);
+      if (!kind || !lacksRequiredModel(step, kind)) return [];
+      const mark = modelMark(step.skillName, {
+        name: instance?.name ?? providerKindLabels[kind],
+        kind,
+        defaultModel: instance?.defaultModel ?? null,
+      });
+      return [
+        {
+          kind: 'model' as const,
+          what: `Workflow ${workflow.name}, step ${step.id}`,
+          reason: `${mark.charAt(0).toUpperCase()}${mark.slice(1)}.`,
+          place: workflowPlace(workflow.id, workflow.name),
+        },
+      ];
+    }),
   );
 }
 
@@ -447,6 +486,7 @@ export async function diagnose(deps: ReaderDeps): Promise<Diagnosis> {
     ...tested.problems,
     ...hostReads(deps),
     ...skills(deps, workflows),
+    ...models(deps, workflows),
     ...triggers(deps, limit, names),
     ...runs(deps, limit, names),
     ...cards(deps, limit, names),
@@ -459,7 +499,7 @@ export async function diagnose(deps: ReaderDeps): Promise<Diagnosis> {
       ? 'connection tests: no host connection is set up'
       : `connection tests: ${tested.tested.join(', ')}`,
     'the last read of each host',
-    `skills of ${plural(workflows.length, 'workflow')}`,
+    `skills and models of ${plural(workflows.length, 'workflow')}`,
     'event triggers',
     'runs and plan runs',
     'calendar cards with a workflow',
@@ -478,7 +518,7 @@ export async function diagnose(deps: ReaderDeps): Promise<Diagnosis> {
 export const diagnosisReaders = {
   [assistantDiagnosisTool]: {
     description:
-      'Says what is failing in the setup and where to fix each: provider instances that are not signed in, failed connection tests of the hosts in use, failed host reads, workflow steps whose skill is not installed, event triggers that failed, failed runs with their error, and cards that did not start and why. Use it when the user asks why something does not work, and give each place as a link.',
+      'Says what is failing in the setup and where to fix each: provider instances that are not signed in, failed connection tests of the hosts in use, failed host reads, workflow steps whose skill is not installed or that lack a model their provider needs, event triggers that failed, failed runs with their error, and cards that did not start and why. Use it when the user asks why something does not work, and give each place as a link.',
     input: none,
     read: (_args, deps) => diagnose(deps),
   } satisfies Reader<typeof none>,

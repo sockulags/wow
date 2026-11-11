@@ -258,6 +258,8 @@ function toolResult(item: ThreadItem): { output: string | null; ok: boolean } {
 // exits. Maps wow threads to codex threads and codex's JSON-RPC to ProviderEvent.
 export class CodexAdapter implements ProviderAdapter {
   readonly kind = 'codex';
+  // Every turn/start carries the thread's model, so a step on Codex must name one.
+  readonly requiresModel = true;
   readonly #options: CodexAdapterOptions;
   readonly #spawn: SpawnCodex;
   readonly #newId: () => string;

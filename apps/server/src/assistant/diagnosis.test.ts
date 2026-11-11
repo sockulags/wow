@@ -163,7 +163,7 @@ describe('the diagnosis (spec 19, 20)', () => {
       expect.arrayContaining([
         'provider sign-ins: 1 instance',
         'connection tests: no host connection is set up',
-        'skills of 1 workflow',
+        'skills and models of 1 workflow',
       ]),
     );
   });

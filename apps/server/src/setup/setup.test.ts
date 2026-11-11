@@ -677,6 +677,11 @@ describe('a step whose provider kind has no instance here', () => {
     expect(applications(other)[0]?.marked).toEqual([
       {
         workflow: 'Second opinion',
+        reason:
+          'step check-work has no model, which Codex needs; choose one in the workflow, or the step fails when it starts',
+      },
+      {
+        workflow: 'Second opinion',
         reason: 'no Codex instance here yet; choose one for its steps in the workflow',
       },
     ]);

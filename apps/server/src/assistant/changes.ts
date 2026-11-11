@@ -159,8 +159,16 @@ const stepNames = (steps: readonly WorkflowStep[]): string =>
 
 // One value in words. Ids of things the user named are shown by their names. A setup preview
 // says its values the same way.
+// A step list is not cut short: the row says every step's instance, model and effort
+// (questions and models spec 15).
 export const show = (key: string, value: unknown, read: ReadModel): string =>
-  clip(showWhole(key, value, read), read);
+  key === 'steps' ? showWhole(key, value, read) : clip(showWhole(key, value, read), read);
+
+// "deliver-work (Codex at work, gpt-x, high)": what a step runs on.
+function stepWords(step: WorkflowStep, read: ReadModel): string {
+  const instance = read.providerInstance(step.providerInstanceId)?.name ?? step.providerInstanceId;
+  return `${step.skillName} (${instance}, ${step.model ?? 'no model'}, ${step.effort ?? 'default effort'})`;
+}
 
 // The same words as `show`, not shortened: for a proposal, which keeps the whole value.
 function showWhole(key: string, value: unknown, read: ReadModel): string {
@@ -176,7 +184,8 @@ function showWhole(key: string, value: unknown, read: ReadModel): string {
   if (Array.isArray(value)) {
     if (value.length === 0) return 'none';
     if (key === 'steps') {
-      return `${value.length} ${value.length === 1 ? 'step' : 'steps'}: ${stepNames(value as WorkflowStep[])}`;
+      const steps = value as WorkflowStep[];
+      return `${steps.length} ${steps.length === 1 ? 'step' : 'steps'}: ${steps.map((step) => stepWords(step, read)).join(', ')}`;
     }
     if (value.every((item) => typeof item === 'string')) return value.join(', ');
   }

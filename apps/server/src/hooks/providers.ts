@@ -1,11 +1,13 @@
-import type {
-  ProviderAdapter,
-  ProviderAdapterContext,
-  ProviderCommand,
-  ProviderEvent,
-  ProviderInstance,
-  ProviderKind,
-  ProviderTestResult,
+import {
+  providerChatOptions,
+  type ProviderAdapter,
+  type ProviderAdapterContext,
+  type ProviderCommand,
+  type ProviderEvent,
+  type ProviderInstance,
+  type ProviderKind,
+  type ProviderModel,
+  type ProviderTestResult,
 } from '@wow/contracts';
 
 export type ProviderAdapterFactory = (
@@ -29,11 +31,23 @@ const echo: MockScript = (command) => {
 
 // Stands in for a real provider in tests and with WOW_PROVIDERS=mock. Events are emitted after
 // send() resolves, the way a real provider streams after accepting a command.
+export const mockModels: readonly ProviderModel[] = [
+  { id: 'mock-model', label: 'Mock model', description: '', efforts: ['low', 'high'] },
+  {
+    id: 'mock-model-large',
+    label: 'Mock model, large',
+    description: 'Invented: the larger mock model',
+    efforts: ['low', 'medium', 'high'],
+  },
+];
+
 export class MockProviderAdapter implements ProviderAdapter {
   readonly kind: ProviderKind;
+  readonly requiresModel: boolean;
   readonly sent: ProviderCommand[] = [];
   readonly #script: MockScript;
   readonly #testResult: () => ProviderTestResult;
+  readonly #models: () => readonly ProviderModel[];
   readonly #listeners = new Set<(event: ProviderEvent) => void>();
 
   // testResult answers "test"; the default is a ready instance.
@@ -46,10 +60,14 @@ export class MockProviderAdapter implements ProviderAdapter {
       version: 'mock',
       message: null,
     }),
+    // What listModels answers; throwing stands for a provider that cannot list them.
+    models: () => readonly ProviderModel[] = () => mockModels,
   ) {
     this.kind = kind;
+    this.requiresModel = providerChatOptions[kind].requiresModel;
     this.#script = script;
     this.#testResult = testResult;
+    this.#models = models;
   }
 
   send(command: ProviderCommand): Promise<unknown> {
@@ -59,9 +77,11 @@ export class MockProviderAdapter implements ProviderAdapter {
       for (const event of events) for (const listener of this.#listeners) listener(event);
     });
     if (command.type === 'listModels') {
-      return Promise.resolve([
-        { id: 'mock-model', label: 'Mock model', description: '', efforts: ['low', 'high'] },
-      ]);
+      try {
+        return Promise.resolve(this.#models().map((model) => ({ ...model })));
+      } catch (error) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      }
     }
     if (command.type === 'test') {
       return Promise.resolve(this.#testResult());

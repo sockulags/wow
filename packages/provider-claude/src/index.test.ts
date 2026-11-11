@@ -4,7 +4,7 @@ import type {
   ProviderEvent,
   ProviderInstance,
 } from '@wow/contracts';
-import { ProviderEvent as ProviderEventSchema } from '@wow/contracts';
+import { ProviderEvent as ProviderEventSchema, providerChatOptions } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import { ClaudeAdapter, extraArgs, providerKind } from './index.js';
 import type { SDKMessage } from './sdk.js';
@@ -143,6 +143,14 @@ function harness(turns: FakeStep[][], onEvent?: (event: ProviderEvent) => void):
 describe('@wow/provider-claude', () => {
   it('is the claude provider', () => {
     expect(providerKind).toBe('claude');
+  });
+
+  // Questions and models spec 13, 17: a step on Claude Code may leave the model to it, and the
+  // copy of that fact in contracts agrees.
+  it('does not require a model on a step', () => {
+    const { adapter } = harness([]);
+    expect(adapter.requiresModel).toBe(false);
+    expect(providerChatOptions.claude.requiresModel).toBe(adapter.requiresModel);
   });
 
   it('streams a recorded turn: text, reasoning, tool call, approval, question, tasks, usage', async () => {

@@ -5,6 +5,7 @@ import {
   defaultAssistantInstructions,
   defaultSecretPatterns,
 } from './assistant.js';
+import { defaultModelGuidance } from './models.js';
 import {
   alwaysStopSkillDefaults,
   WorkflowTemplate,
@@ -1290,6 +1291,15 @@ export const settingsRegistry = {
     description:
       "What the assistant's agent is told it is for, in place of the provider's own instructions for coding: it operates wow only, never asks for a secret, and sends other work to the chat view. What it can do is decided by the tools it is given, not by this text. A changed text applies from the next message on Claude Code, and on Codex from the next start of the assistant's session (after wow or the provider instance restarts).",
     default: defaultAssistantInstructions,
+    scope: 'global',
+  }),
+  'assistant.modelGuidance': defineSetting({
+    schema: z.string().trim().min(1).meta({ widget: 'template', placeholders: [] }),
+    group: 'assistant',
+    label: 'Guidance on choosing a model',
+    description:
+      'What the assistant reads (read_model_guidance) before it picks a model and an effort for a workflow step: which kind of model suits planning, building, reviewing and mechanical steps on each provider. It names kinds of model; the assistant matches it against the models the provider instance lists. Edit it to change what the assistant recommends.',
+    default: defaultModelGuidance,
     scope: 'global',
   }),
   'assistant.greeting': defineSetting({

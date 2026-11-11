@@ -3,6 +3,8 @@ import {
   awaitedProviderKind,
   hostReadId,
   isLiveRunState,
+  lacksRequiredModel,
+  missingModelSentence,
   providerKindLabels,
   ruleProblems,
   type AppNotification,
@@ -76,6 +78,7 @@ export function decideWorkflow(
       }
       refuseConditions(command.steps, read, context);
       refuseRules(command.steps);
+      const steps = withRequiredModels(command.steps, read, context);
       return [
         {
           kind: 'workflow.created',
@@ -84,7 +87,7 @@ export function decideWorkflow(
             id: command.workflowId,
             name: command.name,
             templateKind: command.templateKind ?? null,
-            steps: command.steps,
+            steps,
             ...(command.ownWorkingCopy ? { ownWorkingCopy: true } : {}),
             ...(command.forUnits ? { forUnits: true } : {}),
             ...(typeof command.maxStepVisits === 'number'
@@ -113,7 +116,7 @@ export function decideWorkflow(
         }
         refuseConditions(command.steps, read, context);
         refuseRules(command.steps);
-        changes.steps = command.steps;
+        changes.steps = withRequiredModels(command.steps, read, context);
       }
       // Read when a step is about to start, so a run that is going follows the new number.
       if (
@@ -300,6 +303,25 @@ function refuseConditions(
       );
     }
   }
+}
+
+// A step on a provider that needs a model gets the instance's default model when it names none,
+// and is refused when there is no default (questions and models spec 17). A workflow restored
+// as it was stored, a setup file and an undo keep such a step; it is marked instead (spec 19,
+// 20). A step whose instance is not here yet is judged by the kind it waits for.
+function withRequiredModels(
+  steps: readonly WorkflowStep[],
+  read: ReadModel,
+  context: DecideContext,
+): WorkflowStep[] {
+  return steps.map((step) => {
+    const instance = read.providerInstance(step.providerInstanceId);
+    const kind = instance?.kind ?? awaitedProviderKind(step.providerInstanceId);
+    if (!lacksRequiredModel(step, kind)) return step;
+    if (instance?.defaultModel) return { ...step, model: instance.defaultModel };
+    if (context.keepStepsWithoutModel || !instance) return step;
+    throw new CommandRejected('rejected', missingModelSentence(step.skillName, instance));
+  });
 }
 
 // A workflow whose rules cannot be followed is not stored (workflow branches spec 16). The

@@ -164,6 +164,8 @@ const toolOutput = (content: unknown): string => {
 // mode that lives across turns, so interrupt, setModel and setPermissionMode work mid-session.
 export class ClaudeAdapter implements ProviderAdapter {
   readonly kind = 'claude' as const;
+  // Claude Code picks a model itself when a step names none.
+  readonly requiresModel = false;
   readonly #instance: ProviderInstance;
   readonly #context: ProviderAdapterContext;
   readonly #query: QueryFunction;
