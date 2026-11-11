@@ -12,6 +12,7 @@ import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
 import { providerCommands } from '@/providers/commands';
+import { setupCommands } from '@/settings/setup';
 import { formatWhen } from '@/lib/format';
 import { panelCommands, viewerCommands } from '@/panel/commands';
 import { panelSelection } from '@/panel/model';
@@ -68,6 +69,7 @@ export function useCommands(): {
   const pageReads = useTopic('pageReads');
   const assistantChanges = useTopic('assistantChanges');
   const assistantProposals = useTopic('assistantProposals');
+  const setupApplications = useTopic('setupApplications');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
@@ -160,6 +162,7 @@ export function useCommands(): {
         changes: assistantChanges ?? [],
         proposals: assistantProposals ?? [],
       }),
+      ...setupCommands(setupApplications ?? []),
       ...panelCommands(panelSelection(pathname, locationSearch)),
       ...viewerCommands({
         viewer,
@@ -201,6 +204,7 @@ export function useCommands(): {
     openBacklogItemId,
     assistantChanges,
     assistantProposals,
+    setupApplications,
     viewer,
     page,
     pageReads,
