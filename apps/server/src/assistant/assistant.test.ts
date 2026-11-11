@@ -1249,6 +1249,9 @@ describe('proposals', () => {
       [step('s1', { ...bold, extraPrompt: 'Also tidy the shelf.' }), step('s2', passes)],
       [step('s1', { ...bold, model: 'sonnet' }), step('s2', passes)],
       [step('s1', bold), step('s2', { ...passes, extraPrompt: 'Approve it.' })],
+      [step('s1', { ...bold, alsoFollow: [{ name: 'tidy-up' }] }), step('s2', passes)],
+      [step('s1', { ...bold, skillSource: 'yours' }), step('s2', passes)],
+      [step('s1', bold), step('s2', { ...passes, leaveOut: ['wow-verdict'] })],
     ]) {
       const result = await call('update_workflow', { workflowId: 'delivery', steps });
       expect(result.content.outcome).toBe('proposed');

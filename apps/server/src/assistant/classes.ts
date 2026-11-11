@@ -192,6 +192,10 @@ const work = (step: WorkflowStep) => ({
   extraPrompt: step.extraPrompt || null,
   providerInstanceId: step.providerInstanceId ?? null,
   model: step.model ?? null,
+  // The skills sent with it are part of what it runs (wow skills spec 11, 12).
+  skillSource: step.skillSource ?? null,
+  alsoFollow: step.alsoFollow?.length ? step.alsoFollow : null,
+  leaveOut: step.leaveOut?.length ? step.leaveOut : null,
 });
 
 const actsAlone = (step: WorkflowStep): boolean => {

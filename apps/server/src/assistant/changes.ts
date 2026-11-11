@@ -600,6 +600,9 @@ const stepFieldLabels: Readonly<Record<string, string>> = {
   extraPrompt: 'extra prompt',
   expectedArtifacts: 'expected artifacts',
   rules: 'rules',
+  skillSource: 'skill from',
+  alsoFollow: 'also follows',
+  leaveOut: 'leaves out',
 };
 
 function showStepField(
@@ -629,6 +632,13 @@ function showStepField(
       )
       .join('; ');
   }
+  if (key === 'skillSource') return step.skillSource ?? 'a skill folder';
+  if (key === 'alsoFollow') {
+    return step.alsoFollow?.length
+      ? step.alsoFollow.map((skill) => skill.name).join(', ')
+      : 'nothing';
+  }
+  if (key === 'leaveOut') return step.leaveOut?.length ? step.leaveOut.join(', ') : 'nothing';
   if (key === 'providerInstanceId' && typeof value === 'string') {
     return read.providerInstance(value)?.name ?? value;
   }
