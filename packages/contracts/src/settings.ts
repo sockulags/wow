@@ -468,6 +468,15 @@ export const settingsRegistry = {
     default: true,
     scope: 'global',
   }),
+  'chat.toolOutputLines': defineSetting({
+    schema: z.number().int().min(1).max(500),
+    group: 'chat',
+    label: 'Command output lines',
+    description:
+      'How many of the last lines of a command or tool output an opened row shows; "Show all" shows the rest.',
+    default: 20,
+    scope: 'global',
+  }),
   'chat.starterCount': defineSetting({
     schema: z.number().int().min(0).max(12),
     group: 'chat',
@@ -1643,6 +1652,11 @@ export const settingsRegistry = {
     'Chat: filter threads from the list',
     'The same, while the thread list has the keyboard.',
     '/',
+  ),
+  'keybindings.toggleTasks': keybinding(
+    'Chat: show or hide the task list',
+    'Open or close the task list pinned above the composer of the open thread.',
+    'Mod+T',
   ),
   'keybindings.renameThread': keybinding(
     'Chat: rename thread',

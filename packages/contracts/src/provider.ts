@@ -78,6 +78,48 @@ export type TaskStatus = z.infer<typeof TaskStatus>;
 
 const ThreadScoped = { threadId: z.string().min(1) };
 
+// What a tool call is, in wow's words, so the conversation draws it without reading a provider's
+// shapes (agent workbench spec 27 to 30). `edit` covers file edits and writes; `other` is any
+// tool wow has no row of its own for.
+export const ToolKind = z.enum(['command', 'read', 'search', 'web', 'mcp', 'edit', 'other']);
+export type ToolKind = z.infer<typeof ToolKind>;
+
+// The facts an adapter reads from a tool call's input, each only where the provider gives it.
+export const ToolFacts = z.object({
+  kind: ToolKind,
+  // A shell command as it was run, and the folder it ran in.
+  command: z.string().optional(),
+  cwd: z.string().optional(),
+  // The file a read or an edit is about, or the folder a search looks in.
+  path: z.string().optional(),
+  // The lines a read asked for, first and last (last absent: to the end).
+  lines: z
+    .object({
+      from: z.number().int().positive(),
+      to: z.number().int().positive().optional(),
+    })
+    .optional(),
+  // What a search looks for (a pattern or a glob).
+  pattern: z.string().optional(),
+  // The address a web fetch reads, or the words of a web search.
+  url: z.string().optional(),
+  query: z.string().optional(),
+  // An MCP call: the server and its tool.
+  server: z.string().optional(),
+  tool: z.string().optional(),
+});
+export type ToolFacts = z.infer<typeof ToolFacts>;
+
+const PartialToolFacts = ToolFacts.partial();
+
+// The tool facts of an event or payload, without its other fields.
+export const toolFactsOf = (value: unknown): Partial<ToolFacts> => {
+  const parsed = PartialToolFacts.safeParse(value);
+  return parsed.success
+    ? Object.fromEntries(Object.entries(parsed.data).filter(([, field]) => field !== undefined))
+    : {};
+};
+
 // Work the agent started in the background (a subagent or a shell command) that is still running.
 // When it ends, the provider may go on with the thread by itself in a turn wow did not start.
 // `agent` marks a background agent: a workflow step waits only for those, since a shell command
@@ -118,6 +160,8 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     itemId: z.string().min(1),
     name: z.string().min(1),
     input: z.unknown(),
+    // Absent from an adapter that does not normalize this tool; the row then shows its name.
+    ...ToolFacts.partial().shape,
   }),
   z.object({
     type: z.literal('toolCallOutput'),
@@ -130,6 +174,10 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     ...ThreadScoped,
     itemId: z.string().min(1),
     status: z.enum(['ok', 'error']),
+    // A command's exit code and how long the call took, where the provider says so. Without a
+    // duration the server's clock measures it.
+    exitCode: z.number().int().optional(),
+    durationMs: z.number().nonnegative().optional(),
   }),
   z.object({
     type: z.literal('approvalRequested'),

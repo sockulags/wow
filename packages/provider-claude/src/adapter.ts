@@ -23,6 +23,7 @@ import { markRecommended, replyText } from '@wow/contracts';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
 import { AsyncQueue } from './queue.js';
+import { claudeToolFacts } from './tools.js';
 import {
   extraArgs,
   isEffortLevel,
@@ -534,6 +535,7 @@ export class ClaudeAdapter implements ProviderAdapter {
               itemId: block.id,
               name: block.name,
               input: block.input,
+              ...claudeToolFacts(block.name, block.input),
             });
             this.#trackTasks(session, block.id, block.name, block.input);
           }

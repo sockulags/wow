@@ -247,6 +247,8 @@ describe('@wow/provider-claude', () => {
         itemId: 'toolu_bash',
         name: 'Bash',
         input: { command: 'ls' },
+        kind: 'command',
+        command: 'ls',
       },
       {
         type: 'approvalRequested',
@@ -408,6 +410,42 @@ describe('@wow/provider-claude', () => {
         behavior: 'allow',
         updatedInput: { ...input, answers: { [question.question]: sent } },
       },
+    ]);
+  });
+
+  it('reports a failed Bash call as an error with its command and no exit code (agent workbench spec 27)', async () => {
+    const failed: FakeStep = {
+      message: {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_t', content: '1 failed', is_error: true },
+          ],
+        },
+        parent_tool_use_id: null,
+        tool_use_result: { stdout: '', stderr: '1 failed', interrupted: false },
+        session_id: 'sess-1',
+      } as unknown as SDKMessage,
+    };
+    const h = harness([
+      [assistantToolUse('toolu_t', 'Bash', { command: 'pnpm test' }), failed, result(0)],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(h.events.filter((event) => event.type.startsWith('toolCall'))).toEqual([
+      {
+        type: 'toolCallStarted',
+        threadId: 't1',
+        itemId: 'toolu_t',
+        name: 'Bash',
+        input: { command: 'pnpm test' },
+        kind: 'command',
+        command: 'pnpm test',
+      },
+      { type: 'toolCallOutput', threadId: 't1', itemId: 'toolu_t', output: '1 failed' },
+      { type: 'toolCallCompleted', threadId: 't1', itemId: 'toolu_t', status: 'error' },
     ]);
   });
 

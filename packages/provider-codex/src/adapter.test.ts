@@ -209,6 +209,9 @@ describe('CodexAdapter with recorded sessions', () => {
         itemId: 'item-command',
         name: 'command',
         input: { command: 'pnpm test', cwd: '/work/demo' },
+        kind: 'command',
+        command: 'pnpm test',
+        cwd: '/work/demo',
       },
       expect.objectContaining({
         type: 'approvalRequested',
@@ -224,13 +227,22 @@ describe('CodexAdapter with recorded sessions', () => {
     expect(take()).toEqual([
       { type: 'toolCallOutput', threadId, itemId: 'item-command', output: '> vitest run\n' },
       { type: 'toolCallOutput', threadId, itemId: 'item-command', output: 'Tests 12 passed\n' },
-      { type: 'toolCallCompleted', threadId, itemId: 'item-command', status: 'ok' },
+      {
+        type: 'toolCallCompleted',
+        threadId,
+        itemId: 'item-command',
+        status: 'ok',
+        exitCode: 0,
+        durationMs: 2100,
+      },
       {
         type: 'toolCallStarted',
         threadId,
         itemId: 'item-patch',
         name: 'fileChange',
         input: { changes: [{ path: 'README.md', kind: 'update' }] },
+        kind: 'edit',
+        path: 'README.md',
       },
       expect.objectContaining({
         type: 'approvalRequested',
@@ -1061,6 +1073,89 @@ describe('CodexAdapter', () => {
       { type: 'turnStartedByProvider', threadId: 'thread-1' },
       { type: 'textDelta', threadId: 'thread-1', itemId: 'm2', delta: 'Done.' },
       { type: 'turnCompleted', threadId: 'thread-1' },
+    ]);
+  });
+
+  it('gives a failed command its exit code and time, and an MCP call its server and tool (agent workbench spec 27, 29)', async () => {
+    const { adapter, take, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(startTurn);
+    take();
+    const command = {
+      type: 'commandExecution',
+      id: 'cmd-1',
+      pluginId: null,
+      scriptPath: null,
+      command: 'pnpm test',
+      cwd: '/work/demo/app',
+      processId: null,
+      source: 'agent',
+      commandActions: [{ type: 'unknown', command: 'pnpm test' }],
+      aggregatedOutput: null,
+      exitCode: null,
+      durationMs: null,
+      status: 'inProgress',
+    };
+    const mcp = {
+      type: 'mcpToolCall',
+      id: 'mcp-1',
+      server: 'tracker',
+      tool: 'find_issue',
+      status: 'inProgress',
+      arguments: { key: 'DEMO-42' },
+      appContext: null,
+      mcpAppUi: null,
+      pluginId: null,
+      readOnlyHint: null,
+      result: null,
+      error: null,
+      durationMs: null,
+    };
+    const params = { threadId: 'codex-thread', turnId: 'turn-1' };
+    current().emit({ method: 'item/started', params: { ...params, item: command } });
+    current().emit({
+      method: 'item/completed',
+      params: {
+        ...params,
+        item: {
+          ...command,
+          status: 'failed',
+          aggregatedOutput: '1 test failed\n',
+          exitCode: 1,
+          durationMs: 4200,
+        },
+      },
+    });
+    current().emit({ method: 'item/started', params: { ...params, item: mcp } });
+    expect(take()).toEqual([
+      {
+        type: 'toolCallStarted',
+        threadId: 'thread-1',
+        itemId: 'cmd-1',
+        name: 'command',
+        input: { command: 'pnpm test', cwd: '/work/demo/app' },
+        kind: 'command',
+        command: 'pnpm test',
+        cwd: '/work/demo/app',
+      },
+      { type: 'toolCallOutput', threadId: 'thread-1', itemId: 'cmd-1', output: '1 test failed\n' },
+      {
+        type: 'toolCallCompleted',
+        threadId: 'thread-1',
+        itemId: 'cmd-1',
+        status: 'error',
+        exitCode: 1,
+        durationMs: 4200,
+      },
+      {
+        type: 'toolCallStarted',
+        threadId: 'thread-1',
+        itemId: 'mcp-1',
+        name: 'tracker/find_issue',
+        input: { key: 'DEMO-42' },
+        kind: 'mcp',
+        server: 'tracker',
+        tool: 'find_issue',
+      },
     ]);
   });
 

@@ -581,6 +581,11 @@ export const codexProtocolFingerprint: ProtocolFingerprint = {
           shape: { type: 'number', required: false, nullable: true },
         },
         {
+          path: 'item<commandExecution>.durationMs',
+          copes: true,
+          shape: { type: 'number', required: false, nullable: true },
+        },
+        {
           path: 'item<fileChange>.changes[].diff',
           copes: true,
           shape: { type: 'string', required: true, nullable: false },
@@ -622,6 +627,11 @@ export const codexProtocolFingerprint: ProtocolFingerprint = {
           path: 'item<mcpToolCall>.result.content',
           copes: true,
           shape: { type: 'array', required: true, nullable: false },
+        },
+        {
+          path: 'item<mcpToolCall>.durationMs',
+          copes: true,
+          shape: { type: 'number', required: false, nullable: true },
         },
         {
           path: 'item<dynamicToolCall>.status',

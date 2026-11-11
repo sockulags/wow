@@ -9,6 +9,7 @@ import {
   ProviderUpdateRun,
   TaskStatus,
   ThreadState,
+  ToolFacts,
 } from './provider.js';
 import { QuestionOption, QuestionReply } from './questions.js';
 import { SentSkill } from './skills.js';
@@ -157,11 +158,18 @@ export const TextItemPayload = z.object({
 });
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 
-export const ToolCallItemPayload = z.object({
+// A tool call stored before tool kinds has only name, input, output and status, and is drawn as
+// it was (agent workbench spec 48). The server stamps `startedAt` when the call starts and
+// `endedAt` when it ends; `durationMs` is the provider's own measure where it gives one.
+export const ToolCallItemPayload = ToolFacts.partial().extend({
   name: z.string(),
   input: z.unknown(),
   output: z.string(),
   status: z.enum(['running', 'ok', 'error']),
+  exitCode: z.number().int().optional(),
+  startedAt: Timestamp.optional(),
+  endedAt: Timestamp.optional(),
+  durationMs: z.number().nonnegative().optional(),
 });
 export type ToolCallItemPayload = z.infer<typeof ToolCallItemPayload>;
 
@@ -185,8 +193,12 @@ export const QuestionItemPayload = z.object({
 });
 export type QuestionItemPayload = z.infer<typeof QuestionItemPayload>;
 
+// Since the agent workbench, every update of the list is an item of its own, stamped `at`, and
+// is drawn as a one-line marker (spec 31). An item without `at` is a turn's only list, stored
+// before, and is drawn in full as it was (spec 48).
 export const TaskListItemPayload = z.object({
   tasks: z.array(z.object({ id: z.string(), content: z.string(), status: TaskStatus })),
+  at: Timestamp.optional(),
 });
 export type TaskListItemPayload = z.infer<typeof TaskListItemPayload>;
 

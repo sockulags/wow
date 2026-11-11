@@ -300,7 +300,14 @@ describe('provider service', () => {
       {
         id: 't1:turn:0:tool1',
         kind: 'tool_call',
-        payload: { name: 'Bash', input: { command: 'ls' }, output: 'README.md', status: 'ok' },
+        payload: {
+          name: 'Bash',
+          input: { command: 'ls' },
+          output: 'README.md',
+          status: 'ok',
+          startedAt: expect.any(String),
+          endedAt: expect.any(String),
+        },
         streaming: false,
       },
       {
@@ -321,10 +328,23 @@ describe('provider service', () => {
         },
         streaming: false,
       },
+      // Each update is its own item (agent workbench spec 31).
       {
         id: 't1:turn:0:tasks',
         kind: 'task_list',
-        payload: { tasks: [{ id: '1', content: 'Read it', status: 'completed' }] },
+        payload: {
+          tasks: [{ id: '1', content: 'Read it', status: 'in_progress' }],
+          at: expect.any(String),
+        },
+        streaming: false,
+      },
+      {
+        id: 't1:turn:0:tasks:1',
+        kind: 'task_list',
+        payload: {
+          tasks: [{ id: '1', content: 'Read it', status: 'completed' }],
+          at: expect.any(String),
+        },
         streaming: false,
       },
       {

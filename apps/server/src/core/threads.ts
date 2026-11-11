@@ -20,6 +20,7 @@ import {
   assistantThreadId,
   replyProblem,
   replyText,
+  toolFactsOf,
   type QuestionReply,
 } from '@wow/contracts';
 import { z } from 'zod';
@@ -909,11 +910,19 @@ function decideProviderEvents(
       case 'toolCallStarted': {
         const id = itemId(event.itemId);
         if (!exists(id)) {
+          // The server's clock stamps the start, so a reload shows the same time (spec 30).
           add(
             current,
             id,
             'tool_call',
-            { name: event.name, input: event.input ?? null, output: '', status: 'running' },
+            {
+              ...toolFactsOf(event),
+              name: event.name,
+              input: event.input ?? null,
+              output: '',
+              status: 'running',
+              startedAt: now,
+            },
             true,
           );
         }
@@ -932,7 +941,20 @@ function decideProviderEvents(
       }
       case 'toolCallCompleted': {
         const id = itemId(event.itemId);
-        if (exists(id)) patch(current, id, 'tool_call', { status: event.status }, false);
+        if (exists(id)) {
+          patch(
+            current,
+            id,
+            'tool_call',
+            {
+              status: event.status,
+              endedAt: now,
+              ...(event.exitCode === undefined ? {} : { exitCode: event.exitCode }),
+              ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+            },
+            false,
+          );
+        }
         break;
       }
       case 'approvalRequested': {
@@ -1003,9 +1025,14 @@ function decideProviderEvents(
         needsYou(`question:${event.askId ?? event.questionId}`, event.question, null);
         break;
       }
-      case 'taskListUpdated':
-        patch(current, itemId('tasks'), 'task_list', { tasks: event.tasks });
+      case 'taskListUpdated': {
+        // Each update is an item of its own, so the conversation marks where the list changed
+        // (spec 31). The first keeps the id a turn's only list had before.
+        let id = itemId('tasks');
+        for (let count = 1; exists(id); count += 1) id = itemId(`tasks:${count}`);
+        add(current, id, 'task_list', { tasks: event.tasks, at: now }, false);
         break;
+      }
       case 'usage': {
         const usage =
           event.costUsd === undefined
