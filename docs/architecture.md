@@ -1921,7 +1921,7 @@ toFillIn, leftOut}`). It takes every global setting that is stored, passes its s
 from its default: this includes the trackers, hosts and `workflows.templates` settings. A secret
 setting is never read, and a stored reference only puts its key under `toFillIn`; the secret store
 is not asked. A setting whose registry entry has `personal` stays out: `account` for the Jira and
-Confluence email, `machine` for folders and ids that fit one computer (`skills.directories`,
+Confluence email, the GitHub owner and `triggers.ignoredCommentAuthors`, `machine` for folders and ids that fit one computer (`skills.directories`,
 `workspaces.root`, `assistant.providerInstanceId`, `advanced.port`, `desktop.autostart`,
 `appearance.paletteRecent`, `providers.offerSetup`), `person` for what only that person can say (`calendar.zone`,
 `calendar.firstDayOfWeek`, `calendar.workHours`). Projects, cards, backlog items, threads and runs
@@ -1931,7 +1931,10 @@ step names an instance that no longer exists.
 
 **Read and preview** (`setup/file.ts`, `setup/plan.ts`, `planSetup`, RPC `setup.preview {text}` →
 `SetupRead`). `parseSetup` keeps a line counter, so every problem has the line of its key. The
-order: YAML errors; an empty file or one that is not a mapping; the version (a missing version
+order: YAML errors; a `__proto__` key anywhere ("Unknown setting **proto**" under `settings`),
+which would not become a key of the value read; aliases of aliases past the YAML library's
+count, refused with the first alias's line instead of failing; an empty file or one that is not
+a mapping; the version (a missing version
 refuses; a newer one refuses with "needs wow <wow> or newer" before any other check, since a
 newer file may hold keys this wow does not know); the strict schema (an unknown key or a wrong
 type, with where it is: "Workflow "Delivery", step 2: …"); then each setting against its
@@ -1944,10 +1947,17 @@ the file's kind, else takes the first instance of that kind, so a file read wher
 changes nothing. Each command is decided once on the projections without storing anything, so a
 command the app would refuse (rules that point nowhere, a workflow with a live run) refuses the
 file with its line. The preview (`SetupPreview`) has `added` (nothing stored or a new workflow)
-and `replaced` (a stored value or an existing workflow), each a `{what, from, to}` line; `marked`
+and `replaced` (a stored value or an existing workflow), each a `{what, from, to}` line with
+`full`, the whole new value as YAML or text, whenever `to` does not say all of it (a text past
+the 160 characters a line shows, a list, a workflow's steps with their prompts and rules), so
+the view can show it on request and nothing is applied unseen; `marked`
 for a workflow whose skill is not installed ("skill not installed: brew-report") or whose
 provider kind has no instance here; and `toFillIn` with label and place, without the secrets
-this install already has. A file saved and read back on the same install previews nothing.
+this install already has; and `warnings`, shown above Apply: a `trackers.<x>.baseUrl` whose
+host differs from the current global address while a token is stored globally ("the token
+stored here will be sent to <host>"), or for a project that stores its own token and takes the
+global address, and `viewer.htmlScripts` turned on. `warnings` are not kept in the
+`setupApplications` row. A file saved and read back on the same install previews nothing.
 
 **Apply and Undo** (`setup/apply.ts`, `decideSetup`, commands `setup.apply {applicationId,
 name, text}` and `setup.undo {applicationId}`). `decideInSteps` decides them in steps in one
@@ -1965,8 +1975,9 @@ preview and presses Apply.
 **The view** (`apps/web/src/settings/setup.ts`, `setup-section.tsx`). Settings → Advanced has a
 "Setup file" section: "Save setup to a file" (download through a blob link, a toast that says
 how many secrets are listed to fill in and what was left out), "Start from a setup file" (a file
-input; its text goes to `setup.preview`), the preview dialog with the lists Added, Replaced,
-Marked and To fill in afterwards and Apply, or the problems with their lines, and a row per
+input; its text goes to `setup.preview`), the preview dialog with "Read before you apply" (the
+warnings) first, the lists Added, Replaced (a line with `full` opens "Show all of it"), Marked
+and To fill in afterwards and Apply, or the problems with their lines, and a row per
 applied file with Undo or "Undone". The palette has "Save setup to a file", "Start from a setup
 file" (opens Settings → Advanced and its file picker, through `setupStore.pickWanted`) and "Undo
 setup from <name>" for every applied file (the newest before typing). No keybinding: these are

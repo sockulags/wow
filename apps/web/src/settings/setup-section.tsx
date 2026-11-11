@@ -1,5 +1,5 @@
 import type { SetupApplication, SetupPreview } from '@wow/contracts';
-import { CircleAlertIcon, FileDownIcon, FileUpIcon } from 'lucide-react';
+import { CircleAlertIcon, FileDownIcon, FileUpIcon, TriangleAlertIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
 import { useRuntime } from '@/app/runtime';
@@ -42,6 +42,19 @@ function Lines({ title, lines }: { title: string; lines: SetupPreview['added'] }
           <li key={line.what} data-testid="setup-line">
             <span className="font-medium">{line.what}</span>
             {fromTo(line) !== '' && <>: {fromTo(line)}</>}
+            {line.full !== undefined && (
+              <details className="mt-0.5">
+                <summary className="cursor-pointer text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+                  Show all of it
+                </summary>
+                <pre
+                  data-testid="setup-line-full"
+                  className="mt-1 max-h-64 overflow-auto rounded-sm bg-muted p-2 font-mono text-[11px] whitespace-pre-wrap"
+                >
+                  {line.full}
+                </pre>
+              </details>
+            )}
           </li>
         ))}
       </ul>
@@ -88,6 +101,29 @@ export function SetupPreviewDialog() {
         )}
         {read?.outcome === 'ready' && (
           <div className="flex flex-col gap-3">
+            {read.preview.warnings.length > 0 && (
+              <section
+                aria-label="Read before you apply"
+                className="flex flex-col gap-1 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs"
+              >
+                <h3 className="font-medium">Read before you apply</h3>
+                <ul className="flex flex-col gap-1">
+                  {read.preview.warnings.map((warning) => (
+                    <li
+                      key={warning}
+                      data-testid="setup-warning"
+                      className="flex items-start gap-1.5"
+                    >
+                      <TriangleAlertIcon
+                        aria-hidden
+                        className="mt-0.5 size-3.5 shrink-0 text-warning"
+                      />
+                      <span>{warning}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
             <Lines title="Added" lines={read.preview.added} />
             <Lines title="Replaced" lines={read.preview.replaced} />
             {read.preview.marked.length > 0 && (

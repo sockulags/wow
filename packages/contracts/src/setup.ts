@@ -63,12 +63,23 @@ export type SetupMark = z.infer<typeof SetupMark>;
 
 // What applying a file would do: what it adds, what it puts in place of a value that is there,
 // the workflows it marks and the secrets left to fill in. Nothing in it is a secret value.
-export const SetupPreview = z.object({
-  added: z.array(AssistantProposalLine),
-  replaced: z.array(AssistantProposalLine),
+// A line of the preview. `from` and `to` are short; `full` is the whole new value (a long text,
+// a list, a workflow's steps with everything they hold) whenever `to` does not say all of it, so
+// nothing is applied unseen.
+export const SetupLine = AssistantProposalLine.extend({ full: z.string().min(1).optional() });
+export type SetupLine = z.infer<typeof SetupLine>;
+
+const SetupShown = z.object({
+  added: z.array(SetupLine),
+  replaced: z.array(SetupLine),
   marked: z.array(SetupMark),
   toFillIn: z.array(SetupFillIn),
 });
+
+// `warnings` are what applying would let go further than this install did before: a tracker
+// address that a stored token would then be sent to, scripts in HTML files turned on. The
+// preview shows them above Apply.
+export const SetupPreview = SetupShown.extend({ warnings: z.array(z.string().min(1)) });
 export type SetupPreview = z.infer<typeof SetupPreview>;
 
 // Why a file is refused: the line (from 1) and the reason. A problem of the whole file has no
@@ -100,7 +111,7 @@ export type SetupApplicationState = z.infer<typeof SetupApplicationState>;
 
 // One file applied as one step (spec 22), as Settings → Advanced shows it with its Undo. The
 // server's whole record, with what Undo puts back, is `SetupApplicationRecord` (commands.ts).
-export const SetupApplication = SetupPreview.extend({
+export const SetupApplication = SetupShown.extend({
   // The id of the command that applied it.
   id: Id,
   at: Timestamp,

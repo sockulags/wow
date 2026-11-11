@@ -940,6 +940,7 @@ export const settingsRegistry = {
     secret: true,
   }),
   'trackers.github.owner': defineSetting({
+    personal: 'account',
     schema: z.string().trim(),
     group: 'trackers',
     label: 'GitHub owner',
@@ -1070,6 +1071,7 @@ export const settingsRegistry = {
     scope: 'global',
   }),
   'triggers.ignoredCommentAuthors': defineSetting({
+    personal: 'account',
     schema: z.array(z.string().trim().min(1)),
     group: 'triggers',
     label: 'Accounts whose comments start nothing',

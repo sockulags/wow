@@ -1,11 +1,13 @@
 import {
   Command,
+  SecretRef,
   findSecret,
   hideSecretsDeep,
   settingGroupTitles,
   type AssistantProposalLine,
   type ProviderKind,
   type SetupFillIn,
+  type SetupLine,
   type SetupMark,
   type SetupPreview,
   type SetupProblem,
@@ -15,6 +17,7 @@ import {
   withoutAddressAccount,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
+import { stringify } from 'yaml';
 import { patternsOf, settingPlace, show } from '../assistant/changes.js';
 import { skillInstalled } from '../assistant/readers.js';
 import {
@@ -69,12 +72,21 @@ function shown(key: string, value: unknown, read: ReadModel): string {
   return show(key, value, read);
 }
 
+// The whole value as the file holds it, for a line whose short text leaves something out.
+const fullText = (value: unknown): string =>
+  typeof value === 'string' ? value : stringify(value, { lineWidth: 0 }).trimEnd();
+
+const withFull = (line: AssistantProposalLine, value: unknown): SetupLine => {
+  const full = fullText(value);
+  return full === '' || full === line.to ? line : { ...line, full };
+};
+
 const stepsText = (steps: readonly { skillName: string }[]): string =>
   `${steps.length} ${steps.length === 1 ? 'step' : 'steps'}: ${steps.map((step) => step.skillName).join(', ')}`;
 
 interface WorkflowPlan {
   readonly command: Command;
-  readonly line: AssistantProposalLine;
+  readonly line: SetupLine;
   readonly replaces: boolean;
   readonly marks: readonly SetupMark[];
 }
@@ -137,7 +149,7 @@ function planWorkflow(
         ...(entry.forUnits ? { forUnits: true } : {}),
         ...(typeof entry.maxStepVisits === 'number' ? { maxStepVisits: entry.maxStepVisits } : {}),
       }),
-      line: { what, from: null, to: stepsText(steps) },
+      line: withFull({ what, from: null, to: stepsText(steps) }, entry),
       replaces: false,
       marks,
     };
@@ -172,12 +184,15 @@ function planWorkflow(
   const to = words(next);
   return {
     command: Command.parse({ type: 'workflow.update', workflowId: match.id, ...next }),
-    line: {
-      what: `Workflow "${match.name}"`,
-      from,
-      // Steps that differ only in what the count and names do not say.
-      to: to === from ? `${to} (the steps' settings differ)` : to,
-    },
+    line: withFull(
+      {
+        what: `Workflow "${match.name}"`,
+        from,
+        // Steps that differ only in what the count and names do not say.
+        to: to === from ? `${to} (the steps' settings differ)` : to,
+      },
+      entry,
+    ),
     replaces: true,
     marks,
   };
@@ -203,6 +218,56 @@ function checkSecrets(parsed: ParsedSetup, patterns: readonly RegExp[]): SetupPr
   return problems;
 }
 
+const trackerAddress = /^trackers\.(jira|github|gitlab|confluence)\.baseUrl$/;
+
+const hostOf = (address: unknown): string | null => {
+  if (typeof address !== 'string' || address.trim() === '') return null;
+  try {
+    return new URL(address.trim()).host.toLowerCase();
+  } catch {
+    return null;
+  }
+};
+
+// What a global value from the file lets go further than before (spec 22): a stored token that
+// would be sent to another host, globally or for a project that keeps its own token but takes
+// the global address, and scripts in HTML files turned on.
+function warningsOf(
+  key: string,
+  value: unknown,
+  read: ReadModel,
+  context: DecideContext,
+): string[] {
+  if (key === 'viewer.htmlScripts') {
+    return value === true
+      ? [
+          `"${context.registry[key]?.label ?? key}" is turned on: an HTML file opened in the viewer runs its scripts.`,
+        ]
+      : [];
+  }
+  const service = trackerAddress.exec(key)?.[1];
+  const host = hostOf(value);
+  if (service === undefined || host === null) return [];
+  const label = context.registry[key]?.label ?? key;
+  const tokenKey = `trackers.${service}.token`;
+  const tokenAt = (scope: string) =>
+    SecretRef.safeParse(read.setting(tokenKey, scope)?.value).success;
+  const globalAddress = read.setting(key, 'global')?.value ?? context.registry[key]?.default;
+  const found: string[] = [];
+  if (tokenAt('global') && hostOf(globalAddress) !== host) {
+    found.push(`${label} changes to ${host}: the token stored here will be sent to ${host}.`);
+  }
+  for (const project of read.projects()) {
+    const scope = `project:${project.id}`;
+    if (!tokenAt(scope) || read.setting(key, scope) !== undefined) continue;
+    if (hostOf(globalAddress) === host) continue;
+    found.push(
+      `${label} changes to ${host} for project ${project.name}, which takes the global address: the token stored for it will be sent to ${host}.`,
+    );
+  }
+  return found;
+}
+
 export function planSetup(text: string, read: ReadModel, context: DecideContext): SetupPlan {
   const reading = parseSetup(text);
   if (reading.outcome === 'refused') return reading;
@@ -210,8 +275,9 @@ export function planSetup(text: string, read: ReadModel, context: DecideContext)
   const { file } = parsed;
   const patterns = patternsOf(read, context);
   const problems: SetupProblem[] = checkSecrets(parsed, patterns);
-  const added: AssistantProposalLine[] = [];
-  const replaced: AssistantProposalLine[] = [];
+  const added: SetupLine[] = [];
+  const replaced: SetupLine[] = [];
+  const warnings: string[] = [];
   const marked: SetupMark[] = [];
   const planned: { command: Command; line: number | null }[] = [];
 
@@ -249,7 +315,8 @@ export function planSetup(text: string, read: ReadModel, context: DecideContext)
         : `${shown(key, definition.default, read)} (default)`,
       to: shown(key, valid.data, read),
     };
-    (stored ? replaced : added).push(change);
+    (stored ? replaced : added).push(withFull(change, valid.data));
+    warnings.push(...warningsOf(key, valid.data, read, context));
     planned.push({
       command: { type: 'setting.set', key, scope: 'global', value: valid.data },
       line,
@@ -307,6 +374,9 @@ export function planSetup(text: string, read: ReadModel, context: DecideContext)
       problems: problems.toSorted((a, b) => (a.line ?? 0) - (b.line ?? 0)),
     };
   }
-  const preview = hideSecretsDeep({ added, replaced, marked, toFillIn }, patterns) as SetupPreview;
+  const preview = hideSecretsDeep(
+    { added, replaced, marked, toFillIn, warnings },
+    patterns,
+  ) as SetupPreview;
   return { outcome: 'ready', preview, commands: planned.map(({ command }) => command) };
 }

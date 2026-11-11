@@ -1,5 +1,14 @@
 import { SetupFile, setupFileVersion, type SetupProblem } from '@wow/contracts';
-import { Document, LineCounter, isMap, isScalar, isSeq, parseDocument, type Node } from 'yaml';
+import {
+  Document,
+  LineCounter,
+  isMap,
+  isScalar,
+  isSeq,
+  parseDocument,
+  visit,
+  type Node,
+} from 'yaml';
 import type { z } from 'zod';
 
 // Reading a setup file's text: YAML into the file's schema, with the line of everything that is
@@ -123,7 +132,51 @@ export function parseSetup(text: string): SetupParse {
     );
   }
   const lineOf = (path: SetupPath) => locate(document, counter, path);
-  const value: unknown = document.toJS({ maxAliasCount: 100 });
+  const lineAt = (node: Node | null | undefined) => {
+    const offset = node?.range?.[0];
+    return offset === undefined ? null : counter.linePos(offset).line;
+  };
+  // A key "__proto__" does not become a key of the value read, so it would pass unseen.
+  const hidden: SetupProblem[] = [];
+  visit(document, {
+    Pair(_key, pair, path) {
+      if (!isScalar(pair.key) || pair.key.value !== '__proto__') return;
+      const parent = path.at(-1);
+      const inSettings =
+        isMap(document.contents) &&
+        document.contents.items.some(
+          (item) => isScalar(item.key) && item.key.value === 'settings' && item.value === parent,
+        );
+      hidden.push({
+        line: lineAt(pair.key),
+        reason: inSettings
+          ? 'Unknown setting __proto__'
+          : 'The file has a key wow does not know: "__proto__"',
+      });
+    },
+  });
+  if (hidden.length > 0) return refused(hidden);
+  let value: unknown;
+  try {
+    value = document.toJS({ maxAliasCount: 100 });
+  } catch {
+    // Aliases of aliases can stand for far more than the text holds; the YAML library stops at
+    // the count and wow refuses the file rather than read it.
+    let first: number | null = null;
+    visit(document, {
+      Alias(_key, alias) {
+        first = lineAt(alias);
+        return visit.BREAK;
+      },
+    });
+    return refused([
+      {
+        line: first,
+        reason:
+          'The file repeats aliases (*name) more than wow reads; write the values out instead',
+      },
+    ]);
+  }
   if (value === null || value === undefined) {
     return refused([{ line: null, reason: 'The file is empty' }]);
   }
