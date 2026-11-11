@@ -1706,13 +1706,19 @@ three kinds and nothing else.
   19, 20). It reads provider instances whose status is not `ready`; runs `trackers.test` for
   each host whose token or address is stored, globally and for each project that stores its own
   (sign-in requests only, nothing is written); failed host, ticket and page reads with the
-  setting they name; workflow steps whose skill is not installed; event triggers with a
-  "Trigger failed" notification and no run started after it; failed runs (until a later run of
-  the same workflow and project ends `done`) and failed plan runs with their stored error; and
-  cards with a workflow that are `missed`, or `failed` without a run, with the notification's
-  reason. Runs, triggers and cards are cut to `assistant.diagnosisLimit` each, newest first.
-  A failed trigger's reason exists only as a notification, so with `scheduler.notifications`
-  off it is not found.
+  setting they name (a read of a run only while the run is live, since an ended run is not read
+  again); workflow steps whose skill is not installed; event triggers whose event was recorded
+  without a run (`trigger_events`) and whose "Trigger failed" notification
+  (`<trigger>:<event>:failed`, matched by that exact id) has no run of the trigger after it;
+  failed runs (until a later run of the same workflow and project ends `done`) and failed plan
+  runs (until a later plan run of the same plan ends `done`) with their stored error; and cards
+  with a workflow that are `missed`, or `failed` without a run, with the notification's reason
+  (until a run of the card's workflow and project that started after the card's start ends
+  `done`). Each part asks SQLite only for the rows that can fail (by state or error), and runs,
+  triggers and cards stop at `assistant.diagnosisLimit` each, newest first. Times are told in
+  the calendar's zone (`calendar.zone`, as the calendar resolves it), e.g. "Tue, 10 Nov 2026,
+  09:00 (Europe/Stockholm)". A failed trigger's reason exists only as a notification, so with
+  `scheduler.notifications` off it is not found.
 
 Every result passes `hideSecretsDeep` with the patterns of `assistant.secretPatterns` before it
 leaves `call`, so text that looks like a secret arrives as `[hidden]` (spec 18). The net

@@ -907,10 +907,12 @@ version than the one named. What you type in the field goes straight to the secr
 
 Ask the assistant why something does not work and it reads what is failing: provider instances
 that are not signed in, connection tests of the hosts you set up (it signs in as Test connection
-does, and writes nothing), failed host reads, workflow steps whose skill is not installed, event
-triggers that could not start a run, failed runs with their error (until a later run of the same
-workflow in the same project ends done), and cards that did not start and why. Each comes with
-the setting or view to fix it in. When nothing fails it says so and what it looked at. It lists at
+does, and writes nothing), failed host reads (of a run only while it is running or waiting),
+workflow steps whose skill is not installed, event triggers that could not start a run, failed
+runs with their error (until a later run of the same workflow in the same project ends done),
+failed plan runs (until a later plan run of the same plan ends done), and cards that did not start
+and why (until a later run of the card's workflow in its project ends done). Each comes with the
+setting or view to fix it in, and times are in the calendar's time zone. When nothing fails it says so and what it looked at. It lists at
 most `assistant.diagnosisLimit` (5) failed runs, failed triggers and cards of each kind, newest
 first. A trigger's reason is kept only while desktop notifications are on.
 
