@@ -31,10 +31,12 @@ import {
   BackgroundIndicator,
   ChatQuestions,
   ConversationItem,
-  ToolCallGroup,
+  StoppedLine,
   WorkingIndicator,
   type ItemContext,
 } from './items';
+import { TaskPin } from './task-pin';
+import { ToolCallGroup } from './tools/group';
 import {
   canMarkDone,
   contextPercent,
@@ -298,6 +300,7 @@ export function ThreadConversation({
   const showMeter = useSetting('chat.contextMeter');
   const resumePrompt = useSetting('chat.resumePrompt');
   const groupTools = useSetting('chat.groupToolCalls');
+  const outputLines = useSetting('chat.toolOutputLines');
   const skillTrigger = useSetting('chat.skillTrigger');
   const { when } = useDateFormat();
   const { container, onScroll } = useStickToBottom(items);
@@ -326,6 +329,9 @@ export function ThreadConversation({
   const context = latestContext(items ?? []);
   const retry = lastUserSent(items ?? []);
   const errorId = canResume ? lastErrorId(items ?? []) : undefined;
+  // A stopped turn's line carries Resume; the footer keeps it for a stopped turn with no items.
+  const stoppedLineResumes =
+    last?.state === 'interrupted' && (items ?? []).some((item) => item.turnId === last.id);
   const permissionLabel = instance
     ? (permissionOptions(instance.kind, thread.permissionMode).find(
         (option) => option.id === thread.permissionMode,
@@ -342,6 +348,7 @@ export function ThreadConversation({
       awaitingApproval: approval !== undefined,
       formatAt: when,
       questionHold: extras?.questionHold,
+      outputLines,
       recovery:
         itemId === errorId
           ? {
@@ -402,9 +409,15 @@ export function ThreadConversation({
       >
         <div className={column}>
           <ol aria-label="Conversation" className="flex flex-col gap-3">
-            {entries.map((entry) => {
+            {entries.map((entry, index) => {
               const tail = entry.kind === 'item' ? entry.item : entry.items.at(-1);
               const after = tail && afters.get(tail.id);
+              const next = entries[index + 1];
+              const nextTurn = next?.kind === 'item' ? next.item.turnId : next?.items[0]?.turnId;
+              const turn = tail && turnById.get(tail.turnId);
+              // A stopped turn ends with its line; Resume sits on the last one (spec 89).
+              const stopped =
+                turn?.state === 'interrupted' && nextTurn !== turn.id ? turn : undefined;
               return (
                 <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
                   {entry.kind === 'item' ? (
@@ -427,9 +440,23 @@ export function ThreadConversation({
                     <ToolCallGroup
                       items={entry.items}
                       contextOf={(item) => itemContext(item.turnId, item.id)}
+                      closed={next !== undefined || after !== undefined}
                     />
                   )}
                   {after && <li>{after}</li>}
+                  {stopped && (
+                    <li>
+                      <StoppedLine
+                        turn={stopped}
+                        formatAt={when}
+                        resume={
+                          canResume && stopped.id === last?.id
+                            ? { onResume: () => void message(resumePrompt), prompt: resumePrompt }
+                            : undefined
+                        }
+                      />
+                    </li>
+                  )}
                 </Fragment>
               );
             })}
@@ -448,6 +475,7 @@ export function ThreadConversation({
         </div>
       </div>
       <div className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}>
+        <TaskPin threadId={threadId} items={items ?? []} turns={turns} />
         {gateRun && (
           <GateBar
             run={gateRun}
@@ -467,7 +495,7 @@ export function ThreadConversation({
           notice={extras?.notice}
           {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
           footer={
-            (showMeter && context) || (canResume && !errorId) ? (
+            (showMeter && context) || (canResume && !errorId && !stoppedLineResumes) ? (
               <div className="flex min-h-6 flex-wrap items-center gap-3">
                 {showMeter && context && (
                   <ContextMeter
@@ -479,7 +507,7 @@ export function ThreadConversation({
                     }
                   />
                 )}
-                {canResume && !errorId && (
+                {canResume && !errorId && !stoppedLineResumes && (
                   // A stopped turn has no error row to carry Resume, so it sits here.
                   <WithTooltip label={`Sends: ${resumePrompt}`}>
                     <Button

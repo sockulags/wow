@@ -96,7 +96,7 @@ const components: Components = {
     return language.toLowerCase() === 'mermaid' ? (
       <MermaidDiagram source={text} />
     ) : (
-      <CodeBlock code={text} language={language} className="text-xs" />
+      <CodeBlock code={text} language={language} className="text-xs" copy />
     );
   },
 };

@@ -11,22 +11,19 @@ import {
   type BackgroundTask,
   type Question,
   type ThreadItem,
+  type Turn,
 } from '@wow/contracts';
 import {
   BrainIcon,
-  CheckIcon,
   ChevronRightIcon,
   CircleAlertIcon,
   CircleDashedIcon,
-  CircleDotIcon,
-  CircleIcon,
   HourglassIcon,
   RotateCcwIcon,
   ShieldQuestionIcon,
-  WrenchIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { CodeBlock } from '@/components/code-block';
+import { CopyButton } from '@/components/copy-button';
 import { WithTooltip } from '@/components/hint';
 import { Markdown } from '@/components/markdown';
 import { Badge } from '@/components/ui/badge';
@@ -41,7 +38,10 @@ import {
 } from './question-card';
 import { formatCost, formatTokens } from './model';
 import { SentSkillChip } from './skill-chip';
-import { failedToolCalls, formatElapsed } from './view-model';
+import { TaskList, TaskMarker } from './task-pin';
+import { ToolCall } from './tools/index';
+import { useNow } from './tools/time';
+import { formatElapsed } from './view-model';
 
 // What a row needs to know about the thread and the turn around it.
 export interface ItemContext {
@@ -64,6 +64,8 @@ export interface ItemContext {
   readonly formatAt: (iso: string) => string;
   // The Assistant view's secret check, for a lone question drawn as an item.
   readonly questionHold?: QuestionHold | undefined;
+  // How many last lines of a tool's output an opened row shows (`chat.toolOutputLines`).
+  readonly outputLines?: number | undefined;
 }
 
 // One row per thread item. Rows skip layout and paint while off screen, so a long conversation
@@ -130,12 +132,33 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
 
 // Assistant text through the shared markdown renderer. While it streams, an unfinished table or
 // fence stays plain text until it is complete.
+// Copy puts the markdown on the clipboard, Copy text what the message reads as on screen (spec
+// 32); both show on hover or focus once the message is complete.
 function AssistantText({ payload, streaming }: { payload: TextItemPayload; streaming: boolean }) {
+  const body = useRef<HTMLDivElement>(null);
   return (
-    <div aria-busy={streaming}>
-      <Markdown text={payload.text} streaming={streaming} />
-      {streaming && (
+    <div aria-busy={streaming} className="group/message relative">
+      <div ref={body}>
+        <Markdown text={payload.text} streaming={streaming} />
+      </div>
+      {streaming ? (
         <span aria-hidden className="mt-1 block h-3.5 w-1.5 animate-pulse bg-foreground/60" />
+      ) : (
+        <div
+          data-testid="message-copy"
+          className="mt-0.5 flex gap-0.5 text-muted-foreground opacity-0 transition-opacity group-focus-within/message:opacity-100 group-hover/message:opacity-100"
+        >
+          <CopyButton text={payload.text} label="Copy" />
+          <CopyButton
+            text={() => {
+              const element = body.current;
+              if (!element) return payload.text;
+              // jsdom has no innerText; a browser's keeps the line breaks the reader sees.
+              return (element.innerText ?? element.textContent ?? '').trim();
+            }}
+            label="Copy text"
+          />
+        </div>
       )}
     </div>
   );
@@ -151,90 +174,6 @@ function Reasoning({ payload, streaming }: { payload: TextItemPayload; streaming
         {streaming ? 'Thinking…' : 'Reasoning'}
       </summary>
       <div className="mt-1 border-l border-border pl-3 whitespace-pre-wrap">{payload.text}</div>
-    </details>
-  );
-}
-
-function inputSummary(input: unknown): string {
-  if (typeof input === 'string') return input;
-  if (typeof input !== 'object' || input === null) return '';
-  const first = Object.values(input).find((value) => typeof value === 'string');
-  return typeof first === 'string' ? first : '';
-}
-
-const toolStatus = {
-  running: { label: 'running', className: 'text-state-working' },
-  ok: { label: 'done', className: 'text-muted-foreground' },
-  error: { label: 'error', className: 'text-state-failed' },
-} as const;
-
-function toolCallStatus(payload: ToolCallItemPayload, context: ItemContext) {
-  return payload.status === 'running' && context.awaitingApproval
-    ? { label: 'waiting for approval', className: 'text-state-needs-you' }
-    : payload.status === 'running' && context.turnEnded
-      ? { label: 'not finished', className: 'text-muted-foreground' }
-      : toolStatus[payload.status];
-}
-
-// The line a tool call is drawn as: its name, the first text of its input and its status.
-function ToolCallLine({
-  payload,
-  context,
-  extra,
-}: {
-  payload: ToolCallItemPayload;
-  context: ItemContext;
-  extra?: ReactNode;
-}) {
-  const status = toolCallStatus(payload, context);
-  const summary = inputSummary(payload.input);
-  return (
-    <>
-      <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="font-mono font-medium">{payload.name}</span>
-      {summary !== '' && (
-        <span className="min-w-0 truncate font-mono text-muted-foreground">{summary}</span>
-      )}
-      <span className="ml-auto flex shrink-0 items-center gap-2">
-        {extra}
-        <span className={status.className}>{status.label}</span>
-      </span>
-    </>
-  );
-}
-
-function ToolCall({ payload, context }: { payload: ToolCallItemPayload; context: ItemContext }) {
-  // Input and output render only while open, so long outputs cost nothing when collapsed.
-  const [open, setOpen] = useState(false);
-  return (
-    <details
-      className="group rounded-md border border-border text-xs"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 select-none">
-        <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />
-        <ToolCallLine payload={payload} context={context} />
-      </summary>
-      {open && (
-        <div className="flex flex-col gap-2 border-t border-border p-2">
-          <section aria-label="Tool input">
-            <h4 className="mb-1 text-2xs text-muted-foreground">Input</h4>
-            <CodeBlock
-              code={JSON.stringify(payload.input, null, 2)}
-              language="json"
-              className="max-h-64 text-2xs"
-            />
-          </section>
-          <section aria-label="Tool output">
-            <h4 className="mb-1 text-2xs text-muted-foreground">Output</h4>
-            {payload.output === '' ? (
-              <p className="text-2xs text-muted-foreground">No output.</p>
-            ) : (
-              <CodeBlock code={payload.output} className="max-h-96 text-2xs" />
-            )}
-          </section>
-        </div>
-      )}
     </details>
   );
 }
@@ -417,49 +356,6 @@ export function ChatQuestions({
   );
 }
 
-const taskIcons = {
-  pending: CircleIcon,
-  in_progress: CircleDotIcon,
-  completed: CheckIcon,
-} as const;
-
-function TaskList({ payload, context }: { payload: TaskListItemPayload; context: ItemContext }) {
-  return (
-    <section aria-label="Tasks" className="rounded-md border border-border p-2 text-xs">
-      <h4 className="mb-1 px-1 text-2xs font-medium text-muted-foreground">Tasks</h4>
-      <ul className="flex flex-col gap-0.5">
-        {payload.tasks.map((task) => {
-          // A turn that ended leaves unfinished tasks unfinished; they no longer show as running.
-          const unfinished = context.turnEnded && task.status !== 'completed';
-          const Icon = unfinished ? CircleIcon : taskIcons[task.status];
-          return (
-            <li
-              key={task.id}
-              data-status={task.status}
-              className={cn(
-                'flex items-start gap-2 px-1',
-                task.status === 'completed' && 'text-muted-foreground line-through',
-              )}
-            >
-              <Icon
-                aria-label={unfinished ? 'not finished' : task.status.replace('_', ' ')}
-                className={cn(
-                  'mt-0.5 size-3.5 shrink-0',
-                  task.status === 'in_progress' && !unfinished && 'text-state-working',
-                )}
-              />
-              <span className="min-w-0 flex-1">{task.content}</span>
-              {unfinished && (
-                <span className="shrink-0 text-2xs text-muted-foreground">not finished</span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
 function UsageRow({ payload }: { payload: UsageItemPayload }) {
   if (payload.inputTokens === undefined && payload.outputTokens === undefined) return null;
   const parts = [
@@ -573,8 +469,14 @@ function ItemBody({
     }
     case 'task_list': {
       const parsed = TaskListItemPayload.safeParse(item.payload);
+      // An update since the agent workbench is a one-line marker; a turn's only list from
+      // before is drawn in full, as it was (spec 31, 48).
       return parsed.success ? (
-        <TaskList payload={parsed.data} context={context} />
+        parsed.data.at === undefined ? (
+          <TaskList tasks={parsed.data.tasks} turnEnded={context.turnEnded} />
+        ) : (
+          <TaskMarker payload={parsed.data} turnEnded={context.turnEnded} />
+        )
       ) : (
         <Unreadable item={item} />
       );
@@ -605,88 +507,6 @@ export function ConversationItem(props: {
       <ItemBody {...props} />
     </Row>
   );
-}
-
-// A run of tool calls as one row (`chat.groupToolCalls`): the latest call as a single row draws
-// it, how many there are, and how many failed, so a failure shows without opening the row. Open,
-// it lists every call, each opening to its input and output. The open state is this window's.
-export function ToolCallGroup({
-  items,
-  contextOf,
-}: {
-  items: readonly ThreadItem[];
-  contextOf: (item: ThreadItem) => ItemContext;
-}) {
-  const [open, setOpen] = useState(false);
-  const first = items[0];
-  const latest = items.at(-1);
-  if (first === undefined || latest === undefined) return null;
-  const parsed = ToolCallItemPayload.safeParse(latest.payload);
-  const failed = failedToolCalls(items);
-  const extra = (
-    <>
-      <span data-testid="tool-group-count" className="text-muted-foreground">
-        {items.length} tool calls
-      </span>
-      {failed > 0 && (
-        <span data-testid="tool-group-failed" className="text-state-failed">
-          {failed} failed
-        </span>
-      )}
-    </>
-  );
-  return (
-    <li
-      data-testid="item-tool_group"
-      data-item-id={first.id}
-      data-failed={failed > 0 || undefined}
-      className="[contain-intrinsic-size:auto_2.5rem] [content-visibility:auto]"
-    >
-      <details
-        className={cn(
-          'group/tools rounded-md border text-xs',
-          failed > 0 ? 'border-state-failed/50' : 'border-border',
-        )}
-        onToggle={(event) => setOpen(event.currentTarget.open)}
-      >
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 select-none">
-          <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-open/tools:rotate-90" />
-          {parsed.success ? (
-            <ToolCallLine payload={parsed.data} context={contextOf(latest)} extra={extra} />
-          ) : (
-            <span className="ml-auto">{extra}</span>
-          )}
-        </summary>
-        {open && (
-          <ol aria-label="Tool calls" className="flex flex-col gap-1 border-t border-border p-2">
-            {items.map((item) => (
-              <ConversationItem
-                key={item.id}
-                item={item}
-                approvals={[]}
-                questions={[]}
-                context={contextOf(item)}
-              />
-            ))}
-          </ol>
-        )}
-      </details>
-    </li>
-  );
-}
-
-// One redraw a second while a turn runs, for its clock.
-const second = 1000;
-
-function useNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return undefined;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), second);
-    return () => clearInterval(timer);
-  }, [active]);
-  return now;
 }
 
 // "Working · 0:42": how long the running turn has taken, from the turn's own start time.
@@ -720,6 +540,40 @@ export function WorkingIndicator({ startedAt }: { startedAt: string | undefined 
           </span>
         )}
       </span>
+    </p>
+  );
+}
+
+// The muted end of a turn the user stopped: "Stopped by you · 20:41", with Resume on the last
+// one (spec 89).
+export function StoppedLine({
+  turn,
+  formatAt,
+  resume,
+}: {
+  turn: Turn;
+  formatAt: (iso: string) => string;
+  resume?: { readonly onResume: () => void; readonly prompt: string } | undefined;
+}) {
+  return (
+    <p data-testid="turn-stopped" className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span>
+        Stopped by you
+        {turn.endedAt && (
+          <>
+            {' · '}
+            <time dateTime={turn.endedAt}>{formatAt(turn.endedAt)}</time>
+          </>
+        )}
+      </span>
+      {resume && (
+        <WithTooltip label={`Sends: ${resume.prompt}`}>
+          <Button size="xs" variant="outline" onClick={resume.onResume}>
+            <RotateCcwIcon />
+            Resume
+          </Button>
+        </WithTooltip>
+      )}
     </p>
   );
 }

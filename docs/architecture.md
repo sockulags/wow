@@ -257,11 +257,26 @@ ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode
                  answerApproval {approvalId, decision} |
                  answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
                  listModels | test
-ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | toolCallStarted |
-                 toolCallOutput | toolCallCompleted | approvalRequested | questionAsked |
+ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta |
+                 toolCallStarted {itemId, name, input, ...ToolFacts?} | toolCallOutput |
+                 toolCallCompleted {itemId, status, exitCode?, durationMs?} | approvalRequested | questionAsked |
                  taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
                  | turnStartedByProvider | backgroundTasks {tasks [{id, description, agent?}]}
 ```
+
+**Tool facts.** Each adapter normalizes a tool call into `ToolFacts` (`provider.ts`): `kind`
+(`command`, `read`, `search`, `web`, `mcp`, `edit`, `other`) and, where the input gives them,
+`command`, `cwd`, `path`, `lines {from, to?}`, `pattern`, `url`, `query`, `server`, `tool`.
+Claude Code (`provider-claude/src/tools.ts`): Bash is a command (its result has no exit code or
+duration, so a failed one is only `error`), Read and NotebookRead reads (offset and limit become
+`lines`), Grep and Glob searches, WebFetch and WebSearch web, `mcp__<server>__<tool>` MCP, Edit,
+MultiEdit, Write and NotebookEdit edits, anything else `other`. Codex: a `commandExecution` is a
+command with its `cwd`, and its completion carries `exitCode` and `durationMs`; `mcpToolCall` is
+MCP (with `durationMs`), `fileChange` an edit (with `path` when it changes one file), `webSearch`
+web, `imageView` a read, `dynamicToolCall` other. The server stamps `startedAt` on
+`toolCallStarted` and `endedAt` on `toolCallCompleted` with its own clock and keeps the facts,
+exit code and provider duration in the item's payload, so a reload shows the same times. A call
+stored before has none of these fields and is drawn as it was.
 
 **Turns the provider starts.** Claude Code goes on with a thread by itself when background work
 it started (a background subagent or shell command) ends: the open `query()` stream carries more
@@ -344,9 +359,11 @@ thread it maps to, since the app-server has no request that unloads one.
   and stored one batch per thread per tick as a `provider.events` command, which the orchestrator
   (`core/threads.ts`) turns into rows: text and reasoning deltas append to one
   `assistant_text`/`reasoning` item per provider item id (`{text}`), tool calls are `tool_call`
-  items (`{name, input, output, status}`), `approval` and `question` items point at their
-  `approvals`/`questions` rows (the payload of each item kind is a schema in `packages/contracts`,
-  `*ItemPayload`), the task list is one `task_list` item per turn (`{tasks}`), and usage plus
+  items (`{name, input, output, status}` plus the tool facts and times below), `approval` and
+  `question` items point at their `approvals`/`questions` rows (the payload of each item kind is a
+  schema in `packages/contracts`, `*ItemPayload`), each task list update is a `task_list` item of
+  its own (`{tasks, at}`: the first keeps the id `<turn>:tasks`, later ones `<turn>:tasks:<n>`; a
+  turn's single list stored before has no `at`), and usage plus
   context usage merge into one `usage` item per turn and the turn's `usage`. Provider ids are only
   unique per session, so row ids are prefixed with the turn or thread id. Thread state: `working`
   while a turn runs, `needs_you` while an approval or question is open, `idle` after a completed or
@@ -1375,8 +1392,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
   `providers.offerSetup`
-- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.starterCount`,
-  `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds` (see "Chat view")
+- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.toolOutputLines`,
+  `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`
+  (see "Chat view")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.maxOccurrences` (see "Repeating cards"),
@@ -2312,9 +2330,10 @@ the sentence. The conversation is the chat view's `ThreadConversation` with
 composer's ref, placeholder, blocked reason, a check before send and a notice line. Nothing of
 the chat view is copied. The skill list and chips are off there (no `providerKind`). With `chat.groupToolCalls` on (the
 default), `groupToolCalls` (`chat/view-model.ts`) draws consecutive tool calls of one turn as one
-row (`ToolCallGroup`): the latest call, the count and how many failed; any other item, a new turn,
-or a call that has rows after it (change rows, proposals, cards) ends the run. Its open state is
-the window's own.
+row (`ToolCallGroup`, `chat/tools/group.tsx`): while open to more calls, the latest call, the
+count and how many failed; closed, a summary of what was done (see "Tool rows, the task pin and
+copy"); any other item, a new turn, or a call that has rows after it (change rows, proposals,
+cards) ends the run. Its open state is the window's own.
 
 - Rows (`assistant/model.ts`, `placeRows`). A change row or proposal card goes right after the
   tool call whose answer names its id (`change.id`, `proposal.id` in the call's output); one
@@ -2703,6 +2722,36 @@ group, detail and keyword matches and needs every typed word. A title's group pr
 today") is dropped where the group heading says it, and `detail` says what a row is. cmdk claims Ctrl+J/K/N/P for list movement and stops the event, so the palette
 runs the app's shortcuts with a modifier itself; otherwise Ctrl+K pressed while the palette fades
 out after Escape was lost.
+
+### Tool rows, the task pin and copy
+
+`chat/tools/` draws a `tool_call` item by its `kind` (agent workbench spec 27 to 30): `command.tsx`
+reads `$ <command>` in mono, `in <folder>` when the command's `cwd` is not the thread's, and on
+the right "exit 1 · 4.2 s" or, without an exit code, "failed" / "done" with the time; `read.tsx`,
+`search.tsx` and `web.tsx` are one line ("Read README.md lines 1-80", "Search kettle in src",
+"Fetch example.org", paths shown relative to the thread's folder); `mcp.tsx` reads
+`server › tool` with the arguments as `key: value` and the JSON behind Show JSON; `generic.tsx`
+is today's row (name, first input text, status words, input and output) for `other`, `edit` (its
+diff row comes later) and every call stored before kinds. Times (`time.tsx`, `facts.ts`): the
+provider's `durationMs` if it gave one, else `endedAt − startedAt`; a running call counts up from
+`startedAt` once a second (display only); a call its turn left running reads "not finished".
+Opened, output sits in `output.tsx`'s box with its last `chat.toolOutputLines` lines, "Show all N
+lines" and Copy (which copies all of it). A group (`group.tsx`) is closed once something follows
+it or its turn ended with no call running, and then reads what it did ("Read 2 files, ran 1
+command · 1 failed", `groupSummary`); before that it draws its latest call with its time.
+
+`chat/task-pin.tsx`: the latest `task_list` of the running turn, or else the last turn, is pinned
+above the composer as "3/7 · <task in progress>" (`TaskPin`), opening to the list; Ctrl+T
+(`keybindings.toggleTasks`, palette "Show task list" / "Hide task list", acting on the newest pin
+shown, via `taskPinStore`) toggles it, and the open state is the window's, per thread. Each update
+in the conversation is a marker "Updated tasks (3/7)" that opens to that list; a list stored
+before (no `at`) is drawn in full as before. The panel's thread Details has a Tasks section
+(`TaskDetails`).
+
+Copy (`components/copy-button.tsx`): an assistant message has Copy (its markdown) and Copy text
+(what it reads on screen) on hover or focus; fenced code in markdown has Copy code
+(`CodeBlock copy`); tool output has Copy output. A stopped turn ends with "Stopped by you · 20:41"
+(`StoppedLine`, from the turn's `endedAt`), which carries Resume on the last turn.
 
 ### Thread list, unread and chat notifications
 

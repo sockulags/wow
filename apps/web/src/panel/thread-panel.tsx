@@ -13,6 +13,7 @@ import {
   runLabel,
   threadTitle,
 } from '@/chat/model';
+import { TaskDetails } from '@/chat/task-pin';
 import { stateDotClass, threadStateLabels } from '@/chat/thread-view';
 import { effortLabel, providerLabel } from '@/chat/view-model';
 import { PathText } from '@/components/path-text';
@@ -108,6 +109,9 @@ export function ThreadPanel({ threadId }: { readonly threadId: string }) {
             ]}
           />
         )}
+      </PanelSection>
+      <PanelSection label="Tasks">
+        <TaskDetails items={items} turns={turns} />
       </PanelSection>
       {(run || card || item) && (
         <PanelSection label="Belongs to">

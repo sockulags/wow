@@ -12,6 +12,7 @@ import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
 import { activeSkillComposer, skillComposerStore } from '@/chat/composer-store';
 import { skillComposerCommands } from '@/chat/skill-commands';
+import { activeTaskPin, taskPinCommands, taskPinStore } from '@/chat/task-pin';
 import { paletteThreadHits, threadListStore } from '@/chat/thread-commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
@@ -108,6 +109,10 @@ export function useCommands(gated = false): {
   const connectShown = useStore(connectStore, (state) => state.shown > 0);
   const questionCard = useStore(questionStore, activeQuestionCard);
   const skillComposer = useStore(skillComposerStore, activeSkillComposer);
+  const taskPin = useStore(taskPinStore, activeTaskPin);
+  const taskPinOpen = useStore(taskPinStore, (state) =>
+    taskPin === undefined ? false : (state.open[taskPin] ?? false),
+  );
   const all = useMemo(() => {
     const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
@@ -192,6 +197,7 @@ export function useCommands(gated = false): {
       }),
       ...questionCommands(questionCard),
       ...skillComposerCommands(skillComposer),
+      ...taskPinCommands(taskPin, taskPinOpen),
       ...assistantCommands({
         changes: assistantChanges ?? [],
         proposals: assistantProposals ?? [],
@@ -258,6 +264,8 @@ export function useCommands(gated = false): {
     connectShown,
     questionCard,
     skillComposer,
+    taskPin,
+    taskPinOpen,
     listProjectId,
     paletteHits,
   ]);
