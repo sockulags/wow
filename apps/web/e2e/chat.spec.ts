@@ -47,7 +47,9 @@ test.describe('chat', () => {
     await reasoning.getByText('Reasoning').click();
     await expect(reasoning.getByText('The user said hello.')).toBeVisible();
 
-    await expect(items.getByRole('region', { name: 'Tasks' })).toContainText('Answer it');
+    // Each update of the task list is a marker; the latest is pinned above the composer.
+    await expect(items.getByTestId('task-marker')).toHaveText('Updated tasks (1/2)');
+    await expect(page.getByTestId('task-pin-line')).toHaveText('1/2 · Answer it');
     await expect(items.getByLabel('Turn usage')).toHaveText(
       '1,200 in · 340 out · 800 cached · $0.01',
     );
@@ -189,11 +191,9 @@ test.describe('chat', () => {
     const group = conversation(page).getByTestId('item-tool_group');
     await expect(group).toHaveCount(1);
     const row = group.locator(':scope > details > summary');
-    // The latest call as a single row draws it, the count, and the failure without opening.
-    await expect(row).toContainText('Read');
-    await expect(row).toContainText('README.md');
-    await expect(row).toContainText('done');
-    await expect(group.getByTestId('tool-group-count')).toHaveText('3 tool calls');
+    // Closed, the row says what was done and the failure without opening. These calls carry no
+    // tool kind, as calls stored before kinds, so they count as tools.
+    await expect(group.getByTestId('tool-group-summary')).toHaveText('Used 3 tools · 1 failed');
     await expect(group.getByTestId('tool-group-failed')).toHaveText('1 failed');
     await expect(conversation(page).getByTestId('item-tool_call')).toHaveCount(0);
 
@@ -213,6 +213,78 @@ test.describe('chat', () => {
     await row.focus();
     await page.keyboard.press('Space');
     await expect(calls).toHaveCount(0);
+  });
+
+  test('reads commands, reads and MCP calls as rows with exit code and time', async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.clock.install();
+    await startThread(page, 'Run the tools');
+    const items = conversation(page);
+    const group = items.getByTestId('item-tool_group');
+    const row = group.locator(':scope > details > summary');
+    // While the turn runs, the group draws its latest call with its time counting up from the
+    // start the server stored (spec 30, 91).
+    await expect(row.getByTestId('tool-command')).toHaveText('$ pnpm dev');
+    const time = row.getByTestId('tool-time');
+    const startedAt = await time.getAttribute('data-started-at');
+    expect(startedAt).toMatch(/^\d{4}-/);
+    await page.clock.pauseAt(Date.parse(startedAt ?? '') + 10_000);
+    await expect(time).toHaveText('running · 10 s');
+    await page.clock.runFor(5000);
+    await expect(time).toHaveText('running · 15 s');
+    await page.reload();
+    await expect(row.getByTestId('tool-time')).toHaveAttribute('data-started-at', startedAt ?? '');
+
+    // The task list is pinned above the composer and Ctrl+T opens it (spec 31).
+    await expect(items.getByTestId('task-marker')).toHaveText('Updated tasks (3/7)');
+    await expect(page.getByTestId('task-pin-line')).toHaveText('3/7 · Running the tests');
+    await page.getByRole('combobox', { name: 'Message' }).focus();
+    await page.keyboard.press('Control+t');
+    await expect(page.getByRole('region', { name: 'Pinned tasks' })).toContainText(
+      'Write the summary',
+    );
+    await page.keyboard.press('Control+t');
+    await expect(page.getByRole('region', { name: 'Pinned tasks' })).toBeHidden();
+
+    // Each call is its own row: the command with its folder, exit code and time, the read as one
+    // line, the MCP call as server › tool with its arguments (spec 27 to 29).
+    await row.click();
+    const calls = group.getByTestId('item-tool_call');
+    await expect(calls).toHaveCount(4);
+    const failing = calls.nth(0);
+    await expect(failing.getByTestId('tool-command')).toHaveText('$ pnpm test');
+    await expect(failing.getByTestId('tool-folder')).toHaveText(/^in .*[\\/]app$/);
+    await expect(failing.getByTestId('tool-time')).toHaveText('exit 1 · 4.2 s');
+    await expect(calls.nth(1).getByTestId('tool-line')).toHaveText('Read README.md lines 1-80');
+    await expect(calls.nth(2).getByTestId('tool-mcp')).toHaveText('tracker › find_issue');
+    await expect(calls.nth(2).getByTestId('tool-arguments')).toHaveText(
+      'key: DEMO-42 · fields: ["status"]',
+    );
+
+    // Opened, the command shows its last lines, all of them on request, and Copy (spec 32).
+    await failing.locator('summary').click();
+    await expect(failing.getByTestId('tool-output-text')).toContainText('expected 2 rings');
+    await expect(failing.getByTestId('tool-output-text')).not.toContainText('kettle test 5 passed');
+    await failing.getByRole('button', { name: 'Show all 25 lines' }).click();
+    await expect(failing.getByTestId('tool-output-text')).toContainText('kettle test 5 passed');
+    await failing.getByRole('button', { name: 'Copy output' }).click();
+    expect(await page.evaluate('navigator.clipboard.readText()')).toMatch(
+      /^kettle test 1 passed\n[\s\S]*expected 2 rings, got 1\n$/,
+    );
+
+    // Stopped, the group says what was done and the turn ends with its line (spec 89, 91).
+    await page.getByRole('combobox', { name: 'Message' }).focus();
+    await page.keyboard.press('Control+.');
+    await expect(group.getByTestId('tool-group-summary')).toHaveText(
+      'Ran 2 commands, read 1 file, used 1 tool · 1 failed',
+    );
+    await expect(items.getByTestId('turn-stopped')).toContainText('Stopped by you');
+    await expect(
+      items.getByTestId('turn-stopped').getByRole('button', { name: 'Resume' }),
+    ).toBeVisible();
   });
 
   test('approves a command and the turn goes on', async ({ page }) => {
@@ -383,6 +455,9 @@ test.describe('chat', () => {
     await page.keyboard.press('Control+.');
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
     await expect(conversation(page).getByText('Working on it')).toBeVisible();
+    await expect(conversation(page).getByTestId('turn-stopped')).toContainText(
+      /^Stopped by you · \d{2}:\d{2}/,
+    );
 
     await page.reload();
     await expect(conversation(page).getByText('Working on it')).toBeVisible();
@@ -617,6 +692,24 @@ test.describe('sketch', () => {
     await expect(threadList(page).getByRole('link', { name: /Descale the kettle/ })).toBeVisible();
     await page.keyboard.press('Control+Shift+F');
     await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'thread-list') });
+  });
+
+  test('tool-rows', async ({ page }) => {
+    await startThread(page, 'Run the tools');
+    const group = conversation(page).getByTestId('item-tool_group');
+    await expect(
+      group.locator(':scope > details > summary').getByTestId('tool-command'),
+    ).toHaveText('$ pnpm dev');
+    await group.locator(':scope > details > summary').click();
+    const failing = group.getByTestId('item-tool_call').nth(0);
+    await failing.locator('summary').click();
+    await expect(failing.getByTestId('tool-output-text')).toContainText('expected 2 rings');
+    await page.getByRole('combobox', { name: 'Message' }).focus();
+    await page.keyboard.press('Control+t');
+    await expect(page.getByRole('region', { name: 'Pinned tasks' })).toBeVisible();
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'tool-rows') });
+    await page.keyboard.press('Control+.');
+    await expect(conversation(page).getByTestId('turn-stopped')).toBeVisible();
   });
 
   test('skill-chip', async ({ page }) => {
