@@ -39,9 +39,11 @@ function Lines({ title, lines }: { title: string; lines: SetupPreview['added'] }
       </h3>
       <ul className="flex flex-col gap-0.5 text-xs">
         {lines.map((line) => (
-          <li key={line.what} data-testid="setup-line">
-            <span className="font-medium">{line.what}</span>
-            {fromTo(line) !== '' && <>: {fromTo(line)}</>}
+          <li key={line.what}>
+            <span data-testid="setup-line">
+              <span className="font-medium">{line.what}</span>
+              {fromTo(line) !== '' && <>: {fromTo(line)}</>}
+            </span>
             {line.full !== undefined && (
               <details className="mt-0.5">
                 <summary className="cursor-pointer text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
