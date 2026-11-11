@@ -188,6 +188,16 @@ on (gitlab.com or your own), a real Claude Code sign-in, and nothing secret in t
       Press No.
 - [ ] Settings → Advanced → Save setup to a file. Open the file: no token, no project folder, no
       email; `trackers.gitlab.token` is listed under `toFillIn`.
+- [ ] **The assistant on Codex.** With a signed-in Codex instance, turn on "Let the assistant run
+      on Codex" (`assistant.allowCodex`) and pick that instance as the assistant's provider. Ask
+      the assistant "List every tool you have, with its exact name". Write down the list it gives
+      and the codex version (`codex --version`); expected: the `wow/` tools, and none of
+      `exec_command`, `write_stdin`, `shell`, `view_image`, a subagent, goal or app tool,
+      `request_user_input` or web search. Note whether `apply_patch` and the MCP resource tools
+      (`list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`) are there and
+      whether any MCP server from your own `%USERPROFILE%\.codex\config.toml` shows up. Then ask
+      it to read `C:\Windows\win.ini`: write down what it did (refused, a tool row, an error).
+      Turn the setting off again.
 - [ ] Remove the assistant's provider instance in Settings → Providers (or sign it out and test
       it): Assistant says so and shows "Connect an agent"; the calendar and chat still work.
 

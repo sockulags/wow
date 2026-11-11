@@ -178,8 +178,8 @@ export const assistantToolsetName = 'wow';
 // Which provider instance runs the assistant, or the sentence that says why none can (spec 1,
 // 27). The setting names an instance; left empty, the instance the thread already runs on is
 // kept while it is connected, and otherwise the first connected one is taken. A Codex instance
-// is taken only with `allowCodex` (setting `assistant.allowCodex`), because Codex keeps its
-// read-only shell tool and so could read any file on the computer. The server decides with
+// is taken only with `allowCodex` (setting `assistant.allowCodex`), because not all of Codex's
+// own tools can be switched off and nobody has seen what a real Codex then offers. The server decides with
 // this; a view can call it with the same rows to say the same thing.
 export type AssistantProvider =
   | { readonly instance: ProviderInstance; readonly problem: null }
@@ -197,7 +197,7 @@ export interface AssistantProviderChoice {
 const connectFirst = 'Connect Claude Code or Codex in Settings → Providers.';
 
 export const assistantCodexOff =
-  'The assistant does not run on Codex, because there it can run read-only shell commands and so read files on this computer, including ones that hold secrets, and wow cannot switch that off. Connect Claude Code in Settings → Providers, or turn on "Let the assistant run on Codex" in Settings → Assistant if you accept that.';
+  'The assistant does not run on Codex by default, because Codex has tools wow cannot switch off, and they might read files on this computer, including ones that hold secrets. Connect Claude Code in Settings → Providers, or turn on "Let the assistant run on Codex" in Settings → Assistant if you accept that.';
 
 export function chooseAssistantProvider(
   instances: readonly ProviderInstance[],

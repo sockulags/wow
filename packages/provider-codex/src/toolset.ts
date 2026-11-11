@@ -5,8 +5,9 @@ import type { ThreadStartParams, TurnStartParams } from './protocol/generated/in
 type StartTurn = Extract<ProviderCommand, { type: 'startTurn' }>;
 export type Toolset = NonNullable<StartTurn['toolset']>;
 
-// A thread that only has the app's tools (app assistant spec 2). codex has no switch that takes
-// its shell tool away, so the thread runs in a read-only sandbox without network and never asks
+// A thread that only has the app's tools (app assistant spec 2). The settings below switch
+// codex's own tools off where it has a switch; should one stay (apply_patch and the MCP resource
+// tools have none), the thread still runs in a read-only sandbox without network and never asks
 // to leave it: a command cannot write, cannot reach a host and is not offered to the user for
 // approval. The folder it starts in is the app's empty one.
 export const toolsOnlyMode = { approvalPolicy: 'never', sandbox: 'read-only' } as const;
@@ -20,10 +21,11 @@ export const toolsOnlySandbox: NonNullable<TurnStartParams['sandboxPolicy']> = {
 
 // What thread/start and thread/resume get on top of the usual settings. `config` overrides
 // config.toml for this thread: `mcp_servers` as a whole, so the servers the user set up for
-// their own work are not there, web search off, and a shell environment that inherits nothing,
-// so a command the agent runs sees no variable of wow's or the instance's (an API key among
-// them). The token travels in a header of the MCP server entry and only over stdio to the
-// app-server.
+// their own work are not there, web search off, codex's switchable tools off (commands, image
+// viewing, subagents, goals, apps, questions to the user; codex 0.166.0 checks each key's type on
+// thread/start), and a shell environment that inherits nothing, so a command the agent runs, if
+// one is still offered, sees no variable of wow's or the instance's (an API key among them). The
+// token travels in a header of the MCP server entry and only over stdio to the app-server.
 export function toolsOnlySettings(
   toolset: Toolset,
   instructions: string | undefined,
@@ -37,6 +39,14 @@ export function toolsOnlySettings(
         },
       },
       web_search: 'disabled',
+      features: {
+        shell_tool: false,
+        view_image: false,
+        multi_agent: false,
+        goals: false,
+        apps: false,
+      },
+      tools: { experimental_request_user_input: { enabled: false } },
       shell_environment_policy: { inherit: 'none' },
     },
     ...(instructions === undefined ? {} : { developerInstructions: instructions }),

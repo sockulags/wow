@@ -620,6 +620,16 @@ describe('CodexAdapter', () => {
         },
       },
       web_search: 'disabled',
+      // Codex's own tools that have a switch: commands, images, subagents, goals, apps and
+      // questions to the user.
+      features: {
+        shell_tool: false,
+        view_image: false,
+        multi_agent: false,
+        goals: false,
+        apps: false,
+      },
+      tools: { experimental_request_user_input: { enabled: false } },
       // A command the agent runs sees none of the variables of wow or the instance.
       shell_environment_policy: { inherit: 'none' },
     },

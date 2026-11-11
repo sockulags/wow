@@ -1634,10 +1634,10 @@ it was first opened.
 - Who runs it is decided by `chooseAssistantProvider` in `packages/contracts`: the instance
   `assistant.providerInstanceId` names; left empty, the instance the thread already runs on
   while it is connected, otherwise the first connected one in the order they were made.
-  A Codex instance counts only while `assistant.allowCodex` is on (default off): on Codex the
-  agent keeps a read-only shell tool and so can read any file the user can, secrets included,
-  and wow cannot take that away (see below). While it is off, a Codex instance named in
-  `assistant.providerInstanceId` is refused, the first connected Claude Code instance is taken
+  A Codex instance counts only while `assistant.allowCodex` is on (default off): wow switches
+  off the Codex tools that have a switch, but nobody has yet seen the tool list a real,
+  signed-in Codex then offers, and the tools without a switch stay (see below). While it is
+  off, a Codex instance named in `assistant.providerInstanceId` is refused, the first connected Claude Code instance is taken
   even if a Codex one was connected earlier, and when only Codex could run it the answer is the
   sentence `assistantCodexOff`, which says why and names both ways out.
   "Connected" means the instance's last test passed (`status: ready`). The model is
@@ -1683,16 +1683,29 @@ round (the adapter refuses the turn).
   that allows only `mcp__wow__` tools and never asks the user. The instance's environment
   (config folder, API key) is kept, since the agent signs in with it.
 - Codex (`packages/provider-codex/src/toolset.ts`): `thread/start` and `thread/resume` get
-  `config: {mcp_servers: {wow: {url, http_headers: {Authorization}}}, web_search: 'disabled',
-shell_environment_policy: {inherit: 'none'}}` (a command sees no environment variable of wow
-  or the instance, so no API key)
-  and `developerInstructions`, with `approvalPolicy: 'never'` and `sandbox: 'read-only'`;
-  every `turn/start` sends `sandboxPolicy: {type: 'readOnly', networkAccess: false}`. Codex has
-  no switch that takes its shell tool away, so the sandbox is what holds: a command cannot
-  write or reach a host, and every approval request of such a thread is declined without
-  asking the user. A read-only sandbox can still read files on the machine, and the user's own
-  `config.toml` still loads; that is the limit of what Codex offers, and the reason the
-  assistant runs on Codex only when the user turns `assistant.allowCodex` on. `config` and
+  a `config` of `mcp_servers: {wow: {url, http_headers: {Authorization}}}`,
+  `web_search: 'disabled'`,
+  `features: {shell_tool: false, view_image: false, multi_agent: false, goals: false, apps: false}`,
+  `tools: {experimental_request_user_input: {enabled: false}}` and
+  `shell_environment_policy: {inherit: 'none'}`, and `developerInstructions`, with
+  `approvalPolicy: 'never'` and `sandbox: 'read-only'`; every `turn/start` sends
+  `sandboxPolicy: {type: 'readOnly', networkAccess: false}`. The `features` and `tools` keys
+  switch off Codex's command tools (reported: `exec_command` and `write_stdin`), image viewing,
+  subagents, goals, apps and the question-to-the-user tool. Checked against codex 0.166.0
+  without a sign-in: `codex features list` knows all five features and shows them off with
+  these overrides, the app-server accepts this `config` on `thread/start` and refuses a wrong
+  type for `features.*` and `tools.experimental_request_user_input.enabled` (so it knows the
+  keys), and with `mcp_servers` in `config` a server from the user's own `config.toml` is not
+  started (only `wow` is). Not known: the tool list a signed-in Codex then offers (no turn
+  could run), `apply_patch` (no documented switch) and the three MCP resource tools (reportedly
+  cannot be switched off). The rest of the user's `config.toml` (model provider, profiles,
+  instruction files) still loads. So the sandbox stays as the second line: a command, if one
+  is still offered, cannot write or reach a host and sees no environment variable of wow or
+  the instance (so no API key), and every approval request of such a thread is declined
+  without asking the user. Because nobody has seen the resulting tool list, the assistant runs
+  on Codex only when the user turns `assistant.allowCodex` on. An ordinary thread gets none of
+  this. The compat check reads `config` as one map of JSON values, so the keys inside it are
+  not part of the fingerprint. `config` and
   `developerInstructions` are in the generated protocol types of the tested codex. For any
   other version the adapter asks that codex for its schema once (`installedCodexLacks`) and
   fails the turn with one sentence naming the missing fields and the version to update to. An
