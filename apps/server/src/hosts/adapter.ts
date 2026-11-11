@@ -1,4 +1,12 @@
-import type { ChangeRequest, HostErrorKind, HostKind, Page, Ticket, UnitRef } from '@wow/contracts';
+import {
+  settingsRegistry,
+  type ChangeRequest,
+  type HostErrorKind,
+  type HostKind,
+  type Page,
+  type Ticket,
+  type UnitRef,
+} from '@wow/contracts';
 
 // What the poller needs from a code host. One adapter per host kind; everything the host calls
 // its own way (pull or merge request, check run or pipeline, review comment or note) is
@@ -81,6 +89,20 @@ export class HostFailure extends Error {
 }
 
 export const validTime = (ms: number): boolean => !Number.isNaN(new Date(ms).getTime());
+
+// How long a host may keep wow away. A host can ask for any wait (a Retry-After of years, a
+// reset far in the future); wow asks again after `hosts.longestWaitMinutes` at the latest.
+export interface WaitOptions {
+  readonly clock?: () => Date;
+  readonly longestWaitMs?: number;
+}
+
+export function waitBound(options: WaitOptions): (until: number) => number {
+  const clock = options.clock ?? (() => new Date());
+  const longest =
+    options.longestWaitMs ?? settingsRegistry['hosts.longestWaitMinutes'].default * 60_000;
+  return (until) => Math.min(until, clock().getTime() + longest);
+}
 
 // A time from the host as an ISO string, or null when it is none.
 export const hostTime = (value: unknown): string | null => {

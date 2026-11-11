@@ -485,6 +485,25 @@ describe('GitLab refusing or not answering (spec 31, 32)', () => {
     await server.hosts.poll();
     expect(read()?.error).toBeNull();
   });
+
+  it('asks again after the longest wait when Retry-After asks for years', async () => {
+    set('hosts.longestWaitMinutes', 30);
+    await follow();
+    gitlab.failure = { status: 429, message: 'Retry later' };
+    gitlab.retryAfter = String(60 * 60 * 24 * 365 * 30);
+    now = new Date('2026-11-03T09:05:00.000Z');
+    await server.hosts.poll();
+    expect(read()?.error?.message).toContain('asks again after 2026-11-03T09:35:00.000Z');
+    gitlab.failure = undefined;
+    gitlab.retryAfter = undefined;
+    const before = gitlab.requests.length;
+    now = new Date('2026-11-03T09:30:00.000Z');
+    await server.hosts.poll();
+    expect(gitlab.requests.length).toBe(before);
+    now = new Date('2026-11-03T09:36:00.000Z');
+    await server.hosts.poll();
+    expect(read()?.error).toBeNull();
+  });
 });
 
 describe('Test connection to GitLab', () => {

@@ -18,9 +18,11 @@ import {
   hostLink,
   hostTime,
   validTime,
+  waitBound,
   webLinksIn,
   type FoundChangeRequest,
   type HostAdapter,
+  type WaitOptions,
 } from './adapter.js';
 import { checkStateOf } from './github.js';
 
@@ -29,10 +31,9 @@ import { checkStateOf } from './github.js';
 // review comments. API v4 with the PRIVATE-TOKEN header. Read only: it sends GET requests and
 // nothing else.
 
-export interface GitLabHostOptions extends RequestOptions {
+export interface GitLabHostOptions extends RequestOptions, WaitOptions {
   // How many of the newest merge requests are read when the search is turned down.
   readonly listFallbackCount: number;
-  readonly clock?: () => Date;
 }
 
 // GitLab's largest page.
@@ -132,6 +133,7 @@ export function createGitLabHost(
   const project = `${gitLabApi(config.baseUrl)}/projects/${gitLabProjectId(config.projectPath)}`;
   const headers = gitLabHeaders(config.token);
   const clock = options.clock ?? (() => new Date());
+  const bounded = waitBound(options);
   let requests = 0;
   let waitUntil: Date | undefined;
   let left: { remaining: number; resetAt: Date } | undefined;
@@ -152,7 +154,7 @@ export function createGitLabHost(
           ? left.resetAt.getTime()
           : undefined;
     if (until === undefined || !validTime(until)) return false;
-    waitUntil = new Date(Math.max(until, waitUntil?.getTime() ?? 0));
+    waitUntil = new Date(Math.max(bounded(until), waitUntil?.getTime() ?? 0));
     return true;
   };
 
@@ -251,7 +253,8 @@ export function createGitLabHost(
       return requests;
     },
     get waitUntil() {
-      const short = left && left.remaining < requests ? left.resetAt : undefined;
+      const short =
+        left && left.remaining < requests ? new Date(bounded(left.resetAt.getTime())) : undefined;
       if (!short) return waitUntil;
       return waitUntil && waitUntil > short ? waitUntil : short;
     },

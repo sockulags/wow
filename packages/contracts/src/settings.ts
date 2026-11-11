@@ -1108,6 +1108,16 @@ export const settingsRegistry = {
     default: 30,
     scope: 'global',
   }),
+  'hosts.longestWaitMinutes': defineSetting({
+    schema: z.number().int().min(1).max(1440),
+    group: 'hosts',
+    label: 'Longest wait for a request limit',
+    description:
+      'A host that says its request limit is used up is left alone until it says, but never longer than this. A host that asks for a longer wait is asked again after this many minutes.',
+    default: 60,
+    scope: 'global',
+    unit: 'minutes',
+  }),
   'viewer.maxFileBytes': defineSetting({
     schema: z.number().int().min(1000).max(50_000_000),
     group: 'viewer',

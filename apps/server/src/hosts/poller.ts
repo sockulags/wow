@@ -508,6 +508,7 @@ export class HostPoller implements BackgroundService {
     const options = {
       timeoutMs: settings.get('trackers.requestTimeoutMs'),
       listFallbackCount: settings.get('hosts.listFallbackCount'),
+      longestWaitMs: settings.get('hosts.longestWaitMinutes') * 60_000,
       clock: this.#clock,
       ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
     };
@@ -716,6 +717,7 @@ export class HostPoller implements BackgroundService {
     const adapter = config
       ? (this.#deps.jiraAdapter ?? createJiraHost)(config, host.name, {
           timeoutMs: settings.get('trackers.requestTimeoutMs'),
+          longestWaitMs: settings.get('hosts.longestWaitMinutes') * 60_000,
           clock: this.#clock,
           ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
         })
@@ -878,6 +880,7 @@ export class HostPoller implements BackgroundService {
     const adapter: PageAdapter | undefined = config
       ? (this.#deps.confluenceAdapter ?? createConfluenceHost)(config, host.name, {
           timeoutMs: settings.get('trackers.requestTimeoutMs'),
+          longestWaitMs: settings.get('hosts.longestWaitMinutes') * 60_000,
           clock: this.#clock,
           ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
         })

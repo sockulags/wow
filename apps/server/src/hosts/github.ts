@@ -14,20 +14,21 @@ import {
   hostLink as link,
   hostTime as time,
   validTime,
+  waitBound,
   webLinksIn,
   type FoundChangeRequest,
   type HostAdapter,
   type HostChangeRequest,
+  type WaitOptions,
 } from './adapter.js';
 
 // GitHub and GitHub Enterprise Server (the same API under https://<host>/api/v3) as a host: finds
 // a plan's pull requests with one search and reads each one's state, checks and review comments.
 // Read only: it sends GET requests and nothing else.
 
-export interface GitHubHostOptions extends RequestOptions {
+export interface GitHubHostOptions extends RequestOptions, WaitOptions {
   // How many of the newest pull requests are read when the host has no search.
   readonly listFallbackCount: number;
-  readonly clock?: () => Date;
 }
 
 // GitHub's largest page. A plan with more pull requests or a pull request with more review
@@ -144,6 +145,7 @@ export function createGitHubHost(
     'x-github-api-version': '2022-11-28',
   };
   const clock = options.clock ?? (() => new Date());
+  const bounded = waitBound(options);
   let requests = 0;
   let waitUntil: Date | undefined;
 
@@ -167,7 +169,7 @@ export function createGitHubHost(
     // A wait that is no date (a number far out of range) says nothing; the refusal is shown as
     // it came.
     if (until === undefined || !validTime(until)) return false;
-    waitUntil = new Date(Math.max(until, waitUntil?.getTime() ?? 0));
+    waitUntil = new Date(Math.max(bounded(until), waitUntil?.getTime() ?? 0));
     return true;
   };
 
@@ -262,7 +264,8 @@ export function createGitHubHost(
     },
     get waitUntil() {
       // With fewer requests left than this round took, the next round would be cut short.
-      const short = left && left.remaining < requests ? left.resetAt : undefined;
+      const short =
+        left && left.remaining < requests ? new Date(bounded(left.resetAt.getTime())) : undefined;
       if (!short) return waitUntil;
       return waitUntil && waitUntil > short ? waitUntil : short;
     },

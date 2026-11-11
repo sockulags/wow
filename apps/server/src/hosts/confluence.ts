@@ -8,7 +8,15 @@ import {
   trimBase,
   type RequestOptions,
 } from '../trackers/http.js';
-import { HostFailure, hostLink, webLinksIn, type PageAdapter, type PageRef } from './adapter.js';
+import {
+  HostFailure,
+  hostLink,
+  waitBound,
+  webLinksIn,
+  type PageAdapter,
+  type PageRef,
+  type WaitOptions,
+} from './adapter.js';
 
 // Confluence Cloud, Server and Data Center as a page host (review loop spec 35). It reads one page
 // a link names, with `GET <base>/rest/api/content/<id>?expand=body.view,version,space` or, for a
@@ -23,9 +31,7 @@ export interface ConfluenceSignIn {
   readonly token: string;
 }
 
-export interface ConfluenceHostOptions extends RequestOptions {
-  readonly clock?: () => Date;
-}
+export interface ConfluenceHostOptions extends RequestOptions, WaitOptions {}
 
 // A link to a page on the Confluence site, as found in a text.
 export interface FoundPageLink {
@@ -105,6 +111,7 @@ export function createConfluenceHost(
   const base = trimBase(config.baseUrl);
   const headers = { authorization: jiraAuthorization(config) };
   const clock = options.clock ?? (() => new Date());
+  const bounded = waitBound(options);
   // A redirect (a sign-in page, another site) is turned down instead of followed with the token.
   const requestOptions: RequestOptions = { ...options, redirect: 'manual' };
   let requests = 0;
@@ -115,7 +122,7 @@ export function createConfluenceHost(
     if (!Number.isFinite(seconds) || seconds < 0) return false;
     const until = clock().getTime() + seconds * 1000;
     if (Number.isNaN(new Date(until).getTime())) return false;
-    waitUntil = new Date(Math.max(until, waitUntil?.getTime() ?? 0));
+    waitUntil = new Date(Math.max(bounded(until), waitUntil?.getTime() ?? 0));
     return true;
   };
 

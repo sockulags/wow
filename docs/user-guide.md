@@ -716,7 +716,8 @@ paused nothing is asked on the timer; **Refresh now** in a view still asks once.
 fails, the last data stays with "Last fetched <time>" and the error, and the next interval tries
 again; a token that is wrong or lacks rights names the host that refused and points to its
 setting, and the token is never shown or logged. A host that says its request limit is used up is
-left alone until the limit resets.
+left alone until the limit resets, but never longer than `hosts.longestWaitMinutes` (60 by
+default).
 
 ## Backlog
 

@@ -1054,7 +1054,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs`, `trackers.jira.keyScanCommits` (the
   `trackers.jira.*`, `trackers.github.*`, `trackers.gitlab.*` and `trackers.confluence.*` ones
   are project-scoped, see "Backlog and trackers")
-- hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount` (see "Hosts")
+- hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount`,
+  `hosts.longestWaitMinutes` (see "Hosts")
 - triggers: `triggers.eventsEnabled`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
 - diff: `diff.maxFileBytes`, `diff.maxFiles` (the "Changes" page, see "Run base and changes")
@@ -1478,7 +1479,9 @@ stored; one the schema turns down is not stored, and only the plan or run that n
 `failed` read saying which pull request and field, so a bad answer can never break the
 `changeRequests` topic. GitHub's `x-ratelimit-remaining`, `x-ratelimit-reset` and `retry-after` headers
 stretch the interval: a host with fewer requests left than the round took, or that refused for
-the limit, is left alone until the limit starts again. The pause belongs to the host and the
+the limit, is left alone until the limit starts again, but never longer than
+`hosts.longestWaitMinutes` (a host may ask for a wait of years; `waitBound` in
+`hosts/adapter.ts` cuts it for every host adapter). The pause belongs to the host and the
 token (kept in memory as a digest), so a project with its own token on the same host is still
 asked. Rounds run one after another.
 `startServer({hostTimers, clock, fetch})` lets tests fire the timer, move the clock and answer
