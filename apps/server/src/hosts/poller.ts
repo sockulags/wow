@@ -21,7 +21,7 @@ import {
   type WorkflowRun,
 } from '@wow/contracts';
 import { eq, inArray } from 'drizzle-orm';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
@@ -103,6 +103,11 @@ interface TicketKey {
   // Where a backlog item's issue was published; only that site knows the key.
   readonly url?: string;
 }
+
+// A request limit belongs to the token that used it up, so another project's token on the same
+// host goes on being asked. Only a digest of the token is kept, and only in memory.
+const pauseKey = (kind: HostKind, name: string, token: string): string =>
+  `${kind}:${name}:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
 
 // A browse link is on the Jira site when it starts with the site's address.
 const onJiraSite = (url: string, baseUrl: string): boolean => {
@@ -494,6 +499,7 @@ export class HostPoller implements BackgroundService {
         readonly name: string;
         readonly branch: string | null;
         readonly missing: readonly string[];
+        readonly token: string;
         readonly adapter: (() => HostAdapter) | undefined;
       }
     | undefined
@@ -513,6 +519,7 @@ export class HostPoller implements BackgroundService {
         name: gitlab.name,
         branch: gitlab.branch,
         missing,
+        token: config?.token ?? '',
         adapter: config
           ? () => (this.#deps.gitlabAdapter ?? createGitLabHost)(config, gitlab.name, options)
           : undefined,
@@ -526,6 +533,7 @@ export class HostPoller implements BackgroundService {
       name: github.name,
       branch: github.branch,
       missing,
+      token: config?.token ?? '',
       adapter: config
         ? () => (this.#deps.adapter ?? createGitHubHost)(config, github.name, options)
         : undefined,
@@ -554,7 +562,7 @@ export class HostPoller implements BackgroundService {
       return;
     }
 
-    const leaveAlone = `${host.kind}:${host.name}`;
+    const leaveAlone = pauseKey(host.kind, host.name, host.token);
     const until = this.#leaveAlone.get(leaveAlone);
     if (!asked && until && until > this.#clock()) return;
 
@@ -700,7 +708,7 @@ export class HostPoller implements BackgroundService {
     const { settings } = this.#deps;
     const host = await this.#deps.resolveJira?.(projectId);
     if (!host) return;
-    const leaveAlone = `jira:${host.name}`;
+    const leaveAlone = pauseKey('jira', host.name, host.jira.config?.token ?? '');
     const until = this.#leaveAlone.get(leaveAlone);
     if (!asked && until && until > this.#clock()) return;
     const outcomes: TicketReadOutcome[] = [];

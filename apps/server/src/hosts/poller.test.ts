@@ -26,6 +26,7 @@ import { HostPoller } from './poller.js';
 
 const api = 'https://ghe.example.invalid/api/v3';
 const TOKEN = 'ghp-invented-token-for-tests';
+const POT_TOKEN = 'ghp-invented-pot-token-for-tests';
 const intentId = '2026-01-tea-timer';
 const planId = `tea:${intentId}`;
 
@@ -38,6 +39,8 @@ let logged: string[];
 let timers: { callback: () => void; delayMs: number }[];
 const pollTimer = (delayMs: number) => timers.findLast((timer) => timer.delayMs === delayMs);
 let reachable: boolean;
+// A second repository on the same host, asked with its own token.
+let pot: MockGitHub;
 let ids = 0;
 
 const dispatch = (command: ServerCommand) => server.engine.dispatch(`t${++ids}`, command);
@@ -195,6 +198,9 @@ beforeEach(async () => {
   host.token = TOKEN;
   host.pulls = [merged, open];
   const answer = host.fetch(api);
+  pot = new MockGitHub({ owner: 'acme', repo: 'pot', webUrl: 'https://ghe.example.invalid' });
+  pot.token = POT_TOKEN;
+  const answerPot = pot.fetch(api);
   server = await startServer({
     home: path.join(root, '.wow'),
     env: {},
@@ -211,10 +217,15 @@ beforeEach(async () => {
       setTimeout: (callback, delayMs) => timers.push({ callback, delayMs }),
       clearTimeout: () => undefined,
     },
-    fetch: (input, init) =>
-      reachable
-        ? answer(input, init)
-        : Promise.reject(new DOMException('The operation timed out.', 'TimeoutError')),
+    fetch: (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!reachable) {
+        return Promise.reject(new DOMException('The operation timed out.', 'TimeoutError'));
+      }
+      return decodeURIComponent(url).includes('acme/pot')
+        ? answerPot(input, init)
+        : answer(input, init);
+    },
   });
   dispatch({ type: 'project.create', projectId: 'tea', name: 'Tea', cwd: path.join(root, 'tea') });
   set('advanced.logLevel', 'debug');
@@ -610,6 +621,41 @@ describe('what a poll asks (spec 29, 30)', () => {
     now = new Date(now.getTime() + 2000);
     await server.hosts.poll();
     expect(asked().filter((url) => url.startsWith('/search/'))).toHaveLength(1);
+  });
+});
+
+describe('a request limit is the token’s own', () => {
+  it('goes on asking with another project’s token while one token waits for its limit', async () => {
+    await mkdir(path.join(root, 'pot'), { recursive: true });
+    dispatch({
+      type: 'project.create',
+      projectId: 'pot',
+      name: 'Pot',
+      cwd: path.join(root, 'pot'),
+    });
+    set('trackers.github.repo', 'pot', 'project:pot');
+    set(
+      'trackers.github.token',
+      await server.secrets.set('setting:project:pot:trackers.github.token', POT_TOKEN),
+      'project:pot',
+    );
+    const folder = path.join(root, 'pot', 'intents', intentId);
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, 'intent.md'), intentMd());
+    await writeFile(path.join(folder, 'spec.md'), specMd());
+    await writeFile(path.join(folder, 'plan.md'), planMd());
+    await server.plans.refresh();
+    pot.pulls = [{ ...merged, body: body('U1') }];
+
+    host.limit = { remaining: 3, reset: now.getTime() / 1000 + 1800 };
+    await follow();
+    await follow(`pot:${intentId}`);
+    host.requests.length = 0;
+    pot.requests.length = 0;
+    await server.hosts.poll();
+    expect(asked()).toEqual([]);
+    expect(pot.requests.filter((request) => request.path.startsWith('/search/'))).toHaveLength(1);
+    expect(statuses(`pot:${intentId}`).U1).toBe('delivered');
   });
 });
 

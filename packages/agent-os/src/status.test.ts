@@ -165,4 +165,22 @@ describe('Intent-Unit lines', () => {
       new Set(['2026-01-tea-timer']),
     );
   });
+
+  it('reads a line in bold, quoted, in quote marks or with words after the key', () => {
+    const body = [
+      '**Intent-Unit:** 2026-01-tea-timer/U1',
+      '**Intent-Unit: 2026-01-tea-timer/U2**',
+      '> Intent-Unit: 2026-01-tea-timer/U3',
+      '"Intent-Unit: 2026-01-tea-timer/U4"',
+      'Intent-Unit: 2026-01-tea-timer/U5 (the bell part)',
+      '__Intent-Unit__: `2026-01-tea-timer/U6`.',
+      'Not an Intent-Unit: 2026-01-tea-timer/U7',
+    ].join('\n');
+    expect(intentUnitLines(body)).toEqual(
+      ['U1', 'U2', 'U3', 'U4', 'U5', 'U6'].map((unitKey) => ({
+        intentId: '2026-01-tea-timer',
+        unitKey,
+      })),
+    );
+  });
 });

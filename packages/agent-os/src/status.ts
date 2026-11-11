@@ -14,14 +14,17 @@ export interface UnitReference {
 }
 
 // Every `Intent-Unit: <intent-id>/<unit-key>` line of a pull request body. A pull request that
-// delivers several units carries one line each. People write the line as a list item, in
-// backticks or with a full stop after it; a claim that is missed shows the unit as ready, so
-// those still count.
+// delivers several units carries one line each. People write the line as a list item, quoted, in
+// bold, backticks or quote marks, or with a full stop or words after it; a claim that is missed
+// shows the unit as ready, so those still count.
 export function intentUnitLines(body: string): UnitReference[] {
   const found: UnitReference[] = [];
   for (const line of body.split(/\r?\n/)) {
-    const match = /^\s*(?:[-*+]\s+)?`?Intent-Unit:\s*`?([^\s/`]+)\/(\S+)\s*$/i.exec(line);
-    const unitKey = match?.[2]?.replace(/[`.,;:!?)\]]+$/, '');
+    const match =
+      /^\s*(?:>\s*)*(?:[-*+]\s+)?[`*_"'“‘]*Intent-Unit[`*_]*:[\s`*_"'“‘]*([^\s/`*"'“‘]+)\/(\S+)(?:\s.*)?$/i.exec(
+        line,
+      );
+    const unitKey = match?.[2]?.replace(/[`*_"'”’.,;:!?)\]]+$/, '');
     if (!match?.[1] || !unitKey) continue;
     const reference = { intentId: match[1], unitKey };
     if (

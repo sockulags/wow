@@ -1398,7 +1398,8 @@ as `trackers/resolve.ts` resolves them, so Enterprise Server is the same code un
 `https://<host>/api/v3`. A plan's pull requests are found with one search
 (`GET /search/issues?q="Intent-Unit: <intent-id>/" in:body is:pr repo:<owner>/<repo>`), and only
 a body that really has an `Intent-Unit: <intent-id>/<unit-key>` line counts (every such line is
-taken, also as a list item, in backticks or with punctuation after the key; `intentUnitLines`
+taken, also as a list item, quoted with `>`, in bold, backticks or quote marks, or with
+punctuation or words after the key; `intentUnitLines`
 in `packages/agent-os`). A host whose search is missing or refuses the
 query (404, 405, 410, 422, 501) gets its newest pull requests read instead, as many as the
 fallback count setting says; the whole repository is never listed. A run's pull request is the
@@ -1475,7 +1476,9 @@ stored; one the schema turns down is not stored, and only the plan or run that n
 `failed` read saying which pull request and field, so a bad answer can never break the
 `changeRequests` topic. GitHub's `x-ratelimit-remaining`, `x-ratelimit-reset` and `retry-after` headers
 stretch the interval: a host with fewer requests left than the round took, or that refused for
-the limit, is left alone until the limit starts again. Rounds run one after another.
+the limit, is left alone until the limit starts again. The pause belongs to the host and the
+token (kept in memory as a digest), so a project with its own token on the same host is still
+asked. Rounds run one after another.
 `startServer({hostTimers, clock, fetch})` lets tests fire the timer, move the clock and answer
 for the host; `hosts/mock-github.ts` is the invented host the server tests and the e2e server
 share.
@@ -1510,10 +1513,10 @@ and panels lose their frame, pictures become `[picture: <name>]` and are never l
 stays a link only for an http, https or mailto address, HTML stays text) and the
 `<base>/browse/<key>` link when that is a web address. 401 and 403 are `refused` and name
 `trackers.jira.token`, as is 404 ("shows no issue <key> to the Jira token"), which fails only that
-ticket, as does a published key that is not a Jira key; a 429 with `Retry-After` leaves the site alone until then; anything else and a timeout
-are `failed`, and after such a failure the site is not asked again that round. A project without
-a Jira site, token or (for `cloud-basic`) email, or without a project key when the run has no
-backlog issue, gets a `notSetUp` read naming the setting; so does a run whose backlog item was
+ticket, as does a published key that is not a Jira key; a 429 with `Retry-After` leaves the
+site alone for that token until then; anything else and a timeout are `failed`, and after such a
+failure the site is not asked again that round. A project without a Jira site, token or (for
+`cloud-basic`) email, or without a project key when the run has no backlog issue, gets a `notSetUp` read naming the setting; so does a run whose backlog item was
 published to another Jira site than the project's (its browse link is not under
 `trackers.jira.baseUrl`), and that site is not asked. The round ends in one internal
 `tickets.sync` command per project; `core/tickets.ts` stores `ticket_reads` rows through
