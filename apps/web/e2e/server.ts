@@ -26,6 +26,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import path from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
 import {
+  e2eAssistantHome,
   e2eBinDir,
   e2eBinary,
   e2eChangesHome,
@@ -76,6 +77,7 @@ import {
   e2eWorkflowId,
   e2eWorkspace,
 } from './env';
+import { AssistantMockAgent } from './assistant-agent';
 import { e2eIntentMd, e2ePlanMd, e2ePlansDirectory, e2eSpecMd, seedPlanFiles } from './plans-seed';
 
 // WOW_E2E_HOME and WOW_E2E_PORT start a second copy for the settings tests (playwright.config.ts).
@@ -780,7 +782,14 @@ const server = await startServer({
   },
   hooks: {
     providers: {
-      claude: () => new MockProviderAdapter('claude', chatScript),
+      claude: () =>
+        home === e2eAssistantHome
+          ? new AssistantMockAgent(
+              new MockProviderAdapter('claude', chatScript),
+              () => server.assistant.tools,
+              `http://127.0.0.1:${trackerPort}`,
+            )
+          : new MockProviderAdapter('claude', chatScript),
       codex: (instance) => new MockProviderAdapter('codex', chatScript, codexTest(instance)),
     },
     outlook: (mode, context) => {
@@ -826,6 +835,8 @@ server.engine.dispatch('seed-instance', {
   launchArgs: [],
   defaultPermissionMode: 'default',
 });
+// The assistant runs only on an instance whose test passed.
+if (home === e2eAssistantHome) await server.providerService.test(e2eProviderInstanceId);
 // Only the chat server gets a Codex instance; the settings tests count and add instances themselves.
 if (home === e2eHome) {
   server.engine.dispatch('seed-codex-instance', {

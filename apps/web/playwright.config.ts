@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 import {
+  e2eAssistantHome,
+  e2eAssistantOutlookControlPort,
+  e2eAssistantPort,
+  e2eAssistantTrackerPort,
   e2eChangesHome,
   e2eChangesOutlookControlPort,
   e2eChangesPort,
@@ -121,6 +125,19 @@ export default defineConfig({
         WOW_E2E_PORT: String(e2eChangesPort),
         WOW_E2E_OUTLOOK_CONTROL_PORT: String(e2eChangesOutlookControlPort),
         WOW_E2E_TRACKER_PORT: String(e2eChangesTrackerPort),
+        WOW_OUTLOOK: 'mock',
+      },
+      reuseExistingServer: false,
+    },
+    {
+      // A copy for the assistant tests, whose mock agent calls wow's tools.
+      command: 'pnpm exec tsx e2e/server.ts',
+      port: e2eAssistantPort,
+      env: {
+        WOW_E2E_HOME: e2eAssistantHome,
+        WOW_E2E_PORT: String(e2eAssistantPort),
+        WOW_E2E_OUTLOOK_CONTROL_PORT: String(e2eAssistantOutlookControlPort),
+        WOW_E2E_TRACKER_PORT: String(e2eAssistantTrackerPort),
         WOW_OUTLOOK: 'mock',
       },
       reuseExistingServer: false,

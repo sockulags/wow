@@ -151,3 +151,13 @@ export const e2eBinary = (home: string, name: string) =>
 export const e2eTrackerPort = 4521;
 export const e2eSettingsTrackerPort = 4522;
 export const e2eWorkflowId = 'backlog-e2e';
+
+// A seventh server for the assistant tests (e2e/assistant.spec.ts). The assistant changes global
+// settings (work hours, the GitLab address and token) that other tests read, and has one
+// conversation per install. Its Claude instance is tested at start, so the assistant can run.
+export const e2eAssistantHome = path.join(tmpdir(), 'wow-e2e-assistant-home');
+export const e2eAssistantPort = 4571;
+export const e2eAssistantOutlookControlPort = 4572;
+export const e2eAssistantTrackerPort = 4573;
+// The token the mock GitLab accepts, typed into the assistant's secret field.
+export const e2eGitLabToken = 'gitlab-host-e2e-token';

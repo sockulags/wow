@@ -13,6 +13,7 @@ test.describe('shell', () => {
       ['Chat', /\/chat$/, 'Not connected to the wow server'],
       ['Workflows', /\/workflows$/, 'Not connected to the wow server'],
       ['Backlog', /\/backlog$/, 'Not connected to the wow server'],
+      ['Assistant', /\/assistant$/, 'Not connected to the wow server'],
       ['Settings', /\/settings\/providers$/, 'Test timeout'],
     ] as const;
     for (const [name, url, text] of routes) {
