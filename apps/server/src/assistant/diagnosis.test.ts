@@ -424,6 +424,41 @@ describe('the diagnosis (spec 19, 20)', () => {
     const failed = ofKind((await diagnose()).diagnosis.problems, 'run');
     expect(failed).toHaveLength(2);
   });
+
+  it('drops failed runs of a deleted workflow or project, and counts the limit after dropping them', async () => {
+    set('assistant.diagnosisLimit', 1);
+    dispatch({
+      type: 'workflowRun.start',
+      runId: 'run-kept',
+      workflowId: 'brew',
+      projectId: 'tea',
+    });
+    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-kept', stepId: 'pour', error: 'No.' });
+    clock = Date.parse(at(5));
+    dispatch({ type: 'workflow.create', workflowId: 'gone', name: 'Gone', steps: [step('s')] });
+    dispatch({
+      type: 'workflowRun.start',
+      runId: 'run-gone',
+      workflowId: 'gone',
+      projectId: 'tea',
+    });
+    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-gone', stepId: 's', error: 'No.' });
+    dispatch({ type: 'workflow.delete', workflowId: 'gone' });
+    clock = Date.parse(at(10));
+    dispatch({ type: 'project.create', projectId: 'old', name: 'Old', cwd: root });
+    dispatch({ type: 'workflowRun.start', runId: 'run-old', workflowId: 'brew', projectId: 'old' });
+    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-old', stepId: 'pour', error: 'No.' });
+    server.database.db
+      .insert(planRuns)
+      .values({ ...planRun('plan-old', 'failed', at(10)), planId: 'old:kettle', projectId: 'old' })
+      .run();
+    dispatch({ type: 'project.delete', projectId: 'old' });
+    expect(ofKind((await diagnose()).diagnosis.problems, 'run')).toEqual([
+      expect.objectContaining({
+        place: { label: 'The run of Brew', path: '/workflows/runs/run-kept' },
+      }),
+    ]);
+  });
   it('drops a failed read of a run once the run has ended, since it is not read again', async () => {
     dispatch({
       type: 'workflowRun.start',

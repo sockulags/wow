@@ -1786,12 +1786,14 @@ three kinds and nothing else.
   again); workflow steps whose skill is not installed; event triggers whose event was recorded
   without a run (`trigger_events`) and whose "Trigger failed" notification
   (`<trigger>:<event>:failed`, matched by that exact id) has no run of the trigger after it;
-  failed runs (until a later run of the same workflow and project ends `done`) and failed plan
-  runs (until a later plan run of the same plan ends `done`) with their stored error; and cards
+  failed runs (until a later run of the same workflow and project ends `done`, and only while
+  the workflow and project exist) and failed plan runs (until a later plan run of the same plan
+  ends `done`, and only while the project exists) with their stored error; and cards
   with a workflow that are `missed`, or `failed` without a run, with the notification's reason
   (until a run of the card's workflow and project that started after the card's start ends
-  `done`). Each part asks SQLite only for the rows that can fail (by state or error), and runs,
-  triggers and cards stop at `assistant.diagnosisLimit` each, newest first. Times are told in
+  `done`). Each part is one query that asks SQLite only for the rows that still count (by
+  state, error and the later runs above), with runs, plan runs, triggers and cards limited to
+  `assistant.diagnosisLimit` each in the query, newest first. Times are told in
   the calendar's zone (`calendar.zone`, as the calendar resolves it), e.g. "Tue, 10 Nov 2026,
   09:00 (Europe/Stockholm)". A failed trigger's reason exists only as a notification, so with
   `scheduler.notifications` off it is not found.

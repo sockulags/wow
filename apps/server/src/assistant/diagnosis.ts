@@ -2,7 +2,6 @@ import {
   OutlookProfile,
   SecretRef,
   assistantDiagnosisTool,
-  isCardTrigger,
   isEventTrigger,
   isLiveRunState,
   resolveZoneSetting,
@@ -15,7 +14,7 @@ import {
   type DiagnosisProblem,
   type TrackerConnection,
 } from '@wow/contracts';
-import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, not, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { runPath } from '../core/workflows.js';
 import { triggersPath } from '../core/triggers.js';
@@ -222,35 +221,15 @@ interface Names {
   readonly time: (iso: string) => string;
 }
 
-const after = (later: string | undefined, than: string) =>
-  later !== undefined && Date.parse(later) > Date.parse(than);
-
-// The newest run of a workflow in a project that ended done.
-const lastDone = (deps: ReaderDeps, workflowId: string, projectId: string) =>
-  deps.db
-    .select({ startedAt: t.workflowRuns.startedAt })
-    .from(t.workflowRuns)
-    .where(
-      and(
-        eq(t.workflowRuns.state, 'done'),
-        eq(t.workflowRuns.workflowId, workflowId),
-        eq(t.workflowRuns.projectId, projectId),
-      ),
-    )
-    .orderBy(desc(t.workflowRuns.startedAt))
-    .limit(1)
-    .get()?.startedAt;
+// Each list below is one bounded query: what still counts is decided in SQL, so the limit is
+// applied to what is reported and no row costs a query of its own.
 
 // An event trigger that could not start its run records the event with no run and stores a
-// "Trigger failed" notification under `<trigger>:<event>:failed` (see core/triggers.ts); it
-// counts until the trigger starts a run after it.
+// "Trigger failed" notification under `<trigger>:<event>:failed` (see core/triggers.ts); its
+// newest failure counts until the trigger starts a run after it.
 function triggers(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[] {
   const failures = deps.db
-    .select({
-      triggerId: t.triggerEvents.triggerId,
-      at: t.notifications.at,
-      body: t.notifications.body,
-    })
+    .select({ trigger: t.triggers, body: t.notifications.body })
     .from(t.triggerEvents)
     .innerJoin(
       t.notifications,
@@ -259,52 +238,62 @@ function triggers(deps: ReaderDeps, limit: number, names: Names): DiagnosisProbl
         sql`${t.triggerEvents.triggerId} || ':' || ${t.triggerEvents.eventId} || ':failed'`,
       ),
     )
-    .where(and(isNull(t.triggerEvents.runId), eq(t.notifications.kind, 'failed')))
+    .innerJoin(t.triggers, eq(t.triggers.id, t.triggerEvents.triggerId))
+    .where(
+      and(
+        isNull(t.triggerEvents.runId),
+        eq(t.notifications.kind, 'failed'),
+        eq(t.triggers.kind, 'event'),
+        sql`not exists (select 1 from ${t.triggerEvents} as other join ${t.notifications} as newer on newer.id = other.trigger_id || ':' || other.event_id || ':failed' where other.trigger_id = ${t.triggerEvents.triggerId} and other.run_id is null and newer.kind = 'failed' and (newer.at > ${t.notifications.at} or (newer.at = ${t.notifications.at} and newer.id > ${t.notifications.id})))`,
+        sql`not exists (select 1 from ${t.triggerEvents} as started where started.trigger_id = ${t.triggerEvents.triggerId} and started.run_id is not null and started.at > ${t.notifications.at})`,
+      ),
+    )
     .orderBy(desc(t.notifications.at))
+    .limit(limit)
     .all();
-  const seen = new Set<string>();
-  const problems: DiagnosisProblem[] = [];
-  for (const failure of failures) {
-    if (problems.length >= limit) break;
-    if (seen.has(failure.triggerId)) continue;
-    seen.add(failure.triggerId);
-    const trigger = deps.db
-      .select()
-      .from(t.triggers)
-      .where(eq(t.triggers.id, failure.triggerId))
-      .get();
-    if (!trigger || !isEventTrigger(trigger)) continue;
-    const started = deps.db
-      .select({ at: t.triggerEvents.at })
-      .from(t.triggerEvents)
-      .where(and(eq(t.triggerEvents.triggerId, trigger.id), isNotNull(t.triggerEvents.runId)))
-      .orderBy(desc(t.triggerEvents.at))
-      .limit(1)
-      .get()?.at;
-    if (after(started, failure.at)) continue;
-    problems.push({
-      kind: 'trigger',
-      what: `Trigger "${triggerEventLabels[trigger.event]}" for ${names.workflows.get(trigger.workflowId) ?? trigger.workflowId} in ${names.projects.get(trigger.projectId) ?? trigger.projectId}`,
-      reason: `It could not start a run: ${failure.body}`,
-      place: triggersPlace,
-    });
-  }
-  return problems;
+  return failures.flatMap(({ trigger, body }) =>
+    isEventTrigger(trigger)
+      ? [
+          {
+            kind: 'trigger' as const,
+            what: `Trigger "${triggerEventLabels[trigger.event]}" for ${names.workflows.get(trigger.workflowId) ?? trigger.workflowId} in ${names.projects.get(trigger.projectId) ?? trigger.projectId}`,
+            reason: `It could not start a run: ${body}`,
+            place: triggersPlace,
+          },
+        ]
+      : [],
+  );
 }
 
+// A run of the workflow in the project that started after `startedAt` and ended done.
+const doneAfter = (
+  workflowId: typeof t.workflowRuns.workflowId | typeof t.calendarItems.workflowId,
+  projectId: typeof t.workflowRuns.projectId | typeof t.calendarItems.projectId,
+  startedAt: typeof t.workflowRuns.startedAt | typeof t.calendarItems.start,
+) =>
+  sql`exists (select 1 from ${t.workflowRuns} as later where later.state = 'done' and later.workflow_id = ${workflowId} and later.project_id = ${projectId} and later.started_at > ${startedAt})`;
+
 // A failed run counts until a later run of the same workflow in the same project ends done; a
-// failed plan run until a later plan run of the same plan ends done.
+// failed plan run until a later plan run of the same plan ends done. A run whose workflow or
+// project was deleted cannot be run again, so it no longer counts.
 function runs(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[] {
-  const failed: DiagnosisProblem[] = [];
   const candidates = deps.db
-    .select()
+    .select({ run: t.workflowRuns })
     .from(t.workflowRuns)
-    .where(eq(t.workflowRuns.state, 'failed'))
+    .innerJoin(t.workflows, eq(t.workflows.id, t.workflowRuns.workflowId))
+    .innerJoin(t.projects, eq(t.projects.id, t.workflowRuns.projectId))
+    .where(
+      and(
+        eq(t.workflowRuns.state, 'failed'),
+        not(
+          doneAfter(t.workflowRuns.workflowId, t.workflowRuns.projectId, t.workflowRuns.startedAt),
+        ),
+      ),
+    )
     .orderBy(desc(t.workflowRuns.startedAt))
+    .limit(limit)
     .all();
-  for (const run of candidates) {
-    if (failed.length >= limit) break;
-    if (after(lastDone(deps, run.workflowId, run.projectId), run.startedAt)) continue;
+  const failed = candidates.map(({ run }): DiagnosisProblem => {
     const workflow = names.workflows.get(run.workflowId) ?? run.workflowId;
     const step = run.steps.find((entry) => entry.state === 'failed' && entry.error);
     const reason = step?.error
@@ -312,40 +301,35 @@ function runs(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[]
       : run.workingCopy?.error
         ? `Its working copy failed: ${run.workingCopy.error}`
         : 'It failed without an error message.';
-    failed.push({
+    return {
       kind: 'run',
       what: `Run of ${workflow} in ${names.projects.get(run.projectId) ?? run.projectId}, started ${names.time(run.startedAt)}`,
       reason,
       place: { label: `The run of ${workflow}`, path: runPath(run.id) },
-    });
-  }
-  const planRuns: DiagnosisProblem[] = [];
+    };
+  });
   const failedPlans = deps.db
-    .select()
+    .select({ run: t.planRuns })
     .from(t.planRuns)
-    .where(eq(t.planRuns.state, 'failed'))
+    .innerJoin(t.projects, eq(t.projects.id, t.planRuns.projectId))
+    .where(
+      and(
+        eq(t.planRuns.state, 'failed'),
+        sql`not exists (select 1 from ${t.planRuns} as later where later.state = 'done' and later.plan_id = ${t.planRuns.planId} and later.started_at > ${t.planRuns.startedAt})`,
+      ),
+    )
     .orderBy(desc(t.planRuns.startedAt))
+    .limit(limit)
     .all();
-  for (const run of failedPlans) {
-    if (planRuns.length >= limit) break;
-    const done = deps.db
-      .select({ startedAt: t.planRuns.startedAt })
-      .from(t.planRuns)
-      .where(and(eq(t.planRuns.planId, run.planId), eq(t.planRuns.state, 'done')))
-      .orderBy(desc(t.planRuns.startedAt))
-      .limit(1)
-      .get()?.startedAt;
-    if (after(done, run.startedAt)) continue;
-    planRuns.push({
-      kind: 'run',
-      what: `Plan run of ${run.intentId} in ${names.projects.get(run.projectId) ?? run.projectId}, started ${names.time(run.startedAt)}`,
-      reason: run.message ?? 'It failed without an error message.',
-      place: {
-        label: `Plans → ${run.intentId}`,
-        path: `/plans/${encodeURIComponent(run.projectId)}/${encodeURIComponent(run.intentId)}`,
-      },
-    });
-  }
+  const planRuns = failedPlans.map(({ run }): DiagnosisProblem => ({
+    kind: 'run',
+    what: `Plan run of ${run.intentId} in ${names.projects.get(run.projectId) ?? run.projectId}, started ${names.time(run.startedAt)}`,
+    reason: run.message ?? 'It failed without an error message.',
+    place: {
+      label: `Plans → ${run.intentId}`,
+      path: `/plans/${encodeURIComponent(run.projectId)}/${encodeURIComponent(run.intentId)}`,
+    },
+  }));
   return [...failed, ...planRuns];
 }
 
@@ -356,7 +340,15 @@ function cards(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[
   const policy = deps.settings.get('scheduler.missedPolicy');
   const policyLabel = settingsRegistry['scheduler.missedPolicy'].options?.[policy]?.label ?? policy;
   const candidates = deps.db
-    .select()
+    .select({
+      card: t.calendarItems,
+      failure: sql<
+        string | null
+      >`(select failure.body from ${t.notifications} as failure where failure.kind = 'failed' and failure.run_id is null and failure.calendar_item_id = "calendar_items"."id" order by failure.at desc limit 1)`,
+      offered: sql<
+        number | null
+      >`(select card_trigger.offer_run_now from ${t.triggers} as card_trigger where card_trigger.kind = 'card' and card_trigger.calendar_item_id = "calendar_items"."id" limit 1)`,
+    })
     .from(t.calendarItems)
     .where(
       and(
@@ -367,55 +359,33 @@ function cards(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[
           and(eq(t.calendarItems.state, 'failed'), isNull(t.calendarItems.runId)),
           eq(t.calendarItems.state, 'missed'),
         ),
+        not(
+          doneAfter(t.calendarItems.workflowId, t.calendarItems.projectId, t.calendarItems.start),
+        ),
       ),
     )
     .orderBy(desc(t.calendarItems.start))
+    .limit(limit)
     .all();
-  const problems: DiagnosisProblem[] = [];
-  for (const card of candidates) {
-    if (problems.length >= limit) break;
-    if (card.workflowId === null || card.projectId === null) continue;
-    if (after(lastDone(deps, card.workflowId, card.projectId), card.start)) continue;
+  return candidates.map(({ card, failure, offered }): DiagnosisProblem => {
     let reason: string;
     if (card.state === 'failed') {
-      const failure = deps.db
-        .select({ body: t.notifications.body })
-        .from(t.notifications)
-        .where(
-          and(
-            eq(t.notifications.kind, 'failed'),
-            isNull(t.notifications.runId),
-            eq(t.notifications.calendarItemId, card.id),
-          ),
-        )
-        .orderBy(desc(t.notifications.at))
-        .limit(1)
-        .get();
       const prefix = `${card.title}: `;
-      const why = failure?.body.startsWith(prefix)
-        ? failure.body.slice(prefix.length)
-        : failure?.body;
+      const why = failure?.startsWith(prefix) ? failure.slice(prefix.length) : failure;
       reason = `Its run could not start${why ? `: ${why}` : '.'}`;
     } else {
-      const trigger = deps.db
-        .select()
-        .from(t.triggers)
-        .where(eq(t.triggers.calendarItemId, card.id))
-        .get();
-      const offered = trigger !== undefined && isCardTrigger(trigger) && trigger.offerRunNow;
       reason = `Its start time passed without a run: it was put in the past, or wow was closed or the scheduler paused then. Missed triggers are set to "${policyLabel}" in Settings → Scheduler.${offered ? ' Run now on the card starts it.' : ''}`;
     }
-    problems.push({
-      kind: 'card' as const,
+    return {
+      kind: 'card',
       what: `Card "${card.title}" at ${names.time(card.start)}`,
       reason,
       place: {
         label: `Calendar → ${card.title}`,
         path: `/calendar?item=${encodeURIComponent(card.id)}`,
       },
-    });
-  }
-  return problems;
+    };
+  });
 }
 
 // Times are told in the zone the calendar shows, so the agent can repeat them as they are.
