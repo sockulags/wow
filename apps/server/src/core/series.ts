@@ -30,7 +30,14 @@ export type RepeatingCard = CalendarItem & { readonly repeat: NonNullable<Calend
 export const isRepeating = (card: CalendarItem): card is RepeatingCard =>
   card.source === 'local' && card.repeat !== null && card.repeat !== undefined;
 
-export const seriesOf = (card: RepeatingCard): Series => ({
+// What the series and the trigger read of a repeating card, so a card not stored yet can be read
+// the same way.
+export type SeriesCard = Pick<CalendarItem, 'id' | 'start' | 'end' | 'zone'> &
+  Partial<Pick<CalendarItem, 'skippedDates' | 'pastSeries'>> & {
+    readonly repeat: NonNullable<CalendarItem['repeat']>;
+  };
+
+export const seriesOf = (card: SeriesCard): Series => ({
   start: card.start,
   end: card.end,
   zone: card.zone,
@@ -39,7 +46,7 @@ export const seriesOf = (card: RepeatingCard): Series => ({
 
 // The card's series over time: each series it followed before a change keeps the days before
 // that change, so past occurrences stay where they were (recurring cards spec 10, 11).
-export function scheduleOf(card: RepeatingCard): SchedulePart[] {
+export function scheduleOf(card: SeriesCard): SchedulePart[] {
   const parts: SchedulePart[] = [];
   let from: string | undefined;
   for (const past of card.pastSeries ?? []) {
@@ -66,7 +73,10 @@ export function pastSeriesBefore(card: RepeatingCard, day: string): PastSeries[]
 }
 
 // The days that will not fire again: skipped by hand, or already reached.
-export function takenDays(card: CalendarItem, read: ReadModel): Set<string> {
+export function takenDays(
+  card: Pick<CalendarItem, 'id'> & Partial<Pick<CalendarItem, 'skippedDates'>>,
+  read: ReadModel,
+): Set<string> {
   return new Set([
     ...(card.skippedDates ?? []),
     ...read.cardOccurrences(card.id).map((occurrence) => occurrence.date),
@@ -76,7 +86,7 @@ export function takenDays(card: CalendarItem, read: ReadModel): Set<string> {
 // The occurrence the card's trigger fires next: the first one after `now` that was neither
 // skipped nor reached. Only finitely many days are taken, so the walk ends.
 export function nextOccurrence(
-  card: RepeatingCard,
+  card: SeriesCard,
   read: ReadModel,
   now: number,
   alsoTaken: ReadonlySet<string> = new Set(),

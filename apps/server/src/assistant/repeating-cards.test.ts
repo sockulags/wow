@@ -212,6 +212,34 @@ describe('waiting for a yes looks at the next occurrence (spec 20)', () => {
       to: 'Every day at 09:10',
     });
   });
+
+  it('judges a moved series by when it really fires next', async () => {
+    // Every day at 09:10 from yesterday; from next Tuesday on it was moved to 14:00. Today's
+    // occurrence still follows the series from before the move, ten minutes from now.
+    asUser({
+      type: 'card.create',
+      cardId: 'standup',
+      title: 'Standup',
+      start: '2026-11-09T08:10:00.000Z',
+      end: '2026-11-09T08:40:00.000Z',
+      zone: 'Europe/Stockholm',
+      repeat: { frequency: 'daily', interval: 1, weekdays: [], end: { kind: 'never' } },
+    });
+    asUser({
+      type: 'card.moveOccurrence',
+      cardId: 'standup',
+      date: '2026-11-17',
+      start: '2026-11-17T13:00:00.000Z',
+      end: '2026-11-17T13:30:00.000Z',
+    });
+    expect(card('standup')?.pastSeries).toHaveLength(1);
+    const linked = await call('update_card', {
+      cardId: 'standup',
+      projectId: 'tea',
+      workflowId: 'delivery',
+    });
+    expect(linked.content.outcome).toBe('proposed');
+  });
 });
 
 describe('skipping and reading (spec 21)', () => {

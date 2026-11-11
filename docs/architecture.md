@@ -1205,7 +1205,10 @@ start, end}` is a drag in the calendar (spec 11): the occurrence must stay on it
   `skip_card_occurrence` sends `card.skipOccurrence`; `card.moveOccurrence` is refused for the
   assistant (it changes the time with `update_card`). A card's change row and proposal say the
   rule in words with its time (`Repeats` line). Whether a card waits for a yes looks at the
-  next occurrence that is not taken: a proposal when it starts within
+  next occurrence that is not taken, worked out by the scheduler's `nextOccurrence` over the
+  card as the change leaves it, its past series included (`pastSeriesAfter` in
+  `core/calendar.ts`), so a series moved from a later day is judged by when it fires next: a
+  proposal when it starts within
   `assistant.startSoonMinutes` (or is past), ordinary otherwise, and ordinary for a series with
   nothing left to run. `read_calendar` lists for a repeating card its rule, the rule in words,
   `nextAt`, the skipped days and its occurrences in the range with what happened at them, and
