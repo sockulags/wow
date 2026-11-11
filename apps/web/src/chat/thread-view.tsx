@@ -10,6 +10,7 @@ import { CircleCheckIcon, PinIcon, RotateCcwIcon, SearchXIcon, Undo2Icon } from 
 import {
   Fragment,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   type ReactNode,
@@ -47,7 +48,8 @@ import {
   threadTitle,
   type ContextUsage,
 } from './model';
-import { ThreadSettings } from './thread-settings';
+import { ModelBar, useModelBarKeys, type ModelBarHandle, type ModelBarProps } from './model-bar';
+import { frontModelBar } from './model-commands';
 import {
   groupQuestions,
   groupToolCalls,
@@ -161,16 +163,6 @@ function ThreadHeader({
         <span data-testid="thread-provider" className="text-xs text-muted-foreground">
           {instance ? providerLabel(instance, instances) : thread.providerInstanceId}
         </span>
-        {instance && (
-          <ThreadSettings
-            providerInstanceId={instance.id}
-            kind={instance.kind}
-            value={thread}
-            onChange={(changes) =>
-              void send({ type: 'thread.configure', threadId: thread.id, ...changes })
-            }
-          />
-        )}
       </div>
     </header>
   );
@@ -268,6 +260,8 @@ export interface ConversationExtras {
   // The same check for what is typed on an agent's question card.
   readonly questionHold?: QuestionHold;
   readonly notice?: ReactNode;
+  // Its own composer bar (the assistant's settings); without one the conversation has none.
+  readonly modelBar?: Omit<ModelBarProps, 'ref' | 'returnFocus'>;
 }
 
 // A thread's conversation, its gate bar and its composer: the chat view's thread and, narrower,
@@ -303,6 +297,9 @@ export function ThreadConversation({
   const { container, onScroll } = useStickToBottom(items);
   const ownComposer = useRef<ComposerHandle>(null);
   const composer = extras?.composerRef ?? ownComposer;
+  const bar = useRef<ModelBarHandle>(null);
+  const barKeys = useModelBarKeys(bar);
+  const barId = useId();
 
   useEffect(() => {
     if (autoFocus) composer.current?.focus();
@@ -391,6 +388,21 @@ export function ThreadConversation({
         ? 'Write the next message; it is sent when the turn ends'
         : (extras?.placeholder ?? `Message the agent. Type ${skillTrigger} to pick a skill.`);
 
+  // A chat or step thread picks its model, effort and mode in the bar; the pick applies to the
+  // next turn (agent workbench spec 1, 2, 5).
+  const barProps: Omit<ModelBarProps, 'ref' | 'returnFocus'> | undefined = extras
+    ? extras.modelBar
+    : instance && {
+        providerInstanceId: instance.id,
+        kind: instance.kind,
+        value: thread,
+        defaults: { model: instance.defaultModel, effort: instance.defaultEffort },
+        onChange: (changes) => void send({ type: 'thread.configure', threadId, ...changes }),
+      };
+  const modelBar = barProps && (
+    <ModelBar id={barId} ref={bar} {...barProps} returnFocus={() => composer.current?.focus()} />
+  );
+
   const column = compact ? 'w-full px-3' : 'mx-auto w-full max-w-3xl px-4';
   return (
     <>
@@ -447,7 +459,11 @@ export function ThreadConversation({
           )}
         </div>
       </div>
-      <div className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}>
+      <div
+        className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}
+        // The palette's model commands go to the bar whose composer had the focus last.
+        onFocus={() => frontModelBar(barId)}
+      >
         {gateRun && (
           <GateBar
             run={gateRun}
@@ -465,6 +481,8 @@ export function ThreadConversation({
           onSend={answerQuestion ?? message}
           onStop={stop}
           notice={extras?.notice}
+          bar={modelBar}
+          onBarKey={barKeys}
           {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
           footer={
             (showMeter && context) || (canResume && !errorId) ? (

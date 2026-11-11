@@ -3,7 +3,10 @@ import {
   askedQuestionsOf,
   assistantThreadId,
   heldSecretSentence,
+  providerChatOptions,
   rpcMethods,
+  type ProviderInstance,
+  type Thread,
   type ThreadItem,
 } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
@@ -13,6 +16,7 @@ import { useRuntime, useSetting } from '@/app/runtime';
 import type { ComposerHandle } from '@/chat/composer';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
 import type { QuestionHold } from '@/chat/question-card';
+import type { ModelBarProps } from '@/chat/model-bar';
 import { ThreadConversation } from '@/chat/thread-view';
 import { providerLabel } from '@/chat/view-model';
 import { Banner } from '@/components/banner';
@@ -54,6 +58,9 @@ function useOpenProblem(): {
   const instances = useTopic('providerInstances');
   const configured = useSetting('assistant.providerInstanceId');
   const allowCodex = useSetting('assistant.allowCodex');
+  // A pick in the bar writes these; asking again brings the thread in line with them.
+  const model = useSetting('assistant.model');
+  const effort = useSetting('assistant.effort');
   const [state, setState] = useState<{ problem: string | null; asked: boolean }>({
     problem: null,
     asked: false,
@@ -77,7 +84,7 @@ function useOpenProblem(): {
     return () => {
       current = false;
     };
-  }, [connection, instancesKey, configured, allowCodex]);
+  }, [connection, instancesKey, configured, allowCodex, model, effort]);
   return state;
 }
 
@@ -208,6 +215,10 @@ export function AssistantView() {
   const composer = useRef<ComposerHandle>(null);
   const [held, setHeld] = useState<Held>();
   const [saved, setSaved] = useState<string>();
+  const storedInstanceId = useSetting('assistant.providerInstanceId');
+  const storedModel = useSetting('assistant.model');
+  const storedEffort = useSetting('assistant.effort');
+  const allowCodex = useSetting('assistant.allowCodex');
 
   if (status !== 'ready' && !thread) return <TopicPlaceholder status={status} />;
   if (!connection) return <TopicPlaceholder status="offline" />;
@@ -228,6 +239,17 @@ export function AssistantView() {
   }
 
   const instance = instances.find((candidate) => candidate.id === thread.providerInstanceId);
+  const modelBar = assistantBar({
+    thread,
+    instances,
+    stored: {
+      instanceId: storedInstanceId,
+      model: storedModel,
+      effort: storedEffort,
+      allowCodex,
+    },
+    write: (key, value) => void runtime.settings.write(key, value),
+  });
   const { after, rest } = placeRows(items ?? [], changes, proposals);
   const asks = askedFields(items ?? []);
 
@@ -347,8 +369,6 @@ export function AssistantView() {
         <h2 className="text-sm font-medium">Assistant</h2>
         <span data-testid="assistant-provider" className="text-xs text-muted-foreground">
           {instance ? providerLabel(instance, instances) : thread.providerInstanceId}
-          {' · '}
-          {thread.model}
         </span>
         <Button asChild size="xs" variant="ghost" className="ml-auto">
           <Link to="/settings/$group" params={{ group: 'assistant' }}>
@@ -375,10 +395,67 @@ export function AssistantView() {
           },
           questionHold,
           notice,
+          ...(modelBar ? { modelBar } : {}),
         }}
       />
     </div>
   );
+}
+
+// The Assistant view's composer bar (agent workbench spec 10): the provider instance, model and
+// effort the assistant's settings name, else what its thread runs on now. A pick writes the
+// setting, as Settings → Assistant does; a new instance starts from its own defaults. The mode
+// is the assistant's fixed one and is not a choice.
+export function assistantBar({
+  thread,
+  instances,
+  stored,
+  write,
+}: {
+  thread: Thread;
+  instances: readonly ProviderInstance[];
+  stored: {
+    readonly instanceId: string;
+    readonly model: string;
+    readonly effort: string;
+    readonly allowCodex: boolean;
+  };
+  write(
+    key: 'assistant.providerInstanceId' | 'assistant.model' | 'assistant.effort',
+    value: string,
+  ): void;
+}): Omit<ModelBarProps, 'ref' | 'returnFocus'> | undefined {
+  const allowed = instances.filter((entry) => entry.kind === 'claude' || stored.allowCodex);
+  const instance =
+    allowed.find((entry) => entry.id === stored.instanceId) ??
+    instances.find((entry) => entry.id === thread.providerInstanceId);
+  if (!instance) return undefined;
+  const onThread = instance.id === thread.providerInstanceId;
+  return {
+    providerInstanceId: instance.id,
+    kind: instance.kind,
+    value: {
+      model: stored.model || (onThread ? thread.model : '') || instance.defaultModel || '',
+      effort: stored.effort || (onThread ? thread.effort : '') || instance.defaultEffort || '',
+      permissionMode: providerChatOptions[instance.kind].assistantPermissionMode,
+    },
+    defaults: { model: instance.defaultModel, effort: instance.defaultEffort },
+    modeLocked: 'Read only',
+    instances: {
+      choices: allowed.map((entry) => ({ id: entry.id, label: providerLabel(entry, instances) })),
+      value: instance.id,
+      onChange: (id) => {
+        if (id === instance.id) return;
+        write('assistant.providerInstanceId', id);
+        write('assistant.model', '');
+        write('assistant.effort', '');
+      },
+    },
+    onChange: (changes) => {
+      if (changes.model !== undefined) write('assistant.model', changes.model);
+      if (changes.effort !== undefined) write('assistant.effort', changes.effort);
+    },
+  };
 }
 
 function ProviderLinks() {

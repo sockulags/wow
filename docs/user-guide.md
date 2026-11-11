@@ -369,6 +369,39 @@ box in the browser). The chosen folder shows under the picker; hover it for the 
 the first message and press Enter; the first line becomes the thread's title. Until a project or
 folder is chosen, Send stays disabled and says why.
 
+### Model, effort and mode
+
+The bar at the bottom of the composer, left of Send, reads the thread's model, effort and
+permission mode, such as "Opus · High · Ask". It sits on every composer that runs turns: an open
+thread, a new thread and a workflow step's thread in the side panel. Each part opens a list you
+can type in to filter. While the composer has the cursor:
+
+- **Ctrl+Shift+M** (`keybindings.composerModel`) opens the model list and **Ctrl+Shift+E**
+  (`keybindings.composerEffort`) the effort list.
+- **Shift+Tab** (`keybindings.composerModeCycle`) moves to the next permission mode: on Claude
+  Code Ask, Accept edits, Plan only and back to Ask; on Codex Read only, Auto, Ask untrusted and
+  back. Bypass permissions and Full access are never in that cycle; pick them from the list.
+- **Escape** (`keybindings.composerLeave`) takes the cursor out of the composer to what comes
+  before it, which is what Shift+Tab does everywhere else.
+
+The mode is coloured by what it allows: Plan only blue, Accept edits (and Codex's Auto) green,
+Bypass permissions and Full access red with a warning sign. A pick applies to the next turn and
+the thread keeps it.
+
+Each model in the list shows its label and, under it, the provider's description. The provider
+instance's default model is marked "(default)"; when the instance has none, the model the
+provider calls its own default is marked "(provider's default)". Models the provider hides are
+not listed, and a model the provider says takes images carries an image icon. The effort list
+holds the chosen model's levels, with the instance's default marked "(default)" and, where the
+provider names one, the model's own default marked "(model's default)". Codex reports all of
+these; Claude Code gives descriptions only, so its lists show no image icon and no model default.
+A new thread without a last thread on its instance starts on the provider's default model and
+that model's default effort.
+
+The palette has the same choices for the thread on screen: "Model: <label>", "Effort: <level>"
+and "Permission mode: <label>", with the current one marked **Current**, and "Choose model…" and
+"Choose effort…", which open the bar's lists.
+
 Below the composer, the new-thread view offers starters: a few skills (the project's own first),
 open backlog items to start from, and the thread you worked in last. `chat.starterCount` sets how
 many; 0 hides them.
@@ -463,8 +496,8 @@ threads first (pin from the thread header). Each row's second line says the proj
 thread was last active. A thread whose turn failed sits under Idle with a marker. A thread started
 by a workflow is titled by its step, with the workflow on the second line.
 
-The thread header shows the project (hover it for the folder), the provider instance, and the
-model, effort and permission selects. When a workflow run waits at a gate after the thread's step,
+The thread header shows the project (hover it for the folder) and the provider instance; the
+model, effort and mode are in the composer bar. When a workflow run waits at a gate after the thread's step,
 the thread shows the gate with **Approve** (**Ctrl+Enter**), **Send back** (**Ctrl+Shift+Enter**)
 and **Stop**, the same as the run view.
 
@@ -474,7 +507,7 @@ thread** puts it back under Idle (a thread whose last turn failed keeps its mark
 new message to a done thread reopens it as well. A workflow step's thread moves to Done by itself
 when its step completes; with a gate after the step, that happens once you press Approve.
 
-Change model, effort or permission mode in the thread header; the next turn uses them. **Ctrl+.**
+Change model, effort or permission mode in the composer bar; the next turn uses them. **Ctrl+.**
 or the stop button interrupts a running turn and keeps what it produced. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
 
@@ -961,7 +994,10 @@ between restarts; there is only one.
 
 It runs on a provider you connected: `assistant.providerInstanceId`, or the first connected
 instance when that is empty, with `assistant.model` and `assistant.effort` (empty means the
-instance's default). On Codex it runs only with `assistant.allowCodex` on: wow switches off Codex's command, image,
+instance's default). The bar at the bottom of its composer shows the instance, the model and the
+effort, and a pick there writes these settings, as Settings → Assistant does; picking another
+instance empties the model and effort, so it starts from that instance's defaults. Its mode
+reads "Read only" and cannot be changed. On Codex it runs only with `assistant.allowCodex` on: wow switches off Codex's command, image,
 image generation, computer and browser use, subagent, goal, app, plugin, skill search, tool
 suggestion, sleep, code mode and question tools and your own Codex hooks for the assistant, but Codex's file edit tool and its MCP
 resource tools have no switch and nobody has yet checked the resulting tool list on a real Codex

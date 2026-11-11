@@ -364,11 +364,20 @@ thread it maps to, since the app-server has no request that unloads one.
   the temp directory and reports `claude_code_version` from the init message and the account from
   `accountInfo()`; the server stores them on the instance. `listModels` uses `supportedModels()` of
   a live session or a short-lived query.
-- **Chat options.** What the thread header offers per provider kind (permission modes, the
-  effort that leaves the choice to the provider, the compact message) is `providerChatOptions`
-  in `packages/contracts`, because the web app cannot import the adapters. The keys are the ones
-  the adapters accept. Models and their efforts come from `provider.listModels`. Compact is
-  Claude's `/compact` sent as a message; codex has none in the adapter yet.
+- **Chat options.** What the composer bar offers per provider kind (permission modes with their
+  short label and tone, the Shift+Tab cycle `modeCycle`, the effort that leaves the choice to the
+  provider, the compact message) is `providerChatOptions` in `packages/contracts`, because the
+  web app cannot import the adapters. The keys are the ones the adapters accept. A mode's `tone`
+  (`plan`, `edits`, `danger`) colours it; a `danger` mode (Bypass permissions, Full access) is
+  never in `modeCycle`, and `nextPermissionMode(kind, current)` starts the cycle again from a mode
+  outside it, so the bar, the palette and the key read one list (a contracts test holds this).
+  Models and their efforts come from `provider.listModels`: `ProviderModel {id, label,
+description, efforts, defaultEffort?, isDefault?, imageInput?}`. The three optional fields are
+  set only when the provider reports them: Codex's `model/list` gives `defaultReasoningEffort`,
+  `isDefault` and `inputModalities` (`imageInput` is whether it holds `image`; an older codex
+  without the field leaves it out, marked as coped with in the protocol fingerprint), and hidden
+  models are left out; Claude Code's `supportedModels()` gives none of them, so they stay absent.
+  Compact is Claude's `/compact` sent as a message; codex has none in the adapter yet.
 - **Instances.** A provider instance is one binary + one config directory + env. Several instances
   of the same kind are allowed (work and personal accounts). A thread remembers its instance and
   can only resume on an instance with the same config directory.
@@ -2636,7 +2645,7 @@ between them only from a guidance text it ships; nothing about models comes from
   `ask_questions` when two choices differ in a way the person would care about.
 
 - **The builder** (spec 18, 19). `ThreadSettings` takes the instance's `defaults` and marks that
-  model and effort "(default)" in its lists. `stepDefaults` fills an empty model with the
+  model and effort "(default)" in its lists (the composer bar's lists, see "Chat view"). `stepDefaults` fills an empty model with the
   instance's default, and only for a provider that does not need one with the first listed
   model, so a Codex step without a default stays empty. `validateDraft` then gives that step
   `missingModelSentence`, the server's own words, as a problem marked `always`, shown beside the
@@ -2685,6 +2694,40 @@ the palette's approval commands (`keybindings.approvalAllowOnce|approvalAllowSes
 plain keys, so they do nothing in text fields) answer it. A thread whose step a waiting run asks
 to review (`gateRunForThread`: the gate after this step, or before the next) shows the run view's
 `GateBar` above the composer, and the palette's Continue run and Stop run apply to that run.
+
+**Composer bar** (`chat/model-bar.tsx`, agent workbench spec 1 to 8, 10). `ModelBar` sits in the
+composer's bottom row, left of Stop and Send (the composer takes it as `bar` and its keys as
+`onBarKey`), and reads "model · effort · mode". It replaced the header's selects on an open
+thread, the row under the provider picker on `/chat/new` and, through `ThreadConversation`, the
+step thread in the side panel; the builder keeps its selects (`ThreadSettings`) with the same
+lists. Each part is a Popover with a cmdk list. `modelChoices` and `effortChoices`
+(`chat/thread-settings.tsx`) build the lists: a model's label and, under it, its description;
+"(default)" on the instance's default model and effort; "(provider's default)" on the model the
+provider flags while the instance names no default; an image icon where `imageInput` is true;
+"(model's default)" on the model's `defaultEffort`. Nothing absent is filled in. A pick calls the
+caller's `onChange`: a thread sends `thread.configure` (unchanged), the draft keeps it until
+`thread.create`, the Assistant view writes `assistant.providerInstanceId`, `assistant.model` and
+`assistant.effort` through the settings store (`assistantBar` in `assistant/assistant-view.tsx`;
+a new instance empties the other two) and asks `assistant.open` again so the thread follows;
+its mode shows `modeLocked` ("Read only") and has no list. `threadDefaults` starts a new thread
+on the provider's default model and that model's default effort when neither the last thread nor
+the instance names one. Keys while the composer has the focus (`useModelBarKeys`, `barKeyOf`):
+`keybindings.composerModel` (Mod+Shift+M) and `keybindings.composerEffort` (Mod+Shift+E) open the
+lists, `keybindings.composerModeCycle` (Shift+Tab) moves to `nextPermissionMode`, and
+`keybindings.composerLeave` (Escape, after the skill list's own Escape) focuses what comes before
+the composer, since Shift+Tab no longer leaves it. They are matched in the composer's key handler,
+not by the global keybinding listener, so they do nothing elsewhere. A list that closes returns
+the focus to the composer unless the user already moved on. The palette reaches the bar on screen
+through `modelBarStore` (`chat/model-commands.ts`; the bar whose conversation had the focus last
+is in front): "Model: <label>", "Effort: <level>" and "Permission mode: <label>", the current one
+with detail "Current", and "Choose model…" / "Choose effort…", which open the lists. The
+assistant's bar has no mode commands. Tests: `apps/web/src/chat/model-bar.test.tsx` (keys, cycle,
+colours, lists, palette, new thread, step thread, the assistant's bar),
+`packages/contracts/src/model-bar.test.ts` (cycle and danger facts), the adapters' model cases,
+`apps/server/src/hooks/mock-models.test.ts` (`mockCodexModels`, which the chat copy of the e2e
+server's Codex lists), and the e2e cases "picks model, effort and mode from the composer bar" and
+"sets the model from the palette" in `chat.spec.ts` and "the assistant's bar writes its settings"
+in `app-assistant.spec.ts` (run in the `assistant` project, since it uses that copy).
 
 The palette (`app/palette.tsx`, `app/palette-model.ts`) lists, before anything is typed, the
 commands marked `needsYou`, the newest by `recentAt` (`appearance.paletteRecent`) and the open

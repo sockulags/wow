@@ -68,6 +68,10 @@ export interface ComposerProps {
   beforeSend?(text: string): boolean;
   // A line above the text box, such as why a message was held.
   readonly notice?: ReactNode;
+  // The model bar at the box's bottom edge, left of Stop and Send (agent workbench spec 1).
+  readonly bar?: ReactNode;
+  // The bar's keys while the box has the focus; true when the key was used.
+  onBarKey?(event: KeyboardEvent<HTMLTextAreaElement>): boolean;
 }
 
 // The skill list (wow skills spec 16): a cmdk list grouped like every skill list. The focus stays
@@ -185,6 +189,8 @@ export function Composer({
   footer,
   beforeSend,
   notice,
+  bar,
+  onBarKey,
 }: ComposerProps) {
   const pickerId = useId();
   const composerId = useId();
@@ -392,6 +398,7 @@ export function Composer({
         return;
       }
     }
+    if (onBarKey?.(event)) return;
     // The chips stand before the text: at its start, Backspace removes the last chip whole and
     // the left arrow steps onto it (wow skills spec 17).
     const box = event.currentTarget;
@@ -545,20 +552,25 @@ export function Composer({
             takesSkills && chips.length > 0 ? 'pt-1.5' : 'pt-2.5',
           )}
         />
-        <div className="absolute right-2 bottom-2 flex items-center gap-1">
-          {running && onStop && (
-            <WithTooltip label="Stop" binding={stopBinding}>
-              <Button size="sm" variant="secondary" onClick={onStop} aria-label="Stop">
-                <SquareIcon className="size-3 fill-current" />
-                Stop
-              </Button>
-            </WithTooltip>
-          )}
-          {blockedReason !== undefined && !empty ? (
-            <WithTooltip label={blockedReason}>{sendButton}</WithTooltip>
-          ) : (
-            sendButton
-          )}
+        {/* Only the bar's and the buttons' own boxes take the pointer; around them the text box
+            does. */}
+        <div className="pointer-events-none absolute right-2 bottom-2 left-2 flex items-center gap-1">
+          <div className="min-w-0 flex-1">{bar}</div>
+          <div className="pointer-events-auto flex items-center gap-1">
+            {running && onStop && (
+              <WithTooltip label="Stop" binding={stopBinding}>
+                <Button size="sm" variant="secondary" onClick={onStop} aria-label="Stop">
+                  <SquareIcon className="size-3 fill-current" />
+                  Stop
+                </Button>
+              </WithTooltip>
+            )}
+            {blockedReason !== undefined && !empty ? (
+              <WithTooltip label={blockedReason}>{sendButton}</WithTooltip>
+            ) : (
+              sendButton
+            )}
+          </div>
         </div>
       </div>
       {error && (
