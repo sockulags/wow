@@ -1,13 +1,24 @@
-import type {
-  CalendarItem,
-  CardChanges,
-  DomainEvent,
-  OutlookCalendarRow,
-  ServerCommand,
+import {
+  RepeatRule,
+  type CalendarItem,
+  type CardChanges,
+  type DomainEvent,
+  type OutlookCalendarRow,
+  type ServerCommand,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
-import { cardDeleteEvents, cardTriggerEvents } from './triggers.js';
+import {
+  firstAfter,
+  instantOf,
+  localDay,
+  nextDay,
+  occurrenceOn,
+  wallClock,
+  type Occurrence,
+} from '../scheduler/occurrences.js';
+import { isRepeating, pastSeriesBefore, scheduleOf, type RepeatingCard } from './series.js';
+import { cardDeleteEvents, cardTriggerEvents, triggerIdFor } from './triggers.js';
 
 // Decisions for local cards and the Outlook cache. Cards are the user's own calendar items and
 // never reach Outlook; Outlook rows only change through `outlook.sync`, never through card
@@ -15,7 +26,16 @@ import { cardDeleteEvents, cardTriggerEvents } from './triggers.js';
 
 type CalendarCommand = Extract<
   ServerCommand,
-  { type: 'card.create' | 'card.update' | 'card.delete' | 'outlook.sync' | 'outlook.fail' }
+  {
+    type:
+      | 'card.create'
+      | 'card.update'
+      | 'card.delete'
+      | 'card.skipOccurrence'
+      | 'card.moveOccurrence'
+      | 'outlook.sync'
+      | 'outlook.fail';
+  }
 >;
 
 export const isCalendarCommand = (command: ServerCommand): command is CalendarCommand =>
@@ -28,7 +48,15 @@ const outlookIdPrefix = 'outlook';
 
 const OUTLOOK_STATUS_AGGREGATE = 'outlook';
 
-const triggerFields = ['start', 'zone', 'projectId', 'workflowId'] as const;
+const triggerFields = [
+  'start',
+  'end',
+  'zone',
+  'projectId',
+  'workflowId',
+  'repeat',
+  'skippedDates',
+] as const;
 
 function requireCard(read: ReadModel, cardId: string): CalendarItem {
   const item = read.calendarItem(cardId);
@@ -43,6 +71,58 @@ function checkRange(start: string, end: string): void {
   if (Date.parse(end) <= Date.parse(start)) {
     throw new CommandRejected('rejected', 'A card must end after it starts');
   }
+}
+
+function checkZone(zone: string): void {
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone: zone }).resolvedOptions();
+  } catch {
+    throw new CommandRejected('rejected', `${zone} is not a time zone`);
+  }
+}
+
+// A rule whose end comes before its first occurrence would have no occurrence at all.
+function checkRepeat(card: CalendarItem): void {
+  const rule = card.repeat;
+  if (!rule) return;
+  // The wire parses the rule; this holds for a command that reached the engine another way.
+  const parsed = RepeatRule.safeParse(rule);
+  if (!parsed.success) {
+    throw new CommandRejected('rejected', parsed.error.issues[0]?.message ?? 'Not a repeat rule');
+  }
+  checkZone(card.zone);
+  if (rule.end.kind === 'on' && rule.end.date < localDay(card.start, card.zone)) {
+    throw new CommandRejected(
+      'rejected',
+      `The repeat ends on ${rule.end.date}, before the card's first day`,
+    );
+  }
+}
+
+const sortedDays = (days: readonly string[]): string[] => [...new Set(days)].toSorted();
+
+// The occurrence of a repeating card on a day, which must not have started yet.
+function upcomingOccurrence(
+  card: CalendarItem,
+  date: string,
+  read: ReadModel,
+  context: DecideContext,
+): Occurrence {
+  if (!isRepeating(card)) {
+    throw new CommandRejected('rejected', `"${card.title}" does not repeat`);
+  }
+  const occurrence = occurrenceOn(scheduleOf(card), date);
+  if (!occurrence) {
+    throw new CommandRejected('rejected', `"${card.title}" has no occurrence on ${date}`);
+  }
+  const reached = read.cardOccurrences(card.id).some((done) => done.date === date);
+  if (reached || Date.parse(occurrence.start) <= Date.parse(context.now)) {
+    throw new CommandRejected(
+      'rejected',
+      `The occurrence of "${card.title}" on ${date} has already started`,
+    );
+  }
+  return occurrence;
 }
 
 interface Links {
@@ -73,7 +153,17 @@ const toCalendarItem = (row: OutlookCalendarRow, at: string): CalendarItem => ({
   updatedAt: at,
 });
 
-const withoutUpdatedAt = ({ updatedAt: _updatedAt, ...rest }: CalendarItem) => rest;
+// What Outlook says about a row: neither the time it was stored nor a card's own columns, which
+// an Outlook row stores empty.
+const withoutUpdatedAt = ({
+  updatedAt: _updatedAt,
+  repeat: _repeat,
+  skippedDates: _skippedDates,
+  nextAt: _nextAt,
+  occurrences: _occurrences,
+  pastSeries: _pastSeries,
+  ...rest
+}: CalendarItem) => rest;
 
 // Rows Outlook returned that are new or differ, and stored rows overlapping the polled window that
 // Outlook no longer returns (deleted or moved there). Rows outside the window stay as history.
@@ -96,6 +186,107 @@ export function diffOutlookCalendar(
         (row) => !seen.has(row.id) && Date.parse(row.start) < to && Date.parse(row.end) > from,
       )
       .map((row) => row.id),
+  };
+}
+
+const seriesFields = ['start', 'end', 'zone', 'repeat'] as const;
+
+// The day a change of a repeating card's series takes over from (recurring cards spec 10): the
+// day of the first occurrence that has not started. Once none is left, the day after today.
+function firstOpenDay(card: RepeatingCard, context: DecideContext): string {
+  const now = Date.parse(context.now);
+  return firstAfter(scheduleOf(card), now)?.date ?? nextDay(localDay(now, card.zone));
+}
+
+// `from` is the day a moved occurrence changes the series from; any other change of the series
+// changes it from the first occurrence that has not started.
+function updateEvents(
+  card: CalendarItem,
+  proposed: CardChanges,
+  read: ReadModel,
+  context: DecideContext,
+  from?: string,
+): DomainEvent[] {
+  if (Object.keys(proposed).length === 0) return [];
+  const changes: CardChanges = { ...proposed };
+  if (changes.zone !== undefined) checkZone(changes.zone);
+  const proposedCard: CalendarItem = Object.assign({ ...card }, changes);
+  let past = card.pastSeries ?? [];
+  if (isRepeating(card) && !isRepeating(proposedCard)) {
+    // A card that stops repeating keeps only the days that have started, so a move of an
+    // occurrence that has not happened cannot govern a series it gets again.
+    past = pastSeriesBefore(card, firstOpenDay(card, context));
+  } else if (isRepeating(card) && seriesFields.some((field) => field in changes)) {
+    past = pastSeriesBefore(card, from ?? firstOpenDay(card, context));
+  } else if (!isRepeating(card) && isRepeating(proposedCard)) {
+    // A card that starts repeating again takes over from its own first day.
+    const first = localDay(proposedCard.start, proposedCard.zone);
+    past = past.filter((series) => series.until <= first);
+  }
+  if (!isDeepStrictEqual(past, card.pastSeries ?? [])) changes.pastSeries = past;
+  const after: CalendarItem = Object.assign({ ...card }, changes);
+  checkRepeat(after);
+  const events: DomainEvent[] = [
+    {
+      kind: 'card.updated',
+      aggregate: card.id,
+      payload: { cardId: card.id, changes, updatedAt: context.now },
+    },
+  ];
+  // A single card that already ran becomes a series whose first occurrence is that run.
+  const trigger = read.trigger(triggerIdFor(card.id));
+  if (
+    !isRepeating(card) &&
+    isRepeating(after) &&
+    card.runId !== null &&
+    trigger?.state === 'fired' &&
+    !read.cardOccurrences(card.id).some((done) => done.date === localDay(card.start, card.zone))
+  ) {
+    events.push({
+      kind: 'card.occurrenceRecorded',
+      aggregate: card.id,
+      payload: {
+        cardId: card.id,
+        occurrence: {
+          date: localDay(card.start, card.zone),
+          start: card.start,
+          end: card.end,
+          outcome: 'fired',
+          runId: card.runId,
+          reason: null,
+          offerRunNow: false,
+          at: context.now,
+        },
+      },
+    });
+  }
+  // Moving the card moves its trigger (spec 6); its workflow and project decide whether it
+  // has one, and a rule which occurrence it waits for.
+  if (triggerFields.some((field) => field in changes)) {
+    events.push(...cardTriggerEvents(after, read, context));
+  }
+  return events;
+}
+
+// The series after one of its occurrences moved within its day: every occurrence keeps the
+// series' days and takes the moved one's local start time and length (recurring cards spec
+// 11). The first day stays the first day.
+function movedSeries(
+  card: CalendarItem,
+  occurrence: Occurrence,
+  moved: { readonly start: string; readonly end: string },
+  zone: string,
+): { start: string; end: string } {
+  const wall = wallClock(Date.parse(moved.start), zone);
+  const first = wallClock(Date.parse(card.start), zone);
+  const start =
+    occurrence.start === card.start
+      ? Date.parse(moved.start)
+      : instantOf({ ...first, hour: wall.hour, minute: wall.minute, second: wall.second }, zone);
+  const length = Date.parse(moved.end) - Date.parse(moved.start);
+  return {
+    start: new Date(start).toISOString(),
+    end: new Date(start + length).toISOString(),
   };
 }
 
@@ -133,7 +324,11 @@ export function decideCalendar(
         runId: null,
         state: 'scheduled',
         updatedAt: context.now,
+        repeat: command.repeat ?? null,
+        skippedDates: sortedDays(command.skippedDates ?? []),
       };
+      checkZone(card.zone);
+      checkRepeat(card);
       return [
         { kind: 'card.created', aggregate: card.id, payload: card },
         ...cardTriggerEvents(card, read, context),
@@ -159,20 +354,42 @@ export function decideCalendar(
         if (value !== undefined && value !== card[field])
           Object.assign(changes, { [field]: value });
       }
-      if (Object.keys(changes).length === 0) return [];
-      const events: DomainEvent[] = [
-        {
-          kind: 'card.updated',
-          aggregate: command.cardId,
-          payload: { cardId: command.cardId, changes, updatedAt: context.now },
-        },
-      ];
-      // Moving the card moves its trigger (spec 6); its workflow and project decide whether it
-      // has one.
-      if (triggerFields.some((field) => field in changes)) {
-        events.push(...cardTriggerEvents(Object.assign({ ...card }, changes), read, context));
+      if (command.repeat !== undefined && !isDeepStrictEqual(command.repeat, card.repeat ?? null)) {
+        changes.repeat = command.repeat;
       }
-      return events;
+      if (command.skippedDates !== undefined) {
+        const days = sortedDays(command.skippedDates);
+        if (!isDeepStrictEqual(days, card.skippedDates ?? [])) changes.skippedDates = days;
+      }
+      return updateEvents(card, changes, read, context);
+    }
+    case 'card.skipOccurrence': {
+      const card = requireCard(read, command.cardId);
+      upcomingOccurrence(card, command.date, read, context);
+      const skipped = card.skippedDates ?? [];
+      if (skipped.includes(command.date)) return [];
+      return updateEvents(
+        card,
+        { skippedDates: sortedDays([...skipped, command.date]) },
+        read,
+        context,
+      );
+    }
+    case 'card.moveOccurrence': {
+      const card = requireCard(read, command.cardId);
+      const occurrence = upcomingOccurrence(card, command.date, read, context);
+      checkRange(command.start, command.end);
+      if (localDay(command.start, card.zone) !== command.date) {
+        throw new CommandRejected(
+          'rejected',
+          'An occurrence moves within its day; to move the series to other days, change its rule',
+        );
+      }
+      const { start, end } = movedSeries(card, occurrence, command, card.zone);
+      const changes: CardChanges = {};
+      if (start !== card.start) changes.start = start;
+      if (end !== card.end) changes.end = end;
+      return updateEvents(card, changes, read, context, command.date);
     }
     case 'card.delete': {
       const card = requireCard(read, command.cardId);

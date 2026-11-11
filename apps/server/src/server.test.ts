@@ -253,11 +253,12 @@ describe('rpc', () => {
     const command = { type: 'project.create', projectId: 'p1', name: 'wow', cwd: home };
     const pushed = client.nextPush();
     const dispatched = await client.request('dispatch', { commandId: 'c1', command });
-    expect(dispatched).toMatchObject({ result: { seqs: [1], duplicate: false } });
+    expect(dispatched).toMatchObject({ result: { seqs: [expect.any(Number)], duplicate: false } });
     expect(await pushed).toMatchObject({ subscription: subscriptionId, data: [{ id: 'p1' }] });
+    const { seqs } = (dispatched as { result: { seqs: number[] } }).result;
 
     const retried = await client.request('dispatch', { commandId: 'c1', command });
-    expect(retried).toMatchObject({ result: { seqs: [1], duplicate: true } });
+    expect(retried).toMatchObject({ result: { seqs, duplicate: true } });
     expect(client.messages.filter((message) => 'subscription' in message)).toHaveLength(1);
   });
 
@@ -268,9 +269,12 @@ describe('rpc', () => {
       path.join(skillDir, 'SKILL.md'),
       '---\nname: tidy\ndescription: Tidy up\n---\n',
     );
-    expect(await client.request('skills.refresh')).toMatchObject({
-      result: { skills: [{ name: 'tidy', invocations: { claude: '/tidy', codex: '$tidy' } }] },
-    });
+    const refreshed = (await client.request('skills.refresh')) as {
+      result: { skills: { name: string; source: string }[] };
+    };
+    expect(refreshed.result.skills.filter((skill) => skill.source !== 'wow')).toMatchObject([
+      { name: 'tidy', invocations: { claude: '/tidy', codex: '$tidy' } },
+    ]);
   });
 
   it('lists the files expected artifact globs match in a project, for the builder', async () => {
@@ -411,7 +415,7 @@ describe('rpc', () => {
     ).toMatchObject({ result: { ok: true, version: 'mock' } });
     expect(
       await client.request('provider.listModels', { providerInstanceId: 'claude-work' }),
-    ).toMatchObject({ result: [{ id: 'mock-model' }] });
+    ).toMatchObject({ result: [{ id: 'mock-model' }, { id: 'mock-model-large' }] });
 
     await dispatch('c2', {
       type: 'thread.create',

@@ -1,8 +1,10 @@
 import {
   alwaysStops,
+  changeRequestName,
   type GateCondition,
   type GatePart,
   type GatePartResult,
+  type HostKind,
   type WorkflowStep,
 } from '@wow/contracts';
 
@@ -12,14 +14,19 @@ import {
 
 // What the host last showed about the checks of the run's pull request, read after the step
 // ended. The server builds it from the stored host read; the engine words it and decides.
+// `host` words it as GitLab's merge request or GitHub's pull request; GitHub when absent.
+interface Numbered {
+  readonly number: number;
+  readonly host?: HostKind;
+}
 export type ChecksReading =
-  | { readonly state: 'success'; readonly number: number; readonly checks: readonly string[] }
-  | { readonly state: 'failure'; readonly number: number; readonly failing: readonly string[] }
-  | { readonly state: 'pending'; readonly number: number; readonly running: readonly string[] }
+  | (Numbered & { readonly state: 'success'; readonly checks: readonly string[] })
+  | (Numbered & { readonly state: 'failure'; readonly failing: readonly string[] })
+  | (Numbered & { readonly state: 'pending'; readonly running: readonly string[] })
   // The pull request has no check at all (yet).
-  | { readonly state: 'none'; readonly number: number }
+  | (Numbered & { readonly state: 'none' })
   // No pull request was found for the branch the run is on; null while it is on none.
-  | { readonly state: 'noPullRequest'; readonly branch: string | null }
+  | { readonly state: 'noPullRequest'; readonly branch: string | null; readonly host?: HostKind }
   // The host is not set up for the project, so no later read can help.
   | { readonly state: 'notSetUp'; readonly message: string }
   // The host could not be asked this time.
@@ -112,6 +119,13 @@ export function artifactsPart(
 
 const names = (list: readonly string[]): string => list.join(', ');
 
+const titled = ({ number, host }: Numbered): string =>
+  changeRequestName({ host: host ?? 'github', number });
+const inSentence = (reading: Numbered): string => {
+  const name = titled(reading);
+  return name.charAt(0).toLowerCase() + name.slice(1);
+};
+
 // The checks part from a reading. `pending` means a later read may still settle it.
 export function checksPart(reading: ChecksReading): GatePartResult {
   switch (reading.state) {
@@ -119,32 +133,34 @@ export function checksPart(reading: ChecksReading): GatePartResult {
       return result(
         'checks',
         'held',
-        `Every check of pull request #${reading.number} is successful (${names(reading.checks)})`,
+        `Every check of ${inSentence(reading)} is successful (${names(reading.checks)})`,
       );
     case 'failure':
       return result(
         'checks',
         'failed',
-        `Pull request #${reading.number} has failing checks: ${names(reading.failing)}`,
+        `${titled(reading)} has failing checks: ${names(reading.failing)}`,
       );
     case 'pending':
       return result(
         'checks',
         'pending',
         reading.running.length > 0
-          ? `Checks of pull request #${reading.number} are still running: ${names(reading.running)}`
-          : `Checks of pull request #${reading.number} are still running`,
+          ? `Checks of ${inSentence(reading)} are still running: ${names(reading.running)}`
+          : `Checks of ${inSentence(reading)} are still running`,
       );
     case 'none':
-      return result('checks', 'pending', `Pull request #${reading.number} shows no checks yet`);
-    case 'noPullRequest':
+      return result('checks', 'pending', `${titled(reading)} shows no checks yet`);
+    case 'noPullRequest': {
+      const noun = reading.host === 'gitlab' ? 'merge request' : 'pull request';
       return result(
         'checks',
         'pending',
         reading.branch === null
-          ? 'The run is on no branch yet, so it has no pull request'
-          : `No pull request found yet for branch ${reading.branch}`,
+          ? `The run is on no branch yet, so it has no ${noun}`
+          : `No ${noun} found yet for branch ${reading.branch}`,
       );
+    }
     case 'notSetUp':
       return result('checks', 'failed', reading.message);
     case 'unavailable':

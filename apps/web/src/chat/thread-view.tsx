@@ -1,6 +1,7 @@
 import {
   providerChatOptions,
   type ProviderInstance,
+  type SkillRef,
   type Thread,
   type ThreadItem,
 } from '@wow/contracts';
@@ -24,8 +25,15 @@ import { cn } from '@/lib/utils';
 import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
 import { Composer, type ComposerHandle } from './composer';
+import type { QuestionHold } from './question-card';
 import { useDispatch, useTopic } from './data';
-import { ConversationItem, WorkingIndicator, type ItemContext } from './items';
+import {
+  ChatQuestions,
+  ConversationItem,
+  ToolCallGroup,
+  WorkingIndicator,
+  type ItemContext,
+} from './items';
 import {
   canMarkDone,
   contextPercent,
@@ -40,11 +48,14 @@ import {
 } from './model';
 import { ThreadSettings } from './thread-settings';
 import {
+  groupQuestions,
+  groupToolCalls,
   lastErrorId,
-  lastUserMessage,
+  lastUserSent,
   pendingApproval,
   pendingQuestion,
   providerLabel,
+  type ConversationEntry,
 } from './view-model';
 
 export const threadStateLabels: Readonly<Record<Thread['state'], string>> = {
@@ -253,6 +264,8 @@ export interface ConversationExtras {
   readonly placeholder?: string;
   readonly blockedReason?: string | undefined;
   beforeSend?(text: string): boolean;
+  // The same check for what is typed on an agent's question card.
+  readonly questionHold?: QuestionHold;
   readonly notice?: ReactNode;
 }
 
@@ -283,6 +296,8 @@ export function ThreadConversation({
   const projects = useTopic('projects') ?? [];
   const showMeter = useSetting('chat.contextMeter');
   const resumePrompt = useSetting('chat.resumePrompt');
+  const groupTools = useSetting('chat.groupToolCalls');
+  const skillTrigger = useSetting('chat.skillTrigger');
   const { when } = useDateFormat();
   const { container, onScroll } = useStickToBottom(items);
   const ownComposer = useRef<ComposerHandle>(null);
@@ -296,13 +311,19 @@ export function ThreadConversation({
   const last = lastTurn(turns);
   const canResume = !running && (last?.state === 'failed' || last?.state === 'interrupted');
   const compactPrompt = instance ? providerChatOptions[instance.kind].compactPrompt : null;
-  const message = (text: string) => send({ type: 'thread.sendMessage', threadId, text });
+  const message = (text: string, skills?: readonly SkillRef[]) =>
+    send({
+      type: 'thread.sendMessage',
+      threadId,
+      text,
+      ...(skills ? { skills: [...skills] } : {}),
+    });
   const stop = () => void send({ type: 'thread.interrupt', threadId });
   const approval = pendingApproval(approvals);
-  const question = pendingQuestion(questions);
+  const question = pendingQuestion(questions, items ?? [], running);
   const gateRun = gateRunForThread(thread, runs);
   const context = latestContext(items ?? []);
-  const retryText = lastUserMessage(items ?? []);
+  const retry = lastUserSent(items ?? []);
   const errorId = canResume ? lastErrorId(items ?? []) : undefined;
   const permissionLabel = instance
     ? (permissionOptions(instance.kind, thread.permissionMode).find(
@@ -319,10 +340,16 @@ export function ThreadConversation({
       at: turn?.startedAt,
       awaitingApproval: approval !== undefined,
       formatAt: when,
+      questionHold: extras?.questionHold,
       recovery:
         itemId === errorId
           ? {
-              ...(retryText ? { onRetry: () => void message(retryText) } : {}),
+              ...(retry
+                ? {
+                    onRetry: () =>
+                      void message(retry.text, retry.skills.length > 0 ? retry.skills : undefined),
+                  }
+                : {}),
               onResume: () => void message(resumePrompt),
               resumePrompt,
             }
@@ -330,18 +357,34 @@ export function ThreadConversation({
     };
   };
 
-  // While a question waits, the composer answers it; while an approval waits, the buttons above
-  // answer it and the composer only queues the next message (audit C-04).
+  const afters = new Map((items ?? []).map((item) => [item.id, extras?.after?.(item)]));
+  const entries: ConversationEntry[] = groupQuestions(
+    groupTools
+      ? groupToolCalls(items ?? [], (item) => Boolean(afters.get(item.id)))
+      : (items ?? []).map((item) => ({ kind: 'item', item })),
+  );
+
+  // While a question waits, the composer answers it with typed text, as its card's "Other" does;
+  // while an approval waits, the buttons above answer it and the composer only queues the next
+  // message (audit C-04).
   const answerQuestion = question
-    ? (text: string) => send({ type: 'question.answer', questionId: question.id, answer: text })
+    ? (text: string, skills?: readonly SkillRef[]) =>
+        skills
+          ? Promise.reject(
+              new Error('An answer takes no skills. Remove the chip, or answer on the card.'),
+            )
+          : send({
+              type: 'question.answer',
+              answers: [{ questionId: question.id, reply: { picked: [], text } }],
+            })
     : undefined;
   const placeholder = question
-    ? 'Type your answer, or pick an option above'
+    ? 'Type your answer, or answer on the card above'
     : approval
       ? 'Answer the request above'
       : running
         ? 'Write the next message; it is sent when the turn ends'
-        : (extras?.placeholder ?? 'Message the agent. Type $ to pick a skill.');
+        : (extras?.placeholder ?? `Message the agent. Type ${skillTrigger} to pick a skill.`);
 
   const column = compact ? 'w-full px-3' : 'mx-auto w-full max-w-3xl px-4';
   return (
@@ -354,16 +397,33 @@ export function ThreadConversation({
       >
         <div className={column}>
           <ol aria-label="Conversation" className="flex flex-col gap-3">
-            {(items ?? []).map((item) => {
-              const after = extras?.after?.(item);
+            {entries.map((entry) => {
+              const tail = entry.kind === 'item' ? entry.item : entry.items.at(-1);
+              const after = tail && afters.get(tail.id);
               return (
-                <Fragment key={item.id}>
-                  <ConversationItem
-                    item={item}
-                    approvals={approvals}
-                    questions={questions}
-                    context={itemContext(item.turnId, item.id)}
-                  />
+                <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
+                  {entry.kind === 'item' ? (
+                    <ConversationItem
+                      item={entry.item}
+                      approvals={approvals}
+                      questions={questions}
+                      context={itemContext(entry.item.turnId, entry.item.id)}
+                    />
+                  ) : entry.kind === 'questions' ? (
+                    <li data-testid="item-question" data-item-id={entry.id}>
+                      <ChatQuestions
+                        items={entry.items}
+                        questions={questions}
+                        turnEnded={itemContext(entry.items[0]?.turnId ?? '', entry.id).turnEnded}
+                        hold={extras?.questionHold}
+                      />
+                    </li>
+                  ) : (
+                    <ToolCallGroup
+                      items={entry.items}
+                      contextOf={(item) => itemContext(item.turnId, item.id)}
+                    />
+                  )}
                   {after && <li>{after}</li>}
                 </Fragment>
               );

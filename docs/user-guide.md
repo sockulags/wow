@@ -52,7 +52,8 @@ left for you to fill in.
 
 Once a test passes, the step goes away for good (the `providers.offerSetup` setting turns off, so
 removing a provider later never hides the app again) and the Assistant opens. wow sends it a first
-message for you (`assistant.greeting`), and the assistant answers with what is set up and what a
+message for you (`assistant.greeting`), also when the window was reloaded in between (then when you
+next open Assistant), and the assistant answers with what is set up and what a
 first run still needs: usually a project and a workflow. After a setup file it then goes through
 what the file left to fill in, one thing per answer: each token through its field, then your work
 hours, then your project folders, which a file never holds.
@@ -316,6 +317,46 @@ Plain cards show no state. A card with a workflow but no project is drawn dashed
 will not run". The form says what a trigger will do ("Starts at 16:30 in Demo · 4 steps, 2
 gates"), warns when it will not run, and links to its run once it has one.
 
+### Repeating cards
+
+A card can repeat, so a workflow runs on a schedule: a daily report, a weekly review. It stays
+one card; wow works out its occurrences.
+
+- **Make one**: in the card form, **Repeat** sets how often (Daily, Weekly or Monthly), **Every**
+  how many days, weeks or months, **On days** the weekdays of a weekly card (Monday to Friday for
+  every weekday), and **Stops** when: never, on a last day, or after a number of times. The form
+  says the rule in words ("Every weekday at 08:30, until 19 December 2026") and, once saved, when
+  the card fires next. The card's date and times are its first occurrence; every later one has
+  the same clock time and length in the card's zone, also across a daylight saving change. A
+  monthly card on the 31st has no occurrence in a month without one. "Does not repeat" makes it a
+  single card again.
+- **In the calendar** every occurrence in the days shown is drawn with a repeat mark. One that
+  has passed shows how it went (Done, Failed, Missed, or Skipped when the card's earlier run was
+  still going) and opens its run; one still to come opens the card. When one card has more
+  occurrences in the days shown than `calendar.maxOccurrences`, the first ones are drawn and a
+  line above the grid says so. When the occurrences cannot be read from the server, a banner says
+  so and **Try again** reads them once more.
+- **Move**: drag an occurrence to another time, or its lower edge, or use Alt+Up and Alt+Down.
+  That changes the time or length of the series from that day on, not of one day; the days
+  before it keep their time. An occurrence stays on its day (to change the days, edit the rule),
+  and one that has passed does not move.
+- **Edit**: changing the title, time, workflow, project or rule changes every occurrence that has
+  not started. Occurrences that have passed stay where they were, and those that ran keep their
+  runs.
+- **Delete**: **Delete…** in the form, or the **Delete** key (`keybindings.calendarDeleteCard`)
+  on a card in the grid, asks **This occurrence** or **The whole series**. This occurrence skips
+  that day only; the whole series deletes the card, and asks first whether to stop a run that is
+  going. **Undo** brings back either, a series with its rule and skipped days.
+- **Palette**: "Skip next occurrence: <title>" skips the day the card fires next, and "Delete
+  series: <title>" opens the same choice. A single card has "Delete card: <title>", which asks
+  before it deletes.
+
+A repeating trigger starts one run per occurrence, named with its day. If the run of an earlier
+occurrence is still going, the occurrence starts nothing and a notification says it was skipped.
+A card whose remaining occurrences were all skipped by hand never fires again and shows Done.
+After wow was closed or paused over several occurrences, only the latest follows
+`scheduler.missedPolicy`; the older ones are recorded as missed.
+
 ## Chat
 
 ### Starting a thread
@@ -333,7 +374,11 @@ open backlog items to start from, and the thread you worked in last. `chat.start
 many; 0 hides them.
 
 The reply streams as it is written. Reasoning is folded; click it to read. Every tool call is a
-row you can open to see its input and output. A turn ends with its usage: input, output and cached
+row you can open to see its input and output. Tool calls one after another in a turn share one
+row: it shows the latest call, how many there are ("10 tool calls") and how many failed, and opens
+(click, or Enter or Space) to list every call. Anything else in the turn, such as text, an
+approval or the Assistant's change rows and cards, starts a new row. `chat.groupToolCalls` off
+shows every call on its own row. A turn ends with its usage: input, output and cached
 tokens, and the cost when the provider reports one. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.
 
@@ -345,10 +390,20 @@ how much of the context window the thread uses, with a Compact action for Claude
   work at once; they are in Settings → Keybindings and in the palette. The tool row reads "waiting
   for approval" meanwhile.
 - **Questions**: when the agent asks (Claude's `AskUserQuestion`, Codex's user input request), the
-  options show as buttons. To answer in your own words, type in the composer (or the answer box
-  under the options). The answer continues the same turn.
+  thread shows a question card: each question with its header as a small chip, its choices (the
+  one the agent recommends first, marked **Recommended**) and a last choice **Other** with a text
+  field for your own words. Pick a choice, type, or both; where the agent lets you pick several,
+  pick as many as you like. When the agent asks several questions at once, they are on one card
+  and are sent together with **Send answers**. From the keyboard: the arrow keys move, the digit
+  next to a choice picks it, typing goes to **Other**, and Enter sends. **Alt+Q**
+  (`keybindings.questionFocus`) puts the keyboard on the card, and the palette has "Question: pick
+  …", "Question: type your own answer" and "Question: send the answer". Typing in the composer
+  also answers, as **Other**. The answer continues the same turn. A question that was still open
+  when its turn ended or was stopped says "Not answered" and takes no answer any more; an answered
+  one keeps showing what you answered.
 
-Either way, the thread moves to "Needs you" in the sidebar until you answer.
+Either way, the thread moves to "Needs you" in the sidebar until you answer. When the thread is a
+workflow step, its run says "Waiting for an answer" in the list of runs and in the run view.
 
 While a turn runs, the thread shows how long it has been working. You can write the next message
 meanwhile: Enter queues it, and it is sent when the turn ends. **Send now** stops the turn and
@@ -357,10 +412,26 @@ message again) and **Resume** (sends `chat.resumePrompt`) in the error row.
 
 ### Skills
 
-Type `$` in the composer to list installed skills with their descriptions, grouped by where they
-come from (Project, User, Plugins) with the source on the right. Keep typing to filter, move with
-the arrow keys, and press Enter or Tab (or click) to insert one; Escape closes the list. wow inserts
-the form the thread's provider understands: `/name` for Claude and `$name` for Codex.
+Type `/` at the start of a message or after a space to list skills with their descriptions,
+grouped by where they come from (Yours, wow, Project, User, Plugins, Other), each with a mark for
+its group and the source on the right. Keep typing to filter, move with the arrow keys, and press
+Enter or Tab (or click) to pick one; Escape closes the list. The palette's "Pick a skill for the
+message" opens the same list. The character is the setting `chat.skillTrigger` (`/` by default);
+set it to `$` if you prefer the old key. A slash anywhere else (a path such as `src/app`, a date
+such as `2026/11/12`) or in pasted text opens nothing.
+
+A picked skill becomes a chip in front of the text: its name with the mark of its group. Backspace
+at the start of the text removes the last chip whole, the left arrow steps onto the chips and the
+right arrow back into the text, and Backspace or Delete on a chip (or its cross, or the palette's
+"Remove skill <name> from the message") removes it. A message can be only chips. The starters
+under a new thread's composer add their skill as a chip too.
+
+When you send, wow sends each skill the way it works on the thread's provider: the text of a wow
+skill (Yours or wow), and `/name` for Claude or `$name` for Codex for a skill from a folder. The
+message in the thread shows the same chips above your text; click one to read the text that was
+sent (or the invocation), and, on a step's prompt, why wow attached a built-in skill. Messages
+sent before chips existed show their text as it was, `$name` included. The Assistant's composer
+takes no skills.
 
 ### How answers look
 
@@ -419,11 +490,24 @@ Workflows → New workflow (or "New workflow from template" in the palette). Giv
 from **Blank** or a template, then add steps. Each step is one line (number, skill, provider,
 model); open it to edit:
 
-- a skill from the installed list (Refresh skills re-reads the skill folders),
+- a skill from the list (Refresh skills re-reads the skill folders); each choice says its group:
+  Yours, wow, Project, User or Plugins,
+- **Also follow**: more skills the step's agent follows after its own skill, in the order listed
+  (see "Skills of a step" below),
 - a provider instance, model, effort and permission mode,
 - an optional extra prompt,
 - optional expected artifacts: paths or globs, one per line, such as `intents/*/spec.md`. With a
   project chosen to run in, the help line says how many files match there now.
+
+The model and effort lists are what the step's provider instance offers, read from the installed
+provider; the instance's default model and effort are marked "(default)". Codex needs a model on
+every step. A Codex step without one takes the instance's default model; when the instance has
+none, the step says so in words ("Step check-work runs on Codex (…), which needs a model on every
+step …"), and wow refuses to save it until you pick one. A workflow saved before wow had this
+rule still loads and runs as it did; its builder marks such a step ("was saved without a model
+…"), Save stores the model shown, and the assistant's "Why does this not work" names it. A setup
+file with such a step is applied with the step marked. Claude Code steps may leave the model to
+Claude Code, as before.
 
 Between steps (and before the first and after the last) the builder shows where the run waits:
 **Waits for you** marks a gate; **Add a gate** adds one there. Reorder steps by dragging the handle
@@ -452,6 +536,36 @@ each project's `.claude/skills` and `.agents/skills` by default) and, with
 `skills.includeClaudePlugins`, from installed Claude plugins. Skills marked
 `disable-model-invocation: true` are offered too, because wow invokes them explicitly.
 
+### Skills of a step
+
+Settings → Skills has **Your skills**: skills you write in wow. **New skill** asks for a name (lower
+case letters, digits and hyphens, not starting with `wow-`), when to use it, and the text the agent
+is told. **Edit** changes the description and the text; **Delete** removes the skill at once. Each
+of the three offers **Undo**. A name that is not allowed or already taken is refused with the
+reason, and nothing is saved. wow keeps each skill as a `SKILL.md` file under its home folder
+(`~/.wow/skills/<name>/SKILL.md`); a file you put there by hand is listed after **Refresh skills**.
+Your skills come first in every skill list. The palette has **New skill**, and **Edit skill** and
+**Delete skill** for each of yours.
+
+Below them are the skills wow ships: `wow-verdict` (end with exactly one verdict line),
+`wow-artifacts` (write each expected artifact where the step expects it), `wow-pull-request` (put
+the `Intent-Unit` line in the pull request) and `wow-handover` (end with what was done, what is left
+and what the next step needs). They are read-only; **Show the text** shows what they say, and the
+parts in braces are filled in from your settings and the run when they are sent. List one in
+`skills.builtInOff` to switch it off.
+
+A wow skill (yours or built in) is sent to the agent as its text, the same way on Claude Code and on
+Codex. A skill from a folder is invoked as before (`/name` or `$name`).
+
+In the builder, **Also follow** under a step's skill adds any other skill, from every group, as a
+chip; the cross on a chip removes it. Below it, **Attached automatically** lists the built-in skills
+wow gives the step by itself and why: `wow-verdict` when the gate after the step or one of its
+rules reads the verdict, `wow-artifacts` when the step expects artifacts, and `wow-pull-request`
+when a plan run delivers a unit with the workflow. **Leave out** keeps one away from that step
+(**Attach again** undoes it). `workflows.attachBuiltInSkills` turns automatic attaching off. The
+palette has the same actions for the step you are editing: "Also follow <skill> in step N", "Stop
+following <skill> in step N" and "Leave <skill> out of step N".
+
 ### Running one
 
 Open a workflow, pick the project next to **Run now** and press it (save changes first), or put it
@@ -468,8 +582,10 @@ and the gate, and the run view's tabs (**Changes**, **Artifacts**, **Pull reques
 (**Ctrl+Enter**, `keybindings.gateApprove`) in the panel, the run view or the step's thread to
 start the next step. Press **Send back** (**Ctrl+Shift+Enter**, `keybindings.gateSendBack`) to
 write what is wrong; **Send it back** (or the same key again) runs the step again in the same
-thread with your note (`workflows.sendBackTemplate`), the step shows "Attempt 2", and the run
-waits at the same gate with the new result. A note is needed. A message you type in the thread
+thread with your note (`workflows.sendBackTemplate`; a template without `{{note}}` gets your note
+after its text), the step shows "Attempt 2", and the run waits at the same gate with the new
+result. A note is needed. A note you leave unsent belongs to that gate and is not offered at the
+next one. A message you type in the thread
 instead is a side conversation and leaves the run waiting. **Stop** ends the run; Stop asks
 first, because a stopped run cannot be continued. The next step's prompt is its skill invocation, its extra prompt, and the handover from
 `workflows.handoverTemplate` (by default the previous step's final message and the expected
@@ -497,7 +613,9 @@ palette ("Run: show changes" and so on) and in the address, so a reload shows th
   failing check names and review comments; the Jira ticket with key, summary, status, assignee,
   type and description; and the Confluence pages the ticket, the pull request or the intent link
   to. Each has a "Last fetched" line, **Refresh now** and **Open on host**. A tab with nothing to
-  show says why.
+  show says why. A page larger than `hosts.pageMaxBytes` (1,000,000 bytes by default) is not kept:
+  its line says so and points to that setting. A page Confluence no longer shows (deleted, moved
+  or restricted) says to check the link.
 
 ### Files in the side panel
 
@@ -530,7 +648,7 @@ from the local tip and the run says so. Fetching, creating or removing a copy ma
 
 When the run ends and everything in the copy is committed and reachable from a branch on the
 remote, the copy is removed. Otherwise it is kept, and the run header lists what is unpushed
-(uncommitted files, commits not on the remote). **Remove working copy** (also in the palette)
+(uncommitted files, files the repository ignores, commits not on the remote). **Remove working copy** (also in the palette)
 removes it after you confirm. If a copy cannot be created (the project is not a Git repository,
 the disk is full, the path is too long), the run fails before its first step with the reason, and
 nothing runs in the project folder instead. A short `workspaces.root` helps with Windows path
@@ -581,7 +699,9 @@ A rule is followed after the step's gate has passed. Going to an earlier step ru
 its own thread, as the next attempt, with a message that says which step sent the work back, why,
 and what that step wrote (`workflows.goBackTemplate`). The steps after it run again too, each in
 its own thread. Going to a later step leaves the steps in between "Skipped" for that pass. Steps
-whose skill is in `workflows.alwaysStopSkills` still always wait for you.
+whose skill is in `workflows.alwaysStopSkills` still always wait for you. When a rule sends the
+run back to a step while you are talking with that step's thread, the step's new attempt waits
+for the answer to your message and then starts in the same thread.
 
 **The limit.** A step starts at most three times in a run (`workflows.maxStepVisits`, per
 project). When a rule or the order of the steps would start it once more, the run waits for you
@@ -624,13 +744,21 @@ followed plan, or one of a live run). Workflows → **Triggers** ("Go to event t
 palette) lists them per project, each with an on and off switch and Delete. **New trigger** ("New event
 trigger" in the palette) asks for the project, the event and the workflow:
 
-- **Pull request merged**,
+- **Pull request merged** (**Merge request merged** for a project on GitLab),
 - **Checks failed**,
 - **Review comment added**.
 
 When polling first sees the event, one run of the workflow starts with the pull request's link,
 number, branch and the event in its handover, in the pull request's working copy when one exists
-and in a new working copy on its branch otherwise. The same event seen again starts nothing, and
+and otherwise in a new working copy at the pull request's head commit, on its branch when this
+repository's branch is at that commit (a fork's pull request whose branch is named like one here
+gets its own commit, on no branch). A merged pull request's run starts at the tip of the default
+branch, which holds the merged code, unless its branch here is still at the head commit; it is
+never left on the code from before the merge. A pull request or merge request from a fork starts
+nothing: a run would work on the fork's files, and they would steer an agent on this computer. A
+failed notification "Trigger started nothing" says so. Turn on
+`triggers.forkPullRequests` ("Start runs for pull requests from forks", globally or for one
+project) only for forks you trust. The same event seen again starts nothing, and
 what was already true when you created the trigger or followed the plan starts nothing either;
 only later changes do. For a review comment the run gets the comment's link and author, never its
 text: the agent reads it with its own tools. Comments by accounts in
@@ -703,14 +831,16 @@ review comments) instead of pull requests. A token only ever goes to the host yo
 Every `hosts.pollSeconds` (60 by default) wow asks the hosts about the pull requests and tickets
 of live runs and followed plans only: one search per followed plan for its `Intent-Unit:` lines,
 never a list of the whole repository. A host without search is asked for its newest
-`hosts.listFallbackCount` pull requests instead. The Ticket tab reads the backlog item's issue, or
-else a Jira key in the pull request's title or branch; the Pages tab reads only Confluence pages
+`hosts.listFallbackCount` pull requests instead. The Ticket tab reads the backlog item's issue (only
+from the project's Jira site; an issue published to another site is not asked for), or else a
+Jira key in the pull request's title or branch; the Pages tab reads only Confluence pages
 the ticket, the pull request or the intent link to. With `hosts.polling` off or the scheduler
 paused nothing is asked on the timer; **Refresh now** in a view still asks once. When a host
 fails, the last data stays with "Last fetched <time>" and the error, and the next interval tries
 again; a token that is wrong or lacks rights names the host that refused and points to its
 setting, and the token is never shown or logged. A host that says its request limit is used up is
-left alone until the limit resets.
+left alone until the limit resets, but never longer than `hosts.longestWaitMinutes` (60 by
+default).
 
 ## Backlog
 
@@ -746,8 +876,8 @@ Tracker settings come in two places:
 
 - **Settings → Trackers** holds the defaults for every project. Jira: site URL, sign-in (Jira
   Cloud with email and API token, or a personal access token on Server or Data Center), project
-  key, issue type. GitHub: API URL (`https://api.github.com`, or `https://<host>/api/v3` for
-  Enterprise Server), token, owner, repository, labels. Tokens saved here are shared: one GitHub
+  key, issue type. GitHub: API URL (`https://api.github.com`, or `https://api.<name>.ghe.com` for
+  `<name>.ghe.com`, or `https://<host>/api/v3` for Enterprise Server), token, owner, repository, labels. Tokens saved here are shared: one GitHub
   token and one Jira token serve all projects. While the Jira email is empty, wow signs in with
   the address Outlook uses.
 - **Settings → Projects → Trackers** on each project (also "Trackers for project …" in the
@@ -761,8 +891,9 @@ wow fills in what it can find, and never changes anything in the repository:
 
 - GitHub owner, repository and API URL come from the project folder's git remote (`origin`, or
   the first GitHub remote when there is no `origin`). HTTPS and SSH remotes both work; a host
-  other than github.com is taken to be GitHub Enterprise Server, so its API URL is
-  `https://<host>/api/v3`. GitLab, Bitbucket and Azure DevOps remotes are not used.
+  `<name>.ghe.com` (GitHub Enterprise Cloud with data residency) gets the API URL
+  `https://api.<name>.ghe.com`, and any other host than github.com is taken to be GitHub
+  Enterprise Server, so its API URL is `https://<host>/api/v3`. GitLab, Bitbucket and Azure DevOps remotes are not used.
 - The Jira project key is only suggested: wow looks for references such as `ABC-123` in the
   branch names and the latest commits (how many is **Commits searched for Jira keys**) and offers
   **Use ABC**. Likewise a project without a Jira site is offered the one another project uses.
@@ -810,9 +941,12 @@ between restarts; there is only one.
 
 It runs on a provider you connected: `assistant.providerInstanceId`, or the first connected
 instance when that is empty, with `assistant.model` and `assistant.effort` (empty means the
-instance's default). On Codex it runs only with `assistant.allowCodex` on, because Codex keeps a
-read-only shell that could read files on your computer; with it off and only Codex connected, the
-assistant says so. Its agent gets wow's own tools and nothing else: no files, no shell, no
+instance's default). On Codex it runs only with `assistant.allowCodex` on: wow switches off Codex's command, image,
+image generation, computer and browser use, subagent, goal, app, plugin, skill search, tool
+suggestion, sleep, code mode and question tools and your own Codex hooks for the assistant, but Codex's file edit tool and its MCP
+resource tools have no switch and nobody has yet checked the resulting tool list on a real Codex
+(the sandbox stays read-only, without network, as a second guard); with it off and only Codex
+connected, the assistant says so. Its agent gets wow's own tools and nothing else: no files, no shell, no
 network, in an empty folder of wow's (`~/.wow/assistant`). What it is told to do is the
 `assistant.instructions` text.
 
@@ -820,6 +954,30 @@ It can read settings (secret ones only as "set" or "not set"), projects, provide
 templates and skills, calendar cards and meeting times and titles, the backlog, runs, triggers,
 notifications and connection tests. It cannot read a chat thread or a file in a project. Ask it
 for project work ("fix this test") and it offers to open a new thread in Chat with your text.
+
+### When the assistant asks
+
+When a few answers are likely, the assistant asks with the same question card a chat thread
+shows: up to four questions, each with a header, its choices (the recommended one first) and
+**Other** for your own words. Its turn ends there. Your answer, sent with **Send answer**, is your
+next message, and the assistant reads it as the answer to those questions. If you write a message
+instead, the card says "Not answered" and takes no answer any more. A typed answer that looks
+like a secret is held exactly like a typed message ("Put it in …", "Send anyway"). The assistant
+never asks for a token, password or key on the card: its tool refuses such a question and tells
+it to show the secret's field instead. The words it looks for are `assistant.askRefusedWords`
+(Settings → Assistant).
+
+### When the assistant writes a workflow
+
+Before it writes a workflow, the assistant reads the models and efforts each provider instance
+offers (an instance that is not connected offers none, and it says so) and wow's guidance on
+choosing one per kind of work: planning and specification, building, reviewing and mechanical
+steps. Every step it writes names an instance, a model and an effort from that list; wow refuses
+any other and tells it what is offered. It says what it recommends and why in a sentence, and asks
+you on the question card when two choices differ in a way you would care about, such as cost
+against quality. The change row shows each step with its instance, model and effort. The guidance
+is `assistant.modelGuidance` (Settings → Assistant, "Guidance on choosing a model"); edit it and
+the assistant reads your text the next time it chooses. wow never looks up models on the internet.
 
 ### Changes, proposals and Undo
 
@@ -831,31 +989,43 @@ A change that lets wow do more on its own shows as a proposal card with exactly 
 **Yes** and **No** (with an optional reason that goes back to the assistant), and nothing changes
 until you press Yes: a step's permission mode, a gate condition, a step's rules, an event
 trigger, "for units" or "own working copy" on a workflow, resuming the scheduler, the missed
-policy `run`, `hosts.polling` or `triggers.eventsEnabled` on, `viewer.htmlScripts` on, and
+policy `run`, `hosts.polling` or `triggers.eventsEnabled` on, `viewer.htmlScripts` on, any
+change to `triggers.forkPullRequests`, writing, changing or removing one of your own skills (the
+card shows the text, or what changes), and
 starting a run ("Start <workflow> in <project>"). A card with a workflow that starts sooner than
-`assistant.startSoonMinutes` (15) from now is a proposal too. The palette has Yes and No for every
+`assistant.startSoonMinutes` (15) from now is a proposal too. A value longer than `assistant.valueLength` (160) characters is cut
+short on its line; "show all of it" under the line opens the whole of it. The palette has Yes and No for every
 waiting proposal and Undo for every change.
 
 It never answers a gate: approving, sending back or stopping a run is yours, and wow refuses those
-commands from the assistant.
+commands from the assistant. It can read the list of skills and the text of a wow skill, and can
+give a step "Also follow" skills as part of changing a workflow, but it cannot change the skills
+wow ships or skills in other folders.
 
 ### Secrets
 
 The assistant never asks you to type a token in the conversation. It puts the setting's field in
 the conversation instead, with the token guide's steps above it (see below); **Save** writes the
 value straight to the secret store and **Test connection** checks it. The assistant learns only
-"set" or "not set" and the test's result.
+"set" or "not set" and the test's result. A provider's secret environment variable (an API key
+the CLI reads) gets the same kind of card, named after the variable and its instance: Save puts
+the value in the secret store, the instance keeps only its reference, and the instance is tested
+again.
 
 A message you are about to send that looks like a secret (a known token prefix, a private key, a
 long random string after "token", "password" or "key") is held: a line above the composer says
 what it looks like, with **Put it in <field>** and **Send anyway**. A held message is not stored.
+When the field already holds a value, the line says that putting it there replaces it. Send
+anyway sends what the box holds at that moment, queued like any message while the assistant is
+still answering.
 The patterns are `assistant.secretPatterns`; anything that matches them in what the assistant is
 shown is replaced by "[hidden]".
 
 ### A setup to share
 
 Settings → Advanced (and the palette) has **Save setup to a file**: a YAML file with the global
-settings that differ from their default, tracker and host settings, and workflows and templates.
+settings that differ from their default, tracker and host settings, workflows and templates, and
+your own skills with their text.
 It holds no secret value (each secret that was set is listed under `toFillIn`), no project folder,
 no account name and nothing from the calendar, backlog, threads or runs. Settings that belong to
 this machine or this person (work hours, the calendar's zone, desktop settings, first start) stay
@@ -863,9 +1033,13 @@ out too.
 
 **Start from a setup file** (Settings → Advanced, the palette, or the first-start step) shows a
 preview with what would be added and what would replace a value you have, and applies it as one
-step you can undo. A file with an unknown key, a wrong type or a secret value is refused with the
+step you can undo. A skill in the file is listed as added, or as replacing one of yours with the
+same name, and **Show all of it** opens its whole text before you apply. A file with an unknown key, a wrong type or a secret value is refused with the
 line and the reason; a workflow naming a skill that is not installed is applied and marked "skill
-not installed".
+not installed". The row of an applied file under Settings → Advanced keeps those marks and lists
+the secrets still to fill in, each with a link to its field, until they are set. A file larger
+than `advanced.setupFileMaxBytes` (1 MB unless you change it) is refused before it is read. After a file is applied here, your next message to the assistant tells it what the file
+left to fill in, and it goes through that list one thing per answer as after a first start.
 
 ### When it cannot start
 
@@ -880,13 +1054,15 @@ back.
 When a GitLab, GitHub, Jira or Confluence token is needed, the assistant puts the token's field in
 the conversation with the steps from a guide that ships with wow, never from what the agent
 remembers. The guide links to the token page on your own host, built from the address stored in
-Settings → Trackers (or the project's own), says which rights reading needs, what to copy, and
-which host versions it was written for:
+Settings → Trackers (or the project's own; a project's own GitHub token is linked on the host of
+the project's git remote when the project stores no GitHub API URL, since that is where wow sends
+it), says which rights reading needs, what to copy, and which host versions it was written for:
 
 | Host and sign-in                                   | Written for                                 | Rights                                                             |
 | -------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------ |
 | github.com                                         | github.com, November 2026                   | classic token, `repo` (`public_repo` for public repositories only) |
 | GitHub Enterprise Server                           | 3.10 to 3.17                                | classic token, `repo`                                              |
+| GitHub Enterprise Cloud with data residency        | GHE.com, November 2026                      | classic token, `repo`                                              |
 | GitLab                                             | 16.9 and later, self-managed and gitlab.com | `read_api`                                                         |
 | Jira Server or Data Center (personal access token) | 8.14 and later                              | your own account: Browse projects, Create issues for Publish       |
 | Jira Cloud (API token)                             | November 2026                               | your own account, plus your email in Jira email                    |
@@ -901,10 +1077,13 @@ version than the one named. What you type in the field goes straight to the secr
 
 Ask the assistant why something does not work and it reads what is failing: provider instances
 that are not signed in, connection tests of the hosts you set up (it signs in as Test connection
-does, and writes nothing), failed host reads, workflow steps whose skill is not installed, event
-triggers that could not start a run, failed runs with their error (until a later run of the same
-workflow in the same project ends done), and cards that did not start and why. Each comes with
-the setting or view to fix it in. When nothing fails it says so and what it looked at. It lists at
+does, and writes nothing), failed host reads (of a run only while it is running or waiting),
+workflow steps whose skill is not installed, event triggers that could not start a run, failed
+runs with their error (until a later run of the same workflow in the same project ends done; a
+run of a deleted workflow or project is left out),
+failed plan runs (until a later plan run of the same plan ends done), and cards that did not start
+and why (until a later run of the card's workflow in its project ends done). Each comes with the
+setting or view to fix it in, and times are in the calendar's time zone. When nothing fails it says so and what it looked at. It lists at
 most `assistant.diagnosisLimit` (5) failed runs, failed triggers and cards of each kind, newest
 first. A trigger's reason is kept only while desktop notifications are on.
 
@@ -937,8 +1116,9 @@ Useful ones to know:
 - `outlook.pollSeconds`, `outlook.requestTimeoutMs`
 - `scheduler.missedPolicy`, `scheduler.notifications`, `scheduler.paused`
 - `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`
-- `plans.intentsDirectory`, `hosts.polling`, `hosts.pollSeconds`, `triggers.eventsEnabled`
-- `viewer.maxFileBytes`, `viewer.htmlScripts`, `diff.maxFileBytes`, `workspaces.root`
+- `plans.intentsDirectory`, `hosts.polling`, `hosts.pollSeconds`, `triggers.eventsEnabled`,
+  `triggers.forkPullRequests`
+- `viewer.maxFileBytes`, `viewer.htmlScripts`, `diff.maxFileBytes`, `diff.maxHashBytes`, `workspaces.root`
 - `appearance.theme` (dark by default), `appearance.density`
 - `desktop.closeToTray`, `desktop.autostart`, `desktop.startMinimized`
 - `updates.enabled`, `updates.checkIntervalMinutes`
@@ -953,6 +1133,7 @@ Everything is in `~/.wow` (`%USERPROFILE%\.wow` on Windows), or in the folder `W
 | `secrets.json` | Encrypted tokens and secret environment values                        |
 | `server.json`  | Port and token of the running server; removed on a clean stop         |
 | `desktop.log`  | The desktop app's log and the server's output                         |
+| `skills/`      | Your own skills, one `<name>/SKILL.md` each                           |
 
 Back up `wow.sqlite` and `secrets.json` together. Secrets are encrypted for your Windows user and
 cannot be read on another machine or account.
@@ -1001,7 +1182,7 @@ None are known right now; the rest of this guide describes the intended behavior
 Scroll to the end of the thread; the approval or question row is the last one. If the server was
 restarted mid-turn, the turn is marked failed; send a new message or press Resume.
 
-**Skills are missing in the `$` list or the builder**
+**Skills are missing in the skill list or the builder**
 
 Check `skills.directories`, then press "Refresh skills" in the builder or the palette. A
 `SKILL.md` whose frontmatter does not parse is skipped and logged in `desktop.log`.

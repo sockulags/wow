@@ -1,5 +1,6 @@
 import {
   hostReadId,
+  touchPageRead,
   type DomainEvent,
   type PageLink,
   type PageRead,
@@ -20,6 +21,7 @@ export function decidePages(command: PagesSync, read: ReadModel): DomainEvent[] 
   if (!read.project(projectId)) throw new CommandRejected('not_found', `No project ${projectId}`);
   const before = new Map(read.pageReads(projectId).map((row) => [row.id, row]));
   const reads: PageRead[] = [];
+  const fetched: string[] = [];
   for (const outcome of command.reads) {
     // A run removed while the host was being asked is not stored.
     const run = read.run(outcome.runId);
@@ -59,8 +61,20 @@ export function decidePages(command: PagesSync, read: ReadModel): DomainEvent[] 
             ? last.error
             : { ...error, at: command.at },
     };
-    if (!isDeepStrictEqual(last, next)) reads.push(next);
+    if (isDeepStrictEqual(last, next)) continue;
+    if (last && isDeepStrictEqual(touchPageRead(last, command.at), next)) fetched.push(id);
+    else reads.push(next);
   }
-  if (reads.length === 0) return [];
-  return [{ kind: 'pages.synced', aggregate: `pages:${projectId}`, payload: { projectId, reads } }];
+  if (reads.length === 0 && fetched.length === 0) return [];
+  return [
+    {
+      kind: 'pages.synced',
+      aggregate: `pages:${projectId}`,
+      payload: {
+        projectId,
+        reads,
+        ...(fetched.length > 0 ? { fetched: { at: command.at, ids: fetched } } : {}),
+      },
+    },
+  ];
 }

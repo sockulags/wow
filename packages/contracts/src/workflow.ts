@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ThreadState } from './provider.js';
+import { BuiltInSkillName, SentSkill, SkillRef, WowSkillSource } from './skills.js';
 
 // One part of a gate's condition (review loop spec 54): the step's final message ends with the
 // approved verdict line, the run's pull request has every check successful, or a file was found
@@ -96,6 +97,14 @@ export function ruleConditionText(when: RuleCondition): string {
 export const WorkflowStep = z.object({
   id: z.string().min(1),
   skillName: z.string().min(1),
+  // Set when the step runs a wow skill: `yours` keeps an own skill apart from a folder skill of
+  // the same name. Absent: a folder skill, or a built-in one by its reserved name.
+  skillSource: WowSkillSource.optional(),
+  // Skills the step also follows, after the one it runs and before the extra prompt, in this
+  // order (wow skills spec 11). Absent: none.
+  alsoFollow: z.array(SkillRef).optional(),
+  // Built-in skills wow would attach by itself that this step leaves out (spec 12).
+  leaveOut: z.array(BuiltInSkillName).optional(),
   providerInstanceId: z.string().min(1),
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
@@ -231,6 +240,10 @@ export const StepRun = z.object({
   // The changed files when the step ended, so the Changes tab can tell what this step changed
   // (review loop spec 11). Absent for a run without a base.
   fileHashes: z.array(FileHash).optional(),
+  // The changed files as the step that ended before this attempt left them (the base's for the
+  // first), so after a loop the step is still compared with what it began from. Absent on runs
+  // without a path and on steps stored before it was kept.
+  fileHashesBefore: z.array(FileHash).optional(),
   // How many times the step has run: absent for the first time, 2 after one send back (review
   // loop spec 16).
   attempt: z.number().int().min(2).optional(),
@@ -240,6 +253,18 @@ export const StepRun = z.object({
   gate: StepGate.optional(),
   // Only a step with rules has them.
   facts: StepFacts.optional(),
+  // The message the step runs again with, while a rule or the list sent the run back to it and
+  // its thread is still answering a message the user typed there. It is sent when that turn
+  // ends; until then the step is running without a turn of its own.
+  heldPrompt: z.string().optional(),
+  // What the thread shows for that held message and the skills it goes with (wow skills spec
+  // 14), when it was made with skills.
+  heldShown: z.string().optional(),
+  heldSkills: z.array(SentSkill).optional(),
+  // Where the run waits at this step while it does: after the step ended, or before the step
+  // starts (its gate before, or the limit). Set by the engine, so a step that ran before and
+  // keeps its end time is not read as waited after. Absent on runs stored without it.
+  waits: z.enum(['before', 'after']).optional(),
 });
 export type StepRun = z.infer<typeof StepRun>;
 
@@ -286,8 +311,11 @@ export type WorkingCopyState = z.infer<typeof WorkingCopyState>;
 
 // What a kept working copy holds that is nowhere else.
 export const UnpushedWork = z.object({
-  // Changed and new files that are not committed (ignored files do not count).
+  // Changed and new files that are not committed, ignored ones not counted.
   uncommittedFiles: z.number().int().nonnegative(),
+  // Files and folders the repository ignores (a local settings file, build output), each
+  // ignored folder counted once. Absent on copies settled before they were counted.
+  ignoredFiles: z.number().int().nonnegative().optional(),
   // Commits no branch on the remote reaches, and the subject of the newest one.
   unpushedCommits: z.number().int().nonnegative(),
   newestSubject: z.string().nullable(),
@@ -329,6 +357,10 @@ export const RunEffect = z.discriminatedUnion('type', [
     stepId: z.string().min(1),
     threadId: z.string().min(1),
     prompt: z.string(),
+    // The prompt as the thread shows it, without the wow skills' texts, and the skills it was
+    // made with (wow skills spec 14). Absent for runs from before wow skills.
+    shown: z.string().optional(),
+    skills: z.array(SentSkill).optional(),
   }),
   // A step sent back at a gate runs again in its own thread. The orchestrator starts that turn in
   // the same commit as the run change, so nothing is left to perform; the effect records what
@@ -340,6 +372,8 @@ export const RunEffect = z.discriminatedUnion('type', [
     threadId: z.string().min(1),
     attempt: z.number().int().min(2),
     prompt: z.string(),
+    shown: z.string().optional(),
+    skills: z.array(SentSkill).optional(),
   }),
   z.object({ type: z.literal('interrupt'), threadId: z.string().min(1) }),
   z.object({

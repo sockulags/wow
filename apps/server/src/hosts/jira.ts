@@ -7,7 +7,7 @@ import {
   trimBase,
   type RequestOptions,
 } from '../trackers/http.js';
-import { HostFailure, type TicketAdapter } from './adapter.js';
+import { HostFailure, waitBound, type TicketAdapter, type WaitOptions } from './adapter.js';
 import { jiraToMarkdown } from './jira-wiki.js';
 
 // Jira Cloud, Server and Data Center as a ticket host (review loop spec 33): reads one issue with
@@ -16,9 +16,7 @@ import { jiraToMarkdown } from './jira-wiki.js';
 
 export type JiraSignIn = Pick<JiraConfig, 'baseUrl' | 'authMode' | 'email' | 'token'>;
 
-export interface JiraHostOptions extends RequestOptions {
-  readonly clock?: () => Date;
-}
+export interface JiraHostOptions extends RequestOptions, WaitOptions {}
 
 const tokenSetting = 'trackers.jira.token';
 const issueKey = /^[A-Z][A-Z0-9_]*-[1-9]\d*$/;
@@ -36,8 +34,8 @@ export function jiraKeyIn(text: string, projectKey: string): string | undefined 
   return match ? `${key.toUpperCase()}-${match[1]}` : undefined;
 }
 
-// The host has no such issue, or does not show it to the token. Only this ticket is affected,
-// so the poller goes on asking about the others.
+// The host has no such issue or does not show it to the token, or the key is not one. Only this
+// ticket is affected, so the poller goes on asking about the others.
 export class MissingTicket extends HostFailure {}
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -55,6 +53,7 @@ export function createJiraHost(
   const base = trimBase(config.baseUrl);
   const headers = { authorization: jiraAuthorization(config) };
   const clock = options.clock ?? (() => new Date());
+  const bounded = waitBound(options);
   let requests = 0;
   let waitUntil: Date | undefined;
 
@@ -64,7 +63,7 @@ export function createJiraHost(
     if (!Number.isFinite(seconds) || seconds < 0) return false;
     const until = clock().getTime() + seconds * 1000;
     if (Number.isNaN(new Date(until).getTime())) return false;
-    waitUntil = new Date(Math.max(until, waitUntil?.getTime() ?? 0));
+    waitUntil = new Date(Math.max(bounded(until), waitUntil?.getTime() ?? 0));
     return true;
   };
 
@@ -107,7 +106,10 @@ export function createJiraHost(
     },
     async read(key) {
       if (!isJiraKey(key)) {
-        throw new HostFailure('failed', `${key} is not a Jira issue key, so it was not asked for`);
+        throw new MissingTicket(
+          'failed',
+          `${key} is not a Jira issue key, so it was not asked for`,
+        );
       }
       requests += 1;
       let body: unknown;

@@ -151,6 +151,33 @@ describe('connection', () => {
     });
   });
 
+  it('keeps a push that arrives before its subscribe answer and delivers it after the rows', () => {
+    const connection = createConnection({ url: 'ws://x', socket: server.factory });
+    server.current.handlers.onOpen();
+    const seen: unknown[] = [];
+    connection.subscribe('assistantThread', null, (data) => seen.push(data));
+    // The server answers after its own microtasks, so a commit's push can overtake the answer.
+    server.push({ subscription: 's1', data: ['assistant'] });
+    expect(seen).toEqual([]);
+    server.push({ id: '1', result: { subscriptionId: 's1', data: [] } });
+    expect(seen).toEqual([[], ['assistant']]);
+    server.push({ subscription: 's1', data: ['assistant', 'more'] });
+    expect(seen).toEqual([[], ['assistant'], ['assistant', 'more']]);
+  });
+
+  it('forgets early pushes once no subscribe answer is awaited', () => {
+    const connection = createConnection({ url: 'ws://x', socket: server.factory });
+    server.current.handlers.onOpen();
+    connection.subscribe('threads', null, () => undefined);
+    server.push({ id: '1', result: { subscriptionId: 's1', data: [] } });
+    // A push for an id this client never asked for, after every answer came in.
+    server.push({ subscription: 's9', data: ['other'] });
+    const seen: unknown[] = [];
+    connection.subscribe('projects', null, (data) => seen.push(data));
+    server.push({ id: '2', result: { subscriptionId: 's9', data: ['fresh'] } });
+    expect(seen).toEqual([['fresh']]);
+  });
+
   it('caps the backoff delay', () => {
     const options = { initialDelayMs: 500, maxDelayMs: 10_000 };
     expect([1, 2, 3, 10].map((attempt) => reconnectDelay(attempt, options))).toEqual([

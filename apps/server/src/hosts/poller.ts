@@ -21,7 +21,7 @@ import {
   type WorkflowRun,
 } from '@wow/contracts';
 import { eq, inArray } from 'drizzle-orm';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
@@ -100,7 +100,24 @@ export interface HostPollerDeps {
 interface TicketKey {
   readonly key: string | null;
   readonly source: TicketSource | null;
+  // Where a backlog item's issue was published; only that site knows the key.
+  readonly url?: string;
 }
+
+// A request limit belongs to the token that used it up, so another project's token on the same
+// host goes on being asked. Only a digest of the token is kept, and only in memory.
+const pauseKey = (kind: HostKind, name: string, token: string): string =>
+  `${kind}:${name}:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
+
+// A browse link is on the Jira site when it starts with the site's address.
+const onJiraSite = (url: string, baseUrl: string): boolean => {
+  if (!URL.canParse(url) || !URL.canParse(baseUrl)) return false;
+  const site = new URL(baseUrl);
+  const page = new URL(url);
+  const prefix = site.pathname.replace(/\/+$/, '');
+  return page.origin === site.origin && page.pathname.startsWith(`${prefix}/`);
+};
+const hostOfLink = (url: string): string => (URL.canParse(url) ? new URL(url).host : url);
 
 // What one round asks about: the followed plans and the runs of one project.
 interface Targets {
@@ -193,6 +210,9 @@ export class HostPoller implements BackgroundService {
     );
     this.#seen = new Set(this.#scopeIds(this.#targets()));
     this.#gatesNoticed();
+    // A wait that ran out while the server was stopped gets no timer; the read above may store
+    // nothing that ends it.
+    this.#background(this.#enqueue(() => Promise.resolve(this.checkGates())));
     this.#background(this.poll());
     this.#schedule();
   }
@@ -479,6 +499,7 @@ export class HostPoller implements BackgroundService {
         readonly name: string;
         readonly branch: string | null;
         readonly missing: readonly string[];
+        readonly token: string;
         readonly adapter: (() => HostAdapter) | undefined;
       }
     | undefined
@@ -487,6 +508,7 @@ export class HostPoller implements BackgroundService {
     const options = {
       timeoutMs: settings.get('trackers.requestTimeoutMs'),
       listFallbackCount: settings.get('hosts.listFallbackCount'),
+      longestWaitMs: settings.get('hosts.longestWaitMinutes') * 60_000,
       clock: this.#clock,
       ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
     };
@@ -498,6 +520,7 @@ export class HostPoller implements BackgroundService {
         name: gitlab.name,
         branch: gitlab.branch,
         missing,
+        token: config?.token ?? '',
         adapter: config
           ? () => (this.#deps.gitlabAdapter ?? createGitLabHost)(config, gitlab.name, options)
           : undefined,
@@ -511,6 +534,7 @@ export class HostPoller implements BackgroundService {
       name: github.name,
       branch: github.branch,
       missing,
+      token: config?.token ?? '',
       adapter: config
         ? () => (this.#deps.adapter ?? createGitHubHost)(config, github.name, options)
         : undefined,
@@ -539,7 +563,7 @@ export class HostPoller implements BackgroundService {
       return;
     }
 
-    const leaveAlone = `${host.kind}:${host.name}`;
+    const leaveAlone = pauseKey(host.kind, host.name, host.token);
     const until = this.#leaveAlone.get(leaveAlone);
     if (!asked && until && until > this.#clock()) return;
 
@@ -653,7 +677,9 @@ export class HostPoller implements BackgroundService {
     const item = run.backlogItemId
       ? db.select().from(backlogItems).where(eq(backlogItems.id, run.backlogItemId)).get()
       : undefined;
-    if (item?.remote?.service === 'jira') return { key: item.remote.key, source: 'backlog' };
+    if (item?.remote?.service === 'jira') {
+      return { key: item.remote.key, source: 'backlog', url: item.remote.url };
+    }
     if (host.projectKey === '') return { key: null, source: null };
     const read = db
       .select()
@@ -683,7 +709,7 @@ export class HostPoller implements BackgroundService {
     const { settings } = this.#deps;
     const host = await this.#deps.resolveJira?.(projectId);
     if (!host) return;
-    const leaveAlone = `jira:${host.name}`;
+    const leaveAlone = pauseKey('jira', host.name, host.jira.config?.token ?? '');
     const until = this.#leaveAlone.get(leaveAlone);
     if (!asked && until && until > this.#clock()) return;
     const outcomes: TicketReadOutcome[] = [];
@@ -691,6 +717,7 @@ export class HostPoller implements BackgroundService {
     const adapter = config
       ? (this.#deps.jiraAdapter ?? createJiraHost)(config, host.name, {
           timeoutMs: settings.get('trackers.requestTimeoutMs'),
+          longestWaitMs: settings.get('hosts.longestWaitMinutes') * 60_000,
           clock: this.#clock,
           ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
         })
@@ -724,7 +751,7 @@ export class HostPoller implements BackgroundService {
       return asking;
     };
     for (const run of runs) {
-      const { key, source } = await this.#ticketKey(run, host);
+      const { key, source, url } = await this.#ticketKey(run, host);
       const missing = [
         ...host.jira.missing,
         ...(key === null && host.projectKey === '' ? ['trackers.jira.projectKey'] : []),
@@ -740,6 +767,22 @@ export class HostPoller implements BackgroundService {
               kind: 'notSetUp',
               message: `${hostKindLabels.jira} is not set up for this project: fill in ${missing.map(labelOf).join(', ')} in Settings → Trackers or in the project's own trackers`,
               setting: missing[0] ?? null,
+            },
+          },
+        });
+        continue;
+      }
+      if (url !== undefined && config && !onJiraSite(url, config.baseUrl)) {
+        outcomes.push({
+          runId: run.id,
+          key,
+          source,
+          result: {
+            ok: false,
+            error: {
+              kind: 'notSetUp',
+              message: `${key ?? ''} was published to ${hostOfLink(url)}, not to this project's ${hostKindLabels.jira} site ${host.name}; wow reads a ticket only from the ${labelOf('trackers.jira.baseUrl')} in Settings → Trackers or in the project's own trackers`,
+              setting: 'trackers.jira.baseUrl',
             },
           },
         });
@@ -837,6 +880,8 @@ export class HostPoller implements BackgroundService {
     const adapter: PageAdapter | undefined = config
       ? (this.#deps.confluenceAdapter ?? createConfluenceHost)(config, host.name, {
           timeoutMs: settings.get('trackers.requestTimeoutMs'),
+          pageMaxBytes: settings.get('hosts.pageMaxBytes'),
+          longestWaitMs: settings.get('hosts.longestWaitMinutes') * 60_000,
           clock: this.#clock,
           ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),
         })

@@ -2,7 +2,13 @@ import type { Skill, SkillSource } from '@wow/contracts';
 import type { Dirent } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { codexPolicyFile, parseCodexPolicy, parseSkillFile, skillFileName } from './parse.js';
+import {
+  codexPolicyFile,
+  parseCodexPolicy,
+  parseSkillFile,
+  skillBody,
+  skillFileName,
+} from './parse.js';
 import { invocationsFor } from './invocations.js';
 
 export interface SkillRoot {
@@ -105,6 +111,10 @@ async function readSkill(dir: string, root: SkillRoot): Promise<Skill | ScanProb
     }
   }
   const name = frontmatter.name ?? path.basename(dir);
+  const wow = root.source === 'wow' || root.source === 'yours';
+  if (root.source === 'yours' && name.startsWith('wow-')) {
+    return { file, message: 'Names starting with wow- are kept for the skills wow ships' };
+  }
   return {
     id: dir,
     name,
@@ -114,6 +124,7 @@ async function readSkill(dir: string, root: SkillRoot): Promise<Skill | ScanProb
     // Behavior 27: such skills are still offered, because the app invokes them explicitly.
     manualOnly: frontmatter.disableModelInvocation || allowImplicit === false,
     invocations: invocationsFor(name, root.plugin),
+    ...(wow ? { text: skillBody(content) } : {}),
   };
 }
 

@@ -1,7 +1,7 @@
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { createStore, useStore } from 'zustand';
-import { useTopic } from '@/chat/data';
+import { useDispatch, useTopic } from '@/chat/data';
 import { ConnectAgentStep } from '@/providers/connect-step';
 import { useRuntime, useSetting } from './runtime';
 
@@ -13,20 +13,21 @@ import { useRuntime, useSetting } from './runtime';
 // its test today), is never gated: the Assistant view's own connect step covers a provider that
 // does not work. Once it is up it stays until an instance passes, even while the instances its
 // Test buttons create fail. When one passes, the setting is turned off, so a provider removed
-// later leaves the app usable (spec 27), and the assistant opens to greet.
+// later leaves the app usable (spec 27), and the assistant opens to greet. The server owns the
+// greeting: it is asked for when the gate goes up, kept owed, and sent once the assistant can
+// run, so a reload anywhere in between does not lose it.
 
 export interface FirstStartState {
   // The gate went up in this window.
   readonly up: boolean;
-  // The first-start step just finished; the Assistant view sends the greeting once it is open.
-  readonly greet: boolean;
 }
 
-export const firstStartStore = createStore<FirstStartState>(() => ({ up: false, greet: false }));
+export const firstStartStore = createStore<FirstStartState>(() => ({ up: false }));
 
 export function useFirstStart(): boolean {
   const { connection, settings } = useRuntime();
   const navigate = useNavigate();
+  const send = useDispatch();
   const settingsReady = useStore(settings, (state) => state.ready);
   const offer = useSetting('providers.offerSetup');
   const instances = useTopic('providerInstances');
@@ -41,14 +42,17 @@ export function useFirstStart(): boolean {
     (up || instances.length === 0);
 
   useEffect(() => {
-    if (gated && !up) firstStartStore.setState({ up: true });
-  }, [gated, up]);
+    if (!gated || up) return;
+    firstStartStore.setState({ up: true });
+    // Asked again at the next start while the gate is still up, so a failure here is not lost.
+    send({ type: 'thread.greetAssistant' }).catch(() => undefined);
+  }, [gated, up, send]);
 
   useEffect(() => {
     if (!passed || !settingsReady) return;
     if (offer) void settings.write('providers.offerSetup', false);
     if (up) {
-      firstStartStore.setState({ up: false, greet: true });
+      firstStartStore.setState({ up: false });
       void navigate({ to: '/assistant' });
     }
   }, [passed, settingsReady, offer, up, settings, navigate]);

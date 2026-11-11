@@ -7,6 +7,7 @@ import {
   addWorktree,
   askRemoteDefaultBranch,
   fetchRemote,
+  fetchRemoteRef,
   pruneWorktrees,
   readCommit,
   readFolderGit,
@@ -19,8 +20,9 @@ import {
 
 // A run's own working copy (review loop spec 36 to 38): a Git worktree of the project's
 // repository on no branch, because the agent's delivery skill names and creates its own branch.
-// A run that an event started on a pull request is the exception: its copy is on the pull
-// request's branch, so the agent adds to that pull request (spec 48).
+// A run that an event started on a pull request is the exception: its copy is at the pull
+// request's head commit, and on its branch when this repository's branch is at that commit, so
+// the agent adds to that pull request (spec 48).
 // Nothing here installs dependencies or runs a command the repository declares.
 
 export interface CreateRequest {
@@ -29,8 +31,14 @@ export interface CreateRequest {
   readonly target: string;
   // `workspaces.fetchBeforeCreate`.
   readonly fetch: boolean;
-  // The branch to put the copy on, for a run an event started on a pull request. Without one
-  // the copy is on no branch at the default branch's tip.
+  // For a run an event started on a pull request: its head commit, the ref of this repository's
+  // remote that commit is fetched from, and its branch. Without a head the copy is on no branch
+  // at the default branch's tip. `merged`: the pull request's code is on the default branch now,
+  // so the copy is never left at the head commit off its branch; it starts at the default
+  // branch's tip instead.
+  readonly head?:
+    | { readonly sha: string; readonly ref: string; readonly merged?: boolean | undefined }
+    | undefined;
   readonly branch?: string | null | undefined;
   readonly git: GitRunOptions;
 }
@@ -145,62 +153,90 @@ export async function createWorkingCopy(request: CreateRequest): Promise<Created
   } catch (error) {
     return failed(error instanceof Error ? error.message : String(error));
   }
-  if (request.branch) {
-    const onBranch = await createOnBranch(request, request.branch, start);
-    if (onBranch) return onBranch;
+  let missing: string | undefined;
+  if (request.head) {
+    const atHead = await createAtHead(request, request.head, start.defaultBranch);
+    if (typeof atHead !== 'string') return atHead;
+    missing = atHead;
   }
   const added = await addWorktree(projectFolder, target, start.sha, git);
   if (!added.ok) return failed(`${added.message} (${target})`);
   const note =
-    request.branch && start.note === null
-      ? `Branch ${request.branch} was not found, so the working copy starts at the tip of the default branch, on no branch.`
-      : request.branch
-        ? `Branch ${request.branch} was not found. ${start.note}`
-        : start.note;
+    missing === undefined
+      ? start.note
+      : start.note === null
+        ? `${missing}, so the working copy starts at the tip of the default branch, on no branch.`
+        : `${missing}. ${start.note}`;
   return { ok: true, startSha: start.sha, defaultBranch: start.defaultBranch, note };
 }
 
-// The working copy on the pull request's branch: the local branch when the repository has it,
-// else a new local branch that follows the remote's. When another folder is on the branch the
-// copy is on its commit and on no branch. Undefined when the branch is nowhere to be found (a
-// merged pull request's branch is often deleted, and a fork's branch is not on this remote);
-// the caller then starts at the default branch. `startCommit` has fetched by now.
-async function createOnBranch(
-  { projectFolder: folder, target, git }: CreateRequest,
-  branch: string,
-  start: Start,
-): Promise<Created | undefined> {
-  // The name comes from the host. One that git would read as an option is not used.
-  if (branch.startsWith('-')) return undefined;
+const commitName = /^[0-9a-f]{7,64}$/i;
+
+// The working copy at the pull request's head commit, fetched by the pull request's own ref of
+// this repository's remote. A branch name alone can name other code: a fork's branch may be
+// called like one here. So the copy is on the branch only when this repository's branch is at
+// the head commit; else it is on that commit and on no branch, unless the pull request is merged:
+// its code is on the default branch then. Answers why not when the head commit is not here even
+// after the fetch, or a merged pull request's branch is not at it; the caller then starts at the
+// default branch.
+async function createAtHead(
+  { projectFolder: folder, target, fetch, branch, git }: CreateRequest,
+  head: NonNullable<CreateRequest['head']>,
+  defaultBranch: string | null,
+): Promise<Created | string> {
   const { primary: remote } = await readFolderGit(folder, git);
+  const fetched =
+    fetch && remote !== null ? await fetchRemoteRef(folder, remote, head.ref, git) : undefined;
+  const sha = commitName.test(head.sha) ? await readCommit(folder, head.sha, git) : null;
+  if (sha === null) {
+    const why =
+      fetched === undefined
+        ? remote === null
+          ? ' (the project has no remote)'
+          : ` (${remote} was not fetched: the setting is off)`
+        : fetched.ok
+          ? ''
+          : ` (fetching ${head.ref} from ${remote} failed: ${fetched.message})`;
+    return `The pull request's head commit ${head.sha} was not found${why}`;
+  }
+  const made = (note: string | null): Created => ({
+    ok: true,
+    startSha: sha,
+    defaultBranch,
+    note,
+  });
+  const detached = async (note: string): Promise<Created> => {
+    const added = await addWorktree(folder, target, sha, git);
+    return added.ok ? made(note) : failed(`${added.message} (${target})`);
+  };
+  // The name comes from the host. One that git would read as an option is not used.
+  if (!branch || branch.startsWith('-')) {
+    if (head.merged) return "The pull request's branch is not known";
+    return detached("The working copy is on the pull request's head commit and on no branch.");
+  }
   const localTip = await readCommit(folder, `refs/heads/${branch}`, git);
   const remoteTip =
     remote === null ? null : await readCommit(folder, `refs/remotes/${remote}/${branch}`, git);
   const tip = localTip ?? remoteTip;
-  if (tip === null) return undefined;
-  const made = (sha: string, note: string | null): Created => ({
-    ok: true,
-    startSha: sha,
-    defaultBranch: start.defaultBranch,
-    note,
-  });
+  if (tip === null) {
+    if (head.merged) return `Branch ${branch} was not found`;
+    return detached(
+      `Branch ${branch} was not found, so the working copy is on the pull request's head commit and on no branch.`,
+    );
+  }
+  if (tip !== sha) {
+    if (head.merged) return `Branch ${branch} here is not at the pull request's head commit`;
+    return detached(
+      `Branch ${branch} here is not at the pull request's head commit (the pull request may come from a fork, or the branch moved since), so the working copy is on that commit and on no branch.`,
+    );
+  }
   const added =
     localTip !== null
       ? await addBranchWorktree(folder, target, branch, git)
       : await addTrackingWorktree(folder, target, branch, remote as string, git);
-  if (added.ok) {
-    return made(
-      tip,
-      localTip !== null && remoteTip !== null && localTip !== remoteTip
-        ? `The local branch ${branch} is not at the same commit as ${remote}/${branch}; the working copy is on the local one.`
-        : null,
-    );
-  }
+  if (added.ok) return made(null);
   // Most often the project folder or another working copy is on the branch.
-  const detached = await addWorktree(folder, target, remoteTip ?? tip, git);
-  if (!detached.ok) return failed(`${detached.message} (${target})`);
-  return made(
-    remoteTip ?? tip,
+  return detached(
     `The working copy could not be put on branch ${branch} (${added.message}), so it is on that branch's commit and on no branch.`,
   );
 }
@@ -241,7 +277,7 @@ export async function settleWorkingCopy({
       error: 'Git could not say what the working copy holds, so it was kept.',
     };
   }
-  if (unpushed.uncommittedFiles > 0 || unpushed.unpushedCommits > 0) {
+  if (unpushed.uncommittedFiles > 0 || unpushed.ignoredFiles > 0 || unpushed.unpushedCommits > 0) {
     return { state: 'kept', unpushed, error: null };
   }
   const removed = await removeWorktree(projectFolder, target, false, git);

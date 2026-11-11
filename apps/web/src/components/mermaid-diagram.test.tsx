@@ -128,6 +128,10 @@ describe('mermaid diagram (review loop spec 2)', () => {
       `stateDiagram-v2\n  classDef evil background-image:url(${host}/state.png)\n  [*] --> A\n  class A evil`,
       `stateDiagram-v2\n  classDef evil fill:url(${host}/fill.svg#p)\n  [*] --> A\n  class A evil`,
       `stateDiagram-v2\n  classDef evil background:u\\rl('${host}/escaped.png')\n  [*] --> A`,
+      `stateDiagram-v2\n  classDef evil background:u\\72 l('${host}/hex.png')\n  [*] --> A`,
+      `flowchart LR\n  A --> B\n  style A fill:\\000075\\72\\6C("${host}/hex.svg#p")`,
+      `stateDiagram-v2\n  classDef evil fill:\\\\75rl(${host}/twice.svg#p)\n  [*] --> A`,
+      `stateDiagram-v2\n  classDef evil fill:\\\\000075\\\\72 l(${host}/twice.png)\n  [*] --> A`,
       `classDiagram\n  class A\n  style A background-image:image-set("${host}/set.png" 1x)`,
       `flowchart LR\n  A --> B\n  style A fill:URL( "${host}/flow.svg#p" )`,
     ];
@@ -155,7 +159,9 @@ describe('mermaid diagram (review loop spec 2)', () => {
       svg: [
         '<svg id="d"><style>@import url(https://elsewhere.example.test/a.css);',
         '#d .node{fill:u\\rl("https://elsewhere.example.test/b.png");stroke:#333}',
-        '#d .edge{marker-end:url(#arrow)}</style>',
+        '#d .edge{marker-end:url(#arrow)}#d .label{fill:\\75\\72\\6c("https://elsewhere.example.test/e.png")}',
+        '#d .twice{fill:\\\\75rl(https://elsewhere.example.test/t.svg#p)}',
+        '#d .again{fill:\\\\000075\\\\72 l(https://elsewhere.example.test/t.png)}</style>',
         '<g><image href="https://elsewhere.example.test/c.png"></image>',
         '<foreignObject><div><img src="https://elsewhere.example.test/d.png">plan</div>',
         '</foreignObject><rect fill="url(https://elsewhere.example.test/e.svg#p)" width="4">',
@@ -170,7 +176,8 @@ describe('mermaid diagram (review loop spec 2)', () => {
     expect(diagram.innerHTML).not.toContain('elsewhere.example.test');
     expect(diagram.querySelectorAll('img, image, feImage')).toHaveLength(0);
     expect(diagram.querySelector('style')?.textContent).toBe(
-      '#d .node{fill:none;stroke:#333}#d .edge{marker-end:url(#arrow)}',
+      '#d .node{fill:none;stroke:#333}#d .edge{marker-end:url(#arrow)}#d .label{fill:none}' +
+        '#d .twice{fill:none}#d .again{fill:none}',
     );
     expect(diagram.querySelector('rect')?.getAttribute('fill')).toBeNull();
     expect(diagram.querySelector('rect')?.getAttribute('width')).toBe('4');

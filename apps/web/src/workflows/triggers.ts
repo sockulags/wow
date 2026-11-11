@@ -1,7 +1,11 @@
 import {
   isEventTrigger,
-  triggerEventLabels,
+  projectCodeHost,
+  TriggerEvent as TriggerEvents,
+  triggerEventLabel,
   type EventTrigger,
+  type HostKind,
+  type HostRead,
   type Project,
   type Trigger,
   type TriggerEvent,
@@ -169,11 +173,16 @@ export interface TriggerGroup {
 export const eventTriggers = (triggers: readonly Trigger[]): EventTrigger[] =>
   triggers.filter(isEventTrigger);
 
+// The events a trigger can listen to, in the words of the project's host.
+export const eventChoices = (host: HostKind) =>
+  TriggerEvents.options.map((event) => ({ value: event, label: triggerEventLabel(event, host) }));
+
 // The event triggers by project, projects by name and triggers in the order they were made.
 export function triggerGroups(
   triggers: readonly Trigger[],
   projects: readonly Project[],
   workflows: readonly Workflow[],
+  reads: readonly HostRead[] = [],
 ): TriggerGroup[] {
   const projectNames = new Map(projects.map((project) => [project.id, project.name]));
   const workflowNames = new Map(workflows.map((workflow) => [workflow.id, workflow.name]));
@@ -185,7 +194,7 @@ export function triggerGroups(
     groups.set(trigger.projectId, rows);
     rows.push({
       trigger,
-      event: triggerEventLabels[trigger.event],
+      event: triggerEventLabel(trigger.event, projectCodeHost(reads, trigger.projectId)),
       workflow: workflowNames.get(trigger.workflowId),
     });
   }

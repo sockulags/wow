@@ -128,7 +128,8 @@ export class Workspaces {
   }
 
   // After a restart: a working copy that was being made is not trusted (the run fails with the
-  // reason), and one whose run ended while the server was down is looked at now.
+  // reason) and what git made of it is taken away, and one whose run ended while the server was
+  // down is looked at now.
   recover(): void {
     const rows = this.#deps.db.select().from(workflowRuns).all();
     for (const run of rows) {
@@ -139,6 +140,8 @@ export class Workspaces {
           runId: run.id,
           error: 'The server stopped while the working copy was being made',
         });
+        const target = run.workingCopy?.path;
+        if (target) this.#track(() => this.#discardUnfinished(run.projectId, target));
       } else if (state === 'ready' && !isLiveRunState(run.state)) {
         this.#track(() => this.#settle(run.id));
       }
@@ -179,6 +182,14 @@ export class Workspaces {
             projectFolder,
             target,
             branch,
+            head:
+              run.event?.headSha && run.event.headRef
+                ? {
+                    sha: run.event.headSha,
+                    ref: run.event.headRef,
+                    merged: run.event.event === 'merged',
+                  }
+                : undefined,
             fetch:
               this.#deps.settings.resolve('workspaces.fetchBeforeCreate', {
                 projectId: run.projectId,
@@ -205,6 +216,19 @@ export class Workspaces {
       error: created.error,
     });
     return created.error;
+  }
+
+  // The folder is named after the run, so nothing else is in it; no step ever worked there.
+  async #discardUnfinished(projectId: string, target: string): Promise<void> {
+    const projectFolder = this.#projectFolder(projectId);
+    if (projectFolder === undefined) return;
+    const outcome = await discardWorkingCopy({ projectFolder, target, git: this.#git() });
+    if (outcome.state === 'kept') {
+      this.#deps.logger.warn('unfinished working copy not removed', {
+        target,
+        reason: outcome.error,
+      });
+    }
   }
 
   // Looks at a working copy once no run works in it any more. A run that an event started may

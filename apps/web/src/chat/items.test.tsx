@@ -1,8 +1,8 @@
 import type { ThreadItem } from '@wow/contracts';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadMarkdown } from '../test/markdown';
-import { ConversationItem, type ItemContext } from './items';
+import { ConversationItem, ToolCallGroup, type ItemContext } from './items';
 
 beforeAll(loadMarkdown);
 
@@ -58,5 +58,106 @@ describe('assistant message in the thread (review loop spec 1, 3)', () => {
     expect(row.getByTestId('markdown-pending').textContent).toBe(
       '| Check | Result |\n| --- | --- |\n| tests |',
     );
+  });
+});
+
+const call = (last: number, name: string, status: 'running' | 'ok' | 'error'): ThreadItem => ({
+  id: id(last),
+  threadId: id(2),
+  turnId: id(3),
+  index: last,
+  kind: 'tool_call',
+  payload: { name, input: { file_path: `/work/demo/${name}.ts` }, output: `out ${name}`, status },
+  streaming: false,
+});
+const group = (items: ThreadItem[], running = false) => (
+  <ol>
+    <ToolCallGroup items={items} contextOf={() => ({ ...context, turnEnded: !running })} />
+  </ol>
+);
+
+describe('a run of tool calls is one row', () => {
+  it('shows the latest call and the count, and lists every call when opened', async () => {
+    const view = render(group([call(4, 'Read', 'ok'), call(5, 'Grep', 'running')], true));
+    const row = within(screen.getByTestId('item-tool_group'));
+    const summary = screen.getByTestId('item-tool_group').querySelector('summary');
+    expect(summary?.textContent).toContain('Grep');
+    expect(summary?.textContent).toContain('/work/demo/Grep.ts');
+    expect(summary?.textContent).toContain('running');
+    expect(row.getByTestId('tool-group-count').textContent).toBe('2 tool calls');
+    expect(row.queryByTestId('tool-group-failed')).toBeNull();
+    expect(row.queryAllByTestId('item-tool_call')).toHaveLength(0);
+
+    // The running turn adds a call: the row follows it.
+    view.rerender(
+      group([call(4, 'Read', 'ok'), call(5, 'Grep', 'ok'), call(6, 'Edit', 'running')], true),
+    );
+    expect(summary?.textContent).toContain('Edit');
+    expect(row.getByTestId('tool-group-count').textContent).toBe('3 tool calls');
+
+    const details = summary?.parentElement as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+    const calls = await row.findAllByTestId('item-tool_call');
+    expect(calls.map((entry) => entry.querySelector('summary')?.textContent)).toEqual([
+      expect.stringContaining('Read'),
+      expect.stringContaining('Grep'),
+      expect.stringContaining('Edit'),
+    ]);
+  });
+
+  it('says that a call failed without being opened', () => {
+    render(group([call(4, 'Bash', 'error'), call(5, 'Read', 'ok')]));
+    const row = screen.getByTestId('item-tool_group');
+    expect(row.dataset['failed']).toBe('true');
+    expect(within(row).getByTestId('tool-group-failed').textContent).toBe('1 failed');
+  });
+});
+
+const user = (payload: unknown): ThreadItem => ({
+  id: id(4),
+  threadId: id(2),
+  turnId: id(3),
+  index: 0,
+  kind: 'user',
+  payload,
+  streaming: false,
+});
+
+describe('the skills a message was sent with (wow skills spec 14, 18)', () => {
+  it('shows each skill as a chip with its group, and its text opens from the chip', async () => {
+    show(
+      user({
+        text: 'the login fix',
+        skills: [
+          { name: 'tidy-notes', source: 'yours', text: 'Tidy the notes of the run.' },
+          { name: 'deliver-work', source: 'user-claude', invocation: '/deliver-work' },
+          {
+            name: 'wow-verdict',
+            source: 'wow',
+            text: 'End with one verdict line.',
+            reason: 'a rule of this step reads the verdict',
+          },
+        ],
+      }),
+    );
+    const row = within(screen.getByTestId('item-user'));
+    expect(row.getAllByTestId('skill-chip').map((chip) => chip.getAttribute('aria-label'))).toEqual(
+      ['tidy-notes, Yours skill', 'deliver-work, User skill', 'wow-verdict, wow skill'],
+    );
+    // The text is not in the conversation itself.
+    expect(row.queryByText('Tidy the notes of the run.')).toBeNull();
+    expect(row.getByText('the login fix')).toBeTruthy();
+    fireEvent.click(row.getByRole('button', { name: 'wow-verdict, wow skill' }));
+    const card = await screen.findByRole('dialog', { name: 'Skill wow-verdict' });
+    expect(within(card).getByTestId('skill-text').textContent).toBe('End with one verdict line.');
+    expect(card.textContent).toContain('Attached by wow: a rule of this step reads the verdict.');
+  });
+
+  it('shows a message stored before chips, with $name in its text, as it was', () => {
+    show(user({ text: '$check-work the release' }));
+    const row = within(screen.getByTestId('item-user'));
+    expect(row.queryAllByTestId('skill-chip')).toEqual([]);
+    expect(screen.getByTestId('item-user').textContent).toBe('$check-work the release');
   });
 });

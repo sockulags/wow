@@ -128,6 +128,24 @@ export function ChangeRow({
   );
 }
 
+// The whole of a value the line had to shorten, on request.
+function WholeValue({ label, text }: { label: string; text: string | undefined }) {
+  if (text === undefined) return null;
+  return (
+    <details className="mt-0.5">
+      <summary className="cursor-pointer text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        {label}: show all of it
+      </summary>
+      <pre
+        data-testid="assistant-proposal-full"
+        className="mt-1 max-h-64 overflow-auto rounded-sm bg-muted p-2 font-mono text-[11px] whitespace-pre-wrap"
+      >
+        {text}
+      </pre>
+    </details>
+  );
+}
+
 const answered: Readonly<Record<AssistantProposal['state'], string>> = {
   pending: 'Waiting for your answer',
   accepted: 'Yes: applied',
@@ -187,6 +205,8 @@ export function ProposalCard({
             <li key={index}>
               <span className="font-medium">{line.what}</span>
               {fromTo(line) !== '' && `: ${fromTo(line)}`}
+              <WholeValue label="Was" text={line.fromFull} />
+              <WholeValue label="Becomes" text={line.toFull} />
             </li>
           ))}
         </ul>

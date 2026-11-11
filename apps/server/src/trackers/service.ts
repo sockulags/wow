@@ -132,7 +132,10 @@ interface Context {
 const hostOf = (url: string): string | null => {
   try {
     const host = new URL(url).host;
-    return host === 'api.github.com' ? 'github.com' : host;
+    // github.com and <name>.ghe.com serve their API on an api. host of their own.
+    return host === 'api.github.com' || /^api\.[a-z0-9-]+\.ghe\.com$/.test(host)
+      ? host.slice('api.'.length)
+      : host;
   } catch {
     return null;
   }
@@ -277,6 +280,13 @@ export class TrackerService {
         jiraKeys: guessJiraKeys(git.branch ? [git.branch, ...texts] : texts),
       }),
     };
+  }
+
+  // The GitHub API address a project's own token is sent to (see githubHost): stored for the
+  // project, else the host of its folder's git remote, else the shared one.
+  async githubAddress(projectId: string): Promise<string> {
+    const value = (await this.#context(projectId)).get('trackers.github.baseUrl')?.value;
+    return typeof value === 'string' ? value : '';
   }
 
   // The project's GitHub host as the poller reads it: the same settings a publish uses, the

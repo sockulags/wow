@@ -7,8 +7,10 @@ import type {
   ProviderInstance,
   ProviderTestResult,
   ProviderUpdate,
+  QuestionReply,
   TaskStatus,
 } from '@wow/contracts';
+import { markRecommended } from '@wow/contracts';
 import {
   CompatibilityCache,
   checkInstalledCodex,
@@ -133,7 +135,7 @@ interface OpenInput {
   readonly codexThreadId: string;
   // wow question id → codex question id
   readonly questions: Map<string, string>;
-  readonly answers: Map<string, string>;
+  readonly answers: Map<string, QuestionReply>;
 }
 
 const okStatuses = new Set(['completed']);
@@ -256,6 +258,8 @@ function toolResult(item: ThreadItem): { output: string | null; ok: boolean } {
 // exits. Maps wow threads to codex threads and codex's JSON-RPC to ProviderEvent.
 export class CodexAdapter implements ProviderAdapter {
   readonly kind = 'codex';
+  // Every turn/start carries the thread's model, so a step on Codex must name one.
+  readonly requiresModel = true;
   readonly #options: CodexAdapterOptions;
   readonly #spawn: SpawnCodex;
   readonly #newId: () => string;
@@ -601,7 +605,7 @@ export class CodexAdapter implements ProviderAdapter {
     return { ok: true };
   }
 
-  #answerQuestion(questionId: string, answer: string): unknown {
+  #answerQuestion(questionId: string, answer: QuestionReply): unknown {
     const entry = [...this.#inputs.entries()].find(([, input]) => input.questions.has(questionId));
     const connection = this.#connection;
     if (!entry || !connection)
@@ -613,8 +617,13 @@ export class CodexAdapter implements ProviderAdapter {
       return { ok: true, waitingFor: input.questions.size - input.answers.size };
     this.#inputs.delete(key);
     const answers: Record<string, { answers: string[] }> = {};
-    for (const [wowId, codexId] of input.questions)
-      answers[codexId] = { answers: [input.answers.get(wowId) ?? ''] };
+    // codex takes a list of answers per question: each picked label, then the typed text as an
+    // answer of its own (its "other" answer has no other form in the protocol).
+    for (const [wowId, codexId] of input.questions) {
+      const reply = input.answers.get(wowId) ?? { picked: [], text: '' };
+      const text = reply.text.trim();
+      answers[codexId] = { answers: [...reply.picked, ...(text === '' ? [] : [text])] };
+    }
     connection.respond(input.requestId, 'item/tool/requestUserInput', { answers });
     return { ok: true, waitingFor: 0 };
   }
@@ -834,6 +843,8 @@ export class CodexAdapter implements ProviderAdapter {
           answers: new Map(),
         };
         const asked: ProviderEvent[] = [];
+        // The questions of one request are answered together.
+        const askId = message.params.itemId;
         for (const question of message.params.questions) {
           const questionId = this.#newId();
           input.questions.set(questionId, question.id);
@@ -841,13 +852,12 @@ export class CodexAdapter implements ProviderAdapter {
             type: 'questionAsked',
             threadId,
             questionId,
-            question: question.header
-              ? `${question.header}: ${question.question}`
-              : question.question,
-            options: (question.options ?? []).map((option) => ({
-              label: option.label,
-              description: option.description,
-            })),
+            question: question.question,
+            ...(question.header.trim() ? { header: question.header.trim() } : {}),
+            askId,
+            options: (question.options ?? []).map((option) =>
+              markRecommended({ label: option.label, description: option.description }),
+            ),
             multiSelect: false,
           });
         }

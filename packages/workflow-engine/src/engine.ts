@@ -1,5 +1,13 @@
 import {
+  automaticSkills,
+  intentUnitLine,
+  promptShown,
+  promptWithSkills,
   ruleConditionText,
+  type BuiltInSkillValues,
+  type PromptSkillPart,
+  type SentSkill,
+  type SkillRef,
   type FileHash,
   type GatePartResult,
   type MissedTriggerPolicy,
@@ -122,9 +130,37 @@ export interface EngineContext extends GateSettings, RuleSettings {
   readonly sendBackTemplate: string;
   // The `workflows.unitPromptTemplate` setting for the run's project; used by a unit's run only.
   readonly unitPromptTemplate: string;
-  // The step's skill as its provider invokes it: `/name` for Claude, `$name` for Codex.
+  // The step's skill as its provider invokes it: `/name` for Claude, `$name` for Codex. Used for
+  // runs stored before wow skills, and when `skillFor` is absent.
   readonly invocationFor: (step: WorkflowStep) => string;
+  // A skill the step names, for the step's provider: a wow skill's text filled in for this send,
+  // or a folder skill's invocation. Undefined when it no longer exists (wow skills spec 15).
+  readonly skillFor?: (
+    step: WorkflowStep,
+    ref: SkillRef,
+    values: BuiltInSkillValues,
+  ) => ResolvedSkill | undefined;
+  // The `workflows.attachBuiltInSkills` setting for the run's project (spec 12).
+  readonly attachBuiltInSkills?: boolean;
   readonly backlogBody?: string | null | undefined;
+}
+
+export type ResolvedSkill =
+  | { readonly kind: 'text'; readonly name: string; readonly source: string; readonly text: string }
+  | {
+      readonly kind: 'invoke';
+      readonly name: string;
+      readonly source: string;
+      readonly invocation: string;
+    };
+
+// A step's first prompt: what is sent, what the thread shows and the skills it was made with.
+// `missing` names a skill the step needs that no longer exists; then nothing is sent.
+export interface StepPrompt {
+  readonly prompt: string;
+  readonly shown?: string;
+  readonly skills?: SentSkill[];
+  readonly missing?: string;
 }
 
 export interface Transition {
@@ -171,10 +207,11 @@ export function pendingGate(run: WorkflowRun): PendingGate | undefined {
   if (run.state !== 'waiting') return undefined;
   const step = run.steps[run.currentStep];
   if (!step) return undefined;
+  if (step.waits) return { stepIndex: run.currentStep, position: step.waits };
   const last = lastVisit(run.path);
   const after = run.path
     ? last !== undefined && last.stepId === step.stepId && last.ended !== null && last.next === null
-    : Boolean(step.endedAt);
+    : Boolean(step.endedAt) && step.gate?.state !== 'waitingAtLimit';
   return { stepIndex: run.currentStep, position: after ? 'after' : 'before' };
 }
 
@@ -224,6 +261,7 @@ export function startRun(workflow: Workflow, input: NewRun, context: EngineConte
     baseSha: null,
     baseFiles: null,
     path: [],
+    wowSkills: true,
     ...(input.unit ? { unit: input.unit } : {}),
     ...(input.event ? { event: input.event } : {}),
   };
@@ -231,7 +269,33 @@ export function startRun(workflow: Workflow, input: NewRun, context: EngineConte
   return begin(workflow, run, { from: undefined, to: 0, by: 'list' }, context, []);
 }
 
+// Only the step the run waits at says where it waits; every other step forgets it.
+function settleWaits({ run, effects }: Transition): Transition {
+  if (
+    !run.steps.some(
+      (entry, at) => entry.waits && (run.state !== 'waiting' || at !== run.currentStep),
+    )
+  ) {
+    return { run, effects };
+  }
+  const steps = run.steps.map((entry, at): StepRun => {
+    if (!entry.waits || (run.state === 'waiting' && at === run.currentStep)) return entry;
+    const { waits: _left, ...rest } = entry;
+    return rest;
+  });
+  return { run: { ...run, steps }, effects };
+}
+
 export function advance(
+  workflow: Workflow,
+  run: WorkflowRun,
+  input: RunInput,
+  context: EngineContext,
+): Transition {
+  return settleWaits(transit(workflow, run, input, context));
+}
+
+function transit(
   workflow: Workflow,
   run: WorkflowRun,
   input: RunInput,
@@ -315,6 +379,8 @@ function completeStep(
     state: step.gateAfter ? 'waiting' : 'done',
     ...(input.fileHashes ? { fileHashes: [...input.fileHashes] } : {}),
   };
+  const began = input.fileHashes ? hashesBefore(before) : undefined;
+  if (began) finished.fileHashesBefore = [...began];
   // A step that runs again is judged again from nothing.
   delete finished.gate;
   delete finished.error;
@@ -350,7 +416,7 @@ function completeStep(
   if (parts.some((part) => part.state === 'pending')) {
     // Nobody is asked yet: the run waits for the host, and the user is told when it is their
     // turn after all.
-    const waiting: StepRun = { ...finished, gate: gate('waitingForChecks', parts) };
+    const waiting: StepRun = { ...finished, waits: 'after', gate: gate('waitingForChecks', parts) };
     return {
       run: { ...run, steps: replaceStep(run.steps, index, waiting), state: 'waiting' },
       effects: [],
@@ -366,8 +432,19 @@ function completeStep(
   );
 }
 
+// What the changed files were when the running visit began: as the visit that ended done
+// before it left them, or as the run began. A step keeps only its latest hashes, which are
+// still that visit's now, while this one ends. Undefined without a path to tell the order.
+function hashesBefore(run: WorkflowRun): readonly FileHash[] | undefined {
+  if (!run.path) return undefined;
+  const previous = run.path.slice(0, -1).findLast((visit) => visit.ended === 'done');
+  if (!previous) return run.baseFiles ?? undefined;
+  return run.steps.find((entry) => entry.stepId === previous.stepId)?.fileHashes;
+}
+
 // The run waits for the user after the step, as at any gate after a step.
-function waitForUser(run: WorkflowRun, index: number, waiting: StepRun): Transition {
+function waitForUser(run: WorkflowRun, index: number, stepRun: StepRun): Transition {
+  const waiting: StepRun = { ...stepRun, waits: 'after' };
   return {
     run: { ...run, steps: replaceStep(run.steps, index, waiting), state: 'waiting' },
     effects: [
@@ -412,6 +489,7 @@ function route(
     const waiting: StepRun = {
       ...done,
       state: 'waiting',
+      waits: 'after',
       gate: {
         state: 'waitingForChecks',
         parts: [checksNotReadYet()],
@@ -503,6 +581,7 @@ function moveTo(
     const waiting: StepRun = {
       ...(steps[move.to] as StepRun),
       state: 'waiting',
+      waits: 'before',
       gate: { state: 'waitingAtLimit', parts: [], detail, since: context.now, at: context.now },
     };
     return {
@@ -723,6 +802,8 @@ function backToRest(entry: StepRun): StepRun {
   return rested;
 }
 
+const NOTE_PLACEHOLDER = /\{\{note\}\}/;
+
 function sendBack(
   workflow: Workflow,
   run: WorkflowRun,
@@ -762,8 +843,14 @@ function sendBack(
     skill: step.skillName,
     attempt: String(attempt),
   });
-  // A template emptied in the settings still sends what the reviewer wrote.
-  const prompt = rendered === '' ? text : rendered;
+  // A template emptied in the settings, or one that does not name the note, still sends what the
+  // reviewer wrote.
+  const prompt =
+    rendered === ''
+      ? text
+      : NOTE_PLACEHOLDER.test(context.sendBackTemplate)
+        ? rendered
+        : `${rendered}\n\n${text}`;
   const sent = decideVisit(
     run,
     { to: { type: 'step', stepId: step.id }, by: 'user' },
@@ -789,9 +876,13 @@ function stopRun(run: WorkflowRun, context: EngineContext): Transition {
   // The threads are kept (behavior 13); a running turn is interrupted and its step marked failed.
   const steps = run.steps.map((step): StepRun => {
     if (step.state === 'running') {
-      if (step.threadId) effects.push({ type: 'interrupt', threadId: step.threadId });
+      // A held step has no turn yet: the one running in its thread is the user's own.
+      if (step.threadId && step.heldPrompt === undefined) {
+        effects.push({ type: 'interrupt', threadId: step.threadId });
+      }
       effects.push(...threadState(step.threadId, 'failed'));
-      return { ...step, state: 'failed', endedAt: context.now, error: 'Stopped' };
+      const { heldPrompt: _never, heldShown: _shown, heldSkills: _skills, ...stopped } = step;
+      return { ...stopped, state: 'failed', endedAt: context.now, error: 'Stopped' };
     }
     if (step.state === 'waiting') {
       if (gate?.position === 'after') {
@@ -855,8 +946,18 @@ function begin(
   const index = move.to;
   const step = workflow.steps[index] as WorkflowStep;
   const existing = run.steps[index] as StepRun;
-  const stepPromptText = () => renderStepPrompt(workflow, run, index, context, move.from);
+  const made = () => stepPromptFor(workflow, run, index, context, move.from);
   if (!existing.threadId) {
+    const first = made();
+    if (first.missing !== undefined) {
+      const starting: StepRun = {
+        stepId: step.id,
+        state: 'running',
+        startedAt: context.now,
+        artifactsFound: [],
+      };
+      return missingSkill(workflow, run, index, starting, 1, first.missing, context, effects);
+    }
     const threadId = stepThreadId(run.id, step.id);
     const steps = replaceStep(run.steps, index, {
       stepId: step.id,
@@ -874,7 +975,14 @@ function begin(
       },
       effects: [
         ...effects,
-        { type: 'startStep', runId: run.id, stepId: step.id, threadId, prompt: stepPromptText() },
+        {
+          type: 'startStep',
+          runId: run.id,
+          stepId: step.id,
+          threadId,
+          prompt: first.prompt,
+          ...sentWith(first),
+        },
       ],
     };
   }
@@ -898,7 +1006,10 @@ function begin(
         })
       : '';
   // A template emptied in the settings still tells the step what the run came with.
-  const prompt = wentBack === '' ? stepPromptText() : wentBack;
+  const again = wentBack === '' ? made() : { prompt: wentBack };
+  if (again.missing !== undefined) {
+    return missingSkill(workflow, run, index, rerun, attempt, again.missing, context, effects);
+  }
   return {
     run: {
       ...startVisit(run, step.id, attempt, context.now),
@@ -914,15 +1025,54 @@ function begin(
         stepId: step.id,
         threadId: existing.threadId,
         attempt,
-        prompt,
+        prompt: again.prompt,
+        ...sentWith(again),
       },
     ],
   };
 }
 
+const sentWith = (made: StepPrompt) => ({
+  ...(made.shown === undefined ? {} : { shown: made.shown }),
+  ...(made.skills === undefined ? {} : { skills: made.skills }),
+});
+
+// A step whose skill is gone fails before it starts, with the skill's name (wow skills spec 15).
+// The user is told; no rule is followed, as for a step the user stopped.
+function missingSkill(
+  workflow: Workflow,
+  run: WorkflowRun,
+  index: number,
+  starting: StepRun,
+  attempt: number,
+  name: string,
+  context: EngineContext,
+  effects: RunEffect[],
+): Transition {
+  const step = workflow.steps[index] as WorkflowStep;
+  const running: WorkflowRun = {
+    ...startVisit(run, step.id, attempt, context.now),
+    steps: replaceStep(run.steps, index, starting),
+    currentStep: index,
+    state: 'running',
+  };
+  const failed = failStep(
+    workflow,
+    running,
+    {
+      type: 'stepFailed',
+      stepId: step.id,
+      error: `The skill ${name} no longer exists, so the step cannot start. Pick another skill for it, or make the skill again.`,
+      stopped: true,
+    },
+    context,
+  );
+  return { run: failed.run, effects: [...effects, ...failed.effects] };
+}
+
 function waitBefore(run: WorkflowRun, index: number, effects: RunEffect[]): Transition {
   const current = run.steps[index] as StepRun;
-  const steps = replaceStep(run.steps, index, { ...current, state: 'waiting' });
+  const steps = replaceStep(run.steps, index, { ...current, state: 'waiting', waits: 'before' });
   return {
     run: { ...run, steps, currentStep: index, state: 'waiting' },
     effects: [
@@ -989,29 +1139,108 @@ export function renderStepPrompt(
   context: EngineContext,
   fromIndex: number | undefined = index - 1,
 ): string {
+  return stepPromptFor(workflow, run, index, context, fromIndex).prompt;
+}
+
+// A run from before wow skills keeps the prompts it had: the skill's invocation, the expected
+// artifacts in the handover and the Intent-Unit line in the unit text. A newer run sends the
+// skills the step names and the built-in skills the workflow depends on (wow skills spec 10 to
+// 13), and leaves out each of wow's own sentences that a skill sent says instead.
+export function stepPromptFor(
+  workflow: Workflow,
+  run: WorkflowRun,
+  index: number,
+  context: EngineContext,
+  fromIndex: number | undefined = index - 1,
+): StepPrompt {
   const step = workflow.steps[index] as WorkflowStep;
   const previousStep = fromIndex >= 0 ? workflow.steps[fromIndex] : undefined;
   const previousRun = fromIndex >= 0 ? run.steps[fromIndex] : undefined;
   const failed = previousRun?.state === 'failed';
   const earlierArtifacts = run.steps.slice(0, index).flatMap((entry) => entry.artifactsFound);
-  const handover = renderHandover(context.handoverTemplate, {
-    previousStep: previousStep?.skillName ?? '',
-    previousMessage: failed ? '' : (previousRun?.finalMessage ?? ''),
-    previousError: failed ? (previousRun.error ?? '') : '',
-    backlogBody: context.backlogBody ?? '',
-    previousArtifacts: bulletList([...new Set(earlierArtifacts)]),
-    expectedArtifacts: bulletList(step.expectedArtifacts),
-    ...eventValues(run.event),
-  });
-  // Every step of a unit's run is told which unit it works on (review loop spec 40).
-  const unit = run.unit
-    ? renderUnitPrompt(context.unitPromptTemplate, {
-        intentId: run.unit.intentId,
-        unitKey: run.unit.unitKey,
-        unitTitle: run.unit.title,
-      })
-    : '';
-  return stepPrompt(context.invocationFor(step), step.extraPrompt, handover, unit);
+  const expectedArtifacts = bulletList(step.expectedArtifacts);
+  const unitLine = run.unit ? intentUnitLine(run.unit.intentId, run.unit.unitKey) : '';
+  const unitText = (line: string) =>
+    run.unit
+      ? renderUnitPrompt(context.unitPromptTemplate, {
+          intentId: run.unit.intentId,
+          unitKey: run.unit.unitKey,
+          unitTitle: run.unit.title,
+          intentUnitLine: line,
+        })
+      : '';
+  const texts = (attached: ReadonlySet<string>) => {
+    const handover = renderHandover(context.handoverTemplate, {
+      previousStep: previousStep?.skillName ?? '',
+      previousMessage: failed ? '' : (previousRun?.finalMessage ?? ''),
+      previousError: failed ? (previousRun.error ?? '') : '',
+      backlogBody: context.backlogBody ?? '',
+      previousArtifacts: bulletList([...new Set(earlierArtifacts)]),
+      expectedArtifacts: attached.has('wow-artifacts') ? '' : expectedArtifacts,
+      ...eventValues(run.event),
+    });
+    // Every step of a unit's run is told which unit it works on (review loop spec 40).
+    return { handover, unit: unitText(attached.has('wow-pull-request') ? '' : unitLine) };
+  };
+  const { skillFor } = context;
+  if (!run.wowSkills || !skillFor) {
+    const { handover, unit } = texts(new Set());
+    return { prompt: stepPrompt(context.invocationFor(step), step.extraPrompt, handover, unit) };
+  }
+  const values: BuiltInSkillValues = {
+    approvedLine: context.verdictApprovedLine,
+    changesRequestedLine: context.verdictChangesRequestedLine,
+    blockedLine: context.verdictBlockedLine,
+    expectedArtifacts,
+    intentId: run.unit?.intentId ?? '',
+    unitKey: run.unit?.unitKey ?? '',
+    unitTitle: run.unit?.title ?? '',
+    // A unit template written before wow skills spells the line out itself; it is sent once.
+    intentUnitLine: unitLine !== '' && unitText('').includes(unitLine) ? '' : unitLine,
+  };
+  const named: SkillRef[] = [
+    { name: step.skillName, ...(step.skillSource ? { source: step.skillSource } : {}) },
+    ...(step.alsoFollow ?? []),
+  ];
+  const chosen: { skill: ResolvedSkill; reason?: string }[] = [];
+  for (const ref of named) {
+    const skill = skillFor(step, ref, values);
+    if (!skill) return { prompt: '', missing: ref.name };
+    chosen.push({ skill });
+  }
+  const builtIn = (name: string) =>
+    chosen.some(({ skill }) => skill.source === 'wow' && skill.name === name);
+  if (context.attachBuiltInSkills) {
+    for (const auto of automaticSkills(step, run.unit)) {
+      if (step.leaveOut?.includes(auto.name) || builtIn(auto.name)) continue;
+      // A built-in skill switched off in the settings is attached nowhere (spec 3).
+      const skill = skillFor(step, { name: auto.name, source: 'wow' }, values);
+      if (skill) chosen.push({ skill, reason: auto.reason });
+    }
+  }
+  const attached = new Set(
+    chosen.filter(({ skill }) => skill.source === 'wow').map(({ skill }) => skill.name),
+  );
+  const { handover, unit } = texts(attached);
+  const parts: PromptSkillPart[] = chosen.map(({ skill }) =>
+    skill.kind === 'text'
+      ? { kind: 'text', name: skill.name, text: skill.text }
+      : { kind: 'invoke', invocation: skill.invocation },
+  );
+  const extra = step.extraPrompt ?? '';
+  const join = (head: string) => [head, unit, handover].filter((part) => part !== '').join('\n\n');
+  const skills: SentSkill[] = chosen.map(({ skill, reason }) => ({
+    name: skill.name,
+    source: skill.source,
+    ...(skill.kind === 'text' ? { text: skill.text } : { invocation: skill.invocation }),
+    ...(reason === undefined ? {} : { reason }),
+  }));
+  const shown = join(promptShown(parts, extra));
+  return {
+    prompt: join(promptWithSkills(parts, extra)),
+    shown: shown === '' ? skills.map((skill) => skill.name).join(', ') : shown,
+    skills,
+  };
 }
 
 function runningStepIndex(run: WorkflowRun, stepId: string): number {

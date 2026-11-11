@@ -54,8 +54,9 @@ test.describe('projects', () => {
 
     await expectInPickers(page, 'Site e2e', true);
 
-    // Rename from the palette.
+    // Rename from the palette, once the page has loaded and a key reaches the app.
     await page.goto('/settings/projects');
+    await expect(projectList(page).getByRole('listitem', { name: 'Site e2e' })).toBeVisible();
     await page.keyboard.press('Control+k');
     await page.getByRole('combobox').fill('Rename project Site e2e');
     await page.keyboard.press('Enter');

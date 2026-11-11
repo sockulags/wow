@@ -19,19 +19,23 @@ import type {
   HostKind,
   HostReadScope,
   NotificationKind,
+  OccurrenceOutcome,
   OutlookProfile,
   PlanFile,
   PlanProblem,
   PlanRunState,
   PlanRunUnit,
+  PastSeries,
   PlanSource,
   PlanUnit,
   ProviderInstanceStatus,
   ProviderKind,
   ProviderUpdate,
   ProviderUpdateRun,
+  RepeatRule,
   ReviewComment,
   RunEvent,
+  RunOccurrence,
   RunUnit,
   SecretRef,
   SetupApplicationState,
@@ -192,8 +196,30 @@ export const calendarItems = sqliteTable(
     runId: text(),
     state: text().notNull(),
     updatedAt: text().notNull(),
+    repeat: json<RepeatRule>(),
+    skippedDates: json<string[]>().notNull().default([]),
+    nextAt: text(),
+    pastSeries: json<PastSeries[]>().notNull().default([]),
   },
   (table) => [index('calendar_items_start_idx').on(table.start)],
+);
+
+// What happened at each occurrence of a repeating card the scheduler reached. Rows outlive
+// their card, as its runs do, so Undo of a delete brings the history back with the card.
+export const cardOccurrences = sqliteTable(
+  'card_occurrences',
+  {
+    cardId: text().notNull(),
+    date: text().notNull(),
+    start: text().notNull(),
+    end: text().notNull(),
+    outcome: text().$type<OccurrenceOutcome>().notNull(),
+    runId: text(),
+    reason: text(),
+    offerRunNow: bool().notNull().default(false),
+    at: text().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.cardId, table.date] })],
 );
 
 // A single row; the id only exists so the row can be upserted.
@@ -245,7 +271,9 @@ export const workflowRuns = sqliteTable('workflow_runs', {
   workingCopy: json<WorkingCopy>(),
   unit: json<RunUnit>(),
   event: json<RunEvent>(),
+  occurrence: json<RunOccurrence>(),
   path: json<PathVisit[]>(),
+  wowSkills: bool(),
 });
 
 // Plan runs: one row per "Run ready units", kept after it ended.
@@ -363,6 +391,12 @@ export const setupApplications = sqliteTable('setup_applications', {
   undoneAt: text(),
 });
 
+// One row while the greeting after the first-start step is owed (app assistant spec 26).
+export const assistantGreeting = sqliteTable('assistant_greeting', {
+  id: integer().primaryKey(),
+  owedAt: text().notNull(),
+});
+
 export const skills = sqliteTable('skills', {
   id: text().primaryKey(),
   name: text().notNull(),
@@ -371,6 +405,8 @@ export const skills = sqliteTable('skills', {
   source: text().$type<SkillSource>().notNull(),
   manualOnly: bool().notNull(),
   invocations: json<{ claude: string; codex: string }>().notNull(),
+  // A wow skill's text (built-in template or own text); null for skills from other folders.
+  text: text(),
 });
 
 // One row per intent folder of a project, as its files read (packages/agent-os).
@@ -442,6 +478,7 @@ export const changeRequests = sqliteTable('change_requests', {
   mergedAt: text(),
   headBranch: text().notNull(),
   headSha: text().notNull(),
+  fromFork: bool().notNull().default(false),
   units: json<UnitRef[]>().notNull(),
   checkState: text().$type<CheckState>().notNull(),
   checks: json<HostCheck[]>().notNull(),

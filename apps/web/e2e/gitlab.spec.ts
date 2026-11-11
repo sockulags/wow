@@ -86,7 +86,11 @@ test.describe('gitlab', () => {
     });
     expect((await fetch(`${control}/run?${query}`, { method: 'POST' })).ok).toBe(true);
     await page.goto('/workflows/runs/gitlab-e2e-run?tab=pullRequest');
-    const tab = page.getByRole('tabpanel', { name: 'Pull request' });
+    await expect(page.getByRole('tab', { name: 'Merge request' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    const tab = page.getByRole('tabpanel', { name: 'Merge request' });
     const request = tab.getByRole('article', { name: 'Merge request !9' });
 
     // The merge request of the branch the run's folder is on, with the failing job names and

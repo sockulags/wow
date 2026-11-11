@@ -1,16 +1,24 @@
 import {
   alwaysStops,
+  changeRequestName,
   GatePart,
   gatePartLabels,
+  lacksRequiredModel,
+  missingModelSentence,
+  providerKindLabels,
   providerChatOptions,
   rulesForTemplate,
   rulesFromTemplate,
+  runEventHost,
+  triggerEventLabel,
   type GatePartResult,
   type ProviderInstance,
   type ProviderModel,
+  type RunEvent,
   type Skill,
   type StepRun,
   type StepRunState,
+  type Thread,
   type Workflow,
   type WorkflowRun,
   type WorkflowRunState,
@@ -234,7 +242,12 @@ export function stepDefaults(
   instance: ProviderInstance,
   models: readonly ProviderModel[],
 ): { model: string; effort: string; permissionMode: string } {
-  const model = instance.defaultModel ?? models[0]?.id ?? '';
+  // A provider that needs a model gets the instance's default or none: the step then shows the
+  // server's refusal until a model is chosen, instead of taking whatever is listed first
+  // (questions and models spec 17, 18).
+  const model =
+    instance.defaultModel ??
+    (providerChatOptions[instance.kind].requiresModel ? '' : (models[0]?.id ?? ''));
   const effort =
     instance.defaultEffort ?? effortOptions(instance.kind, models, model, '')[0] ?? 'default';
   const permissionMode =
@@ -250,6 +263,8 @@ export interface DraftProblem {
   readonly message: string;
   // Warnings do not block saving.
   readonly warning?: boolean;
+  // Shown before the first Save too: it says what the server would refuse.
+  readonly always?: boolean;
 }
 
 // Behavior 24 validation. A skill missing from the scanned list is only a warning: the server
@@ -259,6 +274,8 @@ export function validateDraft(
   draft: WorkflowDraft,
   instances: readonly ProviderInstance[],
   skills: readonly Skill[],
+  // The workflow as stored, whose steps saved without a required model are marked (spec 19).
+  stored?: Workflow,
 ): DraftProblem[] {
   const problems: DraftProblem[] = [];
   if (draft.name.trim() === '') problems.push({ message: 'Give the workflow a name.' });
@@ -281,7 +298,22 @@ export function validateDraft(
     if (!instances.some((instance) => instance.id === step.providerInstanceId)) {
       problems.push({ stepId, message: `${label} needs a provider instance.` });
     }
-    if (!step.model) problems.push({ stepId, message: `${label} needs a model.` });
+    const instance = instances.find((candidate) => candidate.id === step.providerInstanceId);
+    const was = stored?.steps.find((candidate) => candidate.id === stepId);
+    if (instance && was && lacksRequiredModel(was, instance.kind) && step.model) {
+      problems.push({
+        stepId,
+        warning: true,
+        message: `${label} was saved without a model, which ${providerKindLabels[instance.kind]} needs; Save stores ${step.model}.`,
+      });
+    }
+    if (!step.model && instance && lacksRequiredModel(step, instance.kind)) {
+      problems.push({
+        stepId,
+        always: true,
+        message: missingModelSentence(step.skillName.trim() || label, instance),
+      });
+    } else if (!step.model) problems.push({ stepId, message: `${label} needs a model.` });
     if (!step.effort) problems.push({ stepId, message: `${label} needs an effort.` });
     if (!step.permissionMode) {
       problems.push({ stepId, message: `${label} needs a permission mode.` });
@@ -344,18 +376,23 @@ export interface Gate {
   readonly limit?: string;
 }
 
-// The same reading as the engine's pendingGate. A run that keeps a path waits after its current
-// step only when that step's visit is the last one and nothing was decided after it: a step
-// that ran before keeps its end time while the run waits before it again. A run from before
-// paths goes by whether the current step has ended.
+// Where the run waits, as the server stored it on the step (`waits`). Runs stored before it
+// did are read as the engine's pendingGate reads them: a run that keeps a path waits after its
+// current step only when that step's visit is the last one and nothing was decided after it; a
+// run from before paths goes by whether the current step has ended and is not at the limit.
 export function gateOf(run: WorkflowRun): Gate | undefined {
   if (run.state !== 'waiting') return undefined;
   const step = run.steps[run.currentStep];
   if (!step) return undefined;
   const last = run.path?.at(-1);
-  const after = run.path
-    ? last !== undefined && last.stepId === step.stepId && last.ended !== null && last.next === null
-    : Boolean(step.endedAt);
+  const after = step.waits
+    ? step.waits === 'after'
+    : run.path
+      ? last !== undefined &&
+        last.stepId === step.stepId &&
+        last.ended !== null &&
+        last.next === null
+      : Boolean(step.endedAt) && step.gate?.state !== 'waitingAtLimit';
   const limit = step.gate?.state === 'waitingAtLimit' ? (step.gate.detail ?? '') : undefined;
   return {
     stepIndex: run.currentStep,
@@ -427,9 +464,16 @@ export function gateStanding(run: WorkflowRun): GateStanding | undefined {
   };
 }
 
-// "Waiting for checks" while a gate waits for the host; otherwise the run state's own words.
-export const runStateLabel = (run: WorkflowRun): string =>
-  gateStanding(run)?.waitsFor === 'checks' ? 'Waiting for checks' : runStateLabels[run.state];
+// "Waiting for checks" while a gate waits for the host; "Waiting for an answer" while the running
+// step's thread waits for the user (a question or an approval; the run itself stays running);
+// otherwise the run state's own words.
+export function runStateLabel(run: WorkflowRun, threads: readonly Thread[] = []): string {
+  if (gateStanding(run)?.waitsFor === 'checks') return 'Waiting for checks';
+  const threadId = run.state === 'running' ? run.steps[run.currentStep]?.threadId : undefined;
+  if (threadId !== undefined && threads.some((t) => t.id === threadId && t.state === 'needs_you'))
+    return 'Waiting for an answer';
+  return runStateLabels[run.state];
+}
 
 // "Passed by itself: Approved verdict, Checks successful" for a step whose gate did.
 export function passedByItself(stepRun: StepRun): string | undefined {
@@ -450,6 +494,10 @@ export const sortRuns = (runs: readonly WorkflowRun[]): WorkflowRun[] =>
 // effort and permission mode, because those belong to the instance it left.
 export function applyStepChanges(step: DraftStep, changes: Partial<DraftStep>): DraftStep {
   const next: DraftStep = { ...step, ...changes };
+  // A field set to undefined is taken away, so the step is saved without it.
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === undefined) delete next[key as keyof DraftStep];
+  }
   if (
     changes.providerInstanceId !== undefined &&
     changes.providerInstanceId !== step.providerInstanceId
@@ -505,9 +553,12 @@ export function gateRunForThread(
 
 // What a step row says. A step that finished and now waits at its gate is done; the gate marker
 // after it says that the run waits for you. A step the run waits before, to run it again, is
-// waiting although its last attempt has ended.
+// waiting although its last attempt has ended. `waitsBefore` is for runs stored before the
+// server said which side the run waits on.
 export function stepDisplayState(stepRun: StepRun, waitsBefore = false): StepRunState {
-  return stepRun.state === 'waiting' && stepRun.endedAt && !waitsBefore ? 'done' : stepRun.state;
+  if (stepRun.state !== 'waiting') return stepRun.state;
+  const after = stepRun.waits ? stepRun.waits === 'after' : stepRun.endedAt && !waitsBefore;
+  return after ? 'done' : 'waiting';
 }
 
 // How long a step took; undefined while it has not ended.
@@ -521,4 +572,12 @@ export function artifactPath(cwd: string, relative: string): string {
   const separator = windows ? '\\' : '/';
   const base = cwd.replace(/[\\/]+$/, '');
   return `${base}${separator}${relative.split('/').join(separator)}`;
+}
+
+// What started an event's run, in the host's words: "pull request merged on pull request #21",
+// "merge request merged on merge request !12".
+export function eventSummary(event: RunEvent): string {
+  const host = runEventHost(event);
+  const name = changeRequestName({ host, number: event.number });
+  return `${triggerEventLabel(event.event, host).toLowerCase()} on ${name.charAt(0).toLowerCase()}${name.slice(1)}`;
 }

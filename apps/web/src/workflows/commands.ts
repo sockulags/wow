@@ -2,9 +2,11 @@ import {
   changeRequestName,
   gatePartLabels,
   type ChangeRequest,
+  type HostRead,
   type Ticket,
   type Project,
   type RunDiffFile,
+  type Skill,
   type Trigger,
   type Workflow,
   type WorkflowRun,
@@ -34,6 +36,15 @@ import {
   toggleGatePart,
 } from './model';
 import { addRule, moveRule, removeRule, ruleSentence, ruleStep, type RulesState } from './rules';
+import {
+  attachedSkills,
+  refKey,
+  skillChoices,
+  stepSkillRef,
+  toggledLeaveOut,
+  withAlsoFollow,
+  withoutAlsoFollow,
+} from './step-skills';
 import {
   openNewTrigger,
   removeTrigger,
@@ -70,11 +81,15 @@ export interface WorkflowCommandData {
   // tab is the open view.
   readonly triggers?: readonly Trigger[] | undefined;
   readonly projects?: readonly Project[] | undefined;
+  // The host reads, which say whether a project's code host is GitLab.
+  readonly hostReads?: readonly HostRead[] | undefined;
   readonly onTriggers?: boolean | undefined;
   // The `workflows.alwaysStopSkills` setting: gates after these skills get no condition.
   readonly alwaysStopSkills?: readonly string[] | undefined;
   // The open builder's steps and the rule that has the keyboard (from the rules store).
   readonly rules?: RulesState | undefined;
+  // Every skill, for the step's "Also follow" commands.
+  readonly skills?: readonly Skill[] | undefined;
   // The run whose send back note is being written, if any (from the gate store).
   readonly sendBackRunId?: string | undefined;
   // "14:39" for a run's start, in the calendar's zone.
@@ -212,6 +227,62 @@ function ruleCommands(rules: RulesState | undefined): AppCommand[] {
   return commands;
 }
 
+// The skills of the step being edited in the builder (wow skills spec 11, 12): follow another
+// skill or stop following one, and leave out a built-in skill wow would attach or attach it
+// again. They change the draft; Save stores it.
+function stepSkillCommands(rules: RulesState | undefined, skills: readonly Skill[]): AppCommand[] {
+  const builder = rules?.builder;
+  const current = rules && ruleStep(rules);
+  const changeStep = builder?.changeStep;
+  if (!builder || !current || !changeStep) return [];
+  const { step, index } = current;
+  const where = stepWords(step, index);
+  const keywords = ['skill', 'also follow', 'builder', 'workflow', 'step'];
+  const choices = skillChoices(skills);
+  const own = refKey(stepSkillRef(step));
+  const following = step.alsoFollow ?? [];
+  const commands: AppCommand[] = [];
+  for (const choice of choices) {
+    if (choice.value === own || following.some((ref) => refKey(ref) === choice.value)) continue;
+    commands.push({
+      id: `workflow.alsoFollow.add.${choice.value}`,
+      title: `Also follow ${choice.label} in ${where}`,
+      group: 'Workflows',
+      keywords,
+      ...(choice.detail ? { detail: choice.detail } : {}),
+      searchOnly: true,
+      run: () => changeStep(step.id, withAlsoFollow(step, choice.ref)),
+    });
+  }
+  for (const ref of following) {
+    commands.push({
+      id: `workflow.alsoFollow.remove.${refKey(ref)}`,
+      title: `Stop following ${ref.name} in ${where}`,
+      group: 'Workflows',
+      keywords: [...keywords, 'remove'],
+      run: () => changeStep(step.id, withoutAlsoFollow(step, ref)),
+    });
+  }
+  const attached = attachedSkills(step, {
+    on: builder.attachBuiltIn ?? true,
+    forUnits: builder.forUnits ?? false,
+    skills,
+  });
+  for (const skill of attached) {
+    commands.push({
+      id: `workflow.leaveOut.${skill.name}`,
+      title: skill.left
+        ? `Attach ${skill.name} to ${where} again`
+        : `Leave ${skill.name} out of ${where}`,
+      group: 'Workflows',
+      keywords: [...keywords, 'built-in', 'attached', 'automatically', 'leave out'],
+      detail: `Because ${skill.reason}`,
+      run: () => changeStep(step.id, toggledLeaveOut(step, skill.name)),
+    });
+  }
+  return commands;
+}
+
 // The run's pull request and ticket (review loop spec 28, 30 and 33): ask the hosts once, and
 // open either there.
 function pullRequestCommands({
@@ -268,6 +339,7 @@ function triggerCommands({
   triggers = [],
   projects = [],
   workflows,
+  hostReads = [],
   onTriggers = false,
 }: WorkflowCommandData): AppCommand[] {
   const commands: AppCommand[] = [
@@ -289,7 +361,7 @@ function triggerCommands({
       },
     },
   ];
-  for (const group of triggerGroups(triggers, projects, workflows)) {
+  for (const group of triggerGroups(triggers, projects, workflows, hostReads)) {
     for (const row of group.rows) {
       const { trigger } = row;
       const name = `${group.project} · ${triggerTitle(row)}`;
@@ -508,7 +580,7 @@ export function workflowCommands(data: WorkflowCommandData): AppCommand[] {
         group: 'Workflows',
         keywords: ['gate', 'reject', 'again', 'retry', 'note', 'changes requested'],
         keybinding: 'keybindings.gateSendBack',
-        run: () => openSendBack(runId),
+        run: () => openSendBack(openRun),
       });
     }
     commands.push({
@@ -524,7 +596,7 @@ export function workflowCommands(data: WorkflowCommandData): AppCommand[] {
   }
 
   if (runView) commands.push(...changesCommands(runView), ...pullRequestCommands(runView));
-  commands.push(...ruleCommands(data.rules));
+  commands.push(...ruleCommands(data.rules), ...stepSkillCommands(data.rules, data.skills ?? []));
   commands.push(...triggerCommands(data));
 
   for (const workflow of workflows) {

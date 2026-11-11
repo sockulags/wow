@@ -1,4 +1,12 @@
-import type { ChangeRequest, HostErrorKind, HostKind, Page, Ticket, UnitRef } from '@wow/contracts';
+import {
+  settingsRegistry,
+  type ChangeRequest,
+  type HostErrorKind,
+  type HostKind,
+  type Page,
+  type Ticket,
+  type UnitRef,
+} from '@wow/contracts';
 
 // What the poller needs from a code host. One adapter per host kind; everything the host calls
 // its own way (pull or merge request, check run or pipeline, review comment or note) is
@@ -17,8 +25,10 @@ export interface FoundChangeRequest {
   readonly units: readonly UnitRef[];
   // The web addresses its body links to.
   readonly links?: readonly string[];
-  // Present when the answer that found it already said where its head is.
-  readonly head?: { readonly branch: string; readonly sha: string } | undefined;
+  // Present when the answer that found it already said where its head is, and with it whether
+  // the head is in another repository (a fork).
+  readonly head?:
+    { readonly branch: string; readonly sha: string; readonly fromFork: boolean } | undefined;
 }
 
 // A change request as the host has it now; the poller adds the project.
@@ -82,6 +92,20 @@ export class HostFailure extends Error {
 
 export const validTime = (ms: number): boolean => !Number.isNaN(new Date(ms).getTime());
 
+// How long a host may keep wow away. A host can ask for any wait (a Retry-After of years, a
+// reset far in the future); wow asks again after `hosts.longestWaitMinutes` at the latest.
+export interface WaitOptions {
+  readonly clock?: () => Date;
+  readonly longestWaitMs?: number;
+}
+
+export function waitBound(options: WaitOptions): (until: number) => number {
+  const clock = options.clock ?? (() => new Date());
+  const longest =
+    options.longestWaitMs ?? settingsRegistry['hosts.longestWaitMinutes'].default * 60_000;
+  return (until) => Math.min(until, clock().getTime() + longest);
+}
+
 // A time from the host as an ISO string, or null when it is none.
 export const hostTime = (value: unknown): string | null => {
   const parsed = typeof value === 'string' ? Date.parse(value) : Number.NaN;
@@ -96,12 +120,41 @@ export const hostLink = (value: unknown): string | null => {
   return protocol === 'https:' || protocol === 'http:' ? value : null;
 };
 
+// What ends a web address in a text, besides a bracket it did not open.
+const addressStop = new Set('<>"\'`{}|\\^');
+const sentenceEnd = new Set('.,;:!?*_~');
+
 // Every web address written in a text (markdown, wiki markup or plain), in order and once each.
 // Only http and https addresses; the end of a sentence or of a markdown link is not part of one.
-export function webLinksIn(text: string): string[] {
+// An address keeps brackets it opens and closes itself (`Plan+(draft)`), ends at one it did not
+// open (a markdown link's own `)` or `]`), and leaves out one it opens and never closes. Each
+// character is read once, so a long text without spaces costs no more than its length; `meter`
+// counts the characters read, for the tests.
+export function webLinksIn(text: string, meter: { steps: number } = { steps: 0 }): string[] {
   const found = new Set<string>();
-  for (const match of text.matchAll(/https?:\/\/[^\s<>"'`()[\]{}|\\^]+/gi)) {
-    const link = hostLink(match[0].replace(/[.,;:!?*_~]+$/, ''));
+  const scheme = /https?:\/\//gi;
+  for (let match = scheme.exec(text); match !== null; match = scheme.exec(text)) {
+    let round = 0;
+    let square = 0;
+    let end = match.index + match[0].length;
+    let closed = end;
+    for (; end < text.length; end += 1) {
+      const char = text.charAt(end);
+      if (/\s/.test(char) || addressStop.has(char)) break;
+      if (char === '(') round += 1;
+      else if (char === '[') square += 1;
+      else if (char === ')' && (round -= 1) < 0) break;
+      else if (char === ']' && (square -= 1) < 0) break;
+      if (round === 0 && square === 0) closed = end + 1;
+    }
+    meter.steps += end - match.index;
+    // The search goes on after everything read, so no character is read twice; what follows a
+    // cut address (`](https://…)`) may still hold the next one.
+    scheme.lastIndex = end;
+    let last = closed;
+    while (last > match.index && sentenceEnd.has(text.charAt(last - 1))) last -= 1;
+    meter.steps += closed - last;
+    const link = hostLink(text.slice(match.index, last));
     if (link !== null) found.add(link);
   }
   return [...found];

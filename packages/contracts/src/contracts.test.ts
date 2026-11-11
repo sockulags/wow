@@ -566,7 +566,8 @@ describe('plan runs', () => {
   it('has the unit text and the failure choice as project settings', () => {
     const template = settingsRegistry['workflows.unitPromptTemplate'];
     expect(template.scope).toBe('project');
-    expect(template.default).toContain('Intent-Unit: {{intentId}}/{{unitKey}}');
+    // The Intent-Unit line comes in whole, or not at all for a step that gets wow-pull-request.
+    expect(template.default).toContain('put this line in its body: {{intentUnitLine}}');
     const onFailure = settingsRegistry['workflows.planRunOnFailure'];
     expect(onFailure.default).toBe('stop');
     expect(onFailure.schema.safeParse('skip').success).toBe(true);
@@ -925,5 +926,33 @@ describe('app assistant', () => {
     expect(
       JSON.parse(hideSecrets('["https://a.example.invalid","ada@example.invalid"]', [])),
     ).toEqual(['https://a.example.invalid', 'ada@example.invalid']);
+  });
+});
+
+describe('page reads in the history', () => {
+  const pageRead = {
+    id: 'run:r1',
+    projectId: 'tea',
+    runId: 'r1',
+    host: 'confluence',
+    hostName: 'wiki.example.invalid',
+    pages: [],
+    fetchedAt: '2026-11-03T09:00:00.000Z',
+    error: null,
+  };
+
+  it('loads a pages.synced event from before, and one that only moves the times', () => {
+    for (const payload of [
+      { projectId: 'tea', reads: [pageRead] },
+      {
+        projectId: 'tea',
+        reads: [],
+        fetched: { at: '2026-11-03T09:10:00.000Z', ids: ['run:r1'] },
+      },
+    ]) {
+      expect(
+        DomainEvent.safeParse({ kind: 'pages.synced', aggregate: 'pages:tea', payload }).success,
+      ).toBe(true);
+    }
   });
 });

@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { ruleAsksAbout } from '@wow/workflow-engine';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
+import { stepMessage } from '../core/workflows.js';
 import type { Db } from '../db/database.js';
 import { projects, threadItems, threads, turns, workflowRuns, workflows } from '../db/schema.js';
 import type { Logger } from '../logger.js';
@@ -163,6 +164,8 @@ export class WorkflowRunner {
         // No prompt is sent while the run's own working copy is not there (review loop spec 38).
         if ((await this.#deps.prepare?.(effect.runId)) !== undefined) return;
         await this.#recordBase(effect.runId);
+        // The user may have stopped the run while its folder was made or read.
+        if (!this.#stepStillStarts(effect)) return;
         this.#startStep(effect);
         return;
       case 'interrupt':
@@ -208,6 +211,14 @@ export class WorkflowRunner {
     });
   }
 
+  #stepStillStarts({ runId, stepId, threadId }: Extract<RunEffect, { type: 'startStep' }>) {
+    const run = this.#run(runId);
+    const stepRun = run?.steps.find((entry) => entry.stepId === stepId);
+    return (
+      run?.state === 'running' && stepRun?.state === 'running' && stepRun.threadId === threadId
+    );
+  }
+
   #startStep(effect: Extract<RunEffect, { type: 'startStep' }>): void {
     const { runId, stepId, threadId } = effect;
     const thread = this.#deps.db.select().from(threads).where(eq(threads.id, threadId)).get();
@@ -232,11 +243,7 @@ export class WorkflowRunner {
       });
       return;
     }
-    const sent = this.#dispatch(`workflow:${runId}:${stepId}:start`, {
-      type: 'thread.sendMessage',
-      threadId,
-      text: effect.prompt,
-    });
+    const sent = this.#dispatch(`workflow:${runId}:${stepId}:start`, stepMessage(effect));
     if (!sent.ok) {
       this.#dispatch(`workflow:${runId}:${stepId}:failed`, {
         type: 'workflowRun.stepFailed',
@@ -258,6 +265,15 @@ export class WorkflowRunner {
     // A send-back turn is the step's outcome again: it starts in the commit that sets the step
     // running, and no other turn can run in the thread beside it.
     if (!run || stepRun?.state !== 'running' || stepRun.threadId !== threadId) return;
+    // The user's own turn ended in a thread whose step waited for it: the step's turn goes now.
+    if (stepRun.heldPrompt !== undefined) {
+      this.#dispatch(`workflow:${turn.id}:held`, {
+        type: 'workflowRun.sendHeldTurn',
+        runId,
+        stepId,
+      });
+      return;
+    }
     const commandId = `workflow:${turn.id}:ended`;
     if (turn.state !== 'completed') {
       this.#dispatch(commandId, {
@@ -290,9 +306,13 @@ export class WorkflowRunner {
       step !== undefined &&
       (step.gateAfterCondition?.includes('checks') === true || ruleAsksAbout(step, 'checks'));
     const artifactsMissing: string[] = [];
-    if (step && folder !== undefined && asksArtifacts) {
+    if (step && asksArtifacts) {
       for (const glob of step.expectedArtifacts) {
-        if ((await this.#deps.detectArtifacts(folder, [glob])).length === 0) {
+        // With no folder to look in (the project is gone), nothing was found.
+        if (
+          folder === undefined ||
+          (await this.#deps.detectArtifacts(folder, [glob])).length === 0
+        ) {
           artifactsMissing.push(glob);
         }
       }

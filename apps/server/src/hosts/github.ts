@@ -14,20 +14,21 @@ import {
   hostLink as link,
   hostTime as time,
   validTime,
+  waitBound,
   webLinksIn,
   type FoundChangeRequest,
   type HostAdapter,
   type HostChangeRequest,
+  type WaitOptions,
 } from './adapter.js';
 
 // GitHub and GitHub Enterprise Server (the same API under https://<host>/api/v3) as a host: finds
 // a plan's pull requests with one search and reads each one's state, checks and review comments.
 // Read only: it sends GET requests and nothing else.
 
-export interface GitHubHostOptions extends RequestOptions {
+export interface GitHubHostOptions extends RequestOptions, WaitOptions {
   // How many of the newest pull requests are read when the host has no search.
   readonly listFallbackCount: number;
-  readonly clock?: () => Date;
 }
 
 // GitHub's largest page. A plan with more pull requests or a pull request with more review
@@ -57,6 +58,15 @@ function found(item: unknown): FoundChangeRequest | undefined {
   const head = field(item, 'head');
   const branch = field(head, 'ref');
   const sha = field(head, 'sha');
+  // A deleted fork's head repository is null. Anything but the same name as the base repository
+  // counts as a fork, so an answer that leaves it out never lets a fork through.
+  const headRepo = field(field(head, 'repo'), 'full_name');
+  const baseRepo = field(field(field(item, 'base'), 'repo'), 'full_name');
+  const fromFork = !(
+    typeof headRepo === 'string' &&
+    typeof baseRepo === 'string' &&
+    headRepo.toLowerCase() === baseRepo.toLowerCase()
+  );
   return {
     number,
     title: text(field(item, 'title')),
@@ -66,7 +76,9 @@ function found(item: unknown): FoundChangeRequest | undefined {
     mergedAt,
     units: intentUnitLines(text(field(item, 'body'))),
     links: webLinksIn(text(field(item, 'body'))),
-    ...(typeof branch === 'string' && typeof sha === 'string' ? { head: { branch, sha } } : {}),
+    ...(typeof branch === 'string' && typeof sha === 'string'
+      ? { head: { branch, sha, fromFork } }
+      : {}),
   };
 }
 
@@ -144,6 +156,7 @@ export function createGitHubHost(
     'x-github-api-version': '2022-11-28',
   };
   const clock = options.clock ?? (() => new Date());
+  const bounded = waitBound(options);
   let requests = 0;
   let waitUntil: Date | undefined;
 
@@ -167,7 +180,7 @@ export function createGitHubHost(
     // A wait that is no date (a number far out of range) says nothing; the refusal is shown as
     // it came.
     if (until === undefined || !validTime(until)) return false;
-    waitUntil = new Date(Math.max(until, waitUntil?.getTime() ?? 0));
+    waitUntil = new Date(Math.max(bounded(until), waitUntil?.getTime() ?? 0));
     return true;
   };
 
@@ -262,12 +275,15 @@ export function createGitHubHost(
     },
     get waitUntil() {
       // With fewer requests left than this round took, the next round would be cut short.
-      const short = left && left.remaining < requests ? left.resetAt : undefined;
+      const short =
+        left && left.remaining < requests ? new Date(bounded(left.resetAt.getTime())) : undefined;
       if (!short) return waitUntil;
       return waitUntil && waitUntil > short ? waitUntil : short;
     },
     async findForIntent(intentId) {
-      const query = `"Intent-Unit: ${intentId}/" in:body is:pr repo:${config.owner}/${config.repo}`;
+      // Only the intent id is searched for: a line in bold, underscores or quote marks does not
+      // hold the phrase `Intent-Unit: <intent-id>/`, and the lines are read below.
+      const query = `"${intentId}" in:body is:pr repo:${config.owner}/${config.repo}`;
       const all = await getOr(
         `${base}/search/issues?q=${encodeURIComponent(query)}&per_page=${pageSize}`,
         noSearch,
@@ -277,7 +293,7 @@ export function createGitHubHost(
           ),
         (body) => list(field(body, 'items')).flatMap((item) => found(item) ?? []),
       );
-      // The search matches words; only a body with the line itself counts.
+      // The search matches the id anywhere; only a body with the line itself counts.
       return all.filter((request) => request.units.some((unit) => unit.intentId === intentId));
     },
     async findForBranch(branch) {
@@ -318,6 +334,7 @@ export function createGitHubHost(
         mergedAt: current.mergedAt,
         headBranch: current.head.branch,
         headSha: current.head.sha,
+        fromFork: current.head.fromFork,
         // The single pull request answer has the body too, but the lines were read when it was
         // found, from the same body.
         units: [...request.units],

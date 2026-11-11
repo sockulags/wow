@@ -14,12 +14,13 @@ import {
   type Connection,
   type ConnectionState,
 } from '@wow/client-runtime';
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
 import { activeStep } from '@/panel/model';
+import { outbox } from '@/test/outbox';
 import { renderApp } from '@/test/render';
 import { stepUnderReview } from './changes';
 import { workflowCommands } from './commands';
@@ -235,7 +236,9 @@ const diff: RunDiff = {
 };
 
 function fake(runRow: WorkflowRun) {
-  const sent: Command[] = [];
+  const dispatches = outbox<Command>();
+  const sent = dispatches.sent;
+  const diffs = outbox<unknown>();
   const topics: Readonly<Record<string, unknown[]>> = {
     workflowRuns: [runRow],
     workflows: [workflow],
@@ -246,10 +249,13 @@ function fake(runRow: WorkflowRun) {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
     request(method, params) {
       if (method === 'workflowRuns.detectArtifacts') return Promise.resolve(runRow);
-      if (method === 'workflowRuns.diff') return Promise.resolve(diff);
+      if (method === 'workflowRuns.diff') {
+        diffs.record(params);
+        return Promise.resolve(diff);
+      }
       if (method !== 'dispatch') return Promise.resolve([]);
       const { command, commandId } = params as { command: Command; commandId: string };
-      sent.push(command);
+      dispatches.record(command);
       return Promise.resolve({ commandId, seqs: [sent.length], duplicate: false });
     },
     subscribe(topic, _params, onData) {
@@ -267,7 +273,7 @@ function fake(runRow: WorkflowRun) {
       createMemorySettingsSource(undefined, { 'providers.offerSetup': false }),
     ),
   };
-  return { runtime, sent };
+  return { runtime, sent, untilSent: dispatches.until, untilDiff: diffs.until };
 }
 
 const texts = (root: HTMLElement, testId: string) =>
@@ -418,14 +424,21 @@ describe('a step that ran more than once (spec 19)', () => {
     ]);
     view.unmount();
 
-    await renderApp('/workflows/runs/run-1?tab=changes', fake(reviewing).runtime);
+    const changes = fake(reviewing);
+    await renderApp('/workflows/runs/run-1?tab=changes', changes.runtime);
     const only = await screen.findByLabelText(/This step only/);
     expect(only.closest('span')?.textContent).toContain(
       'This step only (deliver-work, attempt 2, 1)',
     );
     fireEvent.click(only);
     const files = await screen.findByRole('navigation', { name: 'Changed files' });
-    await waitFor(() => expect(within(files).queryByText(/kettle\.ts/)).toBeNull());
+    // The step's only file becomes the one shown, so its patch is asked for.
+    await act(() =>
+      changes.untilDiff((asked) =>
+        asked.some((params) => (params as { path?: string }).path === 'src/lid.ts'),
+      ),
+    );
+    expect(within(files).queryByText(/kettle\.ts/)).toBeNull();
     expect(within(files).getByText(/lid\.ts/)).toBeTruthy();
   });
 
@@ -485,7 +498,7 @@ describe('waiting at the limit (spec 9)', () => {
   });
 
   it('shows the limit sentence in the gate bar with Run once more and Stop', async () => {
-    const { runtime, sent } = fake(atLimit);
+    const { runtime, sent, untilSent } = fake(atLimit);
     await renderApp('/workflows/runs/run-1', runtime);
     const panel = await screen.findByRole('complementary', { name: 'Context panel' });
     const bar = within(panel).getByRole('region', { name: 'Gate' });
@@ -515,7 +528,8 @@ describe('waiting at the limit (spec 9)', () => {
     ]);
 
     fireEvent.click(within(bar).getByRole('button', { name: 'Run once more' }));
-    await waitFor(() => expect(sent).toEqual([{ type: 'workflowRun.continue', runId: 'run-1' }]));
+    await act(() => untilSent((commands) => commands.length > 0));
+    expect(sent).toEqual([{ type: 'workflowRun.continue', runId: 'run-1' }]);
   });
 
   it('says in the path that the run reached the limit and waits, or waited', async () => {

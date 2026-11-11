@@ -60,6 +60,33 @@ describe('jiraToMarkdown', () => {
     expect(jiraToMarkdown('<script>alert(1)</script>')).toBe('<script>alert(1)</script>');
   });
 
+  it('reads long runs of [ and {{ in steps that grow with the length, not its square', () => {
+    const size = 200_000;
+    for (const wiki of [
+      '['.repeat(size),
+      '{{'.repeat(size / 2),
+      `${'[a'.repeat(size / 2)}]`,
+      `${'{{a'.repeat(size / 3)}}}`,
+    ]) {
+      const meter = { steps: 0 };
+      const markdown = jiraToMarkdown(wiki, meter);
+      expect(markdown.length).toBeGreaterThan(0);
+      expect(meter.steps).toBeLessThanOrEqual(4 * wiki.length);
+    }
+    // Long runs of colour and citation openers, which never close.
+    expect(jiraToMarkdown('{color:'.repeat(30_000)).length).toBeGreaterThan(0);
+    expect(jiraToMarkdown('??a '.repeat(50_000)).length).toBeGreaterThan(0);
+  });
+
+  it('turns a link with an empty label into one link, and a nested bracket into text', () => {
+    expect(jiraToMarkdown('[|https://jira.example.invalid/x]')).toBe(
+      '[https://jira.example.invalid/x](https://jira.example.invalid/x)',
+    );
+    expect(jiraToMarkdown('[see [notes|https://wiki.example.invalid/n]]')).toBe(
+      '[see [notes](https://wiki.example.invalid/n)]',
+    );
+  });
+
   it('answers an empty description with an empty text', () => {
     expect(jiraToMarkdown('')).toBe('');
   });

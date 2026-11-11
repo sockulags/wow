@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CalendarRange, CalendarRangeParams } from './repeat.js';
 import { AssistantChange, AssistantProposal } from './assistant.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RunDiff, RunDiffParams } from './diff.js';
@@ -233,6 +234,13 @@ export const rpcMethods = {
   'secrets.status': {
     params: NoParams,
     result: z.object({ protection: SecretProtection, names: z.array(z.string()) }),
+  },
+  // The occurrences of the local cards in a range (recurring cards spec 15, 17): every
+  // occurrence of a repeating card, at most `calendar.maxOccurrences` of one card, and a card
+  // without a rule as its one occurrence. Worked out by the server in each card's zone.
+  'calendar.occurrences': {
+    params: CalendarRangeParams,
+    result: CalendarRange,
   },
   // Asks Outlook to show a meeting (spec 1). Nothing in Outlook changes.
   'outlook.open': {

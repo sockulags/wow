@@ -5,6 +5,7 @@ import {
   type AssistantProposalRecord,
   type CommandOrigin,
   type CalendarItem,
+  type CardOccurrence,
   type ChangeRequest,
   type HostRead,
   type TicketRead,
@@ -25,6 +26,7 @@ import {
   type PlanRun,
   type Skill,
   type Thread,
+  type ThreadItem,
   type Trigger,
   type Turn,
   type Workflow,
@@ -39,6 +41,7 @@ import { decideHosts, decidePlansSync, isHostCommand } from './hosts.js';
 import { decidePlanRun, isPlanRunCommand } from './plan-runs.js';
 import { decideProject, isProjectCommand } from './projects.js';
 import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
+import { decideSkill, isSkillCommand } from './skills.js';
 import { decideThread, isThreadCommand } from './threads.js';
 import { decideTrigger, isTriggerCommand } from './triggers.js';
 import { decideWorkflow, isWorkflowCommand } from './workflows.js';
@@ -71,11 +74,14 @@ export interface ReadModel {
   // Index the next item of the thread gets.
   nextItemIndex(threadId: string): number;
   itemExists(id: string): boolean;
+  threadItem(id: string): ThreadItem | undefined;
   approval(id: string): Approval | undefined;
   question(id: string): Question | undefined;
   // Approvals and questions of the thread that are still waiting for an answer.
   openRequests(threadId: string): number;
   calendarItem(id: string): CalendarItem | undefined;
+  // What happened at each occurrence of a repeating card the scheduler reached, oldest first.
+  cardOccurrences(cardId: string): CardOccurrence[];
   // Every cached Outlook calendar row.
   outlookCalendarItems(): CalendarItem[];
   outlookStatus(): OutlookStatus | undefined;
@@ -110,6 +116,8 @@ export interface ReadModel {
   setupApplication(id: string): SetupApplicationRecord | undefined;
   // The newest setup file applied here and not undone.
   lastSetupApplication(): SetupApplicationRecord | undefined;
+  // True while the greeting after the first-start step waits for the assistant to run it.
+  greetingOwed(): boolean;
   // What the user answered to the assistant after `since` (every answer without it), in the
   // order answered: proposals they said Yes or No to, and changes they undid.
   assistantAnswers(since: string | undefined): {
@@ -126,6 +134,13 @@ export interface DecideContext {
   // Who sent the command; absent means the user. `decide` itself does not look at it: what the
   // assistant may send is settled in `decideInSteps` (core/assistant.ts) before a command gets here.
   readonly origin?: CommandOrigin | undefined;
+  // A workflow step without a model its provider needs and without a default to take is kept as
+  // it is instead of refused: a setup file is applied with the step marked (questions and models
+  // spec 19, 20).
+  readonly keepStepsWithoutModel?: boolean | undefined;
+  // An undo stores the steps exactly as they were stored: a step without a model gets no
+  // default written in, so it goes on following the instance's default (spec 19).
+  readonly putBackSteps?: boolean | undefined;
 }
 
 type AssistantCommand = Extract<ServerCommand, { type: `assistant.${string}` }>;
@@ -162,6 +177,7 @@ export function decide(
   if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
   if (isBacklogCommand(command)) return decideBacklog(command, read, context);
   if (isHostCommand(command)) return decideHosts(command, read, context);
+  if (isSkillCommand(command)) return decideSkill(command, read, context);
   if (command.type === 'tickets.sync') return decideTickets(command, read);
   if (command.type === 'pages.sync') return decidePages(command, read);
   if (isPlanRunCommand(command)) return decidePlanRun(command, read, context);

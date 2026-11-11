@@ -25,6 +25,8 @@ export interface ChangesOptions {
   readonly maxFileBytes: number;
   // `diff.maxFiles`: how many changed files are listed and hashed.
   readonly maxFiles: number;
+  // `diff.maxHashBytes`: a larger file is not read when it is hashed.
+  readonly maxHashBytes: number;
 }
 
 // The settings as they are now; git keeps the limit it has for every other read of a project.
@@ -32,14 +34,34 @@ export const changesOptions = (settings: Pick<SettingsService, 'get'>): ChangesO
   git: { timeoutMs: settings.get('trackers.gitTimeoutMs') },
   maxFileBytes: settings.get('diff.maxFileBytes'),
   maxFiles: settings.get('diff.maxFiles'),
+  maxHashBytes: settings.get('diff.maxHashBytes'),
 });
 
 const fullPath = (folder: string, relative: string) => path.join(folder, ...relative.split('/'));
 
+// The file's own entry, or undefined when it is gone or a folder on its way is a link: a tracked
+// folder replaced by a link would otherwise be followed to whatever it points at.
+async function entryOf(folder: string, relative: string) {
+  const parts = relative.split('/');
+  for (let depth = 1; depth < parts.length; depth += 1) {
+    const parent = await lstat(path.join(folder, ...parts.slice(0, depth))).catch(() => undefined);
+    if (!parent?.isDirectory()) return undefined;
+  }
+  const full = path.join(folder, ...parts);
+  const found = await lstat(full).catch(() => undefined);
+  return found && { full, found };
+}
+
 // A link is hashed as where it points, never as what it points at: that may be outside the folder.
-async function hashOf(file: string): Promise<string | null> {
-  const found = await lstat(file).catch(() => undefined);
-  if (!found) return null;
+// A file over the limit stands for its size and change time, so a huge file is never read.
+async function hashOf(
+  folder: string,
+  relative: string,
+  maxHashBytes: number,
+): Promise<string | null> {
+  const entry = await entryOf(folder, relative);
+  if (!entry) return null;
+  const { full: file, found } = entry;
   try {
     if (found.isSymbolicLink()) {
       return createHash('sha256')
@@ -47,6 +69,9 @@ async function hashOf(file: string): Promise<string | null> {
         .digest('hex');
     }
     if (!found.isFile()) return 'not-a-file';
+    if (found.size > maxHashBytes) {
+      return createHash('sha256').update(`large:${found.size}:${found.mtimeMs}`).digest('hex');
+    }
     const hash = createHash('sha256');
     await pipeline(createReadStream(file), hash);
     return hash.digest('hex');
@@ -66,7 +91,7 @@ export async function snapshotChanges(
   if (!listed.ok) return undefined;
   const hashes: FileHash[] = [];
   for (const { path: relative } of listed.files.slice(0, options.maxFiles)) {
-    hashes.push({ path: relative, hash: await hashOf(fullPath(folder, relative)) });
+    hashes.push({ path: relative, hash: await hashOf(folder, relative, options.maxHashBytes) });
   }
   return hashes;
 }
@@ -106,9 +131,8 @@ function inOrderEnded(run: RunHashes): WorkflowRun['steps'] {
 // The steps that changed the file, in the order they last ended: a step changed it when the
 // file's hash at the step's end is not the hash it had when the step that ended before it ended
 // (or when the run began, for the first of them). A path missing from a list was the same as in
-// the base commit then. After a loop the step that ended last is marked with exactly what its
-// latest attempt changed; a step that ended before it is compared with what is still known from
-// then.
+// the base commit then. A step that kept what it began from (`fileHashesBefore`) is compared
+// with that instead, so after a loop every step is marked with what its latest attempt changed.
 export function stepsThatChanged(run: RunHashes, relative: string): string[] {
   const hashAt = (files: readonly FileHash[]) =>
     files.find((entry) => entry.path === relative)?.hash;
@@ -117,6 +141,8 @@ export function stepsThatChanged(run: RunHashes, relative: string): string[] {
   for (const step of inOrderEnded(run)) {
     if (!step.fileHashes) continue;
     const after = hashAt(step.fileHashes);
+    // What the step began from, when it was kept: the chain loses it after a loop.
+    if (step.fileHashesBefore) before = hashAt(step.fileHashesBefore);
     if (after !== before) steps.push(step.stepId);
     before = after;
   }
@@ -157,7 +183,7 @@ async function describe(
   maxFileBytes: number,
 ): Promise<Described> {
   const full = fullPath(folder, entry.path);
-  const found = await lstat(full).catch(() => undefined);
+  const found = (await entryOf(folder, entry.path))?.found;
   const regular = found?.isFile() === true;
   const size = regular ? found.size : (baseSizes.get(entry.path) ?? null);
   const shown = {

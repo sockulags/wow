@@ -47,7 +47,8 @@ export function splitUnfinished(text: string): { readonly done: string; readonly
   let items: number[] = [];
   let wasQuoted = false;
   let runStart = 0;
-  for (const [index, line] of lines.entries()) {
+  for (const [index, written] of lines.entries()) {
+    const line = written.endsWith('\r') ? written.slice(0, -1) : written;
     const marks = quoteMarks.exec(line)?.[0] ?? '';
     const quoted = marks !== '';
     const rest = line.slice(marks.length);

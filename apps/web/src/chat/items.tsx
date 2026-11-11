@@ -19,7 +19,6 @@ import {
   CircleDashedIcon,
   CircleDotIcon,
   CircleIcon,
-  HelpCircleIcon,
   RotateCcwIcon,
   ShieldQuestionIcon,
   WrenchIcon,
@@ -30,12 +29,17 @@ import { WithTooltip } from '@/components/hint';
 import { Markdown } from '@/components/markdown';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { errorMessage, useDispatch } from './data';
+import {
+  QuestionCard,
+  type CardQuestion,
+  type QuestionHold,
+  type QuestionStatus,
+} from './question-card';
 import { formatCost, formatTokens } from './model';
-import { formatElapsed } from './view-model';
+import { SentSkillChip } from './skill-chip';
+import { failedToolCalls, formatElapsed } from './view-model';
 
 // What a row needs to know about the thread and the turn around it.
 export interface ItemContext {
@@ -56,6 +60,8 @@ export interface ItemContext {
       }
     | undefined;
   readonly formatAt: (iso: string) => string;
+  // The Assistant view's secret check, for a lone question drawn as an item.
+  readonly questionHold?: QuestionHold | undefined;
 }
 
 // One row per thread item. Rows skip layout and paint while off screen, so a long conversation
@@ -77,11 +83,37 @@ function Unreadable({ item }: { item: ThreadItem }) {
 }
 
 function UserMessage({ payload, context }: { payload: TextItemPayload; context: ItemContext }) {
+  // The answer to the assistant's questions shows on their card; here only that it was sent.
+  if (payload.answers) {
+    return (
+      <p data-testid="answered-note" className="text-right text-xs text-muted-foreground">
+        Answered the questions above.
+      </p>
+    );
+  }
+  // The skills it was sent with are chips; a message stored before them shows its text as it was
+  // (wow skills spec 14, 18).
+  const skills = payload.skills ?? [];
   return (
     <div className="group flex flex-col items-end gap-0.5">
-      <div className="w-fit max-w-[85%] rounded-lg bg-secondary px-3 py-2 text-sm whitespace-pre-wrap text-secondary-foreground">
-        {payload.text}
-      </div>
+      {skills.length > 0 && (
+        <div
+          role="list"
+          aria-label="Sent with skills"
+          className="flex max-w-[85%] flex-wrap justify-end gap-1"
+        >
+          {skills.map((skill, index) => (
+            <span role="listitem" key={`${skill.source}:${skill.name}:${index}`}>
+              <SentSkillChip skill={skill} />
+            </span>
+          ))}
+        </div>
+      )}
+      {payload.text.trim() !== '' && (
+        <div className="w-fit max-w-[85%] rounded-lg bg-secondary px-3 py-2 text-sm whitespace-pre-wrap text-secondary-foreground">
+          {payload.text}
+        </div>
+      )}
       {context.at && (
         <time
           dateTime={context.at}
@@ -134,16 +166,44 @@ const toolStatus = {
   error: { label: 'error', className: 'text-state-failed' },
 } as const;
 
+function toolCallStatus(payload: ToolCallItemPayload, context: ItemContext) {
+  return payload.status === 'running' && context.awaitingApproval
+    ? { label: 'waiting for approval', className: 'text-state-needs-you' }
+    : payload.status === 'running' && context.turnEnded
+      ? { label: 'not finished', className: 'text-muted-foreground' }
+      : toolStatus[payload.status];
+}
+
+// The line a tool call is drawn as: its name, the first text of its input and its status.
+function ToolCallLine({
+  payload,
+  context,
+  extra,
+}: {
+  payload: ToolCallItemPayload;
+  context: ItemContext;
+  extra?: ReactNode;
+}) {
+  const status = toolCallStatus(payload, context);
+  const summary = inputSummary(payload.input);
+  return (
+    <>
+      <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="font-mono font-medium">{payload.name}</span>
+      {summary !== '' && (
+        <span className="min-w-0 truncate font-mono text-muted-foreground">{summary}</span>
+      )}
+      <span className="ml-auto flex shrink-0 items-center gap-2">
+        {extra}
+        <span className={status.className}>{status.label}</span>
+      </span>
+    </>
+  );
+}
+
 function ToolCall({ payload, context }: { payload: ToolCallItemPayload; context: ItemContext }) {
   // Input and output render only while open, so long outputs cost nothing when collapsed.
   const [open, setOpen] = useState(false);
-  const status =
-    payload.status === 'running' && context.awaitingApproval
-      ? { label: 'waiting for approval', className: 'text-state-needs-you' }
-      : payload.status === 'running' && context.turnEnded
-        ? { label: 'not finished', className: 'text-muted-foreground' }
-        : toolStatus[payload.status];
-  const summary = inputSummary(payload.input);
   return (
     <details
       className="group rounded-md border border-border text-xs"
@@ -151,12 +211,7 @@ function ToolCall({ payload, context }: { payload: ToolCallItemPayload; context:
     >
       <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 select-none">
         <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />
-        <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="font-mono font-medium">{payload.name}</span>
-        {summary !== '' && (
-          <span className="min-w-0 truncate font-mono text-muted-foreground">{summary}</span>
-        )}
-        <span className={cn('ml-auto shrink-0', status.className)}>{status.label}</span>
+        <ToolCallLine payload={payload} context={context} />
       </summary>
       {open && (
         <div className="flex flex-col gap-2 border-t border-border p-2">
@@ -307,125 +362,56 @@ function ApprovalRow({
   );
 }
 
-function QuestionRow({
-  payload,
-  question,
+// An agent's questions in a chat thread or a step: one card for the questions of one ask
+// (questions spec 3, 6). A question whose turn ended without an answer is closed (spec 5).
+export function ChatQuestions({
+  items,
+  questions,
+  turnEnded,
+  hold,
 }: {
-  payload: QuestionItemPayload;
-  question: Question | undefined;
+  items: readonly ThreadItem[];
+  questions: readonly Question[];
+  turnEnded: boolean;
+  hold?: QuestionHold | undefined;
 }) {
   const send = useDispatch();
-  const [chosen, setChosen] = useState<readonly string[]>([]);
-  const [text, setText] = useState('');
-  const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
-  const answered = question?.answer ?? null;
-  const submit = (answer: string) => {
-    if (answer.trim() === '') return;
-    setBusy(true);
-    setError(undefined);
-    send({ type: 'question.answer', questionId: payload.questionId, answer }).then(
-      () => setBusy(false),
-      (reason: unknown) => {
-        setBusy(false);
-        setError(errorMessage(reason));
-      },
-    );
-  };
-  const disabled = busy || !question;
+  const asked = items.flatMap((item) => {
+    const parsed = QuestionItemPayload.safeParse(item.payload);
+    return parsed.success ? [{ item, payload: parsed.data }] : [];
+  });
+  const first = asked[0];
+  if (!first) return null;
+  const cardQuestions: CardQuestion[] = asked.map(({ payload }) => {
+    const row = questions.find((entry) => entry.id === payload.questionId);
+    const status: QuestionStatus =
+      row && row.answer !== null
+        ? { kind: 'answered', reply: payload.reply ?? row.answer }
+        : row && !turnEnded
+          ? { kind: 'open' }
+          : { kind: 'closed' };
+    return {
+      key: payload.questionId,
+      question: payload.question,
+      header: payload.header,
+      options: payload.options,
+      multiSelect: payload.multiSelect,
+      status,
+    };
+  });
   return (
-    <section
-      aria-label="Question"
-      className={cn(
-        'flex flex-col gap-2 rounded-md border p-3 text-sm',
-        answered === null ? 'border-state-needs-you/60' : 'border-border',
-      )}
-    >
-      <div className="flex items-start gap-2">
-        <HelpCircleIcon className="mt-0.5 size-4 shrink-0 text-state-needs-you" />
-        <p className="font-medium">{payload.question}</p>
-      </div>
-      {answered !== null ? (
-        <p className="text-xs text-muted-foreground">Answered: {answered}</p>
-      ) : (
-        <>
-          {payload.multiSelect ? (
-            <div role="group" aria-label="Options" className="flex flex-col gap-1.5">
-              {payload.options.map((option) => (
-                <label key={option.label} className="flex items-start gap-2 text-sm">
-                  <Checkbox
-                    checked={chosen.includes(option.label)}
-                    disabled={disabled}
-                    onCheckedChange={(checked) =>
-                      setChosen((current) =>
-                        checked === true
-                          ? [...current, option.label]
-                          : current.filter((label) => label !== option.label),
-                      )
-                    }
-                  />
-                  <span>
-                    {option.label}
-                    {option.description && (
-                      <span className="block text-xs text-muted-foreground">
-                        {option.description}
-                      </span>
-                    )}
-                  </span>
-                </label>
-              ))}
-              <Button
-                size="sm"
-                className="w-fit"
-                disabled={disabled || chosen.length === 0}
-                onClick={() => submit(chosen.join(', '))}
-              >
-                Answer
-              </Button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {payload.options.map((option) => (
-                <Button
-                  key={option.label}
-                  size="sm"
-                  variant="outline"
-                  title={option.description}
-                  disabled={disabled}
-                  onClick={() => submit(option.label)}
-                >
-                  {option.label}
-                </Button>
-              ))}
-            </div>
-          )}
-          <form
-            className="flex gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              submit(text);
-            }}
-          >
-            <Input
-              aria-label="Your answer"
-              placeholder="Or type an answer"
-              value={text}
-              disabled={disabled}
-              onChange={(event) => setText(event.target.value)}
-              className="h-8 text-sm"
-            />
-            <Button size="sm" type="submit" variant="secondary" disabled={disabled || !text.trim()}>
-              Send
-            </Button>
-          </form>
-        </>
-      )}
-      {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
-    </section>
+    <QuestionCard
+      id={first.item.id}
+      questions={cardQuestions}
+      closedReason="the turn ended before an answer was sent."
+      onSend={(replies) =>
+        send({
+          type: 'question.answer',
+          answers: [...replies].map(([questionId, reply]) => ({ questionId, reply })),
+        })
+      }
+      {...(hold ? { check: hold.check, renderHold: hold.render } : {})}
+    />
   );
 }
 
@@ -574,8 +560,14 @@ function ItemBody({
     case 'question': {
       const parsed = QuestionItemPayload.safeParse(item.payload);
       if (!parsed.success) return <Unreadable item={item} />;
-      const question = questions.find((row) => row.id === parsed.data.questionId);
-      return <QuestionRow payload={parsed.data} question={question} />;
+      return (
+        <ChatQuestions
+          items={[item]}
+          questions={questions}
+          turnEnded={context.turnEnded}
+          hold={context.questionHold}
+        />
+      );
     }
     case 'task_list': {
       const parsed = TaskListItemPayload.safeParse(item.payload);
@@ -610,6 +602,74 @@ export function ConversationItem(props: {
     <Row item={props.item}>
       <ItemBody {...props} />
     </Row>
+  );
+}
+
+// A run of tool calls as one row (`chat.groupToolCalls`): the latest call as a single row draws
+// it, how many there are, and how many failed, so a failure shows without opening the row. Open,
+// it lists every call, each opening to its input and output. The open state is this window's.
+export function ToolCallGroup({
+  items,
+  contextOf,
+}: {
+  items: readonly ThreadItem[];
+  contextOf: (item: ThreadItem) => ItemContext;
+}) {
+  const [open, setOpen] = useState(false);
+  const first = items[0];
+  const latest = items.at(-1);
+  if (first === undefined || latest === undefined) return null;
+  const parsed = ToolCallItemPayload.safeParse(latest.payload);
+  const failed = failedToolCalls(items);
+  const extra = (
+    <>
+      <span data-testid="tool-group-count" className="text-muted-foreground">
+        {items.length} tool calls
+      </span>
+      {failed > 0 && (
+        <span data-testid="tool-group-failed" className="text-state-failed">
+          {failed} failed
+        </span>
+      )}
+    </>
+  );
+  return (
+    <li
+      data-testid="item-tool_group"
+      data-item-id={first.id}
+      data-failed={failed > 0 || undefined}
+      className="[contain-intrinsic-size:auto_2.5rem] [content-visibility:auto]"
+    >
+      <details
+        className={cn(
+          'group/tools rounded-md border text-xs',
+          failed > 0 ? 'border-state-failed/50' : 'border-border',
+        )}
+        onToggle={(event) => setOpen(event.currentTarget.open)}
+      >
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 select-none">
+          <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-open/tools:rotate-90" />
+          {parsed.success ? (
+            <ToolCallLine payload={parsed.data} context={contextOf(latest)} extra={extra} />
+          ) : (
+            <span className="ml-auto">{extra}</span>
+          )}
+        </summary>
+        {open && (
+          <ol aria-label="Tool calls" className="flex flex-col gap-1 border-t border-border p-2">
+            {items.map((item) => (
+              <ConversationItem
+                key={item.id}
+                item={item}
+                approvals={[]}
+                questions={[]}
+                context={contextOf(item)}
+              />
+            ))}
+          </ol>
+        )}
+      </details>
+    </li>
   );
 }
 

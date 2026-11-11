@@ -26,6 +26,7 @@ import { HostPoller } from './poller.js';
 
 const api = 'https://ghe.example.invalid/api/v3';
 const TOKEN = 'ghp-invented-token-for-tests';
+const POT_TOKEN = 'ghp-invented-pot-token-for-tests';
 const intentId = '2026-01-tea-timer';
 const planId = `tea:${intentId}`;
 
@@ -38,6 +39,8 @@ let logged: string[];
 let timers: { callback: () => void; delayMs: number }[];
 const pollTimer = (delayMs: number) => timers.findLast((timer) => timer.delayMs === delayMs);
 let reachable: boolean;
+// A second repository on the same host, asked with its own token.
+let pot: MockGitHub;
 let ids = 0;
 
 const dispatch = (command: ServerCommand) => server.engine.dispatch(`t${++ids}`, command);
@@ -195,6 +198,9 @@ beforeEach(async () => {
   host.token = TOKEN;
   host.pulls = [merged, open];
   const answer = host.fetch(api);
+  pot = new MockGitHub({ owner: 'acme', repo: 'pot', webUrl: 'https://ghe.example.invalid' });
+  pot.token = POT_TOKEN;
+  const answerPot = pot.fetch(api);
   server = await startServer({
     home: path.join(root, '.wow'),
     env: {},
@@ -211,10 +217,15 @@ beforeEach(async () => {
       setTimeout: (callback, delayMs) => timers.push({ callback, delayMs }),
       clearTimeout: () => undefined,
     },
-    fetch: (input, init) =>
-      reachable
-        ? answer(input, init)
-        : Promise.reject(new DOMException('The operation timed out.', 'TimeoutError')),
+    fetch: (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!reachable) {
+        return Promise.reject(new DOMException('The operation timed out.', 'TimeoutError'));
+      }
+      return decodeURIComponent(url).includes('acme/pot')
+        ? answerPot(input, init)
+        : answer(input, init);
+    },
   });
   dispatch({ type: 'project.create', projectId: 'tea', name: 'Tea', cwd: path.join(root, 'tea') });
   set('advanced.logLevel', 'debug');
@@ -271,6 +282,24 @@ describe('unit status from pull requests (spec 23, 24, 26, 27)', () => {
       { intentId, unitKey: 'U1' },
       { intentId, unitKey: 'U2' },
     ]);
+  });
+
+  it('finds a pull request whose line is in bold, underscores or quote marks', async () => {
+    host.pulls = [
+      { ...merged, body: `**Intent-Unit:** ${intentId}/U1` },
+      { ...open, body: `__Intent-Unit__: \`${intentId}/U2\`.` },
+      { ...open, number: 16, branch: 'agent/U3-time', body: `Intent-Unit: "${intentId}/U3"` },
+      { ...open, number: 18, branch: 'agent/notes', body: `Notes on ${intentId}/U4, no claim.` },
+    ];
+    await follow();
+    expect(asked().some((url) => url.startsWith('/search/'))).toBe(true);
+    expect(statuses()).toEqual({
+      U1: 'delivered',
+      U2: 'claimed',
+      U3: 'claimed',
+      U4: 'waiting',
+      U5: 'blocked',
+    });
   });
 
   it('makes no unit of a stale plan ready and names the stale file', async () => {
@@ -498,7 +527,7 @@ describe('what a poll asks (spec 29, 30)', () => {
     await follow();
     host.requests.length = 0;
     await server.hosts.poll();
-    const search = `/search/issues?q=${encodeURIComponent(`"Intent-Unit: ${intentId}/" in:body is:pr repo:acme/tea`)}&per_page=100`;
+    const search = `/search/issues?q=${encodeURIComponent(`"${intentId}" in:body is:pr repo:acme/tea`)}&per_page=100`;
     // The merged pull request is known and does not change, so it is not read again.
     expect(asked()).toEqual([
       search,
@@ -610,6 +639,41 @@ describe('what a poll asks (spec 29, 30)', () => {
     now = new Date(now.getTime() + 2000);
     await server.hosts.poll();
     expect(asked().filter((url) => url.startsWith('/search/'))).toHaveLength(1);
+  });
+});
+
+describe('a request limit is the token’s own', () => {
+  it('goes on asking with another project’s token while one token waits for its limit', async () => {
+    await mkdir(path.join(root, 'pot'), { recursive: true });
+    dispatch({
+      type: 'project.create',
+      projectId: 'pot',
+      name: 'Pot',
+      cwd: path.join(root, 'pot'),
+    });
+    set('trackers.github.repo', 'pot', 'project:pot');
+    set(
+      'trackers.github.token',
+      await server.secrets.set('setting:project:pot:trackers.github.token', POT_TOKEN),
+      'project:pot',
+    );
+    const folder = path.join(root, 'pot', 'intents', intentId);
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, 'intent.md'), intentMd());
+    await writeFile(path.join(folder, 'spec.md'), specMd());
+    await writeFile(path.join(folder, 'plan.md'), planMd());
+    await server.plans.refresh();
+    pot.pulls = [{ ...merged, body: body('U1') }];
+
+    host.limit = { remaining: 3, reset: now.getTime() / 1000 + 1800 };
+    await follow();
+    await follow(`pot:${intentId}`);
+    host.requests.length = 0;
+    pot.requests.length = 0;
+    await server.hosts.poll();
+    expect(asked()).toEqual([]);
+    expect(pot.requests.filter((request) => request.path.startsWith('/search/'))).toHaveLength(1);
+    expect(statuses(`pot:${intentId}`).U1).toBe('delivered');
   });
 });
 

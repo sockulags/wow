@@ -8,12 +8,17 @@ import { backlogCommands } from '@/backlog/commands';
 import { calendarCommands } from '@/calendar/commands';
 import { validateCalendarSearch } from '@/calendar/search';
 import { chatCommands } from '@/chat/commands';
+import { questionCommands } from '@/chat/question-commands';
+import { activeQuestionCard, questionStore } from '@/chat/question-store';
+import { activeSkillComposer, skillComposerStore } from '@/chat/composer-store';
+import { skillComposerCommands } from '@/chat/skill-commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
 import { connectCommands, providerCommands } from '@/providers/commands';
 import { connectStore } from '@/providers/connect-step';
 import { setupCommands } from '@/settings/setup';
+import { skillCommands } from '@/settings/skills';
 import { formatWhen } from '@/lib/format';
 import { panelCommands, viewerCommands } from '@/panel/commands';
 import { panelSelection } from '@/panel/model';
@@ -25,7 +30,7 @@ import { useCalendarPrefs } from '@/calendar/prefs';
 import { pendingApproval } from '@/chat/view-model';
 import { changesStore } from '@/workflows/changes';
 import { workflowCommands } from '@/workflows/commands';
-import { gateStore } from '@/workflows/gate';
+import { gateStore, sendBackDraft } from '@/workflows/gate';
 import { rulesStore } from '@/workflows/rules';
 import { gateRunForThread } from '@/workflows/model';
 import { triggersPath } from '@/workflows/triggers';
@@ -77,6 +82,7 @@ export function useCommands(gated = false): {
   const assistantChanges = useTopic('assistantChanges');
   const assistantProposals = useTopic('assistantProposals');
   const setupApplications = useTopic('setupApplications');
+  const skills = useTopic('skills');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
@@ -87,11 +93,16 @@ export function useCommands(gated = false): {
   const changedFiles = useStore(changesStore, (state) =>
     state.runId === openRunId ? state.files : undefined,
   );
-  const sendBackRunId = useStore(gateStore, (state) => state.sendBack?.runId);
+  // Which run and gate the open note belongs to; the note's text is not needed here.
+  const sendBackAt = useStore(gateStore, (state) =>
+    state.sendBack ? `${state.sendBack.runId}:${state.sendBack.gate}` : undefined,
+  );
   const ruleBuilder = useStore(rulesStore, (state) => state.builder);
   const ruleAt = useStore(rulesStore, (state) => state.at);
   const staticCommands = useMemo(() => buildCommands(), []);
   const connectShown = useStore(connectStore, (state) => state.shown > 0);
+  const questionCard = useStore(questionStore, activeQuestionCard);
+  const skillComposer = useStore(skillComposerStore, activeSkillComposer);
   const all = useMemo(() => {
     const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
@@ -147,11 +158,16 @@ export function useCommands(gated = false): {
                 ticket: runTicketRead(ticketReads ?? [], openRunId)?.ticket ?? undefined,
               }
             : undefined,
-        sendBackRunId,
+        sendBackRunId:
+          sendBackAt !== undefined && openRun && sendBackDraft(gateStore.getState(), openRun)
+            ? openRun.id
+            : undefined,
         rules: { builder: ruleBuilder, at: ruleAt, focus: undefined },
+        skills: skills ?? [],
         formatWhen: when,
         triggers,
         projects,
+        hostReads,
         onTriggers: pathname === triggersPath,
       }),
       ...planCommands({
@@ -166,11 +182,14 @@ export function useCommands(gated = false): {
         items: backlogItems ?? [],
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
       }),
+      ...questionCommands(questionCard),
+      ...skillComposerCommands(skillComposer),
       ...assistantCommands({
         changes: assistantChanges ?? [],
         proposals: assistantProposals ?? [],
       }),
       ...setupCommands(setupApplications ?? []),
+      ...skillCommands(skills ?? []),
       ...panelCommands(panelSelection(pathname, locationSearch)),
       ...viewerCommands({
         viewer,
@@ -214,6 +233,7 @@ export function useCommands(gated = false): {
     assistantChanges,
     assistantProposals,
     setupApplications,
+    skills,
     viewer,
     page,
     pageReads,
@@ -223,10 +243,12 @@ export function useCommands(gated = false): {
     hostReads,
     ticketReads,
     changedFiles,
-    sendBackRunId,
+    sendBackAt,
     ruleBuilder,
     ruleAt,
     connectShown,
+    questionCard,
+    skillComposer,
   ]);
   const commands = useMemo(
     () => (gated ? all.filter((command) => gateCommand(command.id)) : all),

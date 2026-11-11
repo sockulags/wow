@@ -65,6 +65,9 @@ export const ChangeRequest = z.object({
   mergedAt: Timestamp.nullable(),
   headBranch: z.string(),
   headSha: z.string(),
+  // The head is in another repository than the one wow follows (a fork), or the host did not
+  // say it is in this one. Absent on rows read before wow asked.
+  fromFork: z.boolean().optional(),
   units: z.array(UnitRef),
   checkState: CheckState,
   checks: z.array(HostCheck),
@@ -119,6 +122,22 @@ export const HostRead = z.object({
   error: HostError.nullable(),
 });
 export type HostRead = z.infer<typeof HostRead>;
+
+// The code host a project's pull requests are on, as its newest host read names it; GitHub
+// until one was read.
+export function projectCodeHost(
+  reads: readonly Pick<HostRead, 'projectId' | 'host' | 'fetchedAt'>[],
+  projectId: string,
+): HostKind {
+  const newest = reads
+    .filter((read) => read.projectId === projectId && read.fetchedAt !== null)
+    .toSorted((a, b) => (b.fetchedAt ?? '').localeCompare(a.fetchedAt ?? ''))[0];
+  return newest?.host ?? 'github';
+}
+
+// What the host calls a change request: GitLab's are merge requests.
+export const changeRequestNoun = (host: HostKind): string =>
+  host === 'gitlab' ? 'merge request' : 'pull request';
 
 export const hostReadId = (scope: HostReadScope, id: string): string => `${scope}:${id}`;
 export const changeRequestId = (projectId: string, number: number): string =>
@@ -253,6 +272,14 @@ export const PageRead = z.object({
   error: HostError.nullable(),
 });
 export type PageRead = z.infer<typeof PageRead>;
+
+// A page read after a round in which the host answered just what it answered before: every page
+// and the read that had no error were fetched again at `at`, and nothing else changed.
+export const touchPageRead = (read: PageRead, at: string): PageRead => ({
+  ...read,
+  fetchedAt: read.error === null ? at : read.fetchedAt,
+  pages: read.pages.map((page) => (page.error === null ? { ...page, fetchedAt: at } : page)),
+});
 
 // One run's linked pages as one poll found them.
 export const PageReadOutcome = z.object({

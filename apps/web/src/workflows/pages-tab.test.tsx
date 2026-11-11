@@ -171,6 +171,25 @@ describe('the Pages tab', () => {
     expect(panel.getByTestId('host-fetched').textContent).toContain('wiki.example.invalid');
   });
 
+  it('points a page too large to keep to its setting under Hosts', async () => {
+    const large: PageLink = {
+      ...notes,
+      error: {
+        kind: 'failed',
+        message: 'wiki.example.invalid answered page 123 with 2000000 bytes, more than wow keeps.',
+        setting: 'hosts.pageMaxBytes',
+        at: T,
+      },
+    };
+    await renderApp(`${route}?tab=pages`, fake(read([large])).runtime);
+    const item = within((await tab()).getByTestId('page-title:ENG/Design notes'));
+    expect(
+      item
+        .getByRole('link', { name: 'Open Largest Confluence page kept in Settings' })
+        .getAttribute('href'),
+    ).toBe('/settings/hosts');
+  });
+
   it('says so when nothing links to a page, or Confluence was not asked yet', async () => {
     await renderApp(`${route}?tab=pages`, fake(read([])).runtime);
     expect((await tab()).getByText(/No Confluence page is linked from this run/)).toBeTruthy();

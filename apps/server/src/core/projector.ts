@@ -1,10 +1,13 @@
 import {
+  type CardOccurrence,
   isEventTrigger,
   isLivePlanRunState,
   isLiveRunState,
+  touchPageRead,
   type DomainEvent,
   type Project,
   type ProviderUpdateRun,
+  type Skill,
   type SubscriptionTopic,
 } from '@wow/contracts';
 import { and, asc, count, desc, eq, gt, inArray, isNull, max, ne, sql } from 'drizzle-orm';
@@ -14,8 +17,10 @@ import {
   assistantChanges,
   assistantProposals,
   setupApplications,
+  assistantGreeting,
   backlogItems,
   calendarItems,
+  cardOccurrences,
   changeRequests,
   hostReads,
   ticketReads,
@@ -44,6 +49,12 @@ const threadTopics: SubscriptionTopic[] = ['threads', 'assistantThread'];
 
 // Applies one event to the projection tables inside the caller's transaction and says which
 // subscription topics changed.
+// A skill as stored: a folder skill has no text, which the row keeps as null.
+export function skillOf(row: typeof skills.$inferSelect): Skill {
+  const { text, ...rest } = row;
+  return text === null ? rest : { ...rest, text };
+}
+
 export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
   switch (event.kind) {
     case 'project.created':
@@ -104,6 +115,15 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(and(eq(settings.key, event.payload.key), eq(settings.scope, event.payload.scope)))
         .run();
       return ['settings'];
+    case 'skill.saved': {
+      const { skill } = event.payload;
+      const row = { ...skill, text: skill.text ?? null };
+      tx.insert(skills).values(row).onConflictDoUpdate({ target: skills.id, set: row }).run();
+      return ['skills'];
+    }
+    case 'skill.deleted':
+      tx.delete(skills).where(eq(skills.id, event.payload.skill.id)).run();
+      return ['skills'];
     case 'skills.synced':
       for (const skill of event.payload.upserted) {
         tx.insert(skills).values(skill).onConflictDoUpdate({ target: skills.id, set: skill }).run();
@@ -155,7 +175,14 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           .run();
       }
       return ['ticketReads'];
-    case 'pages.synced':
+    case 'pages.synced': {
+      const { fetched } = event.payload;
+      for (const id of fetched?.ids ?? []) {
+        const stored = tx.select().from(pageReads).where(eq(pageReads.id, id)).get();
+        if (!stored || !fetched) continue;
+        const { fetchedAt, pages } = touchPageRead(stored, fetched.at);
+        tx.update(pageReads).set({ fetchedAt, pages }).where(eq(pageReads.id, id)).run();
+      }
       for (const read of event.payload.reads) {
         tx.insert(pageReads)
           .values(read)
@@ -163,6 +190,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           .run();
       }
       return ['pageReads'];
+    }
     case 'planRun.changed': {
       const { planRun } = event.payload;
       tx.insert(planRuns)
@@ -377,15 +405,43 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       tx.insert(questions).values(event.payload.question).run();
       tx.insert(threadItems).values(event.payload.item).run();
       return ['questions', 'threadItems'];
-    case 'question.answered':
+    case 'question.answered': {
       tx.update(questions)
         .set({ answer: event.payload.answer, answeredAt: event.payload.answeredAt })
         .where(eq(questions.id, event.payload.questionId))
         .run();
-      return ['questions'];
-    case 'card.created':
-      tx.insert(calendarItems).values(event.payload).run();
+      // The card shows what was picked and typed from its item; an answer from before the card
+      // has only the row's text.
+      const { reply } = event.payload;
+      if (reply === undefined) return ['questions'];
+      const row = tx
+        .select()
+        .from(questions)
+        .where(eq(questions.id, event.payload.questionId))
+        .get();
+      const item = row && tx.select().from(threadItems).where(eq(threadItems.id, row.itemId)).get();
+      if (!item || typeof item.payload !== 'object' || item.payload === null) return ['questions'];
+      tx.update(threadItems)
+        .set({ payload: { ...item.payload, reply } })
+        .where(eq(threadItems.id, item.id))
+        .run();
+      return ['questions', 'threadItems'];
+    }
+    case 'card.created': {
+      // The history and the next time are not the card's to set: they follow its occurrences
+      // and its trigger.
+      const { occurrences: _occurrences, nextAt: _nextAt, ...card } = event.payload;
+      tx.insert(calendarItems).values(card).run();
       return ['calendarItems'];
+    }
+    case 'card.occurrenceRecorded': {
+      const row = { cardId: event.payload.cardId, ...event.payload.occurrence };
+      tx.insert(cardOccurrences)
+        .values(row)
+        .onConflictDoUpdate({ target: [cardOccurrences.cardId, cardOccurrences.date], set: row })
+        .run();
+      return ['calendarItems'];
+    }
     case 'card.updated':
       tx.update(calendarItems)
         .set({ ...event.payload.changes, updatedAt: event.payload.updatedAt })
@@ -405,6 +461,16 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .values(event.payload)
         .onConflictDoUpdate({ target: triggers.id, set: event.payload })
         .run();
+      // A card shows when its trigger fires next (recurring cards spec 9).
+      if (event.payload.kind === 'card' && event.payload.calendarItemId !== null) {
+        const nextAt = event.payload.state === 'scheduled' ? event.payload.runAt : null;
+        const moved = tx
+          .update(calendarItems)
+          .set({ nextAt })
+          .where(eq(calendarItems.id, event.payload.calendarItemId))
+          .run();
+        if (moved.changes > 0) return ['triggers', 'calendarItems'];
+      }
       return ['triggers'];
     case 'trigger.deleted':
       tx.delete(triggerEvents).where(eq(triggerEvents.triggerId, event.payload.triggerId)).run();
@@ -431,6 +497,15 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(assistantChanges.id, event.payload.changeId))
         .run();
       return ['assistantChanges'];
+    case 'assistant.greetingOwed':
+      tx.insert(assistantGreeting)
+        .values({ id: 1, owedAt: event.payload.at })
+        .onConflictDoNothing()
+        .run();
+      return [];
+    case 'assistant.greetingSent':
+      tx.delete(assistantGreeting).run();
+      return [];
     case 'setup.applied':
       tx.insert(setupApplications).values(event.payload).run();
       return ['setupApplications'];
@@ -533,6 +608,16 @@ const outlookStatusColumns = {
   profile: outlookStatus.profile,
 };
 
+export function readCardOccurrences(tx: DbOrTx, cardId: string): CardOccurrence[] {
+  return tx
+    .select()
+    .from(cardOccurrences)
+    .where(eq(cardOccurrences.cardId, cardId))
+    .orderBy(asc(cardOccurrences.start))
+    .all()
+    .map(({ cardId: _cardId, ...occurrence }) => occurrence);
+}
+
 export function readOutlookStatus(tx: DbOrTx) {
   return tx.select(outlookStatusColumns).from(outlookStatus).all();
 }
@@ -602,7 +687,7 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(settings)
         .where(eq(settings.key, key))
         .all(),
-    skills: () => tx.select().from(skills).all(),
+    skills: () => tx.select().from(skills).all().map(skillOf),
     planIntents: () => tx.select().from(planIntents).all(),
     planRun: (id) => tx.select().from(planRuns).where(eq(planRuns.id, id)).get(),
     livePlanRun: (planId) =>
@@ -647,6 +732,7 @@ export function readModel(tx: DbOrTx): ReadModel {
         .where(eq(setupApplications.state, 'applied'))
         .orderBy(desc(setupApplications.at), desc(sql`rowid`))
         .get(),
+    greetingOwed: () => tx.select().from(assistantGreeting).get() !== undefined,
     assistantProposal: (id) =>
       tx.select().from(assistantProposals).where(eq(assistantProposals.id, id)).get(),
     assistantAnswers: (since) => ({
@@ -712,6 +798,7 @@ export function readModel(tx: DbOrTx): ReadModel {
         .get()?.index;
       return last === null || last === undefined ? 0 : last + 1;
     },
+    threadItem: (id) => tx.select().from(threadItems).where(eq(threadItems.id, id)).get(),
     itemExists: (id) =>
       tx.select({ id: threadItems.id }).from(threadItems).where(eq(threadItems.id, id)).get() !==
       undefined,
@@ -723,12 +810,22 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(approvals)
         .where(and(eq(approvals.threadId, threadId), isNull(approvals.decision)))
         .get()?.n ?? 0) +
+      // A question left when its turn ended takes no answer any more, so nothing waits on it.
       (tx
         .select({ n: count() })
         .from(questions)
-        .where(and(eq(questions.threadId, threadId), isNull(questions.answeredAt)))
+        .innerJoin(threadItems, eq(threadItems.id, questions.itemId))
+        .innerJoin(turns, eq(turns.id, threadItems.turnId))
+        .where(
+          and(
+            eq(questions.threadId, threadId),
+            isNull(questions.answeredAt),
+            eq(turns.state, 'running'),
+          ),
+        )
         .get()?.n ?? 0),
     calendarItem: (id) => tx.select().from(calendarItems).where(eq(calendarItems.id, id)).get(),
+    cardOccurrences: (cardId) => readCardOccurrences(tx, cardId),
     outlookCalendarItems: () =>
       tx.select().from(calendarItems).where(eq(calendarItems.source, 'outlook')).all(),
     outlookStatus: () => readOutlookStatus(tx)[0],

@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { SecretPattern, defaultAssistantInstructions, defaultSecretPatterns } from './assistant.js';
+import { BuiltInSkillName } from './skills.js';
+import {
+  SecretPattern,
+  defaultAskRefusedWords,
+  defaultAssistantInstructions,
+  defaultSecretPatterns,
+} from './assistant.js';
+import { defaultModelGuidance } from './models.js';
 import {
   alwaysStopSkillDefaults,
   WorkflowTemplate,
@@ -337,7 +344,7 @@ export const defaultHandoverTemplate = [
   '{{expectedArtifacts}}',
   '{{/expectedArtifacts}}',
   '{{#event}}This run was started by an event: {{event}}.',
-  'Pull request #{{pullRequestNumber}}: {{pullRequestUrl}}',
+  '{{pullRequestName}}: {{pullRequestUrl}}',
   'Branch: {{pullRequestBranch}}',
   '{{/event}}',
   '{{#commentUrl}}The review comment, by {{commentAuthor}}: {{commentUrl}}',
@@ -375,7 +382,8 @@ export const defaultUnitPromptTemplate = [
   'Intent: {{intentId}}',
   'Unit: {{unitKey}} {{unitTitle}}',
   '',
-  'When you open a pull request for it, put this line in its body: Intent-Unit: {{intentId}}/{{unitKey}}',
+  // Left out for a run whose steps get wow-pull-request, which says the same (wow skills spec 13).
+  '{{#intentUnitLine}}When you open a pull request for it, put this line in its body: {{intentUnitLine}}{{/intentUnitLine}}',
 ].join('\n');
 
 export const PlanRunOnFailure = z.enum(['stop', 'skip']);
@@ -447,6 +455,15 @@ export const settingsRegistry = {
     default: 'Continue where you left off.',
     scope: 'provider',
   }),
+  'chat.groupToolCalls': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Group tool calls',
+    description:
+      'Draw consecutive tool calls of a turn as one row that shows the latest call and how many there are; open it to list them all. Off shows every tool call as its own row.',
+    default: true,
+    scope: 'global',
+  }),
   'chat.starterCount': defineSetting({
     schema: z.number().int().min(0).max(12),
     group: 'chat',
@@ -454,6 +471,15 @@ export const settingsRegistry = {
     description:
       "How many skills, and how many open backlog items, the new-thread view offers as one-click starters below the composer (the project's skills first). 0 hides them.",
     default: 4,
+    scope: 'global',
+  }),
+  'chat.skillTrigger': defineSetting({
+    schema: z.string().regex(/^\S$/u, 'One character that is not a space'),
+    group: 'chat',
+    label: 'Skill list character',
+    description:
+      'Typed at the start of a message or after a space, this character opens the list of skills in the composer. A picked skill becomes a chip; the character in other places (a path such as src/app, a date) opens nothing.',
+    default: '/',
     scope: 'global',
   }),
   'calendar.zone': defineSetting({
@@ -512,6 +538,15 @@ export const settingsRegistry = {
     default: 14,
     scope: 'global',
     unit: 'days',
+  }),
+  'calendar.maxOccurrences': defineSetting({
+    schema: z.number().int().min(1).max(10000),
+    group: 'calendar',
+    label: 'Most occurrences per card',
+    description:
+      'How many occurrences of one repeating card a calendar range shows at most. A range that needs more shows the first ones and says some are left out.',
+    default: 200,
+    scope: 'global',
   }),
   'calendar.snapMinutes': defineSetting({
     schema: z.number().int().min(1).max(60),
@@ -701,6 +736,7 @@ export const settingsRegistry = {
         'expectedArtifacts',
         'event',
         'pullRequestNumber',
+        'pullRequestName',
         'pullRequestUrl',
         'pullRequestBranch',
         'commentUrl',
@@ -719,7 +755,7 @@ export const settingsRegistry = {
     group: 'workflows',
     label: 'Send back text',
     description:
-      "The message a step gets in its own thread when you send it back at a gate. {{note}} is what you wrote, {{skill}} the step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
+      "The message a step gets in its own thread when you send it back at a gate. {{note}} is what you wrote (added after the text when the template does not name it), {{skill}} the step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
     default: defaultSendBackTemplate,
     scope: 'project',
   }),
@@ -736,13 +772,14 @@ export const settingsRegistry = {
     scope: 'project',
   }),
   'workflows.unitPromptTemplate': defineSetting({
-    schema: z
-      .string()
-      .meta({ widget: 'template', placeholders: ['intentId', 'unitKey', 'unitTitle'] }),
+    schema: z.string().meta({
+      widget: 'template',
+      placeholders: ['intentId', 'unitKey', 'unitTitle', 'intentUnitLine'],
+    }),
     group: 'workflows',
     label: 'Unit text',
     description:
-      "What every step is told about its unit when a plan run starts the workflow for one. It goes after the step's skill and before the handover. {{intentId}} is the intent's folder name, {{unitKey}} the unit's key and {{unitTitle}} its title; a {{#name}}…{{/name}} section is left out when that value is empty.",
+      "What every step is told about its unit when a plan run starts the workflow for one. It goes after the step's skill and before the handover. {{intentId}} is the intent's folder name, {{unitKey}} the unit's key and {{unitTitle}} its title and {{intentUnitLine}} the Intent-Unit line, which is empty when the step gets the built-in skill wow-pull-request that asks for it; a {{#name}}…{{/name}} section is left out when that value is empty.",
     default: defaultUnitPromptTemplate,
     scope: 'project',
   }),
@@ -810,6 +847,15 @@ export const settingsRegistry = {
     default: [...alwaysStopSkillDefaults],
     scope: 'project',
   }),
+  'workflows.attachBuiltInSkills': defineSetting({
+    schema: z.boolean(),
+    group: 'workflows',
+    label: 'Attach built-in skills',
+    description:
+      "Give a step wow's built-in skills where the workflow depends on them: wow-verdict when its gate or a rule reads the verdict, wow-artifacts when it expects artifacts, wow-pull-request when the run delivers a unit of a plan. A step can leave one out. Off: steps get only the skills they name.",
+    default: true,
+    scope: 'project',
+  }),
   'workflows.gateChecksTimeoutMinutes': defineSetting({
     schema: z.number().int().min(1).max(1440),
     group: 'workflows',
@@ -829,6 +875,21 @@ export const settingsRegistry = {
       'Folders whose */SKILL.md files are offered as skills. "~" is your home folder and "<project>" is repeated for every project folder.',
     default: [...defaultSkillDirectories],
     scope: 'global',
+  }),
+  'skills.builtInOff': defineSetting({
+    schema: z.array(BuiltInSkillName),
+    group: 'skills',
+    label: 'Built-in skills switched off',
+    description:
+      'Skills that ship with wow and are switched off: they are in no skill list and wow attaches them nowhere. A step that names one fails before it starts.',
+    default: [],
+    scope: 'global',
+    options: {
+      'wow-verdict': { label: 'wow-verdict' },
+      'wow-artifacts': { label: 'wow-artifacts' },
+      'wow-pull-request': { label: 'wow-pull-request' },
+      'wow-handover': { label: 'wow-handover' },
+    },
   }),
   'skills.includeClaudePlugins': defineSetting({
     schema: z.boolean(),
@@ -925,7 +986,7 @@ export const settingsRegistry = {
     group: 'trackers',
     label: 'GitHub API URL',
     description:
-      "https://api.github.com for github.com, or https://<host>/api/v3 for GitHub Enterprise Server. A project whose git remote is on a GitHub host uses that host's instead.",
+      "https://api.github.com for github.com, https://api.<name>.ghe.com for <name>.ghe.com, or https://<host>/api/v3 for GitHub Enterprise Server. A project whose git remote is on a GitHub host uses that host's instead.",
     default: 'https://api.github.com',
     scope: 'project',
   }),
@@ -1070,6 +1131,15 @@ export const settingsRegistry = {
     default: true,
     scope: 'global',
   }),
+  'triggers.forkPullRequests': defineSetting({
+    schema: z.boolean(),
+    group: 'triggers',
+    label: 'Start runs for pull requests from forks',
+    description:
+      "Let an event on a pull request or merge request from a fork start a run. The run's working copy is then at the fork's head commit, so the fork's files (agent instructions, skills, hook settings, scripts) steer an agent on this computer. Off: such an event starts nothing, and a notification says so.",
+    default: false,
+    scope: 'project',
+  }),
   'triggers.ignoredCommentAuthors': defineSetting({
     personal: 'account',
     schema: z.array(z.string().trim().min(1)),
@@ -1107,6 +1177,26 @@ export const settingsRegistry = {
       "On a host without search, how many of the repository's newest pull requests are read to find a plan's own.",
     default: 30,
     scope: 'global',
+  }),
+  'hosts.longestWaitMinutes': defineSetting({
+    schema: z.number().int().min(1).max(1440),
+    group: 'hosts',
+    label: 'Longest wait for a request limit',
+    description:
+      'A host that says its request limit is used up is left alone until it says, but never longer than this. A host that asks for a longer wait is asked again after this many minutes.',
+    default: 60,
+    scope: 'global',
+    unit: 'minutes',
+  }),
+  'hosts.pageMaxBytes': defineSetting({
+    schema: z.number().int().min(1000).max(20_000_000),
+    group: 'hosts',
+    label: 'Largest Confluence page kept',
+    description:
+      'A Confluence page whose rendered body is larger than this is not stored; the Pages tab says so and links to the page on the host.',
+    default: 1_000_000,
+    scope: 'global',
+    unit: 'bytes',
   }),
   'viewer.maxFileBytes': defineSetting({
     schema: z.number().int().min(1000).max(50_000_000),
@@ -1156,6 +1246,16 @@ export const settingsRegistry = {
     default: 2_000,
     scope: 'global',
   }),
+  'diff.maxHashBytes': defineSetting({
+    schema: z.number().int().min(1000).max(10_000_000_000),
+    group: 'diff',
+    label: 'Largest file read to tell which step changed it',
+    description:
+      'A changed file larger than this is not read when a step ends; its size and the time it was last written stand for its content, so a change that keeps both is not seen.',
+    default: 100_000_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
   'workspaces.root': defineSetting({
     personal: 'machine',
     schema: z.string().trim().min(1),
@@ -1200,7 +1300,7 @@ export const settingsRegistry = {
     group: 'assistant',
     label: 'Let the assistant run on Codex',
     description:
-      'Off: the assistant runs only on Claude Code, and never on a Codex instance even when one is chosen above. On Codex the assistant can run read-only shell commands, so it can read files on this computer, including files that hold secrets. wow cannot switch that off in Codex. Only the assistant itself is kept off Codex; chat threads and workflow steps are not affected.',
+      'Off: the assistant runs only on Claude Code, and never on a Codex instance even when one is chosen above. On Codex wow switches off its command, image, image generation, computer and browser use, subagent, goal, app, plugin, skill search, tool suggestion, sleep, code mode, web search and question tools and your Codex hooks for the assistant and keeps it in a read-only sandbox without network. Codex has no switch for its file edit tool or its MCP resource tools, and nobody has yet checked the tool list a real Codex then offers, so the assistant might still read files on this computer, including files that hold secrets. Only the assistant itself is kept off Codex; chat threads and workflow steps are not affected.',
     default: false,
     scope: 'global',
   }),
@@ -1227,6 +1327,15 @@ export const settingsRegistry = {
     description:
       "What the assistant's agent is told it is for, in place of the provider's own instructions for coding: it operates wow only, never asks for a secret, and sends other work to the chat view. What it can do is decided by the tools it is given, not by this text. A changed text applies from the next message on Claude Code, and on Codex from the next start of the assistant's session (after wow or the provider instance restarts).",
     default: defaultAssistantInstructions,
+    scope: 'global',
+  }),
+  'assistant.modelGuidance': defineSetting({
+    schema: z.string().trim().min(1).meta({ widget: 'template', placeholders: [] }),
+    group: 'assistant',
+    label: 'Guidance on choosing a model',
+    description:
+      'What the assistant reads (read_model_guidance) before it picks a model and an effort for a workflow step: which kind of model suits planning, building, reviewing and mechanical steps on each provider. It names kinds of model; the assistant matches it against the models the provider instance lists. Edit it to change what the assistant recommends.',
+    default: defaultModelGuidance,
     scope: 'global',
   }),
   'assistant.greeting': defineSetting({
@@ -1257,6 +1366,15 @@ export const settingsRegistry = {
     default: 5,
     scope: 'global',
   }),
+  'assistant.valueLength': defineSetting({
+    schema: z.number().int().min(20).max(10_000),
+    group: 'assistant',
+    label: 'Longest value on a change or proposal line',
+    description:
+      'A value longer than this many characters is cut short on the change rows and proposal cards the assistant leaves. A proposal keeps the whole value beside it, to show on request.',
+    default: 160,
+    scope: 'global',
+  }),
   'assistant.secretPatterns': defineSetting({
     schema: z.array(SecretPattern),
     group: 'assistant',
@@ -1264,6 +1382,15 @@ export const settingsRegistry = {
     description:
       'Regular expressions, matched without regard to case. Text that matches one is replaced by "[hidden]" before anything the assistant reads or wrote is stored. This is a net for mistakes: tokens and passwords belong in their own fields and never in the conversation.',
     default: [...defaultSecretPatterns],
+    scope: 'global',
+  }),
+  'assistant.askRefusedWords': defineSetting({
+    schema: z.array(z.string().trim().min(1)),
+    group: 'assistant',
+    label: 'Words a question may not ask for',
+    description:
+      "The assistant's question tool refuses a question whose text, header or choices hold one of these words or phrases (whole words, without regard to case), and tells the assistant to show the secret's field instead. A net for mistakes: a question never collects a secret.",
+    default: [...defaultAskRefusedWords],
     scope: 'global',
   }),
   'appearance.theme': defineSetting({
@@ -1396,6 +1523,11 @@ export const settingsRegistry = {
     'Open the form for a new card on the day the calendar shows (while the calendar is open).',
     'C',
   ),
+  'keybindings.calendarDeleteCard': keybinding(
+    'Delete card',
+    'Ask how to delete the card that has the focus in the calendar: a single card, or for a repeating card this occurrence or the whole series.',
+    'Delete',
+  ),
   'keybindings.newThread': keybinding('New thread', 'Start a new chat thread.', 'Mod+Alt+N'),
   'keybindings.stopTurn': keybinding(
     'Stop turn',
@@ -1462,6 +1594,11 @@ export const settingsRegistry = {
     'Deny the request the open thread waits for.',
     'D',
   ),
+  'keybindings.questionFocus': keybinding(
+    'Question: go to the card',
+    'Put the keyboard on the question card that waits for an answer, in a chat thread or the Assistant view. There the arrow keys or digits pick, typing goes to "Other" and Enter sends.',
+    'Alt+Q',
+  ),
   'advanced.port': defineSetting({
     personal: 'machine',
     schema: z.number().int().min(0).max(65535),
@@ -1496,6 +1633,16 @@ export const settingsRegistry = {
     default: 30_000,
     scope: 'global',
     unit: 'ms',
+  }),
+  'advanced.setupFileMaxBytes': defineSetting({
+    schema: z.number().int().min(1000).max(50_000_000),
+    group: 'advanced',
+    label: 'Largest setup file',
+    description:
+      'A setup file larger than this is refused before it is read, for its preview and when it is applied.',
+    default: 1_000_000,
+    scope: 'global',
+    unit: 'bytes',
   }),
   'advanced.showSettingKeys': defineSetting({
     schema: z.boolean(),

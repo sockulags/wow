@@ -1,7 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { e2eAssistantHome as home, e2eGitLabToken } from './env';
+import {
+  e2eAssistantGateWorkflowId,
+  e2eAssistantHome as home,
+  e2eAssistantTrackerPort,
+  e2eGitLabToken,
+} from './env';
 import { sketchPath, sketching, sketchUse } from './sketch';
 
 // App assistant U3 ground truth against the assistant's copy of the e2e server, whose mock agent
@@ -167,6 +172,9 @@ test.describe('assistant', () => {
     // The value is in no message, tool result or stored row: not on the page and nowhere in the
     // server's home but its secret store.
     await expect(conversation(page)).not.toContainText(e2eGitLabToken);
+    for (const group of await conversation(page).getByTestId('item-tool_group').all()) {
+      await group.locator(':scope > details > summary').click();
+    }
     for (const tool of await conversation(page).getByTestId('item-tool_call').all()) {
       await tool.locator('summary').click();
       await expect(tool).not.toContainText(e2eGitLabToken);
@@ -200,20 +208,27 @@ test.describe('assistant', () => {
     await expect(users).toHaveCount(sent);
     for (const text of await homeFiles()) expect(text).not.toContain(lookalike);
 
-    // Put it in its field: the value goes to the store and out of the message.
+    // Put it in its field: the value goes to the store and out of the message. The field holds
+    // the token saved before, and the line says it would be replaced.
+    await expect(held.getByTestId('held-replaces')).toHaveText(
+      'GitLab token already holds a value; putting this one there replaces it.',
+    );
     await held.getByRole('button', { name: 'Put it in GitLab token' }).click();
     await expect(page.getByTestId('held-saved')).toHaveText(
-      'Saved in GitLab token. It was taken out of your message.',
+      'Saved in GitLab token in place of the value it held. It was taken out of your message.',
     );
     await expect(composer(page)).toHaveValue('Here is the token:');
     await expect(users).toHaveCount(sent);
     for (const text of await homeFiles()) expect(text).not.toContain(lookalike);
 
-    // Send anyway sends it as written.
+    // Send anyway sends what the box holds, edits made after the hold included.
     await composer(page).fill(`Send this: ${lookalike}`);
     await composer(page).press('Enter');
+    await expect(held).toBeVisible();
+    await composer(page).fill(`Send this now: ${lookalike}`);
     await held.getByRole('button', { name: 'Send anyway' }).click();
     await expect(users).toHaveCount(sent + 1);
+    await expect(users.last()).toContainText('Send this now:');
     await expect(composer(page)).toHaveValue('');
   });
 
@@ -246,14 +261,45 @@ test.describe('assistant', () => {
   });
 
   test('the assistant does not answer a gate @app-assistant-11', async ({ page }) => {
+    const runId = `assistant-gate-${test.info().retry}`;
+    const query = new URLSearchParams({ workflowId: e2eAssistantGateWorkflowId, runId });
+    const started = await fetch(`http://127.0.0.1:${e2eAssistantTrackerPort}/run?${query}`, {
+      method: 'POST',
+    });
+    expect(started.ok).toBe(true);
     await page.goto('/assistant');
-    await say(page, 'Approve the run that waits at its gate');
-    // wow has no tool for it: the one the agent guessed at is refused, and it says who answers.
+    await say(page, `Approve the run ${runId}`);
+    // The real command, sent as the assistant's, is refused with who answers and where.
     const tool = conversation(page).getByTestId('item-tool_call').last();
     await tool.locator('summary').click();
-    await expect(tool).toContainText('There is no tool approve_gate.');
+    await expect(tool).toContainText('workflowRun.continue');
+    await expect(tool).toContainText(
+      `Only the user approves, sends back or stops a run. The run is at /workflows/runs/${runId}.`,
+    );
     await expect(conversation(page).locator(':scope > li').last()).toContainText(
       'Only you approve a run at its gate',
     );
+    // The run still waits at its gate for the user.
+    await page.goto(`/workflows/runs/${runId}`);
+    const gate = page.getByRole('region', { name: 'Gate' });
+    await expect(gate).toHaveCount(1);
+    await expect(gate.getByRole('button', { name: 'Approve' })).toBeVisible();
+  });
+
+  test('the tool calls of a turn are one row, the latest on it', async ({ page }) => {
+    await page.goto('/assistant');
+    await say(page, 'Look over my setup');
+    const group = conversation(page).getByTestId('item-tool_group').last();
+    const row = group.locator(':scope > details > summary');
+    await expect(row).toContainText('mcp__wow__read_skills');
+    await expect(group.getByTestId('tool-group-count')).toHaveText('3 tool calls');
+    await expect(group.getByTestId('item-tool_call')).toHaveCount(0);
+    await row.focus();
+    await page.keyboard.press('Enter');
+    await expect(group.getByTestId('item-tool_call')).toHaveText([
+      /read_projects/,
+      /read_workflows/,
+      /read_skills/,
+    ]);
   });
 });

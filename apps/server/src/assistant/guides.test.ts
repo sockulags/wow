@@ -7,7 +7,8 @@ import {
   type ServerCommand,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -84,6 +85,45 @@ describe('token guides (spec 15)', () => {
     expect(links(found)).toEqual([
       'https://github.com/settings/tokens/new?scopes=repo&description=wow',
     ]);
+  });
+
+  it('links GitHub Enterprise Cloud with data residency at its pages, not at its API host', async () => {
+    set('trackers.github.baseUrl', 'https://api.octo-tea.ghe.com');
+    const found = await guide('github');
+    expect(found).toMatchObject({
+      host: 'GitHub Enterprise Cloud with data residency (GHE.com)',
+      address: 'https://octo-tea.ghe.com',
+    });
+    expect(links(found)).toEqual([
+      'https://octo-tea.ghe.com/settings/tokens/new?scopes=repo&description=wow',
+    ]);
+  });
+
+  it("links a project's GitHub token where the poller sends it: its git remote's host, not the stored one", async () => {
+    set('trackers.github.baseUrl', 'https://ghe.example.invalid/api/v3');
+    const repo = path.join(root, 'leaf');
+    await mkdir(repo);
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+    git('init', '-q');
+    git('remote', 'add', 'origin', 'https://code.leaf.example.invalid/acme/leaf.git');
+    dispatch({ type: 'project.create', projectId: 'leaf', name: 'Leaf', cwd: repo });
+
+    const own = await guide('github', 'leaf');
+    expect(own.address).toBe('https://code.leaf.example.invalid');
+    expect(links(own)).toEqual([
+      'https://code.leaf.example.invalid/settings/tokens/new?scopes=repo&description=wow',
+    ]);
+    const field = await server.assistant.tools.call('show_secret_field', {
+      key: 'trackers.github.token',
+      projectId: 'leaf',
+    });
+    expect(field.text).toContain('https://code.leaf.example.invalid/settings/tokens/new');
+    // The shared token goes only to the stored host, so its guide stays there.
+    expect((await guide('github')).address).toBe('https://ghe.example.invalid');
+    // An address the project stores wins over its remote.
+    set('trackers.github.baseUrl', 'https://ghe.example.invalid/api/v3', 'project:leaf');
+    expect((await guide('github', 'leaf')).address).toBe('https://ghe.example.invalid');
   });
 
   it("links GitLab's access token page on the stored site with read_api", async () => {

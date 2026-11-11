@@ -10,7 +10,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { workflowRuns } from '../db/schema.js';
+import { planRuns, workflowRuns } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/providers.js';
 import { startServer, type RunningServer } from '../server.js';
 
@@ -28,6 +28,18 @@ const now = '2026-11-10T08:00:00.000Z';
 // The server's clock; a case moves it on instead of waiting.
 let clock = Date.parse(now);
 const at = (minutes: number) => new Date(Date.parse(now) + minutes * 60_000).toISOString();
+// How the diagnosis tells a time with calendar.zone set to Europe/Stockholm.
+const time = (iso: string) =>
+  `${new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Stockholm',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(Date.parse(iso))} (Europe/Stockholm)`;
 
 const dispatch = (command: ServerCommand) => server.engine.dispatch(`d${++ids}`, command);
 const set = (key: string, value: unknown, scope = 'global') =>
@@ -68,6 +80,21 @@ const runOf = (id: string) =>
     .from(workflowRuns)
     .all()
     .find((run) => run.id === id);
+
+// A plan run row as the plan-run projection stores it.
+const planRun = (id: string, state: 'failed' | 'done', startedAt: string) => ({
+  id,
+  planId: 'tea:kettle',
+  projectId: 'tea',
+  intentId: 'kettle',
+  workflowId: 'brew',
+  state,
+  units: [],
+  waitingFor: [],
+  message: state === 'failed' ? 'Unit K-1 failed.' : null,
+  startedAt,
+  endedAt: startedAt,
+});
 
 beforeEach(async () => {
   clock = Date.parse(now);
@@ -136,7 +163,7 @@ describe('the diagnosis (spec 19, 20)', () => {
       expect.arrayContaining([
         'provider sign-ins: 1 instance',
         'connection tests: no host connection is set up',
-        'skills of 1 workflow',
+        'skills and models of 1 workflow',
       ]),
     );
   });
@@ -311,7 +338,78 @@ describe('the diagnosis (spec 19, 20)', () => {
     ]);
   });
 
+  it('names the newest failure of each trigger in the words of a GitLab project, within the limit', async () => {
+    for (const id of ['mend', 'tidy']) {
+      dispatch({ type: 'workflow.create', workflowId: id, name: id, steps: [step('fix')] });
+      dispatch({
+        type: 'trigger.create',
+        triggerId: `on-merged-${id}`,
+        projectId: 'tea',
+        event: 'merged',
+        workflowId: id,
+      });
+    }
+    dispatch({
+      type: 'workflowRun.start',
+      runId: 'run-watch',
+      workflowId: 'brew',
+      projectId: 'tea',
+    });
+    const request = (number: number, merged: boolean): ChangeRequest => ({
+      id: `tea:${number}`,
+      projectId: 'tea',
+      host: 'gitlab',
+      number,
+      title: 'Ring the bell',
+      url: `https://gitlab.example.invalid/acme/tea/-/merge_requests/${number}`,
+      state: merged ? 'merged' : 'open',
+      draft: false,
+      mergedAt: merged ? new Date(clock).toISOString() : null,
+      headBranch: 'agent/bell',
+      headSha: 'b2b2b2b',
+      units: [],
+      checkState: 'none',
+      checks: [],
+      comments: [],
+      newestCommentId: null,
+    });
+    const sync = (...requests: ChangeRequest[]) =>
+      dispatch({
+        type: 'hosts.sync',
+        projectId: 'tea',
+        at: new Date(clock).toISOString(),
+        host: 'gitlab',
+        hostName: 'gitlab.example.invalid',
+        reads: [
+          {
+            id: 'run:run-watch',
+            scope: 'run',
+            branch: 'agent/bell',
+            result: { ok: true, changeRequestIds: requests.map((entry) => entry.id) },
+          },
+        ],
+        changeRequests: requests,
+      });
+    sync(request(14, false), request(15, false));
+    dispatch({ type: 'workflow.delete', workflowId: 'mend' });
+    dispatch({ type: 'workflow.delete', workflowId: 'tidy' });
+    clock = Date.parse(at(1));
+    sync(request(14, true), request(15, false));
+    clock = Date.parse(at(2));
+    sync(request(14, true), request(15, true));
+
+    const triggers = ofKind((await diagnose()).diagnosis.problems, 'trigger');
+    expect(triggers.map((problem) => problem.what).toSorted()).toEqual([
+      'Trigger "Merge request merged" for mend in Tea',
+      'Trigger "Merge request merged" for tidy in Tea',
+    ]);
+    expect(triggers.every((problem) => problem.reason.includes('!15'))).toBe(true);
+    set('assistant.diagnosisLimit', 1);
+    expect(ofKind((await diagnose()).diagnosis.problems, 'trigger')).toHaveLength(1);
+  });
+
   it('names a failed run with its error and its link, until a later run of it ends done', async () => {
+    set('calendar.zone', 'Europe/Stockholm');
     dispatch({ type: 'workflowRun.start', runId: 'run-1', workflowId: 'brew', projectId: 'tea' });
     dispatch({
       type: 'workflowRun.stepFailed',
@@ -324,7 +422,7 @@ describe('the diagnosis (spec 19, 20)', () => {
     expect(ofKind(diagnosis.problems, 'run')).toEqual([
       {
         kind: 'run',
-        what: `Run of Brew in Tea, started ${now}`,
+        what: 'Run of Brew in Tea, started Tue, 10 Nov 2026, 09:00 (Europe/Stockholm)',
         reason: 'Step pour failed: The kettle was empty.',
         place: { label: 'The run of Brew', path: '/workflows/runs/run-1' },
       },
@@ -344,6 +442,7 @@ describe('the diagnosis (spec 19, 20)', () => {
   });
 
   it('names a card that did not start: missed, and failed with the reason, each with its card', async () => {
+    set('calendar.zone', 'Europe/Stockholm');
     dispatch({
       type: 'card.create',
       cardId: 'late',
@@ -371,11 +470,11 @@ describe('the diagnosis (spec 19, 20)', () => {
     const found = ofKind((await diagnose()).diagnosis.problems, 'card');
     expect(found.map(({ what, place }) => ({ what, place }))).toEqual([
       {
-        what: `Card "Brew the gone one" at ${at(60)}`,
+        what: `Card "Brew the gone one" at ${time(at(60))}`,
         place: { label: 'Calendar → Brew the gone one', path: '/calendar?item=orphan' },
       },
       {
-        what: `Card "Brew yesterday" at ${at(-24 * 60)}`,
+        what: `Card "Brew yesterday" at ${time(at(-24 * 60))}`,
         place: { label: 'Calendar → Brew yesterday', path: '/calendar?item=late' },
       },
     ]);
@@ -394,5 +493,145 @@ describe('the diagnosis (spec 19, 20)', () => {
     }
     const failed = ofKind((await diagnose()).diagnosis.problems, 'run');
     expect(failed).toHaveLength(2);
+  });
+
+  it('drops failed runs of a deleted workflow or project, and counts the limit after dropping them', async () => {
+    set('assistant.diagnosisLimit', 1);
+    dispatch({
+      type: 'workflowRun.start',
+      runId: 'run-kept',
+      workflowId: 'brew',
+      projectId: 'tea',
+    });
+    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-kept', stepId: 'pour', error: 'No.' });
+    clock = Date.parse(at(5));
+    dispatch({ type: 'workflow.create', workflowId: 'gone', name: 'Gone', steps: [step('s')] });
+    dispatch({
+      type: 'workflowRun.start',
+      runId: 'run-gone',
+      workflowId: 'gone',
+      projectId: 'tea',
+    });
+    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-gone', stepId: 's', error: 'No.' });
+    dispatch({ type: 'workflow.delete', workflowId: 'gone' });
+    clock = Date.parse(at(10));
+    dispatch({ type: 'project.create', projectId: 'old', name: 'Old', cwd: root });
+    dispatch({ type: 'workflowRun.start', runId: 'run-old', workflowId: 'brew', projectId: 'old' });
+    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-old', stepId: 'pour', error: 'No.' });
+    server.database.db
+      .insert(planRuns)
+      .values({ ...planRun('plan-old', 'failed', at(10)), planId: 'old:kettle', projectId: 'old' })
+      .run();
+    dispatch({ type: 'project.delete', projectId: 'old' });
+    expect(ofKind((await diagnose()).diagnosis.problems, 'run')).toEqual([
+      expect.objectContaining({
+        place: { label: 'The run of Brew', path: '/workflows/runs/run-kept' },
+      }),
+    ]);
+  });
+  it('drops a failed read of a run once the run has ended, since it is not read again', async () => {
+    dispatch({
+      type: 'workflowRun.start',
+      runId: 'run-read',
+      workflowId: 'brew',
+      projectId: 'tea',
+    });
+    dispatch({
+      type: 'hosts.sync',
+      projectId: 'tea',
+      at: now,
+      host: 'github',
+      hostName: 'github.example.invalid',
+      reads: [
+        {
+          id: 'run:run-read',
+          scope: 'run',
+          branch: 'agent/bell',
+          result: {
+            ok: false,
+            error: {
+              kind: 'refused',
+              message: 'github.example.invalid refused the GitHub token (401).',
+              setting: 'trackers.github.token',
+            },
+          },
+        },
+      ],
+      changeRequests: [],
+    });
+    expect(ofKind((await diagnose()).diagnosis.problems, 'hostRead')).toHaveLength(1);
+    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-read', stepId: 'pour', error: 'No.' });
+    expect(ofKind((await diagnose()).diagnosis.problems, 'hostRead')).toEqual([]);
+  });
+
+  it('names a failed plan run until a later plan run of the same plan ends done', async () => {
+    server.database.db
+      .insert(planRuns)
+      .values(planRun('plan-1', 'failed', at(-10)))
+      .run();
+    expect(ofKind((await diagnose()).diagnosis.problems, 'run')).toMatchObject([
+      { what: expect.stringMatching(/^Plan run of kettle in Tea/), reason: 'Unit K-1 failed.' },
+    ]);
+    server.database.db
+      .insert(planRuns)
+      .values(planRun('plan-2', 'done', at(-5)))
+      .run();
+    expect(ofKind((await diagnose()).diagnosis.problems, 'run')).toEqual([]);
+  });
+
+  it('drops a missed card once a later run of its workflow in its project ends done', async () => {
+    dispatch({
+      type: 'card.create',
+      cardId: 'late',
+      title: 'Brew yesterday',
+      start: at(-24 * 60),
+      end: at(-23 * 60),
+      zone: 'Europe/Stockholm',
+      projectId: 'tea',
+      workflowId: 'brew',
+    });
+    expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toHaveLength(1);
+    dispatch({ type: 'workflowRun.start', runId: 'run-now', workflowId: 'brew', projectId: 'tea' });
+    dispatch({
+      type: 'workflowRun.stepCompleted',
+      runId: 'run-now',
+      stepId: 'pour',
+      finalMessage: 'Poured.',
+      artifactsFound: [],
+    });
+    expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toEqual([]);
+  });
+
+  it('compares a card start that carries an offset as an instant, not as text', async () => {
+    clock = Date.parse(at(60));
+    const card = (cardId: string, start: string, end: string) =>
+      dispatch({
+        type: 'card.create',
+        cardId,
+        title: cardId,
+        start,
+        end,
+        zone: 'Europe/Stockholm',
+        projectId: 'tea',
+        workflowId: 'brew',
+      });
+    // 07:30Z, before the run below; 08:30Z, after it.
+    card('Before', '2026-11-10T08:30:00+01:00', '2026-11-10T08:45:00+01:00');
+    card('After', '2026-11-10T07:30:00-01:00', '2026-11-10T07:45:00-01:00');
+    expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toHaveLength(2);
+    // A run that starts at 08:00Z and ends done.
+    clock = Date.parse(now);
+    dispatch({ type: 'workflowRun.start', runId: 'run-8', workflowId: 'brew', projectId: 'tea' });
+    expect(runOf('run-8')?.startedAt).toBe(now);
+    dispatch({
+      type: 'workflowRun.stepCompleted',
+      runId: 'run-8',
+      stepId: 'pour',
+      finalMessage: 'Poured.',
+      artifactsFound: [],
+    });
+    expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toEqual([
+      expect.objectContaining({ what: expect.stringMatching(/^Card "After"/) }),
+    ]);
   });
 });

@@ -9,6 +9,7 @@ import {
   type DomainEvent,
   type ProviderInstance,
   type ProviderModel,
+  type SetupApplicationRecord,
   type Thread,
 } from '@wow/contracts';
 import { randomUUID } from 'node:crypto';
@@ -290,6 +291,45 @@ const placeOf = (key: string, context: DecideContext): string => {
 const names = (rows: readonly { readonly name: string }[]): string =>
   rows.length === 0 ? 'none' : rows.map((row) => row.name).join(', ');
 
+// What a setup file left to fill in that is still not set, and what only this person can say.
+function fillInLines(
+  application: SetupApplicationRecord,
+  read: ReadModel,
+  context: DecideContext,
+): string[] {
+  const isSet = (key: string) => read.setting(key, 'global')?.value != null;
+  return [
+    ...application.toFillIn
+      .filter((entry) => !isSet(entry.key))
+      .map(
+        (entry) =>
+          `- ${entry.label} (${entry.key}, ${entry.place.label}): a secret; show its field.`,
+      ),
+    ...(isSet('calendar.workHours')
+      ? []
+      : [
+          `- Work hours (calendar.workHours, ${placeOf('calendar.workHours', context)}): only this person can say.`,
+        ]),
+    '- Project folders (Settings → Projects): a setup file holds none, they differ per machine.',
+  ];
+}
+
+// A setup file applied from Settings since the assistant's last turn began (spec 24): the
+// assistant is told what it left to fill in at its next turn, as the greeting tells it after a
+// file applied at first start.
+export function setupAppliedNote(read: ReadModel, context: DecideContext): string | null {
+  const application = read.lastSetupApplication();
+  if (!application) return null;
+  const since = read.lastTurn(assistantThreadId)?.startedAt;
+  if (since !== undefined && Date.parse(application.at) < Date.parse(since)) return null;
+  const lines = [
+    `[From wow, not typed by the user] The user applied the setup file ${application.name} in Settings.`,
+    `To fill in after the setup file ${application.name}:`,
+    ...fillInLines(application, read, context),
+  ];
+  return hideSecrets(lines.join('\n'), storedPatterns(read, context));
+}
+
 // What the greeting turn tells the agent besides the user's line (spec 24, 26): what is set up,
 // what a first run still needs, and, after a setup file, what it left to fill in and what only
 // this person can say. Facts only; what to do with them is in `assistant.instructions`.
@@ -325,22 +365,7 @@ export function firstStartNote(
       : []),
   ];
   const application = read.lastSetupApplication();
-  const fillIn = application
-    ? [
-        ...application.toFillIn
-          .filter((entry) => !isSet(entry.key))
-          .map(
-            (entry) =>
-              `- ${entry.label} (${entry.key}, ${entry.place.label}): a secret; show its field.`,
-          ),
-        ...(isSet('calendar.workHours')
-          ? []
-          : [
-              `- Work hours (calendar.workHours, ${placeOf('calendar.workHours', context)}): only this person can say.`,
-            ]),
-        '- Project folders (Settings → Projects): a setup file holds none, they differ per machine.',
-      ]
-    : [];
+  const fillIn = application ? fillInLines(application, read, context) : [];
   const lines = [
     `[From wow, not typed by the user] The first-start step just finished: ${instance?.name ?? providerInstanceId} passed its test and runs this conversation.`,
     'Set up:',

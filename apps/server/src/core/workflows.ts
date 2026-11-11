@@ -1,7 +1,11 @@
 import {
   alwaysStops,
+  awaitedProviderKind,
   hostReadId,
   isLiveRunState,
+  lacksRequiredModel,
+  missingModelSentence,
+  providerKindLabels,
   ruleProblems,
   type AppNotification,
   type CardState,
@@ -10,6 +14,7 @@ import {
   type HostRead,
   type RunEffect,
   type RunEvent,
+  type RunOccurrence,
   type RunUnit,
   type ServerCommand,
   type StepGate,
@@ -31,12 +36,12 @@ import {
   type RunInput,
   type Transition,
 } from '@wow/workflow-engine';
-import { invocationsFor } from '@wow/skills';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveStored } from '../settings/service.js';
 import { backlogFollowsRun } from './backlog.js';
+import { folderSkillInvocation, skillToSend } from './skills.js';
 import { decideThread } from './threads.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 
@@ -73,6 +78,7 @@ export function decideWorkflow(
       }
       refuseConditions(command.steps, read, context);
       refuseRules(command.steps);
+      const steps = withRequiredModels(command.steps, read, context);
       return [
         {
           kind: 'workflow.created',
@@ -81,7 +87,7 @@ export function decideWorkflow(
             id: command.workflowId,
             name: command.name,
             templateKind: command.templateKind ?? null,
-            steps: command.steps,
+            steps,
             ...(command.ownWorkingCopy ? { ownWorkingCopy: true } : {}),
             ...(command.forUnits ? { forUnits: true } : {}),
             ...(typeof command.maxStepVisits === 'number'
@@ -110,7 +116,7 @@ export function decideWorkflow(
         }
         refuseConditions(command.steps, read, context);
         refuseRules(command.steps);
-        changes.steps = command.steps;
+        changes.steps = withRequiredModels(command.steps, read, context);
       }
       // Read when a step is about to start, so a run that is going follows the new number.
       if (
@@ -223,6 +229,8 @@ export function decideWorkflow(
         read,
         context,
       );
+    case 'workflowRun.sendHeldTurn':
+      return heldTurnEvents(command.type, command.runId, command.stepId, read, context);
     case 'workflowRun.artifactsFound':
       return runInput(
         command.type,
@@ -297,6 +305,27 @@ function refuseConditions(
   }
 }
 
+// A step on a provider that needs a model gets the instance's default model when it names none,
+// and is refused when there is no default (questions and models spec 17). A workflow restored
+// as it was stored and an undo keep such a step as it was; a setup file keeps it when there is
+// no default, marked (spec 19, 20). A step whose instance is not here yet is judged by the kind
+// it waits for.
+function withRequiredModels(
+  steps: readonly WorkflowStep[],
+  read: ReadModel,
+  context: DecideContext,
+): WorkflowStep[] {
+  if (context.putBackSteps) return [...steps];
+  return steps.map((step) => {
+    const instance = read.providerInstance(step.providerInstanceId);
+    const kind = instance?.kind ?? awaitedProviderKind(step.providerInstanceId);
+    if (!lacksRequiredModel(step, kind)) return step;
+    if (instance?.defaultModel) return { ...step, model: instance.defaultModel };
+    if (context.keepStepsWithoutModel || !instance) return step;
+    throw new CommandRejected('rejected', missingModelSentence(step.skillName, instance));
+  });
+}
+
 // A workflow whose rules cannot be followed is not stored (workflow branches spec 16). The
 // reason names the step and the rule, the way the builder marks it.
 function refuseRules(steps: readonly WorkflowStep[]): void {
@@ -326,23 +355,23 @@ function checksReading(
     return null;
   }
   const request = changeRequests.find((row) => hostRead.changeRequestIds.includes(row.id));
-  if (!request) return { state: 'noPullRequest', branch: hostRead.branch };
+  if (!request) return { state: 'noPullRequest', branch: hostRead.branch, host: hostRead.host };
   // Checks for another commit say nothing about what the step left: the host may not have seen
   // the push yet, or the step did not push. Wait for a read of this commit, or for the wait to
   // run out.
   if (typeof headSha === 'string' && request.headSha !== headSha) return null;
-  const { number } = request;
+  const { number, host } = request;
   const named = (state: 'success' | 'failure' | 'pending') =>
     request.checks.filter((check) => check.state === state).map((check) => check.name);
   switch (request.checkState) {
     case 'success':
-      return { state: 'success', number, checks: named('success') };
+      return { state: 'success', number, host, checks: named('success') };
     case 'failure':
-      return { state: 'failure', number, failing: named('failure') };
+      return { state: 'failure', number, host, failing: named('failure') };
     case 'pending':
-      return { state: 'pending', number, running: named('pending') };
+      return { state: 'pending', number, host, running: named('pending') };
     case 'none':
-      return { state: 'none', number };
+      return { state: 'none', number, host };
   }
 }
 
@@ -433,6 +462,8 @@ export interface RunStart {
   // already has, if any.
   readonly event?: RunEvent | undefined;
   readonly existingCopy?: { readonly run: WorkflowRun; readonly copy: WorkingCopy } | undefined;
+  // The occurrence of a repeating card the run is for.
+  readonly occurrence?: RunOccurrence | undefined;
 }
 
 // A new run of the workflow: a client's Run now, a card's Run now, a firing trigger or a plan
@@ -451,6 +482,13 @@ export function startRunEvents(
   if (!project) throw new CommandRejected('not_found', `No project ${start.projectId}`);
   for (const step of workflow.steps) {
     if (!read.providerInstance(step.providerInstanceId)) {
+      const awaited = awaitedProviderKind(step.providerInstanceId);
+      if (awaited) {
+        throw new CommandRejected(
+          'rejected',
+          `Step ${step.skillName} has no ${providerKindLabels[awaited]} instance here yet: choose one for it in the workflow ${workflow.name}.`,
+        );
+      }
       throw new CommandRejected(
         'rejected',
         `Step ${step.skillName} uses provider instance ${step.providerInstanceId}, which does not exist`,
@@ -459,7 +497,7 @@ export function startRunEvents(
   }
   const backlogBody = backlogBodyOf(read, start.backlogItemId ?? null);
   const engineContext = runContext(read, context, start.projectId, backlogBody);
-  const transition = engineCall(() =>
+  const started = engineCall(() =>
     startRun(
       workflow,
       {
@@ -473,6 +511,9 @@ export function startRunEvents(
       engineContext,
     ),
   );
+  const transition = start.occurrence
+    ? { ...started, run: { ...started.run, occurrence: start.occurrence } }
+    : started;
   // A unit's run always works in its own working copy (review loop spec 40), and so does a run
   // an event started (spec 48).
   if (!workflow.ownWorkingCopy && !start.unit && !start.event) {
@@ -554,12 +595,33 @@ function transitionEvents(
   if (before && effects.length === 0 && isDeepStrictEqual(before, run)) return [];
   // A step that runs again gets its turn in its own thread in this commit. When the user asked
   // for that (Approve, Send back) and the thread cannot take it, the command is refused. When a
-  // rule or the list got there by itself, nobody is there to refuse to: that step fails with
-  // the reason, so the run does not stay "running" without a turn.
+  // rule or the list got there by itself, nobody is there to refuse to: while the thread answers
+  // a message the user typed there, the step's turn is held until that one ends; a thread that
+  // is gone fails the step with the reason, so the run does not stay "running" without a turn.
   const rerun = effects.find((effect) => effect.type === 'sendBack');
   const refusal = rerun ? sendBackRefusal(rerun, read) : undefined;
   if (rerun && refusal !== undefined) {
     if (USER_CAUSES.has(cause)) throw new CommandRejected('rejected', refusal);
+    if (read.thread(rerun.threadId) && read.runningTurn(rerun.threadId)) {
+      const steps = run.steps.map((entry) =>
+        entry.stepId === rerun.stepId
+          ? {
+              ...entry,
+              heldPrompt: rerun.prompt,
+              ...(rerun.shown === undefined ? {} : { heldShown: rerun.shown }),
+              ...(rerun.skills === undefined ? {} : { heldSkills: rerun.skills }),
+            }
+          : entry,
+      );
+      return transitionEvents(
+        cause,
+        workflow,
+        before,
+        { run: { ...run, steps }, effects: effects.filter((effect) => effect !== rerun) },
+        read,
+        context,
+      );
+    }
     const engineContext = runContext(read, context, run.projectId, null);
     const failed = engineCall(() =>
       advance(
@@ -645,11 +707,68 @@ function sendBackTurn(
 ): DomainEvent[] {
   const refusal = sendBackRefusal(effect, read);
   if (refusal !== undefined) throw new CommandRejected('rejected', refusal);
-  return decideThread(
-    { type: 'thread.sendMessage', threadId: effect.threadId, text: effect.prompt },
-    read,
-    context,
-  );
+  return decideThread(stepMessage(effect), read, context);
+}
+
+// A step's turn: the prompt as the engine made it. A prompt made with skills goes with the text
+// the thread shows and the skills (wow skills spec 14); a run from before sends it as typed.
+export function stepMessage(
+  effect: Pick<
+    Extract<RunEffect, { type: 'startStep' }>,
+    'threadId' | 'prompt' | 'shown' | 'skills'
+  >,
+): Extract<ServerCommand, { type: 'thread.sendMessage' | 'thread.sendPrepared' }> {
+  return effect.skills === undefined
+    ? { type: 'thread.sendMessage', threadId: effect.threadId, text: effect.prompt }
+    : {
+        type: 'thread.sendPrepared',
+        threadId: effect.threadId,
+        text: effect.shown ?? effect.prompt,
+        prompt: effect.prompt,
+        skills: effect.skills,
+      };
+}
+
+// The held turn of a step goes to its thread once the turn the user started there has ended.
+// Anything else (the run moved on or was stopped, or the thread answers again) leaves it.
+function heldTurnEvents(
+  cause: string,
+  runId: string,
+  stepId: string,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const run = read.run(runId);
+  const index = run?.steps.findIndex((entry) => entry.stepId === stepId) ?? -1;
+  const held = run?.steps[index];
+  if (
+    !run ||
+    run.state !== 'running' ||
+    held?.state !== 'running' ||
+    held.heldPrompt === undefined ||
+    !held.threadId ||
+    read.runningTurn(held.threadId)
+  ) {
+    return [];
+  }
+  const { heldPrompt: prompt, heldShown: shown, heldSkills: skills, ...sent } = held;
+  const effect = {
+    type: 'sendBack' as const,
+    runId,
+    stepId,
+    threadId: held.threadId,
+    attempt: held.attempt ?? 1,
+    prompt,
+    ...(shown === undefined ? {} : { shown }),
+    ...(skills === undefined ? {} : { skills }),
+  };
+  return [
+    ...sendBackTurn(effect, read, context),
+    runChanged(cause, {
+      ...run,
+      steps: run.steps.map((entry, at) => (at === index ? sent : entry)),
+    }),
+  ];
 }
 
 // Every run state has a card state of the same name; `waiting` is what the card shows as "needs
@@ -796,7 +915,11 @@ function runContext(
     maxStepVisits: Number(resolvedSetting(MAX_VISITS_KEY, read, context, projectId)),
     alwaysStopSkills: stringList(resolvedSetting(ALWAYS_STOP_KEY, read, context, projectId)),
     gateChecksTimeoutMinutes: Number(resolvedSetting(CHECKS_TIMEOUT_KEY, read, context, projectId)),
-    invocationFor: (step) => invocationFor(read, step),
+    invocationFor: (step) =>
+      folderSkillInvocation(read.skills(), step.skillName, providerKindOf(read, step)),
+    skillFor: (step, ref, values) =>
+      skillToSend(read.skills(), ref, providerKindOf(read, step), values),
+    attachBuiltInSkills: resolvedSetting(ATTACH_KEY, read, context, projectId) !== false,
     backlogBody,
   };
 }
@@ -811,6 +934,7 @@ const CHANGES_REQUESTED_KEY = 'workflows.verdictChangesRequestedLine';
 const BLOCKED_KEY = 'workflows.verdictBlockedLine';
 const MAX_VISITS_KEY = 'workflows.maxStepVisits';
 const CHECKS_TIMEOUT_KEY = 'workflows.gateChecksTimeoutMinutes';
+const ATTACH_KEY = 'workflows.attachBuiltInSkills';
 
 // The setting as it applies to the project, or to all projects without one.
 function resolvedSetting(
@@ -834,24 +958,12 @@ function resolvedTemplate(key: string, read: ReadModel, context: DecideContext, 
 const stringList = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : [];
 
-// The step's skill as its provider invokes it. A step names a skill by its name, or a Claude
-// plugin skill by plugin:name. Skills are matched by name; with several of that name the
-// plugin's own wins. Unknown skills get the plain forms, so a workflow still runs on a machine
-// where the skill lives somewhere wow does not scan.
-function invocationFor(read: ReadModel, step: WorkflowStep): string {
+function providerKindOf(read: ReadModel, step: WorkflowStep) {
   const instance = read.providerInstance(step.providerInstanceId);
   if (!instance) {
     throw new CommandRejected('not_found', `No provider instance ${step.providerInstanceId}`);
   }
-  const separator = step.skillName.indexOf(':');
-  const plugin = separator > 0 ? step.skillName.slice(0, separator) : undefined;
-  const name = plugin === undefined ? step.skillName : step.skillName.slice(separator + 1);
-  const expected = invocationsFor(name, plugin);
-  const named = read.skills().filter((skill) => skill.name === name);
-  const skill =
-    named.find((entry) => isDeepStrictEqual(entry.invocations, expected)) ??
-    (plugin === undefined ? named[0] : undefined);
-  return (skill?.invocations ?? expected)[instance.kind];
+  return instance.kind;
 }
 
 function backlogBodyOf(read: ReadModel, backlogItemId: string | null): string | null {

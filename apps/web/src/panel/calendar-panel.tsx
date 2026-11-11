@@ -1,5 +1,6 @@
 import {
   isCardTrigger,
+  repeatRuleWords,
   type CalendarItem,
   type CardTrigger,
   type TriggerState,
@@ -142,6 +143,10 @@ function CardPanel({ card }: { readonly card: CalendarItem }) {
                 ) : (
                   <span className="text-muted-foreground">None, the card is only time</span>
                 ),
+              },
+              card.repeat != null && {
+                label: 'Repeats',
+                value: repeatRuleWords(card.repeat, { start: card.start, zone: card.zone }),
               },
               trigger !== undefined && { label: 'Trigger', value: triggerText(trigger, zone) },
               run !== undefined && {

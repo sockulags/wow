@@ -1,6 +1,7 @@
 import type { RunDiffFile } from '@wow/contracts';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -19,6 +20,7 @@ const options: ChangesOptions = {
   git: { timeoutMs: 20_000 },
   maxFileBytes: 20_000,
   maxFiles: 100,
+  maxHashBytes: 1_000_000,
 };
 
 let root: string;
@@ -239,6 +241,28 @@ describe('the changes of a run', () => {
     },
   );
 
+  it.skipIf(process.platform === 'win32')(
+    'does not follow a tracked folder that was replaced by a link, for size or hash',
+    async () => {
+      const { repo, base } = await repository('folder-link', { 'src/a.txt': 'a\n' });
+      const outside = path.join(root, 'outside-folder');
+      await mkdir(outside);
+      await writeFile(path.join(outside, 'a.txt'), 'outside the folder, longer\n');
+      await rm(path.join(repo, 'src'), { recursive: true });
+      await symlink(outside, path.join(repo, 'src'), 'dir');
+      const hashes = await snapshotChanges(repo, base, options);
+      expect(hashes?.find((entry) => entry.path === 'src/a.txt')).toEqual({
+        path: 'src/a.txt',
+        hash: null,
+      });
+      const diff = await diffOf(repo, base);
+      expect(diff.files.find((file) => file.path === 'src/a.txt')).toMatchObject({
+        status: 'deleted',
+        size: 2,
+      });
+    },
+  );
+
   it('changes nothing in the folder or the repository', async () => {
     const { repo, base } = await repository('untouched', { 'a.txt': 'a\n' });
     await write(repo, 'a.txt', 'b\n');
@@ -319,6 +343,24 @@ describe('what a step changed', () => {
     ]);
   });
 
+  it('does not read a file larger than diff.maxHashBytes, and still sees it change', async () => {
+    const { repo, base } = await repository('big-hash', { 'a.txt': 'a\n' });
+    const content = 'x'.repeat(100);
+    await write(repo, 'big.bin', content);
+    const small = { ...options, maxHashBytes: 50 };
+    const first = (await snapshotChanges(repo, base, small))?.[0]?.hash;
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    expect(first).not.toBe(createHash('sha256').update(content).digest('hex'));
+    const later = new Date('2026-11-02T09:00:00.000Z');
+    await utimes(path.join(repo, 'big.bin'), later, later);
+    const second = (await snapshotChanges(repo, base, small))?.[0]?.hash;
+    expect(second).not.toBe(first);
+    // Under the limit the content itself is hashed.
+    expect((await snapshotChanges(repo, base, options))?.[0]?.hash).toBe(
+      createHash('sha256').update(content).digest('hex'),
+    );
+  });
+
   it('reads a path that is missing from a list as unchanged from the base', () => {
     const run = {
       baseFiles: [],
@@ -395,6 +437,50 @@ describe('what a step changed', () => {
     expect(stepsThatChanged(again, 'b')).toEqual(['build']);
     // A run from before paths were kept goes by the list.
     expect(changedBy('build', { ...run, path: [] })).toEqual(['a', 'b', 'notes']);
+  });
+
+  it('credits a step that ended before a loop only with what it changed itself', () => {
+    // build 1 wrote `a` and `b`, review 1 wrote `notes` and sent the work back, build 2
+    // changed `b`. Build now keeps only the hashes of its second attempt.
+    const build = {
+      stepId: 'build',
+      state: 'done' as const,
+      artifactsFound: [],
+      attempt: 2,
+      fileHashes: [
+        { path: 'a', hash: 'a1' },
+        { path: 'b', hash: 'b2' },
+        { path: 'notes', hash: 'n1' },
+      ],
+      fileHashesBefore: [
+        { path: 'a', hash: 'a1' },
+        { path: 'b', hash: 'b1' },
+        { path: 'notes', hash: 'n1' },
+      ],
+    };
+    const review = {
+      stepId: 'review',
+      state: 'done' as const,
+      artifactsFound: [],
+      fileHashes: [
+        { path: 'a', hash: 'a1' },
+        { path: 'b', hash: 'b1' },
+        { path: 'notes', hash: 'n1' },
+      ],
+      // What build's first attempt had left when the review began.
+      fileHashesBefore: [
+        { path: 'a', hash: 'a1' },
+        { path: 'b', hash: 'b1' },
+      ],
+    };
+    const run = {
+      baseFiles: [],
+      steps: [build, review],
+      path: [visit('build', 1), visit('review', 1), visit('build', 2)],
+    };
+    expect(stepsThatChanged(run, 'a')).toEqual([]);
+    expect(stepsThatChanged(run, 'b')).toEqual(['build']);
+    expect(stepsThatChanged(run, 'notes')).toEqual(['review']);
   });
 
   it('writes a new file as added lines', () => {

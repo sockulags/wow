@@ -17,7 +17,7 @@ packages/
   provider-claude/   Claude Agent SDK adapter → ProviderEvent / ProviderCommand.
   provider-codex/    codex app-server JSON-RPC adapter → the same types.
   outlook-bridge/    PowerShell COM bridge + mock adapter + fixtures.
-  skills/        SKILL.md discovery.
+  skills/        SKILL.md discovery, the built-in wow skills (builtin/) and own skill files.
   workflow-engine/   workflow definitions, runs, gates, step handover. Pure; the server wires it.
   agent-os/      reads agent-os intent, spec and plan files from their text, and unit status
                  from pull requests. Pure; no I/O.
@@ -42,7 +42,9 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test`, `provider.listModels` and
-  `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`, `plans.refresh` (reads every project's
+  `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`,
+  `calendar.occurrences` (`{from, to}`, the occurrences of the local cards in a range, see
+  "Repeating cards"), `skills.refresh`, `plans.refresh` (reads every project's
   intents folder now, see "Plans"), `hosts.refresh` (`{planId?, runId?}`, asks the host once
   about one followed plan, one run or everything wow follows, see "Hosts"),
   `workflowRuns.detectArtifacts` (`{runId}`), `workflowRuns.diff` (`{runId, path?}`, what the run
@@ -67,7 +69,10 @@ projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see 
   after every reconnect. It reads the port and token from `server.json` (`ServerInfo`). It
   subscribes with `subscribe {topic, threadId?}`, keeps the returned `subscriptionId` per socket to
   route pushes and to `unsubscribe {subscriptionId}`, and shares one server subscription between
-  listeners of the same topic and thread (a late listener gets the last rows at once).
+  listeners of the same topic and thread (a late listener gets the last rows at once). The server
+  sends a subscribe answer after its own microtasks, so a commit's push can arrive first; while an
+  answer is awaited the client keeps the newest push of each id it does not know yet and delivers
+  it right after that answer's rows.
 - **Commands → events → projections.** A request becomes a command. The orchestrator (pure
   function, no I/O) turns the command plus current projection into events. One SQLite transaction
   appends the events, updates projections and records the command receipt (idempotent retries).
@@ -147,11 +152,19 @@ turns            id, threadId, index, state, startedAt, endedAt, usage(json)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
 approvals        id, threadId, itemId, kind, request(json), decision?, decidedAt?
-questions        id, threadId, itemId, request(json), answer?, answeredAt?
+questions        id, threadId, itemId, request(json), answer?, answeredAt?   (answer: the reply
+                 as one line; the item's payload holds the reply's picks and text)
 calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end, zone, allDay,
                  location?, joinUrl?, body?, organizer?, projectId?, backlogItemId?, workflowId?,
-                 runId?, state, updatedAt   -- state: CardState for cards, 'scheduled'|'cancelled'
-                 for Outlook; body: a card's notes or an Outlook item's snippet
+                 runId?, state, updatedAt, repeat(json: RepeatRule)?, skippedDates(json: string[]),
+                 nextAt?, pastSeries(json: PastSeries[])   -- state: CardState for cards,
+                 'scheduled'|'cancelled' for Outlook; body: a card's notes or an Outlook item's
+                 snippet; repeat, the days skipped by hand and the trigger's next time for a
+                 repeating card (migration 0022_repeating_cards); pastSeries the series it
+                 followed before a change, for the days before it (migration 0023_past_series)
+card_occurrences cardId, date, start, end, outcome ('fired'|'failed'|'skipped'|'missed'), runId?,
+                 reason?, offerRunNow, at   -- what happened at each occurrence of a repeating
+                 card the scheduler reached; kept when the card is deleted, as its runs are
 outlook_status   singleton: lastSyncAt, lastError?, unavailableSince?, bridgeVersion,
                  profile(json: OutlookProfile)?
 backlog_items    id, title, body, tags(json), state, runId?, remote(json: service,key,url)?, createdAt
@@ -164,6 +177,7 @@ workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, sta
                  workingCopy(json: WorkingCopy)?,   -- null for a run in the project folder
                  unit(json: RunUnit)?,   -- the unit a plan run started the run for
                  event(json: RunEvent)?,   -- what started the run, when an event trigger did
+                 occurrence(json: {date, start})?,   -- the occurrence of a repeating card
                  path(json: PathVisit[])?   -- every step visit and why the run went on as it did;
                                             -- null for a run from before paths were kept
 plan_runs        id, planId ('<projectId>:<intentId>'), projectId, intentId, workflowId, state
@@ -174,10 +188,11 @@ triggers         id, kind ('card'|'event'), workflowId, runId?, offerRunNow;
                  'cancelled'); event: projectId, event ('merged'|'checksFailed'|
                  'commentAdded'), enabled, createdAt (the other kind's columns are null)
 trigger_events   triggerId, eventId, runId?, at (the events an event trigger has seen; no topic)
-notifications    id, at, kind ('started'|'waiting'|'failed'), title, body, path, runId?,
+notifications    id, at, kind ('started'|'waiting'|'failed'|'skipped'), title, body, path, runId?,
                  calendarItemId?
 skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
-                 'project-agents'|'custom'), manualOnly, invocations(json: {claude, codex})
+                 'project-agents'|'custom'|'wow'|'yours'), manualOnly, invocations(json: {claude,
+                 codex}), text? (a wow skill's text; null for folder skills)
 plan_intents     id ('<projectId>:<intentId>'), projectId, intentId, title, hasIntent, status?, rev?,
                  spec(json: PlanFile)?, plan(json: PlanFile)?, source ('files'|'issues')?,
                  units(json: PlanUnit[]), problems(json: PlanProblem[]), followed
@@ -208,14 +223,17 @@ setup_applications id (the command's id), at, name, added(json), replaced(json),
                  toFillIn(json), parts(json: AssistantChangeRecord[]), state
                  ('applied'|'undone'), undoneAt?   -- setup files applied here, with what Undo
                  puts back (migration 0019_setup_applications)
+assistant_greeting id (always 1), owedAt   -- one row while the greeting after the first-start
+                 step waits for the assistant to run it (migration 0020_assistant_greeting)
 settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
 events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
 ```
 
-`WorkflowStep = {id, skillName, providerInstanceId, model?, effort?, permissionMode?, gateBefore,
+`WorkflowStep = {id, skillName, skillSource?: 'wow'|'yours', alsoFollow?: SkillRef[], leaveOut?:
+BuiltInSkillName[], providerInstanceId, model?, effort?, permissionMode?, gateBefore,
 gateAfter, gateAfterCondition?: ('verdict'|'checks'|'artifacts')[], extraPrompt?,
-expectedArtifacts: string[]}`. `StepRun = {stepId, state, threadId?, startedAt?, endedAt?,
+expectedArtifacts: string[]}` (the skill fields: see "wow skills"). `StepRun = {stepId, state, threadId?, startedAt?, endedAt?,
 artifactsFound: string[], finalMessage?, error?, fileHashes?, attempt?, gate?}`. `gate` is
 `StepGate = {state: 'waitingForChecks'|'waitingForUser'|'passedByItself'|'passedByUser', parts:
 {part, state: 'held'|'failed'|'pending', detail}[], since, at}` and only a gate with a condition
@@ -231,7 +249,8 @@ ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode
                             toolset? {name, url, token}, instructions?}
                  interrupt {threadId} | closeThread {threadId} |
                  answerApproval {approvalId, decision} |
-                 answerQuestion {questionId, answer} | setModel | setPermissionMode | listModels | test
+                 answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
+                 listModels | test
 ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | toolCallStarted |
                  toolCallOutput | toolCallCompleted | approvalRequested | questionAsked |
                  taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
@@ -257,7 +276,9 @@ thread it maps to, since the app-server has no request that unloads one.
   `thread/tokenUsage/updated` and `turn/completed`; server-initiated requests
   `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` and
   `item/permissions/requestApproval` map to `approvalRequested`, `item/tool/requestUserInput` to
-  one `questionAsked` per question; `model/list` feeds the picker and `account/read` the "Test"
+  one `questionAsked` per question (its `header`, and the request's `itemId` as `askId`; the
+  answers go back together, each question's list holding the picked labels and then the typed
+  text as an answer of its own); `model/list` feeds the picker and `account/read` the "Test"
   action. Method names and types are generated, not written from memory:
   `scripts/generate-protocol.mjs` runs `codex app-server generate-ts` for the installed codex and
   keeps the methods the adapter uses (currently codex 0.166.0). It also writes a protocol
@@ -305,8 +326,10 @@ thread it maps to, since the app-server has no request that unloads one.
   keeps one `query()` while the server runs; model, permission mode and effort changes are applied
   to it before the next prompt. `canUseTool` waits for the answer: allow once, allow for this
   session (the SDK's suggested rules with destination `session`) or deny; an interrupt denies with
-  `interrupt: true`. `AskUserQuestion` may hold several questions; each is asked separately and the
-  tool runs with `answers` once all are answered. The task list comes from `TodoWrite` (whole list)
+  `interrupt: true`. `AskUserQuestion` may hold several questions; each is asked separately (with
+  its `header` and the tool call id as `askId`) and the tool runs with `answers` once all are
+  answered. Claude Code takes one text per question: the picked labels separated by ", " and then
+  the typed text, which is how its own "Other" answers. The task list comes from `TodoWrite` (whole list)
   or `TaskCreate`/`TaskUpdate` (one task at a time). `total_cost_usd` is cumulative per query, so a
   turn's cost is the difference to the previous result. `test` runs a tool-less one-turn query in
   the temp directory and reports `claude_code_version` from the init message and the account from
@@ -481,6 +504,118 @@ skills settings or the project list change, and on `skills.refresh`; scans run o
 burst of changes shares one queued scan. It sends the result as a `skills.sync` command, which
 stores only the differences.
 
+### wow skills
+
+Two more sources sit beside the folders (wow skills spec 1 to 15). Both are read by the same scan,
+from `wowSkillRoots(wowHome)` in `packages/skills`, and carry their text in `Skill.text`:
+
+- `wow` (group "wow"): the built-in skills `wow-verdict`, `wow-artifacts`, `wow-pull-request` and
+  `wow-handover`, shipped as `packages/skills/builtin/<name>/SKILL.md` and found with
+  `new URL('../builtin', import.meta.url)`, so the desktop build copies the folder next to the
+  server bundle. They come with the app version and cannot be changed: `skill.update` and
+  `skill.delete` refuse them. `skills.builtInOff` lists the ones switched off; `SkillsService`
+  leaves those out of `skills.sync`, so they are in no list and attached nowhere. Their text is a
+  template filled by `fillBuiltInSkill` (`fillTemplate` in `packages/contracts`, the same
+  `{{name}}`/`{{#name}}…{{/name}}` rules as the workflow texts) with `BuiltInSkillValues`:
+  `approvedLine`, `changesRequestedLine`, `blockedLine` (the verdict line settings of the project),
+  `expectedArtifacts` (the step's globs as a list), `intentId`, `unitKey`, `unitTitle` and
+  `intentUnitLine` (`Intent-Unit: <intent>/<unit>`). A value not known for the send is empty and
+  drops its section.
+- `yours` (group "Yours"): own skills, one folder per skill under `<WOW_HOME>/skills`, in the
+  same `SKILL.md` format (`ownSkillFile`: YAML frontmatter with `name` and `description`, then the
+  text). A file put there by hand is read like any skill folder; one whose name starts with `wow-`
+  is reported and skipped. Commands `skill.create {skill: {name, description, text}}`,
+  `skill.update {skill}` and `skill.delete {name}` (`core/skills.ts`) check the name with
+  `ownSkillNameProblem` (lower case letters, digits and single hyphens, at most 64 characters,
+  not starting with `wow-`, not taken by another wow skill) and store `skill.saved {skill,
+previous}` or `skill.deleted {skill}` in the skills projection at once; `SkillsService` writes
+  or removes the file synchronously in its commit listener and rescans. The orchestrator does no
+  I/O, so the RPC `dispatch` handler asks `SkillsService.refusal` first: a `skill.create` whose
+  folder already holds a `SKILL.md` the list does not show (skipped by the scan, or a folder
+  whose name differs only in case, which is the same folder on Windows) is refused with its path.
+  The handler asks the same for the `skill.create` commands a `setup.apply` (its plan) or an
+  `assistant.proposal.accept` (the proposal's command) would decide. `decideSkill` itself refuses
+  a `skill.create` whose folder holds an own skill the list shows under another name (a
+  hand-written file, compared without case), so the setup preview and the assistant's proposal
+  are refused at once, with the same sentence.
+  A file that cannot be written or removed is answered to the command as refused with the path
+  and the reason (`writeFailure(commandId)`); the command has committed, and the rescan puts the
+  list back to what is on disk. Scans run one after another, and a scan that began before an
+  own-skill commit sends no `skills.sync` (the one that commit queued does), so it cannot undo
+  the save. Undo is the opposite
+  command with what the client holds: delete for a create, update with the old text, create for
+  a delete. From the assistant all three are proposals (see "Assistant"); a setup file carries
+  own skills (see "Setup file").
+
+**Settings → Skills** (`apps/web/src/settings/skills.ts`, `skills-section.tsx`; wow skills spec
+3, 5). Above the folder settings: "Your skills" (the `skills` topic's group `yours`) with New
+skill, and Edit and Delete on each row, and "Built in" (group `wow`), read-only, each with its
+text under "Show the text". The editor is a dialog (`skillsStore.editor`) with Name (fixed
+while editing; a new name is a new skill), "When to use it" and Text. Save checks the draft
+with `ownSkillNameProblem` against the other wow skills first and shows the reason without
+sending anything; a refusal of the server is shown in the same place and the dialog stays
+open. After a save or a delete a toast offers Undo, which sends the opposite command with the
+skill as the client held it. Palette: "New skill" (`skills.new`, opens the page and the
+editor), "Edit skill: <name>" and "Delete skill: <name>" for every own skill (search only). No
+keybinding: these are rare. `apps/web/e2e/wow-skills.spec.ts` (Changes copy) writes a skill and
+adds it to a step, and sees `wow-verdict` attached by itself to the Bug template's check-work;
+with `WOW_E2E_SKETCHES` set it writes `intents/2026-11-wow-skills/sketches/your-skills.png`.
+
+`skillGroupOf(skill)` in `packages/contracts` gives a skill's `SkillGroup` (`yours`, `wow`,
+`project`, `user`, `plugins`, `other`) and `inListOrder` sorts by that group and then by name;
+the `skills` topic is sent in that order, so Yours comes first in every list.
+
+A step or a message names a skill with `SkillRef {name, source?}`. Without `source` it is a
+folder skill, invoked as before (`plugin:name` for a Claude plugin's), or a built-in one by its
+reserved name; `source: 'yours'` keeps an own skill apart from a folder skill of the same name,
+and each is listed with its own group. `skillToSend(skills, ref, providerKind, values)` answers a
+wow skill's text (a built-in one filled) or a folder skill's invocation, or nothing for a wow
+skill that is not in the list. `promptWithSkills(parts, tail)` puts each wow skill's text as its
+own block marked with its name:
+
+```text
+<skill name="tidy">
+Tidy the imports.
+</skill>
+```
+
+and keeps invocations and the tail that follow each other on one line, as a step's invocation and
+extra prompt always were. `promptShown` is the same without the texts: what the thread shows.
+
+Chat: `thread.sendMessage {threadId, text, skills?: SkillRef[]}` sends the skills in their order
+before the text (`text` may be empty when there are skills), built-in ones filled with the project's verdict lines (no artifacts, no unit).
+A skill that is gone refuses the message with its name; the assistant thread takes no skills.
+
+Every user message item stores `TextItemPayload.skills?: SentSkill[]` (`{name, source, text?,
+invocation?, reason?}`): the text that was sent for a wow skill, the invocation for a folder
+skill, and why wow attached a built-in one. `text` is what the user typed, or for a step the
+prompt without the wow skills' texts. Older items have no `skills`.
+
+### Skills in the composer
+
+The composer (`apps/web/src/chat/composer.tsx`, wow skills spec 16 to 20) stays a plain text box
+with the picked skills held beside the text, not a rich editor: chips are a list in front of the
+text box (`ComposerSkillChip` in `chat/skill-chip.tsx`), so caret handling stays the browser's.
+The list opens only where an input event of type `insertText` typed `chat.skillTrigger` (global,
+default `/`) at the start of the text or after whitespace (`typedTrigger` in `chat/model.ts`);
+it stays open while the caret is in the word after it (`skillQuery`) and closes for good once the
+caret leaves. A paste, a path (`src/app`) or a date never opens it, and only a pick makes a chip:
+text is never parsed into chips. A pick takes the trigger and query out of the text
+(`withoutQuery`) and adds the `Skill`; `skillRefOf` names it on the wire as `SkillRef` (`source`
+for wow and own skills, `plugin:name` for a Claude plugin's skill). Backspace at caret 0 removes
+the last chip; ArrowLeft at caret 0 focuses the last chip, and on a chip the arrows move between
+chips and back to caret 0, Backspace or Delete remove it. `onSend(text, skills?)` gets the
+skills only when chips were picked, so `thread.sendMessage` carries `skills` and may have empty
+`text` (the server refuses a message with neither). A queued message keeps its chips. Retry
+sends the last user item's text and skills again (`lastUserSent`). A composer without
+`providerKind` (the Assistant view) takes no skills. The composer on screen that takes skills
+registers in `skillComposerStore` (`chat/composer-store.ts`), which feeds the palette's "Pick a
+skill for the message" (inserts the trigger at the caret) and "Remove skill <name> from the
+message" (`chat/skill-commands.ts`). A user item with `skills` draws them as `SentSkillChip`s
+above its text; each opens a popover with the text sent (or the invocation) and the reason for
+an attached built-in skill. Items without `skills` (older messages, `$name` in their text) are
+drawn as before. New-thread starters add their skill as a chip (`ComposerHandle.addSkill`).
+
 ## Workflow engine
 
 `packages/workflow-engine` is pure: given a workflow, a run and an event (step completed, gate
@@ -488,7 +623,8 @@ answered, trigger fired) it returns the next run state and the effects to perfor
 with prompt, notify, finish). The server performs them. The step prompt is:
 
 ```text
-<skill invocation for the step's provider>  <extraPrompt>
+<the step's skills: the one it runs, its alsoFollow skills, then the built-in skills attached
+ by themselves, each as text or invocation (see "wow skills")>  <extraPrompt>
 
 <unit text: workflows.unitPromptTemplate rendered with the run's unit; only in a run that a
  plan run started for a unit, see "Plan runs">
@@ -496,6 +632,31 @@ with prompt, notify, finish). The server performs them. The step prompt is:
 <handover: workflows.handoverTemplate rendered with previous step's final assistant message,
  the backlog item body if any, and the expected artifact paths>
 ```
+
+Skills of a step (wow skills spec 10 to 15). `stepPromptFor` makes the prompt and answers
+`{prompt, shown?, skills?, missing?}`; `renderStepPrompt` is its `prompt`. A run started since wow
+skills has `WorkflowRun.wowSkills: true` (column `wow_skills`). For it the engine asks
+`EngineContext.skillFor(step, ref, values)` for the skill the step runs (`skillName` with
+`skillSource`) and each `alsoFollow` entry, in that order. Then, while
+`workflows.attachBuiltInSkills` is on, it adds the built-in skills of `automaticSkills(step,
+run.unit)` that the step does not name and does not `leaveOut`, with the reason:
+`wow-verdict` when the gate after the step has the verdict part or a rule reads the verdict,
+`wow-artifacts` when the step expects artifacts, `wow-pull-request` when the run is for a unit.
+A built-in skill switched off is not found, so it is not attached. Each of wow's own sentences
+for these purposes is sent once: with `wow-artifacts` in the prompt the handover gets an empty
+`expectedArtifacts`, and with `wow-pull-request` the unit text gets an empty `intentUnitLine`.
+A skill the step names that `skillFor` does not find fails the step before it starts (no
+thread, no turn, no rule followed) with "The skill <name> no longer exists, so the step cannot
+start. …". The `startStep` and `sendBack` effects carry `shown` and `skills`; the runner and the
+orchestrator then send `thread.sendPrepared {threadId, text: shown, prompt, skills}` (internal)
+instead of `thread.sendMessage`, so the thread shows the prompt without the skills' texts and
+names the skills. A run stored before (no `wowSkills`), or an engine context without
+`skillFor`, keeps the old prompt: `invocationFor(step)`, the expected artifacts in the handover
+and the Intent-Unit line in the unit text. A step held while the user's own turn runs keeps its
+prompt (`heldPrompt`) with `heldShown` and `heldSkills`, and goes as `thread.sendPrepared` like
+any step's turn. A `workflows.unitPromptTemplate` stored before wow skills that spells out
+`Intent-Unit: {{intentId}}/{{unitKey}}` itself keeps the line; `wow-pull-request` then gets an
+empty `intentUnitLine`, so the line is still sent once.
 
 `workflows.handoverTemplate` is a setting (project scope). `{{name}}` is replaced and
 `{{#name}}…{{/name}}` is dropped when the value is empty; the values are `previousStep`,
@@ -513,7 +674,9 @@ itself shows `waiting` (its thread shows "needs you"). Before a step with `gateB
 shows `waiting` without a thread, and the previous step's thread shows "needs you". The run is
 `waiting` in both cases and `pendingGate(run)` tells them apart. One Continue (shown as Approve)
 passes the gate between two steps even when both flags are set. Stop ends the run as `stopped`,
-interrupts a running turn and keeps every thread.
+interrupts a running turn and keeps every thread. A step's prompt is sent only after the runner
+has made the working copy and read the base, and only when the run and the step are still
+`running` then, so a run stopped meanwhile starts no turn.
 
 Send back (review loop spec 16 to 18) is the other answer at a gate. `workflowRun.sendBack {runId,
 note}` runs the reviewed step again (`reviewedStepIndex`: the step that just ended for a gate
@@ -523,7 +686,10 @@ that waited before its gate goes back to `not_started`. The step keeps its last 
 artifacts and file hashes until the new turn ends and replaces them, and the run then waits at the
 same gate again, because the step ends through the same `stepCompleted` path as the first time.
 The message is `workflows.sendBackTemplate` (project scope) rendered with `note`, `skill` and
-`attempt`; an emptied template sends the note alone. The engine refuses an empty note, a run that
+`attempt`; an emptied template sends the note alone, and a template that does not name
+`{{note}}` gets the note after its own text, so a reviewer's note is never dropped. Templates
+collapse runs of blank lines in their own text only: a value (the note, a step's final message)
+is put in afterwards and keeps its blank lines as written. The engine refuses an empty note, a run that
 is not waiting (with its state in the reason) and a gate before the first step, where nothing has
 run. The engine's `sendBack` effect is not performed by the runner: the orchestrator turns it into
 the thread's `turn.started` in the same commit as the run change (the `thread.sendMessage`
@@ -541,8 +707,8 @@ When the step ends the engine judges them; no model does.
   taken off and nothing else is, so `- APPROVED`, `APPROVED.` or `approved` do not count.
 - `artifacts` holds when every one of the step's `expectedArtifacts` globs found a file. The
   runner looks for each glob on its own and reports the ones that found nothing
-  (`workflowRun.stepCompleted.artifactsMissing`). A step that names no expected artifacts fails
-  the part.
+  (`workflowRun.stepCompleted.artifactsMissing`); with no folder to look in (the project row is
+  gone) every glob found nothing. A step that names no expected artifacts fails the part.
 - `checks` holds when the run's pull request has every check successful, read from the host
   after the step ended (see below).
 
@@ -639,8 +805,12 @@ Where a rule or the list goes (`moveTo`):
   the user approved the gate after the previous step passes it, as before.
 - When the thread of the step to run again is gone or still answering a message the user typed
   there, an Approve or Send back is refused with the reason. When a rule or the list got there
-  with nobody asking, that step fails with the reason and so does the run, instead of staying
-  "running" without a turn.
+  with nobody asking and the thread is answering the user, the step is `running` with its turn
+  held in `StepRun.heldPrompt`; when the user's turn in that thread ends the runner sends
+  `workflowRun.sendHeldTurn`, which starts the held turn and drops the field (a thread that is
+  answering again keeps it held). Stop ends such a step without interrupting the user's turn.
+  When the thread is gone, that step fails with the reason and so does the run, instead of
+  staying "running" without a turn.
 
 The path (spec 18). `WorkflowRun.path` is a list of `PathVisit {stepId, attempt, startedAt,
 endedAt, ended, next, reason, limit?}`: one entry per start of a step, in the order it happened.
@@ -649,11 +819,15 @@ endedAt, ended, next, reason, limit?}`: one entry per start of a step, in the or
 ("verdict changes requested → deliver-work", "no rule held → next step", "you sent it back");
 `limit` holds the limit sentence when the run waited there. `StepRun` stays one row per step
 with its attempt count, so everything that reads steps by position still works. A step that
-ran in an earlier pass keeps its last result while the run waits before it, so
-`pendingGate(run)` uses the path to tell "after" from "before": the run waits after a step when
-that step's visit is the last one and nothing has decided where the run goes next. Runs from
-before this change have no path, never get one, and only run workflows without rules (steps
-cannot change under a live run), so they continue as they always did.
+ran in an earlier pass keeps its last result while the run waits before it, so the engine
+stores which side the run waits on: the step it waits at has `StepRun.waits` `before` (its
+gate before, or the limit) or `after` (its gate after, or checks), and no other step has it.
+`pendingGate(run)` and the web app's `gateOf` read that field and never decide from the end
+time. A run stored before the field has none until its next wait; for it `pendingGate` falls
+back to the path (the run waits after a step when that step's visit is the last one and nothing
+has decided where the run goes next) and, without a path, to the step's end time, where a wait
+at the limit is always before the step. Runs from before paths were kept never get one; their
+workflow can still gain rules, since only its steps cannot change under a live run.
 
 Templates (spec 20). A template's steps have no ids, so a rule in a template (`TemplateRule`,
 `WorkflowTemplateStep.rules?`) names the step it goes to by its skill: `{type: 'skill',
@@ -675,19 +849,21 @@ reason names the step and the rule ("Step check-work, rule 2: …"). `workflow.c
 
 Commands: `workflow.create|update|delete`, `workflowRun.start|continue|sendBack|stop` and
 `planRun.start|stop` (see "Plan runs") from clients, and
-`skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded|checkGate` and
+`skills.sync` and
+`workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded|checkGate|sendHeldTurn` and
 `workflowRun.workingCopyReady|workingCopyFailed|workingCopySettled` as `InternalCommand`s from
 the server. The orchestrator calls `startRun`/`advance` and stores one `workflowRun.changed` event
 (the run plus the effects to perform), an idle `thread.created` with `runId` and `stepId` for each
 step started for the first time (model, effort and permission mode from the step, then the provider instance
 defaults) and `thread.stateChanged` for gates. Step changes and deletes are refused while a run of
 the workflow is live, because a run follows its steps by position. Thread ids are
-`<runId>.<stepId>`. The step's invocation comes from the skills projection, matched by name
+`<runId>.<stepId>`. A folder skill's invocation comes from the skills projection, matched by name
 (`plugin:name` picks a Claude plugin's skill); `invocationsFor` in `packages/skills` formats both
-the scanned skills and unknown ones.
+the scanned skills and unknown ones, so an unknown folder skill is still invoked by name.
 
 `WorkflowRunner` performs the effects after commit through the thread commands: `startStep`
-dispatches `thread.sendMessage` with the rendered prompt, so the provider service starts the turn
+dispatches `thread.sendMessage` with the rendered prompt (`thread.sendPrepared` for a prompt made
+with skills, see "Skills of a step"), so the provider service starts the turn
 like any other, and `interrupt` dispatches `thread.interrupt`. A step ends when the persisted
 `turn.ended` of its thread does: completed becomes `workflowRun.stepCompleted` with the turn's
 last assistant text as the final message, the artifacts found and the step's file hashes (see
@@ -713,8 +889,10 @@ What changed is always the folder as it is now against the base commit, so commi
 uncommitted work both show. wow makes no commit per step, so "what did this step change" comes
 from content hashes: `baseFiles` and each ended step's `StepRun.fileHashes` are lists of
 `FileHash {path, hash}` for the files that differed from the base at that moment (SHA-256 of the
-file in the folder, null when it is gone; a link is hashed as its target path and never
-followed). A step changed a file when the file's hash at the step's end differs from the one in
+file in the folder, null when it is gone or a folder on its path is a link, as when a tracked
+folder was replaced by one; a link is hashed as its target path and never followed; a file over
+`diff.maxHashBytes` is not read and is hashed as its size and modification time). The size a
+file shows is read the same way, so a link never gives the size of what it points at. A step changed a file when the file's hash at the step's end differs from the one in
 the list before it (`stepsThatChanged`); a path missing from a list was the same as in the base.
 `baseFiles` holds what was already edited when the run began, so the first step is not credited
 with it. Changes made after the last step ended belong to no step.
@@ -778,10 +956,12 @@ the working copy first and still the project folder).
 - **After the run.** When a run with a `ready` copy has ended and no turn of its threads is
   still running (a stopped run's turn is interrupted after the run ended, so `turn.ended` is
   heard too), `settleWorkingCopy` counts what would be lost: files `git status` lists
-  (changed, staged or new and not ignored) and commits that `HEAD` reaches and neither a
+  (changed, staged or new), ignored files and folders (`ignoredFiles`, each ignored folder once:
+  git keeps nothing of them, and an agent's local file may be the only copy) and commits that
+  `HEAD` reaches and neither a
   remote-tracking branch nor the start commit does (`readUnpushed`). With none, `git worktree
 remove` without `--force` removes the folder (git itself refuses if something is there after
-  all) and the copy is `removed`. Otherwise it is `kept` with `unpushed {uncommittedFiles,
+  all) and the copy is `removed`. Otherwise it is `kept` with `unpushed {uncommittedFiles, ignoredFiles,
 unpushedCommits, newestSubject, branch}`. Unpushed commits are counted from every commit `HEAD` has been on in
   the copy (its reflog), so a commit made on no branch and then left still keeps the copy. A removal that fails, for example a file locked on
   Windows, is not retried: the copy is `kept` with the reason in `error`. Both arrive as
@@ -790,18 +970,29 @@ unpushedCommits, newestSubject, branch}`. Unpushed commits are counted from ever
   kept copy: `git worktree remove --force`, then `removed`. It is refused while the run is
   live, and a failure leaves the copy `kept` with what it held and the reason.
 - **Restart.** `Workspaces.recover()` runs before the runner's: a copy still `pending` fails
-  its run ("The server stopped while the working copy was being made"), and a `ready` copy
+  its run ("The server stopped while the working copy was being made") and what git had made
+  of it is removed with `git worktree remove --force` (the folder is named after the run, so
+  nothing else is in it), and a `ready` copy
   whose run ended while the server was down is settled.
 
-- **On a pull request's branch.** A run that an event trigger started (see "Scheduler and
-  triggers") is the one case of a copy on a branch, so the agent adds to the pull request:
-  `WorkingCopy.branch` names it. After the same fetch, `createWorkingCopy` checks out the
-  local branch when the repository has it, else makes a local branch that follows the
-  remote's (`git worktree add --track -b`). When git refuses because another folder is on the
-  branch, the copy is on the branch's commit and on no branch; when the branch is nowhere (a
-  merged pull request's branch is often deleted, a fork's is not on this remote) the copy
-  starts at the default branch as usual. `note` says which. A branch name git would read as
-  an option is not used.
+- **On a pull request's head.** A run that an event trigger started (see "Scheduler and
+  triggers") is the one case of a copy at a pull request: `RunEvent.headSha` is the head commit
+  when the event was seen and `RunEvent.headRef` the base repository's ref for it
+  (`refs/pull/<n>/head` on GitHub, `refs/merge-requests/<n>/head` on GitLab). After the usual
+  fetch, `createWorkingCopy` fetches that ref (when `workspaces.fetchBeforeCreate` is on) and
+  checks out the head commit by sha, never by branch name alone: a fork's branch may be called
+  like a branch here. The copy is on the branch `WorkingCopy.branch` names only when this
+  repository's branch (the local one when there is one, else the remote's, followed with
+  `git worktree add --track -b`) is at the head commit, so the agent adds to the pull request.
+  Otherwise, or when git refuses because another folder is on the branch, the copy is on the
+  head commit and on no branch. When the head commit is not here even after the fetch, the
+  copy starts at the default branch as usual. A merged pull request's code is on the default
+  branch, so a run of a "pull request merged" event is never left at the pre-merge head commit
+  off its branch: when its branch is gone or is not at the head commit here, the copy starts at
+  the default branch's tip (after the usual fetch); only events on an open pull request (checks
+  failed, review comment) start detached at the head commit. `note` says which. A branch name
+  git would read as an option, or a head that is not a commit name, is not used. A run from
+  before heads were kept has no `headSha` and starts at the default branch.
 - **Shared.** When the pull request already has a working copy, the event's run gets the same
   `path` with state `ready` and a note naming the run that made it; nothing is made. The
   folder is therefore judged per folder, not per run: it is settled once no run that names it
@@ -867,7 +1058,10 @@ planId, intentId, unitKey, title}`) and has the id `<planRunId>.<unitKey>`.
   the plan of a live plan run. After a unit's run ends it first has the poller read the plan
   once (`HostPoller.readPlan`) and sends the command when that read is stored or has failed,
   so the next unit is picked from what the host shows now and a unit someone else claimed
-  while the run was going is skipped (spec 42). That read is a consequence of the plan run the
+  while the run was going is skipped (spec 42). Until that read is done, a `plans.synced` for
+  the plan (a plan file edited, say) does not advance the plan run: its statuses are from
+  before the read. Only the end of a unit's run asks; later changes to the ended run (its
+  working copy settled) do not. That read is a consequence of the plan run the
   user started, so it happens whatever the polling settings say; a host whose request limit
   is used up is still left alone. `plans.synced` is how a host poll reaches a plan run: the
   poller's `hosts.sync` changes unit statuses, the orchestrator stores them as `plans.synced`,
@@ -880,15 +1074,19 @@ planId, intentId, unitKey, title}`) and has the id `<planRunId>.<unitKey>`.
   followed, the read is forgotten and the units show what the files say, in the same commit
   (`closePlanEvents`).
 - **Prompt.** `renderStepPrompt` adds the unit text to every step of a unit's run:
-  `workflows.unitPromptTemplate` (project scope) rendered with `intentId`, `unitKey` and
-  `unitTitle`. The default also asks for the `Intent-Unit: <intent-id>/<unit-key>` line in the
-  pull request body, which is how wow finds the pull request afterwards. A send back message
+  `workflows.unitPromptTemplate` (project scope) rendered with `intentId`, `unitKey`,
+  `unitTitle` and `intentUnitLine`. The `Intent-Unit: <intent-id>/<unit-key>` line in the pull
+  request body is how wow finds the pull request afterwards; a step that gets the built-in skill
+  `wow-pull-request` is asked for it there, so `intentUnitLine` is empty and the default leaves
+  its sentence out. A run from before wow skills, or one with automatic attaching off, gets the
+  sentence as before. A send back message
   does not repeat it; the thread already has it.
 
 ## Scheduler and triggers
 
 A local card with a workflow and a project has one trigger, id `<cardId>:trigger`, at its start
-(`core/triggers.ts`). `card.create` and a `card.update` that changes the start, zone, project or
+(`core/triggers.ts`); a repeating card's trigger waits at its next occurrence instead (see
+"Repeating cards" below). `card.create` and a `card.update` that changes the start, zone, project or
 workflow bring it in line: a start in the future makes it `scheduled`, a start already past makes
 it `missed` with `offerRunNow` (the user placed the card in the past, so it is not run on its own),
 and a card without a workflow or project cancels it. A card that has started a run keeps its fired
@@ -912,6 +1110,101 @@ again follows the newer run. `card.runNow {cardId, runId}` starts a run for a ca
 and project and no live run, and fires its trigger. `card.delete` of a card whose run is running or
 waiting is refused with `conflict` unless it says `stopRun`: `true` stops the run in the same
 command, `false` leaves it going; the threads stay either way.
+
+**Repeating cards** (recurring cards spec 1 to 21). A card can carry a repeat rule
+(`RepeatRule` in `packages/contracts/src/repeat.ts`): `frequency` (`daily`, `weekly`,
+`monthly`), `interval` (1 to 1000), `weekdays` (weekly only; empty means the start's weekday)
+and `end` (`never`, `on` a day inclusive, or `after` a count of at most 10 000 that includes the
+first occurrence). The bounds keep every occurrence a date `Date` can hold, and a series also
+stops after 31 December 9999, so no rule can walk for ever; the card decisions check the rule
+again for commands that did not come over the wire. Every card's zone must be one `Intl`
+knows; a stored card whose zone it does not know is read on its UTC day rather than failing
+the range read. It is wow's own structure, not an RRULE, so it can be said in words
+(`repeatRuleWords`: "Every weekday at 08:30, until 19 December 2026") by the server and the app
+alike. The card stays one row.
+
+- **Occurrences are computed** (`apps/server/src/scheduler/occurrences.ts`, pure). The card's
+  start and end are the first occurrence, on whatever weekday it falls. Every later one is on a
+  day the rule names, at the same local start time and local length in the card's zone. Wall
+  clock readings come from the platform's zone data through `Intl` (there is no Temporal on
+  Node 22 and the server has no date library): `instantOf` turns a local reading into an
+  instant, taking the first of a reading that happens twice and, for a reading in the hour the
+  clocks skip, the instant they jumped (02:30 becomes 03:00). Monthly falls on the start's day;
+  a month without it has none. `occurrences(series, from?)` is a generator in start order and never
+  ends for `never` before year 9999, so every caller stops it by time or count. Given `from`
+  (an instant or a day) it jumps to that day by day number before it asks Intl for anything,
+  so a read far from the card's first day costs what a read near it does; an end after a count
+  counts the days it passes without working out their times, and a day past the series' last
+  one answers nothing at once.
+- **What is stored**: the rule, the days skipped by hand (`skippedDates`), and per reached
+  occurrence a `card_occurrences` row (`CardOccurrence`): `fired` with its run, `failed` (the
+  run could not start), `skipped` (the card's earlier run was still going) or `missed`, with a
+  reason and whether it offers "Run now". Rows are keyed by card and day and outlive the card,
+  so Undo of a delete brings the history back. The `calendarItems` topic carries each local
+  card's records as `occurrences`; the stored row does not.
+- **One trigger per card, re-armed.** `<cardId>:trigger` waits at the first occurrence after now
+  that is neither skipped by hand nor reached (`nextOccurrence` in `core/series.ts`).
+  Occurrences already past when a card is made or changed are not run. When it comes due,
+  `trigger.fire` (and `trigger.applyMissed`) takes every occurrence from the trigger's time to
+  now that is not taken: the older ones are recorded `missed`, and only the latest is handled —
+  started by a tick or the `run` policy, recorded `missed` with "Run now" by `mark`, or
+  `missed` by `skip` (spec 8); an older record that still offered "Run now" is re-recorded
+  without it, so only the newest missed occurrence offers it. A latest occurrence whose card still has a live run (the newest
+  run the card follows, or any run its records name) starts nothing: it is recorded `skipped`
+  with the reason and a `skipped` notification "Occurrence skipped" (spec 7; older rows of it
+  keep the kind `failed` they were stored with). Then the trigger
+  waits for the next occurrence; after the last one it is `fired` (or `cancelled` when nothing
+  ever ran, and the card, still `scheduled`, becomes `done`: every remaining occurrence was
+  skipped). The run has `WorkflowRun.occurrence {date, start}`, which names it by its day, and
+  its "Workflow run started" notification ends with the day. The card follows its newest run as
+  a single card does. `card.runNow` on a repeating card answers the occurrence that offers
+  "Run now" and leaves the trigger waiting. A card that ran and is made single again (or
+  undone back to single) puts its trigger back to `fired` with that run.
+- **The next time** is `CalendarItem.nextAt`, set by the projector from every `trigger.set` of a
+  card trigger (the trigger's `runAt` while `scheduled`, else null), so the card and the trigger
+  list say the same. The migration fills it for cards stored before.
+- **Changing.** `card.create` and `card.update` take `repeat` (null in an update makes the card
+  single again) and `skippedDates` (the whole list; Undo of a skip and of a delete send it).
+  Any change of time, zone, rule, project or workflow re-arms the trigger, so every occurrence
+  not yet started follows it; records keep where the reached ones were and what they ran, and
+  a range read shows a reached occurrence from its record even when the rule has moved on.
+  Days without a record keep their place too (spec 10, 11): a change of start, end, zone or
+  rule stores the series as it was in `CalendarItem.pastSeries` (`PastSeries`: the series and
+  `until`, the first day it no longer sets), for the days before the first occurrence that has
+  not started, or for a moved occurrence the days before its date. Entries are oldest first;
+  each sets the days from the entry before's `until` to its own, and the card's series the days
+  from the last `until` on. Days are in each entry's own zone, so after a change of zone a part
+  also takes over only from the instant the `until` day began in the zone before: no day and no
+  instant is set twice. A later change from an earlier day cuts the entries back to it. A card
+  that stops repeating keeps only the entries for days that have started, and one that repeats
+  again drops entries whose `until` is after its first day.
+  `scheduleOf(card)` in `core/series.ts` is that schedule, and the trigger, the range read,
+  skip and move all read it, so after a move the days before the moved one, past or still to
+  come, keep their time. Cards stored before have none (`[]`). A
+  single card that already ran and gets a rule records its run as the first occurrence.
+  `card.skipOccurrence {cardId, date}` adds the day to `skippedDates` and is refused for a day
+  the rule does not fall on and for one already started. `card.moveOccurrence {cardId, date,
+start, end}` is a drag in the calendar (spec 11): the occurrence must stay on its day, and the
+  series keeps its first day and takes the moved occurrence's local time and length from that
+  day on. `card.delete` of a series with a live run needs `stopRun` as for a single card. The
+  inverse commands (`assistant/changes.ts`) carry `repeat` and `skippedDates`, so one Undo
+  restores a series with its rule, skipped days and trigger.
+- **Reading a range.** `calendar.occurrences {from, to}` (`readCalendarRange`) answers
+  `CalendarRange`: every occurrence of each local card overlapping the range (a card without a
+  rule is its one occurrence), without the days skipped by hand, each with `repeating`,
+  whether the trigger fires there `next`, and its `record`. At most `calendar.maxOccurrences`
+  of one card are returned; a card that had more is listed in `more` (spec 17). The web app
+  draws from this read and never works occurrences out itself.
+- **The assistant** (spec 18 to 21). `create_card` and `update_card` take `repeat`;
+  `skip_card_occurrence` sends `card.skipOccurrence`; `card.moveOccurrence` is refused for the
+  assistant (it changes the time with `update_card`). A card's change row and proposal say the
+  rule in words with its time (`Repeats` line). Whether a card waits for a yes looks at the
+  next occurrence that is not taken: a proposal when it starts within
+  `assistant.startSoonMinutes` (or is past), ordinary otherwise, and ordinary for a series with
+  nothing left to run. `read_calendar` lists for a repeating card its rule, the rule in words,
+  `nextAt`, the skipped days and its occurrences in the range with what happened at them, and
+  `read_triggers` shows the trigger's next time. The default instruction text says to make one
+  repeating card for anything recurring and never a card per day.
 
 **Event triggers** (review loop spec 48 to 53) are rows of the same table with `kind: 'event'`:
 a project, an event (`merged`, `checksFailed`, `commentAdded`), a workflow and `enabled`.
@@ -940,14 +1233,22 @@ There are no webhooks: an event is something a read from the host shows.
   answers the review with a comment would start the next run, without end. wow cannot tell
   which account an agent writes as, so a person's comment made during that run is passed over
   too.
+- **A fork starts nothing.** A run on a fork's pull request would check out the fork's head
+  commit, and the fork's files (agent instruction files, skills, hook settings, scripts a
+  workflow runs) would steer an agent on this computer. So an event on a change request with
+  `fromFork` is recorded as seen without a run and a `failed` notification "Trigger started
+  nothing" says why and names the setting, unless `triggers.forkPullRequests` (off by default,
+  global or per project) allows it. Turning the setting on later starts nothing for events
+  already seen. `RunEvent.fromFork` keeps what the read said.
 - **Off means never.** While `triggers.eventsEnabled` is off, the scheduler is paused or the
   trigger itself is off, nothing starts. The stored pull request moves on all the same, so
   the event is not seen again and nothing starts for it later (spec 52).
 - **The run.** It is an ordinary run with `WorkflowRun.event` (`RunEvent`: trigger, event,
-  pull request id, number, link and branch, and for a comment its link and author). The
-  handover template's `event`, `pullRequestNumber`, `pullRequestUrl`, `pullRequestBranch`,
-  `commentUrl` and `commentAuthor` placeholders carry it into every step's prompt
-  (`eventValues` in the workflow engine). The comment's text is never copied: it is someone
+  pull request id, number, link, branch, head commit and head ref, whether it is from a fork,
+  and for a comment its link
+  and author). The handover template's `event`, `pullRequestNumber`, `pullRequestName`, `pullRequestUrl`,
+  `pullRequestBranch`, `commentUrl` and `commentAuthor` placeholders carry it into every step's
+  prompt (`eventValues` in the workflow engine). The comment's text is never copied: it is someone
   else's text and must not become an instruction in a prompt wow writes, so the agent reads it
   at the link (spec 51). The author is cut down to the characters account names use. A
   project that stored its own handover template gets these lines only after adding the
@@ -955,7 +1256,7 @@ There are no webhooks: an event is something a read from the host shows.
 - **Its folder.** An event's run always works in a working copy. When a run whose last read
   from the host names the pull request has one on disk (the run is still going, or its copy
   was kept), the event's run works in that same folder; otherwise it gets a new one on the
-  pull request's branch (see "Working copies").
+  pull request's head commit (see "Working copies").
 - **Failing.** A run that cannot start (the workflow is gone, say) stores the event as seen
   without a run and a `failed` notification "Trigger failed" that opens the Triggers tab
   (spec 53); it is not tried again. A started run stores "Workflow run started". The trigger
@@ -1005,10 +1306,12 @@ until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
   `providers.offerSetup`
-- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.starterCount`
+- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.starterCount`,
+  `chat.skillTrigger`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
-  `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`,
+  `calendar.lookaheadDays`, `calendar.maxOccurrences` (see "Repeating cards"),
+  `calendar.snapMinutes`, `calendar.cardMinutes`,
   `calendar.hourHeight`, `calendar.zoomStep`
 - outlook: `outlook.pollSeconds`, `outlook.requestTimeoutMs`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
@@ -1019,8 +1322,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `workflows.gateChecksTimeoutMinutes` (project-scoped, see "Gates that pass by themselves"),
   `workflows.verdictChangesRequestedLine`, `workflows.verdictBlockedLine`,
   `workflows.goBackTemplate`, `workflows.maxStepVisits` (project-scoped, see "Rules" under
-  "Workflow engine")
-- skills: `skills.directories`, `skills.includeClaudePlugins`
+  "Workflow engine"), `workflows.attachBuiltInSkills` (project-scoped, see "Skills of a step")
+- skills: `skills.directories`, `skills.includeClaudePlugins`, `skills.builtInOff` (see "wow
+  skills")
 - plans: `plans.intentsDirectory` (project-scoped), `plans.writeSettleMs` (see "Plans")
 - trackers: `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
   `trackers.jira.email`, `trackers.jira.token` (secret), `trackers.jira.projectKey`,
@@ -1032,23 +1336,25 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.requestTimeoutMs`, `trackers.gitTimeoutMs`, `trackers.jira.keyScanCommits` (the
   `trackers.jira.*`, `trackers.github.*`, `trackers.gitlab.*` and `trackers.confluence.*` ones
   are project-scoped, see "Backlog and trackers")
-- hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount` (see "Hosts")
-- triggers: `triggers.eventsEnabled`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
+- hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount`,
+  `hosts.longestWaitMinutes`, `hosts.pageMaxBytes` (see "Hosts")
+- triggers: `triggers.eventsEnabled`, `triggers.forkPullRequests`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
-- diff: `diff.maxFileBytes`, `diff.maxFiles` (the "Changes" page, see "Run base and changes")
+- diff: `diff.maxFileBytes`, `diff.maxFiles`, `diff.maxHashBytes` (the "Changes" page, see "Run base and changes")
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
 - assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,
   `assistant.effort`, `assistant.instructions`, `assistant.greeting`,
-  `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.secretPatterns` (see
-  "Assistant")
+  `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.valueLength`,
+  `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance` (see
+  "Assistant", "Question card" and "Models for steps")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
 - desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
 - updates: `updates.enabled`, `updates.checkIntervalMinutes`
 - advanced: `advanced.port`, `advanced.logLevel`, `advanced.secretsTimeoutMs`,
-  `advanced.showSettingKeys` (`WOW_HOME` is an
+  `advanced.setupFileMaxBytes` (see "Setup file"), `advanced.showSettingKeys` (`WOW_HOME` is an
   environment variable, see "Server")
 
 The same test fails when `apps/server/src` or `apps/web/src` declares a tunable-looking constant
@@ -1189,13 +1495,15 @@ project and its `project:<id>` settings and unlinks what pointed at it rather th
 
 **Git** (`apps/server/src/projects/git.ts`, owner decision F-4, audit E-12). The server reads a
 project folder with `git -C <folder>`: `rev-parse --git-dir` (fails: `noRepository`), `remote -v`
-and `symbolic-ref --short HEAD`, with `GIT_TERMINAL_PROMPT=0` and `GIT_OPTIONAL_LOCKS=0`, so nothing
-waits for credentials or takes a lock, and `trackers.gitTimeoutMs` as the limit. Without git on the
+and `symbolic-ref --short HEAD`, with `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` and `GIT_OPTIONAL_LOCKS=0`
+(`gitEnvironment`), so nothing waits for credentials (no terminal prompt, no Git Credential
+Manager window on Windows) or takes a lock, and `trackers.gitTimeoutMs` as the limit. Without git on the
 PATH it reads `<folder>/.git/config` and `HEAD` itself (`gitUnavailable` when that fails too). A
 folder that is gone is `folderMissing`. `parseRemoteUrl` reads https, ssh://, git:// and scp-like
 `user@host:path` remotes and local paths, drops user names and passwords from https URLs, and
 names a GitHub repository for `owner/repo` paths: github.com (also `ssh.github.com`) gives
-`https://api.github.com`, any other host is taken as GitHub Enterprise Server with
+`https://api.github.com`, `<name>.ghe.com` (GitHub Enterprise Cloud with data residency) gives
+`https://api.<name>.ghe.com`, any other host is taken as GitHub Enterprise Server with
 `https://<host>/api/v3`; deeper paths (GitLab subgroups), local paths and known other hosts
 (GitLab, Bitbucket, Azure DevOps, Codeberg) give none. The primary remote is `origin`, else the
 first GitHub one, else the first. `projects.git` answers `ProjectGit` for every project
@@ -1358,7 +1666,11 @@ approved or commented on. GitHub and GitHub Enterprise Server are the first host
 (merge requests, spec 34) and the others join behind the same interface.
 
 **Types** (`packages/contracts/src/hosts.ts`). `ChangeRequest` is a pull request as last read:
-number, title, link, `state`, `draft`, `mergedAt`, head branch and commit, the `Intent-Unit`
+number, title, link, `state`, `draft`, `mergedAt`, head branch and commit, `fromFork` (the head
+is in another repository: GitHub's `head.repo.full_name` is not the base repository's, or
+`head.repo` is null for a deleted fork; GitLab's `source_project_id` is not `target_project_id`;
+an answer that leaves them out counts as a fork; rows read before migration 0021 hold false
+until read again), the `Intent-Unit`
 lines of its body as `units`, `checkState` with every check (`HostCheck`: name, state, link),
 the review comments (`ReviewComment`: author, text, file, link) and `newestCommentId`. Event
 triggers and plan runs compare the next read with this row, which is why it keeps the state,
@@ -1374,9 +1686,11 @@ adapter.
 the tracker client's HTTP helper (`trackers/http.ts`) and the project's GitHub tracker settings
 as `trackers/resolve.ts` resolves them, so Enterprise Server is the same code under
 `https://<host>/api/v3`. A plan's pull requests are found with one search
-(`GET /search/issues?q="Intent-Unit: <intent-id>/" in:body is:pr repo:<owner>/<repo>`), and only
+(`GET /search/issues?q="<intent-id>" in:body is:pr repo:<owner>/<repo>`; not the whole phrase
+`Intent-Unit: <intent-id>/`, which a line in bold, underscores or quote marks does not hold), and only
 a body that really has an `Intent-Unit: <intent-id>/<unit-key>` line counts (every such line is
-taken, also as a list item, in backticks or with punctuation after the key; `intentUnitLines`
+taken, also as a list item, quoted with `>`, in bold, backticks or quote marks, or with
+punctuation or words after the key; `intentUnitLines`
 in `packages/agent-os`). A host whose search is missing or refuses the
 query (404, 405, 410, 422, 501) gets its newest pull requests read instead, as many as the
 fallback count setting says; the whole repository is never listed. A run's pull request is the
@@ -1397,7 +1711,8 @@ a comment must have an id. A `Retry-After` or reset that gives no valid date is 
 **GitLab** (review loop spec 34; `hosts/gitlab.ts`, `trackers/gitlab.ts`). A project is on
 GitLab when its primary git remote is on the host of the stored `trackers.gitlab.baseUrl`
 (`gitLabProjectOf` in `projects/git.ts`; any host can run GitLab, so the remote alone never
-decides, and a site under a sub-path has that prefix cut from its https remotes). The project
+decides, and a site under a sub-path has that prefix cut from its https remotes; an https remote
+on the same host outside that sub-path is not the site's). The project
 path keeps every nested group (`git@gitlab.example.test:group/sub/app.git` is `group/sub/app`)
 and goes to the API URL-encoded as one project id (`group%2Fsub%2Fapp`). Such a remote names no
 GitHub repository, and the poller reads that project from GitLab instead of GitHub
@@ -1406,14 +1721,17 @@ the token in the `PRIVATE-TOKEN` header and nowhere else: GitLab requests do not
 (fetch would carry that header to another origin), and a 3xx answer is `failed` and asks to check
 the URL. Merge requests fill the role of pull
 requests: a plan's are found with one
-`GET /projects/<id>/merge_requests?state=all&search="Intent-Unit: <intent-id>/"&in=description`,
+`GET /projects/<id>/merge_requests?state=all&search=<intent-id>/&in=description` (the id, not the
+whole phrase, for the same reason as on GitHub),
 filtered to descriptions that really carry the line, falling back to the newest
 `hosts.listFallbackCount` when the search is turned down (400, 405, 422, 501); a run's is the
 newest with `source_branch=<branch>`. `iid` is the number, shown as `!12` (`changeRequestRef`,
 `changeRequestName` in contracts); `opened` is open, `merged` merged, `closed` and `locked`
 closed; `draft` (or `work_in_progress` before version 14). Checks are the jobs of the newest
 merge request pipeline on the head commit (`…/merge_requests/<iid>/pipelines`, then
-`/pipelines/<id>/jobs`): failed and canceled jobs fail, a failure the job is allowed passes,
+`/pipelines/<id>/jobs`); a merged-results or merge-train pipeline runs on a merge commit, so when
+no listed pipeline has the head's sha the merge request's own `head_pipeline` is taken, while the
+merge request is still at that head (`GET …/merge_requests/<iid>`): failed and canceled jobs fail, a failure the job is allowed passes,
 skipped and manual jobs are left out, anything still to run is pending, and a pipeline without
 jobs counts as one check. A failed, canceled or running pipeline whose listed jobs show no failure
 or nothing pending (a child pipeline, a job past the first page) adds a `pipeline <id>` check with
@@ -1422,7 +1740,13 @@ review comments, without GitLab's system notes, linked as `<merge request>#note_
 403 are `refused` and name `trackers.gitlab.token`, as does 404 on the project; a 429 with
 `Retry-After`, or `RateLimit-Remaining`/`RateLimit-Reset`, leaves the site alone like GitHub's
 limit; anything else and a timeout are `failed`. Unit status reasons say "Merge request !12 is
-merged". GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
+merged", and so do the gate's checks part (`ChecksReading.host`), an event run's line,
+notification and handover (`runEventHost`, `triggerEventLabel`), and the Pull request tab's name
+and empty text, which read "Merge request" on a run whose host read is GitLab
+(`pullRequestTabLabel`). The Triggers tab's rows, its palette commands and New trigger's event
+choices say "Merge request merged" for a project whose newest host read is GitLab
+(`projectCodeHost` in `apps/web/src/workflows/triggers.ts`), and the default handover names
+the event's request with `pullRequestName` ("Merge request !12" or "Pull request #14"). GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
 GitLab the server tests and the e2e server share.
 
 **Poller** (`apps/server/src/hosts/poller.ts`, started with the scheduler and stopped right
@@ -1438,7 +1762,8 @@ its step has most likely just pushed; later rounds ask about it like any live ru
 `hosts.sync` of each read decides the gate. The poller also keeps one timer for the earliest end
 of such a wait (`workflows.gateChecksTimeoutMinutes` after the step ended, for the run's
 project) and then sends `workflowRun.checkGate` (`checkGates()`; see "Gates that pass by
-themselves" under "Workflow engine"). Per project it resolves the GitHub settings and the
+themselves" under "Workflow engine"). At start it calls `checkGates()` once after the first
+reads, so a wait that ran out while the server was stopped ends even when no read is stored. Per project it resolves the GitHub settings and the
 folder's branch (`TrackerService.githubHost`; without a token nothing is asked and the reads
 say which setting is missing; the shared token goes only to a host the user chose, so when the
 API URL comes from the folder's git remote and is neither the stored `trackers.github.baseUrl`'s
@@ -1452,7 +1777,11 @@ stored; one the schema turns down is not stored, and only the plan or run that n
 `failed` read saying which pull request and field, so a bad answer can never break the
 `changeRequests` topic. GitHub's `x-ratelimit-remaining`, `x-ratelimit-reset` and `retry-after` headers
 stretch the interval: a host with fewer requests left than the round took, or that refused for
-the limit, is left alone until the limit starts again. Rounds run one after another.
+the limit, is left alone until the limit starts again, but never longer than
+`hosts.longestWaitMinutes` (a host may ask for a wait of years; `waitBound` in
+`hosts/adapter.ts` cuts it for every host adapter). The pause belongs to the host and the
+token (kept in memory as a digest), so a project with its own token on the same host is still
+asked. Rounds run one after another.
 `startServer({hostTimers, clock, fetch})` lets tests fire the timer, move the clock and answer
 for the host; `hosts/mock-github.ts` is the invented host the server tests and the e2e server
 share.
@@ -1487,10 +1816,12 @@ and panels lose their frame, pictures become `[picture: <name>]` and are never l
 stays a link only for an http, https or mailto address, HTML stays text) and the
 `<base>/browse/<key>` link when that is a web address. 401 and 403 are `refused` and name
 `trackers.jira.token`, as is 404 ("shows no issue <key> to the Jira token"), which fails only that
-ticket; a 429 with `Retry-After` leaves the site alone until then; anything else and a timeout
-are `failed`, and after such a failure the site is not asked again that round. A project without
-a Jira site, token or (for `cloud-basic`) email, or without a project key when the run has no
-backlog issue, gets a `notSetUp` read naming the setting. The round ends in one internal
+ticket, as does a published key that is not a Jira key; a 429 with `Retry-After` leaves the
+site alone for that token until then; anything else and a timeout are `failed`, and after such a
+failure the site is not asked again that round. A project without a Jira site, token or (for
+`cloud-basic`) email, or without a project key when the run has no backlog issue, gets a `notSetUp` read naming the setting; so does a run whose backlog item was
+published to another Jira site than the project's (its browse link is not under
+`trackers.jira.baseUrl`), and that site is not asked. The round ends in one internal
 `tickets.sync` command per project; `core/tickets.ts` stores `ticket_reads` rows through
 `tickets.synced` (topic `ticketReads`), keeping the last ticket and its time beside an error while
 the key stays the same, and the time an error was first seen while it repeats. A run with no
@@ -1510,7 +1841,10 @@ read from the project's `plans.intentsDirectory` with links left out (`readInten
 `trackers.confluence.baseUrl`'s scheme, host, port and path, and names a page:
 `/pages/viewpage.action?pageId=<id>` and `/spaces/<space>/pages/<id>/…` by id (`ref`
 `id:<id>`), `/display/<space>/<title>` by title (`title:<space>/<title>`, `+` read as a
-space). Links to another site are dropped before anything is asked, so the Confluence token never
+space). `webLinksIn` keeps brackets an address opens and closes itself (`Plan+(draft)`), ends
+an address at one it did not open (a markdown link's own `)` or `]`), and leaves out one it opens
+and never closes; it reads each character of the text once, so a long text without spaces costs
+no more than its length. Links to another site are dropped before anything is asked, so the Confluence token never
 goes anywhere but the stored site. A run with no links gets a row with no pages and no error,
 and costs no request. Each linked page is asked for once a round,
 `GET <base>/rest/api/content/<id>?expand=body.view,version,space` or
@@ -1521,13 +1855,19 @@ API token (`cloud-basic`, `jiraAuthorization`), with redirects turned down. The 
 and the body as Confluence renders it (`body.view`, HTML), and the page's address made from the
 stored site and the answer's `webui` path. The HTML is never rendered in the app: only the
 viewer's sandboxed frame shows it. 401 and 403 are `refused` and name
-`trackers.confluence.token`, as is 404 ("shows no page <id> to the Confluence token"), which fails
-only that page; a 429 with `Retry-After` leaves the site alone until then; anything else and a
+`trackers.confluence.token`. 404, or no result for a title, is `refused` for that page only and
+names no setting ("shows no page <id> to the Confluence token … may have been deleted or moved"):
+the token works, so the link is what to check; a 429 with `Retry-After` leaves the site alone until then; anything else and a
 timeout are `failed`, and after such a failure the site is not asked again that round. A project
 without the site gets a `notSetUp` read naming `trackers.confluence.baseUrl` for every live run;
 one without the token (or the email on Cloud) names that setting only for runs that link to a
-page. The round ends in one internal `pages.sync` command per project; `core/pages.ts` stores
-`page_reads` rows through `pages.synced` (topic `pageReads`). Each `PageLink` keeps its last page
+page. A body larger than `hosts.pageMaxBytes` (UTF-8 bytes) is not kept: that page fails
+(`failed`, naming the setting) and keeps its last body. The round ends in one internal
+`pages.sync` command per project; `core/pages.ts` stores `page_reads` rows through
+`pages.synced` (topic `pageReads`). A read whose host answered exactly what it answered before
+is not written again: the event names it in `fetched {at, ids}` and the projection moves only its
+times (`touchPageRead` in contracts), so unchanged bodies do not go into the history every round;
+events from before have no `fetched`. Each `PageLink` keeps its last page
 and time beside its own error; the row's `error` is what kept wow from asking or the round's
 first refusal or failure (a missing page is only the page's), and its `fetchedAt` the last round
 without one. The rows go with their project.
@@ -1573,10 +1913,10 @@ it was first opened.
 - Who runs it is decided by `chooseAssistantProvider` in `packages/contracts`: the instance
   `assistant.providerInstanceId` names; left empty, the instance the thread already runs on
   while it is connected, otherwise the first connected one in the order they were made.
-  A Codex instance counts only while `assistant.allowCodex` is on (default off): on Codex the
-  agent keeps a read-only shell tool and so can read any file the user can, secrets included,
-  and wow cannot take that away (see below). While it is off, a Codex instance named in
-  `assistant.providerInstanceId` is refused, the first connected Claude Code instance is taken
+  A Codex instance counts only while `assistant.allowCodex` is on (default off): wow switches
+  off the Codex tools that have a switch, but nobody has yet seen the tool list a real,
+  signed-in Codex then offers, and the tools without a switch stay (see below). While it is
+  off, a Codex instance named in `assistant.providerInstanceId` is refused, the first connected Claude Code instance is taken
   even if a Codex one was connected earlier, and when only Codex could run it the answer is the
   sentence `assistantCodexOff`, which says why and names both ways out.
   "Connected" means the instance's last test passed (`status: ready`). The model is
@@ -1622,16 +1962,35 @@ round (the adapter refuses the turn).
   that allows only `mcp__wow__` tools and never asks the user. The instance's environment
   (config folder, API key) is kept, since the agent signs in with it.
 - Codex (`packages/provider-codex/src/toolset.ts`): `thread/start` and `thread/resume` get
-  `config: {mcp_servers: {wow: {url, http_headers: {Authorization}}}, web_search: 'disabled',
-shell_environment_policy: {inherit: 'none'}}` (a command sees no environment variable of wow
-  or the instance, so no API key)
-  and `developerInstructions`, with `approvalPolicy: 'never'` and `sandbox: 'read-only'`;
-  every `turn/start` sends `sandboxPolicy: {type: 'readOnly', networkAccess: false}`. Codex has
-  no switch that takes its shell tool away, so the sandbox is what holds: a command cannot
-  write or reach a host, and every approval request of such a thread is declined without
-  asking the user. A read-only sandbox can still read files on the machine, and the user's own
-  `config.toml` still loads; that is the limit of what Codex offers, and the reason the
-  assistant runs on Codex only when the user turns `assistant.allowCodex` on. `config` and
+  a `config` of `mcp_servers: {wow: {url, http_headers: {Authorization}}}`,
+  `web_search: 'disabled'`,
+  `features` with `false` for `shell_tool`, `unified_exec`, `view_image`, `multi_agent`, `goals`,
+  `apps`, `image_generation`, `computer_use`, `browser_use`, `browser_use_external`,
+  `in_app_browser`, `plugins`, `remote_plugin`, `skill_search`, `tool_suggest`, `sleep_tool`,
+  `code_mode_host` and `hooks`,
+  `tools: {experimental_request_user_input: {enabled: false}}` and
+  `shell_environment_policy: {inherit: 'none'}`, and `developerInstructions`, with
+  `approvalPolicy: 'never'` and `sandbox: 'read-only'`; every `turn/start` sends
+  `sandboxPolicy: {type: 'readOnly', networkAccess: false}`. The `features` and `tools` keys
+  switch off Codex's command tools (reported: `exec_command` and `write_stdin`), image viewing,
+  subagents, goals, apps, image generation, computer use, the browser tools, plugins, skill
+  search, tool suggestions, the sleep tool, code mode and the question-to-the-user tool, and
+  the user's own Codex hooks, which run the user's commands. Checked against codex 0.166.0
+  without a sign-in: `codex features list` knows every one of these features, on by default,
+  and shows each off with these overrides except `unified_exec`, which it still lists as on
+  (sent all the same; `shell_tool` off is what removes the command tools); the app-server
+  accepts this `config` on `thread/start` and refuses a non-boolean for each of them (it does
+  so for an unknown feature name too, so that alone does not show the key is known), and with `mcp_servers` in `config` a server from the user's own `config.toml` is not
+  started (only `wow` is). Not known: the tool list a signed-in Codex then offers (no turn
+  could run), `apply_patch` (no documented switch) and the three MCP resource tools (reportedly
+  cannot be switched off). The rest of the user's `config.toml` (model provider, profiles,
+  instruction files) still loads. So the sandbox stays as the second line: a command, if one
+  is still offered, cannot write or reach a host and sees no environment variable of wow or
+  the instance (so no API key), and every approval request of such a thread is declined
+  without asking the user. Because nobody has seen the resulting tool list, the assistant runs
+  on Codex only when the user turns `assistant.allowCodex` on. An ordinary thread gets none of
+  this. The compat check reads `config` as one map of JSON values, so the keys inside it are
+  not part of the fingerprint. `config` and
   `developerInstructions` are in the generated protocol types of the tested codex. For any
   other version the adapter asks that codex for its schema once (`installedCodexLacks`) and
   fails the turn with one sentence naming the missing fields and the version to update to. An
@@ -1643,9 +2002,14 @@ shell_environment_policy: {inherit: 'none'}}` (a command sees no environment var
 three kinds and nothing else.
 
 - Read tools are the readers in `assistant/readers.ts`: `read_settings`, `read_projects`,
-  `read_providers`, `read_workflows`, `read_templates`, `read_skills`, `read_calendar`,
-  `read_backlog`, `read_runs`, `read_triggers`, `read_notifications`, `read_connections` and
-  `test_connection` (the same sign-in test as `trackers.test`). Each reader builds its answer
+  `read_providers`, `read_workflows`, `read_templates`, `read_skills`, `read_skill`,
+  `read_calendar`, `read_backlog`, `read_runs`, `read_triggers`, `read_notifications`,
+  `read_connections` and `test_connection` (the same sign-in test as `trackers.test`).
+  `read_skills` lists every skill in list order with its description and `group` (wow skills
+  spec 21), and `skillSource` for a wow skill, which is what a step's `skillSource` and an
+  `alsoFollow` entry's `source` take. `read_skill {name, group?}` answers the text of an own or
+  a built-in skill (a built-in one as its template, unfilled) and whether it can be changed; a
+  folder skill's text is not read. Each reader builds its answer
   field by field. None returns a thread's items, a step's final message, a file's content, a
   card's notes or more of a meeting than its time and title. A secret setting and a secret
   environment variable say `set` or `not set`, decided from the names in the secret store; no
@@ -1659,20 +2023,34 @@ three kinds and nothing else.
   the card from the tool call's own input. `show_secret_field {key, projectId?}`
   (`assistantSecretFieldTool`) accepts only a setting marked `secret` and a project that
   exists, and answers the setting's label, where the value goes and `set` or `not set`.
+  `show_secret_variable {providerInstanceId, variable}` (`assistantSecretVariableTool`,
+  `SecretVariableRequest`) does the same for a provider instance's secret environment variable
+  (spec 14): an instance that exists and a variable name, answering where it goes
+  (Settings → Providers → <instance>) and `set` or `not set`.
   `offer_project_work {text}` (`assistantProjectWorkTool`) is for a request that is not about
-  operating wow (spec 3) and answers that the button is shown. No tool name has "thread",
+  operating wow (spec 3) and answers that the button is shown. `ask_questions {questions}`
+  (`assistantAskTool`, `AskQuestionsRequest`: one to four `AskedQuestion {question, header,
+options, multiSelect}`) puts the question card under the call (see "Question card"); it refuses
+  a question whose text, header or choices hold a word of `assistant.askRefusedWords`
+  (`askedSecretWord`, whole words, any case) with a sentence that points to the secret field, two
+  choices with one label, and a choice "Other" (the card has one). It answers `asked` and tells
+  the agent to end its turn. No tool name has "thread",
   "message", "file", "content" or "chat" in it, so the U1 test that no tool reads a thread or a
   file still holds by name.
 
 - Guides (`assistant/guides.ts`, `read_token_guide {service, projectId?}`,
   `assistantTokenGuideTool`) answer a `TokenGuide` from data that ships with wow (spec 15): one
-  entry per host kind and sign-in (github.com, GitHub Enterprise Server, GitLab, Jira and
-  Confluence with a personal access token or as Cloud), each naming the host versions it was
-  written for, the steps, the rights reading needs and what to copy. Links are built from the
-  address stored for the scope asked (`trackers.<x>.baseUrl` resolved for the project, so a
-  project's own address wins; the git remote's host is not used): a GitHub API URL
+  entry per host kind and sign-in (github.com, GitHub Enterprise Cloud with data residency,
+  GitHub Enterprise Server, GitLab, Jira and Confluence with a personal access token or as
+  Cloud), each naming the host versions it was written for, the steps, the rights reading needs
+  and what to copy. Links are built from the address stored for the scope asked
+  (`trackers.<x>.baseUrl` resolved for the project, so a project's own address wins). A
+  project's GitHub guide follows the poller's host rule for a project's own token
+  (`TrackerService.githubAddress`): the project's stored API URL, else its git remote's host,
+  else the shared one; without a project it is the shared address. A GitHub API URL
   `https://<host>/api/v3` becomes `https://<host>`, `https://api.github.com` becomes github.com,
-  and Atlassian Cloud API tokens link to the Atlassian account page. Links and `address` are
+  `https://api.<name>.ghe.com` becomes `https://<name>.ghe.com`, and Atlassian Cloud API tokens
+  link to the Atlassian account page. Links and `address` are
   built from the parsed address with its user name, password, query and fragment dropped, so an
   address like `https://reader:pass@host` never puts the password in a link. Without an address
   the guide has one step, fill in the address first, and `addressNeeded` names the setting and
@@ -1684,13 +2062,24 @@ three kinds and nothing else.
   19, 20). It reads provider instances whose status is not `ready`; runs `trackers.test` for
   each host whose token or address is stored, globally and for each project that stores its own
   (sign-in requests only, nothing is written); failed host, ticket and page reads with the
-  setting they name; workflow steps whose skill is not installed; event triggers with a
-  "Trigger failed" notification and no run started after it; failed runs (until a later run of
-  the same workflow and project ends `done`) and failed plan runs with their stored error; and
-  cards with a workflow that are `missed`, or `failed` without a run, with the notification's
-  reason. Runs, triggers and cards are cut to `assistant.diagnosisLimit` each, newest first.
-  A failed trigger's reason exists only as a notification, so with `scheduler.notifications`
-  off it is not found.
+  setting they name (a read of a run only while the run is live, since an ended run is not read
+  again); workflow steps whose skill is not installed; event triggers whose event was recorded
+  without a run (`trigger_events`) and whose "Trigger failed" notification
+  (`<trigger>:<event>:failed`, matched by that exact id) has no run of the trigger after it;
+  failed runs (until a later run of the same workflow and project ends `done`, and only while
+  the workflow and project exist) and failed plan runs (until a later plan run of the same plan
+  ends `done`, and only while the project exists) with their stored error; and cards
+  with a workflow that are `missed`, or `failed` without a run, with the notification's reason
+  (until a run of the card's workflow and project that started after the card's start ends
+  `done`). Each part is one query that asks SQLite only for the rows that still count (by
+  state, error and the later runs above), with runs, plan runs, triggers and cards limited to
+  `assistant.diagnosisLimit` each in the query, newest first. Times are told in
+  the calendar's zone (`calendar.zone`, as the calendar resolves it), e.g. "Tue, 10 Nov 2026,
+  09:00 (Europe/Stockholm)". A failed trigger's reason exists only as a notification, so with
+  `scheduler.notifications` off it is not found.
+
+- Models (`assistant/models.ts`, `read_models`, `read_model_guidance`) answer what each
+  instance offers and wow's guidance on choosing; see "Models for steps".
 
 Every result passes `hideSecretsDeep` with the patterns of `assistant.secretPatterns` before it
 leaves `call`, so text that looks like a secret arrives as `[hidden]` (spec 18). The net
@@ -1716,7 +2105,7 @@ decides what a command of the assistant does. The table names every type of `Ser
   that then lets the app do more: `scheduler.paused` off, `scheduler.missedPolicy` to `run`,
   `hosts.polling`, `triggers.eventsEnabled` or `viewer.htmlScripts` on. A change to
   `assistant.secretPatterns` is a proposal too, since that is the assistant's own net, and so
-  is any change to `assistant.allowCodex`, either way. Three
+  is any change to `assistant.allowCodex` or `triggers.forkPullRequests`, either way. Three
   more are proposals though spec 9 does not list them, because they do the same kind of thing:
   another skill, extra prompt, provider or model on a step that has a permission mode or a
   gate that passes by itself (the yes once given for that step was for that work); taking a
@@ -1726,10 +2115,19 @@ decides what a command of the assistant does. The table names every type of `Ser
   one, so a global change counts for a project's token too). Two more close ways around a yes:
   `project.update` with another folder, because the folder is where agents work and its git
   remote names the host a project's own token goes to; and a card with a workflow and a project
-  (`card.create`, `card.update`, `backlog.plan`) whose start is in the past or within
-  `assistant.startSoonMinutes` of now, because the scheduler would start its run almost at
+  (`card.create`, `card.update`, `backlog.plan`) whose start (for a repeating card, its next
+  occurrence) is in the past or within `assistant.startSoonMinutes` of now, because the scheduler would start its run almost at
   once, which is "start a run now" by another name. A card further ahead is scheduling and stays
   ordinary.
+  Every own skill the assistant writes, changes or removes (`skill.create`, `skill.update`,
+  `skill.delete`; tools `create_skill`, `update_skill`, `delete_skill`) is a proposal too (wow
+  skills spec 22): a skill steers every agent that follows it. Its card shows "When to use it"
+  and the text (the whole text kept as `toFull`/`fromFull` and shown on request, as a long value
+  always is), or for a change only what differs, or for a removal the text that goes; its basis
+  is the own skill as it is, so an accept after the skill was changed by hand is refused as
+  stale. `skill.update` and `skill.delete` of a built-in skill or a folder skill are refused
+  with a sentence that says so. Setting a step's `alsoFollow`, `skillSource` or `leaveOut`
+  (spec 23) is part of `update_workflow` and follows the workflow rules above.
 - `refused`: never applied, with a sentence for the assistant. The answers at a gate
   (`workflowRun.continue`, `sendBack`, `stop`; the sentence carries the run's path),
   `planRun.stop`, a card delete that would stop a run, every thread, approval and question
@@ -1816,7 +2214,10 @@ the same for a marked thread message and a marked file. One case speaks MCP to t
 with the SDK's own client. `assistant/view.test.ts` covers what the view relies on: the two
 asks, a value saved in a secret field (searched for in every event, receipt, thread item, log
 line and prompt), the net over the agent's own reports, and the note in the next prompt, with
-the server's clock moved between turns.
+the server's clock moved between turns. `assistant/skills.test.ts` covers wow skills spec 21 to
+23: the list in its groups, a wow skill's text, a new, changed and removed own skill as a
+proposal with its text and written only at Yes, the refusals for built-in and folder skills,
+a stale accept, and "Also follow" under the workflow rules.
 
 **The view** (`apps/web/src/assistant`, section "Assistant" above Settings, `/assistant`,
 `keybindings.goAssistant`, Mod+6). It calls `assistant.open` when it opens and again when an
@@ -1826,7 +2227,11 @@ Assistant (the composer is blocked with the same sentence); with no thread yet i
 the sentence. The conversation is the chat view's `ThreadConversation` with
 `ConversationExtras` (`chat/thread-view.tsx`): rows after an item, rows at the end, the
 composer's ref, placeholder, blocked reason, a check before send and a notice line. Nothing of
-the chat view is copied. The `$` skill picker is off there.
+the chat view is copied. The skill list and chips are off there (no `providerKind`). With `chat.groupToolCalls` on (the
+default), `groupToolCalls` (`chat/view-model.ts`) draws consecutive tool calls of one turn as one
+row (`ToolCallGroup`): the latest call, the count and how many failed; any other item, a new turn,
+or a call that has rows after it (change rows, proposals, cards) ends the run. Its open state is
+the window's own.
 
 - Rows (`assistant/model.ts`, `placeRows`). A change row or proposal card goes right after the
   tool call whose answer names its id (`change.id`, `proposal.id` in the call's output); one
@@ -1836,7 +2241,10 @@ the chat view is copied. The `$` skill picker is off there.
   provider's naming itself.
 - Change row (`ChangeRow`): "what: from → to · place" with Undo (`assistant.undo`); greyed with
   "Undone" when the topic says so; a refused Undo shows the server's reason under it.
-- Proposal card (`ProposalCard`): the title, one line per change, the place, Yes
+- Proposal card (`ProposalCard`): the title, one line per change (a value past
+  `assistant.valueLength` (160) characters is cut there, and the line carries the whole of it in `fromFull`/`toFull`, shown under "Was:
+  show all of it" / "Becomes: show all of it"; the secret net runs on the whole value before it
+  is cut), the place, Yes
   (`assistant.proposal.accept`) and No, which opens an optional reason field and sends
   `assistant.proposal.decline`. A reason that looks like a secret is not sent and the card
   says why. A refused Yes (stale, or the app refuses it now) shows the reason and still offers
@@ -1850,6 +2258,13 @@ the chat view is copied. The `$` skill picker is off there.
   (`TokenGuideSteps`) from the tool's stored answer (`askOf` reads `guide`), with links out to
   the host and, while the address is missing, a link to where it is filled in. It says "Set" from the `settings` topic once a
   reference is stored at that scope.
+- Secret variable card (`SecretVariableCard`), after a `show_secret_variable` call the server
+  answered: "<VARIABLE> (<instance>)", where the value goes, a password field and Save
+  (`storeSecretVariable`: `secrets.set` as `provider:<id>:env:<name>` (`providerSecretName`),
+  then `providerInstance.update` with the instance's env and the reference, then
+  `provider.test`, as the instance editor does), "Set" once the instance holds a reference for
+  it, and the instance's last test. A held message whose field is unknown goes to the field or
+  variable the assistant asked for last.
 - Project work card (`ProjectWorkCard`), after `offer_project_work`: "Open in Chat" puts the
   text in the draft store (`DraftState.text`) and opens `/chat/new`, whose composer takes it.
 - Held message. Before a message is sent or queued, `holdMessage` runs `findSecret` from
@@ -1859,7 +2274,11 @@ the chat view is copied. The `$` skill picker is off there.
   names (a GitHub, GitLab or Atlassian prefix), taking the project of a field the assistant
   asked for, or else the field the assistant asked for last; without one only "Send anyway"
   is offered. "Put it in" stores the matched text through `storeSecretSetting` and leaves the
-  rest of the message in the composer. A held message is sent nowhere until "Send anyway".
+  rest of the message, as the box holds it now, in the composer; when the field already holds a
+  reference at that scope the line says it will be replaced, and the note after says it was. A
+  held message is sent nowhere until "Send anyway", which calls the composer's
+  `sendUnchecked()`: the box's current text goes through the composer's own send path (queued
+  while a turn runs, as the answer to a waiting question), skipping only the check.
 - Palette (`assistant/commands.ts`): Yes and No for every waiting proposal (Yes under "Needs
   you"), Undo for every applied change (the newest before typing). A refusal from the palette
   is a toast with the reason. The sidebar counts waiting proposals as "need you".
@@ -1881,11 +2300,16 @@ binary and folder when that kind has no instance, then `provider.test`) and the 
 and "Start from a setup file", which reads, previews and applies a file through the same
 `readSetupFile`, `SetupPreviewDialog` and `setup.apply` as Settings → Advanced. When an instance
 passes, the client writes `providers.offerSetup` false, so a provider removed later never brings
-the gate back (spec 27), sets `firstStartStore.greet` and goes to `/assistant`.
+the gate back (spec 27), and goes to `/assistant`.
 
-**The greeting** (spec 24, 26). Once the Assistant view has its thread and no problem, it sends
-`thread.greetAssistant` once. The command is refused from the assistant (classes.ts) and when no
-assistant thread exists, and does nothing while a turn runs. Its turn shows `assistant.greeting`
+**The greeting** (spec 24, 26). The server owns it, so a reload or a restart between the
+passing test and the greeting does not lose it. When the gate goes up the client sends
+`thread.greetAssistant`. The server greets at once when the assistant thread exists, no turn
+runs and a connected instance can run it; otherwise it stores `assistant.greetingOwed` (table
+`assistant_greeting`, `ReadModel.greetingOwed`), and the next `thread.openAssistant` that can run
+the thread starts the greeting turn in the same commit. Each greeting stores
+`assistant.greetingSent`, which ends the debt, so it is sent once. The command is refused from
+the assistant (classes.ts). Its turn shows `assistant.greeting`
 as the user's line; the prompt gets wow's note before it (`firstStartNote` in
 `assistant/thread.ts`, the same "[From wow, not typed by the user]" form as the answers note):
 the providers that are ready, the projects, workflows and trackers (address and whether the token
@@ -1895,7 +2319,10 @@ needs (a project, a workflow), and, when a setup file is applied and not undone
 work hours while `calendar.workHours` is not stored, and project folders, which a file never
 holds. The note goes through `hideSecrets`. What to do with it is in `assistant.instructions`: one
 thing per answer, a secret through `show_secret_field`. Nothing on the server walks the list;
-the agent does, and the facts are re-read on every greeting.
+the agent does, and the facts are re-read on every greeting. A setup file applied later (from
+Settings) is told at the assistant's next `thread.sendMessage` instead (`setupAppliedNote`):
+when the newest applied file is newer than the start of the assistant's last turn, the note
+names it with the same "To fill in" lines, after the answers note and before the user's text.
 
 **When it cannot start.** With no thread or a `problem` from `assistant.open`, the Assistant view
 shows the problem and the same `ConnectAgentStep` in place of the conversation (spec 27); the
@@ -1912,7 +2339,8 @@ text back.
 
 **The file** (`SetupFile` in `packages/contracts/src/setup.ts`) is YAML, read and written with
 the `yaml` package, with a version key: `version` (`setupFileVersion`, 1), `wow` (the version
-that wrote it), `settings` (key → value), `toFillIn` (secret setting keys) and `workflows`. A
+that wrote it), `settings` (key → value), `toFillIn` (secret setting keys), `workflows` and
+`skills` (own skills as `{name, description, text}`, wow skills spec 8). A
 workflow is the stored one without dates, and each step names its provider by kind (`provider:
 claude`) instead of an instance id, which is this install's own. No path, project or line ending
 form is in it, so a file made on Windows reads the same on Linux; a byte order mark and CRLF are
@@ -1927,13 +2355,19 @@ Confluence email, the GitHub owner and `triggers.ignoredCommentAuthors`, `machin
 `workspaces.root`, `assistant.providerInstanceId`, `advanced.port`, `desktop.autostart`,
 `appearance.paletteRecent`, `providers.offerSetup`), `person` for what only that person can say (`calendar.zone`,
 `calendar.firstDayOfWeek`, `calendar.workHours`). Projects, cards, backlog items, threads and runs
-are not read at all, so no project folder is in it. A value or workflow that the secret net
-(`assistant.secretPatterns`) matches is left out and named in `leftOut`; so is a workflow whose
-step names an instance that no longer exists.
+are not read at all, so no project folder is in it. Own skills are written by name with their
+text; built-in skills come with the app and folder skills stay in their folders. A value,
+workflow or own skill that the secret net (`assistant.secretPatterns`) matches is left out and
+named in `leftOut`; so is a workflow whose
+step names an instance that no longer exists. A step applied from a file where no instance of its
+kind was here holds the kind as its instance id (`awaitedProviderKind`) and is written back with
+that kind; a run of its workflow is refused with "Step <skill> has no <kind> instance here yet:
+choose one for it in the workflow <name>."
 
 **Read and preview** (`setup/file.ts`, `setup/plan.ts`, `planSetup`, RPC `setup.preview {text}` →
 `SetupRead`). `parseSetup` keeps a line counter, so every problem has the line of its key. The
-order: YAML errors; a `__proto__` key anywhere ("Unknown setting **proto**" under `settings`),
+order: a text longer than `advanced.setupFileMaxBytes` (UTF-8 bytes; default 1 MB), refused
+without a line before the YAML is read, for the preview and again at Apply; YAML errors; a `__proto__` key anywhere ("Unknown setting **proto**" under `settings`),
 which would not become a key of the value read; aliases of aliases past the YAML library's
 count, refused with the first alias's line instead of failing; an empty file or one that is not
 a mapping; the version (a missing version
@@ -1944,14 +2378,21 @@ registry schema, a secret setting with any value, a `personal` setting, a `toFil
 not secret, and any string the secret net matches. Then the commands are built: `setting.set`
 at global scope for each value that differs from what is stored (or the default), and for each
 workflow `workflow.update` of the one with its id, else of the only one with its name, or
-`workflow.create` with the file's id. A step keeps the instance it already uses when that is of
+`workflow.create` with the file's id. Each own skill in the file is `skill.update` of the own
+skill with its name when the description or text differ (a `replaced` line; "(the text
+differs)" when only the text does), else `skill.create` (an `added` line), either way with
+the whole text as the line's `full`; a name the rule refuses or one in the file twice refuses
+the file with its line. Skills are planned before workflows, so a step that runs or follows a
+skill the same file brings is not marked. A step's skill counts with its source, as a run finds
+it: `yours` only among own skills (or the file's), `wow` (or a built-in name without a source)
+only among wow skills, anything else only among folder skills. A step keeps the instance it already uses when that is of
 the file's kind, else takes the first instance of that kind, so a file read where it was written
 changes nothing. Each command is decided once on the projections without storing anything, so a
 command the app would refuse (rules that point nowhere, a workflow with a live run) refuses the
 file with its line. The preview (`SetupPreview`) has `added` (nothing stored or a new workflow)
 and `replaced` (a stored value or an existing workflow), each a `{what, from, to}` line with
 `full`, the whole new value as YAML or text, whenever `to` does not say all of it (a text past
-the 160 characters a line shows, a list, a workflow's steps with their prompts and rules), so
+the `assistant.valueLength` characters a line shows, a list, a workflow's steps with their prompts and rules), so
 the view can show it on request and nothing is applied unseen; `marked`
 for a workflow whose skill is not installed ("skill not installed: brew-report") or whose
 provider kind has no instance here; and `toFillIn` with label and place, without the secrets
@@ -1966,7 +2407,9 @@ name, text}` and `setup.undo {applicationId}`). `decideInSteps` decides them in 
 transaction, like the assistant's answer commands. Apply reads the text again with
 `planSetup` (the preview is never trusted), decides each command as the user's, and records
 each one's change with `changeOf` from `assistant/changes.ts`: the values it left (`expect`) and
-the commands that take it back (`inverse`). The event `setup.applied` stores them as `parts` of
+the commands that take it back (`inverse`). An own skill's record has the target `{kind:
+'skill', id: <name>}` and holds its name, description and text; its inverse is the delete, the
+update with the old text, or the create. The event `setup.applied` stores them as `parts` of
 the `SetupApplicationRecord`; the `setupApplications` topic row (`SetupApplication`) leaves them
 out. Undo checks every part with `undoRefusal` first and is refused, changing nothing, with what
 changed when any thing the file set changed again; otherwise it decides every inverse, newest
@@ -1980,7 +2423,9 @@ how many secrets are listed to fill in and what was left out), "Start from a set
 input; its text goes to `setup.preview`), the preview dialog with "Read before you apply" (the
 warnings) first, the lists Added, Replaced (a line with `full` opens "Show all of it"), Marked
 and To fill in afterwards and Apply, or the problems with their lines, and a row per
-applied file with Undo or "Undone". The palette has "Save setup to a file", "Start from a setup
+applied file with Undo or "Undone". Under an applied file's row stay its marks and "Still to fill
+in": its `toFillIn` entries that have no stored reference at global scope yet, each with its
+place. The palette has "Save setup to a file", "Start from a setup
 file" (through `setupStore.pickWanted`: while a "Connect an agent" step is on screen, at first
 start or in the Assistant view, that step owns the picker and the palette stays where it is,
 counted in `setupStore.stepPickers`; otherwise it opens Settings → Advanced and its picker) and
@@ -1992,7 +2437,145 @@ Tests: `apps/server/src/setup/setup.test.ts` (two whole servers: save on one wit
 secret, folder, email, card, backlog item and thread, which the file must not contain; preview
 and apply on the other, Undo, refused Undo, CRLF and byte order mark, each refusal with its
 line, a newer version, a missing skill, the round trip, the assistant's refusal, and the RPC
-methods); `apps/web/src/settings/setup.test.tsx`; `apps/web/e2e/setup-file.spec.ts`.
+methods); `apps/server/src/setup/setup-skills.test.ts` (own skills saved, previewed as added
+or replaced with their text, applied as files under wow's home and removed by Undo, the name
+rule with its line); `apps/web/src/settings/setup.test.tsx`; `apps/web/e2e/setup-file.spec.ts`.
+
+## Question card
+
+One card draws every question in wow (intent 2026-11-questions-and-models): an agent's in a chat
+thread or a workflow step, and the assistant's own. `packages/contracts/src/questions.ts` holds
+the shapes: `QuestionOption {label, description?, recommended?}`, `QuestionReply {picked, text}`
+(the picked labels in the asker's order and the typed text), `replyText` (one line: labels, then
+text), `replyProblem` (empty, a label that is not offered, two picks on a single choice question),
+`markRecommended` (both providers mark a recommended choice by ending its label with
+"(Recommended)"; the label stays, since the answer must name it exactly), `shownLabel` and
+`cardOrder` (recommended first).
+
+- **Provider questions.** `questionAsked` carries `header?` and `askId?` (the questions of one
+  provider request). The question row's `request` and the `question` item's payload keep both;
+  `question.answer {answers: [{questionId, reply}]}` answers the questions of one ask together
+  and is refused when a reply has a problem, a question was answered, or the turn that asked is
+  no longer the running one ("… was not answered before its turn ended, so it can no longer be
+  answered."). `question.answered` carries `answer` (the line) and `reply`; the projector writes
+  the line to the row and the reply into the item's payload (`QuestionItemPayload.reply`), which
+  the card reads. Events and items from before the card have no `reply`, `header` or `askId`:
+  the card shows the row's `answer` text and one card per question, as before. A waiting
+  question still makes the thread `needs_you`, so runs list a waiting step as before. Only a
+  question of the running turn counts as open (`ReadModel.openRequests`, and the composer's
+  `pendingQuestion` in the web): one left when its turn ended keeps its row unanswered, shows
+  "Not answered", and holds up nothing.
+- **The assistant's questions.** `ask_questions` (see "Assistant") changes nothing; the view reads
+  the call (`askedQuestionsOf` in `packages/contracts/src/asked.ts`: a call of
+  `ask_questions` whose output says `asked`). The answer is the user's next message:
+  `thread.answerQuestions {threadId, itemId, replies}` (only the assistant's thread; refused while
+  its turn runs, when a reply is missing or has a problem, when a turn started after the
+  call's: "These questions were not answered before the next message, so they can no longer be
+  answered.", and when the call's turn was stopped). The tool refuses a second ask while a turn
+  that already asked runs, so a turn has one card. That the turn ends at the ask rests on the
+  tool's note and the instruction text; the server does not stop the turn, and a card stays
+  "Answer when the assistant has finished its turn" until it ends. It starts a turn like `thread.sendMessage`, with `askAnswerText` as the user item's
+  text, `TextItemPayload.answers {askItemId, replies}` on the item, and `askAnswerPrompt` ("[From
+  wow] The user answered your questions (ask_questions) on the card: …") after wow's other notes
+  in the prompt. The conversation shows such a user item as a short note, since the card shows
+  the answer. The assistant's own command for it is refused (classes.ts).
+- **The card** (`apps/web/src/chat/question-card.tsx`, `QuestionCard`). Per question: the header
+  as a chip, the question, the choices with digit hints (recommended first, marked), and a last
+  row "Other" with a text field; a single choice question keeps one pick, a several question any
+  number. Each question is `open`, `answered` (picks and text, or an old line) or `closed`. Send
+  is enabled when every open question has a pick or text. Keys while the card has focus: the
+  arrows move through the choices and "Other" fields of all questions, a digit picks that choice
+  of the question the keyboard is on (the last digit goes to "Other"), Space picks, Enter sends,
+  and a printable key goes to that question's "Other". `ChatQuestions` (chat/items.tsx) feeds it
+  from question items and rows; consecutive question items with one `askId` are one entry
+  (`groupQuestions` in view-model.ts), and a question whose item's turn ended unanswered is
+  closed. `AssistantQuestions` (assistant/questions.tsx) feeds it from the tool call; `askState`
+  reads the conversation: answered by the user item that names the call, closed by any other
+  user item after it, open otherwise (waiting while the call's turn runs). Before it sends, the
+  Assistant view runs each typed text through `holdMessage`, the composer's check, and shows the
+  same `HeldLine` (Put it in <field>, Send anyway, Keep editing) inside the card.
+- **Palette and keys.** A card with an open question adds itself to `questionStore`
+  (chat/question-store.ts) and leaves when nothing on it can be answered; `questionCommands` offers
+  for the newest one "Question: go to the card" (`keybindings.questionFocus`, Alt+Q), "pick
+  <choice>" for each choice, "type your own answer" for each question, and "send the answer(s)".
+
+Tests: `packages/provider-claude/src/index.test.ts` and `packages/provider-codex/src/adapter.test.ts`
+("answers … by a choice, typed text, both"), `packages/contracts/src/questions.test.ts`,
+`apps/server/src/assistant/questions.test.ts`, `apps/web/src/chat/question-card.test.tsx`,
+`apps/web/src/assistant/questions.test.tsx`, `apps/web/e2e/questions.spec.ts`.
+
+## Models for steps
+
+Behavior lives in `intents/2026-11-questions-and-models/spec.md` (13 to 20). wow learns which
+models an instance offers only from the installed provider (`listModels`), and how to choose
+between them only from a guidance text it ships; nothing about models comes from the internet.
+`packages/contracts/src/models.ts` holds the shapes and the sentences both sides show.
+
+- **Which providers need a model.** It is a fact of the adapter: `ProviderAdapter.requiresModel`
+  is false for Claude Code (it picks a model itself) and true for Codex (every `turn/start`
+  carries the thread's model). A decision and the web app cannot ask an adapter, so
+  `providerChatOptions[kind].requiresModel` holds the same fact, and each adapter package has a
+  test that the two agree (`providerRequiresModel(kind)` reads it).
+- **The rule on the server** (`withRequiredModels` in `core/workflows.ts`, spec 17).
+  `workflow.create` and a `workflow.update` that changes the steps give a step on such a provider
+  that names no model the instance's `defaultModel`; without one the command is refused with
+  `missingModelSentence` ("Step check-work runs on Codex (Codex bare), which needs a model on
+  every step, and Codex bare has no default model: choose a model for the step."). A step whose
+  instance is not here yet (a setup file's kind as its id) is judged by that kind. A Claude Code
+  step without a model is stored as before. Old data keeps working (spec 19): `workflow.restore`
+  stores the row as it was, an update that leaves the steps alone does not look at them, a run
+  starts as it did (the step's thread falls back to the instance's and the project's default
+  model, and the runner fails a step whose model is still empty). `DecideContext.keepStepsWithoutModel`
+  lets a setup file's apply and preview store such a step without a default as it is, marked (a
+  step whose instance has a default takes it), and `DecideContext.putBackSteps` makes every undo
+  (`setup.undo`, `assistant.undo`) store the steps exactly as they were stored, no default
+  written in, since it puts back what was there.
+- **Marks** (`modelMark`, spec 19, 20). A setup file's preview and its `setupApplications` row
+  mark a step left without a model and without a default to take ("step check-work has no
+  model, which Codex needs; choose one in the workflow, or the step fails when it starts"), as
+  for a missing skill. `diagnose_setup` names every stored step without a model its provider
+  needs as a problem of kind `model`, with the workflow as its place; with a default the reason
+  says it runs on that default until one is chosen.
+- **`read_models`** (`assistant/models.ts`, `assistantModelsTool`, `ReadModelsRequest
+{providerInstanceId?}` → `ModelsRead {instances: InstanceModels[], note}`). Per instance: kind,
+  `connected`, `reason`, `requiresModel`, the default model and effort, and `models` (`OfferedModel
+{id, label, description, efforts, isDefault}`). An instance is connected when its last test
+  passed (`status: ready`) and its provider listed its models; otherwise it is listed with no
+  models and the reason, and its provider is not asked. A model's `efforts` are
+  `offeredEfforts(kind, model)`: its own levels plus the effort that leaves the choice to the
+  provider (`default` on Claude Code). `ReaderDeps.listModels` is the provider service's.
+- **`read_model_guidance`** (`assistantGuidanceTool` → `ModelGuidance {text, edited, note}`)
+  returns `assistant.modelGuidance` as it is resolved at that call, so an edited text is what the
+  next call reads. The default (`defaultModelGuidance`) covers planning and specification,
+  building, reviewing and mechanical steps for Claude Code and Codex, and names kinds of model
+  (the largest, a balanced one, the smallest), never versions.
+- **What the assistant writes** (`checkStepModels`, spec 15, 16). `create_workflow` and an
+  `update_workflow` with steps check every step before the command is dispatched: the instance
+  exists, it is connected (its last test passed; otherwise the refusal gives the reason
+  `read_models` gives), its models can be read now, the step names one of them, and an effort
+  that model takes (when it takes any). Each refusal says what is offered ("Codex at work does not offer the
+  model codex-ultra (Step 1 (plan-work)). It offers: codex-max, codex-mini."). The user's own
+  commands are not checked against the list, since the builder offers only the list. A change
+  row says each step with its instance, model and effort ("2 steps: plan-work (Codex at work,
+  codex-max, high), deliver-work (Claude at work, small-claude, default)") and is not cut at
+  `assistant.valueLength`; a proposal already has one line per step field. The instruction text
+  names both tools, says to recommend from them with the reason in a sentence, and to ask with
+  `ask_questions` when two choices differ in a way the person would care about.
+
+- **The builder** (spec 18, 19). `ThreadSettings` takes the instance's `defaults` and marks that
+  model and effort "(default)" in its lists. `stepDefaults` fills an empty model with the
+  instance's default, and only for a provider that does not need one with the first listed
+  model, so a Codex step without a default stays empty. `validateDraft` then gives that step
+  `missingModelSentence`, the server's own words, as a problem marked `always`, shown beside the
+  step before the first Save as well, and Save sends nothing. Given the stored workflow, it also
+  warns on a step that was saved without a model its provider needs ("Step 2 was saved without a
+  model, which Codex needs; Save stores mock-model-large.").
+
+Tests: `apps/server/src/assistant/models.test.ts` (a case per acceptance line of the unit),
+`apps/web/src/workflows/step-models.test.tsx`, `apps/web/e2e/models.spec.ts` (the assistant's
+server copy seeds two Codex instances and a workflow restored without models),
+`packages/provider-claude/src/index.test.ts` and `packages/provider-codex/src/adapter.test.ts`
+("requires a model").
 
 ## Chat view
 
@@ -2018,11 +2601,12 @@ permission mode, and its project or folder; then the instance defaults. Folders 
 project (`recentFolders` over `threads`) and "Another folder…" (`Runtime.pickFolder`, a typed path
 in the browser build) replace a separate working-directory field. Starters under the composer come
 from `skills`, open `backlogItems` and the last active thread (`chat.starterCount`). The composer
-focuses on `/chat/new` and on opening a thread; its `$` picker is a cmdk `Command` with
+focuses on `/chat/new` and on opening a thread; its skill list is a cmdk `Command` with
 `shouldFilter={false}` whose selection the text box moves (focus stays in the text box), grouped by
-`skillGroup` (Project, User, Plugins). A message written while a turn runs is held in the composer
+`skillGroupOf` (see "Skills in the composer"). A message written while a turn runs is held in the composer
 and sent when `turns` says the turn ended; while a question waits, the composer sends
-`question.answer`. The working clock reads the running turn's `startedAt` and redraws each second;
+`question.answer` with its text as the answer's typed text. Questions are drawn by the question
+card (see "Question card"). The working clock reads the running turn's `startedAt` and redraws each second;
 it is display only, the state still comes from `turns`. A pending approval takes the focus, and
 the palette's approval commands (`keybindings.approvalAllowOnce|approvalAllowSession|approvalDeny`,
 plain keys, so they do nothing in text fields) answer it. A thread whose step a waiting run asks
@@ -2060,10 +2644,27 @@ one line each and open to edit. Gates are drawn at the positions between steps (
 both), so the engine's `gateBefore` and `gateAfter` stay as they are. A step picks a skill
 from the `skills` topic (stored as its name, or `plugin:name` for a Claude plugin's skill), a
 provider instance, and model, effort and permission mode with the chat's pickers; empty ones are
-filled with the instance defaults, else the first listed model. Expected artifact globs are typed
+filled with the instance defaults, else the first listed model (not for a provider that needs a
+model; see "Models for steps"). Expected artifact globs are typed
 one per line. Validation needs a name, a step, and per step a skill, an instance, a model, an
 effort and a permission mode; a skill missing from the scan is only a warning, because the server
-invokes unknown skills by name. "Start from" (Blank or a template) is offered for a new workflow;
+invokes unknown skills by name. The skill pickers (`step-skills.ts`, `skillChoices`) list every
+skill once in list order with its group as the muted detail; a wow skill's value carries its
+source (`yours/<name>`, `wow/<name>`) so an own skill and a folder skill of the same name are
+two choices, and picking one sets `skillName` and `skillSource` (wow skills spec 9). "Also
+follow" (spec 11) under the skill holds the step's `alsoFollow` as chips in their order, each
+with its group and a button to stop following it, and a picker that adds any other skill from
+every group. "Attached automatically" (spec 12, `attachedSkills`) lists the built-in skills
+`automaticSkills` gives the step, as long as `workflows.attachBuiltInSkills` is on (its global
+value: the builder has no project), the built-in skill is in the list (not switched off) and the
+step does not already name it. Each says why ("Because a rule of this step reads the
+verdict."); `wow-pull-request` shows for a workflow marked "for units", since a unit is only
+known when a run starts. "Leave out" adds the name to `leaveOut` and the row then says it is
+left out, with "Attach again". The rules store's `builder` also carries `changeStep`,
+`forUnits` and `attachBuiltIn`, so the palette acts on the step being edited: "Also follow
+<skill> in step N" (search only), "Stop following <skill> in step N", and "Leave <name> out of
+step N" or "Attach <name> to step N again". `applyStepChanges` takes a field set to undefined
+away, so a step that follows nothing more is saved without `alsoFollow`. "Start from" (Blank or a template) is offered for a new workflow;
 an existing one shows "Based on <template>" and replaces its steps only through "Replace steps
 with template…", which still needs Save. "Save as template…" writes the draft's skills, gates and artifact globs into
 `workflows.templates` (`saveAsTemplate`: replaced by name, else a new kind from the name), with
@@ -2117,9 +2718,12 @@ are no checkboxes, only the sentence that this gate always waits for you. The pa
 each part on the stored workflow (`workflow.gateCondition.<workflowId>.<stepId>.<part>`, found
 by search). At a gate that did not pass, the gate bar says "Did not pass by itself: <parts>" or
 "Waiting for checks" and lists every part with what it found (`gateStanding`); while a run
-waits for checks its run view says "Waiting for checks" instead of "Waiting for you" (other
-lists keep the run state's own words). A step whose gate passed by itself shows "Passed by
-itself: <parts>" with each part's sentence in its row (`passedByItself`).
+waits for checks its run view says "Waiting for checks" instead of "Waiting for you"; while a
+running run's current step thread is `needs_you` (a question or an approval) the run view and the
+Workflows list of runs say "Waiting for an answer" (`runStateLabel(run, threads)`; the run stays
+`running`, questions-and-models spec 7). Other lists keep the run state's own words. A step
+whose gate passed by itself shows "Passed by itself: <parts>" with each part's sentence in its
+row (`passedByItself`).
 
 **Rules on a step** (`rules.ts`, `step-rules.tsx`; workflow branches spec 14, 16, 17). An open
 step ends with "After this step": its rules in the order they are tried, each a row of three
@@ -2188,8 +2792,10 @@ the gate bar without changing `appearance.contextPanel` (the layout store's `con
 see "Context panel"); it stays for that run until the user closes it or leaves the view. The run
 view's own gate bar shows only while the panel does not show the conversation (closed, or showing
 a file), so there is one gate bar on screen. Send back opens a note field in the gate bar. The
-note being written is view state in `gateStore` (`{runId, note, busy, error}`), so the button,
-the palette and the key act on the same field; nothing about the run is kept there. Confirming
+note being written is view state in `gateStore` (`{runId, gate, note, busy, error}`), so the
+button, the palette and the key act on the same field; nothing about the run is kept there.
+`gate` names the wait it was written at (where the run waits, its path length, and the attempt
+and end of the reviewed step), so a note left unsent is not offered at the run's next gate. Confirming
 (the field's "Send it back", or the Send back key again) dispatches `workflowRun.sendBack`; an
 empty note is refused in place with the server's sentence and sends nothing, a server refusal
 shows its reason and keeps the note, Escape or Cancel puts the field away. While a note is open
@@ -2220,8 +2826,11 @@ Refresh changes, Changed file: <path> for each listed file, and Open changed fil
 the chosen one.
 
 After a loop (workflow branches spec 19) a step keeps the hashes of its latest attempt only, so
-the server compares steps in the order they last ended (`run.path`), not in list order: the
-step that ended last is marked with exactly what its latest attempt changed. `stepUnderReview`
+the server compares steps in the order they last ended (`run.path`), not in list order, and
+each attempt also keeps `fileHashesBefore`: the hashes the step that ended before it left (the
+base's for the first), stored by the engine as the attempt ends. A step is compared with those,
+so every step, not only the one that ended last, is marked with what its latest attempt changed;
+a step stored without them is compared with the step that ended before it. `stepUnderReview`
 follows the same order when no gate asks (the step whose visit ended last, not the last step of
 the list), and "This step only" names the attempt ("deliver-work, attempt 2, 1"). A run without
 a path goes by the list as before.
@@ -2306,6 +2915,48 @@ Undo (`offerUndo`, owner decision F-9), which creates the card again with the sa
 a card whose run is live first asks "Stop run and delete" or "Keep run and delete". The dialog
 gives focus back to whatever had it when it opened.
 
+Repeating cards (recurring cards spec 11 to 17, `occurrences.ts`). The view reads
+`calendar.occurrences` for the days it shows (`viewRange`: local midnight of the first day to
+local midnight after the last, in the calendar's zone) through `useCalendarRange`, and reads
+again whenever the `calendarItems`, `triggers` or `workflowRuns` rows change; an answer for
+another range is dropped. A read that is refused, or whose answer does not parse, is kept as an
+error for that range: an error banner "Repeating cards could not be read" with Try again, which
+reads once more. Single cards are still drawn from their topic rows, so nothing about
+them changed; each occurrence of a repeating card becomes a block of its own
+(`occurrenceBlocks`), a copy of the card with the occurrence's start and end and the id
+`<cardId>@<date>`, so layout, roving focus and drag work on it unchanged. `TimeGrid` takes the
+`occurrences` map (`ShownOccurrence`: card, day, `next`, `record`, state, run) beside the items.
+An occurrence block carries a repeat icon (`data-repeating`) and "repeats" in its accessible name.
+Its state comes from the server's record: a fired occurrence shows its run's state, otherwise
+Failed, Missed or Skipped (`occurrenceStateLabels`); an occurrence without a record shows
+Scheduled only when it is the trigger's next one or after the card's `nextAt` (both the server's
+times), and nothing for a day that went by before the card existed. An occurrence is `fixed`
+(`ShownOccurrence.fixed`) when it has a record, or lies before the card's `nextAt` and is not the
+next one: it has started, so it cannot be moved or resized and Delete offers only the whole
+series. A reached occurrence opens its run; any other opens the card form, with
+`cardDialog.date` set when it is not fixed.
+A drag or Alt+Up/Down sends `card.moveOccurrence` and stays within the occurrence's day (a move
+to another day, by pointer or Alt+Left/Right, is not offered); the day is the one in the card's
+zone, so with another calendar zone a drag or key stops at the card zone's midnight even inside
+one calendar column. A drag that ends where it started sends nothing. The series takes the new
+time.
+A record that offers "Run now" puts the button on that block. When the answer's `more` names a
+card, a banner (`occurrences-more`) says its first `calendar.maxOccurrences` are shown.
+
+The card form has a **Repeat** fieldset (`repeat-section.tsx`, rules in `card-form.ts`:
+`RepeatDraft`, `repeatRule`, `repeatDraft`). Interval and count are bounded by `repeatMaxInterval`
+and `repeatMaxCount`, a last day before the card's date is refused, and a weekly rule starts with
+the date's weekday chosen. The rule is said with contracts' `repeatRuleWords`, the same words the
+assistant's change rows use, and a stored repeating trigger says "Fires next <day>, <time>" from
+its `nextAt` (", as saved" while the form differs from the stored card). `card.update` sends
+`repeat` only when the rule changed. For a repeating card, Delete asks "This occurrence"
+(`card.skipOccurrence`, offered only when the form was opened from an occurrence; Undo sends
+`card.update` with the skipped days as they were) or "The whole series" (`card.delete`, asking
+about a live run as before; Undo sends `card.create` with `repeat` and `skippedDates`).
+`keybindings.calendarDeleteCard` (Delete) on a focused card in the grid opens the form at that
+question (`cardDialog.deleting`); for a single card it asks "Delete this card?". The context
+panel lists a repeating card's rule in words.
+
 Outlook items are read-only: a lock marker, "Teams meeting" instead of a raw Teams link
 (`meetingPlace`), Join, struck through when cancelled. A click or Enter opens their details popover
 (`outlook-details.tsx`): time, place, organizer, the body snippet, Join, "Open in Outlook"
@@ -2372,7 +3023,10 @@ a click still records the selection and opens the dialog or popover as before.
 
 Palette commands: today, next, previous, day view, week view, zoom in, zoom out and reset zoom
 (on the calendar only, with their keys), hide or show weekends,
-New card, Refresh Outlook, and one "Edit card" entry per card.
+New card, Refresh Outlook, one "Edit card" entry per card, and for a repeating card "Skip next
+occurrence: <title>" (the day of its `nextAt` in the card's zone, with Undo) and "Delete series:
+<title>", for any other card "Delete card: <title>"; both open the form at the delete question,
+as the Delete key does.
 
 ## Context panel
 
@@ -2625,7 +3279,7 @@ Shared pieces in `apps/web/src/components` (views compose them; none restyles `c
   holds back a fence without its closing line, or a table at the very end of the text, and shows
   it as plain text until it is complete, also inside a list item or a quote. It reads a fence
   where markdown does: at most three spaces in from its quote or list item, and ended by the end
-  of that quote or item.
+  of that quote or item. Lines may end in CRLF.
 - `mermaid-diagram.tsx` (`MermaidDiagram`) draws a `mermaid` fence in place with a "Source"
   switch. `mermaid.ts` loads the library on first use, runs it at its `strict` security level in
   the app's theme, and returns the SVG or a one-line reason; while drawing and on failure the
@@ -2641,11 +3295,12 @@ Shared pieces in `apps/web/src/components` (views compose them; none restyles `c
   directives cannot set CSS, theme variables or fonts (`htmlLabels: false` and the `secure`
   list); a diagram that names something to load is refused before drawing, with a reason (a
   flowchart image shape, read from the parsed diagram, and in any diagram type a source with
-  `url(` to somewhere outside the drawing, `image-set(` or `@import`, with backslashes removed,
-  which also refuses a label that spells `url(`); and `scrubSvg` removes pictures, scripts, event
+  `url(` to somewhere outside the drawing, `image-set(` or `@import`, after CSS escapes are read
+  as CSS reads them (`u\72l(` is `url(`), which also refuses a label that spells `url(`); and `scrubSvg` removes pictures, scripts, event
   attributes and any CSS or reference that points outside the drawing, and gives links the rule
   of `safeHref` (a new window for http, https and mailto, no link otherwise). The desktop window
-  opens only http and https links outside the app, so a mailto link does nothing there yet.
+  hands the same three to the system (`opensOutside` in `apps/desktop/src/main/app-protocol.ts`),
+  so a mailto link opens the mail program.
   The palette command "Toggle diagram source" switches every diagram at once
   (`diagramView`); it is view state and is not persisted.
 - `lib/feedback.ts`: `notify.success|error|info|warning` and `offerUndo({message, undo})`.

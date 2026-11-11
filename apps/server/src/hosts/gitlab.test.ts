@@ -1,9 +1,11 @@
 import type {
+  AppNotification,
   ChangeRequest,
   HostRead,
   PlanIntent,
   ProviderInstance,
   ServerCommand,
+  WorkflowRun,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import { execFileSync } from 'node:child_process';
@@ -250,6 +252,13 @@ describe('a project on a GitLab host (spec 34)', () => {
         'https://example.test/gitlab',
       ),
     ).toEqual({ host: 'example.test', path: 'group/app' });
+    // The same host outside the site's sub-path is not the site.
+    expect(
+      gitLabProjectOf(
+        parseRemoteUrl('origin', 'https://example.test/other/group/app.git'),
+        'https://example.test/gitlab',
+      ),
+    ).toBe(null);
     // Paths on the site compare without case, like its host name.
     expect(
       gitLabProjectOf(
@@ -309,11 +318,34 @@ describe('a project on a GitLab host (spec 34)', () => {
     // One search, the nested path as one encoded id, and GitHub never asked.
     const searches = asked().filter((request) => request.includes('search='));
     expect(searches).toEqual([
-      `/projects/${encoded}/merge_requests?state=all&search=${encodeURIComponent(`Intent-Unit: ${intentId}/`)}&in=description&order_by=created_at&sort=desc&per_page=100`,
+      `/projects/${encoded}/merge_requests?state=all&search=${encodeURIComponent(`${intentId}/`)}&in=description&order_by=created_at&sort=desc&per_page=100`,
     ]);
     expect(asked().every((request) => request.startsWith(`/projects/${encoded}/`))).toBe(true);
     expect(github.requests).toEqual([]);
     expect(gitlab.requests.every((request) => request.token === TOKEN)).toBe(true);
+  });
+
+  it('finds a merge request whose line is in bold, underscores or quote marks', async () => {
+    gitlab.mergeRequests = [
+      { ...merged, description: `**Intent-Unit:** ${intentId}/U1` },
+      { ...open, description: `__Intent-Unit__: \`${intentId}/U2\`.` },
+      { ...open, iid: 16, branch: 'agent/U3-time', description: `Intent-Unit: "${intentId}/U3"` },
+      {
+        ...open,
+        iid: 18,
+        branch: 'agent/notes',
+        description: `Notes on ${intentId}/U4, no claim.`,
+      },
+    ];
+    await follow();
+    expect(asked().some((request) => request.includes('search='))).toBe(true);
+    expect(statuses()).toEqual({
+      U1: 'delivered',
+      U2: 'claimed',
+      U3: 'claimed',
+      U4: 'waiting',
+      U5: 'blocked',
+    });
   });
 
   it('reads the newest merge requests when the host turns the search down', async () => {
@@ -462,6 +494,172 @@ describe('GitLab refusing or not answering (spec 31, 32)', () => {
     await server.hosts.poll();
     expect(read()?.error).toBeNull();
   });
+
+  it('asks again after the longest wait when Retry-After asks for years', async () => {
+    set('hosts.longestWaitMinutes', 30);
+    await follow();
+    gitlab.failure = { status: 429, message: 'Retry later' };
+    gitlab.retryAfter = String(60 * 60 * 24 * 365 * 30);
+    now = new Date('2026-11-03T09:05:00.000Z');
+    await server.hosts.poll();
+    expect(read()?.error?.message).toContain('asks again after 2026-11-03T09:35:00.000Z');
+    gitlab.failure = undefined;
+    gitlab.retryAfter = undefined;
+    const before = gitlab.requests.length;
+    now = new Date('2026-11-03T09:30:00.000Z');
+    await server.hosts.poll();
+    expect(gitlab.requests.length).toBe(before);
+    now = new Date('2026-11-03T09:36:00.000Z');
+    await server.hosts.poll();
+    expect(read()?.error).toBeNull();
+  });
+});
+
+// For the event trigger cases below.
+const commit = (message: string) =>
+  git(
+    '-c',
+    'user.name=Invented',
+    '-c',
+    'user.email=invented@example.invalid',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    message,
+  );
+const sha = (ref: string) => git('rev-parse', ref).toString().trim();
+const eventRuns = () =>
+  (snapshot(server.database.db, { topic: 'workflowRuns' }) as WorkflowRun[]).filter(
+    (run) => run.event,
+  );
+const notices = () => snapshot(server.database.db, { topic: 'notifications' }) as AppNotification[];
+const pollAgain = async () => {
+  now = new Date(now.getTime() + 60 * 60 * 1000);
+  await server.hosts.poll();
+  await server.hosts.idle();
+  await server.workspaces.settled();
+};
+
+const failingAt = (head: string): MockMergeRequest => ({
+  ...open,
+  sha: head,
+  pipeline: { id: 602, status: 'failed', jobs: [{ name: 'test', status: 'failed' }] },
+});
+
+describe('an event trigger on a GitLab merge request', () => {
+  let start: string;
+  let bellSha: string;
+  beforeEach(async () => {
+    // The remote cannot be reached here, so its branches are what was last fetched.
+    commit('Invented start');
+    start = sha('HEAD');
+    commit('Invented bell');
+    bellSha = sha('HEAD');
+    git('update-ref', 'refs/remotes/origin/main', start);
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    git('update-ref', 'refs/remotes/origin/agent/U2-bell', bellSha);
+    set('workspaces.fetchBeforeCreate', false);
+    server.database.db.insert(providerInstances).values(instance).run();
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'gated',
+      name: 'Gated',
+      steps: [
+        {
+          id: 'only',
+          skillName: 'deliver-work',
+          providerInstanceId: instance.id,
+          gateBefore: true,
+          gateAfter: false,
+          expectedArtifacts: [],
+        },
+      ],
+    });
+  });
+
+  const passing = (): MockMergeRequest => ({
+    ...open,
+    sha: bellSha,
+    pipeline: { id: 601, status: 'success', jobs: [{ name: 'test', status: 'success' }] },
+  });
+  const fork = 9009;
+
+  it('starts nothing for a merge request from a fork and says why', async () => {
+    gitlab.mergeRequests = [merged, { ...passing(), sourceProjectId: fork }];
+    await follow();
+    expect(requests().find((row) => row.id === 'tea:14')?.fromFork).toBe(true);
+    dispatch({
+      type: 'trigger.create',
+      triggerId: 'on-checks',
+      projectId: 'tea',
+      event: 'checksFailed',
+      workflowId: 'gated',
+    });
+    gitlab.mergeRequests = [merged, { ...failingAt(bellSha), sourceProjectId: fork }];
+    await pollAgain();
+    expect(eventRuns()).toEqual([]);
+    expect(notices().map((notice) => [notice.title, notice.body])).toEqual([
+      [
+        'Trigger started nothing',
+        'Checks failed · !14: it comes from a fork, so nothing started. A run would work on the fork\'s files, and they would steer an agent on this computer. "Start runs for pull requests from forks" (triggers.forkPullRequests) allows it.',
+      ],
+    ]);
+  });
+
+  it("starts a fork's merge request at its head commit once the project allows forks", async () => {
+    set('triggers.forkPullRequests', true, 'project:tea');
+    gitlab.mergeRequests = [merged, { ...passing(), sourceProjectId: fork }];
+    await follow();
+    dispatch({
+      type: 'trigger.create',
+      triggerId: 'on-checks',
+      projectId: 'tea',
+      event: 'checksFailed',
+      workflowId: 'gated',
+    });
+    gitlab.mergeRequests = [merged, { ...failingAt(bellSha), sourceProjectId: fork }];
+    await pollAgain();
+    const [run] = eventRuns();
+    expect(run?.event).toMatchObject({
+      headSha: bellSha,
+      headRef: 'refs/merge-requests/14/head',
+      fromFork: true,
+    });
+    expect(run?.workingCopy).toMatchObject({ state: 'ready', startSha: bellSha });
+  });
+
+  it('starts a merged merge request whose branch is gone at the tip of the default branch', async () => {
+    gitlab.mergeRequests = [merged, passing()];
+    await follow();
+    expect(requests().find((row) => row.id === 'tea:14')?.fromFork).toBe(false);
+    dispatch({
+      type: 'trigger.create',
+      triggerId: 'on-merged',
+      projectId: 'tea',
+      event: 'merged',
+      workflowId: 'gated',
+    });
+    gitlab.mergeRequests = [
+      merged,
+      {
+        ...passing(),
+        state: 'merged',
+        mergedAt: '2026-11-03T09:30:00Z',
+        branch: 'agent/U2-gone',
+      },
+    ];
+    await pollAgain();
+    const [run] = eventRuns();
+    expect(run?.event).toMatchObject({ event: 'merged', headSha: bellSha, fromFork: false });
+    expect(run?.workingCopy).toMatchObject({
+      state: 'ready',
+      startSha: start,
+      note: 'Branch agent/U2-gone was not found. origin was not fetched (the setting is off), so the working copy starts at the tip of main as it was last fetched.',
+    });
+  });
 });
 
 describe('Test connection to GitLab', () => {
@@ -538,6 +736,20 @@ describe('the pipeline’s own status (spec 34)', () => {
     });
     expect(checkState).toBe('pending');
     expect(checks.at(-1)).toEqual({ name: 'pipeline 503', state: 'pending', url: pipelineUrl });
+  });
+
+  it('reads the jobs of a merged-results pipeline, which runs on a merge commit', async () => {
+    expect(
+      await checksOf({
+        id: 503,
+        status: 'failed',
+        mergeSha: 'f00dcafe00000000000000000000000000000000',
+        jobs: [{ name: 'test', status: 'failed' }],
+      }),
+    ).toEqual({
+      checkState: 'failure',
+      checks: [{ name: 'test', state: 'failure', url: `${site}/${projectPath}/-/jobs/50300` }],
+    });
   });
 });
 

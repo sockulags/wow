@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { snapshot } from '../core/subscriptions.js';
-import { providerInstances } from '../db/schema.js';
+import { events, providerInstances } from '../db/schema.js';
 import { startServer, type RunningServer } from '../server.js';
 import { confluenceLinksIn, confluencePageOf } from './confluence.js';
 import { MockConfluence, type MockPage } from './mock-confluence.js';
@@ -263,6 +263,22 @@ describe('links to pages on the Confluence site', () => {
       'id:789',
     ]);
   });
+
+  it('keeps brackets that belong to a title in the address', () => {
+    const text = [
+      `Plain ${wiki}/display/ENG/Plan+(draft), and`,
+      `[the plan](${wiki}/display/ENG/Kettle+(v2)).`,
+      `[${wiki}/display/ENG/Notes+[old]](${wiki}/pages/viewpage.action?pageId=456)`,
+      `(${wiki}/pages/viewpage.action?pageId=789)`,
+    ].join('\n');
+    expect(confluenceLinksIn(text, wiki).map((link) => link.ref)).toEqual([
+      'title:ENG/Plan (draft)',
+      'title:ENG/Kettle (v2)',
+      'title:ENG/Notes [old]',
+      'id:456',
+      'id:789',
+    ]);
+  });
 });
 
 describe('the pages a run links to (spec 35)', () => {
@@ -402,13 +418,59 @@ describe('when Confluence refuses or does not answer (spec 31, 32)', () => {
     expect(logged.join('\n')).not.toContain(WIKI_TOKEN);
   });
 
-  it('keeps the last page and names the token setting on 404, reading the other pages', async () => {
+  it('keeps the last page on 404 and points to the link, not the token, reading the other pages', async () => {
     confluence.pages = [notes];
     await server.hosts.poll();
     const [gone, kept] = pageRead()?.pages ?? [];
     expect(gone).toMatchObject({ fetchedAt: lastFetched, page: { title: 'Kettle design' } });
-    expect(gone?.error).toMatchObject({ kind: 'refused', setting: 'trackers.confluence.token' });
+    // The token works, so a deleted page is no reason to send the user to the token setting.
+    expect(gone?.error).toMatchObject({ kind: 'refused', setting: null });
     expect(gone?.error?.message).toContain('shows no page 123');
+    expect(gone?.error?.message).toContain('may have been deleted or moved');
+    expect(kept).toMatchObject({ fetchedAt: now.toISOString(), error: null });
+    expect(pageRead()?.error).toBeNull();
+  });
+
+  it('writes a round that read the same pages as a time only, not the bodies again', async () => {
+    const synced = () =>
+      server.database.db
+        .select()
+        .from(events)
+        .all()
+        .filter((event) => event.kind === 'pages.synced');
+    const before = synced().length;
+    const stored = pageRead();
+    await server.hosts.poll();
+    const [round] = synced().slice(before);
+    expect(synced()).toHaveLength(before + 1);
+    expect(round?.payload).toEqual({
+      projectId: 'tea',
+      reads: [],
+      fetched: { at: now.toISOString(), ids: ['run:r1'] },
+    });
+    expect(JSON.stringify(round?.payload)).not.toContain('whistle');
+    expect(pageRead()).toEqual({
+      ...stored,
+      fetchedAt: now.toISOString(),
+      pages: stored?.pages.map((page) => ({ ...page, fetchedAt: now.toISOString() })),
+    });
+
+    // A page that changed is written whole again.
+    confluence.pages = [{ ...design, version: 5, body: '<p>New whistle.</p>' }, notes];
+    now = new Date('2026-11-03T09:20:00.000Z');
+    await server.hosts.poll();
+    expect(synced().at(-1)?.payload).toMatchObject({ reads: [{ id: 'run:r1' }] });
+    expect(pageRead()?.pages[0]?.page?.body).toBe('<p>New whistle.</p>');
+  });
+
+  it('keeps no page larger than hosts.pageMaxBytes and names that setting', async () => {
+    set('hosts.pageMaxBytes', 1000);
+    confluence.pages = [{ ...design, body: `<p>${'tea '.repeat(400)}</p>` }, notes];
+    await server.hosts.poll();
+    const [large, kept] = pageRead()?.pages ?? [];
+    expect(large?.page?.body).toBe(design.body);
+    expect(large?.error).toMatchObject({ kind: 'failed', setting: 'hosts.pageMaxBytes' });
+    expect(large?.error?.message).toContain('more than the 1000 wow keeps');
     expect(kept).toMatchObject({ fetchedAt: now.toISOString(), error: null });
     expect(pageRead()?.error).toBeNull();
   });

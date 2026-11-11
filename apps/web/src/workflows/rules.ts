@@ -166,6 +166,11 @@ export interface RulesState {
     | {
         readonly steps: readonly DraftStep[];
         setRules(stepId: string, rules: readonly StepRule[]): void;
+        // Any other edit of a step (its skills from the palette); absent in older callers.
+        changeStep?(stepId: string, changes: Partial<DraftStep>): void;
+        // What decides the built-in skills wow attaches by itself (wow skills spec 12).
+        readonly forUnits?: boolean;
+        readonly attachBuiltIn?: boolean;
       }
     | undefined;
   // The step being edited and the rule that has, or last had, the keyboard.

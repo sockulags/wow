@@ -11,17 +11,21 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CommandRejected } from '../core/orchestrator.js';
 import {
   notifications,
+  projects,
   providerInstances,
+  threadItems,
   threads,
   workflowRuns,
   workflows,
 } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { MockGitHub, type MockCheckRun, type MockPullRequest } from '../hosts/mock-github.js';
+import { MockGitLab } from '../hosts/mock-gitlab.js';
 import { startServer, type RunningServer } from '../server.js';
 
 // Review loop spec 54 to 57 on the server: a gate whose condition passes or holds the run,
@@ -35,12 +39,17 @@ const bellBranch = 'agent/U2-bell';
 let root: string;
 let project: string;
 let server: RunningServer;
+let options: Parameters<typeof startServer>[0];
 let host: MockGitHub;
 let now: Date;
 // What the invented agent answers, by the skill its prompt starts with.
 let answers: Record<string, string>;
 let prompts: string[];
+// Runs as a turn starts, before it is answered.
+let onTurn: () => void;
 let timers: { callback: () => void; delayMs: number }[];
+// Threads whose turn is the message that is never answered.
+const hanging = new Set<string>();
 const ceiling = process.env['GIT_CEILING_DIRECTORIES'];
 
 const git = (dir: string, ...args: string[]) =>
@@ -199,11 +208,13 @@ beforeEach(async () => {
   now = new Date('2026-11-03T09:00:00.000Z');
   answers = { 'check-work': 'Looked at the bell.\n\nAPPROVED', wrap: 'Wrapped up.' };
   prompts = [];
+  onTurn = () => undefined;
   timers = [];
+  hanging.clear();
   host = new MockGitHub({ owner: 'acme', repo: 'tea', webUrl: 'https://ghe.example.invalid' });
   host.token = TOKEN;
   host.pulls = [checks(passed('test'))];
-  server = await startServer({
+  options = {
     home: path.join(root, 'wow home'),
     env: {},
     platform: 'linux',
@@ -224,12 +235,20 @@ beforeEach(async () => {
       providers: {
         claude: (row) =>
           new MockProviderAdapter(row.kind, (command) => {
+            // Only the message that hangs is ever interrupted here; it ends as interrupted.
+            if (command.type === 'interrupt' && hanging.delete(command.threadId)) {
+              return [{ type: 'turnInterrupted', threadId: command.threadId }];
+            }
             if (command.type !== 'startTurn') return [];
             const { threadId, prompt } = command;
             prompts.push(prompt);
+            onTurn();
             const skill = Object.keys(answers).find((name) => prompt.startsWith(`/${name}`));
             // A message the test sends beside the run and that is never answered.
-            if (prompt === 'hang') return [];
+            if (prompt === 'hang') {
+              hanging.add(threadId);
+              return [];
+            }
             const failure = /^fails: (.*)$/.exec(answers[skill ?? ''] ?? '');
             if (failure) return [{ type: 'turnFailed', threadId, error: failure[1] ?? '' }];
             return [
@@ -244,7 +263,8 @@ beforeEach(async () => {
           }),
       },
     },
-  });
+  };
+  server = await startServer(options);
   db().insert(providerInstances).values(instance).run();
   dispatch({ type: 'project.create', projectId: 'tea', name: 'Tea timer', cwd: project });
   set('trackers.github.baseUrl', api);
@@ -316,6 +336,23 @@ describe('the artifacts part through the runner (spec 54, 55)', () => {
     });
   });
 
+  it('does not hold when the project row is gone at the step end, so nothing could be looked at', async () => {
+    await mkdir(path.join(project, 'docs'));
+    await writeFile(path.join(project, 'docs', 'bell.md'), '# Invented notes\n');
+    // The row goes while the step's turn is answered, before the runner looks for the files.
+    answers['check-work'] = 'Looked.';
+    onTurn = () => db().delete(projects).where(eq(projects.id, 'tea')).run();
+    createWorkflow(expecting);
+    await start();
+    expect(run().state).toBe('waiting');
+    expect(gate()).toMatchObject({
+      state: 'waitingForUser',
+      parts: [
+        { part: 'artifacts', state: 'failed', detail: 'Nothing found for docs/*.md, readme.md' },
+      ],
+    });
+  });
+
   it('passes when every glob found a file', async () => {
     await mkdir(path.join(project, 'docs'));
     await writeFile(path.join(project, 'docs', 'bell.md'), '# Invented notes\n');
@@ -361,6 +398,39 @@ describe('the checks part (spec 54 to 56)', () => {
       ],
     });
     expect(waitingNotices()).toHaveLength(1);
+  });
+
+  it('names a GitLab merge request as one in the failing check', async () => {
+    const site = 'https://gitlab.example.invalid';
+    const gitlab = new MockGitLab({ projectPath: 'acme/tea', webUrl: site });
+    gitlab.token = 'glpat-invented-token-for-tests';
+    gitlab.mergeRequests = [
+      {
+        iid: 14,
+        title: 'Ring the bell at zero',
+        description: 'Invented for the tests.',
+        state: 'opened',
+        branch: bellBranch,
+        sha: git(project, 'rev-parse', 'HEAD').trim(),
+        pipeline: { id: 7, status: 'failed', jobs: [{ name: 'test', status: 'failed' }] },
+      },
+    ];
+    git(project, 'remote', 'set-url', 'origin', `${site}/acme/tea.git`);
+    await server.stop();
+    server = await startServer({ ...options, fetch: gitlab.fetch(site) });
+    set('trackers.gitlab.baseUrl', site);
+    set(
+      'trackers.gitlab.token',
+      await server.secrets.set('setting:trackers.gitlab.token', gitlab.token),
+    );
+    createWorkflow({ gateAfterCondition: ['checks'] });
+    await start();
+    expect(gate()).toMatchObject({
+      state: 'waitingForUser',
+      parts: [
+        { part: 'checks', state: 'failed', detail: 'Merge request !14 has failing checks: test' },
+      ],
+    });
   });
 
   it('waits for checks while they run and passes when a poll shows success', async () => {
@@ -469,6 +539,27 @@ describe('the checks part (spec 54 to 56)', () => {
     host.pulls = [checks(passed('test'))];
     await poll();
     expect(gate()?.state).toBe('waitingForUser');
+  });
+
+  it('ends at start a wait that ran out while the server was stopped, even when no read is stored', async () => {
+    host.pulls = [checks(going('test'))];
+    createWorkflow({ gateAfterCondition: ['checks'] });
+    await start();
+    expect(gate()?.state).toBe('waitingForChecks');
+    // Its project's row is gone, so the read at start stores nothing for the run.
+    db().delete(projects).where(eq(projects.id, 'tea')).run();
+    await server.stop();
+
+    minutes(45);
+    server = await startServer(options);
+    await server.hosts.idle();
+    await settle();
+    expect(run().state).toBe('waiting');
+    expect(gate()).toMatchObject({
+      state: 'waitingForUser',
+      parts: [{ part: 'checks', state: 'failed' }],
+    });
+    expect(waitingNotices()).toHaveLength(1);
   });
 
   it("uses the project's own wait, and a poll after it also ends the wait", async () => {
@@ -683,7 +774,24 @@ describe('rules on a step (workflow branches)', () => {
         'Do the step (build) again in this conversation with that taken into account, and end with your result as before.',
       ].join('\n'),
     );
-    expect(prompts[3]).toBe('/check-work\n\nThe previous step (build) ended with:\n\nDone');
+    // A rule of check-work reads the verdict, so it gets wow-verdict (wow skills spec 12).
+    expect(prompts[3]).toBe(
+      [
+        '/check-work',
+        '',
+        '<skill name="wow-verdict">',
+        'End your final message with exactly one of these lines, alone on the last line and with nothing after it:',
+        '',
+        'APPROVED when the work is done and acceptable as it is.',
+        'CHANGES_REQUESTED when it needs changes before it can go on.',
+        "BLOCKED when it cannot go on without someone's help.",
+        '</skill>',
+        '',
+        'The previous step (build) ended with:',
+        '',
+        'Done',
+      ].join('\n'),
+    );
     expect(waitingNotices()).toHaveLength(1);
     expect(visits().at(-1)).toBe('check-work#3: verdict changes requested → build');
     expect(run().path?.at(-1)?.limit).toBe('build has run 3 times: the limit');
@@ -816,7 +924,7 @@ describe('rules on a step (workflow branches)', () => {
     expect(states()).toEqual(['failed', 'not_started']);
   });
 
-  it('refuses Approve while the thread of the step to go back to is answering, and fails that step when nobody asked', async () => {
+  it('refuses Approve while the thread of the step to go back to is answering, and holds the rerun until that turn ends when nobody asked', async () => {
     answers = { build: 'Built.', 'check-work': 'CHANGES_REQUESTED' };
     host.pulls = [checks(going('test'))];
     createRules([
@@ -836,13 +944,81 @@ describe('rules on a step (workflow branches)', () => {
     );
     expect(run().state).toBe('waiting');
 
-    // The checks pass, so the gate passes by itself and the rule sends the run back to build.
+    // The checks pass, so the gate passes by itself and the rule sends the run back to build,
+    // whose thread is still answering the user: build's turn waits for that one.
     host.pulls = [checks(passed('test'))];
-    await poll();
-    expect(run().state).toBe('failed');
-    expect(run().steps[0]).toMatchObject({ state: 'failed' });
-    expect(run().steps[0]?.error).toContain("The step's thread is still answering a message");
-    expect(notices().filter((notice) => notice.kind === 'failed')).toHaveLength(1);
+    now = new Date(now.getTime() + server.settings.get('hosts.pollSeconds') * 1000);
+    await server.hosts.poll();
+    await server.hosts.idle();
+    await server.workflows.settled();
+    expect(run().state).toBe('running');
+    expect(run().steps[0]).toMatchObject({ state: 'running', attempt: 2 });
+    expect(run().steps[0]?.heldPrompt).toContain('sent the work back');
+    expect(prompts.at(-1)).toBe('hang');
+    expect(notices().filter((notice) => notice.kind === 'failed')).toHaveLength(0);
+
+    // The user's turn ends; build's turn starts in its thread, and the run goes on.
+    answers['check-work'] = 'APPROVED';
+    dispatch({ type: 'thread.interrupt', threadId: 'r1.build' });
+    await server.workflows.settled();
+    await settle();
+    expect(prompts.filter((prompt) => prompt.includes('sent the work back'))).toHaveLength(1);
+    expect(run().steps[0]?.heldPrompt).toBeUndefined();
+    expect(run().steps[0]).toMatchObject({ state: 'done', attempt: 2, finalMessage: 'Done' });
+    expect(visits().slice(0, 3)).toEqual([
+      'build#1: next step',
+      'check-work#1: verdict changes requested → build',
+      'build#2: next step',
+    ]);
+  });
+
+  it('sends a held turn made with skills with the skills named and their texts left out of the thread', async () => {
+    answers = { build: 'Built.', 'check-work': 'CHANGES_REQUESTED' };
+    host.pulls = [checks(going('test'))];
+    // An empty go-back text makes the rerun send the step's whole prompt, skills included.
+    set('workflows.goBackTemplate', '');
+    createRules([
+      step('build', { alsoFollow: [{ name: 'wow-handover' }] }),
+      step('check-work', {
+        gateAfter: true,
+        gateAfterCondition: ['checks'],
+        rules: [goTo(changesRequested, 'build')],
+      }),
+    ]);
+    await start();
+    dispatch({ type: 'thread.sendMessage', threadId: 'r1.build', text: 'hang' });
+    host.pulls = [checks(passed('test'))];
+    now = new Date(now.getTime() + server.settings.get('hosts.pollSeconds') * 1000);
+    await server.hosts.poll();
+    await server.hosts.idle();
+    await server.workflows.settled();
+    expect(run().steps[0]).toMatchObject({ state: 'running', attempt: 2 });
+    expect(run().steps[0]?.heldSkills?.map((skill) => skill.name)).toEqual([
+      'build',
+      'wow-handover',
+    ]);
+
+    answers['check-work'] = 'APPROVED';
+    dispatch({ type: 'thread.interrupt', threadId: 'r1.build' });
+    await server.workflows.settled();
+    await settle();
+    expect(prompts.filter((prompt) => prompt.includes('<skill name="wow-handover">'))).toHaveLength(
+      2,
+    );
+    const sent = db()
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, 'r1.build'))
+      .orderBy(threadItems.index)
+      .all()
+      .filter((item) => JSON.stringify(item.payload).includes('"skills"'));
+    expect(sent).toHaveLength(2);
+    for (const item of sent) {
+      expect(JSON.stringify(item.payload)).not.toContain('<skill');
+      expect(item.payload).toMatchObject({ skills: [{ name: 'build' }, { name: 'wow-handover' }] });
+    }
+    expect(run().steps[0]?.heldSkills).toBeUndefined();
+    expect(run().steps[0]).toMatchObject({ state: 'done', attempt: 2 });
   });
 
   it('refuses a workflow whose rule names a missing step, with the reason', () => {

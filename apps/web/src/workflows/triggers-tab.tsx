@@ -1,4 +1,4 @@
-import { triggerEventLabels, TriggerEvent } from '@wow/contracts';
+import { changeRequestNoun, projectCodeHost, TriggerEvent } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { PlusIcon, Trash2Icon, ZapIcon } from 'lucide-react';
 import type { FormEvent } from 'react';
@@ -23,6 +23,7 @@ import {
   chosenDraft,
   confirmNewTrigger,
   editNewTrigger,
+  eventChoices,
   openNewTrigger,
   removeTrigger,
   setTriggerEnabled,
@@ -33,20 +34,18 @@ import {
   type TriggerRow,
 } from './triggers';
 
-const eventChoices = TriggerEvent.options.map((event) => ({
-  value: event,
-  label: triggerEventLabels[event],
-}));
-
 // "New trigger": project, event and workflow (review loop spec, Interface).
 function NewTriggerDialog() {
   const dispatch = useDispatch();
   const projects = useTopic('projects') ?? [];
   const workflows = useTopic('workflows') ?? [];
+  const reads = useTopic('hostReads') ?? [];
   const draft = useStore(triggersStore, (state) => state.draft);
   const error = useStore(triggersStore, (state) => state.draftError);
   const busy = useStore(triggersStore, (state) => state.busy);
   const chosen = draft ? chosenDraft(draft, projects, workflows) : undefined;
+  const host = projectCodeHost(reads, chosen?.projectId ?? '');
+  const noun = changeRequestNoun(host);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void confirmNewTrigger(dispatch, projects, workflows);
@@ -57,8 +56,8 @@ function NewTriggerDialog() {
         <DialogHeader>
           <DialogTitle>New trigger</DialogTitle>
           <DialogDescription>
-            Starts a run of the workflow when wow first sees the event on a pull request of a
-            followed plan or of one of its own runs in the project.
+            Starts a run of the workflow when wow first sees the event on a {noun} of a followed
+            plan or of one of its own runs in the project.
           </DialogDescription>
         </DialogHeader>
         {chosen && (
@@ -81,7 +80,7 @@ function NewTriggerDialog() {
                 label="Event"
                 value={chosen.event}
                 placeholder="Choose an event"
-                choices={eventChoices}
+                choices={eventChoices(host)}
                 onValueChange={(event) =>
                   editNewTrigger({ event: TriggerEvent.safeParse(event).data ?? '' })
                 }
@@ -93,7 +92,7 @@ function NewTriggerDialog() {
               help={
                 workflows.length === 0
                   ? 'Build a workflow first.'
-                  : 'Its run works in the pull request’s working copy, or in a new one on its branch.'
+                  : `Its run works in the ${noun}’s working copy, or in a new one on its branch.`
               }
             >
               <ChoiceSelect
@@ -192,10 +191,11 @@ export function TriggersTab() {
   const triggers = useTopic('triggers');
   const projects = useTopic('projects') ?? [];
   const workflows = useTopic('workflows') ?? [];
+  const reads = useTopic('hostReads') ?? [];
   const eventsEnabled = useSetting('triggers.eventsEnabled');
   const schedulerPaused = useSetting('scheduler.paused');
   const error = useStore(triggersStore, (state) => state.error);
-  const groups = triggerGroups(triggers ?? [], projects, workflows);
+  const groups = triggerGroups(triggers ?? [], projects, workflows, reads);
   const held = triggersHeld(eventsEnabled, schedulerPaused);
   const newTrigger = (
     <Button type="button" size="sm" onClick={openNewTrigger}>

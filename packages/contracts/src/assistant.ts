@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ProviderInstance } from './projections.js';
+import { AskedQuestion } from './questions.js';
 import { TrackerConnection } from './trackers.js';
 
 // The app assistant (intent 2026-11-app-assistant): what it changed, what it proposed, and the
@@ -32,10 +33,12 @@ export const AssistantTargetKind = z.enum([
   'workflow',
   'plan',
   'trigger',
+  // An own skill, by its name (wow skills spec 8, 22).
+  'skill',
 ]);
 export type AssistantTargetKind = z.infer<typeof AssistantTargetKind>;
 
-// The thing a change was made to. A setting's id is `<key>:<scope>`.
+// The thing a change was made to. A setting's id is `<key>:<scope>`; an own skill's is its name.
 export const AssistantTarget = z.object({ kind: AssistantTargetKind, id: Id });
 export type AssistantTarget = z.infer<typeof AssistantTarget>;
 
@@ -65,6 +68,10 @@ export const AssistantProposalLine = z.object({
   what: z.string().min(1),
   from: z.string().nullable(),
   to: z.string().nullable(),
+  // The whole value when `from` or `to` had to be shortened, so the card can show all of it.
+  // Absent in proposals stored before they were kept.
+  fromFull: z.string().min(1).optional(),
+  toFull: z.string().min(1).optional(),
 });
 export type AssistantProposalLine = z.infer<typeof AssistantProposalLine>;
 
@@ -174,8 +181,8 @@ export const assistantToolsetName = 'wow';
 // Which provider instance runs the assistant, or the sentence that says why none can (spec 1,
 // 27). The setting names an instance; left empty, the instance the thread already runs on is
 // kept while it is connected, and otherwise the first connected one is taken. A Codex instance
-// is taken only with `allowCodex` (setting `assistant.allowCodex`), because Codex keeps its
-// read-only shell tool and so could read any file on the computer. The server decides with
+// is taken only with `allowCodex` (setting `assistant.allowCodex`), because not all of Codex's
+// own tools can be switched off and nobody has seen what a real Codex then offers. The server decides with
 // this; a view can call it with the same rows to say the same thing.
 export type AssistantProvider =
   | { readonly instance: ProviderInstance; readonly problem: null }
@@ -193,7 +200,7 @@ export interface AssistantProviderChoice {
 const connectFirst = 'Connect Claude Code or Codex in Settings → Providers.';
 
 export const assistantCodexOff =
-  'The assistant does not run on Codex, because there it can run read-only shell commands and so read files on this computer, including ones that hold secrets, and wow cannot switch that off. Connect Claude Code in Settings → Providers, or turn on "Let the assistant run on Codex" in Settings → Assistant if you accept that.';
+  'The assistant does not run on Codex by default, because Codex has tools wow cannot switch off, and they might read files on this computer, including ones that hold secrets. Connect Claude Code in Settings → Providers, or turn on "Let the assistant run on Codex" in Settings → Assistant if you accept that.';
 
 export function chooseAssistantProvider(
   instances: readonly ProviderInstance[],
@@ -252,8 +259,11 @@ What you can do
 - When wow refuses something, tell the person the reason wow gave.
 - A message can start with a note from wow saying what the person answered to your proposals and which changes they undid since your last turn. Take it into account; the person did not type it.
 - After a change, say what changed and where it lives in wow (for example Settings → Calendar, the workflow, the card).
+- For anything that recurs (every weekday, every week, every month), make one repeating card with a repeat rule, never a card per day or one card per occurrence. Say how it repeats and when it fires next. To leave out one occurrence, skip that occurrence instead of changing the rule.
+- When a few answers are likely, ask with ask_questions: each question with a short header, its choices (the one you recommend first, marked recommended) and whether several may be picked; the person can always type their own answer instead. Ask one thing at a time unless the questions belong together, at most four at once. Then end your turn: the answer comes as the person's next message, marked as the answer to your questions. Never ask for a secret with it.
+- When you create or change a workflow, every step you write names a provider instance, a model and an effort. Read the instance's models and efforts with read_models and wow's guidance with read_model_guidance first, and choose from what read_models lists, never from memory: wow refuses a model the instance does not offer. Say in a sentence what you recommend for each step and why. When two choices differ in a way the person would care about, such as cost against quality, ask with ask_questions instead of choosing. An instance that read_models lists as not connected offers no models: say so and how to connect it.
 - When the person asks why something does not work, run diagnose_setup and say each thing that fails, its reason and the place to fix it, as wow gave them. When it finds nothing, say so.
-- When wow's note says the first-start step just finished, greet the person: say what is set up and what a first run still needs, from the note's lists. Then go through its "To fill in" list in order, one thing per answer: a secret through show_secret_field, and anything else (work hours, project folders) by asking and then making the change. Move on when the person has answered or says to skip it.
+- When wow's note says the first-start step just finished, greet the person: say what is set up and what a first run still needs, from the note's lists. Then go through its "To fill in" list in order, one thing per answer: a secret through show_secret_field, and anything else (work hours, project folders) by asking and then making the change. Move on when the person has answered or says to skip it. When a note says the person applied a setup file, go through its "To fill in" list the same way.
 
 What is not yours
 - You operate wow only. When someone asks for other work (write this code, explain this error in my project, review this file), say that the chat view is for that and offer to open a new thread there with their text (offer_project_work). Do not attempt the work.
@@ -262,7 +272,7 @@ What is not yours
 
 Secrets
 - Never ask for a token, password, key or any other secret, and never ask the person to paste one into this conversation. If they offer one, tell them not to send it here.
-- When a secret is needed, put its field in front of them with show_secret_field. Say where the person creates it, which rights it needs and what to copy from the guide wow ships (read_token_guide; show_secret_field includes it for a host token), never from memory, and say which host versions the guide was written for. If it says the address is needed first, ask for the address. You only ever learn whether a secret is set and whether the connection test passed.
+- When a secret is needed, put its field in front of them with show_secret_field, or with show_secret_variable for a provider instance's secret environment variable (such as an API key the CLI reads). Say where the person creates it, which rights it needs and what to copy from the guide wow ships (read_token_guide; show_secret_field includes it for a host token), never from memory, and say which host versions the guide was written for. If it says the address is needed first, ask for the address. You only ever learn whether a secret is set and whether the connection test passed.
 - Never repeat anything that looks like a secret.
 
 Write plainly and briefly.`;
@@ -282,6 +292,68 @@ export const SecretFieldRequest = z
   })
   .strict();
 export type SecretFieldRequest = z.infer<typeof SecretFieldRequest>;
+
+// Asks for a provider instance's secret environment variable (spec 14). The value goes to the
+// secret store as `provider:<id>:env:<name>` and the instance holds its reference, as the
+// instance editor stores it.
+export const assistantSecretVariableTool = 'show_secret_variable';
+export const SecretVariableRequest = z
+  .object({
+    providerInstanceId: Id,
+    // The variable's name as the CLI reads it, such as ANTHROPIC_API_KEY.
+    variable: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'an environment variable name'),
+  })
+  .strict();
+export type SecretVariableRequest = z.infer<typeof SecretVariableRequest>;
+
+// Where a provider instance's secret variable is kept in the secret store.
+export const providerSecretName = (providerInstanceId: string, variable: string) =>
+  `provider:${providerInstanceId}:env:${variable}`;
+
+// Asks the user one to four questions with the question card (questions spec 9 to 11). The
+// assistant's turn ends there; the answer arrives as the user's next message.
+export const assistantAskTool = 'ask_questions';
+export const AskQuestionsRequest = z
+  .object({ questions: z.array(AskedQuestion).min(1).max(4) })
+  .strict();
+export type AskQuestionsRequest = z.infer<typeof AskQuestionsRequest>;
+
+// The words in a question that make the tool refuse it (spec 11), each matched as a whole word
+// or phrase without regard to case. A net, not a proof.
+export function askedSecretWord(
+  request: AskQuestionsRequest,
+  words: readonly string[],
+): string | null {
+  const texts = request.questions.flatMap((question) => [
+    question.question,
+    question.header,
+    ...question.options.flatMap((option) => [option.label, option.description ?? '']),
+  ]);
+  for (const word of words) {
+    const trimmed = word.trim();
+    if (trimmed === '') continue;
+    const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu');
+    if (texts.some((text) => pattern.test(text))) return trimmed;
+  }
+  return null;
+}
+
+export const defaultAskRefusedWords: readonly string[] = [
+  'token',
+  'tokens',
+  'password',
+  'passwords',
+  'passwd',
+  'passphrase',
+  'secret',
+  'secrets',
+  'key',
+  'keys',
+  'api key',
+  'credential',
+  'credentials',
+];
 
 // Offers to take a request that is not about operating wow to the chat view (spec 3).
 export const assistantProjectWorkTool = 'offer_project_work';
@@ -396,6 +468,8 @@ export const DiagnosisKind = z.enum([
   'trigger',
   'run',
   'card',
+  // A workflow step without a model its provider needs (questions and models spec 19).
+  'model',
 ]);
 export type DiagnosisKind = z.infer<typeof DiagnosisKind>;
 

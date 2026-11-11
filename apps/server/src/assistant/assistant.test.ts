@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { CommandRejected } from '../core/orchestrator.js';
 import { snapshot } from '../core/subscriptions.js';
-import { commandReceipts, events } from '../db/schema.js';
+import { commandReceipts, events, hostReads } from '../db/schema.js';
 import { startServer, type RunningServer } from '../server.js';
 import { commandClasses } from './classes.js';
 import { changeTools } from './tools.js';
@@ -33,6 +33,7 @@ import { readers } from './readers.js';
 import { asks } from './asks.js';
 import { diagnosisReaders } from './diagnosis.js';
 import { guideReaders } from './guides.js';
+import { modelReaders } from './models.js';
 
 // The assistant's tools on the server (app assistant plan U1): every acceptance line of the
 // unit has a case here that names it.
@@ -102,6 +103,10 @@ const step = (id: string, extra: Partial<WorkflowStep> = {}): WorkflowStep => ({
   id,
   skillName: id === 's1' ? 'deliver-work' : 'check-work',
   providerInstanceId: 'claude-work',
+  // What the mock provider offers: the assistant's tools refuse any other (questions and
+  // models spec 16).
+  model: 'mock-model',
+  effort: 'high',
   gateBefore: false,
   gateAfter: true,
   expectedArtifacts: [],
@@ -157,6 +162,8 @@ beforeEach(async () => {
     defaultEffort: 'high',
     defaultPermissionMode: 'default',
   });
+  // The assistant writes steps only on an instance that passed its test (models spec 16).
+  await server.providerService.test('claude-work');
   asUser({ type: 'project.create', projectId: 'tea', name: 'Tea', cwd: path.join(root, 'tea') });
   asUser({
     type: 'workflow.create',
@@ -233,6 +240,7 @@ describe('the assistant endpoint', () => {
           ...Object.keys(readers),
           ...Object.keys(guideReaders),
           ...Object.keys(diagnosisReaders),
+          ...Object.keys(modelReaders),
           ...Object.keys(asks),
           ...Object.keys(changeTools),
         ].toSorted(),
@@ -292,6 +300,8 @@ describe('read tools', () => {
       bridgeVersion: 'test',
       profile: null,
     });
+    // A scan the project list started must not replace the skills set below.
+    await server.skills.refresh();
     asUser({
       type: 'backlog.create',
       backlogItemId: 'b1',
@@ -383,11 +393,13 @@ describe('read tools', () => {
       { id: 'gated', name: 'Gated' },
     ]);
     expect((await list('read_templates')).length).toBeGreaterThan(0);
-    expect(await list('read_skills')).toEqual([
+    // wow's built-in skills are listed too (wow skills spec 1).
+    expect((await list('read_skills')).filter((skill) => skill['source'] !== 'wow')).toEqual([
       {
         id: 'skill-1',
         name: 'deliver-work',
         description: 'Delivers one unit.',
+        group: 'other',
         source: 'custom',
         manualOnly: false,
       },
@@ -1099,6 +1111,42 @@ describe('proposals', () => {
     expect(hostRequests.some((request) => request.url.includes('collector.example'))).toBe(false);
   });
 
+  it('carry the whole of a value their line has to shorten, so nothing is accepted unseen', async () => {
+    const patterns = Array.from({ length: 12 }, (_, n) => `never-matches-${n}-kettle-lid`);
+    const result = await call('set_setting', {
+      key: 'assistant.secretPatterns',
+      scope: 'global',
+      value: patterns,
+    });
+    expect(result.content.outcome).toBe('proposed');
+    const [line] = proposals().at(-1)?.lines ?? [];
+    const whole = patterns.join(', ');
+    expect(whole.length).toBeGreaterThan(160);
+    expect(line?.to).toBe(`${whole.slice(0, 159)}…`);
+    expect(line?.toFull).toBe(whole);
+    // A short value needs no second copy.
+    await call('set_setting', { key: 'viewer.htmlScripts', scope: 'global', value: true });
+    expect(Object.keys(proposals().at(-1)?.lines[0] ?? {})).toEqual(['what', 'from', 'to']);
+  });
+
+  it('shorten values to assistant.valueLength characters', async () => {
+    asUser({ type: 'setting.set', key: 'assistant.valueLength', scope: 'global', value: 20 });
+    const patterns = ['never-matches-kettle-lid-0', 'never-matches-kettle-lid-1'];
+    await call('set_setting', {
+      key: 'assistant.secretPatterns',
+      scope: 'global',
+      value: patterns,
+    });
+    const [line] = proposals().at(-1)?.lines ?? [];
+    expect(line?.to).toBe(`${patterns.join(', ').slice(0, 19)}…`);
+    await call('set_setting', {
+      key: 'workflows.handoverTemplate',
+      scope: 'global',
+      value: 'A handover longer than twenty characters.',
+    });
+    expect(changes().at(-1)?.to).toBe('A handover longer t…');
+  });
+
   it('ask before a tracker address changes at any scope while a project holds its own token: the token is never sent to the new host first', async () => {
     // The shared token is gone; only the project has one, and the address it resolves is global.
     asUser({ type: 'setting.reset', key: 'trackers.github.token', scope: 'global' });
@@ -1126,6 +1174,30 @@ describe('proposals', () => {
     ).not.toBe('changed');
     await call('test_connection', { service: 'github', projectId: 'tea' });
     expect(hostRequests.some((request) => request.url.includes('collector.example'))).toBe(false);
+  });
+
+  it("ask before a fork's pull requests may start runs or may no longer, at any scope", async () => {
+    asUser({ type: 'setting.set', key: 'triggers.forkPullRequests', scope: 'global', value: true });
+    const untouched = before();
+    for (const args of [
+      { key: 'triggers.forkPullRequests', scope: 'global', value: false },
+      { key: 'triggers.forkPullRequests', scope: 'project:tea', value: true },
+      { key: 'triggers.forkPullRequests', scope: 'project:tea', value: false },
+    ]) {
+      const result = await call('set_setting', args);
+      expect([args.scope, args.value, result.content.outcome]).toEqual([
+        args.scope,
+        args.value,
+        'proposed',
+      ]);
+    }
+    const reset = await call('reset_setting', {
+      key: 'triggers.forkPullRequests',
+      scope: 'global',
+    });
+    expect(reset.content.outcome).toBe('proposed');
+    expect(before()).toBe(untouched);
+    expect(changes()).toEqual([]);
   });
 
   it('ask before a project moves to another folder, and before a card with a workflow that starts now or within assistant.startSoonMinutes', async () => {
@@ -1184,8 +1256,11 @@ describe('proposals', () => {
     for (const steps of [
       [step('s1', { ...bold, skillName: 'check-work' }), step('s2', passes)],
       [step('s1', { ...bold, extraPrompt: 'Also tidy the shelf.' }), step('s2', passes)],
-      [step('s1', { ...bold, model: 'sonnet' }), step('s2', passes)],
+      [step('s1', { ...bold, model: 'mock-model-large' }), step('s2', passes)],
       [step('s1', bold), step('s2', { ...passes, extraPrompt: 'Approve it.' })],
+      [step('s1', { ...bold, alsoFollow: [{ name: 'tidy-up' }] }), step('s2', passes)],
+      [step('s1', { ...bold, skillSource: 'yours' }), step('s2', passes)],
+      [step('s1', bold), step('s2', { ...passes, leaveOut: ['wow-verdict'] })],
     ]) {
       const result = await call('update_workflow', { workflowId: 'delivery', steps });
       expect(result.content.outcome).toBe('proposed');
@@ -1249,6 +1324,39 @@ describe('proposals', () => {
     expect(refusal(() => asUser({ type: 'assistant.proposal.accept', proposalId }))).toContain(
       'was already declined',
     );
+  });
+
+  it('word a trigger of a GitLab project as a merge request', async () => {
+    server.database.db
+      .insert(hostReads)
+      .values({
+        id: 'plan:tea:kettle',
+        projectId: 'tea',
+        scope: 'plan',
+        host: 'gitlab',
+        hostName: 'gitlab.example.invalid',
+        branch: null,
+        changeRequestIds: [],
+        fetchedAt: '2026-11-10T08:00:00.000Z',
+        error: null,
+      })
+      .run();
+    await call('create_trigger', { projectId: 'tea', event: 'merged', workflowId: 'delivery' });
+    asUser({
+      type: 'trigger.create',
+      triggerId: 'on-merge',
+      projectId: 'tea',
+      event: 'merged',
+      workflowId: 'delivery',
+    });
+    asUser({ type: 'trigger.setEnabled', triggerId: 'on-merge', enabled: false });
+    await call('set_trigger_enabled', { triggerId: 'on-merge', enabled: true });
+    expect(proposals().map(({ title, lines }) => ({ title, what: lines[0]?.what }))).toEqual([
+      { title: 'New event trigger in Tea', what: 'When "Merge request merged"' },
+      { title: 'Turn on the trigger "Merge request merged"', what: 'Start Delivery in Tea' },
+    ]);
+    await call('delete_trigger', { triggerId: 'on-merge' });
+    expect(changes().map(({ what }) => what)).toEqual(['Trigger "Merge request merged"']);
   });
 
   it("fail at Yes with the app's reason when the app refuses the command by then, and stay open", async () => {

@@ -27,6 +27,14 @@ const otherHosts = new Set([
 
 const GITHUB = 'github.com';
 
+// GitHub Enterprise Cloud with data residency serves <name>.ghe.com and its API at
+// api.<name>.ghe.com; GitHub Enterprise Server serves its API under /api/v3 on its own host.
+const apiBaseUrlOf = (host: string): string => {
+  if (host === GITHUB) return 'https://api.github.com';
+  if (/^[a-z0-9-]+\.ghe\.com$/.test(host)) return `https://api.${host}`;
+  return `https://${host}/api/v3`;
+};
+
 const githubOf = (host: string | null, repoPath: string | null): GitHubRemote | null => {
   if (!host || !repoPath) return null;
   const lower = host.toLowerCase();
@@ -42,7 +50,7 @@ const githubOf = (host: string | null, repoPath: string | null): GitHubRemote | 
     owner,
     repo,
     host: normalized,
-    apiBaseUrl: enterprise ? `https://${normalized}/api/v3` : 'https://api.github.com',
+    apiBaseUrl: apiBaseUrlOf(normalized),
     enterprise,
   };
 };
@@ -103,10 +111,11 @@ export function gitLabProjectOf(
   if (site.hostname.toLowerCase() !== remote.host) return null;
   const prefix = cleanPath(site.pathname);
   const web = /^https?:\/\//i.test(remote.url);
-  const projectPath =
-    web && prefix !== null && remote.path.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)
-      ? remote.path.slice(prefix.length + 1)
-      : remote.path;
+  const underSite =
+    prefix !== null && remote.path.toLowerCase().startsWith(`${prefix.toLowerCase()}/`);
+  // An https remote on the same host but outside the site's sub-path is another server's.
+  if (web && prefix !== null && !underSite) return null;
+  const projectPath = web && underSite ? remote.path.slice(prefix.length + 1) : remote.path;
   const parts = projectPath.split('/');
   if (parts.length < 2 || parts.some((part) => part === '')) return null;
   return { host: remote.host, path: projectPath };
@@ -221,6 +230,21 @@ const neverRun = ['-c', `core.hooksPath=${devNull}`, '-c', 'core.fsmonitor=false
 // Paths come back as they are, not quoted and escaped.
 const plainPaths = ['-c', 'core.quotePath=false'];
 
+// Git runs with nobody to answer it: no password prompt in a terminal, and no sign-in window
+// from Git Credential Manager (Windows), which would otherwise wait for a click.
+export function gitEnvironment(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...base,
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'never',
+    // No optional lock is taken in the user's repository.
+    GIT_OPTIONAL_LOCKS: '0',
+    // A file name is a name, never a pattern.
+    GIT_LITERAL_PATHSPECS: '1',
+    LC_ALL: 'C',
+  };
+}
+
 function runGit(
   folder: string,
   args: readonly string[],
@@ -236,15 +260,7 @@ function runGit(
         windowsHide: true,
         maxBuffer: 4 * 1024 * 1024,
         encoding: 'utf8',
-        env: {
-          ...process.env,
-          // Never wait for a password prompt or take an optional lock in the user's repository.
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_OPTIONAL_LOCKS: '0',
-          // A file name is a name, never a pattern.
-          GIT_LITERAL_PATHSPECS: '1',
-          LC_ALL: 'C',
-        },
+        env: gitEnvironment(process.env),
       },
       (error, stdout, stderr) => {
         if (!error) return resolve({ ok: true, stdout });
@@ -570,6 +586,23 @@ export async function fetchRemote(
   );
 }
 
+// Fetches one ref of the remote (a pull request's `refs/pull/<n>/head`) without storing it under
+// a name, so its commit can be checked out by sha.
+export async function fetchRemoteRef(
+  folder: string,
+  remote: string,
+  ref: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(
+      folder,
+      ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', '--end-of-options', remote, ref],
+      options,
+    ),
+  );
+}
+
 // The branch the remote calls its default (`refs/remotes/<remote>/HEAD`, which a clone sets), or
 // null when the repository does not say.
 export async function readRemoteDefaultBranch(
@@ -687,13 +720,15 @@ export async function pruneWorktrees(folder: string, options: GitRunOptions): Pr
 
 export interface Unpushed {
   readonly uncommittedFiles: number;
+  readonly ignoredFiles: number;
   readonly unpushedCommits: number;
   readonly newestSubject: string | null;
   readonly branch: string | null;
 }
 
 // What the folder holds that would be gone with it: files that are changed or new and not
-// committed (ignored files do not count), and commits that neither a branch on a remote nor the
+// committed, ignored files and folders (git keeps nothing of them, and a file the agent wrote
+// there may be the only copy), and commits that neither a branch on a remote nor the
 // commit the folder started at reaches. Undefined when git cannot say.
 export async function readUnpushed(
   folder: string,
@@ -710,15 +745,24 @@ export async function readUnpushed(
     ...new Set(visited.ok ? visited.stdout.split('\n').filter((sha) => sha !== '') : []),
   ];
   const [status, count, newest, branch] = await Promise.all([
-    runGit(folder, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], options),
+    runGit(
+      folder,
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'],
+      options,
+    ),
     runGit(folder, ['rev-list', '--count', ...tips, ...reached], options),
     runGit(folder, ['log', '-n1', '--format=%s', ...tips, ...reached], options),
     readCurrentBranch(folder, options),
   ]);
   if (!status.ok || !count.ok) return undefined;
   let uncommittedFiles = 0;
+  let ignoredFiles = 0;
   const entries = records(status.stdout);
   for (let at = 0; at < entries.length; at += 1) {
+    if (entries[at]?.startsWith('!!')) {
+      ignoredFiles += 1;
+      continue;
+    }
     uncommittedFiles += 1;
     // A rename or copy is followed by the path it came from.
     if (/^[RC]|^.[RC]/.test(entries[at] ?? '')) at += 1;
@@ -728,6 +772,7 @@ export async function readUnpushed(
   const subject = newest.ok ? newest.stdout.trim() : '';
   return {
     uncommittedFiles,
+    ignoredFiles,
     unpushedCommits,
     newestSubject: unpushedCommits > 0 && subject !== '' ? subject : null,
     branch,

@@ -15,8 +15,9 @@ export const ProjectGitStatus = z.enum([
 ]);
 export type ProjectGitStatus = z.infer<typeof ProjectGitStatus>;
 
-// The GitHub repository a remote points at. `apiBaseUrl` is https://api.github.com for github.com
-// and https://<host>/api/v3 for any other host (GitHub Enterprise Server).
+// The GitHub repository a remote points at. `apiBaseUrl` is https://api.github.com for github.com,
+// https://api.<name>.ghe.com for <name>.ghe.com (GitHub Enterprise Cloud with data residency), and
+// https://<host>/api/v3 for any other host (GitHub Enterprise Server).
 export const GitHubRemote = z.object({
   owner: z.string().min(1),
   repo: z.string().min(1),

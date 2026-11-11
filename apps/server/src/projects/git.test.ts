@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  gitEnvironment,
   guessJiraKeys,
   parseGitConfigRemotes,
   parseRemoteList,
@@ -23,6 +24,17 @@ const github = (owner: string, repo: string) => ({
   host: 'github.com',
   apiBaseUrl: 'https://api.github.com',
   enterprise: false,
+});
+
+describe('gitEnvironment', () => {
+  it('lets git ask for nothing: no terminal prompt and no Git Credential Manager window', () => {
+    const env = gitEnvironment({ PATH: '/usr/bin', GCM_INTERACTIVE: 'auto' });
+    expect(env).toMatchObject({
+      PATH: '/usr/bin',
+      GIT_TERMINAL_PROMPT: '0',
+      GCM_INTERACTIVE: 'never',
+    });
+  });
 });
 
 describe('parseRemoteUrl', () => {
@@ -52,6 +64,24 @@ describe('parseRemoteUrl', () => {
           repo: 'billing',
           host: 'git.example.invalid',
           apiBaseUrl: 'https://git.example.invalid/api/v3',
+          enterprise: true,
+        },
+      });
+    }
+  });
+
+  it('gives a <name>.ghe.com remote the API of GitHub Enterprise Cloud with data residency', () => {
+    for (const url of [
+      'https://octo.ghe.com/platform/billing.git',
+      'git@Octo.ghe.com:platform/billing.git',
+    ]) {
+      expect({ url, github: parseRemoteUrl('origin', url).github }).toEqual({
+        url,
+        github: {
+          owner: 'platform',
+          repo: 'billing',
+          host: 'octo.ghe.com',
+          apiBaseUrl: 'https://api.octo.ghe.com',
           enterprise: true,
         },
       });

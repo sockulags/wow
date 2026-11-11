@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { QuestionOption, QuestionReply } from './questions.js';
 
 // The normalized provider protocol. Adapters translate their own wire format to and from these
 // types; orchestration and the UI never see provider-specific shapes.
@@ -56,7 +57,7 @@ export const ProviderCommand = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('answerQuestion'),
     questionId: z.string().min(1),
-    answer: z.string(),
+    answer: QuestionReply,
   }),
   z.object({ type: z.literal('setModel'), threadId: z.string().min(1), model: Model }),
   z.object({
@@ -71,12 +72,6 @@ export type ProviderCommand = z.infer<typeof ProviderCommand>;
 
 export const ApprovalKind = z.enum(['command', 'fileChange', 'tool']);
 export type ApprovalKind = z.infer<typeof ApprovalKind>;
-
-export const QuestionOption = z.object({
-  label: z.string().min(1),
-  description: z.string().optional(),
-});
-export type QuestionOption = z.infer<typeof QuestionOption>;
 
 export const TaskStatus = z.enum(['pending', 'in_progress', 'completed']);
 export type TaskStatus = z.infer<typeof TaskStatus>;
@@ -129,6 +124,10 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     ...ThreadScoped,
     questionId: z.string().min(1),
     question: z.string().min(1),
+    // The chip above the question, when the provider gave one.
+    header: z.string().min(1).optional(),
+    // Questions asked together share it; the card answers them together.
+    askId: z.string().min(1).optional(),
     options: z.array(QuestionOption),
     multiSelect: z.boolean(),
   }),
@@ -172,6 +171,10 @@ export interface ProviderChatOptions {
   readonly compactPrompt: string | null;
   // The mode the assistant thread is stored with: the one that asks for nothing and allows least.
   readonly assistantPermissionMode: string;
+  // Whether a workflow step on this provider must name a model (questions and models spec 13,
+  // 17). The adapter owns the fact (`ProviderAdapter.requiresModel`); this copy is what a
+  // decision and the web app read, since neither can ask an adapter.
+  readonly requiresModel: boolean;
 }
 
 export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOptions>> = {
@@ -187,6 +190,7 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
     defaultEffort: 'default',
     compactPrompt: '/compact',
     assistantPermissionMode: 'dontAsk',
+    requiresModel: false,
   },
   codex: {
     permissionModes: [
@@ -198,6 +202,7 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
     defaultEffort: null,
     compactPrompt: null,
     assistantPermissionMode: 'read-only',
+    requiresModel: true,
   },
 };
 
@@ -355,6 +360,8 @@ export interface ProviderAdapterContext {
 // turns the events they emit into thread commands; nothing outside an adapter sees its wire format.
 export interface ProviderAdapter {
   readonly kind: ProviderKind;
+  // A step on this provider must name a model: Claude Code picks one itself, Codex needs one.
+  readonly requiresModel: boolean;
   send(command: ProviderCommand): Promise<unknown>;
   onEvent(listener: (event: ProviderEvent) => void): () => void;
   dispose(): Promise<void>;

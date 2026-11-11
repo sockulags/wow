@@ -165,4 +165,44 @@ describe('Intent-Unit lines', () => {
       new Set(['2026-01-tea-timer']),
     );
   });
+
+  it('reads a line in bold, quoted, in quote marks or with words after the key', () => {
+    const body = [
+      '**Intent-Unit:** 2026-01-tea-timer/U1',
+      '**Intent-Unit: 2026-01-tea-timer/U2**',
+      '> Intent-Unit: 2026-01-tea-timer/U3',
+      '"Intent-Unit: 2026-01-tea-timer/U4"',
+      'Intent-Unit: 2026-01-tea-timer/U5 (the bell part)',
+      '__Intent-Unit__: `2026-01-tea-timer/U6`.',
+      'Not an Intent-Unit: 2026-01-tea-timer/U7',
+    ].join('\n');
+    expect(intentUnitLines(body)).toEqual(
+      ['U1', 'U2', 'U3', 'U4', 'U5', 'U6'].map((unitKey) => ({
+        intentId: '2026-01-tea-timer',
+        unitKey,
+      })),
+    );
+  });
+
+  // A body is anyone's text, and GitLab allows about a megabyte of it. Each line below made a
+  // regex backtrack in time that grows with the square of its length, which at this size runs
+  // for many minutes and so cannot finish inside the test's time limit.
+  it('reads a megabyte of marks that never make a line in one pass', () => {
+    const size = 1_000_000;
+    const hostile = [
+      `Intent-Unit:${'_'.repeat(size)}`,
+      `Intent-Unit: 2026-01-tea-timer/U1${'.'.repeat(size)}x`,
+      `Intent-Unit${'*'.repeat(size)}`,
+      `Intent-Unit: ${'`'.repeat(size)}`,
+      `${'> '.repeat(size / 2)}x`,
+    ];
+    expect(intentUnitLines(hostile.join('\n'))).toEqual([
+      { intentId: '2026-01-tea-timer', unitKey: `U1${'.'.repeat(size)}x` },
+    ]);
+    const lines = Array.from(
+      { length: size / 20 },
+      (_, index) => `Intent-Unit: 2026-01-tea-timer/U${index}`,
+    );
+    expect(intentUnitLines(lines.join('\n'))).toHaveLength(lines.length);
+  });
 });

@@ -1,12 +1,14 @@
 import {
-  isLiveRunState,
+  type CalendarItem,
   type ServerCommand,
   type SettingDefinition,
   type WorkflowStep,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import type { DecideContext, ReadModel } from '../core/orchestrator.js';
+import { liveRunOf } from '../core/series.js';
 import { runPath } from '../core/workflows.js';
+import { firstAfter } from '../scheduler/occurrences.js';
 import { resolveStored } from '../settings/service.js';
 
 // The one table that says what the server does with a command the assistant sends (app
@@ -70,11 +72,14 @@ const moreOnItsOwn: Readonly<Record<string, (next: unknown, current: unknown) =>
   },
 };
 
-// The assistant's own guards, which it does not change without a yes either way: the net that
-// hides secret-looking text, and whether it may run on Codex, where it could read files.
+// Guards the assistant does not change without a yes either way: the net that hides
+// secret-looking text, whether it may run on Codex, where it could read files, and whether a
+// fork's pull request may start a run whose agent the fork's files steer.
 const guardSettings: ReadonlySet<string> = new Set([
   'assistant.secretPatterns',
+  'assistant.askRefusedWords',
   'assistant.allowCodex',
+  'triggers.forkPullRequests',
 ]);
 
 // Where a tracker's token is sent. Spec 7 calls tracker host settings ordinary, but with the
@@ -114,6 +119,29 @@ function startsSoon(
     : 0;
   const soon = Date.parse(context.now) + (typeof minutes === 'number' ? minutes : 0) * 60_000;
   return Date.parse(start) <= soon ? proposal : ordinary;
+}
+
+// When a card would first start a run: its start, or for a repeating card the next occurrence
+// that is not skipped or reached (recurring cards spec 20). Undefined when a series has no
+// occurrence left, which starts nothing.
+function firstStart(
+  card: Pick<CalendarItem, 'id' | 'start' | 'end' | 'zone'> & {
+    readonly repeat: CalendarItem['repeat'];
+    readonly skippedDates?: readonly string[] | undefined;
+  },
+  read: ReadModel,
+  context: DecideContext,
+): string | undefined {
+  if (!card.repeat) return card.start;
+  const taken = new Set([
+    ...(card.skippedDates ?? []),
+    ...read.cardOccurrences(card.id).map((occurrence) => occurrence.date),
+  ]);
+  return firstAfter(
+    { start: card.start, end: card.end, zone: card.zone, repeat: card.repeat },
+    Date.parse(context.now),
+    (occurrence) => !taken.has(occurrence.date),
+  )?.start;
 }
 
 const definitionOf = (key: string, context: DecideContext): SettingDefinition | undefined =>
@@ -164,6 +192,10 @@ const work = (step: WorkflowStep) => ({
   extraPrompt: step.extraPrompt || null,
   providerInstanceId: step.providerInstanceId ?? null,
   model: step.model ?? null,
+  // The skills sent with it are part of what it runs (wow skills spec 11, 12).
+  skillSource: step.skillSource ?? null,
+  alsoFollow: step.alsoFollow?.length ? step.alsoFollow : null,
+  leaveOut: step.leaveOut?.length ? step.leaveOut : null,
 });
 
 const actsAlone = (step: WorkflowStep): boolean => {
@@ -187,6 +219,24 @@ function stepsAskForMore(before: readonly WorkflowStep[], after: readonly Workfl
       (was.gateAfter && !step.gateAfter)
     );
   });
+}
+
+// Changing or removing a skill is a proposal for one of the user's own skills, and refused for
+// a built-in skill or a skill from a folder (wow skills spec 22). A name that is nothing is the
+// app's to refuse, with its own reason.
+function ownSkillClass(name: string, read: ReadModel): Classified {
+  const named = read.skills().filter((skill) => skill.name === name);
+  if (named.length === 0 || named.some((skill) => skill.source === 'yours')) return proposal;
+  if (named.some((skill) => skill.source === 'wow')) {
+    return {
+      class: 'refused',
+      reason: `${name} ships with wow and cannot be changed or removed. Write an own skill with another name instead.`,
+    };
+  }
+  return {
+    class: 'refused',
+    reason: `${name} is a skill from a folder (${named[0]?.dir ?? 'on disk'}); wow does not change skills in other folders. Write an own skill instead.`,
+  };
 }
 
 export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } = {
@@ -215,6 +265,10 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
     'The greeting is sent by wow when the user finishes the first-start step.',
   ),
   'thread.sendMessage': chatOnly,
+  'thread.sendPrepared': serverOnly,
+  'thread.answerQuestions': refused(
+    'Only the user answers your questions, on their card. End your turn and wait for the answer.',
+  ),
   'thread.interrupt': chatOnly,
   'thread.configure': chatOnly,
   'thread.setPinned': chatOnly,
@@ -222,21 +276,47 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'approval.answer': refused("Only the user answers an agent's request for approval."),
   'question.answer': refused("Only the user answers an agent's question."),
   'card.create': (command, read, context) =>
-    startsSoon(command.workflowId, command.projectId, command.start, read, context),
+    startsSoon(
+      command.workflowId,
+      command.projectId,
+      firstStart({ id: command.cardId, ...command, repeat: command.repeat ?? null }, read, context),
+      read,
+      context,
+    ),
   'card.update': (command, read, context) => {
     const card = read.calendarItem(command.cardId);
+    const start = command.start ?? card?.start;
+    const end = command.end ?? card?.end;
+    const zone = command.zone ?? card?.zone;
     return startsSoon(
       afterUpdate(command.workflowId, card?.workflowId),
       afterUpdate(command.projectId, card?.projectId),
-      command.start ?? card?.start,
+      start === undefined || end === undefined || zone === undefined
+        ? start
+        : firstStart(
+            {
+              id: command.cardId,
+              start,
+              end,
+              zone,
+              repeat: command.repeat === undefined ? (card?.repeat ?? null) : command.repeat,
+              skippedDates: command.skippedDates ?? card?.skippedDates ?? [],
+            },
+            read,
+            context,
+          ),
       read,
       context,
     );
   },
+  'card.skipOccurrence': 'ordinary',
+  'card.moveOccurrence': refused(
+    'Moving one occurrence is for the calendar; change the time of a repeating card with update_card.',
+  ),
   'card.delete': (command, read) => {
     const card = read.calendarItem(command.cardId);
-    const run = card?.runId ? read.run(card.runId) : undefined;
-    if (command.stopRun !== undefined || (run && isLiveRunState(run.state))) {
+    const run = card ? liveRunOf(card, read) : undefined;
+    if (command.stopRun !== undefined || run) {
       return {
         class: 'refused',
         reason: run
@@ -298,6 +378,11 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'outlook.sync': serverOnly,
   'outlook.fail': serverOnly,
   'skills.sync': serverOnly,
+  // A skill steers every agent that follows it, so the assistant's own skills wait for a yes
+  // (wow skills spec 22). Built-in skills and skills in other folders are not its to change.
+  'skill.create': 'proposal',
+  'skill.update': (command, read) => ownSkillClass(command.skill.name, read),
+  'skill.delete': (command, read) => ownSkillClass(command.name, read),
   'plans.sync': serverOnly,
   'hosts.sync': serverOnly,
   'tickets.sync': serverOnly,
@@ -307,6 +392,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'workflowRun.checkGate': serverOnly,
   'workflowRun.baseRecorded': serverOnly,
   'workflowRun.stepFailed': serverOnly,
+  'workflowRun.sendHeldTurn': serverOnly,
   'workflowRun.artifactsFound': serverOnly,
   'workflowRun.workingCopyReady': serverOnly,
   'workflowRun.workingCopyFailed': serverOnly,

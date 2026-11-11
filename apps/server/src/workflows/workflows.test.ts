@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   notifications as notificationRows,
   providerInstances,
+  questions,
   skills,
   threadItems,
   threads,
@@ -202,6 +203,7 @@ describe('skills projection', () => {
       .select()
       .from(skills)
       .all()
+      .filter((row) => row.source !== 'wow')
       .map((row) => row.name);
     expect(names).toEqual(['capture-intent']);
   });
@@ -225,6 +227,7 @@ describe('skills projection', () => {
         .select()
         .from(skills)
         .all()
+        .filter((row) => row.source !== 'wow')
         .map((row) => row.name),
     ).toEqual(['capture-intent']);
   });
@@ -282,7 +285,19 @@ describe('workflow runs', () => {
         type: 'startTurn',
         threadId: 'r1.s1',
         cwd: projectDir,
-        prompt: '/capture-intent\n\nThis step is expected to produce:\n- intents/*/spec.md',
+        // The step expects an artifact, so wow-artifacts says so instead of the handover's
+        // sentence (wow skills spec 12, 13).
+        prompt: [
+          '/capture-intent',
+          '',
+          '<skill name="wow-artifacts">',
+          'Before you end, write every artifact this step is expected to produce, each at the path it is expected at. A missing file counts as not done.',
+          '',
+          'The expected paths (a * stands for any name):',
+          '',
+          '- intents/*/spec.md',
+          '</skill>',
+        ].join('\n'),
         model: 'opus',
         effort: 'high',
         permissionMode: 'default',
@@ -387,6 +402,77 @@ describe('workflow runs', () => {
     expect(thread('r1.s1')?.state).toBe('failed');
   });
 
+  it('lists the run as running while its step waits for an answer, and the answer resumes the step (questions spec 7)', async () => {
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'wf-ask',
+      name: 'Asking',
+      steps: [step('a')],
+    });
+    script = (command) => {
+      if (command.type === 'startTurn') {
+        return [
+          {
+            type: 'questionAsked',
+            threadId: command.threadId,
+            questionId: 'ask-1:0',
+            askId: 'ask-1',
+            header: 'Kettle',
+            question: 'Which kettle should the tea timer start?',
+            options: [{ label: 'Glass kettle' }, { label: 'Steel kettle' }],
+            multiSelect: false,
+          },
+        ];
+      }
+      if (command.type === 'answerQuestion') {
+        return [
+          { type: 'textDelta', threadId: 'r9.a', itemId: 'r9.a-b', delta: 'Glass it is.' },
+          { type: 'turnCompleted', threadId: 'r9.a' },
+        ];
+      }
+      return [];
+    };
+    const asked = new Promise<void>((resolve) => {
+      const check = () => {
+        if (thread('r9.a')?.state !== 'needs_you') return;
+        off();
+        resolve();
+      };
+      const off = server.engine.onCommit(check);
+    });
+    dispatch({ type: 'workflowRun.start', runId: 'r9', workflowId: 'wf-ask', projectId: 'p1' });
+    await asked;
+    // Where runs are listed the run is running, as with any step that waits for its thread; the
+    // step's thread is listed as needing you.
+    expect(run('r9')).toMatchObject({ state: 'running' });
+    expect(run('r9').steps[0]).toMatchObject({ state: 'running', threadId: 'r9.a' });
+    const [question] = server.database.db
+      .select()
+      .from(questions)
+      .where(eq(questions.threadId, 'r9.a'))
+      .all();
+    if (!question) throw new Error('no question');
+
+    dispatch({
+      type: 'question.answer',
+      answers: [
+        { questionId: question.id, reply: { picked: ['Glass kettle'], text: 'the clean one' } },
+      ],
+    });
+    expect(thread('r9.a')?.state).toBe('working');
+    const done = await runBecomes((current) => current.state === 'done', 'r9');
+    expect(done.steps[0]).toMatchObject({ state: 'done', finalMessage: 'Glass it is.' });
+    expect(
+      adapters
+        .flatMap((adapter) => adapter.sent)
+        .find((command) => command.type === 'answerQuestion'),
+    ).toEqual({
+      type: 'answerQuestion',
+      questionId: 'ask-1:0',
+      answer: { picked: ['Glass kettle'], text: 'the clean one' },
+    });
+  });
+
   it('rejects runs that cannot start and step changes under a live run', async () => {
     expect(() =>
       dispatch({ type: 'workflowRun.start', runId: 'r9', workflowId: 'missing', projectId: 'p1' }),
@@ -440,7 +526,23 @@ describe('workflow runs', () => {
       .where(eq(threadItems.threadId, 'r1.s1'))
       .orderBy(threadItems.index)
       .get();
-    expect(first).toMatchObject({ kind: 'user', payload: { text: startTurns()[0]?.prompt } });
+    // The thread shows the prompt without the skill's text, and names the skill with its text
+    // reachable (wow skills spec 14).
+    expect(first).toMatchObject({
+      kind: 'user',
+      payload: {
+        text: '/capture-intent',
+        skills: [
+          { name: 'capture-intent', source: 'user-claude', invocation: '/capture-intent' },
+          {
+            name: 'wow-artifacts',
+            source: 'wow',
+            reason: 'this step expects artifacts',
+            text: expect.stringContaining('- intents/*/spec.md'),
+          },
+        ],
+      },
+    });
 
     // A message the user sends at the gate is not the step's outcome.
     const ended = new Promise<void>((resolve) => {
@@ -898,6 +1000,18 @@ describe('run base and changes', () => {
         ['plan.md', 'modified', ['one']],
       ],
     );
+  });
+
+  it('starts no turn for a run stopped while its base was being read', async () => {
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'edits', projectId: 'git' });
+    // Stop arrives before the runner has read the folder's commit.
+    dispatch({ type: 'workflowRun.stop', runId: 'r1' });
+    await server.workflows.settled();
+    expect(run().state).toBe('stopped');
+    expect(startTurns()).toEqual([]);
+    expect(
+      server.database.db.select().from(turns).where(eq(turns.threadId, 'r1.one')).all(),
+    ).toEqual([]);
   });
 
   it('runs without a base in a folder that is not a repository (spec 13)', async () => {

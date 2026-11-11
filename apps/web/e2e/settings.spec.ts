@@ -67,7 +67,7 @@ test.describe('settings', () => {
     );
     await expect(edit.getByLabel('Launch arguments')).toHaveValue('--verbose');
     // The editor lists the models the tested instance reports.
-    await choose(edit.getByLabel('Default model'), /mock/i);
+    await choose(edit.getByLabel('Default model'), 'Mock model');
     await edit.getByLabel('Config folder').fill(`${e2eClaudeConfigDir(home)}-2`);
     await edit.getByRole('button', { name: 'Save' }).click();
     await expect(edit).toBeHidden();
@@ -154,6 +154,7 @@ test.describe('settings', () => {
 
   test('the wizard creates the detected CLIs from the palette', async ({ page }) => {
     await page.goto('/calendar');
+    await expect(page.getByRole('region', { name: 'Calendar' })).toBeVisible();
     await page.keyboard.press('Control+k');
     await page.getByRole('dialog').getByRole('combobox').fill('Detect installed providers');
     await page.keyboard.press('Enter');

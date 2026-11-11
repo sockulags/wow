@@ -1,4 +1,4 @@
-import { runFolder, triggerEventLabels, type StepRun, type WorkflowStep } from '@wow/contracts';
+import { runFolder, type StepRun, type WorkflowStep } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import {
   CalendarIcon,
@@ -20,11 +20,12 @@ import { isBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
 import { useContextPanelShown } from '@/panel/panel-state';
 import { shownFile } from '@/panel/viewer';
+import { runRead } from '@/plans/model';
 import { Artifact } from './artifact-link';
 import { runTabs, type RunSearch } from './changes';
 import { ChangesTab } from './changes-tab';
 import { GateBar } from './gate-bar';
-import { PullRequestTab } from './pull-request-tab';
+import { PullRequestTab, pullRequestTabLabel } from './pull-request-tab';
 import { PagesTab } from './pages-tab';
 import { PathTab } from './path-tab';
 import { ArtifactsTab } from './review-tabs';
@@ -32,6 +33,7 @@ import { TicketTab } from './ticket-tab';
 import { WorkingCopyLine } from './working-copy-line';
 import {
   attemptLabel,
+  eventSummary,
   gateOf,
   gateStanding,
   passedByItself,
@@ -186,11 +188,13 @@ function StepRow({
 export function RunView({ runId, search = {} }: { runId: string; search?: RunSearch }) {
   const { connection, layout } = useRuntime();
   const runs = useTopic('workflowRuns');
+  const threads = useTopic('threads') ?? [];
   const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
   const instances = useTopic('providerInstances') ?? [];
   const cards = useTopic('calendarItems') ?? [];
   const backlog = useTopic('backlogItems') ?? [];
+  const hostReads = useTopic('hostReads') ?? [];
   const { when, zone } = useDateFormat();
   const [error, setError] = useState<string>();
 
@@ -247,6 +251,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
   const item = backlog.find((candidate) => candidate.id === run.backlogItemId);
   const gate = gateOf(run);
   const tab = search.tab ?? 'steps';
+  const pullRequestLabel = pullRequestTabLabel(runRead(hostReads, run.id));
   // The panel's conversation carries the gate bar; without it (closed, or showing a file) the
   // answers stay reachable here.
   const gateInPanel = gate !== undefined && panelShown && !fileInPanel;
@@ -271,7 +276,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
             )}
           </h2>
           <span data-testid="run-state" className="shrink-0 text-xs text-muted-foreground">
-            {runStateLabel(run)}
+            {runStateLabel(run, threads)}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -298,8 +303,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
         </div>
         {run.event && (
           <p data-testid="run-event" className="text-xs text-muted-foreground">
-            Started by an event: {triggerEventLabels[run.event.event].toLowerCase()} on pull request
-            #{run.event.number}
+            Started by an event: {eventSummary(run.event)}
             {run.event.branch !== '' && (
               <>
                 {' '}
@@ -345,7 +349,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
                 search={id === 'steps' ? {} : { tab: id }}
                 replace
               >
-                {label}
+                {id === 'pullRequest' ? pullRequestLabel : label}
               </Link>
             </Button>
           ))}
@@ -364,7 +368,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
           <ArtifactsTab run={run} workflow={workflow} project={project} />
         </div>
       ) : tab === 'pullRequest' ? (
-        <div role="tabpanel" aria-label="Pull request" className="min-h-0 flex-1">
+        <div role="tabpanel" aria-label={pullRequestLabel} className="min-h-0 flex-1">
           <PullRequestTab run={run} />
         </div>
       ) : tab === 'ticket' ? (

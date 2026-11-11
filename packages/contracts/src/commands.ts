@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AssistantChange, AssistantProposal } from './assistant.js';
+import { OwnSkill, SentSkill, SkillRef } from './skills.js';
 import {
   AppNotification,
   Approval,
@@ -46,6 +47,8 @@ import {
   ProviderUpdate,
   ThreadState,
 } from './provider.js';
+import { QuestionReply } from './questions.js';
+import { CardOccurrence, LocalDay, RepeatRule } from './repeat.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
 import { SetupApplication } from './setup.js';
 import { FileHash, RunEffect, UnpushedWork, WorkflowStep } from './workflow.js';
@@ -145,12 +148,33 @@ export const Command = z.discriminatedUnion('type', [
     fallbackModel: z.string().min(1).optional(),
     fallbackEffort: z.string().min(1).optional(),
   }),
-  // The assistant's first turn after the first-start step (app assistant spec 24, 26). The
-  // conversation shows `assistant.greeting` as the user's line; the agent also gets wow's note
-  // of what is set up, what a first run still needs and what a setup file left to fill in.
+  // The assistant's first turn after the first-start step (app assistant spec 24, 26), sent
+  // when the step goes up. The server keeps it owed and greets as soon as the assistant can
+  // run: at once when its thread is open on a connected instance, else at the next
+  // `thread.openAssistant`. The conversation shows `assistant.greeting` as the user's line; the
+  // agent also gets wow's note of what is set up, what a first run still needs and what a setup
+  // file left to fill in.
   z.object({ type: z.literal('thread.greetAssistant') }),
   // Starts a turn with the thread's current model, effort and permission mode (spec 14, 17).
-  z.object({ type: z.literal('thread.sendMessage'), threadId: Id, text: z.string().min(1) }),
+  // `skills` are the skills picked for the message, in order (wow skills spec 10, 18): a wow
+  // skill goes in as its text, a folder skill as its invocation, both before the text. The text
+  // may be empty when skills are picked (a message that is only a chip); the server refuses a
+  // message with neither.
+  z.object({
+    type: z.literal('thread.sendMessage'),
+    threadId: Id,
+    text: z.string(),
+    skills: z.array(SkillRef).optional(),
+  }),
+  // The user's answer to the questions the assistant asked with its tool (questions spec 9):
+  // `itemId` is that tool call, with one reply per question. It is sent as the user's next
+  // message, marked as the answer. Only the assistant's thread has such questions.
+  z.object({
+    type: z.literal('thread.answerQuestions'),
+    threadId: Id,
+    itemId: Id,
+    replies: z.array(QuestionReply).min(1),
+  }),
   // Stops the running turn; what it produced so far stays (spec 23).
   z.object({ type: z.literal('thread.interrupt'), threadId: Id }),
   z.object({
@@ -166,7 +190,12 @@ export const Command = z.discriminatedUnion('type', [
   // needs the user; reopening puts it back under Idle, and a new message reopens it too.
   z.object({ type: z.literal('thread.setDone'), threadId: Id, done: z.boolean() }),
   z.object({ type: z.literal('approval.answer'), approvalId: Id, decision: ApprovalDecision }),
-  z.object({ type: z.literal('question.answer'), questionId: Id, answer: z.string() }),
+  // Answers to an agent's questions, sent together when one ask holds several (questions
+  // spec 3). Refused for a question whose turn ended.
+  z.object({
+    type: z.literal('question.answer'),
+    answers: z.array(z.object({ questionId: Id, reply: QuestionReply })).min(1),
+  }),
   // A local card (spec 5). Times are instants; `zone` is the zone they were entered in. Cards
   // never reach Outlook.
   z.object({
@@ -180,8 +209,14 @@ export const Command = z.discriminatedUnion('type', [
     projectId: Id.optional(),
     backlogItemId: Id.optional(),
     workflowId: Id.optional(),
+    // Makes the card repeat (recurring cards spec 1); start and end are the first occurrence.
+    repeat: RepeatRule.optional(),
+    // Days already skipped by hand, for Undo of a deleted series (spec 13).
+    skippedDates: z.array(LocalDay).optional(),
   }),
-  // Moving, resizing and editing (spec 6). Outlook items are read-only and refused.
+  // Moving, resizing and editing (spec 6). Outlook items are read-only and refused. On a
+  // repeating card it changes every occurrence that has not started (recurring cards spec 10);
+  // `repeat: null` makes it a single card again (spec 14).
   z.object({
     type: z.literal('card.update'),
     cardId: Id,
@@ -193,6 +228,22 @@ export const Command = z.discriminatedUnion('type', [
     projectId: Id.nullable().optional(),
     backlogItemId: Id.nullable().optional(),
     workflowId: Id.nullable().optional(),
+    repeat: RepeatRule.nullable().optional(),
+    // The whole list of days skipped by hand; Undo of a skip sends the list as it was.
+    skippedDates: z.array(LocalDay).optional(),
+  }),
+  // "This occurrence" (recurring cards spec 12): the day is skipped and the rest of the series
+  // is untouched. Refused for a day the rule does not fall on and for one that already started.
+  z.object({ type: z.literal('card.skipOccurrence'), cardId: Id, date: LocalDay }),
+  // Moving or resizing one occurrence in the calendar (spec 11): the occurrence on `date` gets
+  // this start and end, and so does every occurrence that has not started, by its local time
+  // and length. An occurrence moves within its day; another day is a change of the rule.
+  z.object({
+    type: z.literal('card.moveOccurrence'),
+    cardId: Id,
+    date: LocalDay,
+    start: Timestamp,
+    end: Timestamp,
   }),
   // A card whose run is running or waiting needs `stopRun`: the app asks whether to stop the run
   // first (spec 13). The run's threads are kept either way.
@@ -223,6 +274,12 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('workflow.delete'), workflowId: Id }),
   // Undo of a delete: puts the row the client still holds back as it was.
   z.object({ type: z.literal('workflow.restore'), workflow: Workflow }),
+  // Own skills (wow skills spec 5, 6): a file under wow's home each. Undo sends the opposite
+  // command with what the client still holds: delete for a create, update with the old text,
+  // create for a delete.
+  z.object({ type: z.literal('skill.create'), skill: OwnSkill }),
+  z.object({ type: z.literal('skill.update'), skill: OwnSkill }),
+  z.object({ type: z.literal('skill.delete'), name: z.string().min(1) }),
   z.object({
     type: z.literal('workflowRun.start'),
     runId: Id,
@@ -418,6 +475,15 @@ export const InternalCommand = z.discriminatedUnion('type', [
   }),
   // Replaces the skills projection with a fresh scan; the server's skills watcher sends it.
   z.object({ type: z.literal('skills.sync'), skills: z.array(Skill) }),
+  // A workflow step's turn: the prompt the engine made, sent as it is, with the text the thread
+  // shows and the skills it was made with (wow skills spec 14).
+  z.object({
+    type: z.literal('thread.sendPrepared'),
+    threadId: Id,
+    text: z.string().min(1),
+    prompt: z.string().min(1),
+    skills: z.array(SentSkill),
+  }),
   // Replaces the plans projection with a fresh read of every project's intents folder; the
   // server's plans service sends it.
   z.object({ type: z.literal('plans.sync'), intents: z.array(PlanIntent) }),
@@ -484,6 +550,8 @@ export const InternalCommand = z.discriminatedUnion('type', [
     // The user interrupted the step's turn. Such a step follows no rule.
     stopped: z.boolean().optional(),
   }),
+  // A turn ended in the thread of a step whose own turn was held for it: send the held one.
+  z.object({ type: z.literal('workflowRun.sendHeldTurn'), runId: Id, stepId: Id }),
   z.object({
     type: z.literal('workflowRun.artifactsFound'),
     runId: Id,
@@ -565,6 +633,9 @@ export const CardChanges = CalendarItem.pick({
   projectId: true,
   backlogItemId: true,
   workflowId: true,
+  repeat: true,
+  skippedDates: true,
+  pastSeries: true,
 }).partial();
 export type CardChanges = z.infer<typeof CardChanges>;
 
@@ -655,6 +726,17 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     aggregate: Id,
     payload: z.object({ providerInstanceId: Id, progress: ProviderUpdateProgress }),
   }),
+  // An own skill written or removed by command. The skills service writes or removes its file.
+  z.object({
+    kind: z.literal('skill.saved'),
+    aggregate: z.literal('skills'),
+    payload: z.object({ skill: Skill, previous: Skill.nullable() }),
+  }),
+  z.object({
+    kind: z.literal('skill.deleted'),
+    aggregate: z.literal('skills'),
+    payload: z.object({ skill: Skill }),
+  }),
   z.object({
     kind: z.literal('skills.synced'),
     aggregate: z.literal('skills'),
@@ -684,11 +766,17 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     aggregate: Id,
     payload: z.object({ projectId: Id, reads: z.array(TicketRead) }),
   }),
-  // Page reads as they now are.
+  // Page reads as they now are. `fetched` names the reads whose host answered the same as last
+  // time: only their times move (touchPageRead), so unchanged page bodies are not written into
+  // the history again every round. Absent on events from before.
   z.object({
     kind: z.literal('pages.synced'),
     aggregate: Id,
-    payload: z.object({ projectId: Id, reads: z.array(PageRead) }),
+    payload: z.object({
+      projectId: Id,
+      reads: z.array(PageRead),
+      fetched: z.object({ at: Timestamp, ids: z.array(Id).min(1) }).optional(),
+    }),
   }),
   z.object({
     kind: z.literal('planRun.changed'),
@@ -846,7 +934,9 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       threadId: Id,
       providerInstanceId: Id,
       providerQuestionId: Id,
+      // The answer as one line; events from before the card hold only this.
       answer: z.string(),
+      reply: QuestionReply.optional(),
       answeredAt: Timestamp,
     }),
   }),
@@ -857,6 +947,13 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     payload: z.object({ cardId: Id, changes: CardChanges, updatedAt: Timestamp }),
   }),
   z.object({ kind: z.literal('card.deleted'), aggregate: Id, payload: z.object({ cardId: Id }) }),
+  // A repeating card reached an occurrence: what happened there (recurring cards spec 5 to 8).
+  // Kept when the card is deleted, so Undo brings the card back with its history.
+  z.object({
+    kind: z.literal('card.occurrenceRecorded'),
+    aggregate: Id,
+    payload: z.object({ cardId: Id, occurrence: CardOccurrence }),
+  }),
   // The card follows its trigger and its run.
   z.object({
     kind: z.literal('card.stateChanged'),
@@ -885,6 +982,17 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
   // An ordinary change the assistant made, stored in the same commit as the change itself.
   z.object({ kind: z.literal('assistant.changed'), aggregate: Id, payload: AssistantChangeRecord }),
+  // The greeting after the first-start step waits until the assistant can run it.
+  z.object({
+    kind: z.literal('assistant.greetingOwed'),
+    aggregate: Id,
+    payload: z.object({ at: Timestamp }),
+  }),
+  z.object({
+    kind: z.literal('assistant.greetingSent'),
+    aggregate: Id,
+    payload: z.object({ at: Timestamp }),
+  }),
   z.object({ kind: z.literal('setup.applied'), aggregate: Id, payload: SetupApplicationRecord }),
   z.object({
     kind: z.literal('setup.undone'),

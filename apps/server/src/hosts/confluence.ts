@@ -1,4 +1,4 @@
-import type { JiraAuthMode, Page } from '@wow/contracts';
+import { settingsRegistry, type JiraAuthMode, type Page } from '@wow/contracts';
 import { jiraAuthorization } from '../trackers/jira.js';
 import {
   TrackerError,
@@ -8,7 +8,15 @@ import {
   trimBase,
   type RequestOptions,
 } from '../trackers/http.js';
-import { HostFailure, hostLink, webLinksIn, type PageAdapter, type PageRef } from './adapter.js';
+import {
+  HostFailure,
+  hostLink,
+  waitBound,
+  webLinksIn,
+  type PageAdapter,
+  type PageRef,
+  type WaitOptions,
+} from './adapter.js';
 
 // Confluence Cloud, Server and Data Center as a page host (review loop spec 35). It reads one page
 // a link names, with `GET <base>/rest/api/content/<id>?expand=body.view,version,space` or, for a
@@ -23,8 +31,9 @@ export interface ConfluenceSignIn {
   readonly token: string;
 }
 
-export interface ConfluenceHostOptions extends RequestOptions {
-  readonly clock?: () => Date;
+export interface ConfluenceHostOptions extends RequestOptions, WaitOptions {
+  // `hosts.pageMaxBytes`: a larger body is not kept.
+  readonly pageMaxBytes?: number;
 }
 
 // A link to a page on the Confluence site, as found in a text.
@@ -105,8 +114,10 @@ export function createConfluenceHost(
   const base = trimBase(config.baseUrl);
   const headers = { authorization: jiraAuthorization(config) };
   const clock = options.clock ?? (() => new Date());
+  const bounded = waitBound(options);
   // A redirect (a sign-in page, another site) is turned down instead of followed with the token.
   const requestOptions: RequestOptions = { ...options, redirect: 'manual' };
+  const pageMaxBytes = options.pageMaxBytes ?? settingsRegistry['hosts.pageMaxBytes'].default;
   let requests = 0;
   let waitUntil: Date | undefined;
 
@@ -115,9 +126,17 @@ export function createConfluenceHost(
     if (!Number.isFinite(seconds) || seconds < 0) return false;
     const until = clock().getTime() + seconds * 1000;
     if (Number.isNaN(new Date(until).getTime())) return false;
-    waitUntil = new Date(Math.max(until, waitUntil?.getTime() ?? 0));
+    waitUntil = new Date(Math.max(bounded(until), waitUntil?.getTime() ?? 0));
     return true;
   };
+
+  // The token works (a bad one gets 401), so the page is most likely gone, moved or restricted:
+  // the link is what to look at, not the token setting.
+  const missing = (page: PageRef, answered: string): MissingPage =>
+    new MissingPage(
+      'refused',
+      `${name} shows no ${described(page)} to the Confluence token${answered}. The page may have been deleted or moved: check the link, or that the page is not restricted from the token's account.`,
+    );
 
   const failure = (page: PageRef, error: unknown): HostFailure => {
     if (!(error instanceof TrackerError)) {
@@ -137,13 +156,7 @@ export function createConfluenceHost(
         tokenSetting,
       );
     }
-    if (error.status === 404) {
-      return new MissingPage(
-        'refused',
-        `${name} shows no ${described(page)} to the Confluence token (it answered 404). Check that the page exists and that the token in Settings → Trackers may read it.`,
-        tokenSetting,
-      );
-    }
+    if (error.status === 404) return missing(page, ' (it answered 404)');
     return new HostFailure('failed', error.message);
   };
 
@@ -159,6 +172,15 @@ export function createConfluenceHost(
     }
     const version = field(field(content, 'version'), 'number');
     const webui = text(field(field(content, '_links'), 'webui'));
+    const body = text(field(field(field(content, 'body'), 'view'), 'value'));
+    const bytes = Buffer.byteLength(body, 'utf8');
+    if (bytes > pageMaxBytes) {
+      throw new MissingPage(
+        'failed',
+        `${name} answered ${described(page)} with ${bytes} bytes, more than the ${pageMaxBytes} wow keeps; open it on the host, or raise the limit in Settings → Hosts.`,
+        'hosts.pageMaxBytes',
+      );
+    }
     return {
       id: own,
       title: text(field(content, 'title')),
@@ -167,7 +189,7 @@ export function createConfluenceHost(
         typeof version === 'number' && Number.isSafeInteger(version) && version > 0
           ? version
           : null,
-      body: text(field(field(field(content, 'body'), 'view'), 'value')),
+      body,
       // The address is made from the stored site, never taken whole from the answer.
       url:
         hostLink(webui.startsWith('/') ? `${base}${webui}` : '') ??
@@ -212,13 +234,7 @@ export function createConfluenceHost(
         );
       }
       const first: unknown = results[0];
-      if (first === undefined) {
-        throw new MissingPage(
-          'refused',
-          `${name} shows no ${described(page)} to the Confluence token. Check that the page exists and that the token in Settings → Trackers may read it.`,
-          tokenSetting,
-        );
-      }
+      if (first === undefined) throw missing(page, '');
       return pageOf(page, first);
     },
   };

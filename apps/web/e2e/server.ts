@@ -5,6 +5,7 @@ import type {
   ProviderInstance,
   ProviderTestResult,
 } from '@wow/contracts';
+import { replyText } from '@wow/contracts';
 import { MockOutlookSource, loadFixtures } from '@wow/outlook-bridge';
 import {
   MockConfluence,
@@ -27,7 +28,11 @@ import path from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
 import {
   e2eAssistantBrokenWorkflowId,
+  e2eAssistantGateWorkflowId,
   e2eAssistantHome,
+  e2eCodexBareId,
+  e2eCodexWithDefaultId,
+  e2eOldWorkflowId,
   e2eFirstStartCodexError,
   e2eFirstStartHome,
   e2eBinDir,
@@ -441,6 +446,23 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     if (inTeaRepo(command.cwd)) buildTeaTimer(command.cwd);
     return [session, ...finish(threadId, 'The tea timer rings twice now.')];
   }
+  // A turn that reads three things, one of which fails: the conversation draws them as one row.
+  if (/look around/i.test(prompt)) {
+    const calls = [
+      { id: 'read-1', name: 'Read', input: { file_path: 'package.json' }, status: 'ok' },
+      { id: 'grep-1', name: 'Grep', input: { pattern: 'kettle' }, status: 'error' },
+      { id: 'read-2', name: 'Read', input: { file_path: 'README.md' }, status: 'ok' },
+    ] as const;
+    return [
+      session,
+      ...calls.flatMap(({ id, name, input, status }): ProviderEvent[] => [
+        { type: 'toolCallStarted', threadId, itemId: id, name, input },
+        { type: 'toolCallOutput', threadId, itemId: id, output: `${name} ${id} answered\n` },
+        { type: 'toolCallCompleted', threadId, itemId: id, status },
+      ]),
+      ...finish(threadId, 'The repo holds a kettle.'),
+    ];
+  }
   if (/approve/i.test(prompt)) {
     return [
       session,
@@ -461,6 +483,41 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       },
     ];
   }
+  // Two questions in one ask, as Claude Code asks them: a header each, a recommended choice
+  // marked the provider's way, and one that takes several picks (questions spec 1 to 3).
+  if (/two questions/i.test(prompt)) {
+    return [
+      session,
+      {
+        type: 'questionAsked',
+        threadId,
+        questionId: `${threadId}${separator}ask${separator}0`,
+        askId: `${threadId}-ask`,
+        header: 'Kettle',
+        question: 'Which kettle should the tea timer start?',
+        options: [
+          { label: 'Glass kettle', description: 'You can see the water' },
+          { label: 'Steel kettle (Recommended)', description: 'Boils faster', recommended: true },
+          { label: 'Travel kettle', description: 'Small, for one cup' },
+        ],
+        multiSelect: false,
+      },
+      {
+        type: 'questionAsked',
+        threadId,
+        questionId: `${threadId}${separator}ask${separator}1`,
+        askId: `${threadId}-ask`,
+        header: 'Teas',
+        question: 'Which teas go on the timer list?',
+        options: [
+          { label: 'Green', description: 'Three minutes' },
+          { label: 'Black', description: 'Five minutes' },
+          { label: 'Oolong', description: 'Four minutes' },
+        ],
+        multiSelect: true,
+      },
+    ];
+  }
   if (/question/i.test(prompt)) {
     return [
       session,
@@ -468,6 +525,8 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
         type: 'questionAsked',
         threadId,
         questionId: `${threadId}${separator}question`,
+        askId: `${threadId}-question`,
+        header: 'Color',
         question: 'Which color should the button be?',
         options: [
           { label: 'Red', description: 'Warm and loud' },
@@ -506,6 +565,9 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
 
 const threadOf = (id: string) => id.split(separator)[0] ?? id;
 
+// What the first question of a two-question ask was answered, per thread, until the second is.
+const answered = new Map<string, string[]>();
+
 const chatScript: MockScript = (command) => {
   switch (command.type) {
     case 'startTurn':
@@ -519,8 +581,17 @@ const chatScript: MockScript = (command) => {
         ...finish(threadId, allowed ? 'The command ran.' : 'The command was denied.', 'after'),
       ];
     }
-    case 'answerQuestion':
-      return finish(threadOf(command.questionId), `You chose ${command.answer}.`, 'after');
+    case 'answerQuestion': {
+      // The questions of one ask are answered together; the agent goes on after the last.
+      const threadId = threadOf(command.questionId);
+      const given = [...(answered.get(threadId) ?? []), replyText(command.answer)];
+      if (command.questionId.endsWith(`${separator}ask${separator}0`)) {
+        answered.set(threadId, given);
+        return [];
+      }
+      answered.delete(threadId);
+      return finish(threadId, `You chose ${given.join(' and ')}.`, 'after');
+    }
     case 'interrupt':
       return [{ type: 'turnInterrupted', threadId: command.threadId }];
     default:
@@ -774,6 +845,8 @@ if (home === e2eChangesHome) {
   }
 }
 await seedPlanFiles(home);
+// Commands the assistant mock agent sends as the assistant's, numbered for their ids.
+let assistantActs = 0;
 const server = await startServer({
   home,
   port,
@@ -794,6 +867,8 @@ const server = await startServer({
           ? new AssistantMockAgent(
               new MockProviderAdapter('claude', chatScript),
               () => server.assistant.tools,
+              (command) =>
+                server.engine.dispatch(`assistant-mock-${++assistantActs}`, command, 'assistant'),
               `http://127.0.0.1:${trackerPort}`,
             )
           : new MockProviderAdapter('claude', chatScript),
@@ -1008,7 +1083,71 @@ if (home === e2ePanelHome) {
   });
 }
 
+// A Codex step of the old workflow below, without a model.
+const oldStep = (id: string, providerInstanceId: string) => ({
+  id,
+  skillName: id,
+  providerInstanceId,
+  effort: 'low',
+  permissionMode: 'auto',
+  gateBefore: false,
+  gateAfter: false,
+  expectedArtifacts: [],
+});
+
 if (home === e2eAssistantHome) {
+  for (const [providerInstanceId, name, defaults] of [
+    [
+      e2eCodexWithDefaultId,
+      'Codex at work',
+      { defaultModel: 'mock-model-large', defaultEffort: 'medium' },
+    ],
+    [e2eCodexBareId, 'Codex bare', {}],
+  ] as const) {
+    server.engine.dispatch(`seed-${providerInstanceId}`, {
+      type: 'providerInstance.create',
+      providerInstanceId,
+      kind: 'codex',
+      name,
+      binaryPath: 'codex',
+      configDir: '/home/me/.codex',
+      env: {},
+      launchArgs: [],
+      ...defaults,
+    });
+  }
+  // Stored as an older wow stored it: its Codex steps name no model. Restoring a row keeps it
+  // as it was, which is how old data reaches the store here.
+  server.engine.dispatch('seed-assistant-old-workflow', {
+    type: 'workflow.restore',
+    workflow: {
+      id: e2eOldWorkflowId,
+      name: 'Old review',
+      templateKind: null,
+      steps: [oldStep('check-work', e2eCodexBareId), oldStep('plan-work', e2eCodexWithDefaultId)],
+      createdAt: '2026-10-01T08:00:00.000Z',
+      updatedAt: '2026-10-01T08:00:00.000Z',
+    },
+  });
+  // Its run waits before its only step, so a test has a gate to ask the assistant about.
+  server.engine.dispatch('seed-assistant-gate-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eAssistantGateWorkflowId,
+    name: 'Kettle check',
+    steps: [
+      {
+        id: 'check',
+        skillName: 'check-work',
+        providerInstanceId: e2eProviderInstanceId,
+        model: 'mock-model',
+        effort: 'default',
+        permissionMode: 'default',
+        gateBefore: true,
+        gateAfter: false,
+        expectedArtifacts: [],
+      },
+    ],
+  });
   server.engine.dispatch('seed-assistant-broken-workflow', {
     type: 'workflow.create',
     workflowId: e2eAssistantBrokenWorkflowId,
@@ -1175,7 +1314,11 @@ leafHost.pulls = [
     body: `Invented.\n\nIntent-Unit: ${e2eEventIntentId}/U1`,
     state: 'open',
     branch: e2eEventBranch,
-    sha: 'd4d4d4d4d4d4',
+    // The run's working copy starts at the pull request's head commit.
+    sha:
+      home === e2eChangesHome
+        ? git(leafRepo, 'rev-parse', e2eEventBranch).toString().trim()
+        : 'd4d4d4d4d4d4',
     checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }],
   },
 ];

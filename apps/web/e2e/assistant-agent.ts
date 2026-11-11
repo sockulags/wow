@@ -1,4 +1,10 @@
-import type { ProviderAdapter, ProviderCommand, ProviderEvent } from '@wow/contracts';
+import type {
+  ProviderAdapter,
+  ProviderCommand,
+  ProviderEvent,
+  ServerCommand,
+} from '@wow/contracts';
+import { e2eProviderInstanceId } from './env';
 
 // The mock agent of the assistant's turns (e2e/assistant.spec.ts). An ordinary thread goes to
 // the chat tests' script; a turn that carries wow's toolset calls wow's tools in process, the
@@ -9,10 +15,15 @@ export interface AssistantToolsLike {
   call(name: string, args: unknown): Promise<{ readonly text: string; readonly isError: boolean }>;
 }
 
-interface Step {
-  readonly tool: string;
-  readonly args: Record<string, unknown>;
-}
+// What the agent does in a turn: a call of one of wow's tools, or a command wow would carry out
+// for the assistant (with its origin), which is how the assistant's own commands reach the
+// engine; a mock agent may try one that no tool offers, to show that wow refuses it.
+type Step =
+  | { readonly tool: string; readonly args: Record<string, unknown> }
+  | { readonly command: ServerCommand };
+
+// Carries out a command as the assistant's; throws wow's refusal.
+export type AssistantAct = (command: ServerCommand) => void;
 
 // The user's own words: the last part of the prompt, after a note from wow if there is one.
 const userText = (prompt: string) => prompt.split('\n\n').at(-1) ?? prompt;
@@ -46,6 +57,18 @@ function diagnosisReply(results: readonly string[]): string {
     ),
   ].join('\n');
 }
+
+// A step of the review workflow the mock agent writes.
+const reviewStep = (id: string, model: string, effort: string) => ({
+  id,
+  skillName: id,
+  providerInstanceId: e2eProviderInstanceId,
+  model,
+  effort,
+  gateBefore: false,
+  gateAfter: true,
+  expectedArtifacts: [],
+});
 
 function scenario(text: string, trackerUrl: string): Scenario {
   if (/work hours/i.test(text)) {
@@ -88,6 +111,38 @@ function scenario(text: string, trackerUrl: string): Scenario {
         "I set the GitLab address. The steps from wow's guide are above the field: create a personal access token with read_api on your GitLab and put it in the field; I never see it.",
     };
   }
+  // A workflow made from wow's models and guidance (questions and models spec 15): read both,
+  // then write each step with a model and an effort the instance lists.
+  if (/review workflow/i.test(text)) {
+    return {
+      steps: [
+        { tool: 'read_models', args: {} },
+        { tool: 'read_model_guidance', args: {} },
+        {
+          tool: 'create_workflow',
+          args: {
+            name: 'Tea review',
+            steps: [
+              reviewStep('plan-work', 'mock-model-large', 'high'),
+              reviewStep('check-work', 'mock-model', 'low'),
+            ],
+          },
+        },
+      ],
+      answer:
+        'I made Tea review. plan-work runs on Mock model, large with high effort, because the guidance says planning needs the most capable model; check-work runs on Mock model with low effort, since it only reads.',
+    };
+  }
+  if (/look over/i.test(text)) {
+    return {
+      steps: [
+        { tool: 'read_projects', args: {} },
+        { tool: 'read_workflows', args: {} },
+        { tool: 'read_skills', args: {} },
+      ],
+      answer: 'I read your projects, workflows and skills.',
+    };
+  }
   if (/not work/i.test(text)) {
     return {
       steps: [{ tool: 'diagnose_setup', args: {} }],
@@ -102,10 +157,63 @@ function scenario(text: string, trackerUrl: string): Scenario {
         'That is work in your project, which the chat view is for. Open it there with the button.',
     };
   }
-  if (/approve/i.test(text)) {
-    // A real agent may try a tool it guesses at; wow has none for a gate (spec 11).
+  // The assistant's question tool (questions spec 9 to 11): two questions that belong together,
+  // and one that asks for a token, which wow refuses.
+  if (/morning brief/i.test(text)) {
     return {
-      steps: [{ tool: 'approve_gate', args: { runId: 'the-waiting-run' } }],
+      steps: [
+        {
+          tool: 'ask_questions',
+          args: {
+            questions: [
+              {
+                question: 'When should the morning brief run?',
+                header: 'Time',
+                options: [
+                  { label: '08:30', description: 'Before stand-up', recommended: true },
+                  { label: '09:00', description: 'After stand-up' },
+                ],
+                multiSelect: false,
+              },
+              {
+                question: 'Which projects should it read?',
+                header: 'Projects',
+                options: [
+                  { label: 'Demo', description: 'The demo project' },
+                  { label: 'Tea timer', description: 'The invented one' },
+                ],
+                multiSelect: true,
+              },
+            ],
+          },
+        },
+      ],
+      answer: 'Two things first; they are on the card above.',
+    };
+  }
+  if (/ask me for the token/i.test(text)) {
+    return {
+      steps: [
+        {
+          tool: 'ask_questions',
+          args: {
+            questions: [{ question: 'What is your GitLab token?', header: 'GitLab', options: [] }],
+          },
+        },
+      ],
+      answer: '',
+      reply: (results) => {
+        const { reason } = JSON.parse(results[0] ?? '{}') as { reason?: string };
+        return `wow refused that question: ${reason ?? 'no reason given'}`;
+      },
+    };
+  }
+  const approve = /approve the run (\S+)/i.exec(text);
+  if (approve?.[1]) {
+    // wow offers no tool for a gate (spec 11); even the real command, sent as the assistant's,
+    // is refused, and the run keeps waiting.
+    return {
+      steps: [{ command: { type: 'workflowRun.continue', runId: approve[1] } }],
       answer:
         'Only you approve a run at its gate, send it back or stop it; wow gives me no tool for that and refuses it from me. Open the run from Workflows → Runs and answer the gate there.',
     };
@@ -121,6 +229,7 @@ interface FillIn {
 }
 
 const firstStartLine = 'The first-start step just finished';
+const answeredLine = '[From wow] The user answered your questions';
 
 // The lines of a note's section, from its heading to the next line without a "- ".
 function section(note: string, heading: RegExp): string[] {
@@ -165,17 +274,25 @@ let made = 0;
 
 export class AssistantMockAgent implements ProviderAdapter {
   readonly kind = 'claude' as const;
+  readonly requiresModel = false;
   readonly #ordinary: ProviderAdapter;
   readonly #tools: () => AssistantToolsLike;
+  readonly #act: AssistantAct;
   readonly #trackerUrl: string;
   readonly #listeners = new Set<(event: ProviderEvent) => void>();
   // What the setup file left to fill in and was not asked for yet; undefined when no walk-through
   // is going on.
   #walk: FillIn[] | undefined;
 
-  constructor(ordinary: ProviderAdapter, tools: () => AssistantToolsLike, trackerUrl: string) {
+  constructor(
+    ordinary: ProviderAdapter,
+    tools: () => AssistantToolsLike,
+    act: AssistantAct,
+    trackerUrl: string,
+  ) {
     this.#ordinary = ordinary;
     this.#tools = tools;
+    this.#act = act;
     this.#trackerUrl = trackerUrl;
     ordinary.onEvent((event) => this.#emit(event));
   }
@@ -227,6 +344,20 @@ export class AssistantMockAgent implements ProviderAdapter {
   }
 
   async #turn(threadId: string, prompt: string): Promise<void> {
+    // The answer from the question card: say what arrived, as a real agent would go on with it.
+    const card = prompt.indexOf(answeredLine);
+    if (card !== -1) {
+      this.#emit({ type: 'session', threadId, providerSessionId: `assistant-session-${threadId}` });
+      const lines = prompt.slice(card).split('\n').slice(1);
+      this.#emit({
+        type: 'textDelta',
+        threadId,
+        itemId: `${threadId}-reply-${++made}`,
+        delta: `Thanks. You answered:\n\n${lines.join('\n')}`,
+      });
+      this.#emit({ type: 'turnCompleted', threadId });
+      return;
+    }
     const text = userText(prompt);
     const note = noteOf(prompt);
     const greeting = note?.includes(firstStartLine) ? this.#greeting(note) : undefined;
@@ -243,10 +374,11 @@ export class AssistantMockAgent implements ProviderAdapter {
         type: 'toolCallStarted',
         threadId,
         itemId,
-        name: `mcp__wow__${step.tool}`,
-        input: step.args,
+        name: 'tool' in step ? `mcp__wow__${step.tool}` : `wow command ${step.command.type}`,
+        input: 'tool' in step ? step.args : step.command,
       });
-      const result = await this.#tools().call(step.tool, step.args);
+      const result =
+        'tool' in step ? await this.#tools().call(step.tool, step.args) : this.#command(step);
       results.push(result.text);
       this.#emit({ type: 'toolCallOutput', threadId, itemId, output: result.text });
       this.#emit({
@@ -268,6 +400,16 @@ export class AssistantMockAgent implements ProviderAdapter {
       delta: reply,
     });
     this.#emit({ type: 'turnCompleted', threadId });
+  }
+
+  #command(step: { readonly command: ServerCommand }): { text: string; isError: boolean } {
+    try {
+      this.#act(step.command);
+      return { text: JSON.stringify({ outcome: 'changed' }), isError: false };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      return { text: JSON.stringify({ outcome: 'refused', reason }), isError: true };
+    }
   }
 
   #emit(event: ProviderEvent): void {

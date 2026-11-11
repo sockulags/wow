@@ -1,5 +1,5 @@
 import type { ProviderEvent, ProviderInstance } from '@wow/contracts';
-import { ProviderEvent as ProviderEventSchema } from '@wow/contracts';
+import { ProviderEvent as ProviderEventSchema, providerChatOptions } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   CodexAdapter,
@@ -258,7 +258,9 @@ describe('CodexAdapter with recorded sessions', () => {
         type: 'questionAsked',
         threadId,
         questionId: 'id-3',
-        question: 'Title: Which title should the README use?',
+        question: 'Which title should the README use?',
+        header: 'Title',
+        askId: 'item-ask',
         options: [
           { label: 'Demo app', description: 'Short' },
           { label: 'Demo application', description: 'Long' },
@@ -270,6 +272,7 @@ describe('CodexAdapter with recorded sessions', () => {
         threadId,
         questionId: 'id-4',
         question: 'Add a build badge?',
+        askId: 'item-ask',
         options: [],
         multiSelect: false,
       },
@@ -278,10 +281,18 @@ describe('CodexAdapter with recorded sessions', () => {
     // codex takes the answers of one request together, so nothing is sent after the first.
     const writes = child.written.length;
     await expect(
-      adapter.send({ type: 'answerQuestion', questionId: 'id-3', answer: 'Demo app' }),
+      adapter.send({
+        type: 'answerQuestion',
+        questionId: 'id-3',
+        answer: { picked: ['Demo app'], text: '' },
+      }),
     ).resolves.toEqual({ ok: true, waitingFor: 1 });
     expect(child.written).toHaveLength(writes);
-    await adapter.send({ type: 'answerQuestion', questionId: 'id-4', answer: 'no' });
+    await adapter.send({
+      type: 'answerQuestion',
+      questionId: 'id-4',
+      answer: { picked: [], text: 'no' },
+    });
     expect(child.written.at(-1)).toEqual({
       id: 2,
       result: { answers: { title: { answers: ['Demo app'] }, badge: { answers: ['no'] } } },
@@ -301,6 +312,37 @@ describe('CodexAdapter with recorded sessions', () => {
     ]);
     expect(child.mismatches).toEqual([]);
     expect(child.remaining).toEqual([]);
+  });
+
+  // Questions spec 6: codex takes a list of answers per question; the typed text is an answer of
+  // its own after the picked labels.
+  it.each([
+    ['a choice', { picked: ['Demo application'], text: '' }, ['Demo application']],
+    ['typed text', { picked: [], text: '  Demo kit  ' }, ['Demo kit']],
+    [
+      'a choice and typed text',
+      { picked: ['Demo app'], text: 'with a short tagline' },
+      ['Demo app', 'with a short tagline'],
+    ],
+  ])('answers a question with choices by %s, exactly', async (_name, reply, sent) => {
+    const fixture = readFixture('turn-tools.jsonl');
+    const { adapter, take, current } = setup(() => new ReplayCodexProcess(fixture));
+    await adapter.send(startTurn);
+    await adapter.send({ type: 'answerApproval', approvalId: 'id-1', decision: 'allowOnce' });
+    await adapter.send({ type: 'answerApproval', approvalId: 'id-2', decision: 'deny' });
+    const asked = take().filter((event) => event.type === 'questionAsked');
+    expect(asked.map((event) => event.questionId)).toEqual(['id-3', 'id-4']);
+    await adapter.send({ type: 'answerQuestion', questionId: 'id-3', answer: reply });
+    await adapter.send({
+      type: 'answerQuestion',
+      questionId: 'id-4',
+      answer: { picked: [], text: 'no' },
+    });
+    const child = current() as ReplayCodexProcess;
+    expect(child.written.at(-1)).toEqual({
+      id: 2,
+      result: { answers: { title: { answers: sent }, badge: { answers: ['no'] } } },
+    });
   });
 
   it('interrupts a running turn (recorded from codex 0.166.0)', async () => {
@@ -404,6 +446,14 @@ const withOptions = (method: 'thread/start' | 'thread/resume') => {
 };
 
 describe('CodexAdapter', () => {
+  // Questions and models spec 13, 17: every step on Codex names a model, and the copy of that
+  // fact in contracts agrees.
+  it('requires a model on a step', () => {
+    const { adapter } = setup(() => new ScriptedCodex(baseAnswers));
+    expect(adapter.requiresModel).toBe(true);
+    expect(providerChatOptions.codex.requiresModel).toBe(adapter.requiresModel);
+  });
+
   it('passes Test with the account, version and paged models', async () => {
     const { adapter } = setup(
       () =>
@@ -620,6 +670,30 @@ describe('CodexAdapter', () => {
         },
       },
       web_search: 'disabled',
+      // Codex's own tools that have a switch: commands, images, subagents, goals, apps, image
+      // generation, computer and browser use, plugins, skill search, tool suggestions, sleep,
+      // code mode, and the user's hooks; and questions to the user.
+      features: {
+        shell_tool: false,
+        unified_exec: false,
+        view_image: false,
+        multi_agent: false,
+        goals: false,
+        apps: false,
+        image_generation: false,
+        computer_use: false,
+        browser_use: false,
+        browser_use_external: false,
+        in_app_browser: false,
+        plugins: false,
+        remote_plugin: false,
+        skill_search: false,
+        tool_suggest: false,
+        sleep_tool: false,
+        code_mode_host: false,
+        hooks: false,
+      },
+      tools: { experimental_request_user_input: { enabled: false } },
       // A command the agent runs sees none of the variables of wow or the instance.
       shell_environment_policy: { inherit: 'none' },
     },

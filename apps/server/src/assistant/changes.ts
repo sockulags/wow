@@ -1,23 +1,30 @@
 import {
   Command,
+  RepeatRule,
   SecretPattern,
   gatePartLabels,
   hideSecretsDeep,
+  projectCodeHost,
+  repeatRuleWords,
   ruleConditionText,
   secretPatterns,
   settingGroupTitles,
-  triggerEventLabels,
+  settingsRegistry,
+  TriggerEvent,
+  triggerEventLabel,
   type AssistantChangeRecord,
   type AssistantPlace,
   type AssistantProposalRecord,
   type AssistantProposalLine,
   type AssistantTarget,
+  type CalendarItem,
   type WorkflowStep,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import type { DecideContext, ReadModel } from '../core/orchestrator.js';
 import { triggersPath } from '../core/triggers.js';
+import { resolveStored } from '../settings/service.js';
 
 // What the server keeps about a command of the assistant: for an ordinary change, what changed,
 // from what to what, where it lives and the commands that take it back (spec 7, 8); for a
@@ -26,8 +33,13 @@ import { triggersPath } from '../core/triggers.js';
 
 type Row = Record<string, unknown>;
 
+// An event's label in the words of the project's code host.
+const eventLabel = (event: TriggerEvent, projectId: string, read: ReadModel): string =>
+  triggerEventLabel(event, projectCodeHost(read.hostReads(projectId), projectId));
+
 // A row's own bookkeeping, which says nothing about what the user or the assistant changed.
-const bookkeeping: ReadonlySet<string> = new Set(['updatedAt']);
+// A card's next fire time follows its trigger, and its past series follow its changes.
+const bookkeeping: ReadonlySet<string> = new Set(['updatedAt', 'nextAt', 'pastSeries']);
 
 // The patterns of `assistant.secretPatterns` as stored, or the registry's when none is stored.
 export function patternsOf(read: ReadModel, context: DecideContext): RegExp[] {
@@ -59,6 +71,7 @@ export function targetOf(command: Command): AssistantTarget | undefined {
     case 'card.create':
     case 'card.update':
     case 'card.delete':
+    case 'card.skipOccurrence':
       return { kind: 'card', id: command.cardId };
     case 'backlog.create':
     case 'backlog.update':
@@ -74,6 +87,11 @@ export function targetOf(command: Command): AssistantTarget | undefined {
     case 'trigger.setEnabled':
     case 'trigger.delete':
       return { kind: 'trigger', id: command.triggerId };
+    case 'skill.create':
+    case 'skill.update':
+      return { kind: 'skill', id: command.skill.name };
+    case 'skill.delete':
+      return { kind: 'skill', id: command.name };
     default:
       return undefined;
   }
@@ -102,19 +120,73 @@ export function snapshot(target: AssistantTarget, read: ReadModel): Row | null {
       }
       case 'trigger':
         return read.trigger(target.id);
+      case 'skill':
+        return ownSkillRow(read, target.id);
     }
   })();
   return row ? { ...row } : null;
 }
 
-const clip = (text: string): string => (text.length > 160 ? `${text.slice(0, 159)}…` : text);
+// An own skill as a change or a proposal holds it: what the user wrote, not where wow keeps it.
+function ownSkillRow(read: ReadModel, name: string): Row | undefined {
+  const skill = read.skills().find((entry) => entry.source === 'yours' && entry.name === name);
+  return skill && { name: skill.name, description: skill.description, text: skill.text ?? '' };
+}
+
+const skillsPlace: AssistantPlace = { label: 'Settings → Skills', path: '/settings/skills' };
+
+const VALUE_LENGTH_KEY = 'assistant.valueLength';
+
+const valueLength = (read: ReadModel): number =>
+  z
+    .number()
+    .catch(settingsRegistry[VALUE_LENGTH_KEY].default)
+    .parse(
+      resolveStored(VALUE_LENGTH_KEY, settingsRegistry[VALUE_LENGTH_KEY], {}, (scope) =>
+        read.setting(VALUE_LENGTH_KEY, scope),
+      ).value,
+    );
+
+const clip = (text: string, read: ReadModel): string => {
+  const length = valueLength(read);
+  return text.length > length ? `${text.slice(0, length - 1)}…` : text;
+};
+
+// A proposal line with its values shortened to what the card shows and the whole of each kept
+// beside it, so nothing is accepted unseen. The secret net has run on the whole values first,
+// so a value cut short cannot leave half a secret behind.
+function shortened(line: AssistantProposalLine, read: ReadModel): AssistantProposalLine {
+  const { what, from, to } = line;
+  const next: AssistantProposalLine = {
+    what,
+    from: from === null ? null : clip(from, read),
+    to: to === null ? null : clip(to, read),
+  };
+  return {
+    ...next,
+    ...(from !== null && next.from !== from ? { fromFull: from } : {}),
+    ...(to !== null && next.to !== to ? { toFull: to } : {}),
+  };
+}
 
 const stepNames = (steps: readonly WorkflowStep[]): string =>
   steps.map((step) => step.skillName).join(', ');
 
 // One value in words. Ids of things the user named are shown by their names. A setup preview
 // says its values the same way.
-export function show(key: string, value: unknown, read: ReadModel): string {
+// A step list is not cut short: the row says every step's instance, model and effort
+// (questions and models spec 15).
+export const show = (key: string, value: unknown, read: ReadModel): string =>
+  key === 'steps' ? showWhole(key, value, read) : clip(showWhole(key, value, read), read);
+
+// "deliver-work (Codex at work, gpt-x, high)": what a step runs on.
+function stepWords(step: WorkflowStep, read: ReadModel): string {
+  const instance = read.providerInstance(step.providerInstanceId)?.name ?? step.providerInstanceId;
+  return `${step.skillName} (${instance}, ${step.model ?? 'no model'}, ${step.effort ?? 'default effort'})`;
+}
+
+// The same words as `show`, not shortened: for a proposal, which keeps the whole value.
+function showWhole(key: string, value: unknown, read: ReadModel): string {
   if (value === null || value === undefined || value === '') return 'none';
   if (typeof value === 'boolean') return value ? 'on' : 'off';
   if (typeof value === 'number') return String(value);
@@ -122,14 +194,15 @@ export function show(key: string, value: unknown, read: ReadModel): string {
     if (key === 'projectId') return read.project(value)?.name ?? value;
     if (key === 'workflowId') return read.workflow(value)?.name ?? value;
     if (key === 'backlogItemId') return read.backlogItem(value)?.title ?? value;
-    return clip(value);
+    return value;
   }
   if (Array.isArray(value)) {
     if (value.length === 0) return 'none';
     if (key === 'steps') {
-      return `${value.length} ${value.length === 1 ? 'step' : 'steps'}: ${stepNames(value as WorkflowStep[])}`;
+      const steps = value as WorkflowStep[];
+      return `${steps.length} ${steps.length === 1 ? 'step' : 'steps'}: ${steps.map((step) => stepWords(step, read)).join(', ')}`;
     }
-    if (value.every((item) => typeof item === 'string')) return clip(value.join(', '));
+    if (value.every((item) => typeof item === 'string')) return value.join(', ');
   }
   if (typeof value === 'object' && 'start' in value && 'end' in value) {
     const { start, end, days } = value as { start: unknown; end: unknown; days?: unknown };
@@ -137,24 +210,45 @@ export function show(key: string, value: unknown, read: ReadModel): string {
       return Array.isArray(days) ? `${start}–${end} (${days.join(', ')})` : `${start}–${end}`;
     }
   }
-  return clip(JSON.stringify(value));
+  return JSON.stringify(value);
+}
+
+// A card's rule is said in words with its time (recurring cards spec 18); the other fields as
+// `show` says them.
+function showField(row: Row, key: string, read: ReadModel): string {
+  if (key === 'repeat') {
+    const rule = RepeatRule.safeParse(row['repeat']);
+    if (!rule.success) return 'does not repeat';
+    const start = row['start'];
+    const zone = row['zone'];
+    return clip(
+      repeatRuleWords(
+        rule.data,
+        typeof start === 'string' && typeof zone === 'string' ? { start, zone } : undefined,
+      ),
+      read,
+    );
+  }
+  if (key === 'skippedDates' && Array.isArray(row[key]) && row[key].length === 0) return 'none';
+  return show(key, row[key], read);
 }
 
 function fields(row: Row, keys: readonly string[], read: ReadModel): string {
   const [only] = keys;
-  if (keys.length === 1 && only !== undefined) return show(only, row[only], read);
-  return keys.map((key) => `${key}: ${show(key, row[key], read)}`).join('; ');
+  if (keys.length === 1 && only !== undefined) return showField(row, only, read);
+  return keys.map((key) => `${key}: ${showField(row, key, read)}`).join('; ');
 }
 
 // The fields that say what a new or removed thing is.
 const identity: Readonly<Record<AssistantTarget['kind'], readonly string[]>> = {
   setting: ['value'],
   project: ['name', 'cwd'],
-  card: ['title', 'start', 'end', 'projectId', 'workflowId'],
+  card: ['title', 'start', 'end', 'projectId', 'workflowId', 'repeat'],
   backlogItem: ['title'],
   workflow: ['name', 'steps'],
   plan: ['followed'],
   trigger: ['event', 'workflowId', 'projectId'],
+  skill: ['description', 'text'],
 };
 
 function nameOf(
@@ -185,9 +279,12 @@ function nameOf(
     case 'plan':
       return `Plan "${text('title')}"`;
     case 'trigger': {
-      const event = triggerEventLabels[row['event'] as keyof typeof triggerEventLabels];
-      return `Trigger "${event ?? target.id}"`;
+      const event = TriggerEvent.safeParse(row['event']);
+      const projectId = String(row['projectId'] ?? '');
+      return `Trigger "${event.success ? eventLabel(event.data, projectId, read) : target.id}"`;
     }
+    case 'skill':
+      return `Skill "${target.id}"`;
   }
 }
 
@@ -245,6 +342,8 @@ function placeOf(
     }
     case 'trigger':
       return { label: 'Workflows → Triggers', path: triggersPath };
+    case 'skill':
+      return skillsPlace;
   }
 }
 
@@ -299,18 +398,30 @@ function inverseOf(command: Command, before: Row | null, changed: readonly strin
           {
             type: 'card.update',
             cardId: command.cardId,
-            ...named([
-              'title',
-              'start',
-              'end',
-              'zone',
-              'body',
-              'projectId',
-              'backlogItemId',
-              'workflowId',
-            ]),
+            ...named(
+              [
+                'title',
+                'start',
+                'end',
+                'zone',
+                'body',
+                'projectId',
+                'backlogItemId',
+                'workflowId',
+                'repeat',
+                'skippedDates',
+              ],
+              { skippedDates: [] },
+            ),
           },
         ];
+      // The day goes back into the series.
+      case 'card.skipOccurrence':
+        return [
+          { type: 'card.update', cardId: command.cardId, skippedDates: before?.['skippedDates'] },
+        ];
+      // The whole series comes back, with its rule and the days skipped by hand (recurring
+      // cards spec 13); what its occurrences did is still kept.
       case 'card.delete':
         return [
           {
@@ -326,11 +437,21 @@ function inverseOf(command: Command, before: Row | null, changed: readonly strin
                 'projectId',
                 'backlogItemId',
                 'workflowId',
+                'repeat',
+                'skippedDates',
               ]),
               new Set(
-                ['body', 'projectId', 'backlogItemId', 'workflowId'].filter(
-                  (key) => (before?.[key] ?? null) === null,
-                ),
+                [
+                  'body',
+                  'projectId',
+                  'backlogItemId',
+                  'workflowId',
+                  'repeat',
+                  'skippedDates',
+                ].filter((key) => {
+                  const value = before?.[key] ?? null;
+                  return value === null || (Array.isArray(value) && value.length === 0);
+                }),
               ),
             ),
           },
@@ -397,6 +518,17 @@ function inverseOf(command: Command, before: Row | null, changed: readonly strin
           ...(before?.['enabled'] === false
             ? [{ type: 'trigger.setEnabled', triggerId: command.triggerId, enabled: false }]
             : []),
+        ];
+      case 'skill.create':
+        return [{ type: 'skill.delete', name: command.skill.name }];
+      // The whole skill as it was: an update names every field of it.
+      case 'skill.update':
+      case 'skill.delete':
+        return [
+          {
+            type: command.type === 'skill.update' ? 'skill.update' : 'skill.create',
+            skill: pick(before ?? {}, ['name', 'description', 'text']),
+          },
         ];
       default:
         throw new Error(`${command.type} has no inverse`);
@@ -508,6 +640,9 @@ const stepFieldLabels: Readonly<Record<string, string>> = {
   extraPrompt: 'extra prompt',
   expectedArtifacts: 'expected artifacts',
   rules: 'rules',
+  skillSource: 'skill from',
+  alsoFollow: 'also follows',
+  leaveOut: 'leaves out',
 };
 
 function showStepField(
@@ -537,10 +672,17 @@ function showStepField(
       )
       .join('; ');
   }
+  if (key === 'skillSource') return step.skillSource ?? 'a skill folder';
+  if (key === 'alsoFollow') {
+    return step.alsoFollow?.length
+      ? step.alsoFollow.map((skill) => skill.name).join(', ')
+      : 'nothing';
+  }
+  if (key === 'leaveOut') return step.leaveOut?.length ? step.leaveOut.join(', ') : 'nothing';
   if (key === 'providerInstanceId' && typeof value === 'string') {
     return read.providerInstance(value)?.name ?? value;
   }
-  return show(key, value, read);
+  return showWhole(key, value, read);
 }
 
 const order = (steps: readonly WorkflowStep[], ids: ReadonlySet<string>) =>
@@ -649,7 +791,14 @@ export function basisOf(command: Command, read: ReadModel): Row {
         const projectId = command.projectId === undefined ? card?.projectId : command.projectId;
         return {
           card: card
-            ? pick({ ...card }, ['title', 'start', 'workflowId', 'projectId', 'backlogItemId'])
+            ? pick({ ...card }, [
+                'title',
+                'start',
+                'workflowId',
+                'projectId',
+                'backlogItemId',
+                'repeat',
+              ])
             : null,
           workflow: workflow(workflowId),
           project: project(projectId),
@@ -670,6 +819,12 @@ export function basisOf(command: Command, read: ReadModel): Row {
           project: project(trigger?.projectId),
         };
       }
+      // The yes is for the skill as it is: one written since by hand or in Settings asks again.
+      case 'skill.create':
+      case 'skill.update':
+        return { skill: ownSkillRow(read, command.skill.name) ?? null };
+      case 'skill.delete':
+        return { skill: ownSkillRow(read, command.name) ?? null };
       default:
         return {};
     }
@@ -696,6 +851,26 @@ export function acceptRefusal(
 
 const onOff = (value: boolean | undefined): string => (value ? 'on' : 'off');
 
+// The rule of a card a held update would leave, in words, when the update touches it or the
+// card repeats.
+function repeatLines(
+  card: CalendarItem | undefined,
+  command: Extract<Command, { type: 'card.update' }>,
+): AssistantProposalLine[] {
+  const was = card?.repeat ?? null;
+  const next = command.repeat === undefined ? was : command.repeat;
+  if (was === null && next === null) return [];
+  const start = command.start ?? card?.start;
+  const zone = command.zone ?? card?.zone;
+  const words = (rule: RepeatRule | null, at: string | undefined) =>
+    rule === null
+      ? 'does not repeat'
+      : repeatRuleWords(rule, at && zone ? { start: at, zone } : undefined);
+  const from = words(was, card?.start);
+  const to = words(next, start);
+  return from === to ? [{ what: 'Repeats', from: null, to }] : [{ what: 'Repeats', from, to }];
+}
+
 // What a held command would change, in the words the proposal card shows. The command has
 // already passed the app's own checks, so what it names exists.
 export function proposalOf(
@@ -719,8 +894,8 @@ export function proposalOf(
           lines: [
             {
               what: label,
-              from: show('value', stored ? stored.value : definition?.default, read),
-              to: show('value', next, read),
+              from: showWhole('value', stored ? stored.value : definition?.default, read),
+              to: showWhole('value', next, read),
             },
           ],
           place: settingPlace(command.key, command.scope, context),
@@ -758,8 +933,8 @@ export function proposalOf(
         ) {
           lines.push({
             what: 'Most starts of one step',
-            from: show('maxStepVisits', workflow?.maxStepVisits, read),
-            to: show('maxStepVisits', command.maxStepVisits, read),
+            from: showWhole('maxStepVisits', workflow?.maxStepVisits, read),
+            to: showWhole('maxStepVisits', command.maxStepVisits, read),
           });
         }
         if (
@@ -768,8 +943,8 @@ export function proposalOf(
         ) {
           lines.push({
             what: 'Template kind',
-            from: show('templateKind', workflow?.templateKind, read),
-            to: show('templateKind', command.templateKind, read),
+            from: showWhole('templateKind', workflow?.templateKind, read),
+            to: showWhole('templateKind', command.templateKind, read),
           });
         }
         return {
@@ -813,7 +988,7 @@ export function proposalOf(
           title: `New event trigger in ${projectName(command.projectId)}`,
           lines: [
             {
-              what: `When "${triggerEventLabels[command.event]}"`,
+              what: `When "${eventLabel(command.event, command.projectId, read)}"`,
               from: null,
               to: `start ${workflowName(command.workflowId)}`,
             },
@@ -822,7 +997,9 @@ export function proposalOf(
         };
       case 'trigger.setEnabled': {
         const trigger = read.trigger(command.triggerId);
-        const event = trigger?.event ? triggerEventLabels[trigger.event] : command.triggerId;
+        const event = trigger?.event
+          ? eventLabel(trigger.event, trigger.projectId ?? '', read)
+          : command.triggerId;
         return {
           title: `Turn on the trigger "${event}"`,
           lines: [
@@ -854,9 +1031,20 @@ export function proposalOf(
           command.type === 'card.create'
             ? command.title
             : (read.backlogItem(command.backlogItemId)?.title ?? command.backlogItemId);
+        const rule = command.type === 'card.create' ? command.repeat : undefined;
+        const lines: AssistantProposalLine[] = [{ what: 'Card', from: null, to: title }];
+        if (rule) {
+          lines.push({
+            what: 'Repeats',
+            from: null,
+            to: repeatRuleWords(rule, { start: command.start, zone: command.zone }),
+          });
+        }
         return {
-          title: `Start ${workflowName(command.workflowId ?? '')} in ${projectName(command.projectId ?? '')} from a card at ${command.start}`,
-          lines: [{ what: 'Card', from: null, to: title }],
+          title: rule
+            ? `Start ${workflowName(command.workflowId ?? '')} in ${projectName(command.projectId ?? '')} from a repeating card, first at ${command.start}`
+            : `Start ${workflowName(command.workflowId ?? '')} in ${projectName(command.projectId ?? '')} from a card at ${command.start}`,
+          lines,
           place: cardPlace(command.cardId, false),
         };
       }
@@ -874,15 +1062,62 @@ export function proposalOf(
             ...(command.start !== undefined && command.start !== moved?.start
               ? [{ what: 'Starts', from: moved?.start ?? null, to: command.start }]
               : []),
+            ...repeatLines(moved, command),
           ],
           place: cardPlace(command.cardId, moved !== undefined),
+        };
+      }
+      // The whole text is kept with the line (spec 22): the card shows the start and the rest on
+      // request.
+      case 'skill.create': {
+        const { name, description, text } = command.skill;
+        return {
+          title: `Write the skill "${name}"`,
+          lines: [
+            { what: 'When to use it', from: null, to: showWhole('description', description, read) },
+            { what: 'Text', from: null, to: text.trim() },
+          ],
+          place: skillsPlace,
+        };
+      }
+      case 'skill.update': {
+        const was = ownSkillRow(read, command.skill.name);
+        const lines: AssistantProposalLine[] = [];
+        const description = command.skill.description.trim();
+        if (description !== was?.['description']) {
+          lines.push({
+            what: 'When to use it',
+            from: showWhole('description', was?.['description'], read),
+            to: showWhole('description', description, read),
+          });
+        }
+        if (command.skill.text.trim() !== was?.['text']) {
+          lines.push({
+            what: 'Text',
+            from: String(was?.['text'] ?? ''),
+            to: command.skill.text.trim(),
+          });
+        }
+        return {
+          title: `Change your skill "${command.skill.name}"`,
+          lines,
+          place: skillsPlace,
+        };
+      }
+      case 'skill.delete': {
+        const was = ownSkillRow(read, command.name);
+        return {
+          title: `Remove your skill "${command.name}"`,
+          lines: [{ what: 'Text', from: String(was?.['text'] ?? ''), to: null }],
+          place: skillsPlace,
         };
       }
       default:
         throw new Error(`${command.type} cannot be proposed`);
     }
   })();
-  const shown = hideSecretsDeep(card, patternsOf(read, context)) as typeof card;
+  const hidden = hideSecretsDeep(card, patternsOf(read, context)) as typeof card;
+  const shown = { ...hidden, lines: hidden.lines.map((line) => shortened(line, read)) };
   return {
     id,
     at: context.now,

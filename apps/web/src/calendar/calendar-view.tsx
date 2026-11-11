@@ -24,7 +24,8 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { notify } from '@/lib/feedback';
 import { formatWhen } from '@/lib/format';
 import { CardDialog } from './card-dialog';
-import { newCardRange, runNowCardIds } from './commands';
+import { cardTitle, newCardRange, runNowCardIds } from './commands';
+import { calendarBlocks, notShown, useCalendarRange, viewRange } from './occurrences';
 import { stepDays, visibleDays, type CalendarViewKind } from './layout';
 import { useCalendarPrefs, useOutlookProfile } from './prefs';
 import { anchorDate, type CalendarSearch } from './search';
@@ -193,7 +194,10 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const { rows: items = [], status: itemsStatus } = useTopicState('calendarItems');
   const status = useTopic('outlookStatus')?.[0];
   const triggers = useTopic('triggers');
+  const runs = useTopic('workflowRuns');
   const paused = useSetting('scheduler.paused');
+  const maxOccurrences = useSetting('calendar.maxOccurrences');
+  const deleteKey = useSetting('keybindings.calendarDeleteCard');
 
   const zone = prefs.zone;
   const view: CalendarViewKind = search.view ?? 'week';
@@ -201,8 +205,57 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const today = localDate(new Date(), zone);
   const days = visibleDays(view, anchor, prefs.firstDayOfWeek, showWeekends);
   const cards = useMemo(() => items.filter((item) => item.source === 'local'), [items]);
-  const runNowIds = useMemo(() => runNowCardIds(cards, triggers ?? []), [cards, triggers]);
-  const runNow = (cardId: string) => {
+  // Repeating cards are drawn from the server's occurrences in the shown range (spec 15).
+  const rangeRead = useCalendarRange(viewRange(days, zone), [items, triggers, runs]);
+  const shownRange = rangeRead.range;
+  const blocks = useMemo(
+    () => calendarBlocks(items, shownRange, runs ?? []),
+    [items, shownRange, runs],
+  );
+  const occurrences = blocks.shown;
+  const hidden = notShown(cards, shownRange);
+  const runNowIds = useMemo(() => {
+    const ids = new Set(runNowCardIds(cards, triggers ?? []));
+    for (const [id, occurrence] of occurrences) {
+      if (occurrence.record?.offerRunNow) ids.add(id);
+    }
+    return ids;
+  }, [cards, triggers, occurrences]);
+  const cardIdOf = (itemId: string) => occurrences.get(itemId)?.cardId ?? itemId;
+  // A reached occurrence opens the run it started; any other opens the card, and one still to
+  // come names the day it was opened from so Delete can offer "This occurrence" (spec 12, 15).
+  const open = (itemId: string, deleting = false) => {
+    const occurrence = occurrences.get(itemId);
+    if (!deleting && occurrence?.runId) {
+      void navigate({ to: '/workflows/runs/$runId', params: { runId: occurrence.runId } });
+      return;
+    }
+    layout.setState({
+      cardDialog: {
+        type: 'edit',
+        cardId: cardIdOf(itemId),
+        ...(occurrence && !occurrence.fixed ? { date: occurrence.date } : {}),
+        ...(deleting ? { deleting } : {}),
+      },
+    });
+  };
+  // Moving an occurrence changes the series from that day on (spec 11).
+  const change = (itemId: string, times: { start: string; end: string }) => {
+    const occurrence = occurrences.get(itemId);
+    return occurrence
+      ? dispatch({
+          type: 'card.moveOccurrence',
+          cardId: occurrence.cardId,
+          date: occurrence.date,
+          ...times,
+        }).catch((error: unknown) => {
+          notify.error('The occurrence could not move', { description: errorMessage(error) });
+          throw error;
+        })
+      : dispatch({ type: 'card.update', cardId: itemId, ...times });
+  };
+  const runNow = (itemId: string) => {
+    const cardId = cardIdOf(itemId);
     dispatch({ type: 'card.runNow', cardId, runId: globalThis.crypto.randomUUID() }).catch(
       (error: unknown) =>
         notify.error('The workflow could not start', { description: errorMessage(error) }),
@@ -358,12 +411,43 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           </div>
         </ShellToolbar>
         <OutlookBanner status={status} zone={zone} onRetry={refresh} />
+        {rangeRead.error !== undefined && (
+          <Banner
+            tone="error"
+            testId="occurrences-failed"
+            actions={
+              <Button size="xs" variant="outline" onClick={rangeRead.retry}>
+                <RefreshCwIcon />
+                Try again
+              </Button>
+            }
+          >
+            <span className="font-medium">Repeating cards could not be read.</span>{' '}
+            <span className="text-muted-foreground">
+              {rangeRead.error.replace(/\.$/, '')}.{' '}
+              {rangeRead.range === undefined
+                ? 'Their occurrences are not shown.'
+                : 'The occurrences shown may be out of date.'}
+            </span>
+          </Banner>
+        )}
+        {hidden.length > 0 && (
+          <Banner tone="info" testId="occurrences-more">
+            <span className="font-medium">Some occurrences are not shown.</span>{' '}
+            <span className="text-muted-foreground">
+              {hidden.map(cardTitle).join(', ')} {hidden.length === 1 ? 'repeats' : 'repeat'} more
+              than {maxOccurrences} times in this range; the first {maxOccurrences} are shown. Use a
+              shorter range to see the rest.
+            </span>
+          </Banner>
+        )}
         <Stale status={itemsStatus} className="flex min-h-0 flex-1 flex-col">
           <TimeGrid
             view={view}
             days={days}
             today={today}
-            items={items}
+            items={blocks.items}
+            occurrences={occurrences}
             zone={zone}
             workHours={prefs.workHours}
             snap={snap}
@@ -373,13 +457,15 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
             onZoom={(steps) => zoom.step(steps)}
             onFloor={(height) => zoom.setFloor(height)}
             onCreate={(range) => layout.setState({ cardDialog: { type: 'create', ...range } })}
-            onEdit={(cardId) => layout.setState({ cardDialog: { type: 'edit', cardId } })}
+            onEdit={(itemId) => open(itemId)}
+            deleteKey={deleteKey}
+            onDelete={(itemId) => open(itemId, true)}
             selectedId={search.item}
             panelShown={panelShown}
             onSelect={select}
             runNowIds={runNowIds}
             onRunNow={runNow}
-            onChange={(cardId, range) => dispatch({ type: 'card.update', cardId, ...range })}
+            onChange={change}
           />
         </Stale>
       </section>

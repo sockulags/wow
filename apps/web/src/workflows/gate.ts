@@ -5,9 +5,11 @@ import { gateOf, reviewedStep } from './model';
 
 // Send back at a gate (review loop spec 16 to 18). The note being written is view state like an
 // open dialog: it lives here so the gate bar, the palette and the keybinding act on the same
-// field. Nothing about the run is kept; whether it waits comes from the run row.
+// field. Nothing about the run is kept; whether it waits comes from the run row. A note belongs to
+// the gate it was written at: once the run waits at another gate, it is not offered there.
 export interface SendBackDraft {
   readonly runId: string;
+  readonly gate: string;
   readonly note: string;
   readonly busy: boolean;
   readonly error: string | undefined;
@@ -31,15 +33,33 @@ export function canSendBack(run: WorkflowRun): boolean {
   );
 }
 
-// The note field of this run, while it is open and the run still waits.
-export const sendBackDraft = (state: GateState, run: WorkflowRun): SendBackDraft | undefined =>
-  state.sendBack?.runId === run.id && canSendBack(run) ? state.sendBack : undefined;
+// Which wait of the run this is: where it waits, how far its path has gone, and which result of
+// the reviewed step is under review.
+function gateKey(run: WorkflowRun): string {
+  const gate = gateOf(run);
+  const reviewed = reviewedStep(run);
+  return [
+    gate?.stepIndex,
+    gate?.position,
+    run.path?.length ?? 0,
+    reviewed?.attempt ?? 1,
+    reviewed?.endedAt ?? '',
+  ].join(':');
+}
 
-export function openSendBack(runId: string): void {
+// The note field of this run, while it is open and the run still waits at the gate it was
+// written at.
+export const sendBackDraft = (state: GateState, run: WorkflowRun): SendBackDraft | undefined =>
+  state.sendBack?.runId === run.id && state.sendBack.gate === gateKey(run) && canSendBack(run)
+    ? state.sendBack
+    : undefined;
+
+export function openSendBack(run: WorkflowRun): void {
+  const gate = gateKey(run);
   gateStore.setState((state) =>
-    state.sendBack?.runId === runId
+    state.sendBack?.runId === run.id && state.sendBack.gate === gate
       ? state
-      : { sendBack: { runId, note: '', busy: false, error: undefined } },
+      : { sendBack: { runId: run.id, gate, note: '', busy: false, error: undefined } },
   );
 }
 

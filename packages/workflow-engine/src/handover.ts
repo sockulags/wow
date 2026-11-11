@@ -1,7 +1,12 @@
-import { triggerEventLabels, type RunEvent } from '@wow/contracts';
+import {
+  changeRequestName,
+  fillTemplate,
+  runEventHost,
+  triggerEventLabel,
+  type RunEvent,
+} from '@wow/contracts';
 
-// Renders the `workflows.handoverTemplate` setting. `{{name}}` is replaced by the value and
-// `{{#name}}…{{/name}}` is kept only when the value is not empty, so an unused part of the
+// Renders the `workflows.handoverTemplate` setting with `fillTemplate`, so an unused part of the
 // template (no backlog item, first step) leaves no stray heading.
 
 export interface HandoverValues {
@@ -16,6 +21,8 @@ export interface HandoverValues {
   // otherwise. A review comment is named by its link and author, never by its text.
   readonly event: string;
   readonly pullRequestNumber: string;
+  // "Pull request #14" or "Merge request !12", in the host's words.
+  readonly pullRequestName: string;
   readonly pullRequestUrl: string;
   readonly pullRequestBranch: string;
   readonly commentUrl: string;
@@ -25,6 +32,7 @@ export interface HandoverValues {
 const noEvent = {
   event: '',
   pullRequestNumber: '',
+  pullRequestName: '',
   pullRequestUrl: '',
   pullRequestBranch: '',
   commentUrl: '',
@@ -39,9 +47,11 @@ export function eventValues(
   event: RunEvent | null | undefined,
 ): Pick<HandoverValues, keyof typeof noEvent> {
   if (!event) return noEvent;
+  const host = runEventHost(event);
   return {
-    event: triggerEventLabels[event.event].toLowerCase(),
+    event: triggerEventLabel(event.event, host).toLowerCase(),
     pullRequestNumber: String(event.number),
+    pullRequestName: changeRequestName({ host, number: event.number }),
     pullRequestUrl: event.url,
     pullRequestBranch: event.branch,
     commentUrl: event.commentUrl ?? '',
@@ -50,16 +60,8 @@ export function eventValues(
   };
 }
 
-const SECTION = /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g;
-const PLACEHOLDER = /\{\{(\w+)\}\}/g;
-
-type TemplateValues = Readonly<Record<string, string>>;
-
-const valueOf = (values: TemplateValues, name: string): string =>
-  Object.hasOwn(values, name) ? (values[name] ?? '') : '';
-
 export const renderHandover = (template: string, values: HandoverValues): string =>
-  renderTemplate(template, { ...values });
+  fillTemplate(template, { ...values });
 
 // What `workflows.sendBackTemplate` can name: the reviewer's note, the step's skill and the
 // number of the attempt that starts.
@@ -70,7 +72,7 @@ export interface SendBackValues {
 }
 
 export const renderSendBack = (template: string, values: SendBackValues): string =>
-  renderTemplate(template, { ...values });
+  fillTemplate(template, { ...values });
 
 // What `workflows.goBackTemplate` can name: the step whose rule sent the run back, the fact that
 // held, what that step ended with, and this step's skill and attempt.
@@ -83,27 +85,19 @@ export interface GoBackValues {
 }
 
 export const renderGoBack = (template: string, values: GoBackValues): string =>
-  renderTemplate(template, { ...values });
+  fillTemplate(template, { ...values });
 
 // What `workflows.unitPromptTemplate` can name: the unit a plan run started the run for.
 export interface UnitPromptValues {
   readonly intentId: string;
   readonly unitKey: string;
   readonly unitTitle: string;
+  // Empty for a step that gets wow-pull-request, which asks for the line itself.
+  readonly intentUnitLine: string;
 }
 
 export const renderUnitPrompt = (template: string, values: UnitPromptValues): string =>
-  renderTemplate(template, { ...values });
-
-function renderTemplate(template: string, values: TemplateValues): string {
-  const sections = template.replace(SECTION, (_match, name: string, body: string) =>
-    valueOf(values, name).trim() === '' ? '' : body,
-  );
-  return sections
-    .replace(PLACEHOLDER, (_match, name: string) => valueOf(values, name))
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
+  fillTemplate(template, { ...values });
 
 export const bulletList = (lines: readonly string[]): string =>
   lines.map((line) => `- ${line}`).join('\n');

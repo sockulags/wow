@@ -18,6 +18,7 @@ test.beforeEach(async ({ page }) => {
 
 async function startThread(page: Page, message: string) {
   await page.goto('/chat');
+  await expect(page.getByRole('navigation', { name: 'Threads' })).toBeVisible();
   await page.keyboard.press('Control+Alt+N');
   await expect(page).toHaveURL(/\/chat\/new$/);
   const composer = page.getByRole('combobox', { name: 'Message' });
@@ -182,6 +183,38 @@ test.describe('chat', () => {
     await expect(page.getByRole('button', { name: 'Mark thread done' })).toBeEnabled();
   });
 
+  test('draws the tool calls of a turn as one row that opens to all of them', async ({ page }) => {
+    await startThread(page, 'Look around the repo');
+    await expect(conversation(page).getByText('The repo holds a kettle.')).toBeVisible();
+    const group = conversation(page).getByTestId('item-tool_group');
+    await expect(group).toHaveCount(1);
+    const row = group.locator(':scope > details > summary');
+    // The latest call as a single row draws it, the count, and the failure without opening.
+    await expect(row).toContainText('Read');
+    await expect(row).toContainText('README.md');
+    await expect(row).toContainText('done');
+    await expect(group.getByTestId('tool-group-count')).toHaveText('3 tool calls');
+    await expect(group.getByTestId('tool-group-failed')).toHaveText('1 failed');
+    await expect(conversation(page).getByTestId('item-tool_call')).toHaveCount(0);
+
+    // The row is reached from the keyboard and opens with Enter, listing every call in order.
+    await row.focus();
+    await page.keyboard.press('Enter');
+    const calls = group.getByTestId('item-tool_call');
+    await expect(calls).toHaveCount(3);
+    await expect(calls.nth(0)).toContainText('package.json');
+    await expect(calls.nth(1)).toContainText('Grep');
+    await expect(calls.nth(1)).toContainText('error');
+    await expect(calls.nth(2)).toContainText('README.md');
+    await calls.nth(1).locator('summary').click();
+    await expect(calls.nth(1).getByRole('region', { name: 'Tool output' })).toContainText(
+      'Grep grep-1 answered',
+    );
+    await row.focus();
+    await page.keyboard.press('Space');
+    await expect(calls).toHaveCount(0);
+  });
+
   test('approves a command and the turn goes on', async ({ page }) => {
     await startThread(page, 'Please approve running the tests');
     const approval = conversation(page).getByRole('region', { name: 'Approval request' });
@@ -243,9 +276,9 @@ test.describe('chat', () => {
   test('answers a question with free text', async ({ page }) => {
     await startThread(page, 'Ask me another question');
     const question = conversation(page).getByRole('region', { name: 'Question' });
-    await expect(question.getByRole('button', { name: 'Red' })).toBeVisible();
-    await question.getByLabel('Your answer').fill('Green, please');
-    await question.getByLabel('Your answer').press('Enter');
+    await expect(question.getByRole('radio', { name: /Red/ })).toBeVisible();
+    await question.getByRole('textbox', { name: 'Other' }).fill('Green, please');
+    await question.getByRole('textbox', { name: 'Other' }).press('Enter');
     await expect(question).toContainText('Answered: Green, please');
     await expect(conversation(page).getByText('You chose Green, please.')).toBeVisible();
   });
@@ -254,12 +287,15 @@ test.describe('chat', () => {
     await startThread(page, 'Ask me a question');
     const question = conversation(page).getByRole('region', { name: 'Question' });
     await expect(question).toContainText('Which color should the button be?');
-    await question.getByRole('button', { name: 'Blue' }).click();
+    await question.getByRole('radio', { name: /Blue/ }).click();
+    await question.getByRole('button', { name: 'Send answer' }).click();
     await expect(question).toContainText('Answered: Blue');
     await expect(conversation(page).getByText('You chose Blue.')).toBeVisible();
   });
 
-  test('picks a skill with $ and sends its invocation', async ({ page }) => {
+  test('picks a skill with a slash, sees the chip, sends it and sees the chip in the thread', async ({
+    page,
+  }) => {
     await page.goto('/chat/new');
     // A folder that is not a project: "Another folder…" asks for the path in the browser build.
     await choose(page.getByLabel('Project'), 'Another folder…');
@@ -268,39 +304,70 @@ test.describe('chat', () => {
     await expect(page.getByTestId('new-thread-folder')).toContainText('wow-e2e-home');
     const composer = page.getByRole('combobox', { name: 'Message' });
     await expect(composer).toBeFocused();
-    await composer.pressSequentially('$deli');
     const skills = page.getByRole('listbox', { name: 'Skills' });
+    // A slash inside a path or a date is text (wow skills spec 19), and $ opens nothing now.
+    await composer.pressSequentially('look at src/app from 2026/11/12 $che ');
+    await expect(skills).toBeHidden();
+    await composer.fill('');
+    await composer.pressSequentially('/');
+    await expect(skills.getByRole('group', { name: 'wow' })).toBeVisible();
+    await expect(skills.getByRole('group', { name: 'User' })).toBeVisible();
+    await composer.pressSequentially('deli');
     // A name match ranks above a description match ("Review delivered work").
     await expect(skills.getByRole('option')).toHaveText([
       /^deliver-work\/deliver-work.*Deliver one unit/,
       /^check-work/,
     ]);
-    // Grouped by where the skill comes from, with the source on each row.
-    await expect(skills.getByRole('group', { name: 'User' })).toBeVisible();
     await composer.press('Enter');
     await expect(skills).toBeHidden();
-    await expect(composer).toHaveValue('/deliver-work ');
+    await composer.pressSequentially('/hand');
+    await composer.press('Enter');
+    const picked = page.getByRole('list', { name: 'Picked skills' });
+    await expect(picked.getByRole('listitem')).toHaveText(['deliver-work', 'wow-handover']);
+    await expect(composer).toHaveValue('');
+    // Backspace directly after the chips takes the last one away whole.
+    await composer.press('Backspace');
+    await expect(picked.getByRole('listitem')).toHaveText(['deliver-work']);
+    await composer.pressSequentially('/hand');
+    await composer.press('Enter');
     await composer.pressSequentially('the login fix');
     await composer.press('Enter');
-    await expect(conversation(page).getByTestId('item-user')).toHaveText(
-      /^\/deliver-work the login fix\d{2}:\d{2}$/,
+    await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+    const message = conversation(page).getByTestId('item-user');
+    await expect(message.getByRole('list', { name: 'Sent with skills' })).toHaveText(
+      'deliver-workwow-handover',
+    );
+    await expect(message).toContainText('the login fix');
+    // The agent got the folder skill's invocation and the wow skill's text (wow skills U1); the
+    // mock agent says back what it was sent.
+    const answer = conversation(page).getByTestId('item-assistant_text');
+    await expect(answer).toContainText('End your final message with a short handover');
+    await expect(answer).toContainText('You said: /deliver-work');
+    await expect(answer).toContainText('the login fix');
+    // The text is reachable from the chip, not shown in the conversation.
+    await expect(message).not.toContainText('End your final message');
+    await message.getByRole('button', { name: 'wow-handover, wow skill' }).click();
+    await expect(page.getByRole('dialog', { name: 'Skill wow-handover' })).toContainText(
+      'End your final message with a short handover',
     );
   });
 
-  test('inserts the Codex invocation form on a Codex instance', async ({ page }) => {
+  test('sends the Codex invocation of a chip on a Codex instance', async ({ page }) => {
     await page.goto('/chat/new');
     await choose(page.getByLabel('Provider instance'), 'Mock Codex');
     await choose(page.getByLabel('Project'), 'Demo');
     const composer = page.getByRole('combobox', { name: 'Message' });
-    await composer.pressSequentially('$check');
+    await composer.pressSequentially('/check');
     const skills = page.getByRole('listbox', { name: 'Skills' });
     await expect(skills.getByRole('option').first()).toHaveText(/^check-work\$check-work/);
     await composer.press('Enter');
-    await expect(composer).toHaveValue('$check-work ');
+    await expect(page.getByRole('list', { name: 'Picked skills' })).toHaveText('check-work');
     await composer.pressSequentially('the release');
     await composer.press('Enter');
-    await expect(conversation(page).getByTestId('item-user')).toHaveText(
-      /^\$check-work the release\d{2}:\d{2}$/,
+    const message = conversation(page).getByTestId('item-user');
+    await expect(message.getByRole('button', { name: 'check-work, User skill' })).toBeVisible();
+    await expect(conversation(page).getByTestId('item-assistant_text')).toContainText(
+      'You said: $check-work the release',
     );
   });
 
@@ -350,6 +417,7 @@ test.describe('chat', () => {
   test('finds threads and actions in the palette', async ({ page }) => {
     await startThread(page, 'Palette target');
     await page.goto('/chat');
+    await expect(page.getByRole('navigation', { name: 'Threads' })).toBeVisible();
     await page.keyboard.press('Control+k');
     const palette = page.getByRole('dialog');
     await palette.getByRole('combobox').fill('palette target');
@@ -374,5 +442,26 @@ test.describe('sketch', () => {
     await expect(answer.locator('.wow-code .shiki')).toBeVisible();
     await answer.getByRole('heading').scrollIntoViewIfNeeded();
     await page.screenshot({ path: sketchPath('2026-11-review-loop', 'chat-markdown') });
+  });
+
+  test('skill-chip', async ({ page }) => {
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Project'), 'Demo');
+    const composer = page.getByRole('combobox', { name: 'Message' });
+    await composer.pressSequentially('/deli');
+    await composer.press('Enter');
+    await composer.pressSequentially('/hand');
+    await composer.press('Enter');
+    await composer.pressSequentially('Ship the timer screen');
+    await composer.press('Enter');
+    const answer = conversation(page).getByTestId('item-assistant_text');
+    await expect(answer).toContainText('End your final message');
+    await composer.pressSequentially('/verd');
+    await composer.press('Enter');
+    await composer.pressSequentially('and then /ch');
+    await expect(page.getByRole('listbox', { name: 'Skills' }).getByRole('option')).not.toHaveCount(
+      0,
+    );
+    await page.screenshot({ path: sketchPath('2026-11-wow-skills', 'skill-chip') });
   });
 });

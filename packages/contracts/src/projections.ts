@@ -1,14 +1,17 @@
 import { z } from 'zod';
+import type { HostKind } from './hosts.js';
 import {
   ApprovalDecision,
   ApprovalKind,
   ProviderKind,
   ProviderUpdate,
   ProviderUpdateRun,
-  QuestionOption,
   TaskStatus,
   ThreadState,
 } from './provider.js';
+import { QuestionOption, QuestionReply } from './questions.js';
+import { SentSkill } from './skills.js';
+import { CardOccurrence, LocalDay, PastSeries, RepeatRule } from './repeat.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
 import {
   FileHash,
@@ -134,7 +137,15 @@ export const ThreadItem = z.object({
 export type ThreadItem = z.infer<typeof ThreadItem>;
 
 // What `payload` holds per item kind, as the server's thread orchestrator writes it.
-export const TextItemPayload = z.object({ text: z.string() });
+export const TextItemPayload = z.object({
+  text: z.string(),
+  // A user message that answers the assistant's questions (questions spec 9): the tool call
+  // that asked them and what was answered, one reply per question.
+  answers: z.object({ askItemId: Id, replies: z.array(QuestionReply) }).optional(),
+  // A user message or a step's prompt sent with skills (wow skills spec 14): their names, and
+  // for a wow skill the text that was sent, which `text` leaves out. Absent for older messages.
+  skills: z.array(SentSkill).optional(),
+});
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 
 export const ToolCallItemPayload = z.object({
@@ -155,8 +166,13 @@ export type ApprovalItemPayload = z.infer<typeof ApprovalItemPayload>;
 export const QuestionItemPayload = z.object({
   questionId: Id,
   question: z.string(),
+  header: z.string().optional(),
+  askId: z.string().optional(),
   options: z.array(QuestionOption),
   multiSelect: z.boolean(),
+  // What was answered, from the card. A question answered before the card has only the row's
+  // `answer` text.
+  reply: QuestionReply.optional(),
 });
 export type QuestionItemPayload = z.infer<typeof QuestionItemPayload>;
 
@@ -241,6 +257,19 @@ export const CalendarItem = z.object({
   // A CardState for local cards, an OutlookItemState for Outlook items.
   state: z.string().min(1),
   updatedAt: Timestamp,
+  // A repeating card's rule (recurring cards spec 1). Absent or null for a card that happens
+  // once, and for every card stored before rules existed.
+  repeat: RepeatRule.nullable().optional(),
+  // The days skipped by hand ("This occurrence"), in the card's zone.
+  skippedDates: z.array(LocalDay).optional(),
+  // The series a repeating card followed before it was changed, oldest first, so past days stay
+  // where they were. Absent for cards stored before it existed.
+  pastSeries: z.array(PastSeries).optional(),
+  // When the card's trigger fires next; null when nothing is scheduled.
+  nextAt: Timestamp.nullable().optional(),
+  // What happened at each occurrence the scheduler reached, oldest first. Topic rows carry it;
+  // the stored row does not.
+  occurrences: z.array(CardOccurrence).optional(),
 });
 export type CalendarItem = z.infer<typeof CalendarItem>;
 
@@ -349,10 +378,29 @@ export const RunEvent = z.object({
   number: z.number().int().positive(),
   url: z.string().min(1),
   branch: z.string(),
+  // The pull request's head commit when the event was seen, and the ref of the base repository
+  // it is fetched from (`refs/pull/<n>/head`, `refs/merge-requests/<n>/head`). The run's working
+  // copy starts there, never at a branch name that a fork may share. Absent on runs from before.
+  headSha: z.string().min(1).optional(),
+  headRef: z.string().min(1).optional(),
+  // The pull request comes from a fork. Absent on runs from before wow asked.
+  fromFork: z.boolean().optional(),
   commentUrl: z.string().min(1).nullable(),
   commentAuthor: z.string().nullable(),
 });
 export type RunEvent = z.infer<typeof RunEvent>;
+
+// The host a run's event came from, by the ref its head is fetched from: GitLab's merge
+// requests are `refs/merge-requests/<n>/head`. GitHub for runs from before refs were kept.
+export const runEventHost = (event: Pick<RunEvent, 'headRef'>): HostKind =>
+  event.headRef?.startsWith('refs/merge-requests/') ? 'gitlab' : 'github';
+
+// An event's label in the host's own words: a GitLab merge request is merged, not a pull request.
+export const triggerEventLabel = (event: TriggerEvent, host: HostKind): string =>
+  event === 'merged' && host === 'gitlab' ? 'Merge request merged' : triggerEventLabels[event];
+
+export const RunOccurrence = z.object({ date: LocalDay, start: Timestamp });
+export type RunOccurrence = z.infer<typeof RunOccurrence>;
 
 export const WorkflowRun = z.object({
   id: Id,
@@ -377,9 +425,16 @@ export const WorkflowRun = z.object({
   unit: RunUnit.nullable().optional(),
   // Absent or null for a run no event trigger started.
   event: RunEvent.nullable().optional(),
+  // The occurrence of a repeating card the run was started for, which names the run by its
+  // day (recurring cards spec 5). Absent or null otherwise.
+  occurrence: RunOccurrence.nullable().optional(),
   // Every step visit in the order it happened, with why the run went where it went next
   // (workflow branches spec 18). Absent or null for a run from before paths were kept.
   path: z.array(PathVisit).nullable().optional(),
+  // Set for a run started since wow skills: its steps get the built-in skills where the workflow
+  // depends on them, instead of wow's own sentences (wow skills spec 13). Absent or null for a
+  // run stored before, which keeps the prompts it had.
+  wowSkills: z.boolean().nullable().optional(),
 });
 export type WorkflowRun = z.infer<typeof WorkflowRun>;
 
@@ -447,7 +502,9 @@ export const isEventTrigger = (trigger: Trigger): trigger is EventTrigger =>
 // What the server tells the user about without being asked: a run started by a trigger, a run
 // waiting at a gate, a failed run or trigger. The desktop app shows them as system notifications,
 // the web app as toasts. Only stored while `scheduler.notifications` is on.
-export const NotificationKind = z.enum(['started', 'waiting', 'failed']);
+// `skipped` is an occurrence of a repeating card that started nothing because the card's earlier
+// run was still going; it is not a failure.
+export const NotificationKind = z.enum(['started', 'waiting', 'failed', 'skipped']);
 export type NotificationKind = z.infer<typeof NotificationKind>;
 
 export const AppNotification = z.object({
@@ -469,6 +526,9 @@ export const SkillSource = z.enum([
   'project-claude',
   'project-agents',
   'custom',
+  // Shipped with wow (wow skills spec 1) and written by the user in wow (spec 5).
+  'wow',
+  'yours',
 ]);
 export type SkillSource = z.infer<typeof SkillSource>;
 
@@ -480,6 +540,9 @@ export const Skill = z.object({
   source: SkillSource,
   manualOnly: z.boolean(),
   invocations: z.object({ claude: z.string(), codex: z.string() }),
+  // A wow skill's text: a built-in skill's template, filled in when it is sent, or an own
+  // skill's text as written. Absent for skills from other folders.
+  text: z.string().optional(),
 });
 export type Skill = z.infer<typeof Skill>;
 

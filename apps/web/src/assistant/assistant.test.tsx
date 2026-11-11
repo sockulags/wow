@@ -3,6 +3,7 @@ import {
   hiddenText,
   type AssistantChange,
   type AssistantProposal,
+  type ProviderInstance,
   type ThreadItem,
   type TokenGuide,
 } from '@wow/contracts';
@@ -14,13 +15,16 @@ import {
 } from '@tanstack/react-router';
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ReactNode } from 'react';
+import { createRef, type ReactNode } from 'react';
+import type { Connection, ConnectionState } from '@wow/client-runtime';
 import { describe, expect, it, vi } from 'vitest';
+import { createStore } from 'zustand';
 import { RuntimeProvider } from '@/app/runtime';
-import { Composer } from '@/chat/composer';
+import { Composer, type ComposerHandle } from '@/chat/composer';
 import { ConversationItem, type ItemContext } from '@/chat/items';
 import { createTestRuntime, renderApp } from '@/test/render';
-import { SecretFieldCard } from './cards';
+import { HeldLine } from './assistant-view';
+import { SecretFieldCard, SecretVariableCard } from './cards';
 import { assistantCommands } from './commands';
 import { askOf, askedFields, holdMessage, placeRows, withoutSecret } from './model';
 import { ChangeRow, ProposalCard } from './rows';
@@ -30,6 +34,8 @@ import { ChangeRow, ProposalCard } from './rows';
 
 const at = '2026-11-10T08:00:00.000Z';
 const githubToken = 'ghp_abcdefghijklmnopqrstuvwxyz012345';
+// Invented; may reach nothing but the secret store request.
+const savedValue = 'wow-marked-variable-value-55c2';
 
 const change = (extra: Partial<AssistantChange> = {}): AssistantChange => ({
   id: 'assistant-c1',
@@ -231,6 +237,33 @@ describe('a proposal card (spec 9, 10)', () => {
     expect(yes).toHaveBeenCalledOnce();
   });
 
+  it('shows the whole of a value its line had to shorten, on request', async () => {
+    const long = `${'Answer in rhyme and mind the kettle. '.repeat(6)}The end.`;
+    render(
+      <ProposalCard
+        proposal={proposal({
+          lines: [
+            {
+              what: 'Instruction text',
+              from: 'the default',
+              to: `${long.slice(0, 159)}…`,
+              toFull: long,
+            },
+          ],
+        })}
+        secretPatterns={defaultSecretPatterns}
+        onYes={() => Promise.resolve()}
+        onNo={() => Promise.resolve()}
+      />,
+    );
+    const [full] = screen.getAllByTestId('assistant-proposal-full');
+    expect(screen.getAllByTestId('assistant-proposal-full')).toHaveLength(1);
+    expect(full?.closest('details')?.open).toBe(false);
+    await userEvent.click(screen.getByText('Becomes: show all of it'));
+    expect(full?.closest('details')?.open).toBe(true);
+    expect(full?.textContent).toBe(long);
+  });
+
   it('No takes an optional reason', async () => {
     const no = vi.fn<(reason: string | undefined) => Promise<void>>(() => Promise.resolve());
     await show(
@@ -324,6 +357,163 @@ describe('a secret field card (spec 14)', () => {
   it('draws nothing for a setting that is not secret', async () => {
     await show(<SecretFieldCard request={{ key: 'trackers.gitlab.baseUrl' }} />);
     expect(screen.queryByRole('region')).toBeNull();
+  });
+});
+
+const instance = (env: ProviderInstance['env']): ProviderInstance => ({
+  id: 'claude-work',
+  kind: 'claude',
+  name: 'Claude at work',
+  binaryPath: 'claude',
+  configDir: '',
+  env,
+  launchArgs: [],
+  defaultModel: null,
+  defaultEffort: null,
+  defaultPermissionMode: null,
+  status: 'ready',
+  account: 'ada@example.com',
+  version: '2.1.0',
+  statusMessage: null,
+  update: null,
+  updateRun: null,
+});
+
+// A connection that answers the providerInstances topic and records what is asked.
+function providerConnection(env: ProviderInstance['env']) {
+  const asked: { method: string; params: unknown }[] = [];
+  const connection: Connection = {
+    state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
+    request: (method, params) => {
+      asked.push({ method, params });
+      if (method === 'secrets.set') return Promise.resolve({ secretRef: 'stored-ref' });
+      if (method === 'dispatch') {
+        const { commandId } = params as { commandId: string };
+        return Promise.resolve({ commandId, seqs: [1], duplicate: false });
+      }
+      return Promise.resolve({ ok: true, account: null, version: null, message: null });
+    },
+    subscribe(topic, _params, onData) {
+      onData(topic === 'providerInstances' ? [instance(env)] : []);
+      return () => undefined;
+    },
+    retry: () => undefined,
+    close: () => undefined,
+  };
+  return { asked, runtime: { ...createTestRuntime(), connection } };
+}
+
+describe("a secret field card for a provider's environment variable (spec 14)", () => {
+  it('is read from the call the server answered', () => {
+    const request = { providerInstanceId: 'claude-work', variable: 'ANTHROPIC_API_KEY' };
+    expect(
+      askOf(toolCall('mcp__wow__show_secret_variable', request, '{"outcome":"shown"}')),
+    ).toEqual({ kind: 'secretVariable', request });
+    expect(
+      askOf(toolCall('mcp__wow__show_secret_variable', request, '{"outcome":"refused"}')),
+    ).toBeNull();
+  });
+
+  it('names the variable and its instance, and Save stores the value and only its reference in the instance', async () => {
+    const user = userEvent.setup();
+    const { asked, runtime } = providerConnection({ PATH_EXTRA: '/opt/bin' });
+    render(
+      <RuntimeProvider runtime={runtime}>
+        <SecretVariableCard
+          request={{ providerInstanceId: 'claude-work', variable: 'ANTHROPIC_API_KEY' }}
+        />
+      </RuntimeProvider>,
+    );
+    const card = screen.getByRole('region', {
+      name: 'Secret field: ANTHROPIC_API_KEY (Claude at work)',
+    });
+    expect(within(card).getByTestId('assistant-secret-target').textContent).toContain(
+      'Settings → Providers → Claude at work',
+    );
+    expect(within(card).getByTestId('assistant-secret-state').textContent).toBe('Not set');
+    const field = within(card).getByLabelText('ANTHROPIC_API_KEY (Claude at work)');
+    expect(field.getAttribute('type')).toBe('password');
+    await user.type(field, savedValue);
+    await user.click(within(card).getByRole('button', { name: 'Save' }));
+    expect(asked[0]).toEqual({
+      method: 'secrets.set',
+      params: { name: 'provider:claude-work:env:ANTHROPIC_API_KEY', value: savedValue },
+    });
+    expect(asked[1]).toMatchObject({
+      method: 'dispatch',
+      params: {
+        command: {
+          type: 'providerInstance.update',
+          providerInstanceId: 'claude-work',
+          env: { PATH_EXTRA: '/opt/bin', ANTHROPIC_API_KEY: { secretRef: 'stored-ref' } },
+        },
+      },
+    });
+    expect(JSON.stringify(asked.slice(1))).not.toContain(savedValue);
+    expect(asked[2]).toEqual({
+      method: 'provider.test',
+      params: { providerInstanceId: 'claude-work' },
+    });
+  });
+
+  it('is drawn by the Assistant view after the call that asked for it', async () => {
+    const request = { providerInstanceId: 'claude-work', variable: 'ANTHROPIC_API_KEY' };
+    const thread = {
+      id: 'assistant',
+      kind: 'assistant' as const,
+      projectId: null,
+      cwd: '/home/me/.wow/assistant',
+      branch: null,
+      providerInstanceId: 'claude-work',
+      providerSessionId: null,
+      title: 'Assistant',
+      model: 'opus',
+      effort: 'high',
+      permissionMode: 'default',
+      state: 'idle' as const,
+      pinned: false,
+      runId: null,
+      stepId: null,
+      createdAt: at,
+      updatedAt: at,
+    };
+    const connection: Connection = {
+      state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
+      request: (method) =>
+        Promise.resolve(method === 'assistant.open' ? { thread: null, problem: null } : []),
+      subscribe(topic, _params, onData) {
+        const topics: Readonly<Record<string, unknown[]>> = {
+          assistantThread: [thread],
+          providerInstances: [instance({})],
+          threadItems: [toolCall('mcp__wow__show_secret_variable', request, '{"outcome":"shown"}')],
+        };
+        onData(topics[topic] ?? []);
+        return () => undefined;
+      },
+      retry: () => undefined,
+      close: () => undefined,
+    };
+    await renderApp('/assistant', { ...createTestRuntime(), connection });
+    expect(
+      await screen.findByRole('region', {
+        name: 'Secret field: ANTHROPIC_API_KEY (Claude at work)',
+      }),
+    ).toBeTruthy();
+  });
+
+  it('is where a held message goes when the assistant asked for the variable last', () => {
+    const asked = [
+      { key: 'trackers.confluence.token' },
+      { providerInstanceId: 'claude-work', variable: 'ANTHROPIC_API_KEY' },
+    ];
+    const password = 'password: Zq81mXp0Lw3vKe7RtY2uBn5s';
+    expect(
+      holdMessage(password, defaultSecretPatterns, asked, undefined, () => 'Claude at work')?.field,
+    ).toEqual({
+      providerInstanceId: 'claude-work',
+      variable: 'ANTHROPIC_API_KEY',
+      label: 'ANTHROPIC_API_KEY (Claude at work)',
+    });
   });
 });
 
@@ -502,6 +692,98 @@ describe('a message that looks like a secret (spec 17)', () => {
     await userEvent.clear(box);
     await userEvent.type(box, 'Hello{Enter}');
     expect(onSend).toHaveBeenCalledWith('Hello');
+  });
+});
+
+describe('Send anyway on a held message (spec 17)', () => {
+  it("goes through the composer's own send path with the text as it is now", async () => {
+    const onSend = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
+    const handle = createRef<ComposerHandle>();
+    const runtime = createTestRuntime();
+    const view = (running: boolean) => (
+      <RuntimeProvider runtime={runtime}>
+        <Composer
+          ref={handle}
+          providerKind={undefined}
+          running={running}
+          placeholder="Message"
+          onSend={onSend}
+          beforeSend={(value) => !value.includes('ghp_')}
+        />
+      </RuntimeProvider>
+    );
+    const { rerender } = render(view(true));
+    const box = screen.getByRole('combobox', { name: 'Message' });
+    await userEvent.type(box, `${githubToken}{Enter}`);
+    await userEvent.type(box, ' for the bot');
+    act(() => handle.current?.sendUnchecked());
+    // A turn is running: the message waits in the queue like any other, and as edited.
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByTestId('queued-message').textContent).toContain(
+      `${githubToken} for the bot`,
+    );
+    rerender(view(false));
+    expect(onSend).toHaveBeenCalledWith(`${githubToken} for the bot`);
+  });
+});
+
+const runtimeWithSettings = (rows: unknown[]) => {
+  const connection: Connection = {
+    state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
+    request: () => Promise.resolve(null),
+    subscribe(topic, _params, onData) {
+      onData(topic === 'settings' ? rows : []);
+      return () => undefined;
+    },
+    retry: () => undefined,
+    close: () => undefined,
+  };
+  return { ...createTestRuntime(), connection };
+};
+const held = () => {
+  const found = holdMessage(githubToken, defaultSecretPatterns, []);
+  if (!found) throw new Error('not held');
+  return found;
+};
+
+const line = (
+  rows: unknown[],
+  onPut = vi.fn<(replaces: boolean) => Promise<void>>(() => Promise.resolve()),
+) => {
+  render(
+    <RuntimeProvider runtime={runtimeWithSettings(rows)}>
+      <HeldLine held={held()} onPut={onPut} onSend={() => undefined} onDismiss={() => undefined} />
+    </RuntimeProvider>,
+  );
+  return onPut;
+};
+
+describe('Put it in <field> on a held message (spec 17)', () => {
+  it('says that it replaces the value the field already holds', async () => {
+    const onPut = line([
+      {
+        key: 'trackers.github.token',
+        scope: 'global',
+        value: { secretRef: 'setting:trackers.github.token' },
+      },
+    ]);
+    expect(screen.getByTestId('held-replaces').textContent).toBe(
+      'GitHub token already holds a value; putting this one there replaces it.',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Put it in GitHub token' }));
+    expect(onPut).toHaveBeenCalledWith(true);
+  });
+
+  it('says nothing of replacing for an empty field, or one set only for a project', () => {
+    line([
+      {
+        key: 'trackers.github.token',
+        scope: 'project:tea',
+        value: { secretRef: 'setting:project:tea:trackers.github.token' },
+      },
+    ]);
+    expect(screen.getByRole('button', { name: 'Put it in GitHub token' })).toBeTruthy();
+    expect(screen.queryByTestId('held-replaces')).toBeNull();
   });
 });
 

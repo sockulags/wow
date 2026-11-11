@@ -20,6 +20,7 @@ import { asks } from './asks.js';
 import { alwaysRefused } from './classes.js';
 import { diagnosisReaders } from './diagnosis.js';
 import { guideReaders } from './guides.js';
+import { checkStepModels, modelReaders } from './models.js';
 import { readers, type Reader, type ReaderDeps } from './readers.js';
 
 // The assistant's tools (app assistant spec 4 to 13). A read tool is a reader. A change tool
@@ -60,18 +61,25 @@ export const changeTools = {
   create_card: {
     type: 'card.create',
     newId: 'cardId',
+    withheld: ['skippedDates'],
     description:
-      'Puts a card on the calendar. Times are instants with an offset; zone is the IANA zone they were meant in. With a project and a workflow the card starts that workflow at its start time.',
+      'Puts a card on the calendar. Times are instants with an offset; zone is the IANA zone they were meant in. With a project and a workflow the card starts that workflow at its start time. For anything that recurs, give repeat and make one card: start and end are the first occurrence, and every later one has the same local time and length in zone. repeat is {frequency: "daily"|"weekly"|"monthly", interval (1 = every day, week or month), weekdays (weekly only, e.g. ["mon","tue","wed","thu","fri"]), end: {kind: "never"} | {kind: "on", date: "YYYY-MM-DD"} | {kind: "after", count}}. Monthly falls on the start\'s day of the month. Never make one card per day.',
   },
   update_card: {
     type: 'card.update',
     description:
-      'Moves, renames or relinks a card. Give only what changes; null takes a link away.',
+      'Moves, renames or relinks a card, or changes how it repeats. Give only what changes; null takes a link away, and repeat: null makes a repeating card happen once. On a repeating card a change applies to every occurrence that has not started; the ones that ran keep their runs.',
+  },
+  skip_card_occurrence: {
+    type: 'card.skipOccurrence',
+    description:
+      "Skips one occurrence of a repeating card: date is its day (YYYY-MM-DD) in the card's zone. The rest of the series is untouched. read_calendar lists the occurrences and when each card fires next.",
   },
   delete_card: {
     type: 'card.delete',
     withheld: ['stopRun'],
-    description: 'Removes a card. Refused while its run is live.',
+    description:
+      'Removes a card; a repeating card goes with its whole series. To leave out one occurrence, use skip_card_occurrence. Refused while its run is live.',
   },
   start_card_run: {
     type: 'card.runNow',
@@ -82,12 +90,12 @@ export const changeTools = {
     type: 'workflow.create',
     newId: 'workflowId',
     description:
-      'Creates a workflow from steps. A step with a permission mode, a gate condition or rules, and the switches "for units" and "own working copy", make it a proposal.',
+      'Creates a workflow from steps. Every step names providerInstanceId, model and effort from what read_models lists for that instance; another model or effort is refused. A step with a permission mode, a gate condition or rules, and the switches "for units" and "own working copy", make it a proposal.',
   },
   update_workflow: {
     type: 'workflow.update',
     description:
-      'Changes a workflow. Give steps as the whole new list. Changing a permission mode, a gate, a gate condition, rules, "for units" or "own working copy" makes it a proposal; so does changing the skill, extra prompt, provider or model of a step that has a permission mode or a gate that passes by itself.',
+      'Changes a workflow. Give steps as the whole new list; every step names providerInstanceId, model and effort from what read_models lists. Changing a permission mode, a gate, a gate condition, rules, "for units" or "own working copy" makes it a proposal; so does changing the skill, extra prompt, provider, model or skills of a step that has a permission mode or a gate that passes by itself. A step names its skill with skillName and, for a wow skill, skillSource ("yours" or "wow"); alsoFollow lists more skills ({name, source?}, source as read_skills gives it) whose texts or invocations go after its own; leaveOut names built-in skills wow would attach by itself (wow-verdict, wow-artifacts, wow-pull-request) that this step goes without.',
   },
   delete_workflow: {
     type: 'workflow.delete',
@@ -137,6 +145,18 @@ export const changeTools = {
     description: 'Turns an event trigger on or off. Turning one on becomes a proposal.',
   },
   delete_trigger: { type: 'trigger.delete', description: 'Deletes an event trigger.' },
+  create_skill: {
+    type: 'skill.create',
+    description: `Writes one of your own skills: skill is {name, description, text}. The name has lower case letters, digits and single hyphens, does not start with wow- and is not taken by another wow skill; description says when to use it; text is what the agent is told. ${waits}`,
+  },
+  update_skill: {
+    type: 'skill.update',
+    description: `Changes one of your own skills: skill is {name, description, text}, the whole new skill under its name. Built-in skills and skills from folders cannot be changed. ${waits}`,
+  },
+  delete_skill: {
+    type: 'skill.delete',
+    description: `Removes one of your own skills by name. Built-in skills and skills from folders cannot be removed. ${waits}`,
+  },
 } as const satisfies Record<string, ChangeTool>;
 
 export type ChangeToolName = keyof typeof changeTools;
@@ -199,6 +219,7 @@ const looks: Readonly<Record<string, Reader>> = {
   ...readers,
   ...guideReaders,
   ...diagnosisReaders,
+  ...modelReaders,
   ...asks,
 };
 
@@ -280,6 +301,7 @@ export class AssistantTools {
     const made = tool.newId ? { [tool.newId]: randomUUID() } : {};
     const command = Command.parse({ ...args, ...made, type: tool.type });
     await checkProjectFolder(command);
+    await checkStepModels(command, this.#deps);
     const commandId = `assistant-${randomUUID()}`;
     this.#deps.engine.dispatch(commandId, command, 'assistant');
     const { db } = this.#deps;

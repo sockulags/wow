@@ -220,7 +220,7 @@ describe('first start', () => {
       },
       { providerInstances: initial },
     );
-  beforeEach(() => firstStartStore.setState({ up: false, greet: false }));
+  beforeEach(() => firstStartStore.setState({ up: false }));
   afterEach(() => vi.restoreAllMocks());
 
   it('shows only "Connect an agent", with the binary found, Test and the error in words @app-assistant-25', async () => {
@@ -297,11 +297,19 @@ describe('first start', () => {
     expect(screen.queryByTestId('first-start')).toBeNull();
   });
 
-  it('gates an install without any instance', async () => {
+  it('gates an install without any instance, and asks the server for the greeting then', async () => {
     const server = firstStartServer([]);
     await renderApp('/calendar', runtimeFor(server.connection, {}));
     expect(await screen.findByTestId('first-start')).toBeTruthy();
     expect(screen.queryByRole('navigation', { name: 'Sections' })).toBeNull();
+    // The server keeps it owed until the assistant can run it, so a reload does not lose it.
+    expect(
+      server.requests.filter(
+        ({ method, params }) =>
+          method === 'dispatch' &&
+          (params as { command?: { type?: string } }).command?.type === 'thread.greetAssistant',
+      ),
+    ).toHaveLength(1);
   });
 
   it('waits for the test of an instance that was never tested', async () => {

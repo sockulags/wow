@@ -6,7 +6,8 @@
 
 - `intents/<id>/intent.md`: who needs what and why. One folder per intent: `2026-11-wow-app` (the
   app), `2026-11-review-loop`, `2026-11-app-assistant`,
-  `2026-11-workflow-branches`.
+  `2026-11-workflow-branches`, `2026-11-recurring-cards`,
+  `2026-11-wow-skills`, `2026-11-questions-and-models`.
 - `intents/<id>/spec.md`: behavior, boundaries, decisions, ground truth.
 - `intents/<id>/plan.md`: delivery units and dependencies. A unit's contract is its `###` section.
   Unit keys never change.

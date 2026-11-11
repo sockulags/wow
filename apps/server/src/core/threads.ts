@@ -1,6 +1,7 @@
 import type {
   DomainEvent,
   ProviderEvent,
+  SentSkill,
   ServerCommand,
   Thread,
   ThreadChanges,
@@ -9,14 +10,26 @@ import type {
   ThreadState,
   Turn,
 } from '@wow/contracts';
-import { assistantThreadId } from '@wow/contracts';
+import {
+  QuestionOption,
+  askAnswerPrompt,
+  askAnswerText,
+  askedQuestionsOf,
+  assistantThreadId,
+  replyProblem,
+  replyText,
+  type QuestionReply,
+} from '@wow/contracts';
+import { z } from 'zod';
 import {
   assistantAnswersNote,
   assistantThreadEvents,
   firstStartNote,
+  setupAppliedNote,
   storedGreeting,
 } from '../assistant/thread.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
+import { messageWithSkills } from './skills.js';
 
 // Decisions for provider instances, threads, turns, approvals and questions. Provider events
 // arrive as `provider.events` commands from the provider service and become thread items here, so
@@ -33,6 +46,8 @@ type ThreadCommand = Extract<
       | 'thread.openAssistant'
       | 'thread.greetAssistant'
       | 'thread.sendMessage'
+      | 'thread.sendPrepared'
+      | 'thread.answerQuestions'
       | 'thread.interrupt'
       | 'thread.configure'
       | 'thread.setPinned'
@@ -56,13 +71,46 @@ export const approvalRowId = (threadId: string, providerId: string) => `${thread
 export const questionRowId = approvalRowId;
 const providerIdOf = (threadId: string, rowId: string) => rowId.slice(threadId.length + 1);
 
+// What a question row keeps of the question, to check an answer against its choices.
+const StoredQuestion = z.object({
+  question: z.string(),
+  options: z.array(QuestionOption),
+  multiSelect: z.boolean(),
+});
+
 // A turn with the user's line as its first item. The prompt can carry a note from wow before the
 // line; the conversation shows only the line.
+// The greeting turn: wow's note of what is set up, then the user's line.
+function greetingEvents(read: ReadModel, context: DecideContext, thread: Thread): DomainEvent[] {
+  const text = storedGreeting(read, context);
+  const note = firstStartNote(read, context, thread.providerInstanceId);
+  return [
+    turnStarted(read, thread, context.now, {
+      text,
+      prompt: `${note}\n\n${text}`,
+      assistant: true,
+    }),
+    { kind: 'assistant.greetingSent', aggregate: assistantThreadId, payload: { at: context.now } },
+  ];
+}
+
 function turnStarted(
   read: ReadModel,
   thread: Thread,
   now: string,
-  { text, prompt, assistant }: { text: string; prompt: string; assistant: boolean },
+  {
+    text,
+    prompt,
+    assistant,
+    answers,
+    skills,
+  }: {
+    text: string;
+    prompt: string;
+    assistant: boolean;
+    answers?: { askItemId: string; replies: QuestionReply[] };
+    skills?: SentSkill[] | undefined;
+  },
 ): DomainEvent {
   const index = read.turnCount(thread.id);
   const id = turnId(thread.id, index);
@@ -85,7 +133,11 @@ function turnStarted(
         turnId: id,
         index: read.nextItemIndex(thread.id),
         kind: 'user',
-        payload: { text },
+        payload: {
+          text,
+          ...(answers ? { answers } : {}),
+          ...(skills && skills.length > 0 ? { skills } : {}),
+        },
         streaming: false,
       },
       providerInstanceId: thread.providerInstanceId,
@@ -239,23 +291,29 @@ export function decideThread(
     case 'thread.openAssistant': {
       // A running turn goes on as it started; the thread is brought in line before the next one.
       if (read.runningTurn(assistantThreadId)) return [];
-      return assistantThreadEvents(read, context, {
+      const opened = assistantThreadEvents(read, context, {
         model: command.fallbackModel,
         effort: command.fallbackEffort,
-      }).events;
+      });
+      return read.greetingOwed()
+        ? [...opened.events, ...greetingEvents(read, context, opened.thread)]
+        : opened.events;
     }
     case 'thread.greetAssistant': {
-      if (!read.thread(assistantThreadId)) {
-        throw new CommandRejected('rejected', 'Open the assistant before it can greet you');
+      // The greeting is owed until the assistant can run it, so a reload or a restart between
+      // the first-start step and the greeting does not lose it (spec 26).
+      const owe: DomainEvent[] = read.greetingOwed()
+        ? []
+        : [{ kind: 'assistant.greetingOwed', aggregate: assistantThreadId, payload: { at: now } }];
+      if (!read.thread(assistantThreadId) || read.runningTurn(assistantThreadId)) return owe;
+      let opened: ReturnType<typeof assistantThreadEvents>;
+      try {
+        opened = assistantThreadEvents(read, context);
+      } catch (error) {
+        if (error instanceof CommandRejected) return owe;
+        throw error;
       }
-      if (read.runningTurn(assistantThreadId)) return [];
-      const { events, thread } = assistantThreadEvents(read, context);
-      const text = storedGreeting(read, context);
-      const note = firstStartNote(read, context, thread.providerInstanceId);
-      return [
-        ...events,
-        turnStarted(read, thread, now, { text, prompt: `${note}\n\n${text}`, assistant: true }),
-      ];
+      return [...opened.events, ...greetingEvents(read, context, opened.thread)];
     }
     case 'thread.sendMessage': {
       const stored = requireThread(read, command.threadId);
@@ -267,13 +325,110 @@ export function decideThread(
       const assistant =
         stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
       const thread = assistant?.thread ?? stored;
-      const note = assistant ? assistantAnswersNote(read, context) : null;
+      const notes = assistant
+        ? [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
+            (entry): entry is string => entry !== null,
+          )
+        : [];
+      const note = notes.length === 0 ? null : notes.join('\n\n');
+      const picked = command.skills ?? [];
+      if (command.text.trim() === '' && picked.length === 0) {
+        throw new CommandRejected('rejected', 'A message needs text or a skill');
+      }
+      // The assistant has its own instruction text and takes no skills (wow skills spec 20).
+      if (assistant && picked.length > 0) {
+        throw new CommandRejected('rejected', 'The assistant takes no skills');
+      }
+      const withSkills =
+        picked.length > 0
+          ? messageWithSkills(read, context, thread, picked, command.text)
+          : { prompt: command.text, skills: undefined };
       return [
         ...(assistant?.events ?? []),
         turnStarted(read, thread, now, {
           text: command.text,
-          prompt: note ? `${note}\n\n${command.text}` : command.text,
+          prompt: note ? `${note}\n\n${withSkills.prompt}` : withSkills.prompt,
           assistant: assistant !== undefined,
+          skills: withSkills.skills,
+        }),
+      ];
+    }
+    case 'thread.sendPrepared': {
+      const thread = requireThread(read, command.threadId);
+      if (thread.kind === 'assistant') {
+        throw new CommandRejected('rejected', 'Workflow steps do not run in the assistant thread');
+      }
+      if (read.runningTurn(thread.id)) {
+        throw new CommandRejected('rejected', `Thread ${thread.id} already has a running turn`);
+      }
+      return [
+        turnStarted(read, thread, now, {
+          text: command.text,
+          prompt: command.prompt,
+          assistant: false,
+          skills: command.skills,
+        }),
+      ];
+    }
+    case 'thread.answerQuestions': {
+      const stored = requireThread(read, command.threadId);
+      if (stored.kind !== 'assistant') {
+        throw new CommandRejected(
+          'rejected',
+          "Only the assistant's questions are answered this way; an agent's question is answered on its card.",
+        );
+      }
+      if (read.runningTurn(stored.id)) {
+        throw new CommandRejected(
+          'rejected',
+          'The assistant is still working. Answer its questions when its turn has ended.',
+        );
+      }
+      const item = read.threadItem(command.itemId);
+      const ask = item && item.threadId === stored.id ? askedQuestionsOf(item) : null;
+      if (!item || !ask) {
+        throw new CommandRejected(
+          'not_found',
+          `The assistant asked no questions in ${command.itemId}`,
+        );
+      }
+      // The next message ends the questions: answered, or left for something the user wrote.
+      const asked = read.lastTurn(stored.id);
+      if (asked?.id !== item.turnId) {
+        throw new CommandRejected(
+          'conflict',
+          'These questions were not answered before the next message, so they can no longer be answered.',
+        );
+      }
+      // A stopped turn takes no answer, as an agent's question in a stopped turn (spec 5).
+      if (asked.state === 'interrupted') {
+        throw new CommandRejected(
+          'conflict',
+          'The turn that asked these questions was stopped, so they can no longer be answered.',
+        );
+      }
+      if (command.replies.length !== ask.questions.length) {
+        throw new CommandRejected(
+          'rejected',
+          `Answer every question: ${ask.questions.length} asked, ${command.replies.length} answered.`,
+        );
+      }
+      ask.questions.forEach((question, index) => {
+        const problem = replyProblem(question, command.replies[index] ?? { picked: [], text: '' });
+        if (problem) throw new CommandRejected('rejected', `"${question.question}": ${problem}`);
+      });
+      const opened = assistantThreadEvents(read, context);
+      const notes = [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
+        (entry): entry is string => entry !== null,
+      );
+      const answer = askAnswerPrompt(ask, command.replies);
+      return [
+        ...opened.events,
+        turnStarted(read, opened.thread, now, {
+          text: askAnswerText(ask, command.replies),
+          prompt: [...notes, answer].join('\n\n'),
+          assistant: true,
+          answers: { askItemId: item.id, replies: command.replies },
         }),
       ];
     }
@@ -378,14 +533,42 @@ export function decideThread(
       ];
     }
     case 'question.answer': {
-      const question = read.question(command.questionId);
-      if (!question) throw new CommandRejected('not_found', `No question ${command.questionId}`);
-      if (question.answer !== null) {
-        throw new CommandRejected('conflict', `Question ${question.id} was already answered`);
+      const ids = command.answers.map((entry) => entry.questionId);
+      if (new Set(ids).size !== ids.length) {
+        throw new CommandRejected('rejected', 'A question is answered twice');
       }
-      const thread = requireThread(read, question.threadId);
+      const answered = command.answers.map(({ questionId, reply }) => {
+        const question = read.question(questionId);
+        if (!question) throw new CommandRejected('not_found', `No question ${questionId}`);
+        if (question.answer !== null) {
+          throw new CommandRejected('conflict', `Question ${question.id} was already answered`);
+        }
+        const asked = StoredQuestion.safeParse(question.request);
+        const problem = replyProblem(
+          asked.success ? asked.data : { options: [], multiSelect: true },
+          reply,
+        );
+        if (problem) throw new CommandRejected('rejected', problem);
+        return { question, reply, text: asked.data?.question ?? question.id };
+      });
+      const threadIds = new Set(answered.map((entry) => entry.question.threadId));
+      const [threadId] = threadIds;
+      if (threadIds.size !== 1 || threadId === undefined) {
+        throw new CommandRejected('rejected', 'Questions of different threads are answered apart');
+      }
+      const thread = requireThread(read, threadId);
+      // Once its turn has ended (or was stopped), nobody waits for the answer (spec 5).
+      const running = read.runningTurn(thread.id);
+      for (const { question, text } of answered) {
+        if (!running || read.threadItem(question.itemId)?.turnId !== running.id) {
+          throw new CommandRejected(
+            'rejected',
+            `"${text}" was not answered before its turn ended, so it can no longer be answered.`,
+          );
+        }
+      }
       return [
-        {
+        ...answered.map(({ question, reply }): DomainEvent => ({
           kind: 'question.answered',
           aggregate: thread.id,
           payload: {
@@ -393,11 +576,12 @@ export function decideThread(
             threadId: thread.id,
             providerInstanceId: thread.providerInstanceId,
             providerQuestionId: providerIdOf(thread.id, question.id),
-            answer: command.answer,
+            answer: replyText(reply),
+            reply,
             answeredAt: now,
           },
-        },
-        ...resumeWork(read, thread.id, thread.state, now),
+        })),
+        ...resumeWork(read, thread.id, thread.state, now, answered.length),
       ];
     }
     case 'provider.events':
@@ -417,8 +601,9 @@ function resumeWork(
   threadId: string,
   state: ThreadState,
   now: string,
+  answered = 1,
 ): DomainEvent[] {
-  if (state !== 'needs_you' || read.openRequests(threadId) > 1) return [];
+  if (state !== 'needs_you' || read.openRequests(threadId) > answered) return [];
   return [stateChanged(threadId, 'working', now)];
 }
 
@@ -600,6 +785,8 @@ function decideProviderEvents(
         if (read.question(id)) break;
         const request = {
           question: event.question,
+          ...(event.header === undefined ? {} : { header: event.header }),
+          ...(event.askId === undefined ? {} : { askId: event.askId }),
           options: event.options,
           multiSelect: event.multiSelect,
         };

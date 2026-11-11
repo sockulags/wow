@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AssistantPlace, AssistantProposalLine } from './assistant.js';
 import { ProviderKind } from './provider.js';
+import { OwnSkill } from './skills.js';
 import { WorkflowStep } from './workflow.js';
 
 // A setup file (app assistant spec 21 to 23): the settings, workflows and templates one person
@@ -18,6 +19,16 @@ export const SetupStep = WorkflowStep.omit({ providerInstanceId: true })
   .extend({ provider: ProviderKind })
   .strict();
 export type SetupStep = z.infer<typeof SetupStep>;
+
+export const providerKindLabels: Readonly<Record<ProviderKind, string>> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+};
+
+// A step applied from a file where no instance of its kind was here holds the kind itself as its
+// instance id until one is chosen. The kind it waits for, or null for an ordinary id.
+export const awaitedProviderKind = (providerInstanceId: string): ProviderKind | null =>
+  ProviderKind.safeParse(providerInstanceId).data ?? null;
 
 export const SetupWorkflow = z
   .object({
@@ -41,6 +52,8 @@ export const SetupFile = z
     settings: z.record(z.string(), z.unknown()).optional(),
     toFillIn: z.array(z.string().min(1)).optional(),
     workflows: z.array(SetupWorkflow).optional(),
+    // Own skills (wow skills spec 8): name, description and text, as Settings → Skills keeps them.
+    skills: z.array(OwnSkill.strict()).optional(),
   })
   .strict();
 export type SetupFile = z.infer<typeof SetupFile>;

@@ -59,12 +59,15 @@ function Select({
   );
 }
 
+const marked = (label: string, isDefault: boolean) => (isDefault ? `${label} (default)` : label);
+
 // Model, effort and permission mode pickers (spec 14, 17). The models come from the provider;
 // a change applies to the next turn.
 export function ThreadSettings({
   providerInstanceId,
   kind,
   value,
+  defaults,
   disabled = false,
   className,
   onChange,
@@ -72,6 +75,8 @@ export function ThreadSettings({
   providerInstanceId: string;
   kind: ProviderKind;
   value: ThreadSettingsValue;
+  // The instance's defaults, marked in the lists (questions and models spec 18).
+  defaults?: { readonly model: string | null; readonly effort: string | null };
   disabled?: boolean;
   className?: string;
   onChange(changes: Partial<ThreadSettingsValue>): void;
@@ -79,11 +84,11 @@ export function ThreadSettings({
   const { models, error } = useModels(providerInstanceId);
   const modelChoices = modelOptions(models, value.model).map((id) => ({
     id,
-    label: models.find((model) => model.id === id)?.label || id,
+    label: marked(models.find((model) => model.id === id)?.label || id, id === defaults?.model),
   }));
   const efforts = effortOptions(kind, models, value.model, value.effort).map((id) => ({
     id,
-    label: effortLabel(id),
+    label: marked(effortLabel(id), id === defaults?.effort),
   }));
   return (
     <div className={cn('flex flex-wrap items-center gap-1.5', className)}>

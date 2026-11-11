@@ -96,6 +96,12 @@ export const settingLabel = (key: string): string =>
     ? settingsRegistry[key as keyof typeof settingsRegistry].label
     : key;
 
+// The Settings page a setting is on; Trackers for one the registry does not know.
+export const settingGroup = (key: string): string =>
+  Object.hasOwn(settingsRegistry, key)
+    ? settingsRegistry[key as keyof typeof settingsRegistry].group
+    : 'trackers';
+
 export const fileNames = { intent: 'intent.md', spec: 'spec.md', plan: 'plan.md' } as const;
 
 export const problemLabel = (problem: PlanProblem): string =>

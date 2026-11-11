@@ -27,10 +27,16 @@ export type ProjectDialog =
   | { readonly type: 'remove'; readonly projectId: string };
 
 // The card dialog: a new card for a time range (from a click, a drag or the palette), or an
-// existing card. Times are ISO instants.
+// existing card. Times are ISO instants. An edit opened from one occurrence of a repeating card
+// names its day, so Delete can offer "This occurrence"; `deleting` opens it at that choice.
 export type CardDialog =
   | { readonly type: 'create'; readonly start: string; readonly end: string }
-  | { readonly type: 'edit'; readonly cardId: string };
+  | {
+      readonly type: 'edit';
+      readonly cardId: string;
+      readonly date?: string;
+      readonly deleting?: boolean;
+    };
 
 // The file the context panel shows in place of the conversation (review loop spec 6). `from` is
 // the route it was opened on: the viewer belongs to that view and is gone on any other.

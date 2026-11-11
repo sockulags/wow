@@ -1,8 +1,13 @@
 import {
+  repeatRuleWords,
   SecretRef,
   SettingGroup,
   TrackerConnection,
   isCardTrigger,
+  inListOrder,
+  skillGroupOf,
+  type CalendarOccurrence,
+  type ProviderModel,
   type SettingDefinition,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
@@ -10,6 +15,8 @@ import { asc, desc } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
+import { CommandRejected } from '../core/orchestrator.js';
+import { readCalendarRange } from '../core/series.js';
 import { runPath } from '../core/workflows.js';
 import type { SettingsService } from '../settings/service.js';
 import type { TrackerService } from '../trackers/service.js';
@@ -25,6 +32,8 @@ export interface ReaderDeps {
   readonly trackers: TrackerService;
   readonly clock: () => Date;
   readonly registry: Readonly<Record<string, SettingDefinition>>;
+  // What the installed provider of an instance offers (`listModels`).
+  readonly listModels: (providerInstanceId: string) => Promise<ProviderModel[]>;
 }
 
 export interface Reader<S extends z.ZodType = z.ZodType> {
@@ -196,25 +205,61 @@ export const readers = {
     read: (_args, deps) => deps.settings.get('workflows.templates'),
   }),
   read_skills: reader({
-    description: 'The skills installed on this machine that a workflow step can run.',
+    description:
+      'Every skill a workflow step or a message can use, in list order: your own skills ("yours") first, then the skills wow ships ("wow"), then skills from folders. A wow skill (group yours or wow) is sent as its text; read it with read_skill. Your own skills can be written, changed and removed with create_skill, update_skill and delete_skill; the others cannot be changed.',
     input: none,
     read: (_args, deps) =>
-      deps.db
+      inListOrder(deps.db.select().from(t.skills).all()).map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        group: skillGroupOf(skill),
+        source: skill.source,
+        manualOnly: skill.manualOnly,
+        // A step names a wow skill with this source, so it is not taken for a folder skill of
+        // the same name.
+        ...(skill.source === 'wow' || skill.source === 'yours'
+          ? { skillSource: skill.source }
+          : {}),
+      })),
+  }),
+  read_skill: reader({
+    description:
+      "The text of a wow skill: one of your own (group yours) or one wow ships (group wow). A built-in skill's {{...}} parts are filled in from the settings and the run when it is sent. Skills from folders are the provider's to read; their text is not given here.",
+    input: z
+      .object({ name: z.string().min(1), group: z.enum(['yours', 'wow']).optional() })
+      .strict(),
+    read: ({ name, group }, deps) => {
+      const found = deps.db
         .select()
         .from(t.skills)
-        .orderBy(asc(t.skills.name))
         .all()
-        .map((skill) => ({
-          id: skill.id,
-          name: skill.name,
-          description: skill.description,
-          source: skill.source,
-          manualOnly: skill.manualOnly,
-        })),
+        .filter(
+          (skill) =>
+            skill.name === name &&
+            (skill.source === 'yours' || skill.source === 'wow') &&
+            (group === undefined || skill.source === group),
+        );
+      // Yours before wow's, as in every list.
+      const skill = inListOrder(found)[0];
+      if (!skill) {
+        throw new CommandRejected(
+          'not_found',
+          `There is no wow skill named ${name}. read_skills lists every skill; only those in the groups yours and wow have a text here.`,
+        );
+      }
+      return {
+        name: skill.name,
+        description: skill.description,
+        group: skillGroupOf(skill),
+        text: skill.text ?? '',
+        changeable: skill.source === 'yours',
+      };
+    },
   }),
   read_calendar: reader({
     description:
-      "Calendar cards with what they start, and Outlook meetings with their times and titles only. Without a range: from now for the calendar's lookahead.",
+      "Calendar cards with what they start, and Outlook meetings with their times and titles only. Without a range: from now for the calendar's lookahead. A repeating card is one card: it lists its rule in words, when it fires next, the days skipped by hand and its occurrences in the range with what happened at those already reached.",
     input: z
       .object({
         from: z.iso.datetime({ offset: true }).optional(),
@@ -227,15 +272,21 @@ export const readers = {
         to === undefined
           ? new Date(start.getTime() + deps.settings.get('calendar.lookaheadDays') * 86_400_000)
           : new Date(to);
-      const rows = deps.db
-        .select()
-        .from(t.calendarItems)
-        .orderBy(asc(t.calendarItems.start))
-        .all()
-        .filter(
-          (item) =>
-            Date.parse(item.end) >= start.getTime() && Date.parse(item.start) <= end.getTime(),
-        );
+      const rows = deps.db.select().from(t.calendarItems).orderBy(asc(t.calendarItems.start)).all();
+      const range =
+        end.getTime() > start.getTime()
+          ? readCalendarRange(
+              deps.db,
+              { from: start.toISOString(), to: end.toISOString() },
+              deps.settings.get('calendar.maxOccurrences'),
+            )
+          : { occurrences: [] as CalendarOccurrence[], more: [] as string[] };
+      const inRange = new Map<string, CalendarOccurrence[]>();
+      for (const occurrence of range.occurrences) {
+        const kept = inRange.get(occurrence.cardId);
+        if (kept) kept.push(occurrence);
+        else inRange.set(occurrence.cardId, [occurrence]);
+      }
       const times = (item: (typeof rows)[number]) => ({
         title: item.title,
         start: item.start,
@@ -246,7 +297,7 @@ export const readers = {
         from: start.toISOString(),
         to: end.toISOString(),
         cards: rows
-          .filter((item) => item.source === 'local')
+          .filter((item) => item.source === 'local' && inRange.has(item.id))
           .map((item) => ({
             id: item.id,
             ...times(item),
@@ -255,10 +306,32 @@ export const readers = {
             backlogItemId: item.backlogItemId,
             runId: item.runId,
             state: item.state,
+            nextAt: item.nextAt,
+            ...(item.repeat
+              ? {
+                  repeat: item.repeat,
+                  repeats: repeatRuleWords(item.repeat, { start: item.start, zone: item.zone }),
+                  skippedDates: item.skippedDates,
+                  occurrences: (inRange.get(item.id) ?? []).map((occurrence) => ({
+                    date: occurrence.date,
+                    start: occurrence.start,
+                    end: occurrence.end,
+                    outcome: occurrence.record?.outcome ?? null,
+                    runId: occurrence.record?.runId ?? null,
+                    reason: occurrence.record?.reason ?? null,
+                  })),
+                  moreOccurrences: range.more.includes(item.id),
+                }
+              : {}),
             path: `/calendar?item=${encodeURIComponent(item.id)}`,
           })),
         meetings: rows
-          .filter((item) => item.source === 'outlook')
+          .filter(
+            (item) =>
+              item.source === 'outlook' &&
+              Date.parse(item.end) >= start.getTime() &&
+              Date.parse(item.start) <= end.getTime(),
+          )
           .map((item) => ({ ...times(item), allDay: item.allDay, state: item.state })),
       };
     },
@@ -390,6 +463,7 @@ export const readers = {
                 workflowId: trigger.workflowId,
                 cardId: trigger.calendarItemId,
                 card: cards.get(trigger.calendarItemId) ?? null,
+                // For a repeating card, the next occurrence it fires at.
                 runAt: trigger.runAt,
                 zone: trigger.zone,
                 state: trigger.state,

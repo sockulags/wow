@@ -18,9 +18,11 @@ import {
   hostLink,
   hostTime,
   validTime,
+  waitBound,
   webLinksIn,
   type FoundChangeRequest,
   type HostAdapter,
+  type WaitOptions,
 } from './adapter.js';
 import { checkStateOf } from './github.js';
 
@@ -29,10 +31,9 @@ import { checkStateOf } from './github.js';
 // review comments. API v4 with the PRIVATE-TOKEN header. Read only: it sends GET requests and
 // nothing else.
 
-export interface GitLabHostOptions extends RequestOptions {
+export interface GitLabHostOptions extends RequestOptions, WaitOptions {
   // How many of the newest merge requests are read when the search is turned down.
   readonly listFallbackCount: number;
-  readonly clock?: () => Date;
 }
 
 // GitLab's largest page.
@@ -55,6 +56,11 @@ function found(item: unknown): FoundChangeRequest | undefined {
   const reported = field(item, 'state');
   const branch = field(item, 'source_branch');
   const sha = field(item, 'sha');
+  // A merge request from a fork has its source in another project. One that does not say where
+  // its source is counts as a fork, so an answer that leaves it out never lets a fork through.
+  const source = field(item, 'source_project_id');
+  const target = field(item, 'target_project_id');
+  const fromFork = !(typeof source === 'number' && source === target);
   return {
     number: iid,
     title: text(field(item, 'title')),
@@ -66,7 +72,7 @@ function found(item: unknown): FoundChangeRequest | undefined {
     units: intentUnitLines(text(field(item, 'description'))),
     links: webLinksIn(text(field(item, 'description'))),
     ...(typeof branch === 'string' && typeof sha === 'string' && sha !== ''
-      ? { head: { branch, sha } }
+      ? { head: { branch, sha, fromFork } }
       : {}),
   };
 }
@@ -132,6 +138,7 @@ export function createGitLabHost(
   const project = `${gitLabApi(config.baseUrl)}/projects/${gitLabProjectId(config.projectPath)}`;
   const headers = gitLabHeaders(config.token);
   const clock = options.clock ?? (() => new Date());
+  const bounded = waitBound(options);
   let requests = 0;
   let waitUntil: Date | undefined;
   let left: { remaining: number; resetAt: Date } | undefined;
@@ -152,7 +159,7 @@ export function createGitLabHost(
           ? left.resetAt.getTime()
           : undefined;
     if (until === undefined || !validTime(until)) return false;
-    waitUntil = new Date(Math.max(until, waitUntil?.getTime() ?? 0));
+    waitUntil = new Date(Math.max(bounded(until), waitUntil?.getTime() ?? 0));
     return true;
   };
 
@@ -217,6 +224,26 @@ export function createGitLabHost(
       (body) => list(body).flatMap((item) => found(item) ?? []),
     );
 
+  // A merged-results pipeline (or a merge train's) runs on a merge commit GitLab makes, so no
+  // listed pipeline has the head's sha. The merge request's own head pipeline names it, as long
+  // as the merge request is still at that head.
+  const headPipeline = async (
+    iid: number,
+    sha: string,
+    pipelines: readonly unknown[],
+  ): Promise<unknown> => {
+    const current = await getOr(
+      `${project}/merge_requests/${iid}`,
+      none,
+      () => undefined,
+      (b) => b,
+    );
+    const head = field(current, 'head_pipeline');
+    const id = field(head, 'id');
+    if (field(current, 'sha') !== sha || typeof id !== 'number') return undefined;
+    return pipelines.find((entry) => field(entry, 'id') === id) ?? head;
+  };
+
   // The jobs of the newest pipeline that ran on the head commit; a pipeline without jobs (an
   // external one) counts as one check.
   const checks = async (iid: number, sha: string): Promise<HostCheck[]> => {
@@ -226,7 +253,9 @@ export function createGitLabHost(
       () => [],
       list,
     );
-    const pipeline = pipelines.find((entry) => field(entry, 'sha') === sha);
+    const pipeline =
+      pipelines.find((entry) => field(entry, 'sha') === sha) ??
+      (pipelines.length > 0 ? await headPipeline(iid, sha, pipelines) : undefined);
     const id = field(pipeline, 'id');
     if (typeof id !== 'number' || !Number.isSafeInteger(id)) return [];
     const jobs = await getOr(
@@ -251,12 +280,15 @@ export function createGitLabHost(
       return requests;
     },
     get waitUntil() {
-      const short = left && left.remaining < requests ? left.resetAt : undefined;
+      const short =
+        left && left.remaining < requests ? new Date(bounded(left.resetAt.getTime())) : undefined;
       if (!short) return waitUntil;
       return waitUntil && waitUntil > short ? waitUntil : short;
     },
     async findForIntent(intentId) {
-      const search = encodeURIComponent(`Intent-Unit: ${intentId}/`);
+      // Only `<intent-id>/` is searched for: a line in bold, underscores or quote marks does not
+      // hold the phrase `Intent-Unit: <intent-id>/`, and the lines are read below.
+      const search = encodeURIComponent(`${intentId}/`);
       const all = await getOr(
         `${project}/merge_requests?state=all&search=${search}&in=description&order_by=created_at&sort=desc&per_page=${pageSize}`,
         noSearch,
@@ -266,7 +298,7 @@ export function createGitLabHost(
           ),
         (body) => list(body).flatMap((item) => found(item) ?? []),
       );
-      // The search matches words; only a description with the line itself counts.
+      // The search matches the id anywhere; only a description with the line itself counts.
       return all.filter((request) => request.units.some((unit) => unit.intentId === intentId));
     },
     async findForBranch(branch) {
@@ -308,6 +340,7 @@ export function createGitLabHost(
         mergedAt: current.mergedAt,
         headBranch: current.head.branch,
         headSha: current.head.sha,
+        fromFork: current.head.fromFork,
         units: [...request.units],
         links: [...(current.links ?? request.links ?? [])],
         checkState: checkStateOf(all),

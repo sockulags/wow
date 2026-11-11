@@ -1,13 +1,20 @@
 import {
+  QuestionItemPayload,
+  SkillGroup,
+  skillGroupOf,
   TextItemPayload,
+  ToolCallItemPayload,
   type Approval,
   type Project,
   type ProviderInstance,
   type ProviderKind,
   type Question,
+  type SentSkill,
   type Skill,
+  type SkillRef,
   type Thread,
   type ThreadItem,
+  type Turn,
 } from '@wow/contracts';
 import { threadTitle } from './model';
 
@@ -83,16 +90,15 @@ export function formatElapsed(milliseconds: number): string {
 export const effortLabel = (effort: string): string =>
   effort === 'default' ? 'Default' : effort.charAt(0).toUpperCase() + effort.slice(1);
 
-export type SkillGroup = 'Project' | 'User' | 'Plugins' | 'Other';
-export const skillGroups: readonly SkillGroup[] = ['Project', 'User', 'Plugins', 'Other'];
+// Where a skill comes from, for the list's group headings and the chip's mark: Yours, wow,
+// Project, User, Plugins, Other, in that order (wow skills spec 1, 7).
+export const skillGroups: readonly SkillGroup[] = SkillGroup.options;
+export const skillGroup = (skill: Pick<Skill, 'source' | 'invocations'>): SkillGroup =>
+  skillGroupOf(skill);
 
-// Where a skill comes from, for the picker's group headings.
-export function skillGroup(skill: Pick<Skill, 'source' | 'invocations'>): SkillGroup {
-  if (skill.invocations.claude.includes(':')) return 'Plugins';
-  if (skill.source === 'project-claude' || skill.source === 'project-agents') return 'Project';
-  if (skill.source === 'user-claude' || skill.source === 'user-codex') return 'User';
-  return 'Other';
-}
+// The group of a skill a message was sent with: a folder skill's group follows its invocation.
+export const sentSkillGroup = (skill: SentSkill): SkillGroup =>
+  skillGroupOf({ source: skill.source, invocations: { claude: skill.invocation ?? '' } });
 
 export const skillSourceLabels: Readonly<Record<Skill['source'], string>> = {
   'user-claude': 'Claude user skills',
@@ -100,6 +106,8 @@ export const skillSourceLabels: Readonly<Record<Skill['source'], string>> = {
   'project-claude': 'Project .claude',
   'project-agents': 'Project .agents',
   custom: 'Custom folder',
+  wow: 'Built into wow',
+  yours: 'Your skills',
 };
 
 // The muted source label of one picker row: the plugin's name, or where it was found.
@@ -114,7 +122,7 @@ export function starterSkills(skills: readonly Skill[], count: number): Skill[] 
   const unique: Skill[] = [];
   for (const skill of skills.toSorted(
     (a, b) =>
-      Number(skillGroup(b) === 'Project') - Number(skillGroup(a) === 'Project') ||
+      Number(skillGroup(b) === 'project') - Number(skillGroup(a) === 'project') ||
       a.name.localeCompare(b.name),
   )) {
     if (skill.manualOnly || seen.has(skill.name)) continue;
@@ -127,8 +135,19 @@ export function starterSkills(skills: readonly Skill[], count: number): Skill[] 
 export const pendingApproval = (approvals: readonly Approval[]): Approval | undefined =>
   approvals.find((approval) => approval.decision === null);
 
-export const pendingQuestion = (questions: readonly Question[]): Question | undefined =>
-  questions.find((question) => question.answer === null);
+// Only a question of the running turn waits: once its turn ends it takes no answer (spec 5), and
+// the composer goes back to sending messages.
+export const pendingQuestion = (
+  questions: readonly Question[],
+  items: readonly ThreadItem[],
+  running: Turn | undefined,
+): Question | undefined => {
+  if (!running) return undefined;
+  const turnOf = new Map(items.map((item) => [item.id, item.turnId]));
+  return questions.find(
+    (question) => question.answer === null && turnOf.get(question.itemId) === running.id,
+  );
+};
 
 function lastText(items: readonly ThreadItem[], kind: ThreadItem['kind']): string | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1) {
@@ -140,8 +159,27 @@ function lastText(items: readonly ThreadItem[], kind: ThreadItem['kind']): strin
   return undefined;
 }
 
-// The user's last message, for "Retry".
-export const lastUserMessage = (items: readonly ThreadItem[]) => lastText(items, 'user');
+// The user's last message with its skills, as a message names them, so "Retry" sends both again
+// (a message may be only a chip).
+export function lastUserSent(
+  items: readonly ThreadItem[],
+): { readonly text: string; readonly skills: SkillRef[] } | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item?.kind !== 'user') continue;
+    const parsed = TextItemPayload.safeParse(item.payload);
+    if (!parsed.success) continue;
+    const skills = (parsed.data.skills ?? []).map((skill): SkillRef =>
+      skill.source === 'wow' || skill.source === 'yours'
+        ? { name: skill.name, source: skill.source }
+        : { name: skill.name },
+    );
+    if (parsed.data.text.trim() !== '' || skills.length > 0) {
+      return { text: parsed.data.text, skills };
+    }
+  }
+  return undefined;
+}
 
 // A thread's last assistant message, for the gate's "what to review".
 export const lastAssistantText = (items: readonly ThreadItem[]) =>
@@ -150,3 +188,95 @@ export const lastAssistantText = (items: readonly ThreadItem[]) =>
 // The last error item, the one Retry and Resume belong to.
 export const lastErrorId = (items: readonly ThreadItem[]): string | undefined =>
   items.findLast((item) => item.kind === 'error')?.id;
+
+// One entry of the conversation list: an item as it is, or a run of tool calls drawn as one row.
+export type ConversationEntry =
+  | { readonly kind: 'item'; readonly item: ThreadItem }
+  | { readonly kind: 'tools'; readonly id: string; readonly items: readonly ThreadItem[] }
+  | { readonly kind: 'questions'; readonly id: string; readonly items: readonly ThreadItem[] };
+
+const askIdOf = (item: ThreadItem): string | undefined => {
+  if (item.kind !== 'question') return undefined;
+  const parsed = QuestionItemPayload.safeParse(item.payload);
+  return parsed.success ? parsed.data.askId : undefined;
+};
+
+// The questions of one ask are one card (questions spec 3): consecutive question items of the
+// same turn with the same ask become one entry. A question from before the card has no ask and
+// stays alone.
+export function groupQuestions(entries: readonly ConversationEntry[]): ConversationEntry[] {
+  const out: ConversationEntry[] = [];
+  for (const entry of entries) {
+    const previous = out.at(-1);
+    const askId = entry.kind === 'item' ? askIdOf(entry.item) : undefined;
+    if (entry.kind !== 'item' || askId === undefined) {
+      out.push(entry);
+      continue;
+    }
+    const last =
+      previous?.kind === 'questions'
+        ? previous.items.at(-1)
+        : previous?.kind === 'item'
+          ? previous.item
+          : undefined;
+    if (
+      previous &&
+      previous.kind !== 'tools' &&
+      last !== undefined &&
+      askIdOf(last) === askId &&
+      last.turnId === entry.item.turnId
+    ) {
+      const items = previous.kind === 'questions' ? previous.items : [previous.item];
+      out[out.length - 1] = {
+        kind: 'questions',
+        id: items[0]?.id ?? entry.item.id,
+        items: [...items, entry.item],
+      };
+      continue;
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
+// Consecutive tool calls of one turn become one entry, so a turn that reads ten things does not
+// fill the screen before its answer. Any other item breaks the run, and so does a row the view
+// draws after a call (`endsRun`: the Assistant's change rows and cards). The entry's id is its
+// first call's, so the row keeps its open state while the run grows.
+export function groupToolCalls(
+  items: readonly ThreadItem[],
+  endsRun: (item: ThreadItem) => boolean = () => false,
+): ConversationEntry[] {
+  const entries: ConversationEntry[] = [];
+  let run: ThreadItem[] = [];
+  const close = () => {
+    const [first] = run;
+    if (first !== undefined) {
+      entries.push(
+        run.length === 1
+          ? { kind: 'item', item: first }
+          : { kind: 'tools', id: first.id, items: run },
+      );
+    }
+    run = [];
+  };
+  for (const item of items) {
+    if (item.kind !== 'tool_call') {
+      close();
+      entries.push({ kind: 'item', item });
+      continue;
+    }
+    if (run[0] !== undefined && run[0].turnId !== item.turnId) close();
+    run.push(item);
+    if (endsRun(item)) close();
+  }
+  close();
+  return entries;
+}
+
+// How many calls of a run failed or were refused, so the collapsed row still says so.
+export const failedToolCalls = (items: readonly ThreadItem[]): number =>
+  items.filter((item) => {
+    const parsed = ToolCallItemPayload.safeParse(item.payload);
+    return parsed.success && parsed.data.status === 'error';
+  }).length;

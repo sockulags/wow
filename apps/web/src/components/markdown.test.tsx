@@ -191,5 +191,11 @@ describe('a streaming message (review loop spec 3)', () => {
     expect(splitUnfinished('a | b\n---').pending).toBe('');
     expect(splitUnfinished('a | b\n--- | ---').pending).toBe('a | b\n--- | ---');
     expect(splitUnfinished('a | b\n:--').pending).toBe('a | b\n:--');
+    // Text with Windows line ends is read the same way.
+    expect(splitUnfinished('One\r\n\r\n```mermaid\r\nflowchart LR\r\n')).toEqual({
+      done: 'One\r\n\r',
+      pending: '```mermaid\r\nflowchart LR\r\n',
+    });
+    expect(splitUnfinished('```ts\r\nx\r\n```\r\nTwo').pending).toBe('');
   });
 });

@@ -519,6 +519,23 @@ describe('send back at a gate (review loop spec 16 to 18)', () => {
       prompt: 'Try 2 of a: Shorter.',
     });
     expect(prompt('')).toMatchObject({ prompt: 'Shorter.' });
+    // A template that does not name the note still sends it, after the template's own text.
+    expect(prompt('Attempt {{attempt}} of {{skill}}.')).toMatchObject({
+      prompt: 'Attempt 2 of a.\n\nShorter.',
+    });
+  });
+
+  it('keeps the blank lines the reviewer wrote in the note', () => {
+    const definition = workflow(A({ gateAfter: true }), B());
+    const waiting = play(definition, [completed('a')]);
+    const note = 'First:\n\n\n\n```\nkeep\n\n\n\nthis\n```';
+    const { effects } = advance(
+      definition,
+      waiting.run,
+      sendBack(note),
+      context({ sendBackTemplate: 'Again.\n\n\n\n{{note}}\n\n\n{{#missing}}x{{/missing}}' }),
+    );
+    expect(effects[0]).toMatchObject({ prompt: `Again.\n\n${note}` });
   });
 });
 
@@ -677,6 +694,27 @@ describe('step prompts and handover', () => {
       ].join('\n'),
     );
     expect(renderHandover(defaultHandoverTemplate, { ...values, ...eventValues(null) })).toBe('');
+    // GitLab's words for a GitLab event.
+    expect(
+      renderHandover(defaultHandoverTemplate, {
+        ...values,
+        ...eventValues({
+          ...event,
+          number: 12,
+          url: 'https://gitlab.example.invalid/acme/tea/-/merge_requests/12',
+          headRef: 'refs/merge-requests/12/head',
+          event: 'merged',
+          commentUrl: null,
+          commentAuthor: null,
+        }),
+      }),
+    ).toBe(
+      [
+        'This run was started by an event: merge request merged.',
+        'Merge request !12: https://gitlab.example.invalid/acme/tea/-/merge_requests/12',
+        'Branch: agent/U2-bell',
+      ].join('\n'),
+    );
   });
 
   it('joins invocation, extra prompt and handover', () => {

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { choose } from './controls';
 import { e2eHome, e2eOutlookControlPort } from './env';
+import { sketchPath, sketching, sketchUse } from './sketch';
 
 // U9 ground truth against the mock Outlook (WOW_OUTLOOK=mock, e2e/server.ts): Outlook items
 // render, the banner shows on a mock failure, and a card created, moved and resized by mouse
@@ -37,6 +38,16 @@ function localDay(days = 0): string {
   const date = new Date();
   date.setDate(date.getDate() + days);
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+// The first day from today on, today included, that is Monday to Friday. The recurring fixtures
+// sit on weekdays, so a case that needs one must not depend on the day it runs.
+function weekday(): string {
+  for (let days = 0; ; days += 1) {
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    if (date.getDay() !== 0 && date.getDay() !== 6) return localDay(days);
+  }
 }
 
 const calendar = (page: Page) => page.getByRole('region', { name: 'Calendar' });
@@ -183,7 +194,7 @@ test.describe('calendar', () => {
   test('shows no mail rail, count or command, and the grid spans the width', async ({ page }) => {
     const anyMention = /mail|unread/i;
     for (const view of ['day', 'week']) {
-      await page.goto(`/calendar?view=${view}&date=${localDay()}`);
+      await page.goto(`/calendar?view=${view}&date=${weekday()}`);
       const grid = calendar(page);
       await expect(grid.getByRole('button', { name: /^Team standup/ }).first()).toBeVisible();
       await expect(page.getByRole('complementary')).toHaveCount(0);
@@ -383,9 +394,10 @@ test.describe('calendar', () => {
     const card = view.getByRole('button', { name: /^Write the release notes for lantern-web, / });
     await expect(card).toHaveAccessibleName('Write the release notes for lantern-web, 10:45–11:45');
 
-    // The invented meetings from 10:00 to 12:00 and the card; the standup on weekdays sits apart.
+    // The invented meetings from 10:00 to 12:00 and the card. The weekday meetings (the standup,
+    // and the 1:1 on Thursdays) sit apart and are there or not depending on the day.
     const blocks = view.locator('[data-item]').filter({
-      hasNotText: 'Team standup',
+      hasNotText: /Team standup|1:1 with Bo/,
     });
     await expect(blocks).toHaveCount(6);
     const columnBox = await column.boundingBox();
@@ -481,6 +493,7 @@ test.describe('calendar', () => {
 
   test('refuses an end before the start and says what a trigger will do', async ({ page }) => {
     await page.goto(`/calendar?view=day&date=${localDay(4)}`);
+    await expect(page.getByTestId(`day-${localDay(4)}`)).toBeVisible();
     await page.keyboard.press('c');
     const dialog = page.getByRole('dialog', { name: 'New card' });
     await expect(dialog.getByLabel('Title')).toHaveAttribute(
@@ -529,5 +542,211 @@ test.describe('calendar', () => {
     const [bandBox, columnBox] = [await band.boundingBox(), await column.boundingBox()];
     if (!bandBox || !columnBox) throw new Error('work hours are not on screen');
     expect(Math.round(((bandBox.y - columnBox.y) / columnBox.height) * 24 * 60)).toBe(8 * 60 + 30);
+  });
+});
+
+// Recurring cards (plan U2): a weekday card drawn in two weeks, one occurrence skipped and the
+// series deleted, against the mock Outlook and the e2e server's own scheduler. The cards start on
+// a Monday at least a week ahead, so no occurrence is reached while a case runs.
+
+const shortMonths = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+// Days from today to the first Monday at least seven days away.
+function mondayAhead(): number {
+  for (let days = 7; ; days += 1) {
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    if (date.getDay() === 1) return days;
+  }
+}
+
+// "Mon 23 Nov", as the card form names a day.
+function shortDay(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return `${names[date.getDay()]} ${date.getDate()} ${shortMonths[date.getMonth()]}`;
+}
+
+const occurrencesOf = (page: Page, title: string) =>
+  calendar(page).getByRole('button', {
+    name: new RegExp(`^${title}, \\d\\d:\\d\\d–\\d\\d:\\d\\d, repeats`),
+  });
+
+// Makes a card on `monday` at 06:00 that repeats every weekday and runs a workflow in Demo.
+async function repeatOnWeekdays(page: Page, title: string, monday: number) {
+  await page.goto(`/calendar?view=week&date=${localDay(monday)}`);
+  await expect(page.getByTestId(`day-${localDay(monday)}`)).toBeVisible();
+  await page.getByRole('button', { name: 'New card', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New card' });
+  await dialog.getByLabel('Title').fill(title);
+  await dialog.getByLabel('Date').fill(localDay(monday));
+  await dialog.getByLabel('Start').fill('06:00');
+  await dialog.getByLabel('End').fill('06:15');
+  await choose(dialog.getByLabel('Workflow'), 'Backlog e2e');
+  await choose(dialog.getByLabel('Project'), 'Demo');
+  await choose(dialog.getByLabel('Repeats'), 'Weekly');
+  // A weekly rule starts with the card's own weekday chosen.
+  await expect(dialog.getByRole('button', { name: 'Monday' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(dialog.getByTestId('repeat-words')).toHaveText('Every week on Monday at 06:00');
+  for (const day of ['Tuesday', 'Wednesday', 'Thursday', 'Friday']) {
+    await dialog.getByRole('button', { name: day }).click();
+  }
+  await expect(dialog.getByTestId('repeat-words')).toHaveText('Every weekday at 06:00');
+  await dialog.getByRole('button', { name: 'Create card' }).click();
+  await expect(dialog).toBeHidden();
+  return dialog;
+}
+
+test.describe('repeating cards', () => {
+  test('a card repeats on weekdays @recurring-cards-15 @recurring-cards-16 @recurring-cards-11', async ({
+    page,
+  }) => {
+    const monday = mondayAhead();
+    await repeatOnWeekdays(page, 'Brew log', monday);
+    const shown = occurrencesOf(page, 'Brew log');
+    await expect(shown).toHaveCount(5);
+    await expect(shown.first()).toHaveAccessibleName('Brew log, 06:00–06:15, repeats, scheduled');
+    await expect(shown.first().getByTestId('card-repeats')).toBeVisible();
+
+    // The form says the rule in words and when the card fires next.
+    await shown.first().focus();
+    await page.keyboard.press('Enter');
+    const edit = page.getByRole('dialog', { name: 'Edit card' });
+    await expect(edit.getByTestId('repeat-words')).toHaveText('Every weekday at 06:00');
+    await expect(edit.getByTestId('repeat-next')).toHaveText(
+      `Fires next ${shortDay(monday)}, 06:00`,
+    );
+    await edit.getByRole('button', { name: 'Cancel' }).click();
+    await expect(edit).toBeHidden();
+    // The dialog's overlay fades out after it; a drag before then lands on the overlay.
+    await expect(page.locator('[data-slot="dialog-overlay"]')).toHaveCount(0);
+
+    // A drag of Wednesday's occurrence moves the series from Wednesday on to the new time;
+    // Monday and Tuesday stay where they were.
+    await reveal(page, 5 * 60);
+    const wednesday = page.getByTestId(`day-${localDay(monday + 2)}`);
+    await drag(page, await pointAt(wednesday, 6 * 60 + 5), await pointAt(wednesday, 7 * 60 + 5));
+    await expect(shown).toHaveCount(5);
+    const times = ['06:00', '06:00', '07:00', '07:00', '07:00'];
+    for (const [index, occurrence] of (await shown.all()).entries()) {
+      const from = times[index] ?? '';
+      const to = from === '06:00' ? '06:15' : '07:15';
+      await expect(occurrence).toHaveAccessibleName(`Brew log, ${from}–${to}, repeats, scheduled`);
+    }
+
+    await page.goto(`/calendar?view=week&date=${localDay(monday + 7)}`);
+    await expect(shown).toHaveCount(5);
+    await expect(shown.last()).toHaveAccessibleName('Brew log, 07:00–07:15, repeats, scheduled');
+
+    await shown.first().focus();
+    await page.keyboard.press('Delete');
+    await page
+      .getByRole('alertdialog', { name: 'Delete which?' })
+      .getByRole('button', { name: 'The whole series' })
+      .click();
+    await expect(shown).toHaveCount(0);
+  });
+
+  test('skip one occurrence @recurring-cards-12 @recurring-cards-13', async ({ page }) => {
+    const monday = mondayAhead();
+    await repeatOnWeekdays(page, 'Kettle check', monday);
+    const shown = occurrencesOf(page, 'Kettle check');
+    await expect(shown).toHaveCount(5);
+
+    // Delete on Thursday's occurrence offers both; this occurrence leaves out that day only.
+    await reveal(page, 5 * 60);
+    const thursday = page.getByTestId(`day-${localDay(monday + 3)}`);
+    await thursday.getByRole('button', { name: /^Kettle check, / }).focus();
+    await page.keyboard.press('Delete');
+    const which = page.getByRole('alertdialog', { name: 'Delete which?' });
+    await expect(which).toContainText(`Delete only ${shortDay(monday + 3)}`);
+    await expect(which.getByRole('button', { name: 'The whole series' })).toBeVisible();
+    await which.getByRole('button', { name: 'This occurrence' }).click();
+    await expect(shown).toHaveCount(4);
+    await expect(thursday.getByRole('button', { name: /^Kettle check, / })).toHaveCount(0);
+
+    // Undo brings the day back.
+    await page.getByRole('button', { name: 'Undo' }).click();
+    await expect(shown).toHaveCount(5);
+    await expect(thursday.getByRole('button', { name: /^Kettle check, / })).toHaveCount(1);
+
+    await shown.first().focus();
+    await page.keyboard.press('Delete');
+    await which.getByRole('button', { name: 'The whole series' }).click();
+    await expect(shown).toHaveCount(0);
+  });
+
+  test('delete the series @recurring-cards-12 @recurring-cards-13', async ({ page }) => {
+    const monday = mondayAhead();
+    await repeatOnWeekdays(page, 'Steep timer', monday);
+    const shown = occurrencesOf(page, 'Steep timer');
+    await expect(shown).toHaveCount(5);
+
+    // From the form: Delete… asks, the whole series removes every occurrence.
+    await shown.nth(1).focus();
+    await page.keyboard.press('Enter');
+    const edit = page.getByRole('dialog', { name: 'Edit card' });
+    await edit.getByRole('button', { name: 'Delete…' }).click();
+    await edit
+      .getByRole('alertdialog', { name: 'Delete which?' })
+      .getByRole('button', { name: 'The whole series' })
+      .click();
+    await expect(shown).toHaveCount(0);
+
+    // Undo makes the card again with its rule: this week and the next show it again.
+    await page.getByRole('button', { name: 'Undo' }).click();
+    await expect(shown).toHaveCount(5);
+    await page.getByRole('button', { name: 'Next week' }).click();
+    await expect(page.getByTestId(`day-${localDay(monday + 7)}`)).toBeVisible();
+    await expect(shown).toHaveCount(5);
+
+    await shown.first().focus();
+    await page.keyboard.press('Delete');
+    await page
+      .getByRole('alertdialog', { name: 'Delete which?' })
+      .getByRole('button', { name: 'The whole series' })
+      .click();
+    await expect(shown).toHaveCount(0);
+  });
+});
+
+test.describe('sketch', () => {
+  test.skip(!sketching, 'Set WOW_E2E_SKETCHES to write the screenshots');
+  test.use(sketchUse);
+
+  test('a repeating card in the week and its form', async ({ page }) => {
+    const monday = mondayAhead();
+    await repeatOnWeekdays(page, 'Morning brew report', monday);
+    const shown = occurrencesOf(page, 'Morning brew report');
+    await expect(shown).toHaveCount(5);
+    await reveal(page, 5 * 60);
+    await shown.nth(2).focus();
+    await page.keyboard.press('Enter');
+    const edit = page.getByRole('dialog', { name: 'Edit card' });
+    await expect(edit.getByTestId('repeat-next')).toBeVisible();
+    await page.screenshot({ path: sketchPath('2026-11-recurring-cards', 'repeat') });
+    await edit.getByRole('button', { name: 'Delete…' }).click();
+    await edit
+      .getByRole('alertdialog', { name: 'Delete which?' })
+      .getByRole('button', { name: 'The whole series' })
+      .click();
+    await expect(shown).toHaveCount(0);
   });
 });

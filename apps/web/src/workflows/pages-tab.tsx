@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
 import { openPage } from '@/panel/viewer';
 import { HostLink, HostReadLine, useHostRefresh } from '@/plans/host-read';
-import { settingLabel } from '@/plans/model';
+import { settingGroup, settingLabel } from '@/plans/model';
 
 // The Confluence pages the run's ticket description, pull request body or intent link to (review
 // loop spec 35), as the server last read them. Opening one shows its body in the side panel.
@@ -82,7 +82,7 @@ function PageRow({ runId, link }: { readonly runId: string; readonly link: PageL
               {' '}
               <Link
                 to="/settings/$group"
-                params={{ group: 'trackers' }}
+                params={{ group: settingGroup(link.error.setting) }}
                 className="underline underline-offset-2"
               >
                 Open {settingLabel(link.error.setting)} in Settings

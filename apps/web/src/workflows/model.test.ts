@@ -13,6 +13,7 @@ import {
   blocking,
   draftFromTemplate,
   draftOf,
+  eventSummary,
   gateMessage,
   gateOf,
   gateRunForThread,
@@ -255,6 +256,28 @@ const workflow: Workflow = {
 };
 
 describe('run view helpers', () => {
+  it('words what started an event run as its host does', () => {
+    const event = {
+      triggerId: 'tr1',
+      event: 'merged' as const,
+      changeRequestId: 'tea:12',
+      number: 12,
+      url: 'https://gitlab.example.invalid/tea/-/merge_requests/12',
+      branch: 'agent/U2-bell',
+      commentUrl: null,
+      commentAuthor: null,
+    };
+    expect(eventSummary({ ...event, headRef: 'refs/pull/12/head' })).toBe(
+      'pull request merged on pull request #12',
+    );
+    expect(eventSummary({ ...event, headRef: 'refs/merge-requests/12/head' })).toBe(
+      'merge request merged on merge request !12',
+    );
+    expect(
+      eventSummary({ ...event, event: 'checksFailed', headRef: 'refs/merge-requests/12/head' }),
+    ).toBe('checks failed on merge request !12');
+  });
+
   it('reads the gate the run waits at', () => {
     const after = gateOf(run());
     expect(after).toEqual({ stepIndex: 0, position: 'after' });
@@ -271,6 +294,24 @@ describe('run view helpers', () => {
     expect(gateOf(before)).toEqual({ stepIndex: 1, position: 'before' });
     expect(gateMessage(gateOf(before)!, workflow)).toBe('Waiting for you before plan-work starts.');
     expect(gateOf(run({ state: 'running' }))).toBeUndefined();
+  });
+
+  it('takes the side of the wait from the server, also for a step that ran before', () => {
+    const ended = {
+      stepId: 's1',
+      state: 'waiting' as const,
+      threadId: 'run-1.s1',
+      startedAt: '2026-11-02T08:00:00.000Z',
+      endedAt: '2026-11-02T08:05:00.000Z',
+      artifactsFound: [],
+    };
+    // A rule sent the run back to s1, which ran before and keeps its end time.
+    const again = run({ steps: [{ ...ended, waits: 'before' }, run().steps[1]!] });
+    expect(gateOf(again)).toEqual({ stepIndex: 0, position: 'before' });
+    expect(stepDisplayState(again.steps[0]!)).toBe('waiting');
+    const after = run({ steps: [{ ...ended, waits: 'after' }, run().steps[1]!] });
+    expect(gateOf(after)).toEqual({ stepIndex: 0, position: 'after' });
+    expect(stepDisplayState(after.steps[0]!)).toBe('done');
   });
 
   it('sorts live runs first, then the newest', () => {

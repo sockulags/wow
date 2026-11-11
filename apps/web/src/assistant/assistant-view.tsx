@@ -1,12 +1,18 @@
-import { assistantThreadId, heldSecretSentence, rpcMethods, type ThreadItem } from '@wow/contracts';
+import {
+  SecretRef,
+  askedQuestionsOf,
+  assistantThreadId,
+  heldSecretSentence,
+  rpcMethods,
+  type ThreadItem,
+} from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { KeyRoundIcon, SparklesIcon, XIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useStore } from 'zustand';
-import { firstStartStore } from '@/app/first-start';
 import { useRuntime, useSetting } from '@/app/runtime';
 import type { ComposerHandle } from '@/chat/composer';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
+import type { QuestionHold } from '@/chat/question-card';
 import { ThreadConversation } from '@/chat/thread-view';
 import { providerLabel } from '@/chat/view-model';
 import { Banner } from '@/components/banner';
@@ -15,16 +21,24 @@ import { useTopicState } from '@/app/topic-state';
 import { Button } from '@/components/ui/button';
 import { ConnectAgentStep } from '@/providers/connect-step';
 import { storeSecretSetting } from '@/settings/secret-field';
-import { ProjectWorkCard, SecretFieldCard } from './cards';
+import {
+  ProjectWorkCard,
+  SecretFieldCard,
+  SecretVariableCard,
+  storeSecretVariable,
+  useStoredRef,
+} from './cards';
 import {
   askOf,
   askedFields,
   holdMessage,
+  isVariable,
   placeRows,
   withoutSecret,
   type Held,
   type Placed,
 } from './model';
+import { AssistantQuestions, askState } from './questions';
 import { ChangeRow, ProposalCard } from './rows';
 
 // The Assistant section (app assistant spec 1, 3, 7 to 18): the one assistant conversation,
@@ -32,9 +46,7 @@ import { ChangeRow, ProposalCard } from './rows';
 // the assistant's tools ask for inline where they happened.
 
 // What `assistant.open` answered: the sentence that says why no provider can run it, or null.
-// It waits for the topics' first rows: a row the server sends before it has answered the
-// subscription is not delivered, so the thread this ask makes would not show.
-function useOpenProblem(subscribed: boolean): {
+function useOpenProblem(): {
   readonly problem: string | null;
   readonly asked: boolean;
 } {
@@ -51,7 +63,7 @@ function useOpenProblem(subscribed: boolean): {
     ?.map((instance) => `${instance.id}:${instance.kind}:${instance.status}`)
     .join(',');
   useEffect(() => {
-    if (!connection || !subscribed || instancesKey === undefined) return undefined;
+    if (!connection || instancesKey === undefined) return undefined;
     let current = true;
     connection.request('assistant.open', {}).then(
       (result) => {
@@ -65,7 +77,7 @@ function useOpenProblem(subscribed: boolean): {
     return () => {
       current = false;
     };
-  }, [connection, subscribed, instancesKey, configured, allowCodex]);
+  }, [connection, instancesKey, configured, allowCodex]);
   return state;
 }
 
@@ -102,19 +114,30 @@ function Rows({ placed, patterns }: { placed: Placed; patterns: readonly string[
 
 // The line above the composer while a message is held (spec 17): what looks like a secret,
 // "Put it in <field>" and "Send anyway". The message is not sent or stored until one is chosen.
-function HeldLine({
+export function HeldLine({
   held,
   onPut,
   onSend,
   onDismiss,
 }: {
   held: Held;
-  onPut: (() => Promise<void>) | undefined;
+  onPut: ((replaces: boolean) => Promise<void>) | undefined;
   onSend(): void;
   onDismiss(): void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  // A field that holds a value already has it replaced; the line says so before the press.
+  const field = held.field;
+  const setting = field && !isVariable(field) ? field : undefined;
+  const variable = field && isVariable(field) ? field : undefined;
+  const storedSetting = useStoredRef(setting?.key ?? '', setting?.projectId);
+  const instance = useTopic('providerInstances')?.find(
+    (entry) => entry.id === variable?.providerInstanceId,
+  );
+  const replaces = SecretRef.safeParse(
+    variable ? instance?.env[variable.variable] : storedSetting,
+  ).success;
   return (
     <div
       role="status"
@@ -131,7 +154,7 @@ function HeldLine({
             onClick={() => {
               setBusy(true);
               setError(undefined);
-              onPut().then(
+              onPut(replaces).then(
                 () => setBusy(false),
                 (reason: unknown) => {
                   setBusy(false);
@@ -156,6 +179,11 @@ function HeldLine({
           <XIcon />
         </Button>
       </div>
+      {onPut && held.field && replaces && (
+        <p data-testid="held-replaces" className="text-muted-foreground">
+          {held.field.label} already holds a value; putting this one there replaces it.
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-destructive">
           {error}
@@ -168,29 +196,18 @@ function HeldLine({
 export function AssistantView() {
   const runtime = useRuntime();
   const { connection } = runtime;
-  const send = useDispatch();
   const { rows: threads, status } = useTopicState('assistantThread');
   const thread = threads?.[0];
   const instances = useTopic('providerInstances') ?? [];
   const items = useTopic('threadItems', thread ? assistantThreadId : undefined);
+  const turns = useTopic('turns', thread ? assistantThreadId : undefined);
   const changes = useTopic('assistantChanges') ?? [];
   const proposals = useTopic('assistantProposals') ?? [];
   const patterns = useSetting('assistant.secretPatterns');
-  const { problem, asked } = useOpenProblem(threads !== undefined);
+  const { problem, asked } = useOpenProblem();
   const composer = useRef<ComposerHandle>(null);
   const [held, setHeld] = useState<Held>();
   const [saved, setSaved] = useState<string>();
-  const greet = useStore(firstStartStore, (state) => state.greet);
-
-  // The first-start step just finished (spec 26): wow sends the greeting once, when the thread
-  // is open on a provider that can run it.
-  useEffect(() => {
-    if (!greet || !thread || !asked || problem) return;
-    firstStartStore.setState({ greet: false });
-    send({ type: 'thread.greetAssistant' }).catch((reason: unknown) =>
-      setSaved(errorMessage(reason)),
-    );
-  }, [greet, thread, asked, problem, send]);
 
   if (status !== 'ready' && !thread) return <TopicPlaceholder status={status} />;
   if (!connection) return <TopicPlaceholder status="offline" />;
@@ -214,45 +231,107 @@ export function AssistantView() {
   const { after, rest } = placeRows(items ?? [], changes, proposals);
   const asks = askedFields(items ?? []);
 
+  const holdOf = (text: string) =>
+    holdMessage(
+      text,
+      patterns,
+      asks,
+      undefined,
+      (id) => instances.find((entry) => entry.id === id)?.name,
+    );
+
+  // Typed answers on a card go through the same check as a typed message (questions spec 10).
+  const questionHold: QuestionHold<Held> = {
+    check: (replies) => {
+      setSaved(undefined);
+      for (const reply of replies.values()) {
+        const found = holdOf(reply.text);
+        if (found) return found;
+      }
+      return null;
+    },
+    render: (current, controls) => (
+      <HeldLine
+        held={current}
+        onPut={
+          current.field
+            ? async (replaces) => {
+                const message = await storeHeld(current, replaces);
+                controls.replaceText((text) => withoutSecret(current, text));
+                controls.dismiss();
+                setSaved(message);
+              }
+            : undefined
+        }
+        onSend={controls.sendAnyway}
+        onDismiss={controls.dismiss}
+      />
+    ),
+  };
+
   const extraAfter = (item: ThreadItem): ReactNode => {
     const ask = askOf(item);
+    const questions = askedQuestionsOf(item);
     const placed = after.get(item.id);
-    if (!ask && !placed) return null;
+    if (!ask && !placed && !questions) return null;
     return (
       <div className="flex flex-col gap-2">
+        {questions && (
+          <AssistantQuestions
+            item={item}
+            request={questions}
+            state={askState(item, items ?? [], turns ?? [])}
+            check={questionHold.check}
+            renderHold={questionHold.render}
+          />
+        )}
         {ask?.kind === 'secretField' && <SecretFieldCard request={ask.request} guide={ask.guide} />}
+        {ask?.kind === 'secretVariable' && <SecretVariableCard request={ask.request} />}
         {ask?.kind === 'projectWork' && <ProjectWorkCard offer={ask.offer} />}
         {placed && <Rows placed={placed} patterns={patterns} />}
       </div>
     );
   };
 
-  const sendAnyway = (text: string) => {
+  // The composer sends what its box holds now, the way its own Send does: queued while a turn
+  // runs, as the answer to a waiting question.
+  const sendAnyway = () => {
     setHeld(undefined);
-    send({ type: 'thread.sendMessage', threadId: assistantThreadId, text }).then(
-      () => composer.current?.setText(''),
-      (reason: unknown) => setSaved(errorMessage(reason)),
-    );
+    composer.current?.sendUnchecked();
   };
 
-  const putInField = (current: Held) => async () => {
+  // Puts the held value in its field and says so; the caller takes it out of what was typed.
+  const storeHeld = async (current: Held, replaces: boolean): Promise<string> => {
+    const { field } = current;
+    if (!field) throw new Error('No field for this value');
+    if (isVariable(field)) {
+      const owner = instances.find((entry) => entry.id === field.providerInstanceId);
+      if (!owner) throw new Error(`No provider instance ${field.providerInstanceId}`);
+      await storeSecretVariable(connection, field, owner.env, current.match.value);
+    } else {
+      await storeSecretSetting(
+        { connection, settings: runtime.settings },
+        field.key,
+        field.projectId,
+        current.match.value,
+      );
+    }
+    return `Saved in ${field.label}${replaces ? ' in place of the value it held' : ''}. It was taken out of your message.`;
+  };
+
+  const putInField = (current: Held) => async (replaces: boolean) => {
     if (!current.field) return;
-    await storeSecretSetting(
-      { connection, settings: runtime.settings },
-      current.field.key,
-      current.field.projectId,
-      current.match.value,
-    );
+    const message = await storeHeld(current, replaces);
     setHeld(undefined);
-    setSaved(`Saved in ${current.field.label}. It was taken out of your message.`);
-    composer.current?.setText(withoutSecret(current));
+    setSaved(message);
+    composer.current?.setText(withoutSecret(current, composer.current.text()));
   };
 
   const notice = held ? (
     <HeldLine
       held={held}
       onPut={held.field ? putInField(held) : undefined}
-      onSend={() => sendAnyway(held.text)}
+      onSend={sendAnyway}
       onDismiss={() => setHeld(undefined)}
     />
   ) : saved ? (
@@ -290,10 +369,11 @@ export function AssistantView() {
           placeholder: 'Tell the assistant what to set up or change in wow',
           beforeSend: (text) => {
             setSaved(undefined);
-            const found = holdMessage(text, patterns, asks);
+            const found = holdOf(text);
             setHeld(found ?? undefined);
             return found === null;
           },
+          questionHold,
           notice,
         }}
       />
