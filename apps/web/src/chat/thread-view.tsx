@@ -332,6 +332,7 @@ export function ThreadConversation({
       at: turn?.startedAt,
       awaitingApproval: approval !== undefined,
       formatAt: when,
+      questionHold: extras?.questionHold,
       recovery:
         itemId === errorId
           ? {

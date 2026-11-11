@@ -59,6 +59,8 @@ export interface ItemContext {
       }
     | undefined;
   readonly formatAt: (iso: string) => string;
+  // The Assistant view's secret check, for a lone question drawn as an item.
+  readonly questionHold?: QuestionHold | undefined;
 }
 
 // One row per thread item. Rows skip layout and paint while off screen, so a long conversation
@@ -539,7 +541,14 @@ function ItemBody({
     case 'question': {
       const parsed = QuestionItemPayload.safeParse(item.payload);
       if (!parsed.success) return <Unreadable item={item} />;
-      return <ChatQuestions items={[item]} questions={questions} turnEnded={context.turnEnded} />;
+      return (
+        <ChatQuestions
+          items={[item]}
+          questions={questions}
+          turnEnded={context.turnEnded}
+          hold={context.questionHold}
+        />
+      );
     }
     case 'task_list': {
       const parsed = TaskListItemPayload.safeParse(item.payload);
