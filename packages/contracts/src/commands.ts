@@ -145,6 +145,10 @@ export const Command = z.discriminatedUnion('type', [
     fallbackModel: z.string().min(1).optional(),
     fallbackEffort: z.string().min(1).optional(),
   }),
+  // The assistant's first turn after the first-start step (app assistant spec 24, 26). The
+  // conversation shows `assistant.greeting` as the user's line; the agent also gets wow's note
+  // of what is set up, what a first run still needs and what a setup file left to fill in.
+  z.object({ type: z.literal('thread.greetAssistant') }),
   // Starts a turn with the thread's current model, effort and permission mode (spec 14, 17).
   z.object({ type: z.literal('thread.sendMessage'), threadId: Id, text: z.string().min(1) }),
   // Stops the running turn; what it produced so far stays (spec 23).

@@ -640,6 +640,13 @@ export function readModel(tx: DbOrTx): ReadModel {
       tx.select().from(assistantChanges).where(eq(assistantChanges.id, id)).get(),
     setupApplication: (id) =>
       tx.select().from(setupApplications).where(eq(setupApplications.id, id)).get(),
+    lastSetupApplication: () =>
+      tx
+        .select()
+        .from(setupApplications)
+        .where(eq(setupApplications.state, 'applied'))
+        .orderBy(desc(setupApplications.at), desc(sql`rowid`))
+        .get(),
     assistantProposal: (id) =>
       tx.select().from(assistantProposals).where(eq(assistantProposals.id, id)).get(),
     assistantAnswers: (since) => ({

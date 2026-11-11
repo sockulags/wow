@@ -2,6 +2,7 @@ import type {
   DomainEvent,
   ProviderEvent,
   ServerCommand,
+  Thread,
   ThreadChanges,
   ThreadItem,
   ThreadItemKind,
@@ -9,7 +10,12 @@ import type {
   Turn,
 } from '@wow/contracts';
 import { assistantThreadId } from '@wow/contracts';
-import { assistantAnswersNote, assistantThreadEvents } from '../assistant/thread.js';
+import {
+  assistantAnswersNote,
+  assistantThreadEvents,
+  firstStartNote,
+  storedGreeting,
+} from '../assistant/thread.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 
 // Decisions for provider instances, threads, turns, approvals and questions. Provider events
@@ -25,6 +31,7 @@ type ThreadCommand = Extract<
       | 'providerInstance.recordUpdate'
       | 'thread.create'
       | 'thread.openAssistant'
+      | 'thread.greetAssistant'
       | 'thread.sendMessage'
       | 'thread.interrupt'
       | 'thread.configure'
@@ -48,6 +55,52 @@ export const turnId = (threadId: string, index: number) => `${threadId}:turn:${i
 export const approvalRowId = (threadId: string, providerId: string) => `${threadId}:${providerId}`;
 export const questionRowId = approvalRowId;
 const providerIdOf = (threadId: string, rowId: string) => rowId.slice(threadId.length + 1);
+
+// A turn with the user's line as its first item. The prompt can carry a note from wow before the
+// line; the conversation shows only the line.
+function turnStarted(
+  read: ReadModel,
+  thread: Thread,
+  now: string,
+  { text, prompt, assistant }: { text: string; prompt: string; assistant: boolean },
+): DomainEvent {
+  const index = read.turnCount(thread.id);
+  const id = turnId(thread.id, index);
+  return {
+    kind: 'turn.started',
+    aggregate: thread.id,
+    payload: {
+      turn: {
+        id,
+        threadId: thread.id,
+        index,
+        state: 'running',
+        startedAt: now,
+        endedAt: null,
+        usage: null,
+      },
+      item: {
+        id: `${id}:user`,
+        threadId: thread.id,
+        turnId: id,
+        index: read.nextItemIndex(thread.id),
+        kind: 'user',
+        payload: { text },
+        streaming: false,
+      },
+      providerInstanceId: thread.providerInstanceId,
+      start: {
+        cwd: thread.cwd,
+        prompt,
+        model: thread.model,
+        effort: thread.effort,
+        permissionMode: thread.permissionMode,
+        resumeId: thread.providerSessionId,
+        ...(assistant ? { kind: 'assistant' as const } : {}),
+      },
+    },
+  };
+}
 
 function requireThread(read: ReadModel, threadId: string) {
   const thread = read.thread(threadId);
@@ -191,6 +244,19 @@ export function decideThread(
         effort: command.fallbackEffort,
       }).events;
     }
+    case 'thread.greetAssistant': {
+      if (!read.thread(assistantThreadId)) {
+        throw new CommandRejected('rejected', 'Open the assistant before it can greet you');
+      }
+      if (read.runningTurn(assistantThreadId)) return [];
+      const { events, thread } = assistantThreadEvents(read, context);
+      const text = storedGreeting(read, context);
+      const note = firstStartNote(read, context, thread.providerInstanceId);
+      return [
+        ...events,
+        turnStarted(read, thread, now, { text, prompt: `${note}\n\n${text}`, assistant: true }),
+      ];
+    }
     case 'thread.sendMessage': {
       const stored = requireThread(read, command.threadId);
       if (read.runningTurn(stored.id)) {
@@ -202,44 +268,13 @@ export function decideThread(
         stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
       const thread = assistant?.thread ?? stored;
       const note = assistant ? assistantAnswersNote(read, context) : null;
-      const index = read.turnCount(thread.id);
-      const id = turnId(thread.id, index);
       return [
         ...(assistant?.events ?? []),
-        {
-          kind: 'turn.started',
-          aggregate: thread.id,
-          payload: {
-            turn: {
-              id,
-              threadId: thread.id,
-              index,
-              state: 'running',
-              startedAt: now,
-              endedAt: null,
-              usage: null,
-            },
-            item: {
-              id: `${id}:user`,
-              threadId: thread.id,
-              turnId: id,
-              index: read.nextItemIndex(thread.id),
-              kind: 'user',
-              payload: { text: command.text },
-              streaming: false,
-            },
-            providerInstanceId: thread.providerInstanceId,
-            start: {
-              cwd: thread.cwd,
-              prompt: note ? `${note}\n\n${command.text}` : command.text,
-              model: thread.model,
-              effort: thread.effort,
-              permissionMode: thread.permissionMode,
-              resumeId: thread.providerSessionId,
-              ...(assistant ? { kind: 'assistant' as const } : {}),
-            },
-          },
-        },
+        turnStarted(read, thread, now, {
+          text: command.text,
+          prompt: note ? `${note}\n\n${command.text}` : command.text,
+          assistant: assistant !== undefined,
+        }),
       ];
     }
     case 'thread.interrupt': {

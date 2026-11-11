@@ -420,11 +420,12 @@ export const settingsRegistry = {
     unit: 'ms',
   }),
   'providers.offerSetup': defineSetting({
+    personal: 'machine',
     schema: z.boolean(),
     group: 'providers',
     label: 'Offer setup at start',
     description:
-      'Open the setup guide for providers and projects when wow starts without a provider instance. "Not now" in the guide turns this off.',
+      'Show the first-start step "Connect an agent" in front of the app while no provider instance has passed its test. It turns off once one passes, so a provider removed later does not hide the app again; the Assistant view then shows the same step.',
     default: true,
     scope: 'global',
   }),
@@ -1224,6 +1225,15 @@ export const settingsRegistry = {
     description:
       "What the assistant's agent is told it is for, in place of the provider's own instructions for coding: it operates wow only, never asks for a secret, and sends other work to the chat view. What it can do is decided by the tools it is given, not by this text. A changed text applies from the next message on Claude Code, and on Codex from the next start of the assistant's session (after wow or the provider instance restarts).",
     default: defaultAssistantInstructions,
+    scope: 'global',
+  }),
+  'assistant.greeting': defineSetting({
+    schema: z.string().trim().min(1),
+    group: 'assistant',
+    label: 'First message',
+    description:
+      'What wow sends to the assistant for you when the first-start step is done, so it greets you with what is set up, what a first run still needs and what a setup file left to fill in. The conversation shows it as your message.',
+    default: 'I just connected an agent. What is set up, and what does a first run still need?',
     scope: 'global',
   }),
   'assistant.startSoonMinutes': defineSetting({

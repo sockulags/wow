@@ -4,6 +4,7 @@ import {
   assistantCodexOff,
   assistantThreadId,
   defaultAssistantInstructions,
+  settingsRegistry,
   type ProviderCommand,
   type ProviderEvent,
   type ProviderTestResult,
@@ -666,5 +667,99 @@ describe('moving between instances', () => {
       undefined,
     ]);
     expect(startTurns('claude-b')[0]?.resumeId).toBeUndefined();
+  });
+});
+
+async function greet() {
+  const ended = turnEnds(assistantThreadId);
+  dispatch({ type: 'thread.greetAssistant' });
+  await ended;
+}
+
+describe('the greeting after the first-start step (spec 24, 26)', () => {
+  const greeting = settingsRegistry['assistant.greeting'].default;
+
+  it('says what is set up and what a first run still needs, after the user line', async () => {
+    expect(refusal(() => dispatch({ type: 'thread.greetAssistant' }))).toBe(
+      'Open the assistant before it can greet you',
+    );
+    await instance('claude-work', 'claude', 'Claude at work');
+    await open();
+    expect(
+      refusal(() =>
+        server.engine.dispatch('greet-assistant', { type: 'thread.greetAssistant' }, 'assistant'),
+      ),
+    ).toBe('The greeting is sent by wow when the user finishes the first-start step.');
+    await greet();
+
+    const [start] = startTurns('claude-work');
+    expect(start?.prompt.split('\n')).toEqual([
+      '[From wow, not typed by the user] The first-start step just finished: Claude at work passed its test and runs this conversation.',
+      'Set up:',
+      '- Providers: Claude at work (Claude)',
+      '- Projects: none',
+      '- Workflows: none',
+      '- Trackers: none',
+      'Still needed for a first run:',
+      '- A project: the folder a run works in (Settings → Projects).',
+      '- A workflow: start one from a template (Workflows → New workflow).',
+      '',
+      greeting,
+    ]);
+    expect(start).toMatchObject({ cwd: assistantFolder(home), toolset: { name: 'wow' } });
+    // The conversation shows only the line, as the user's.
+    expect(rows<ThreadItem>('threadItems', assistantThreadId).map((item) => item.payload)).toEqual([
+      { text: greeting },
+      { text: 'Done.' },
+    ]);
+  });
+
+  it('lists what a setup file left to fill in, and leaves out what was filled since', async () => {
+    await instance('claude-work', 'claude', 'Claude at work');
+    dispatch({
+      type: 'project.create',
+      projectId: 'tea',
+      name: 'Tea',
+      cwd: path.join(root, 'tea'),
+    });
+    const text = [
+      'version: 1',
+      'settings:',
+      '  trackers.gitlab.baseUrl: https://gitlab.example.invalid',
+      'toFillIn:',
+      '  - trackers.gitlab.token',
+      '  - trackers.jira.token',
+      '',
+    ].join('\n');
+    dispatch({ type: 'setup.apply', applicationId: 'colleague', name: 'colleague.yaml', text });
+    const reference = await server.secrets.set('setting:trackers.jira.token', 'invented-jira');
+    dispatch({
+      type: 'setting.set',
+      key: 'trackers.jira.token',
+      scope: 'global',
+      value: reference,
+    });
+    await open();
+    await greet();
+
+    const prompt = startTurns('claude-work')[0]?.prompt ?? '';
+    expect(prompt).toContain('- Projects: Tea\n');
+    expect(prompt).toContain(
+      '- Trackers: GitLab URL https://gitlab.example.invalid, token not set\n',
+    );
+    expect(prompt).toContain('Still needed for a first run:\n- A workflow');
+    const fillIn = prompt.slice(prompt.indexOf('To fill in'), prompt.lastIndexOf('\n\n'));
+    expect(fillIn.split('\n')).toEqual([
+      'To fill in after the setup file colleague.yaml:',
+      '- GitLab token (trackers.gitlab.token, Settings → Trackers): a secret; show its field.',
+      '- Work hours (calendar.workHours, Settings → Calendar): only this person can say.',
+      '- Project folders (Settings → Projects): a setup file holds none, they differ per machine.',
+    ]);
+    expect(prompt).not.toContain('invented-jira');
+
+    // Undone, the file asks for nothing any more.
+    dispatch({ type: 'setup.undo', applicationId: 'colleague' });
+    await greet();
+    expect(startTurns('claude-work')[1]?.prompt).not.toContain('To fill in');
   });
 });

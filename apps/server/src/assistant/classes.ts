@@ -211,6 +211,9 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'thread.openAssistant': refused(
     'The assistant thread is opened by the user, in the Assistant view.',
   ),
+  'thread.greetAssistant': refused(
+    'The greeting is sent by wow when the user finishes the first-start step.',
+  ),
   'thread.sendMessage': chatOnly,
   'thread.interrupt': chatOnly,
   'thread.configure': chatOnly,

@@ -4,6 +4,8 @@ import {
   hideSecrets,
   secretPatterns,
   providerChatOptions,
+  providerSetup,
+  settingGroupTitles,
   type DomainEvent,
   type ProviderInstance,
   type ProviderModel,
@@ -242,6 +244,13 @@ export async function openAssistantThread(deps: OpenAssistantDeps): Promise<Open
   return { thread: now(), problem: null };
 }
 
+const storedPatterns = (read: ReadModel, context: DecideContext) => {
+  const sources = storedValue('assistant.secretPatterns', read, context);
+  return secretPatterns(
+    Array.isArray(sources) ? sources.filter((entry) => typeof entry === 'string') : [],
+  );
+};
+
 // What the user did with the assistant's work since its last turn began (spec 10): the
 // proposals they answered, with the reason given with a No, and the changes they undid. It goes
 // before the user's message in the prompt; the conversation shows only the message.
@@ -249,10 +258,7 @@ export function assistantAnswersNote(read: ReadModel, context: DecideContext): s
   const since = read.lastTurn(assistantThreadId)?.startedAt;
   const { proposals, undone } = read.assistantAnswers(since);
   if (proposals.length === 0 && undone.length === 0) return null;
-  const sources = storedValue('assistant.secretPatterns', read, context);
-  const patterns = secretPatterns(
-    Array.isArray(sources) ? sources.filter((entry) => typeof entry === 'string') : [],
-  );
+  const patterns = storedPatterns(read, context);
   const lines = [
     ...proposals.map((proposal) =>
       proposal.state === 'accepted'
@@ -265,4 +271,83 @@ export function assistantAnswersNote(read: ReadModel, context: DecideContext): s
     `[From wow, not typed by the user] Since your last turn the user answered:\n${lines.join('\n')}`,
     patterns,
   );
+}
+
+// The line wow sends for the user when the first-start step is done (spec 26).
+export const storedGreeting = (read: ReadModel, context: DecideContext): string => {
+  const value = stored('assistant.greeting', read, context);
+  const fallback = context.registry['assistant.greeting']?.default;
+  return value || (typeof fallback === 'string' ? fallback : 'Hello');
+};
+
+const trackerKinds = ['github', 'gitlab', 'jira', 'confluence'] as const;
+
+const placeOf = (key: string, context: DecideContext): string => {
+  const group = context.registry[key]?.group;
+  return group ? `Settings → ${settingGroupTitles[group]}` : 'Settings';
+};
+
+const names = (rows: readonly { readonly name: string }[]): string =>
+  rows.length === 0 ? 'none' : rows.map((row) => row.name).join(', ');
+
+// What the greeting turn tells the agent besides the user's line (spec 24, 26): what is set up,
+// what a first run still needs, and, after a setup file, what it left to fill in and what only
+// this person can say. Facts only; what to do with them is in `assistant.instructions`.
+export function firstStartNote(
+  read: ReadModel,
+  context: DecideContext,
+  providerInstanceId: string,
+): string {
+  const instance = read.providerInstance(providerInstanceId);
+  const ready = read.providerInstances().filter((row) => row.status === 'ready');
+  const projects = read.projects();
+  const workflows = read.workflows();
+  // Only what this install stored: a default address is not a tracker someone set up.
+  const isSet = (key: string) => read.setting(key, 'global')?.value != null;
+  const trackers = trackerKinds.flatMap((kind) => {
+    const address = read.setting(`trackers.${kind}.baseUrl`, 'global')?.value;
+    if (typeof address !== 'string' || address === '') return [];
+    const label = context.registry[`trackers.${kind}.baseUrl`]?.label ?? kind;
+    return [`${label} ${address}, token ${isSet(`trackers.${kind}.token`) ? 'set' : 'not set'}`];
+  });
+  const setUp = [
+    `- Providers: ${ready.length === 0 ? 'none' : ready.map((row) => `${row.name} (${providerSetup[row.kind].label})`).join(', ')}`,
+    `- Projects: ${names(projects)}`,
+    `- Workflows: ${names(workflows)}`,
+    `- Trackers: ${trackers.length === 0 ? 'none' : trackers.join('; ')}`,
+  ];
+  const needed = [
+    ...(projects.length === 0
+      ? ['- A project: the folder a run works in (Settings → Projects).']
+      : []),
+    ...(workflows.length === 0
+      ? ['- A workflow: start one from a template (Workflows → New workflow).']
+      : []),
+  ];
+  const application = read.lastSetupApplication();
+  const fillIn = application
+    ? [
+        ...application.toFillIn
+          .filter((entry) => !isSet(entry.key))
+          .map(
+            (entry) =>
+              `- ${entry.label} (${entry.key}, ${entry.place.label}): a secret; show its field.`,
+          ),
+        ...(isSet('calendar.workHours')
+          ? []
+          : [
+              `- Work hours (calendar.workHours, ${placeOf('calendar.workHours', context)}): only this person can say.`,
+            ]),
+        '- Project folders (Settings → Projects): a setup file holds none, they differ per machine.',
+      ]
+    : [];
+  const lines = [
+    `[From wow, not typed by the user] The first-start step just finished: ${instance?.name ?? providerInstanceId} passed its test and runs this conversation.`,
+    'Set up:',
+    ...setUp,
+    'Still needed for a first run:',
+    ...(needed.length === 0 ? ['- Nothing.'] : needed),
+    ...(application ? [`To fill in after the setup file ${application.name}:`, ...fillIn] : []),
+  ];
+  return hideSecrets(lines.join('\n'), storedPatterns(read, context));
 }
