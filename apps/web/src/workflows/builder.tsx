@@ -463,6 +463,7 @@ function StepEditor({
                 <ThreadSettings
                   providerInstanceId={instance.id}
                   kind={instance.kind}
+                  defaults={{ model: instance.defaultModel, effort: instance.defaultEffort }}
                   value={{
                     model: step.model ?? '',
                     effort: step.effort ?? '',
@@ -584,8 +585,10 @@ function Builder({
     () => new Set(workflow ? [] : initial.steps.map((step) => step.id)),
   );
 
-  const problems = validateDraft(draft, instances, skills);
-  const shown = attempted ? problems : problems.filter((problem) => problem.warning);
+  const problems = validateDraft(draft, instances, skills, workflow);
+  const shown = attempted
+    ? problems
+    : problems.filter((problem) => problem.warning || problem.always);
   const alwaysStop = useSetting('workflows.alwaysStopSkills');
   const steps = stepsOf(draft, alwaysStop);
   const ownWorkingCopy = draft.ownWorkingCopy ?? false;

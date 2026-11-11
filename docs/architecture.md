@@ -2362,7 +2362,18 @@ between them only from a guidance text it ships; nothing about models comes from
   names both tools, says to recommend from them with the reason in a sentence, and to ask with
   `ask_questions` when two choices differ in a way the person would care about.
 
+- **The builder** (spec 18, 19). `ThreadSettings` takes the instance's `defaults` and marks that
+  model and effort "(default)" in its lists. `stepDefaults` fills an empty model with the
+  instance's default, and only for a provider that does not need one with the first listed
+  model, so a Codex step without a default stays empty. `validateDraft` then gives that step
+  `missingModelSentence`, the server's own words, as a problem marked `always`, shown beside the
+  step before the first Save as well, and Save sends nothing. Given the stored workflow, it also
+  warns on a step that was saved without a model its provider needs ("Step 2 was saved without a
+  model, which Codex needs; Save stores mock-model-large.").
+
 Tests: `apps/server/src/assistant/models.test.ts` (a case per acceptance line of the unit),
+`apps/web/src/workflows/step-models.test.tsx`, `apps/web/e2e/models.spec.ts` (the assistant's
+server copy seeds two Codex instances and a workflow restored without models),
 `packages/provider-claude/src/index.test.ts` and `packages/provider-codex/src/adapter.test.ts`
 ("requires a model").
 
@@ -2433,7 +2444,8 @@ one line each and open to edit. Gates are drawn at the positions between steps (
 both), so the engine's `gateBefore` and `gateAfter` stay as they are. A step picks a skill
 from the `skills` topic (stored as its name, or `plugin:name` for a Claude plugin's skill), a
 provider instance, and model, effort and permission mode with the chat's pickers; empty ones are
-filled with the instance defaults, else the first listed model. Expected artifact globs are typed
+filled with the instance defaults, else the first listed model (not for a provider that needs a
+model; see "Models for steps"). Expected artifact globs are typed
 one per line. Validation needs a name, a step, and per step a skill, an instance, a model, an
 effort and a permission mode; a skill missing from the scan is only a warning, because the server
 invokes unknown skills by name. "Start from" (Blank or a template) is offered for a new workflow;

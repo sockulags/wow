@@ -30,6 +30,9 @@ import {
   e2eAssistantBrokenWorkflowId,
   e2eAssistantGateWorkflowId,
   e2eAssistantHome,
+  e2eCodexBareId,
+  e2eCodexWithDefaultId,
+  e2eOldWorkflowId,
   e2eFirstStartCodexError,
   e2eFirstStartHome,
   e2eBinDir,
@@ -1080,7 +1083,52 @@ if (home === e2ePanelHome) {
   });
 }
 
+// A Codex step of the old workflow below, without a model.
+const oldStep = (id: string, providerInstanceId: string) => ({
+  id,
+  skillName: id,
+  providerInstanceId,
+  effort: 'low',
+  permissionMode: 'auto',
+  gateBefore: false,
+  gateAfter: false,
+  expectedArtifacts: [],
+});
+
 if (home === e2eAssistantHome) {
+  for (const [providerInstanceId, name, defaults] of [
+    [
+      e2eCodexWithDefaultId,
+      'Codex at work',
+      { defaultModel: 'mock-model-large', defaultEffort: 'medium' },
+    ],
+    [e2eCodexBareId, 'Codex bare', {}],
+  ] as const) {
+    server.engine.dispatch(`seed-${providerInstanceId}`, {
+      type: 'providerInstance.create',
+      providerInstanceId,
+      kind: 'codex',
+      name,
+      binaryPath: 'codex',
+      configDir: '/home/me/.codex',
+      env: {},
+      launchArgs: [],
+      ...defaults,
+    });
+  }
+  // Stored as an older wow stored it: its Codex steps name no model. Restoring a row keeps it
+  // as it was, which is how old data reaches the store here.
+  server.engine.dispatch('seed-assistant-old-workflow', {
+    type: 'workflow.restore',
+    workflow: {
+      id: e2eOldWorkflowId,
+      name: 'Old review',
+      templateKind: null,
+      steps: [oldStep('check-work', e2eCodexBareId), oldStep('plan-work', e2eCodexWithDefaultId)],
+      createdAt: '2026-10-01T08:00:00.000Z',
+      updatedAt: '2026-10-01T08:00:00.000Z',
+    },
+  });
   // Its run waits before its only step, so a test has a gate to ask the assistant about.
   server.engine.dispatch('seed-assistant-gate-workflow', {
     type: 'workflow.create',

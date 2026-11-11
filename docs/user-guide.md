@@ -474,6 +474,16 @@ model); open it to edit:
 - optional expected artifacts: paths or globs, one per line, such as `intents/*/spec.md`. With a
   project chosen to run in, the help line says how many files match there now.
 
+The model and effort lists are what the step's provider instance offers, read from the installed
+provider; the instance's default model and effort are marked "(default)". Codex needs a model on
+every step. A Codex step without one takes the instance's default model; when the instance has
+none, the step says so in words ("Step check-work runs on Codex (…), which needs a model on every
+step …"), and wow refuses to save it until you pick one. A workflow saved before wow had this
+rule still loads and runs as it did; its builder marks such a step ("was saved without a model
+…"), Save stores the model shown, and the assistant's "Why does this not work" names it. A setup
+file with such a step is applied with the step marked. Claude Code steps may leave the model to
+Claude Code, as before.
+
 Between steps (and before the first and after the last) the builder shows where the run waits:
 **Waits for you** marks a gate; **Add a gate** adds one there. Reorder steps by dragging the handle
 or with the move buttons. **Create workflow** stays disabled, with the reason in its tooltip, until
@@ -901,6 +911,18 @@ like a secret is held exactly like a typed message ("Put it in …", "Send anywa
 never asks for a token, password or key on the card: its tool refuses such a question and tells
 it to show the secret's field instead. The words it looks for are `assistant.askRefusedWords`
 (Settings → Assistant).
+
+### When the assistant writes a workflow
+
+Before it writes a workflow, the assistant reads the models and efforts each provider instance
+offers (an instance that is not connected offers none, and it says so) and wow's guidance on
+choosing one per kind of work: planning and specification, building, reviewing and mechanical
+steps. Every step it writes names an instance, a model and an effort from that list; wow refuses
+any other and tells it what is offered. It says what it recommends and why in a sentence, and asks
+you on the question card when two choices differ in a way you would care about, such as cost
+against quality. The change row shows each step with its instance, model and effort. The guidance
+is `assistant.modelGuidance` (Settings → Assistant, "Guidance on choosing a model"); edit it and
+the assistant reads your text the next time it chooses. wow never looks up models on the internet.
 
 ### Changes, proposals and Undo
 

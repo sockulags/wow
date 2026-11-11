@@ -3,6 +3,9 @@ import {
   changeRequestName,
   GatePart,
   gatePartLabels,
+  lacksRequiredModel,
+  missingModelSentence,
+  providerKindLabels,
   providerChatOptions,
   rulesForTemplate,
   rulesFromTemplate,
@@ -238,7 +241,12 @@ export function stepDefaults(
   instance: ProviderInstance,
   models: readonly ProviderModel[],
 ): { model: string; effort: string; permissionMode: string } {
-  const model = instance.defaultModel ?? models[0]?.id ?? '';
+  // A provider that needs a model gets the instance's default or none: the step then shows the
+  // server's refusal until a model is chosen, instead of taking whatever is listed first
+  // (questions and models spec 17, 18).
+  const model =
+    instance.defaultModel ??
+    (providerChatOptions[instance.kind].requiresModel ? '' : (models[0]?.id ?? ''));
   const effort =
     instance.defaultEffort ?? effortOptions(instance.kind, models, model, '')[0] ?? 'default';
   const permissionMode =
@@ -254,6 +262,8 @@ export interface DraftProblem {
   readonly message: string;
   // Warnings do not block saving.
   readonly warning?: boolean;
+  // Shown before the first Save too: it says what the server would refuse.
+  readonly always?: boolean;
 }
 
 // Behavior 24 validation. A skill missing from the scanned list is only a warning: the server
@@ -263,6 +273,8 @@ export function validateDraft(
   draft: WorkflowDraft,
   instances: readonly ProviderInstance[],
   skills: readonly Skill[],
+  // The workflow as stored, whose steps saved without a required model are marked (spec 19).
+  stored?: Workflow,
 ): DraftProblem[] {
   const problems: DraftProblem[] = [];
   if (draft.name.trim() === '') problems.push({ message: 'Give the workflow a name.' });
@@ -285,7 +297,22 @@ export function validateDraft(
     if (!instances.some((instance) => instance.id === step.providerInstanceId)) {
       problems.push({ stepId, message: `${label} needs a provider instance.` });
     }
-    if (!step.model) problems.push({ stepId, message: `${label} needs a model.` });
+    const instance = instances.find((candidate) => candidate.id === step.providerInstanceId);
+    const was = stored?.steps.find((candidate) => candidate.id === stepId);
+    if (instance && was && lacksRequiredModel(was, instance.kind) && step.model) {
+      problems.push({
+        stepId,
+        warning: true,
+        message: `${label} was saved without a model, which ${providerKindLabels[instance.kind]} needs; Save stores ${step.model}.`,
+      });
+    }
+    if (!step.model && instance && lacksRequiredModel(step, instance.kind)) {
+      problems.push({
+        stepId,
+        always: true,
+        message: missingModelSentence(step.skillName.trim() || label, instance),
+      });
+    } else if (!step.model) problems.push({ stepId, message: `${label} needs a model.` });
     if (!step.effort) problems.push({ stepId, message: `${label} needs an effort.` });
     if (!step.permissionMode) {
       problems.push({ stepId, message: `${label} needs a permission mode.` });
