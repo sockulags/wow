@@ -103,10 +103,11 @@ export function gitLabProjectOf(
   if (site.hostname.toLowerCase() !== remote.host) return null;
   const prefix = cleanPath(site.pathname);
   const web = /^https?:\/\//i.test(remote.url);
-  const projectPath =
-    web && prefix !== null && remote.path.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)
-      ? remote.path.slice(prefix.length + 1)
-      : remote.path;
+  const underSite =
+    prefix !== null && remote.path.toLowerCase().startsWith(`${prefix.toLowerCase()}/`);
+  // An https remote on the same host but outside the site's sub-path is another server's.
+  if (web && prefix !== null && !underSite) return null;
+  const projectPath = web && underSite ? remote.path.slice(prefix.length + 1) : remote.path;
   const parts = projectPath.split('/');
   if (parts.length < 2 || parts.some((part) => part === '')) return null;
   return { host: remote.host, path: projectPath };

@@ -219,6 +219,26 @@ export function createGitLabHost(
       (body) => list(body).flatMap((item) => found(item) ?? []),
     );
 
+  // A merged-results pipeline (or a merge train's) runs on a merge commit GitLab makes, so no
+  // listed pipeline has the head's sha. The merge request's own head pipeline names it, as long
+  // as the merge request is still at that head.
+  const headPipeline = async (
+    iid: number,
+    sha: string,
+    pipelines: readonly unknown[],
+  ): Promise<unknown> => {
+    const current = await getOr(
+      `${project}/merge_requests/${iid}`,
+      none,
+      () => undefined,
+      (b) => b,
+    );
+    const head = field(current, 'head_pipeline');
+    const id = field(head, 'id');
+    if (field(current, 'sha') !== sha || typeof id !== 'number') return undefined;
+    return pipelines.find((entry) => field(entry, 'id') === id) ?? head;
+  };
+
   // The jobs of the newest pipeline that ran on the head commit; a pipeline without jobs (an
   // external one) counts as one check.
   const checks = async (iid: number, sha: string): Promise<HostCheck[]> => {
@@ -228,7 +248,9 @@ export function createGitLabHost(
       () => [],
       list,
     );
-    const pipeline = pipelines.find((entry) => field(entry, 'sha') === sha);
+    const pipeline =
+      pipelines.find((entry) => field(entry, 'sha') === sha) ??
+      (pipelines.length > 0 ? await headPipeline(iid, sha, pipelines) : undefined);
     const id = field(pipeline, 'id');
     if (typeof id !== 'number' || !Number.isSafeInteger(id)) return [];
     const jobs = await getOr(

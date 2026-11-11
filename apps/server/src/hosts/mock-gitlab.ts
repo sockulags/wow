@@ -33,6 +33,8 @@ export interface MockMergeRequest {
     readonly id: number;
     readonly status: string;
     readonly jobs: readonly MockGitLabJob[];
+    // A merged-results pipeline: it ran on this merge commit, not on the head commit.
+    readonly mergeSha?: string;
   };
   readonly notes?: readonly MockGitLabNote[];
 }
@@ -92,6 +94,18 @@ export class MockGitLab {
     };
   }
 
+  #pipeline(request: MockMergeRequest) {
+    const { pipeline } = request;
+    if (!pipeline) return null;
+    return {
+      id: pipeline.id,
+      sha: pipeline.mergeSha ?? request.sha,
+      ref: `refs/merge-requests/${request.iid}/${pipeline.mergeSha ? 'merge' : 'head'}`,
+      status: pipeline.status,
+      web_url: `${this.webUrl}/${this.projectPath}/-/pipelines/${pipeline.id}`,
+    };
+  }
+
   answer(method: string, pathAndQuery: string, token: string | null): MockGitLabAnswer {
     this.requests.push({ method, path: pathAndQuery, token });
     const headers: Record<string, string> = this.limit
@@ -136,22 +150,15 @@ export class MockGitLab {
     if (single) {
       const request = this.mergeRequests.find((candidate) => candidate.iid === Number(single[1]));
       if (!request) return json(404, { message: '404 Not found' });
-      if (single[2] === undefined) return json(200, this.#mergeRequest(request));
+      if (single[2] === undefined) {
+        return json(200, {
+          ...this.#mergeRequest(request),
+          head_pipeline: this.#pipeline(request),
+        });
+      }
       if (single[2] === '/pipelines') {
-        const { pipeline } = request;
-        return json(
-          200,
-          pipeline
-            ? [
-                {
-                  id: pipeline.id,
-                  sha: request.sha,
-                  status: pipeline.status,
-                  web_url: `${this.webUrl}/${this.projectPath}/-/pipelines/${pipeline.id}`,
-                },
-              ]
-            : [],
-        );
+        const pipeline = this.#pipeline(request);
+        return json(200, pipeline ? [pipeline] : []);
       }
       return json(
         200,

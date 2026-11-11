@@ -1422,7 +1422,8 @@ a comment must have an id. A `Retry-After` or reset that gives no valid date is 
 **GitLab** (review loop spec 34; `hosts/gitlab.ts`, `trackers/gitlab.ts`). A project is on
 GitLab when its primary git remote is on the host of the stored `trackers.gitlab.baseUrl`
 (`gitLabProjectOf` in `projects/git.ts`; any host can run GitLab, so the remote alone never
-decides, and a site under a sub-path has that prefix cut from its https remotes). The project
+decides, and a site under a sub-path has that prefix cut from its https remotes; an https remote
+on the same host outside that sub-path is not the site's). The project
 path keeps every nested group (`git@gitlab.example.test:group/sub/app.git` is `group/sub/app`)
 and goes to the API URL-encoded as one project id (`group%2Fsub%2Fapp`). Such a remote names no
 GitHub repository, and the poller reads that project from GitLab instead of GitHub
@@ -1439,7 +1440,9 @@ newest with `source_branch=<branch>`. `iid` is the number, shown as `!12` (`chan
 `changeRequestName` in contracts); `opened` is open, `merged` merged, `closed` and `locked`
 closed; `draft` (or `work_in_progress` before version 14). Checks are the jobs of the newest
 merge request pipeline on the head commit (`…/merge_requests/<iid>/pipelines`, then
-`/pipelines/<id>/jobs`): failed and canceled jobs fail, a failure the job is allowed passes,
+`/pipelines/<id>/jobs`); a merged-results or merge-train pipeline runs on a merge commit, so when
+no listed pipeline has the head's sha the merge request's own `head_pipeline` is taken, while the
+merge request is still at that head (`GET …/merge_requests/<iid>`): failed and canceled jobs fail, a failure the job is allowed passes,
 skipped and manual jobs are left out, anything still to run is pending, and a pipeline without
 jobs counts as one check. A failed, canceled or running pipeline whose listed jobs show no failure
 or nothing pending (a child pipeline, a job past the first page) adds a `pipeline <id>` check with

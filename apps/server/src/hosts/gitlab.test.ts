@@ -250,6 +250,13 @@ describe('a project on a GitLab host (spec 34)', () => {
         'https://example.test/gitlab',
       ),
     ).toEqual({ host: 'example.test', path: 'group/app' });
+    // The same host outside the site's sub-path is not the site.
+    expect(
+      gitLabProjectOf(
+        parseRemoteUrl('origin', 'https://example.test/other/group/app.git'),
+        'https://example.test/gitlab',
+      ),
+    ).toBe(null);
     // Paths on the site compare without case, like its host name.
     expect(
       gitLabProjectOf(
@@ -580,6 +587,20 @@ describe('the pipeline’s own status (spec 34)', () => {
     });
     expect(checkState).toBe('pending');
     expect(checks.at(-1)).toEqual({ name: 'pipeline 503', state: 'pending', url: pipelineUrl });
+  });
+
+  it('reads the jobs of a merged-results pipeline, which runs on a merge commit', async () => {
+    expect(
+      await checksOf({
+        id: 503,
+        status: 'failed',
+        mergeSha: 'f00dcafe00000000000000000000000000000000',
+        jobs: [{ name: 'test', status: 'failed' }],
+      }),
+    ).toEqual({
+      checkState: 'failure',
+      checks: [{ name: 'test', state: 'failure', url: `${site}/${projectPath}/-/jobs/50300` }],
+    });
   });
 });
 
