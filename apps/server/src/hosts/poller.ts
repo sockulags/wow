@@ -100,7 +100,19 @@ export interface HostPollerDeps {
 interface TicketKey {
   readonly key: string | null;
   readonly source: TicketSource | null;
+  // Where a backlog item's issue was published; only that site knows the key.
+  readonly url?: string;
 }
+
+// A browse link is on the Jira site when it starts with the site's address.
+const onJiraSite = (url: string, baseUrl: string): boolean => {
+  if (!URL.canParse(url) || !URL.canParse(baseUrl)) return false;
+  const site = new URL(baseUrl);
+  const page = new URL(url);
+  const prefix = site.pathname.replace(/\/+$/, '');
+  return page.origin === site.origin && page.pathname.startsWith(`${prefix}/`);
+};
+const hostOfLink = (url: string): string => (URL.canParse(url) ? new URL(url).host : url);
 
 // What one round asks about: the followed plans and the runs of one project.
 interface Targets {
@@ -656,7 +668,9 @@ export class HostPoller implements BackgroundService {
     const item = run.backlogItemId
       ? db.select().from(backlogItems).where(eq(backlogItems.id, run.backlogItemId)).get()
       : undefined;
-    if (item?.remote?.service === 'jira') return { key: item.remote.key, source: 'backlog' };
+    if (item?.remote?.service === 'jira') {
+      return { key: item.remote.key, source: 'backlog', url: item.remote.url };
+    }
     if (host.projectKey === '') return { key: null, source: null };
     const read = db
       .select()
@@ -727,7 +741,7 @@ export class HostPoller implements BackgroundService {
       return asking;
     };
     for (const run of runs) {
-      const { key, source } = await this.#ticketKey(run, host);
+      const { key, source, url } = await this.#ticketKey(run, host);
       const missing = [
         ...host.jira.missing,
         ...(key === null && host.projectKey === '' ? ['trackers.jira.projectKey'] : []),
@@ -743,6 +757,22 @@ export class HostPoller implements BackgroundService {
               kind: 'notSetUp',
               message: `${hostKindLabels.jira} is not set up for this project: fill in ${missing.map(labelOf).join(', ')} in Settings → Trackers or in the project's own trackers`,
               setting: missing[0] ?? null,
+            },
+          },
+        });
+        continue;
+      }
+      if (url !== undefined && config && !onJiraSite(url, config.baseUrl)) {
+        outcomes.push({
+          runId: run.id,
+          key,
+          source,
+          result: {
+            ok: false,
+            error: {
+              kind: 'notSetUp',
+              message: `${key ?? ''} was published to ${hostOfLink(url)}, not to this project's ${hostKindLabels.jira} site ${host.name}; wow reads a ticket only from the ${labelOf('trackers.jira.baseUrl')} in Settings → Trackers or in the project's own trackers`,
+              setting: 'trackers.jira.baseUrl',
             },
           },
         });

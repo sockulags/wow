@@ -1510,10 +1510,12 @@ and panels lose their frame, pictures become `[picture: <name>]` and are never l
 stays a link only for an http, https or mailto address, HTML stays text) and the
 `<base>/browse/<key>` link when that is a web address. 401 and 403 are `refused` and name
 `trackers.jira.token`, as is 404 ("shows no issue <key> to the Jira token"), which fails only that
-ticket; a 429 with `Retry-After` leaves the site alone until then; anything else and a timeout
+ticket, as does a published key that is not a Jira key; a 429 with `Retry-After` leaves the site alone until then; anything else and a timeout
 are `failed`, and after such a failure the site is not asked again that round. A project without
 a Jira site, token or (for `cloud-basic`) email, or without a project key when the run has no
-backlog issue, gets a `notSetUp` read naming the setting. The round ends in one internal
+backlog issue, gets a `notSetUp` read naming the setting; so does a run whose backlog item was
+published to another Jira site than the project's (its browse link is not under
+`trackers.jira.baseUrl`), and that site is not asked. The round ends in one internal
 `tickets.sync` command per project; `core/tickets.ts` stores `ticket_reads` rows through
 `tickets.synced` (topic `ticketReads`), keeping the last ticket and its time beside an error while
 the key stays the same, and the time an error was first seen while it repeats. A run with no

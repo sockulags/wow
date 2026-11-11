@@ -104,12 +104,12 @@ function onBranch(branch: string): void {
 }
 
 // A backlog item published to Jira as `key`.
-function publishedItem(key: string, id = 'b1'): string {
+function publishedItem(key: string, id = 'b1', site = jiraUrl): string {
   dispatch({ type: 'backlog.create', backlogItemId: id, title: 'Whistle', body: '', tags: [] });
   dispatch({
     type: 'backlog.published',
     backlogItemId: id,
-    remote: { service: 'jira', key, url: `${jiraUrl}/browse/${key}` },
+    remote: { service: 'jira', key, url: `${site}/browse/${key}` },
   });
   return id;
 }
@@ -375,6 +375,34 @@ describe('which tickets a poll asks about (spec 29, 30)', () => {
     await server.hosts.refresh({ runId: 'r1' });
     expect(jiraAsked()).toHaveLength(1);
     expect(ticketRead()?.ticket?.key).toBe('ABC-12');
+  });
+
+  it('fails only the run whose published key is not a Jira key', async () => {
+    jira.issues = [issue, { ...issue, key: 'ABC-7', summary: 'From the backlog' }];
+    onBranch('abc-12-fix');
+    set('hosts.polling', false);
+    await startRun('r1', publishedItem('not a key', 'b1'));
+    await startRun('r2', publishedItem('ABC-7', 'b2'));
+    await startRun('r3');
+    await server.hosts.refresh({});
+    expect(ticketRead('r1')?.error).toMatchObject({ kind: 'failed' });
+    expect(ticketRead('r1')?.error?.message).toContain('not a key is not a Jira issue key');
+    expect(ticketRead('r2')).toMatchObject({
+      error: null,
+      ticket: { summary: 'From the backlog' },
+    });
+    expect(ticketRead('r3')).toMatchObject({ error: null, ticket: { key: 'ABC-12' } });
+  });
+
+  it('does not ask the project’s site for an issue published to another Jira site', async () => {
+    await startRun('r1', publishedItem('ABC-12', 'b1', 'https://other-jira.example.invalid'));
+    expect(jiraAsked()).toEqual([]);
+    expect(ticketRead()).toMatchObject({ key: 'ABC-12', source: 'backlog', ticket: null });
+    expect(ticketRead()?.error).toMatchObject({
+      kind: 'notSetUp',
+      setting: 'trackers.jira.baseUrl',
+    });
+    expect(ticketRead()?.error?.message).toContain('other-jira.example.invalid');
   });
 
   it('sends the Jira token only to the Jira site', async () => {

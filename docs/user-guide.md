@@ -708,8 +708,9 @@ review comments) instead of pull requests. A token only ever goes to the host yo
 Every `hosts.pollSeconds` (60 by default) wow asks the hosts about the pull requests and tickets
 of live runs and followed plans only: one search per followed plan for its `Intent-Unit:` lines,
 never a list of the whole repository. A host without search is asked for its newest
-`hosts.listFallbackCount` pull requests instead. The Ticket tab reads the backlog item's issue, or
-else a Jira key in the pull request's title or branch; the Pages tab reads only Confluence pages
+`hosts.listFallbackCount` pull requests instead. The Ticket tab reads the backlog item's issue (only
+from the project's Jira site; an issue published to another site is not asked for), or else a
+Jira key in the pull request's title or branch; the Pages tab reads only Confluence pages
 the ticket, the pull request or the intent link to. With `hosts.polling` off or the scheduler
 paused nothing is asked on the timer; **Refresh now** in a view still asks once. When a host
 fails, the last data stays with "Last fetched <time>" and the error, and the next interval tries

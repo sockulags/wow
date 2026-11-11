@@ -36,8 +36,8 @@ export function jiraKeyIn(text: string, projectKey: string): string | undefined 
   return match ? `${key.toUpperCase()}-${match[1]}` : undefined;
 }
 
-// The host has no such issue, or does not show it to the token. Only this ticket is affected,
-// so the poller goes on asking about the others.
+// The host has no such issue or does not show it to the token, or the key is not one. Only this
+// ticket is affected, so the poller goes on asking about the others.
 export class MissingTicket extends HostFailure {}
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -107,7 +107,10 @@ export function createJiraHost(
     },
     async read(key) {
       if (!isJiraKey(key)) {
-        throw new HostFailure('failed', `${key} is not a Jira issue key, so it was not asked for`);
+        throw new MissingTicket(
+          'failed',
+          `${key} is not a Jira issue key, so it was not asked for`,
+        );
       }
       requests += 1;
       let body: unknown;
