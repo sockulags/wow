@@ -19,6 +19,7 @@ import { readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Commit, Engine } from '../core/engine.js';
+import { alreadyThere } from '../core/skills.js';
 import type { Db } from '../db/database.js';
 import { projects } from '../db/schema.js';
 import type { Logger } from '../logger.js';
@@ -103,9 +104,7 @@ export class SkillsService {
     const found = names.find(
       (name) => name.toLowerCase() === wanted && existsSync(path.join(dir, name, skillFileName)),
     );
-    return found === undefined
-      ? undefined
-      : `${path.join(dir, found, skillFileName)} is already there. Rename or remove it first.`;
+    return found === undefined ? undefined : alreadyThere(path.join(dir, found));
   }
 
   // Why the file of the own skill a command saved or deleted could not be written or removed.

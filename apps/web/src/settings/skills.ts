@@ -17,13 +17,19 @@ import { notify, offerUndo } from '@/lib/feedback';
 
 export const skillsPath = '/settings/skills';
 
+export interface SkillDraftProblem {
+  readonly on: 'name' | 'text';
+  readonly reason: string;
+}
+
 export interface SkillEditor {
   // The skill being changed, or undefined for a new one.
   readonly editing: string | undefined;
   readonly draft: OwnSkill;
   readonly busy: boolean;
-  // The server's refusal, or the name rule's reason once Save was pressed.
-  readonly error: string | undefined;
+  // The server's refusal, or the draft's problem once Save was pressed, with the field it is
+  // about: the name rule's reason sits under Name.
+  readonly error: SkillDraftProblem | undefined;
 }
 
 export interface SkillsState {
@@ -69,15 +75,18 @@ export function changeSkillDraft(changes: Partial<OwnSkill>): void {
 
 // Why the draft cannot be saved yet, as the server would say it: the name rule against the
 // other wow skills, and a skill needs a text.
-export function draftProblem(editor: SkillEditor, skills: readonly Skill[]): string | undefined {
+export function draftProblem(
+  editor: SkillEditor,
+  skills: readonly Skill[],
+): SkillDraftProblem | undefined {
   if (editor.editing === undefined) {
     const taken = skills
       .filter((skill) => skill.source === 'wow' || skill.source === 'yours')
       .map((skill) => skill.name);
     const problem = ownSkillNameProblem(editor.draft.name, taken);
-    if (problem) return problem;
+    if (problem) return { on: 'name', reason: problem };
   }
-  if (editor.draft.text.trim() === '') return 'A skill needs a text';
+  if (editor.draft.text.trim() === '') return { on: 'text', reason: 'A skill needs a text' };
   return undefined;
 }
 
@@ -121,7 +130,9 @@ export async function saveSkill(connection: Connection, skills: readonly Skill[]
   } catch (failure) {
     const current = skillsStore.getState().editor;
     if (current) {
-      skillsStore.setState({ editor: { ...current, busy: false, error: errorMessage(failure) } });
+      skillsStore.setState({
+        editor: { ...current, busy: false, error: { on: 'text', reason: errorMessage(failure) } },
+      });
     }
   }
 }

@@ -126,6 +126,7 @@ function SkillEditorDialog({ skills }: { skills: readonly Skill[] }) {
           <FormField
             id={`${id}-name`}
             label="Name"
+            error={editor?.error?.on === 'name' ? editor.error.reason : undefined}
             help={
               editing
                 ? 'A skill keeps its name; write a new one for another name.'
@@ -146,7 +147,11 @@ function SkillEditorDialog({ skills }: { skills: readonly Skill[] }) {
               onChange={(event) => changeSkillDraft({ description: event.target.value })}
             />
           </FormField>
-          <FormField id={`${id}-text`} label="Text" error={editor?.error}>
+          <FormField
+            id={`${id}-text`}
+            label="Text"
+            error={editor?.error?.on === 'text' ? editor.error.reason : undefined}
+          >
             <Textarea
               rows={10}
               className="font-mono text-xs"

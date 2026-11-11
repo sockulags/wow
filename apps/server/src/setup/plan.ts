@@ -3,6 +3,7 @@ import {
   SecretRef,
   findSecret,
   hideSecretsDeep,
+  isBuiltInSkillName,
   settingGroupTitles,
   type AssistantProposalLine,
   providerKindLabels,
@@ -14,6 +15,7 @@ import {
   type SetupPreview,
   type SetupProblem,
   type SetupWorkflow,
+  type SkillRef,
   type Workflow,
   type WorkflowStep,
   withoutAddressAccount,
@@ -103,6 +105,22 @@ function matchOf(
   return named.length === 1 ? named[0] : undefined;
 }
 
+// A step's skill is found the way a run finds it (wow skills spec 15): a wow skill only among
+// wow skills, a built-in name without a source as the built-in one, anything else in folders.
+function refInstalled(ref: SkillRef, read: ReadModel, fileSkills: readonly string[]): boolean {
+  const source = ref.source ?? (isBuiltInSkillName(ref.name) ? 'wow' : undefined);
+  const listed = read.skills();
+  if (source === 'yours' && fileSkills.includes(ref.name)) return true;
+  if (source !== undefined) {
+    return listed.some((skill) => skill.source === source && skill.name === ref.name);
+  }
+  const folders = listed.filter((skill) => skill.source !== 'wow' && skill.source !== 'yours');
+  return skillInstalled(
+    ref.name,
+    folders.map((skill) => skill.name),
+  );
+}
+
 function planWorkflow(
   entry: SetupWorkflow,
   match: Workflow | undefined,
@@ -122,12 +140,15 @@ function planWorkflow(
     if (!kept && !first) missingKinds.add(provider);
     return { ...step, providerInstanceId: kept ?? first ?? provider };
   });
-  const installed = [...read.skills().map((skill) => skill.name), ...fileSkills];
   const missingSkills = [
     ...new Set(
       steps
-        .flatMap((step) => [step.skillName, ...(step.alsoFollow ?? []).map((ref) => ref.name)])
-        .filter((name) => !skillInstalled(name, installed)),
+        .flatMap((step): SkillRef[] => [
+          { name: step.skillName, ...(step.skillSource ? { source: step.skillSource } : {}) },
+          ...(step.alsoFollow ?? []),
+        ])
+        .filter((ref) => !refInstalled(ref, read, fileSkills))
+        .map((ref) => ref.name),
     ),
   ];
   for (const skill of missingSkills) {

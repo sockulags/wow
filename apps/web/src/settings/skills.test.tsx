@@ -125,6 +125,9 @@ describe('Your skills in Settings → Skills (spec 5)', () => {
     expect(
       dialog.getByText('Names starting with wow- are kept for the skills wow ships'),
     ).toBeTruthy();
+    // Under Name, the field it is about.
+    expect(dialog.getByLabelText('Name').getAttribute('aria-invalid')).toBe('true');
+    expect(dialog.getByLabelText('Text').getAttribute('aria-invalid')).not.toBe('true');
     expect(commandsSent(box)).toEqual([]);
 
     await user.clear(dialog.getByLabelText('Name'));

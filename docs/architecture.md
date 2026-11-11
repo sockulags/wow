@@ -532,6 +532,11 @@ previous}` or `skill.deleted {skill}` in the skills projection at once; `SkillsS
   I/O, so the RPC `dispatch` handler asks `SkillsService.refusal` first: a `skill.create` whose
   folder already holds a `SKILL.md` the list does not show (skipped by the scan, or a folder
   whose name differs only in case, which is the same folder on Windows) is refused with its path.
+  The handler asks the same for the `skill.create` commands a `setup.apply` (its plan) or an
+  `assistant.proposal.accept` (the proposal's command) would decide. `decideSkill` itself refuses
+  a `skill.create` whose folder holds an own skill the list shows under another name (a
+  hand-written file, compared without case), so the setup preview and the assistant's proposal
+  are refused at once, with the same sentence.
   A file that cannot be written or removed is answered to the command as refused with the path
   and the reason (`writeFailure(commandId)`); the command has committed, and the rescan puts the
   list back to what is on disk. Scans run one after another, and a scan that began before an
@@ -2328,7 +2333,9 @@ skill with its name when the description or text differ (a `replaced` line; "(th
 differs)" when only the text does), else `skill.create` (an `added` line), either way with
 the whole text as the line's `full`; a name the rule refuses or one in the file twice refuses
 the file with its line. Skills are planned before workflows, so a step that runs or follows a
-skill the same file brings is not marked. A step keeps the instance it already uses when that is of
+skill the same file brings is not marked. A step's skill counts with its source, as a run finds
+it: `yours` only among own skills (or the file's), `wow` (or a built-in name without a source)
+only among wow skills, anything else only among folder skills. A step keeps the instance it already uses when that is of
 the file's kind, else takes the first instance of that kind, so a file read where it was written
 changes nothing. Each command is decided once on the projections without storing anything, so a
 command the app would refuse (rules that point nowhere, a workflow with a live run) refuses the

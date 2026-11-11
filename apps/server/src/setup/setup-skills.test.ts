@@ -2,13 +2,15 @@ import { settingsRegistry as registry, type ServerCommand, type Skill } from '@w
 import { plainProtector } from '@wow/secrets';
 import { ownSkillDir } from '@wow/skills';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { parse } from 'yaml';
+import { parse, stringify as stringifyYaml } from 'yaml';
 import { readModel } from '../core/projector.js';
 import { MockProviderAdapter } from '../hooks/providers.js';
+import { createHandlers, type Connection } from '../rpc/handlers.js';
+import { route } from '../rpc/router.js';
 import { startServer, type RunningServer } from '../server.js';
 import { planSetup } from './plan.js';
 import { writeSetup } from './write.js';
@@ -77,6 +79,51 @@ const save = (server: RunningServer) =>
 const preview = (server: RunningServer, text: string, name: string) =>
   planSetup(text, readModel(server.database.db), { now, registry, home: home(name) });
 
+// setup.apply as the app sends it, through the RPC handler, which looks at the disk first.
+function applyOverRpc(server: RunningServer, name: string, text: string) {
+  const handlers = createHandlers({
+    engine: server.engine,
+    subscriptions: undefined as never,
+    workspaces: undefined as never,
+    settings: server.settings,
+    secrets: undefined as never,
+    db: server.database.db,
+    skills: server.skills,
+    hosts: undefined as never,
+    plans: undefined as never,
+    workflows: undefined as never,
+    providers: undefined as never,
+    providerUpdates: undefined as never,
+    trackers: undefined as never,
+    detectProviders: () => Promise.resolve([]),
+    discoverProjects: () => Promise.resolve([]),
+    outlook: () => undefined,
+    info: { version: '0.0.0', home: home(name) },
+    clock: () => new Date(now),
+  });
+  const connection: Connection = { push: () => undefined, subscriptionIds: new Set() };
+  const command = { type: 'setup.apply', applicationId: `a${++ids}`, name: 'tea.yaml', text };
+  return route(
+    JSON.stringify({
+      id: `rpc-${ids}`,
+      method: 'dispatch',
+      params: { commandId: `rpc-${ids}`, command },
+    }),
+    handlers,
+    connection,
+    () => undefined,
+  );
+}
+
+const steepFile = [
+  'version: 1',
+  'skills:',
+  '  - name: steep',
+  '    description: When leaves steep.',
+  '    text: Three minutes.',
+  '',
+].join('\n');
+
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'wow-setup-skills-'));
   source = await start('source');
@@ -93,6 +140,16 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
+// A step that runs the folder skill kettle-check and also follows these.
+const followStep = (id: string, alsoFollow: { name: string; source?: 'yours' }[]) => ({
+  id,
+  skillName: 'kettle-check',
+  providerInstanceId: 'claude-source',
+  gateBefore: false,
+  gateAfter: false,
+  expectedArtifacts: [],
+  alsoFollow,
+});
 describe('own skills in a setup file (wow skills spec 8)', () => {
   it('saves own skills with their text, and neither built-in nor folder skills', () => {
     const file = parse(save(source).text) as { skills?: unknown };
@@ -169,6 +226,87 @@ describe('own skills in a setup file (wow skills spec 8)', () => {
     const plan = preview(other, save(source).text, 'other');
     if (plan.outcome !== 'ready') throw new Error(JSON.stringify(plan.problems));
     expect(plan.preview.marked).toEqual([]);
+  });
+
+  it('refuses a skill whose folder holds a hand-written skill of another name, with the line, and leaves the file', async () => {
+    const dir = ownSkillDir(home('other'), 'steep');
+    const handWritten = '---\nname: brew-notes\ndescription: Notes.\n---\nWrite the notes.\n';
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'SKILL.md'), handWritten);
+    await other.skills.refresh();
+    expect(preview(other, steepFile, 'other')).toEqual({
+      outcome: 'refused',
+      problems: [
+        {
+          line: 3,
+          reason: `${path.join(dir, 'SKILL.md')} is already there. Rename or remove it first.`,
+        },
+      ],
+    });
+    expect(await applyOverRpc(other, 'other', steepFile)).toMatchObject({
+      error: { code: 'rejected' },
+    });
+    expect(await readFile(path.join(dir, 'SKILL.md'), 'utf8')).toBe(handWritten);
+    expect(ownSkills(other).map((skill) => skill.name)).toEqual(['brew-notes']);
+  });
+
+  it('refuses to apply a skill over a SKILL.md the list does not show, and leaves the file', async () => {
+    // Frontmatter that is not YAML, so the scan skips it and the preview cannot know.
+    const dir = ownSkillDir(home('other'), 'steep');
+    const handWritten = '---\nname: [steep\n---\nMine, by hand.\n';
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'SKILL.md'), handWritten);
+    await other.skills.refresh();
+    expect(await applyOverRpc(other, 'other', steepFile)).toMatchObject({
+      error: {
+        code: 'rejected',
+        message: `${path.join(dir, 'SKILL.md')} is already there. Rename or remove it first.`,
+      },
+    });
+    expect(await readFile(path.join(dir, 'SKILL.md'), 'utf8')).toBe(handWritten);
+    expect(ownSkills(other)).toEqual([]);
+  });
+
+  it('marks a step that follows an own skill only a folder skill of that name stands for, and the reverse', async () => {
+    const folder = path.join(root, 'other', 'user', '.claude', 'skills', 'kettle-check');
+    await mkdir(folder, { recursive: true });
+    await writeFile(
+      path.join(folder, 'SKILL.md'),
+      '---\nname: kettle-check\ndescription: A folder skill.\n---\nBoil.\n',
+    );
+    await write(other, {
+      type: 'skill.create',
+      skill: { name: 'pour', description: 'When tea is poured.', text: 'Pour slowly.' },
+    });
+    await write(source, {
+      type: 'skill.create',
+      skill: { name: 'pour', description: 'When tea is poured.', text: 'Pour slowly.' },
+    });
+    const workflow = (
+      workflowId: string,
+      name: string,
+      alsoFollow: Parameters<typeof followStep>[1],
+    ) =>
+      on(source, {
+        type: 'workflow.create',
+        workflowId,
+        name,
+        steps: [followStep('brew', alsoFollow)],
+      });
+    workflow('own-as-folder', 'Own named, folder there', [
+      { name: 'kettle-check', source: 'yours' },
+    ]);
+    workflow('folder-as-own', 'Folder named, own there', [{ name: 'pour' }]);
+    workflow('both-right', 'Both right', [{ name: 'pour', source: 'yours' }]);
+    const saved = parse(save(source).text) as Record<string, unknown>;
+    // Without the file's own skills, so only what the other install has counts.
+    const { skills: _left, ...rest } = saved;
+    const plan = preview(other, stringifyYaml(rest), 'other');
+    if (plan.outcome !== 'ready') throw new Error(JSON.stringify(plan.problems));
+    expect(plan.preview.marked).toEqual([
+      { workflow: 'Own named, folder there', reason: 'skill not installed: kettle-check' },
+      { workflow: 'Folder named, own there', reason: 'skill not installed: pour' },
+    ]);
   });
 
   it('refuses a skill whose name wow keeps for its own, with the line', () => {

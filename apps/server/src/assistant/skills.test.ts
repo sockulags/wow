@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { snapshot } from '../core/subscriptions.js';
+import { createHandlers, type Connection } from '../rpc/handlers.js';
+import { route } from '../rpc/router.js';
 import { startServer, type RunningServer } from '../server.js';
 
 // The assistant and wow skills (wow skills spec 21 to 23): it reads the list and a wow skill's
@@ -48,6 +50,44 @@ interface Called {
 async function call(name: string, args: Record<string, unknown> = {}): Promise<Called> {
   const result = await server.assistant.tools.call(name, args);
   return { isError: result.isError, content: JSON.parse(result.text) as Called['content'] };
+}
+
+// The user's yes as the app sends it, through the RPC handler, which looks at the disk first.
+function acceptOverRpc(proposalId: string) {
+  const handlers = createHandlers({
+    engine: server.engine,
+    subscriptions: undefined as never,
+    workspaces: undefined as never,
+    settings: server.settings,
+    secrets: undefined as never,
+    db: server.database.db,
+    skills: server.skills,
+    hosts: undefined as never,
+    plans: undefined as never,
+    workflows: undefined as never,
+    providers: undefined as never,
+    providerUpdates: undefined as never,
+    trackers: undefined as never,
+    detectProviders: () => Promise.resolve([]),
+    discoverProjects: () => Promise.resolve([]),
+    outlook: () => undefined,
+    info: { version: '0.0.0', home: path.join(root, '.wow') },
+    clock: () => new Date(now),
+  });
+  const connection: Connection = { push: () => undefined, subscriptionIds: new Set() };
+  return route(
+    JSON.stringify({
+      id: `rpc-${++ids}`,
+      method: 'dispatch',
+      params: {
+        commandId: `rpc-${ids}`,
+        command: { type: 'assistant.proposal.accept', proposalId },
+      },
+    }),
+    handlers,
+    connection,
+    () => undefined,
+  );
 }
 
 // The user's yes, then the scan its file write queued.
@@ -209,6 +249,61 @@ describe('own skills the assistant writes wait for a yes (wow skills spec 22)', 
     expect(reserved.content).toEqual({
       outcome: 'refused',
       reason: 'Names starting with wow- are kept for the skills wow ships',
+    });
+    expect(proposals()).toEqual([]);
+  });
+
+  it('refuses a new skill whose folder holds a hand-written skill of another name, and leaves the file', async () => {
+    const dir = ownSkillDir(path.join(root, '.wow'), 'sip');
+    await mkdir(dir, { recursive: true });
+    const handWritten = '---\nname: slow-sip\ndescription: Sip slowly.\n---\nSip it slowly.\n';
+    await writeFile(path.join(dir, 'SKILL.md'), handWritten);
+    await server.skills.refresh();
+    const refused = await call('create_skill', {
+      skill: { name: 'sip', description: 'When tea is drunk.', text: 'Drink it.' },
+    });
+    expect(refused.content).toEqual({
+      outcome: 'refused',
+      reason: `${path.join(dir, 'SKILL.md')} is already there. Rename or remove it first.`,
+    });
+    expect(proposals()).toEqual([]);
+    expect(await readFile(path.join(dir, 'SKILL.md'), 'utf8')).toBe(handWritten);
+  });
+
+  it('refuses the yes when a SKILL.md the list does not show was put in the folder since', async () => {
+    const proposed = await call('create_skill', {
+      skill: { name: 'sip', description: 'When tea is drunk.', text: 'Drink it.' },
+    });
+    // Frontmatter that is not YAML, so the scan skips it.
+    const dir = ownSkillDir(path.join(root, '.wow'), 'sip');
+    const handWritten = '---\nname: [sip\n---\nMine, by hand.\n';
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'SKILL.md'), handWritten);
+    await server.skills.refresh();
+    expect(await acceptOverRpc(proposed.content.proposal?.id ?? '')).toMatchObject({
+      error: {
+        code: 'rejected',
+        message: `${path.join(dir, 'SKILL.md')} is already there. Rename or remove it first.`,
+      },
+    });
+    expect(await readFile(path.join(dir, 'SKILL.md'), 'utf8')).toBe(handWritten);
+    expect(proposals()[0]?.state).toBe('pending');
+  });
+
+  it('refuses a change to a skill that is not there, and proposes nothing for a change that changes nothing', async () => {
+    const unknown = await call('update_skill', {
+      skill: { name: 'no-such-tea', description: 'Never.', text: 'Nothing.' },
+    });
+    expect(unknown.content).toEqual({
+      outcome: 'refused',
+      reason: 'You have no skill named no-such-tea',
+    });
+    const same = await call('update_skill', {
+      skill: { name: 'kettle-check', description: 'Before any tea step.', text: 'Boil first.' },
+    });
+    expect(same.content).toEqual({
+      outcome: 'unchanged',
+      note: 'It is already so; nothing changed.',
     });
     expect(proposals()).toEqual([]);
   });

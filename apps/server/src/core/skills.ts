@@ -13,7 +13,8 @@ import {
   type Thread,
   promptWithSkills,
 } from '@wow/contracts';
-import { fillBuiltInSkill, invocationsFor, ownSkillDir } from '@wow/skills';
+import { fillBuiltInSkill, invocationsFor, ownSkillDir, skillFileName } from '@wow/skills';
+import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveStored } from '../settings/service.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
@@ -49,6 +50,9 @@ function requireOwn(read: ReadModel, name: string): Skill {
   throw new CommandRejected('not_found', `You have no skill named ${name}`);
 }
 
+export const alreadyThere = (dir: string): string =>
+  `${path.join(dir, skillFileName)} is already there. Rename or remove it first.`;
+
 const row = (dir: string, input: OwnSkill): Skill => ({
   id: dir,
   name: input.name,
@@ -80,7 +84,14 @@ export function decideSkill(
           "wow's home folder is not known, so no skill can be saved",
         );
       }
-      const saved = row(ownSkillDir(context.home, skill.name), skill);
+      const dir = ownSkillDir(context.home, skill.name);
+      // A hand-written file may sit in that folder under another name (spec 6), and on Windows
+      // a folder differing only in case is the same one; either would be overwritten.
+      const there = read
+        .skills()
+        .find((entry) => entry.source === 'yours' && entry.dir.toLowerCase() === dir.toLowerCase());
+      if (there) throw new CommandRejected('rejected', alreadyThere(there.dir));
+      const saved = row(dir, skill);
       return [
         { kind: 'skill.saved', aggregate: 'skills', payload: { skill: saved, previous: null } },
       ];
