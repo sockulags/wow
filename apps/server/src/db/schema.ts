@@ -116,6 +116,8 @@ export const threads = sqliteTable(
     runId: text(),
     stepId: text(),
     backgroundTasks: json<BackgroundTask[]>().notNull().default([]),
+    archived: bool().notNull().default(false),
+    seen: bool().notNull().default(true),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },
@@ -344,6 +346,8 @@ export const notifications = sqliteTable('notifications', {
   path: text().notNull(),
   runId: text(),
   calendarItemId: text(),
+  threadId: text(),
+  approvalId: text(),
 });
 
 // What the assistant changed, with the record Undo needs, in the order it happened.

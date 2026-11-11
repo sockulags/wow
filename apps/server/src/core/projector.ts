@@ -319,6 +319,24 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(threads.id, event.payload.threadId))
         .run();
       return threadTopics;
+    case 'thread.renamed':
+      tx.update(threads)
+        .set({ title: event.payload.title })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
+    case 'thread.archived':
+      tx.update(threads)
+        .set({ archived: event.payload.archived })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
+    case 'thread.seenChanged':
+      tx.update(threads)
+        .set({ seen: event.payload.seen })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
     case 'thread.stateChanged':
       tx.update(threads)
         .set({ state: event.payload.state, updatedAt: event.payload.updatedAt })

@@ -62,6 +62,8 @@ const Timestamp = z.iso.datetime({ offset: true });
 
 // The server stores tags trimmed, non-empty and unique, in the order given.
 const BacklogTags = z.array(z.string());
+// A thread's title as the user types it; spaces around it are dropped.
+const ThreadTitle = z.string().trim().min(1, 'A thread needs a title');
 
 const WorkflowSteps = z
   .array(WorkflowStep)
@@ -194,6 +196,14 @@ export const Command = z.discriminatedUnion('type', [
   // Done threads sit in the sidebar's Done group (spec 21). Refused while the thread works or
   // needs the user; reopening puts it back under Idle, and a new message reopens it too.
   z.object({ type: z.literal('thread.setDone'), threadId: Id, done: z.boolean() }),
+  // A new title for a chat thread or a step's thread (agent workbench spec 67).
+  z.object({ type: z.literal('thread.rename'), threadId: Id, title: ThreadTitle }),
+  // Archive hides a thread from the list; there is no delete (spec 68). A workflow step's thread
+  // is refused: it belongs to its run.
+  z.object({ type: z.literal('thread.setArchived'), threadId: Id, archived: z.boolean() }),
+  // The thread was opened, or the user asked to see it as new again (spec 70).
+  z.object({ type: z.literal('thread.markSeen'), threadId: Id }),
+  z.object({ type: z.literal('thread.markUnread'), threadId: Id }),
   z.object({ type: z.literal('approval.answer'), approvalId: Id, decision: ApprovalDecision }),
   // Answers to an agent's questions, sent together when one ask holds several (questions
   // spec 3). Refused for a question whose turn ended.
@@ -851,6 +861,21 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('thread.stateChanged'),
     aggregate: Id,
     payload: z.object({ threadId: Id, state: ThreadState, updatedAt: Timestamp }),
+  }),
+  z.object({
+    kind: z.literal('thread.renamed'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, title: z.string().min(1) }),
+  }),
+  z.object({
+    kind: z.literal('thread.archived'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, archived: z.boolean() }),
+  }),
+  z.object({
+    kind: z.literal('thread.seenChanged'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, seen: z.boolean() }),
   }),
   z.object({
     kind: z.literal('turn.started'),

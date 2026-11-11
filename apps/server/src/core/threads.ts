@@ -9,8 +9,10 @@ import type {
   ThreadItemKind,
   ThreadState,
   Turn,
+  TurnState,
 } from '@wow/contracts';
 import {
+  ChatNotifications,
   QuestionOption,
   askAnswerPrompt,
   askAnswerText,
@@ -21,6 +23,7 @@ import {
   type QuestionReply,
 } from '@wow/contracts';
 import { z } from 'zod';
+import { resolveStored } from '../settings/service.js';
 import {
   assistantAnswersNote,
   assistantThreadEvents,
@@ -53,6 +56,10 @@ type ThreadCommand = Extract<
       | 'thread.configure'
       | 'thread.setPinned'
       | 'thread.setDone'
+      | 'thread.rename'
+      | 'thread.setArchived'
+      | 'thread.markSeen'
+      | 'thread.markUnread'
       | 'approval.answer'
       | 'question.answer'
       | 'provider.events';
@@ -532,6 +539,43 @@ export function decideThread(
       }
       return [stateChanged(thread.id, 'done', now)];
     }
+    case 'thread.rename': {
+      const thread = requireThread(read, command.threadId);
+      const title = command.title.trim();
+      if (title === '') throw new CommandRejected('rejected', 'A thread needs a title');
+      if (thread.title === title) return [];
+      return [
+        {
+          kind: 'thread.renamed',
+          aggregate: thread.id,
+          payload: { threadId: thread.id, title },
+        },
+      ];
+    }
+    case 'thread.setArchived': {
+      const thread = requireThread(read, command.threadId);
+      if ((thread.archived ?? false) === command.archived) return [];
+      if (command.archived && thread.runId !== null) {
+        throw new CommandRejected(
+          'rejected',
+          "A workflow step's thread belongs to its run, so it is not archived on its own.",
+        );
+      }
+      return [
+        {
+          kind: 'thread.archived',
+          aggregate: thread.id,
+          payload: { threadId: thread.id, archived: command.archived },
+        },
+      ];
+    }
+    case 'thread.markSeen':
+    case 'thread.markUnread': {
+      const thread = requireThread(read, command.threadId);
+      const seen = command.type === 'thread.markSeen';
+      if ((thread.seen ?? true) === seen) return [];
+      return [seenChanged(thread.id, seen)];
+    }
     case 'approval.answer': {
       const approval = read.approval(command.approvalId);
       if (!approval) throw new CommandRejected('not_found', `No approval ${command.approvalId}`);
@@ -608,9 +652,41 @@ export function decideThread(
       ];
     }
     case 'provider.events':
-      return decideProviderEvents(command.threadId, command.events, read, now);
+      return decideProviderEvents(command.threadId, command.events, read, context);
   }
 }
+
+const seenChanged = (threadId: string, seen: boolean): DomainEvent => ({
+  kind: 'thread.seenChanged',
+  aggregate: threadId,
+  payload: { threadId, seen },
+});
+
+const settingValue = (key: string, read: ReadModel, context: DecideContext): unknown => {
+  const definition = context.registry[key];
+  if (!definition) return undefined;
+  return resolveStored(key, definition, {}, (scope) => read.setting(key, scope)).value;
+};
+
+// What the user asked to hear about chat threads (spec 65).
+const chatNotifications = (read: ReadModel, context: DecideContext): ChatNotifications => {
+  const parsed = ChatNotifications.safeParse(settingValue('chat.notifications', read, context));
+  return parsed.success ? parsed.data : 'needsYouAndFinished';
+};
+
+const finishedAfterMs = (read: ReadModel, context: DecideContext): number => {
+  const value = settingValue('chat.finishedAfterSeconds', read, context);
+  return typeof value === 'number' ? value * 1000 : Number.POSITIVE_INFINITY;
+};
+
+// Only a thread the user started notifies; a step's thread tells through its run, and the
+// assistant has its own view.
+const threadTitleOf = (thread: Thread) =>
+  thread.title.trim() === '' ? 'New thread' : thread.title;
+
+const notifiesAsChat = (thread: Thread) => thread.runId === null && thread.kind !== 'assistant';
+
+export const threadPath = (threadId: string) => `/chat/${threadId}`;
 
 const stateChanged = (threadId: string, state: ThreadState, now: string): DomainEvent => ({
   kind: 'thread.stateChanged',
@@ -642,8 +718,9 @@ function decideProviderEvents(
   threadId: string,
   events: readonly ProviderEvent[],
   read: ReadModel,
-  now: string,
+  context: DecideContext,
 ): DomainEvent[] {
+  const now = context.now;
   const thread = read.thread(threadId);
   // A thread deleted while its provider was still talking; nothing to record.
   if (!thread) return [];
@@ -655,6 +732,63 @@ function decideProviderEvents(
   const created = new Set<string>();
   const out: DomainEvent[] = [];
   const exists = (id: string) => created.has(id) || read.itemExists(id);
+  let seen = thread.seen ?? true;
+  // The assistant thread is not in the thread list, so it has nothing to mark.
+  const markUnseen = () => {
+    if (!seen || thread.kind === 'assistant') return;
+    seen = false;
+    out.push(seenChanged(threadId, false));
+  };
+  const told = new Set<string>();
+  const notifications = notifiesAsChat(thread) ? chatNotifications(read, context) : 'off';
+  const needsYou = (key: string, summary: string, approvalId: string | null) => {
+    markUnseen();
+    if (notifications === 'off') return;
+    const id = `${threadId}:needs-you:${key}`;
+    // The questions of one ask arrive one by one and are told once.
+    if (told.has(id)) return;
+    told.add(id);
+    out.push({
+      kind: 'notification.sent',
+      aggregate: id,
+      payload: {
+        id,
+        at: now,
+        kind: 'waiting',
+        title: `Needs you: ${threadTitleOf(thread)}`,
+        body: summary,
+        path: threadPath(threadId),
+        runId: null,
+        calendarItemId: null,
+        threadId,
+        approvalId,
+      },
+    });
+  };
+  const finished = (ended: Turn, how: TurnState) => {
+    markUnseen();
+    // The user stopped it themselves, so there is nothing to tell.
+    if (notifications !== 'needsYouAndFinished' || how === 'interrupted') return;
+    const ran = Date.parse(now) - Date.parse(ended.startedAt);
+    if (!(ran > finishedAfterMs(read, context))) return;
+    const id = `${ended.id}:finished`;
+    out.push({
+      kind: 'notification.sent',
+      aggregate: id,
+      payload: {
+        id,
+        at: now,
+        kind: 'finished',
+        title: `Finished: ${threadTitleOf(thread)}`,
+        body: how === 'failed' ? 'The turn failed.' : '',
+        path: threadPath(threadId),
+        runId: null,
+        calendarItemId: null,
+        threadId,
+        approvalId: null,
+      },
+    });
+  };
 
   const item = (
     current: Turn,
@@ -831,6 +965,7 @@ function decideProviderEvents(
           },
         });
         setState('needs_you');
+        needsYou(event.approvalId, event.summary, id);
         break;
       }
       case 'questionAsked': {
@@ -865,6 +1000,7 @@ function decideProviderEvents(
           },
         });
         setState('needs_you');
+        needsYou(`question:${event.askId ?? event.questionId}`, event.question, null);
         break;
       }
       case 'taskListUpdated':
@@ -921,6 +1057,7 @@ function decideProviderEvents(
           },
         });
         state = endedThreadState[ended];
+        finished(current, ended);
         turn = undefined;
         break;
       }

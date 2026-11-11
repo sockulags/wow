@@ -268,6 +268,10 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'thread.configure': chatOnly,
   'thread.setPinned': chatOnly,
   'thread.setDone': chatOnly,
+  'thread.rename': chatOnly,
+  'thread.setArchived': chatOnly,
+  'thread.markSeen': chatOnly,
+  'thread.markUnread': chatOnly,
   'approval.answer': refused("Only the user answers an agent's request for approval."),
   'question.answer': refused("Only the user answers an agent's question."),
   'card.create': (command, read, context) =>

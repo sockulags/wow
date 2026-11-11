@@ -122,6 +122,10 @@ export interface SettingDefinition<S extends z.ZodType = z.ZodType> {
 export const SettingPersonal = z.enum(['account', 'machine', 'person']);
 export type SettingPersonal = z.infer<typeof SettingPersonal>;
 
+// Which chat threads notify (agent workbench spec 65).
+export const ChatNotifications = z.enum(['off', 'needsYou', 'needsYouAndFinished']);
+export type ChatNotifications = z.infer<typeof ChatNotifications>;
+
 const defineSetting = <S extends z.ZodType>(definition: SettingDefinition<S>) => definition;
 
 // The context panel's width range; the web app's resize handle stops at the same bounds.
@@ -481,6 +485,37 @@ export const settingsRegistry = {
       'Typed at the start of a message or after a space, this character opens the list of skills in the composer. A picked skill becomes a chip; the character in other places (a path such as src/app, a date) opens nothing.',
     default: '/',
     scope: 'global',
+  }),
+  'chat.notifications': defineSetting({
+    schema: ChatNotifications,
+    group: 'chat',
+    label: 'Chat notifications',
+    description:
+      'When wow tells you about a chat thread you are not looking at: when it starts to need you (an approval or a question), and when a long turn ends. Clicking one opens the thread.',
+    default: 'needsYouAndFinished',
+    scope: 'global',
+    radio: true,
+    options: {
+      off: { label: 'Off', description: 'No notifications for chat threads.' },
+      needsYou: {
+        label: 'Needs you',
+        description: 'Only when a thread waits for your answer.',
+      },
+      needsYouAndFinished: {
+        label: 'Needs you and finished',
+        description: 'Also when a turn that ran longer than the time below ends.',
+      },
+    },
+  }),
+  'chat.finishedAfterSeconds': defineSetting({
+    schema: z.number().int().min(0).max(86_400),
+    group: 'chat',
+    label: 'Finished notification after',
+    description:
+      'A turn that ran longer than this tells you when it ends ("Finished: <thread>"), with chat notifications set to "Needs you and finished".',
+    default: 30,
+    scope: 'global',
+    unit: 'seconds',
   }),
   'calendar.zone': defineSetting({
     personal: 'person',
@@ -1598,6 +1633,26 @@ export const settingsRegistry = {
     'Question: go to the card',
     'Put the keyboard on the question card that waits for an answer, in a chat thread or the Assistant view. There the arrow keys or digits pick, typing goes to "Other" and Enter sends.',
     'Alt+Q',
+  ),
+  'keybindings.threadFilter': keybinding(
+    'Chat: filter threads',
+    'Put the keyboard in the filter above the thread list.',
+    'Mod+Shift+F',
+  ),
+  'keybindings.threadFilterInList': keybinding(
+    'Chat: filter threads from the list',
+    'The same, while the thread list has the keyboard.',
+    '/',
+  ),
+  'keybindings.renameThread': keybinding(
+    'Chat: rename thread',
+    'Edit the title of the open thread.',
+    'F2',
+  ),
+  'keybindings.nextBoldThread': keybinding(
+    'Chat: next bold thread',
+    'Open the next thread whose title is bold: one that ended a turn or started to need you since you last opened it.',
+    'Alt+Shift+ArrowDown',
   ),
   'advanced.port': defineSetting({
     personal: 'machine',

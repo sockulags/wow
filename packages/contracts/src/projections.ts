@@ -88,6 +88,12 @@ export const Thread = z.object({
   stepId: Id.nullable(),
   // Background work of the agent still running; absent in threads stored before it was recorded.
   backgroundTasks: z.array(BackgroundTask).optional(),
+  // Archived threads leave the thread list; the filter and the palette still find them (agent
+  // workbench spec 68). Absent in rows from before, which are not archived.
+  archived: z.boolean().optional(),
+  // False once a turn ended or the thread started to need the user since it was last opened
+  // (spec 70). The server keeps it, so every window and the tray agree. Absent means seen.
+  seen: z.boolean().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -506,8 +512,10 @@ export const isEventTrigger = (trigger: Trigger): trigger is EventTrigger =>
 // waiting at a gate, a failed run or trigger. The desktop app shows them as system notifications,
 // the web app as toasts. Only stored while `scheduler.notifications` is on.
 // `skipped` is an occurrence of a repeating card that started nothing because the card's earlier
-// run was still going; it is not a failure.
-export const NotificationKind = z.enum(['started', 'waiting', 'failed', 'skipped']);
+// run was still going; it is not a failure. A chat thread that needs the user is `waiting` too,
+// and `finished` is a chat turn that ran long and ended (agent workbench spec 64); those are
+// stored by the `chat.notifications` setting instead.
+export const NotificationKind = z.enum(['started', 'waiting', 'failed', 'skipped', 'finished']);
 export type NotificationKind = z.infer<typeof NotificationKind>;
 
 export const AppNotification = z.object({
@@ -520,6 +528,11 @@ export const AppNotification = z.object({
   path: z.string().min(1),
   runId: Id.nullable(),
   calendarItemId: Id.nullable(),
+  // The chat thread it is about; absent or null for runs and triggers. A client does not show
+  // it while that thread is on screen in a focused window.
+  threadId: Id.nullable().optional(),
+  // The approval a "Needs you" waits on, so the desktop can answer it from the notification.
+  approvalId: Id.nullable().optional(),
 });
 export type AppNotification = z.infer<typeof AppNotification>;
 

@@ -44,7 +44,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test`, `provider.listModels` and
   `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`,
   `calendar.occurrences` (`{from, to}`, the occurrences of the local cards in a range, see
-  "Repeating cards"), `skills.refresh`, `plans.refresh` (reads every project's
+  "Repeating cards"), `threads.search` (`{query}`, the threads whose title, project name or
+  message text hold every word, see "Chat view"), `skills.refresh`, `plans.refresh` (reads every project's
   intents folder now, see "Plans"), `hosts.refresh` (`{planId?, runId?}`, asks the host once
   about one followed plan, one run or everything wow follows, see "Hosts"),
   `workflowRuns.detectArtifacts` (`{runId}`), `workflowRuns.diff` (`{runId, path?}`, what the run
@@ -147,9 +148,11 @@ provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env
                  updateRun(json)?   -- the last "Update Codex": state, command, output, times
 threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessionId?, title, model,
                  effort, permissionMode, state ('idle'|'working'|'needs_you'|'done'|'failed'),
-                 pinned, runId?, stepId?, backgroundTasks(json: BackgroundTask[]), createdAt,
-                 updatedAt   -- backgroundTasks: the agent's work still running in the background,
-                 [] when none (migration 0026_background_tasks)
+                 pinned, runId?, stepId?, backgroundTasks(json: BackgroundTask[]), archived, seen,
+                 createdAt, updatedAt   -- backgroundTasks: the agent's work still running in the
+                 background, [] when none (migration 0026_background_tasks); archived and seen
+                 (false while unread) for the thread list, false and true for older rows
+                 (migration 0027_thread_list)
 turns            id, threadId, index, state, startedAt, endedAt, usage(json)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
@@ -190,8 +193,9 @@ triggers         id, kind ('card'|'event'), workflowId, runId?, offerRunNow;
                  'cancelled'); event: projectId, event ('merged'|'checksFailed'|
                  'commentAdded'), enabled, createdAt (the other kind's columns are null)
 trigger_events   triggerId, eventId, runId?, at (the events an event trigger has seen; no topic)
-notifications    id, at, kind ('started'|'waiting'|'failed'|'skipped'), title, body, path, runId?,
-                 calendarItemId?
+notifications    id, at, kind ('started'|'waiting'|'failed'|'skipped'|'finished'), title, body,
+                 path, runId?, calendarItemId?, threadId?, approvalId?   -- threadId and
+                 approvalId for a chat thread's notification (migration 0027_thread_list)
 skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
                  'project-agents'|'custom'|'wow'|'yours'), manualOnly, invocations(json: {claude,
                  codex}), text? (a wow skill's text; null for folder skills)
@@ -1335,7 +1339,8 @@ transition notifies once. A wait after a send back adds the reviewed step's atte
 spec 19). Clients read the `notifications` topic (newest first): the web app shows
 the rows that arrive after its first snapshot as toasts for `scheduler.toastSeconds`, whose "Open"
 action opens its `path`. The toasts are sonner's (`AppToaster` in `app/notifications.tsx`); the
-same toaster carries the app's own feedback (see "Look").
+same toaster carries the app's own feedback (see "Look"). Chat threads notify too, by
+`chat.notifications` rather than `scheduler.notifications` (see "Chat view").
 
 ## Settings registry
 
@@ -1371,7 +1376,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
   `providers.offerSetup`
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.starterCount`,
-  `chat.skillTrigger`
+  `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds` (see "Chat view")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.maxOccurrences` (see "Repeating cards"),
@@ -1463,7 +1468,12 @@ web app's palette has the same Pause/Resume scheduler command.
 start stays in the tray) and `desktop.startMinimized` are settings the desktop follows through the
 `settings` topic. Notifications use Electron's `Notification`, gated by `scheduler.notifications`,
 and are derived from changes on the `workflowRuns` topic: a new run, a run entering `waiting`, a
-run entering `failed`. A single-instance lock makes a second launch show the running window.
+run entering `failed`. Chat threads' notifications come from the `notifications` topic instead
+(rows with a `threadId` stored after the first snapshot, `chatNotices`), are not shown while the
+focused window shows that thread (`DesktopShell.focusedRoute`), and a "Needs you" for an approval
+carries Allow once and Deny buttons that dispatch `approval.answer`. Electron draws those buttons
+on macOS; Windows shows them only with a toast template, which wow does not build yet, so there
+the click, which opens the thread with the approval focused, is the way to answer. A single-instance lock makes a second launch show the running window.
 
 A packaged build replaces Electron's default application menu (`app-menu.ts`): none on Windows
 and Linux, the app and Edit menus on macOS. The default menu's accelerators zoomed the page
@@ -2693,6 +2703,44 @@ group, detail and keyword matches and needs every typed word. A title's group pr
 today") is dropped where the group heading says it, and `detail` says what a row is. cmdk claims Ctrl+J/K/N/P for list movement and stops the event, so the palette
 runs the app's shortcuts with a modifier itself; otherwise Ctrl+K pressed while the palette fades
 out after Escape was lost.
+
+### Thread list, unread and chat notifications
+
+The list has a filter field on top (`keybindings.threadFilter`, Ctrl+Shift+F anywhere, and
+`keybindings.threadFilterInList`, `/` while the list has the keyboard) and, when threads sit in
+more than one project, a chip per project. The filter matches titles and project names in the
+app at once and asks the server `threads.search` (`core/thread-search.ts`) for the rest: every
+typed word must be in the title, the project's name or the text of a user or assistant message,
+which SQLite searches with `LIKE` (case is ignored for ASCII letters only). Archived threads
+show only for a filter, marked "Archived". Arrow keys move between rows, Enter opens one, and
+Enter in the filter opens the first. The list's state (filter, chip, which title is being
+edited, a focus request) is a zustand store in `chat/thread-commands.ts`, beside the palette
+commands Filter threads, Rename thread (`keybindings.renameThread`, F2, which like every
+function key also works in a text field), Archive thread or Unarchive thread, Mark unread and
+Next unread thread (`keybindings.nextBoldThread`, Alt+Shift+Down). The palette's thread entries
+carry the project name as a keyword and say "Archived" for an archived thread. The header's
+title (`chat/thread-title.tsx`) is a button that edits it.
+
+`thread.rename {threadId, title}` stores `thread.renamed` (an empty title is refused);
+`thread.setArchived {threadId, archived}` stores `thread.archived` and refuses a workflow step's
+thread, which belongs to its run; there is no delete. `thread.markSeen` and
+`thread.markUnread` store `thread.seenChanged`. None of them changes `updatedAt`, so the list
+keeps its order. The server sets `seen` false itself when a turn ends or a thread starts to need
+the user (an approval or a question), for every thread but the assistant's. The web app sends
+`thread.markSeen` when the open thread is on screen in a focused window and is unread, once per
+`updatedAt`: so a turn ending while the user watches leaves it read, and "Mark unread" (which
+then leaves for `/chat`) keeps it bold until the thread is opened again. Unread rows are bold
+with a dot.
+
+Chat notifications are stored by the server in the same `decideProviderEvents` pass, for
+threads that are neither a step's nor the assistant's, following `chat.notifications` (`off`,
+`needsYou`, `needsYouAndFinished`, the default): "Needs you: <thread>" with the request's summary
+as the body, when an approval or a question arrives (one per approval, one per ask; id
+`<threadId>:needs-you:<approval or question:<ask>>`, `kind` `waiting`, `approvalId` set for an
+approval), and "Finished: <thread>" (`kind` `finished`, id `<turnId>:finished`) when a turn that
+ran longer than `chat.finishedAfterSeconds` completes or fails; a turn the user stopped tells
+nothing. `path` is `/chat/<threadId>`. The web toaster and the desktop skip a row whose
+`threadId` is the thread on screen in a focused window.
 
 ## Workflow builder and run view
 

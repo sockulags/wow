@@ -235,6 +235,12 @@ export const rpcMethods = {
     params: NoParams,
     result: z.object({ protection: SecretProtection, names: z.array(z.string()) }),
   },
+  // The threads whose title, project name or message text hold every word of the query
+  // (agent workbench spec 66, 69), archived ones included, newest first. Never the assistant's.
+  'threads.search': {
+    params: z.object({ query: z.string() }),
+    result: z.object({ threadIds: z.array(z.string()) }),
+  },
   // The occurrences of the local cards in a range (recurring cards spec 15, 17): every
   // occurrence of a repeating card, at most `calendar.maxOccurrences` of one card, and a card
   // without a rule as its one occurrence. Worked out by the server in each card's zone.
