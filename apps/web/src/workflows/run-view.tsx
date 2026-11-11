@@ -188,6 +188,7 @@ function StepRow({
 export function RunView({ runId, search = {} }: { runId: string; search?: RunSearch }) {
   const { connection, layout } = useRuntime();
   const runs = useTopic('workflowRuns');
+  const threads = useTopic('threads') ?? [];
   const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
   const instances = useTopic('providerInstances') ?? [];
@@ -275,7 +276,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
             )}
           </h2>
           <span data-testid="run-state" className="shrink-0 text-xs text-muted-foreground">
-            {runStateLabel(run)}
+            {runStateLabel(run, threads)}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">

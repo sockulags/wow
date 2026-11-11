@@ -402,7 +402,8 @@ how much of the context window the thread uses, with a Compact action for Claude
   when its turn ended or was stopped says "Not answered" and takes no answer any more; an answered
   one keeps showing what you answered.
 
-Either way, the thread moves to "Needs you" in the sidebar until you answer.
+Either way, the thread moves to "Needs you" in the sidebar until you answer. When the thread is a
+workflow step, its run says "Waiting for an answer" in the list of runs and in the run view.
 
 While a turn runs, the thread shows how long it has been working. You can write the next message
 meanwhile: Enter queues it, and it is sent when the turn ends. **Send now** stops the turn and

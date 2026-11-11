@@ -18,6 +18,7 @@ import {
   type Skill,
   type StepRun,
   type StepRunState,
+  type Thread,
   type Workflow,
   type WorkflowRun,
   type WorkflowRunState,
@@ -463,9 +464,16 @@ export function gateStanding(run: WorkflowRun): GateStanding | undefined {
   };
 }
 
-// "Waiting for checks" while a gate waits for the host; otherwise the run state's own words.
-export const runStateLabel = (run: WorkflowRun): string =>
-  gateStanding(run)?.waitsFor === 'checks' ? 'Waiting for checks' : runStateLabels[run.state];
+// "Waiting for checks" while a gate waits for the host; "Waiting for an answer" while the running
+// step's thread waits for the user (a question or an approval; the run itself stays running);
+// otherwise the run state's own words.
+export function runStateLabel(run: WorkflowRun, threads: readonly Thread[] = []): string {
+  if (gateStanding(run)?.waitsFor === 'checks') return 'Waiting for checks';
+  const threadId = run.state === 'running' ? run.steps[run.currentStep]?.threadId : undefined;
+  if (threadId !== undefined && threads.some((t) => t.id === threadId && t.state === 'needs_you'))
+    return 'Waiting for an answer';
+  return runStateLabels[run.state];
+}
 
 // "Passed by itself: Approved verdict, Checks successful" for a step whose gate did.
 export function passedByItself(stepRun: StepRun): string | undefined {
