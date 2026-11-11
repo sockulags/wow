@@ -7,6 +7,7 @@ export * from './hosts.js';
 export * from './methods.js';
 export * from './projections.js';
 export * from './provider.js';
+export * from './repeat.js';
 export * from './rpc.js';
 export * from './server-info.js';
 export * from './settings.js';
