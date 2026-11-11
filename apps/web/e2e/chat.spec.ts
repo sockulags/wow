@@ -544,7 +544,8 @@ test.describe('chat', () => {
     await composer.fill('Wait for the kettle');
     await composer.press('Enter');
     await expect(page.getByTestId('thread-state')).toHaveText('Working');
-    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    // The window loses the focus, as when the user switches to another program.
+    await page.evaluate("window.dispatchEvent(new Event('blur'))");
     await page.keyboard.press('Control+.');
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
     await expect(renamed.getByTestId('thread-unread')).toBeVisible();
