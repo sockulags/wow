@@ -294,6 +294,16 @@ describe('the palette reaches the composer (spec 16, 17)', () => {
     act(() => remove?.run({} as never));
     expect(chips()).toEqual([]);
   });
+  it('registers once while the writer types and moves the caret', async () => {
+    const { box, user } = setup();
+    const registered = activeSkillComposer(skillComposerStore.getState());
+    expect(registered).toBeDefined();
+    await user.type(box, 'hello there');
+    await user.keyboard('{ArrowLeft}{ArrowLeft}');
+    expect(activeSkillComposer(skillComposerStore.getState())).toBe(registered);
+    act(() => registered?.openSkills());
+    expect(box.value).toBe('hello the /re');
+  });
 });
 
 describe("the assistant's composer (spec 20)", () => {
