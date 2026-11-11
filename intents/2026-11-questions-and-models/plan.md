@@ -2,7 +2,7 @@
 intent: 2026-11-questions-and-models
 rev: 2
 built_on: spec@2
-status: accepted
+status: done
 source: files
 ---
 

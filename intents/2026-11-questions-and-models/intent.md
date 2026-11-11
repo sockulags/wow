@@ -1,6 +1,6 @@
 ---
 id: 2026-11-questions-and-models
-status: accepted
+status: done
 rev: 1
 supersedes: null
 ---

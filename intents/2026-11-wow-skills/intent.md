@@ -1,6 +1,6 @@
 ---
 id: 2026-11-wow-skills
-status: accepted
+status: done
 rev: 1
 supersedes: null
 ---
