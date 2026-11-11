@@ -42,7 +42,9 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   Methods: `server.info`, `dispatch` (`{commandId, command}`), `subscribe` (`{topic, threadId?}`,
   answers with a `subscriptionId` and the current rows), `unsubscribe`, `settings.resolve`,
   `secrets.set`, `secrets.delete`, `secrets.status`, `provider.test`, `provider.listModels` and
-  `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`, `skills.refresh`, `plans.refresh` (reads every project's
+  `provider.update` (`{providerInstanceId}`), `provider.detect`, `projects.discover`,
+  `calendar.occurrences` (`{from, to}`, the occurrences of the local cards in a range, see
+  "Repeating cards"), `skills.refresh`, `plans.refresh` (reads every project's
   intents folder now, see "Plans"), `hosts.refresh` (`{planId?, runId?}`, asks the host once
   about one followed plan, one run or everything wow follows, see "Hosts"),
   `workflowRuns.detectArtifacts` (`{runId}`), `workflowRuns.diff` (`{runId, path?}`, what the run
@@ -153,8 +155,14 @@ approvals        id, threadId, itemId, kind, request(json), decision?, decidedAt
 questions        id, threadId, itemId, request(json), answer?, answeredAt?
 calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end, zone, allDay,
                  location?, joinUrl?, body?, organizer?, projectId?, backlogItemId?, workflowId?,
-                 runId?, state, updatedAt   -- state: CardState for cards, 'scheduled'|'cancelled'
-                 for Outlook; body: a card's notes or an Outlook item's snippet
+                 runId?, state, updatedAt, repeat(json: RepeatRule)?, skippedDates(json: string[]),
+                 nextAt?   -- state: CardState for cards, 'scheduled'|'cancelled'
+                 for Outlook; body: a card's notes or an Outlook item's snippet; repeat, the
+                 days skipped by hand and the trigger's next time for a repeating card
+                 (migration 0022_repeating_cards)
+card_occurrences cardId, date, start, end, outcome ('fired'|'failed'|'skipped'|'missed'), runId?,
+                 reason?, offerRunNow, at   -- what happened at each occurrence of a repeating
+                 card the scheduler reached; kept when the card is deleted, as its runs are
 outlook_status   singleton: lastSyncAt, lastError?, unavailableSince?, bridgeVersion,
                  profile(json: OutlookProfile)?
 backlog_items    id, title, body, tags(json), state, runId?, remote(json: service,key,url)?, createdAt
@@ -167,6 +175,7 @@ workflow_runs    id, workflowId, projectId, calendarItemId?, backlogItemId?, sta
                  workingCopy(json: WorkingCopy)?,   -- null for a run in the project folder
                  unit(json: RunUnit)?,   -- the unit a plan run started the run for
                  event(json: RunEvent)?,   -- what started the run, when an event trigger did
+                 occurrence(json: {date, start})?,   -- the occurrence of a repeating card
                  path(json: PathVisit[])?   -- every step visit and why the run went on as it did;
                                             -- null for a run from before paths were kept
 plan_runs        id, planId ('<projectId>:<intentId>'), projectId, intentId, workflowId, state
@@ -925,7 +934,8 @@ planId, intentId, unitKey, title}`) and has the id `<planRunId>.<unitKey>`.
 ## Scheduler and triggers
 
 A local card with a workflow and a project has one trigger, id `<cardId>:trigger`, at its start
-(`core/triggers.ts`). `card.create` and a `card.update` that changes the start, zone, project or
+(`core/triggers.ts`); a repeating card's trigger waits at its next occurrence instead (see
+"Repeating cards" below). `card.create` and a `card.update` that changes the start, zone, project or
 workflow bring it in line: a start in the future makes it `scheduled`, a start already past makes
 it `missed` with `offerRunNow` (the user placed the card in the past, so it is not run on its own),
 and a card without a workflow or project cancels it. A card that has started a run keeps its fired
@@ -949,6 +959,76 @@ again follows the newer run. `card.runNow {cardId, runId}` starts a run for a ca
 and project and no live run, and fires its trigger. `card.delete` of a card whose run is running or
 waiting is refused with `conflict` unless it says `stopRun`: `true` stops the run in the same
 command, `false` leaves it going; the threads stay either way.
+
+**Repeating cards** (recurring cards spec 1 to 21). A card can carry a repeat rule
+(`RepeatRule` in `packages/contracts/src/repeat.ts`): `frequency` (`daily`, `weekly`,
+`monthly`), `interval` (one or more), `weekdays` (weekly only; empty means the start's weekday)
+and `end` (`never`, `on` a day inclusive, or `after` a count that includes the first
+occurrence). It is wow's own structure, not an RRULE, so it can be said in words
+(`repeatRuleWords`: "Every weekday at 08:30, until 19 December 2026") by the server and the app
+alike. The card stays one row.
+
+- **Occurrences are computed** (`apps/server/src/scheduler/occurrences.ts`, pure). The card's
+  start and end are the first occurrence, on whatever weekday it falls. Every later one is on a
+  day the rule names, at the same local start time and local length in the card's zone. Wall
+  clock readings come from the platform's zone data through `Intl` (there is no Temporal on
+  Node 22 and the server has no date library): `instantOf` turns a local reading into an
+  instant, taking the first of a reading that happens twice and, for a reading in the hour the
+  clocks skip, the instant they jumped (02:30 becomes 03:00). Monthly falls on the start's day;
+  a month without it has none. `occurrences(series)` is a generator in start order and never
+  ends for `never`, so every caller stops it by time or count.
+- **What is stored**: the rule, the days skipped by hand (`skippedDates`), and per reached
+  occurrence a `card_occurrences` row (`CardOccurrence`): `fired` with its run, `failed` (the
+  run could not start), `skipped` (the card's earlier run was still going) or `missed`, with a
+  reason and whether it offers "Run now". Rows are keyed by card and day and outlive the card,
+  so Undo of a delete brings the history back. The `calendarItems` topic carries each local
+  card's records as `occurrences`; the stored row does not.
+- **One trigger per card, re-armed.** `<cardId>:trigger` waits at the first occurrence after now
+  that is neither skipped by hand nor reached (`nextOccurrence` in `core/series.ts`).
+  Occurrences already past when a card is made or changed are not run. When it comes due,
+  `trigger.fire` (and `trigger.applyMissed`) takes every occurrence from the trigger's time to
+  now that is not taken: the older ones are recorded `missed`, and only the latest is handled —
+  started by a tick or the `run` policy, recorded `missed` with "Run now" by `mark`, or
+  `missed` by `skip` (spec 8). A latest occurrence whose card still has a live run (the newest
+  run the card follows, or any run its records name) starts nothing: it is recorded `skipped`
+  with the reason and a `failed` notification "Occurrence skipped" (spec 7). Then the trigger
+  waits for the next occurrence; after the last one it is `fired` (or `cancelled` when nothing
+  ever ran). The run has `WorkflowRun.occurrence {date, start}`, which names it by its day, and
+  its "Workflow run started" notification ends with the day. The card follows its newest run as
+  a single card does. `card.runNow` on a repeating card answers the occurrence that offers
+  "Run now" and leaves the trigger waiting.
+- **The next time** is `CalendarItem.nextAt`, set by the projector from every `trigger.set` of a
+  card trigger (the trigger's `runAt` while `scheduled`, else null), so the card and the trigger
+  list say the same. The migration fills it for cards stored before.
+- **Changing.** `card.create` and `card.update` take `repeat` (null in an update makes the card
+  single again) and `skippedDates` (the whole list; Undo of a skip and of a delete send it).
+  Any change of time, zone, rule, project or workflow re-arms the trigger, so every occurrence
+  not yet started follows it; records keep where the reached ones were and what they ran, and
+  a range read shows a reached occurrence from its record even when the rule has moved on. A
+  single card that already ran and gets a rule records its run as the first occurrence.
+  `card.skipOccurrence {cardId, date}` adds the day to `skippedDates` and is refused for a day
+  the rule does not fall on and for one already started. `card.moveOccurrence {cardId, date,
+start, end}` is a drag in the calendar (spec 11): the occurrence must stay on its day, and the
+  series keeps its first day and takes the moved occurrence's local time and length, as an
+  edit does. `card.delete` of a series with a live run needs `stopRun` as for a single card. The
+  inverse commands (`assistant/changes.ts`) carry `repeat` and `skippedDates`, so one Undo
+  restores a series with its rule, skipped days and trigger.
+- **Reading a range.** `calendar.occurrences {from, to}` (`readCalendarRange`) answers
+  `CalendarRange`: every occurrence of each local card overlapping the range (a card without a
+  rule is its one occurrence), without the days skipped by hand, each with `repeating`,
+  whether the trigger fires there `next`, and its `record`. At most `calendar.maxOccurrences`
+  of one card are returned; a card that had more is listed in `more` (spec 17). The web app
+  draws from this read and never works occurrences out itself.
+- **The assistant** (spec 18 to 21). `create_card` and `update_card` take `repeat`;
+  `skip_card_occurrence` sends `card.skipOccurrence`; `card.moveOccurrence` is refused for the
+  assistant (it changes the time with `update_card`). A card's change row and proposal say the
+  rule in words with its time (`Repeats` line). Whether a card waits for a yes looks at the
+  next occurrence that is not taken: a proposal when it starts within
+  `assistant.startSoonMinutes` (or is past), ordinary otherwise, and ordinary for a series with
+  nothing left to run. `read_calendar` lists for a repeating card its rule, the rule in words,
+  `nextAt`, the skipped days and its occurrences in the range with what happened at them, and
+  `read_triggers` shows the trigger's next time. The default instruction text says to make one
+  repeating card for anything recurring and never a card per day.
 
 **Event triggers** (review loop spec 48 to 53) are rows of the same table with `kind: 'event'`:
 a project, an event (`merged`, `checksFailed`, `commentAdded`), a workflow and `enabled`.
@@ -1053,7 +1133,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.starterCount`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
-  `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`,
+  `calendar.lookaheadDays`, `calendar.maxOccurrences` (see "Repeating cards"),
+  `calendar.snapMinutes`, `calendar.cardMinutes`,
   `calendar.hourHeight`, `calendar.zoomStep`
 - outlook: `outlook.pollSeconds`, `outlook.requestTimeoutMs`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
@@ -1842,8 +1923,8 @@ decides what a command of the assistant does. The table names every type of `Ser
   one, so a global change counts for a project's token too). Two more close ways around a yes:
   `project.update` with another folder, because the folder is where agents work and its git
   remote names the host a project's own token goes to; and a card with a workflow and a project
-  (`card.create`, `card.update`, `backlog.plan`) whose start is in the past or within
-  `assistant.startSoonMinutes` of now, because the scheduler would start its run almost at
+  (`card.create`, `card.update`, `backlog.plan`) whose start (for a repeating card, its next
+  occurrence) is in the past or within `assistant.startSoonMinutes` of now, because the scheduler would start its run almost at
   once, which is "start a run now" by another name. A card further ahead is scheduling and stays
   ordinary.
 - `refused`: never applied, with a sentence for the assistant. The answers at a gate

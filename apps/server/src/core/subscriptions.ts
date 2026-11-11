@@ -42,8 +42,27 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
         return db.select().from(t.approvals).where(eq(t.approvals.threadId, threadId)).all();
       case 'questions':
         return db.select().from(t.questions).where(eq(t.questions.threadId, threadId)).all();
-      case 'calendarItems':
-        return db.select().from(t.calendarItems).orderBy(asc(t.calendarItems.start)).all();
+      case 'calendarItems': {
+        // A repeating card carries what happened at its occurrences.
+        const history = new Map<string, unknown[]>();
+        for (const { cardId, ...occurrence } of db
+          .select()
+          .from(t.cardOccurrences)
+          .orderBy(asc(t.cardOccurrences.start))
+          .all()) {
+          const kept = history.get(cardId);
+          if (kept) kept.push(occurrence);
+          else history.set(cardId, [occurrence]);
+        }
+        return db
+          .select()
+          .from(t.calendarItems)
+          .orderBy(asc(t.calendarItems.start))
+          .all()
+          .map((item) =>
+            item.source === 'local' ? { ...item, occurrences: history.get(item.id) ?? [] } : item,
+          );
+      }
       case 'outlookStatus':
         return readOutlookStatus(db);
       case 'backlogItems':

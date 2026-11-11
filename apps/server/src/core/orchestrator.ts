@@ -5,6 +5,7 @@ import {
   type AssistantProposalRecord,
   type CommandOrigin,
   type CalendarItem,
+  type CardOccurrence,
   type ChangeRequest,
   type HostRead,
   type TicketRead,
@@ -76,6 +77,8 @@ export interface ReadModel {
   // Approvals and questions of the thread that are still waiting for an answer.
   openRequests(threadId: string): number;
   calendarItem(id: string): CalendarItem | undefined;
+  // What happened at each occurrence of a repeating card the scheduler reached, oldest first.
+  cardOccurrences(cardId: string): CardOccurrence[];
   // Every cached Outlook calendar row.
   outlookCalendarItems(): CalendarItem[];
   outlookStatus(): OutlookStatus | undefined;

@@ -7,6 +7,7 @@ import {
   triggerEventLabel,
   type AppNotification,
   type CalendarItem,
+  type CardOccurrence,
   type CardState,
   type CardTrigger,
   type ChangeRequest,
@@ -21,10 +22,19 @@ import {
   type WorkingCopy,
 } from '@wow/contracts';
 import { missedTriggerOutcome } from '@wow/workflow-engine';
+import { startingBetween, type Occurrence } from '../scheduler/occurrences.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveStored } from '../settings/service.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
+import {
+  isRepeating,
+  liveRunOf,
+  nextOccurrence,
+  seriesOf,
+  takenDays,
+  type RepeatingCard,
+} from './series.js';
 import {
   globalSettingOn,
   notificationsEnabled,
@@ -92,8 +102,15 @@ const notification = (read: ReadModel, context: DecideContext, entry: AppNotific
 // workflow or project. A card that already started a run keeps its fired trigger. A start time
 // that has already passed gives a missed trigger with "Run now" rather than an immediate run.
 export function cardTriggerEvents(card: CalendarItem, read: ReadModel, context: DecideContext) {
-  if (card.source !== 'local' || card.runId !== null) return [];
+  if (card.source !== 'local') return [];
+  if (isRepeating(card)) return seriesTriggerEvents(card, read, context);
   const existing = read.trigger(triggerIdFor(card.id));
+  if (card.runId !== null) {
+    // A card that stopped repeating may still hold a trigger for a later occurrence.
+    return existing?.state === 'scheduled'
+      ? [triggerSet({ ...existing, state: 'cancelled', offerRunNow: false })]
+      : [];
+  }
   const events: DomainEvent[] = [];
   let next: Trigger | undefined;
   let state: CardState = 'scheduled';
@@ -120,6 +137,55 @@ export function cardTriggerEvents(card: CalendarItem, read: ReadModel, context: 
   return events;
 }
 
+// A repeating card's one trigger waits for the next occurrence that was neither skipped nor
+// reached (recurring cards spec 6, 10). Occurrences already past when the card is made or
+// changed are not run: the card is for what comes. After the last occurrence nothing waits.
+function seriesTriggerEvents(
+  card: RepeatingCard,
+  read: ReadModel,
+  context: DecideContext,
+  alsoTaken: ReadonlySet<string> = new Set(),
+  runId?: string,
+): DomainEvent[] {
+  const existing = read.trigger(triggerIdFor(card.id));
+  const lastRunId = runId ?? existing?.runId ?? null;
+  let next: Trigger | undefined;
+  const upcoming =
+    card.workflowId !== null && card.projectId !== null
+      ? nextOccurrence(card, read, Date.parse(context.now), alsoTaken)
+      : undefined;
+  if (upcoming && card.workflowId !== null) {
+    next = {
+      ...noEventFields,
+      id: triggerIdFor(card.id),
+      kind: 'card',
+      calendarItemId: card.id,
+      workflowId: card.workflowId,
+      runAt: upcoming.start,
+      zone: card.zone,
+      state: 'scheduled',
+      runId: lastRunId,
+      offerRunNow: false,
+    };
+  } else if (existing && (existing.state === 'scheduled' || existing.state === 'missed')) {
+    next = {
+      ...existing,
+      runId: lastRunId,
+      state: lastRunId === null ? 'cancelled' : 'fired',
+      offerRunNow: false,
+    };
+  } else if (existing && runId !== undefined) {
+    next = { ...existing, runId };
+  }
+  const events: DomainEvent[] = [];
+  if (next && !isDeepStrictEqual(next, existing)) events.push(triggerSet(next));
+  // A card that has run shows how its newest run went; one that has not waits for its first.
+  if (card.runId === null && runId === undefined && upcoming) {
+    events.push(...cardState(card, 'scheduled', null, context));
+  }
+  return events;
+}
+
 // What deleting a card does to its run and trigger. A live run needs the user's answer first.
 export function cardDeleteEvents(
   card: CalendarItem,
@@ -128,8 +194,8 @@ export function cardDeleteEvents(
   context: DecideContext,
 ): DomainEvent[] {
   const events: DomainEvent[] = [];
-  const run = card.runId === null ? undefined : read.run(card.runId);
-  if (run && isLiveRunState(run.state)) {
+  const run = liveRunOf(card, read);
+  if (run) {
     if (stopRun === undefined) {
       throw new CommandRejected(
         'conflict',
@@ -216,6 +282,149 @@ function fire(
   ];
 }
 
+const occurrenceRecorded = (
+  card: CalendarItem,
+  occurrence: Occurrence,
+  outcome: CardOccurrence['outcome'],
+  context: DecideContext,
+  extra: Partial<Pick<CardOccurrence, 'runId' | 'reason' | 'offerRunNow'>> = {},
+): DomainEvent => ({
+  kind: 'card.occurrenceRecorded',
+  aggregate: card.id,
+  payload: {
+    cardId: card.id,
+    occurrence: {
+      ...occurrence,
+      outcome,
+      runId: extra.runId ?? null,
+      reason: extra.reason ?? null,
+      offerRunNow: extra.offerRunNow ?? false,
+      at: context.now,
+    },
+  },
+});
+
+// What a repeating card's trigger does when it comes due (recurring cards spec 5 to 8). The
+// occurrences between the trigger's time and now that were neither skipped nor reached are
+// due; when there are several (the app was closed, paused or asleep), only the latest is
+// handled as `mode` says and the older ones are recorded as missed. A latest occurrence whose
+// card still has a run going starts nothing. Then the trigger waits for the next occurrence.
+function fireSeries(
+  cause: string,
+  trigger: CardTrigger,
+  card: RepeatingCard,
+  runId: string,
+  mode: 'run' | 'mark' | 'skip',
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const taken = takenDays(card, read);
+  const due = startingBetween(
+    seriesOf(card),
+    Date.parse(trigger.runAt) - 1,
+    Date.parse(context.now),
+    (occurrence) => !taken.has(occurrence.date),
+  );
+  const latest = due.at(-1);
+  const events: DomainEvent[] = due
+    .slice(0, -1)
+    .map((occurrence) => occurrenceRecorded(card, occurrence, 'missed', context));
+  const reached = new Set(due.map((occurrence) => occurrence.date));
+  let started: string | undefined;
+  if (latest && mode !== 'run') {
+    events.push(
+      occurrenceRecorded(card, latest, 'missed', context, { offerRunNow: mode === 'mark' }),
+      ...cardState(card, 'missed', card.runId, context),
+    );
+  } else if (latest) {
+    const busy = liveRunOf(card, read);
+    if (busy) {
+      const reason = `The run of an earlier occurrence (${busy.occurrence?.date ?? busy.id}) was still ${busy.state === 'waiting' ? 'waiting for you' : 'running'}, so this one started nothing.`;
+      events.push(
+        occurrenceRecorded(card, latest, 'skipped', context, { reason }),
+        ...notification(read, context, {
+          id: `${card.id}:${latest.date}:skipped`,
+          at: context.now,
+          kind: 'failed',
+          title: 'Occurrence skipped',
+          body: `${card.title} · ${latest.date}: ${reason}`,
+          path: `/calendar?item=${encodeURIComponent(card.id)}`,
+          runId: busy.id,
+          calendarItemId: card.id,
+        }),
+      );
+    } else {
+      const fired = startSeriesRun(cause, card, latest, runId, read, context);
+      events.push(...fired.events);
+      started = fired.runId;
+    }
+  }
+  return [...events, ...seriesTriggerEvents(card, read, context, reached, started)];
+}
+
+function startSeriesRun(
+  cause: string,
+  card: RepeatingCard,
+  occurrence: Occurrence,
+  runId: string,
+  read: ReadModel,
+  context: DecideContext,
+): { events: DomainEvent[]; runId?: string } {
+  if (card.workflowId === null || card.projectId === null) return { events: [] };
+  let started: DomainEvent[];
+  try {
+    started = startRunEvents(
+      cause,
+      {
+        runId,
+        workflowId: card.workflowId,
+        projectId: card.projectId,
+        calendarItemId: card.id,
+        backlogItemId: card.backlogItemId,
+        occurrence: { date: occurrence.date, start: occurrence.start },
+      },
+      read,
+      context,
+    );
+  } catch (error) {
+    if (!(error instanceof CommandRejected)) throw error;
+    return {
+      events: [
+        occurrenceRecorded(card, occurrence, 'failed', context, { reason: error.message }),
+        ...cardState(card, 'failed', card.runId, context),
+        ...notification(read, context, {
+          id: `${triggerIdFor(card.id)}:${occurrence.start}:failed`,
+          at: context.now,
+          kind: 'failed',
+          title: 'Trigger failed',
+          body: `${card.title} · ${occurrence.date}: ${error.message}`,
+          path: '/calendar',
+          runId: null,
+          calendarItemId: card.id,
+        }),
+      ],
+    };
+  }
+  const workflow = read.workflow(card.workflowId);
+  return {
+    runId,
+    events: [
+      occurrenceRecorded(card, occurrence, 'fired', context, { runId }),
+      ...started,
+      ...notification(read, context, {
+        id: `${runId}:started`,
+        at: context.now,
+        kind: 'started',
+        title: 'Workflow run started',
+        body: [workflow?.name, card.title, occurrence.date].filter(Boolean).join(' · '),
+        path: runPath(runId),
+        runId,
+        calendarItemId: card.id,
+      }),
+    ],
+  };
+}
+
 export function decideTrigger(
   command: TriggerCommand,
   read: ReadModel,
@@ -224,11 +433,28 @@ export function decideTrigger(
   switch (command.type) {
     case 'trigger.fire': {
       const trigger = requireTrigger(read, command.triggerId, command.runAt);
-      return trigger ? fire(command.type, trigger, command.runId, read, context) : [];
+      if (!trigger) return [];
+      const card = read.calendarItem(trigger.calendarItemId);
+      if (card && isRepeating(card)) {
+        return fireSeries(command.type, trigger, card, command.runId, 'run', read, context);
+      }
+      return fire(command.type, trigger, command.runId, read, context);
     }
     case 'trigger.applyMissed': {
       const trigger = requireTrigger(read, command.triggerId, command.runAt);
       if (!trigger) return [];
+      const repeating = read.calendarItem(trigger.calendarItemId);
+      if (repeating && isRepeating(repeating)) {
+        return fireSeries(
+          command.type,
+          trigger,
+          repeating,
+          command.runId,
+          command.policy,
+          read,
+          context,
+        );
+      }
       const outcome = missedTriggerOutcome(command.policy);
       if (outcome.startRun) return fire(command.type, trigger, command.runId, read, context);
       const card = read.calendarItem(trigger.calendarItemId);
@@ -249,10 +475,14 @@ export function decideTrigger(
       if (card.projectId === null) {
         throw new CommandRejected('rejected', `"${card.title}" has no project`);
       }
-      const current = card.runId === null ? undefined : read.run(card.runId);
-      if (current && isLiveRunState(current.state)) {
+      if (liveRunOf(card, read)) {
         throw new CommandRejected('conflict', `"${card.title}" already has a run in progress`);
       }
+      // On a repeating card, Run now answers the missed occurrence that offers it, and the
+      // trigger keeps waiting for the next one.
+      const offered = isRepeating(card)
+        ? read.cardOccurrences(card.id).findLast((occurrence) => occurrence.offerRunNow)
+        : undefined;
       const events = startRunEvents(
         command.type,
         {
@@ -261,10 +491,19 @@ export function decideTrigger(
           projectId: card.projectId,
           calendarItemId: card.id,
           backlogItemId: card.backlogItemId,
+          occurrence: offered && { date: offered.date, start: offered.start },
         },
         read,
         context,
       );
+      if (isRepeating(card)) {
+        if (offered) {
+          events.unshift(
+            occurrenceRecorded(card, offered, 'fired', context, { runId: command.runId }),
+          );
+        }
+        return events;
+      }
       const trigger = read.trigger(triggerIdFor(card.id));
       if (trigger && (trigger.state === 'scheduled' || trigger.state === 'missed')) {
         events.unshift(

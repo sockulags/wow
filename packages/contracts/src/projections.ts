@@ -10,6 +10,7 @@ import {
   TaskStatus,
   ThreadState,
 } from './provider.js';
+import { CardOccurrence, LocalDay, RepeatRule } from './repeat.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
 import {
   FileHash,
@@ -242,6 +243,16 @@ export const CalendarItem = z.object({
   // A CardState for local cards, an OutlookItemState for Outlook items.
   state: z.string().min(1),
   updatedAt: Timestamp,
+  // A repeating card's rule (recurring cards spec 1). Absent or null for a card that happens
+  // once, and for every card stored before rules existed.
+  repeat: RepeatRule.nullable().optional(),
+  // The days skipped by hand ("This occurrence"), in the card's zone.
+  skippedDates: z.array(LocalDay).optional(),
+  // When the card's trigger fires next; null when nothing is scheduled.
+  nextAt: Timestamp.nullable().optional(),
+  // What happened at each occurrence the scheduler reached, oldest first. Topic rows carry it;
+  // the stored row does not.
+  occurrences: z.array(CardOccurrence).optional(),
 });
 export type CalendarItem = z.infer<typeof CalendarItem>;
 
@@ -371,6 +382,9 @@ export const runEventHost = (event: Pick<RunEvent, 'headRef'>): HostKind =>
 export const triggerEventLabel = (event: TriggerEvent, host: HostKind): string =>
   event === 'merged' && host === 'gitlab' ? 'Merge request merged' : triggerEventLabels[event];
 
+export const RunOccurrence = z.object({ date: LocalDay, start: Timestamp });
+export type RunOccurrence = z.infer<typeof RunOccurrence>;
+
 export const WorkflowRun = z.object({
   id: Id,
   workflowId: Id,
@@ -394,6 +408,9 @@ export const WorkflowRun = z.object({
   unit: RunUnit.nullable().optional(),
   // Absent or null for a run no event trigger started.
   event: RunEvent.nullable().optional(),
+  // The occurrence of a repeating card the run was started for, which names the run by its
+  // day (recurring cards spec 5). Absent or null otherwise.
+  occurrence: RunOccurrence.nullable().optional(),
   // Every step visit in the order it happened, with why the run went where it went next
   // (workflow branches spec 18). Absent or null for a run from before paths were kept.
   path: z.array(PathVisit).nullable().optional(),

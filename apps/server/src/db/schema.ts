@@ -19,6 +19,7 @@ import type {
   HostKind,
   HostReadScope,
   NotificationKind,
+  OccurrenceOutcome,
   OutlookProfile,
   PlanFile,
   PlanProblem,
@@ -30,8 +31,10 @@ import type {
   ProviderKind,
   ProviderUpdate,
   ProviderUpdateRun,
+  RepeatRule,
   ReviewComment,
   RunEvent,
+  RunOccurrence,
   RunUnit,
   SecretRef,
   SetupApplicationState,
@@ -192,8 +195,29 @@ export const calendarItems = sqliteTable(
     runId: text(),
     state: text().notNull(),
     updatedAt: text().notNull(),
+    repeat: json<RepeatRule>(),
+    skippedDates: json<string[]>().notNull().default([]),
+    nextAt: text(),
   },
   (table) => [index('calendar_items_start_idx').on(table.start)],
+);
+
+// What happened at each occurrence of a repeating card the scheduler reached. Rows outlive
+// their card, as its runs do, so Undo of a delete brings the history back with the card.
+export const cardOccurrences = sqliteTable(
+  'card_occurrences',
+  {
+    cardId: text().notNull(),
+    date: text().notNull(),
+    start: text().notNull(),
+    end: text().notNull(),
+    outcome: text().$type<OccurrenceOutcome>().notNull(),
+    runId: text(),
+    reason: text(),
+    offerRunNow: bool().notNull().default(false),
+    at: text().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.cardId, table.date] })],
 );
 
 // A single row; the id only exists so the row can be upserted.
@@ -245,6 +269,7 @@ export const workflowRuns = sqliteTable('workflow_runs', {
   workingCopy: json<WorkingCopy>(),
   unit: json<RunUnit>(),
   event: json<RunEvent>(),
+  occurrence: json<RunOccurrence>(),
   path: json<PathVisit[]>(),
 });
 

@@ -14,6 +14,7 @@ import path from 'node:path';
 import { openAssistantThread } from '../assistant/thread.js';
 import type { Engine } from '../core/engine.js';
 import { readModel } from '../core/projector.js';
+import { readCalendarRange } from '../core/series.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
 import { projects, workflowRuns } from '../db/schema.js';
@@ -98,6 +99,8 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       return { removed: deps.subscriptions.unsubscribe(subscriptionId) };
     },
     'settings.resolve': (context) => deps.settings.resolveAll(context),
+    'calendar.occurrences': (range) =>
+      readCalendarRange(deps.db, range, deps.settings.get('calendar.maxOccurrences')),
     'provider.test': ({ providerInstanceId }) => deps.providers.test(providerInstanceId),
     'provider.update': ({ providerInstanceId }) => deps.providerUpdates.start(providerInstanceId),
     'provider.listModels': ({ providerInstanceId }) =>

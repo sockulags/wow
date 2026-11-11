@@ -1,4 +1,5 @@
 import {
+  type CardOccurrence,
   isEventTrigger,
   isLivePlanRunState,
   isLiveRunState,
@@ -18,6 +19,7 @@ import {
   assistantGreeting,
   backlogItems,
   calendarItems,
+  cardOccurrences,
   changeRequests,
   hostReads,
   ticketReads,
@@ -393,9 +395,21 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(questions.id, event.payload.questionId))
         .run();
       return ['questions'];
-    case 'card.created':
-      tx.insert(calendarItems).values(event.payload).run();
+    case 'card.created': {
+      // The history and the next time are not the card's to set: they follow its occurrences
+      // and its trigger.
+      const { occurrences: _occurrences, nextAt: _nextAt, ...card } = event.payload;
+      tx.insert(calendarItems).values(card).run();
       return ['calendarItems'];
+    }
+    case 'card.occurrenceRecorded': {
+      const row = { cardId: event.payload.cardId, ...event.payload.occurrence };
+      tx.insert(cardOccurrences)
+        .values(row)
+        .onConflictDoUpdate({ target: [cardOccurrences.cardId, cardOccurrences.date], set: row })
+        .run();
+      return ['calendarItems'];
+    }
     case 'card.updated':
       tx.update(calendarItems)
         .set({ ...event.payload.changes, updatedAt: event.payload.updatedAt })
@@ -415,6 +429,16 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .values(event.payload)
         .onConflictDoUpdate({ target: triggers.id, set: event.payload })
         .run();
+      // A card shows when its trigger fires next (recurring cards spec 9).
+      if (event.payload.kind === 'card' && event.payload.calendarItemId !== null) {
+        const nextAt = event.payload.state === 'scheduled' ? event.payload.runAt : null;
+        const moved = tx
+          .update(calendarItems)
+          .set({ nextAt })
+          .where(eq(calendarItems.id, event.payload.calendarItemId))
+          .run();
+        if (moved.changes > 0) return ['triggers', 'calendarItems'];
+      }
       return ['triggers'];
     case 'trigger.deleted':
       tx.delete(triggerEvents).where(eq(triggerEvents.triggerId, event.payload.triggerId)).run();
@@ -551,6 +575,16 @@ const outlookStatusColumns = {
   bridgeVersion: outlookStatus.bridgeVersion,
   profile: outlookStatus.profile,
 };
+
+export function readCardOccurrences(tx: DbOrTx, cardId: string): CardOccurrence[] {
+  return tx
+    .select()
+    .from(cardOccurrences)
+    .where(eq(cardOccurrences.cardId, cardId))
+    .orderBy(asc(cardOccurrences.start))
+    .all()
+    .map(({ cardId: _cardId, ...occurrence }) => occurrence);
+}
 
 export function readOutlookStatus(tx: DbOrTx) {
   return tx.select(outlookStatusColumns).from(outlookStatus).all();
@@ -749,6 +783,7 @@ export function readModel(tx: DbOrTx): ReadModel {
         .where(and(eq(questions.threadId, threadId), isNull(questions.answeredAt)))
         .get()?.n ?? 0),
     calendarItem: (id) => tx.select().from(calendarItems).where(eq(calendarItems.id, id)).get(),
+    cardOccurrences: (cardId) => readCardOccurrences(tx, cardId),
     outlookCalendarItems: () =>
       tx.select().from(calendarItems).where(eq(calendarItems.source, 'outlook')).all(),
     outlookStatus: () => readOutlookStatus(tx)[0],

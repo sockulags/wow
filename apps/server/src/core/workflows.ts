@@ -12,6 +12,7 @@ import {
   type HostRead,
   type RunEffect,
   type RunEvent,
+  type RunOccurrence,
   type RunUnit,
   type ServerCommand,
   type StepGate,
@@ -437,6 +438,8 @@ export interface RunStart {
   // already has, if any.
   readonly event?: RunEvent | undefined;
   readonly existingCopy?: { readonly run: WorkflowRun; readonly copy: WorkingCopy } | undefined;
+  // The occurrence of a repeating card the run is for.
+  readonly occurrence?: RunOccurrence | undefined;
 }
 
 // A new run of the workflow: a client's Run now, a card's Run now, a firing trigger or a plan
@@ -470,7 +473,7 @@ export function startRunEvents(
   }
   const backlogBody = backlogBodyOf(read, start.backlogItemId ?? null);
   const engineContext = runContext(read, context, start.projectId, backlogBody);
-  const transition = engineCall(() =>
+  const started = engineCall(() =>
     startRun(
       workflow,
       {
@@ -484,6 +487,9 @@ export function startRunEvents(
       engineContext,
     ),
   );
+  const transition = start.occurrence
+    ? { ...started, run: { ...started.run, occurrence: start.occurrence } }
+    : started;
   // A unit's run always works in its own working copy (review loop spec 40), and so does a run
   // an event started (spec 48).
   if (!workflow.ownWorkingCopy && !start.unit && !start.event) {

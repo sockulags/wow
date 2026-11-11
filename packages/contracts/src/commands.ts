@@ -46,6 +46,7 @@ import {
   ProviderUpdate,
   ThreadState,
 } from './provider.js';
+import { CardOccurrence, LocalDay, RepeatRule } from './repeat.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
 import { SetupApplication } from './setup.js';
 import { FileHash, RunEffect, UnpushedWork, WorkflowStep } from './workflow.js';
@@ -183,8 +184,14 @@ export const Command = z.discriminatedUnion('type', [
     projectId: Id.optional(),
     backlogItemId: Id.optional(),
     workflowId: Id.optional(),
+    // Makes the card repeat (recurring cards spec 1); start and end are the first occurrence.
+    repeat: RepeatRule.optional(),
+    // Days already skipped by hand, for Undo of a deleted series (spec 13).
+    skippedDates: z.array(LocalDay).optional(),
   }),
-  // Moving, resizing and editing (spec 6). Outlook items are read-only and refused.
+  // Moving, resizing and editing (spec 6). Outlook items are read-only and refused. On a
+  // repeating card it changes every occurrence that has not started (recurring cards spec 10);
+  // `repeat: null` makes it a single card again (spec 14).
   z.object({
     type: z.literal('card.update'),
     cardId: Id,
@@ -196,6 +203,22 @@ export const Command = z.discriminatedUnion('type', [
     projectId: Id.nullable().optional(),
     backlogItemId: Id.nullable().optional(),
     workflowId: Id.nullable().optional(),
+    repeat: RepeatRule.nullable().optional(),
+    // The whole list of days skipped by hand; Undo of a skip sends the list as it was.
+    skippedDates: z.array(LocalDay).optional(),
+  }),
+  // "This occurrence" (recurring cards spec 12): the day is skipped and the rest of the series
+  // is untouched. Refused for a day the rule does not fall on and for one that already started.
+  z.object({ type: z.literal('card.skipOccurrence'), cardId: Id, date: LocalDay }),
+  // Moving or resizing one occurrence in the calendar (spec 11): the occurrence on `date` gets
+  // this start and end, and so does every occurrence that has not started, by its local time
+  // and length. An occurrence moves within its day; another day is a change of the rule.
+  z.object({
+    type: z.literal('card.moveOccurrence'),
+    cardId: Id,
+    date: LocalDay,
+    start: Timestamp,
+    end: Timestamp,
   }),
   // A card whose run is running or waiting needs `stopRun`: the app asks whether to stop the run
   // first (spec 13). The run's threads are kept either way.
@@ -570,6 +593,8 @@ export const CardChanges = CalendarItem.pick({
   projectId: true,
   backlogItemId: true,
   workflowId: true,
+  repeat: true,
+  skippedDates: true,
 }).partial();
 export type CardChanges = z.infer<typeof CardChanges>;
 
@@ -868,6 +893,13 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     payload: z.object({ cardId: Id, changes: CardChanges, updatedAt: Timestamp }),
   }),
   z.object({ kind: z.literal('card.deleted'), aggregate: Id, payload: z.object({ cardId: Id }) }),
+  // A repeating card reached an occurrence: what happened there (recurring cards spec 5 to 8).
+  // Kept when the card is deleted, so Undo brings the card back with its history.
+  z.object({
+    kind: z.literal('card.occurrenceRecorded'),
+    aggregate: Id,
+    payload: z.object({ cardId: Id, occurrence: CardOccurrence }),
+  }),
   // The card follows its trigger and its run.
   z.object({
     kind: z.literal('card.stateChanged'),

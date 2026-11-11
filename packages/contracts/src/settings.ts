@@ -522,6 +522,15 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'days',
   }),
+  'calendar.maxOccurrences': defineSetting({
+    schema: z.number().int().min(1).max(10000),
+    group: 'calendar',
+    label: 'Most occurrences per card',
+    description:
+      'How many occurrences of one repeating card a calendar range shows at most. A range that needs more shows the first ones and says some are left out.',
+    default: 200,
+    scope: 'global',
+  }),
   'calendar.snapMinutes': defineSetting({
     schema: z.number().int().min(1).max(60),
     group: 'calendar',

@@ -1,12 +1,14 @@
 import {
-  isLiveRunState,
+  type CalendarItem,
   type ServerCommand,
   type SettingDefinition,
   type WorkflowStep,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import type { DecideContext, ReadModel } from '../core/orchestrator.js';
+import { liveRunOf } from '../core/series.js';
 import { runPath } from '../core/workflows.js';
+import { firstAfter } from '../scheduler/occurrences.js';
 import { resolveStored } from '../settings/service.js';
 
 // The one table that says what the server does with a command the assistant sends (app
@@ -118,6 +120,29 @@ function startsSoon(
   return Date.parse(start) <= soon ? proposal : ordinary;
 }
 
+// When a card would first start a run: its start, or for a repeating card the next occurrence
+// that is not skipped or reached (recurring cards spec 20). Undefined when a series has no
+// occurrence left, which starts nothing.
+function firstStart(
+  card: Pick<CalendarItem, 'id' | 'start' | 'end' | 'zone'> & {
+    readonly repeat: CalendarItem['repeat'];
+    readonly skippedDates?: readonly string[] | undefined;
+  },
+  read: ReadModel,
+  context: DecideContext,
+): string | undefined {
+  if (!card.repeat) return card.start;
+  const taken = new Set([
+    ...(card.skippedDates ?? []),
+    ...read.cardOccurrences(card.id).map((occurrence) => occurrence.date),
+  ]);
+  return firstAfter(
+    { start: card.start, end: card.end, zone: card.zone, repeat: card.repeat },
+    Date.parse(context.now),
+    (occurrence) => !taken.has(occurrence.date),
+  )?.start;
+}
+
 const definitionOf = (key: string, context: DecideContext): SettingDefinition | undefined =>
   Object.hasOwn(context.registry, key) ? context.registry[key] : undefined;
 
@@ -224,21 +249,47 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'approval.answer': refused("Only the user answers an agent's request for approval."),
   'question.answer': refused("Only the user answers an agent's question."),
   'card.create': (command, read, context) =>
-    startsSoon(command.workflowId, command.projectId, command.start, read, context),
+    startsSoon(
+      command.workflowId,
+      command.projectId,
+      firstStart({ id: command.cardId, ...command, repeat: command.repeat ?? null }, read, context),
+      read,
+      context,
+    ),
   'card.update': (command, read, context) => {
     const card = read.calendarItem(command.cardId);
+    const start = command.start ?? card?.start;
+    const end = command.end ?? card?.end;
+    const zone = command.zone ?? card?.zone;
     return startsSoon(
       afterUpdate(command.workflowId, card?.workflowId),
       afterUpdate(command.projectId, card?.projectId),
-      command.start ?? card?.start,
+      start === undefined || end === undefined || zone === undefined
+        ? start
+        : firstStart(
+            {
+              id: command.cardId,
+              start,
+              end,
+              zone,
+              repeat: command.repeat === undefined ? (card?.repeat ?? null) : command.repeat,
+              skippedDates: command.skippedDates ?? card?.skippedDates ?? [],
+            },
+            read,
+            context,
+          ),
       read,
       context,
     );
   },
+  'card.skipOccurrence': 'ordinary',
+  'card.moveOccurrence': refused(
+    'Moving one occurrence is for the calendar; change the time of a repeating card with update_card.',
+  ),
   'card.delete': (command, read) => {
     const card = read.calendarItem(command.cardId);
-    const run = card?.runId ? read.run(card.runId) : undefined;
-    if (command.stopRun !== undefined || (run && isLiveRunState(run.state))) {
+    const run = card ? liveRunOf(card, read) : undefined;
+    if (command.stopRun !== undefined || run) {
       return {
         class: 'refused',
         reason: run
