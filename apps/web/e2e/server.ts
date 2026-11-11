@@ -554,7 +554,7 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       {
         type: 'backgroundTasks',
         threadId,
-        tasks: [{ id: 'bg-1', description: 'Count the tea leaves' }],
+        tasks: [{ id: 'bg-1', description: 'Count the tea leaves', agent: true }],
       },
       ...finish(threadId, 'I asked a background agent to count them.'),
     ];

@@ -126,18 +126,32 @@ const assistantText = (id: string, text: string): FakeStep => ({
 
 // What Claude Code reports as running in the background after a change (the whole list).
 const backgroundChanged = (
-  tasks: Array<{ id: string; description: string; ambient?: boolean }>,
+  tasks: Array<{ id: string; description: string; ambient?: boolean; type?: string }>,
 ): FakeStep => ({
   message: {
     type: 'system',
     subtype: 'background_tasks_changed',
     tasks: tasks.map((task) => ({
       task_id: task.id,
-      task_type: 'local_agent',
+      task_type: task.type ?? 'local_agent',
       description: task.description,
       ...(task.ambient ? { ambient: true } : {}),
     })),
     uuid: '00000000-0000-4000-8000-0000000000dd',
+    session_id: 'sess-1',
+  } as unknown as SDKMessage,
+});
+
+// Claude Code's notice that a background task ended, which it then answers in a turn.
+const taskNotification = (id: string): FakeStep => ({
+  message: {
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: id,
+    status: 'completed',
+    output_file: '',
+    summary: 'Done',
+    uuid: '00000000-0000-4000-8000-0000000000de',
     session_id: 'sess-1',
   } as unknown as SDKMessage,
 });
@@ -713,7 +727,7 @@ describe('@wow/provider-claude', () => {
       {
         type: 'backgroundTasks',
         threadId: 't1',
-        tasks: [{ id: 'bg-1', description: 'Count the tea leaves' }],
+        tasks: [{ id: 'bg-1', description: 'Count the tea leaves', agent: true }],
       },
     ]);
     const before = h.events.length;
@@ -734,6 +748,56 @@ describe('@wow/provider-claude', () => {
       { type: 'turnCompleted', threadId: 't1' },
     ]);
     expect(h.queries[0]?.prompts).toEqual(['What is in the readme?']);
+  });
+
+  it('starts the turn that answers a background agent before the agent leaves the list', async () => {
+    const later = released();
+    const h = harness([
+      [
+        backgroundChanged([
+          { id: 'bg-1', description: 'Count the tea leaves' },
+          { id: 'sh-1', description: 'npm run dev', type: 'local_bash' },
+        ]),
+        result(0),
+        later.step,
+        taskNotification('sh-1'),
+        backgroundChanged([{ id: 'bg-1', description: 'Count the tea leaves' }]),
+        taskNotification('bg-1'),
+        backgroundChanged([]),
+        assistantText('2', 'The agent counted 42 leaves.'),
+        result(0),
+      ],
+    ]);
+    const first = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await first;
+    expect(h.events.find((event) => event.type === 'backgroundTasks')).toEqual({
+      type: 'backgroundTasks',
+      threadId: 't1',
+      tasks: [
+        { id: 'bg-1', description: 'Count the tea leaves', agent: true },
+        { id: 'sh-1', description: 'npm run dev' },
+      ],
+    });
+    const before = h.events.length;
+    const second = h.next('turnCompleted');
+    later.release();
+    await second;
+    expect(
+      h.events
+        .slice(before)
+        .map((event) =>
+          event.type === 'backgroundTasks' ? `background ${event.tasks.length}` : event.type,
+        ),
+    ).toEqual([
+      'background 1',
+      'turnStartedByProvider',
+      'background 0',
+      'textDelta',
+      'usage',
+      'contextUsage',
+      'turnCompleted',
+    ]);
   });
 
   it('stops a turn Claude Code started by itself', async () => {

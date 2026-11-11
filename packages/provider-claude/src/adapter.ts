@@ -477,8 +477,20 @@ export class ClaudeAdapter implements ProviderAdapter {
             session,
             message.tasks
               .filter((task) => task.ambient !== true)
-              .map((task) => ({ id: task.task_id, description: task.description })),
+              .map((task) => ({
+                id: task.task_id,
+                description: task.description,
+                ...(task.task_type === 'local_agent' ? { agent: true } : {}),
+              })),
           );
+        } else if (
+          message.subtype === 'task_notification' &&
+          session.background.some((task) => task.agent === true && task.id === message.task_id)
+        ) {
+          // Claude Code answers a background agent's notice in a turn of its own. Starting it here,
+          // before the agent leaves the list, keeps a step that waits for the agent from ending
+          // with the turn before.
+          this.#selfStart(session);
         }
         return;
       case 'stream_event': {

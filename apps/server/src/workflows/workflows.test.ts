@@ -388,7 +388,7 @@ describe('workflow runs', () => {
             {
               type: 'backgroundTasks',
               threadId: command.threadId,
-              tasks: [{ id: 'bg-1', description: 'Count the tea leaves' }],
+              tasks: [{ id: 'bg-1', description: 'Count the tea leaves', agent: true }],
             },
             { type: 'turnCompleted', threadId: command.threadId },
           ]
@@ -406,7 +406,7 @@ describe('workflow runs', () => {
     await server.workflows.settled();
     expect(run().steps[0]).toMatchObject({ state: 'running' });
     expect(thread('r1.s1')?.backgroundTasks).toEqual([
-      { id: 'bg-1', description: 'Count the tea leaves' },
+      { id: 'bg-1', description: 'Count the tea leaves', agent: true },
     ]);
 
     adapters[0]?.emit([
@@ -422,6 +422,102 @@ describe('workflow runs', () => {
     });
     expect(thread('r1.s1')).toMatchObject({ state: 'needs_you', backgroundTasks: [] });
     expect(startTurns()).toHaveLength(1);
+  });
+
+  // A step that leaves its background agent running: the turn ends, the step waits.
+  const startWithBackground = async (tasks: Array<{ agent?: boolean }>) => {
+    script = (command) =>
+      command.type === 'startTurn'
+        ? [
+            { type: 'textDelta', threadId: command.threadId, itemId: 'a', delta: 'Started.' },
+            {
+              type: 'backgroundTasks',
+              threadId: command.threadId,
+              tasks: tasks.map((task, index) => ({
+                id: `bg-${index}`,
+                description: 'Work in the background',
+                ...task,
+              })),
+            },
+            { type: 'turnCompleted', threadId: command.threadId },
+          ]
+        : [];
+    const firstEnded = new Promise<void>((resolve) => {
+      const off = server.engine.onCommit((commit) => {
+        if (commit.events.some(({ event }) => event.kind === 'turn.ended')) {
+          off();
+          resolve();
+        }
+      });
+    });
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf1', projectId: 'p1' });
+    await firstEnded;
+    await server.workflows.settled();
+  };
+
+  it('does not wait for a background shell command such as a dev server', async () => {
+    await startWithBackground([{}]);
+    const waiting = await runBecomes((current) => current.state === 'waiting');
+    expect(waiting.steps[0]).toMatchObject({ state: 'waiting', finalMessage: 'Started.' });
+    expect(thread('r1.s1')?.backgroundTasks).toHaveLength(1);
+  });
+
+  it('ends a waiting step when its background agent ends and no turn follows', async () => {
+    await startWithBackground([{ agent: true }, {}]);
+    expect(run().steps[0]).toMatchObject({ state: 'running' });
+    adapters[0]?.emit([
+      {
+        type: 'backgroundTasks',
+        threadId: 'r1.s1',
+        tasks: [{ id: 'bg-1', description: 'Work in the background' }],
+      },
+    ]);
+    const waiting = await runBecomes((current) => current.state === 'waiting');
+    expect(waiting.steps[0]).toMatchObject({ state: 'waiting', finalMessage: 'Started.' });
+  });
+
+  it('ends a waiting step when its provider instance is edited and its adapter goes', async () => {
+    await startWithBackground([{ agent: true }]);
+    expect(run().steps[0]).toMatchObject({ state: 'running' });
+    dispatch({
+      type: 'providerInstance.update',
+      providerInstanceId: 'claude-work',
+      name: 'Work account',
+    });
+    const waiting = await runBecomes((current) => current.state === 'waiting');
+    expect(waiting.steps[0]).toMatchObject({ state: 'waiting', finalMessage: 'Started.' });
+    expect(thread('r1.s1')?.backgroundTasks).toEqual([]);
+  });
+
+  it('fails a step on restart only while it waited for a background agent', async () => {
+    await startWithBackground([{ agent: true }]);
+    dispatch({
+      type: 'thread.create',
+      threadId: 'chat',
+      providerInstanceId: 'claude-work',
+      projectId: 'p1',
+      cwd: projectDir,
+      title: 'Chat',
+      model: 'opus',
+      effort: 'high',
+      permissionMode: 'default',
+    });
+    server.database.db
+      .update(threads)
+      .set({ backgroundTasks: [{ id: 'dev', description: 'npm run dev' }] })
+      .where(eq(threads.id, 'chat'))
+      .run();
+    const chatBefore = thread('chat');
+    await server.stop();
+    server = await launch();
+    const failed = await runBecomes((current) => current.state === 'failed');
+    expect(failed.steps[0]?.error).toBe(
+      'The server stopped while the agent was waiting for background work',
+    );
+    expect(thread('chat')).toMatchObject({ state: chatBefore?.state, backgroundTasks: [] });
+    expect(server.database.db.select().from(turns).where(eq(turns.threadId, 'chat')).all()).toEqual(
+      [],
+    );
   });
 
   it('fails a step that has no model instead of sending an empty one', async () => {

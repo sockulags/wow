@@ -80,7 +80,13 @@ const ThreadScoped = { threadId: z.string().min(1) };
 
 // Work the agent started in the background (a subagent or a shell command) that is still running.
 // When it ends, the provider may go on with the thread by itself in a turn wow did not start.
-export const BackgroundTask = z.object({ id: z.string().min(1), description: z.string() });
+// `agent` marks a background agent: a workflow step waits only for those, since a shell command
+// such as a dev server or a watcher may never end.
+export const BackgroundTask = z.object({
+  id: z.string().min(1),
+  description: z.string(),
+  agent: z.boolean().optional(),
+});
 export type BackgroundTask = z.infer<typeof BackgroundTask>;
 
 export const ProviderEvent = z.discriminatedUnion('type', [
