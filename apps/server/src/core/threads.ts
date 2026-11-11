@@ -1,7 +1,9 @@
 import type {
   DomainEvent,
   ProviderEvent,
+  QueuedMessage,
   SentSkill,
+  SkillRef,
   ServerCommand,
   Thread,
   ThreadChanges,
@@ -47,6 +49,9 @@ type ThreadCommand = Extract<
       | 'thread.greetAssistant'
       | 'thread.sendMessage'
       | 'thread.sendPrepared'
+      | 'thread.cancelQueued'
+      | 'thread.sendQueued'
+      | 'thread.handedOver'
       | 'thread.retry'
       | 'thread.answerQuestions'
       | 'thread.interrupt'
@@ -105,12 +110,14 @@ function turnStarted(
     assistant,
     answers,
     skills,
+    queued: mark,
   }: {
     text: string;
     prompt: string;
     assistant: boolean;
     answers?: { askItemId: string; replies: QuestionReply[] };
     skills?: SentSkill[] | undefined;
+    queued?: 'afterTurn';
   },
 ): DomainEvent {
   const index = read.turnCount(thread.id);
@@ -138,6 +145,7 @@ function turnStarted(
           text,
           ...(answers ? { answers } : {}),
           ...(skills && skills.length > 0 ? { skills } : {}),
+          ...(mark ? { queued: mark } : {}),
         },
         streaming: false,
       },
@@ -153,6 +161,98 @@ function turnStarted(
       },
     },
   };
+}
+
+// A message needs text or a skill, and the assistant takes no skills (wow skills spec 20).
+function checkMessage(thread: Thread, text: string, picked: readonly SkillRef[]): void {
+  if (text.trim() === '' && picked.length === 0) {
+    throw new CommandRejected('rejected', 'A message needs text or a skill');
+  }
+  if (thread.kind === 'assistant' && picked.length > 0) {
+    throw new CommandRejected('rejected', 'The assistant takes no skills');
+  }
+}
+
+const queueChanged = (
+  threadId: string,
+  queued: QueuedMessage | null,
+  handOver?: { providerInstanceId: string; prompt: string },
+): DomainEvent => ({
+  kind: 'thread.queueChanged',
+  aggregate: threadId,
+  payload: { threadId, queued, ...(handOver ? { handOver } : {}) },
+});
+
+// A message written while a turn runs waits with the server (agent workbench spec 50); one that
+// already waits takes it in after its own text. A chat or step thread offers it to the running
+// turn as well (spec 51); the assistant's prompt carries notes made when its turn starts, so its
+// message always waits.
+function queueMessage(
+  read: ReadModel,
+  context: DecideContext,
+  thread: Thread,
+  running: Turn,
+  text: string,
+  picked: readonly SkillRef[],
+): DomainEvent {
+  const before = thread.queued ?? undefined;
+  const skills = [...(before?.skills ?? [])];
+  for (const ref of picked) {
+    if (!skills.some((skill) => skill.name === ref.name && skill.source === ref.source))
+      skills.push(ref);
+  }
+  const message: QueuedMessage = {
+    id: before ? `${before.id}+` : `${running.id}:queued:${context.now}`,
+    text: before
+      ? [before.text, text.trim()].filter((part) => part.trim() !== '').join('\n\n')
+      : text,
+    ...(skills.length > 0 ? { skills } : {}),
+    queuedAt: before?.queuedAt ?? context.now,
+  };
+  if (thread.kind === 'assistant') return queueChanged(thread.id, message);
+  const prompt =
+    skills.length > 0
+      ? messageWithSkills(read, context, thread, skills, message.text).prompt
+      : message.text;
+  return queueChanged(thread.id, message, {
+    providerInstanceId: thread.providerInstanceId,
+    prompt,
+  });
+}
+
+// A message as the next turn: on the assistant's thread on the instance the settings name now,
+// with wow's notes before it (app assistant spec 27); the skills go in front of the text.
+function messageTurn(
+  read: ReadModel,
+  context: DecideContext,
+  stored: Thread,
+  text: string,
+  picked: readonly SkillRef[],
+  mark?: 'afterTurn',
+): DomainEvent[] {
+  checkMessage(stored, text, picked);
+  const assistant = stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
+  const thread = assistant?.thread ?? stored;
+  const notes = assistant
+    ? [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
+        (entry): entry is string => entry !== null,
+      )
+    : [];
+  const note = notes.length === 0 ? null : notes.join('\n\n');
+  const withSkills =
+    picked.length > 0
+      ? messageWithSkills(read, context, thread, picked, text)
+      : { prompt: text, skills: undefined };
+  return [
+    ...(assistant?.events ?? []),
+    turnStarted(read, thread, context.now, {
+      text,
+      prompt: note ? `${note}\n\n${withSkills.prompt}` : withSkills.prompt,
+      assistant: assistant !== undefined,
+      skills: withSkills.skills,
+      ...(mark ? { queued: mark } : {}),
+    }),
+  ];
 }
 
 function requireThread(read: ReadModel, threadId: string) {
@@ -318,40 +418,63 @@ export function decideThread(
     }
     case 'thread.sendMessage': {
       const stored = requireThread(read, command.threadId);
-      if (read.runningTurn(stored.id)) {
-        throw new CommandRejected('rejected', `Thread ${stored.id} already has a running turn`);
-      }
-      // The assistant's turn starts on the instance the settings name now, or not at all with
-      // the reason (app assistant spec 27).
-      const assistant =
-        stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
-      const thread = assistant?.thread ?? stored;
-      const notes = assistant
-        ? [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
-            (entry): entry is string => entry !== null,
-          )
-        : [];
-      const note = notes.length === 0 ? null : notes.join('\n\n');
       const picked = command.skills ?? [];
-      if (command.text.trim() === '' && picked.length === 0) {
-        throw new CommandRejected('rejected', 'A message needs text or a skill');
+      checkMessage(stored, command.text, picked);
+      const running = read.runningTurn(stored.id);
+      if (running) return [queueMessage(read, context, stored, running, command.text, picked)];
+      return messageTurn(read, context, stored, command.text, picked);
+    }
+    case 'thread.cancelQueued': {
+      const thread = requireThread(read, command.threadId);
+      if (!thread.queued) {
+        throw new CommandRejected(
+          'conflict',
+          'No message waits in this thread any more; it was sent or taken off the queue.',
+        );
       }
-      // The assistant has its own instruction text and takes no skills (wow skills spec 20).
-      if (assistant && picked.length > 0) {
-        throw new CommandRejected('rejected', 'The assistant takes no skills');
-      }
-      const withSkills =
-        picked.length > 0
-          ? messageWithSkills(read, context, thread, picked, command.text)
-          : { prompt: command.text, skills: undefined };
+      return [queueChanged(thread.id, null)];
+    }
+    case 'thread.sendQueued': {
+      const thread = requireThread(read, command.threadId);
+      const waiting = thread.queued;
+      if (!waiting || waiting.id !== command.queuedId || read.runningTurn(thread.id)) return [];
       return [
-        ...(assistant?.events ?? []),
-        turnStarted(read, thread, now, {
-          text: command.text,
-          prompt: note ? `${note}\n\n${withSkills.prompt}` : withSkills.prompt,
-          assistant: assistant !== undefined,
-          skills: withSkills.skills,
-        }),
+        queueChanged(thread.id, null),
+        ...messageTurn(read, context, thread, waiting.text, waiting.skills ?? [], 'afterTurn'),
+      ];
+    }
+    case 'thread.handedOver': {
+      const thread = requireThread(read, command.threadId);
+      const waiting = thread.queued;
+      if (!waiting || waiting.id !== command.queuedId) return [];
+      // The provider has it, so it shows in the turn it went into, or the one that just ended.
+      const turn = read.runningTurn(thread.id) ?? read.lastTurn(thread.id);
+      if (!turn) return [queueChanged(thread.id, null)];
+      const picked = waiting.skills ?? [];
+      const skills =
+        picked.length > 0
+          ? messageWithSkills(read, context, thread, picked, waiting.text).skills
+          : undefined;
+      const index = read.nextItemIndex(thread.id);
+      return [
+        queueChanged(thread.id, null),
+        {
+          kind: 'threadItem.added',
+          aggregate: thread.id,
+          payload: {
+            id: `${turn.id}:handedOver:${index}`,
+            threadId: thread.id,
+            turnId: turn.id,
+            index,
+            kind: 'user',
+            payload: {
+              text: waiting.text,
+              ...(skills && skills.length > 0 ? { skills } : {}),
+              queued: 'duringTurn',
+            },
+            streaming: false,
+          },
+        },
       ];
     }
     case 'thread.sendPrepared': {

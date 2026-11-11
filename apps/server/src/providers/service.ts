@@ -1,7 +1,9 @@
 import {
   assistantToolsetName,
+  HandOverResult,
   ProviderEvent,
   ProviderModel,
+  ProviderSlashCommand,
   ProviderTestResult,
   SecretRef,
   secretPatterns,
@@ -10,7 +12,7 @@ import {
   type ProviderInstance,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, isNotNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { AssistantRedactor } from '../assistant/redact.js';
 import { prepareAssistantFolder } from '../assistant/thread.js';
@@ -103,6 +105,15 @@ export class ProviderService {
         },
       ]);
     }
+    // A message queued while a turn ran goes now that no turn runs (agent workbench spec 50).
+    const queued = this.#deps.db
+      .select({ id: threads.id, queued: threads.queued })
+      .from(threads)
+      .where(isNotNull(threads.queued))
+      .all();
+    for (const { id, queued: message } of queued) {
+      if (message) this.#sendQueued(id, message.id);
+    }
   }
 
   #stepRunning(runId: string | null, stepId: string | null): boolean {
@@ -136,6 +147,17 @@ export class ProviderService {
   async listModels(providerInstanceId: string): Promise<ProviderModel[]> {
     const adapter = this.#adapter(providerInstanceId);
     return ProviderModel.array().parse(await adapter.send({ type: 'listModels' }));
+  }
+
+  async listCommands(
+    providerInstanceId: string,
+    cwd: string,
+    threadId?: string,
+  ): Promise<ProviderSlashCommand[]> {
+    const adapter = this.#adapter(providerInstanceId);
+    return ProviderSlashCommand.array().parse(
+      await adapter.send({ type: 'listCommands', cwd, ...(threadId ? { threadId } : {}) }),
+    );
   }
 
   // Stops the instance's adapter (and its app-server process); the next use starts a new one.
@@ -219,6 +241,24 @@ export class ProviderService {
             true,
             start.kind === 'assistant' ? () => this.#assistantTurn(command) : command,
           );
+          break;
+        }
+        case 'thread.queueChanged': {
+          const { threadId, queued, handOver } = event.payload;
+          if (queued && handOver)
+            this.#handOver(handOver.providerInstanceId, threadId, queued.id, handOver.prompt);
+          break;
+        }
+        // Dispatched after this commit's listeners have all heard of the turn's end, so none of
+        // them sees the next turn start first.
+        case 'turn.ended': {
+          const { threadId } = event.payload;
+          const queued = this.#deps.db
+            .select({ queued: threads.queued })
+            .from(threads)
+            .where(eq(threads.id, threadId))
+            .get()?.queued;
+          if (queued) queueMicrotask(() => this.#sendQueued(threadId, queued.id));
           break;
         }
         case 'turn.interruptRequested':
@@ -311,6 +351,48 @@ export class ProviderService {
           this.#deps.logger.warn(`could not delete secret ${name}`, error),
         );
     }
+  }
+
+  #sendQueued(threadId: string, queuedId: string): void {
+    if (this.#stopped) return;
+    try {
+      // One id per queued message, so the turn end and a restart never send it twice.
+      this.#deps.engine.dispatch(`send-queued:${queuedId}`, {
+        type: 'thread.sendQueued',
+        threadId,
+        queuedId,
+      });
+    } catch (error) {
+      this.#deps.logger.warn('the queued message was not sent', describeError(error));
+    }
+  }
+
+  // Offers the queued message to the running turn. Not taken, it stays queued and goes when
+  // the turn ends (agent workbench spec 51 and its open risk).
+  #handOver(providerInstanceId: string, threadId: string, queuedId: string, prompt: string): void {
+    let answer: Promise<unknown>;
+    try {
+      answer = this.#adapter(providerInstanceId).send({ type: 'handOver', threadId, prompt });
+    } catch (error) {
+      this.#deps.logger.warn('provider handOver failed', describeError(error));
+      return;
+    }
+    answer
+      .then(
+        (result) => {
+          if (this.#stopped || !HandOverResult.safeParse(result).data?.taken) return;
+          this.#deps.engine.dispatch(`handed-over:${queuedId}`, {
+            type: 'thread.handedOver',
+            threadId,
+            queuedId,
+          });
+        },
+        (error: unknown) =>
+          this.#deps.logger.warn('provider handOver failed', describeError(error)),
+      )
+      .catch((error: unknown) =>
+        this.#deps.logger.warn('the handed over message was not recorded', describeError(error)),
+      );
   }
 
   // The assistant's turn (app assistant spec 2): wow's tools and no others, the instruction

@@ -132,6 +132,8 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     'provider.update': ({ providerInstanceId }) => deps.providerUpdates.start(providerInstanceId),
     'provider.listModels': ({ providerInstanceId }) =>
       deps.providers.listModels(providerInstanceId),
+    'provider.listCommands': ({ providerInstanceId, cwd, threadId }) =>
+      deps.providers.listCommands(providerInstanceId, cwd, threadId),
     'provider.detect': () => deps.detectProviders(),
     'assistant.open': () =>
       openAssistantThread({

@@ -390,6 +390,16 @@ describe('CodexAdapter with recorded sessions', () => {
     expect((current() as ReplayCodexProcess).mismatches).toEqual([]);
   });
 
+  // Agent workbench spec 51, 60: Codex takes no message into a running turn, so it waits for
+  // the turn to end, and Codex reports no slash commands of its own.
+  it('takes no message into a running turn and lists no commands', async () => {
+    const { adapter } = setup(() => new ReplayCodexProcess([]));
+    expect(await adapter.send({ type: 'handOver', threadId: 't1', prompt: 'Then this' })).toEqual({
+      taken: false,
+    });
+    expect(await adapter.send({ type: 'listCommands', cwd: '/work/demo' })).toEqual([]);
+  });
+
   it('lists models from the recorded model/list answer', async () => {
     const recorded = readFixture('test-not-logged-in.jsonl');
     // Same session without the account check in between.

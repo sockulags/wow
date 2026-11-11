@@ -148,8 +148,9 @@ provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env
 threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessionId?, title, model,
                  effort, permissionMode, state ('idle'|'working'|'needs_you'|'done'|'failed'),
                  pinned, runId?, stepId?, backgroundTasks(json: BackgroundTask[]), createdAt,
-                 updatedAt   -- backgroundTasks: the agent's work still running in the background,
-                 [] when none (migration 0026_background_tasks)
+                 queued(json: QueuedMessage)?, updatedAt   -- backgroundTasks: the agent's work
+                 still running in the background, [] when none (migration 0026_background_tasks);
+                 queued: the message waiting for the running turn to end (0027_queued_messages)
 turns            id, threadId, index, state, startedAt, endedAt, usage(json)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
@@ -252,7 +253,8 @@ ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode
                  interrupt {threadId} | closeThread {threadId} |
                  answerApproval {approvalId, decision} |
                  answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
-                 listModels | test
+                 listModels | handOver {threadId, prompt} -> {taken} |
+                 listCommands {cwd, threadId?} -> [{name, description, argumentHint?}] | test
 ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | toolCallStarted |
                  toolCallOutput | toolCallCompleted | approvalRequested | questionAsked |
                  taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
@@ -349,6 +351,27 @@ thread it maps to, since the app-server has no request that unloads one.
   interrupted turn, `failed` after a failed one. An effect that cannot start or interrupt a turn
   fails the turn with the reason; a turn still `running` at startup failed with the previous server
   process and is marked so. Events after a turn ended are dropped.
+- **Queued messages** (agent workbench spec 50 to 52). `thread.sendMessage` while a turn runs does
+  not start a turn: it sets the thread's `queued` (`QueuedMessage {id, text, skills?, queuedAt}`,
+  a JSON column of `threads`, migration `0027_queued_messages`) through `thread.queueChanged`. A
+  second message joins it (texts separated by a blank line, skills once each) and gets a new `id`
+  (the old one plus `+`), so whatever acts on the queue acts on one version of it. For a chat or
+  step thread the event carries `handOver {providerInstanceId, prompt}` (the prompt with the
+  skills in front, as `thread.sendMessage` would send it); the provider service then sends the
+  adapter `handOver {threadId, prompt}`, which answers `HandOverResult {taken}`. Taken, the
+  service dispatches `thread.handedOver {threadId, queuedId}`: the queue empties and a `user` item
+  with `queued: 'duringTurn'` joins the running turn (or the turn that just ended), so the
+  conversation shows it sent. Not taken, it stays queued. On every `turn.ended` whose thread holds
+  a queue, the service dispatches `thread.sendQueued {threadId, queuedId}` in a microtask (after
+  every listener heard of the end, so none sees the next turn start first) with command id
+  `send-queued:<queuedId>`; the orchestrator empties the queue and starts the turn as
+  `thread.sendMessage` would, the user item marked `queued: 'afterTurn'`. `recover()` sends a
+  queue left with no running turn; the command id makes a second dispatch a duplicate. The
+  assistant thread's message always waits (its prompt carries notes made when its turn starts).
+  `thread.cancelQueued` empties the queue and is refused when nothing waits, so Edit (cancel, then
+  the text back in the composer) never puts back a message the server already sent. A queued
+  message the server cannot send when the turn ends (a skill gone, the assistant unable to run)
+  stays queued with Edit and Cancel; the next turn end tries again.
 - **Claude details.** The SDK version is pinned exactly in `packages/provider-claude/package.json`.
   `launchArgs` (`--flag value`, `--flag=value`, `--flag`) become the SDK's `extraArgs`. Effort
   `default` leaves the effort to Claude Code; other values must be an SDK `EffortLevel`. A thread
@@ -363,7 +386,15 @@ thread it maps to, since the app-server has no request that unloads one.
   turn's cost is the difference to the previous result. `test` runs a tool-less one-turn query in
   the temp directory and reports `claude_code_version` from the init message and the account from
   `accountInfo()`; the server stores them on the instance. `listModels` uses `supportedModels()` of
-  a live session or a short-lived query.
+  a live session or a short-lived query. `handOver` pushes the prompt into the live session's
+  input with `priority: 'next'`, which joins the running turn at its next step as Claude Code's own
+  queue does; without a running turn, or in the assistant's tools-only session, it answers
+  `{taken: false}`. Should Claude Code answer the message in a turn of its own after the result
+  instead (not verified for a turn wow started), that turn arrives as one it started by itself.
+  `listCommands {cwd, threadId?}` answers `supportedCommands()` (name, description, argument hint)
+  of the thread's live session, or of a short-lived query opened in `cwd`. Codex answers
+  `handOver` with `{taken: false}` and `listCommands` with `[]`; RPC `provider.listCommands
+{providerInstanceId, cwd, threadId?}` returns the list (`ProviderSlashCommand[]`).
 - **Chat options.** What the composer bar offers per provider kind (permission modes with their
   short label and tone, the Shift+Tab cycle `modeCycle`, the effort that leaves the choice to the
   provider, the compact message) is `providerChatOptions` in `packages/contracts`, because the
@@ -2360,8 +2391,8 @@ the window's own.
   rest of the message, as the box holds it now, in the composer; when the field already holds a
   reference at that scope the line says it will be replaced, and the note after says it was. A
   held message is sent nowhere until "Send anyway", which calls the composer's
-  `sendUnchecked()`: the box's current text goes through the composer's own send path (queued
-  while a turn runs, as the answer to a waiting question), skipping only the check.
+  `sendUnchecked()`: the box's current text goes through the composer's own send path (queued by
+  the server while a turn runs, as the answer to a waiting question), skipping only the check.
 - Palette (`assistant/commands.ts`): Yes and No for every waiting proposal (Yes under "Needs
   you"), Undo for every applied change (the newest before typing). A refusal from the palette
   is a toast with the reason. The sidebar counts waiting proposals as "need you".
@@ -2686,8 +2717,12 @@ in the browser build) replace a separate working-directory field. Starters under
 from `skills`, open `backlogItems` and the last active thread (`chat.starterCount`). The composer
 focuses on `/chat/new` and on opening a thread; its skill list is a cmdk `Command` with
 `shouldFilter={false}` whose selection the text box moves (focus stays in the text box), grouped by
-`skillGroupOf` (see "Skills in the composer"). A message written while a turn runs is held in the composer
-and sent when `turns` says the turn ended; while a question waits, the composer sends
+`skillGroupOf` (see "Skills in the composer"). A message written while a turn runs goes to the
+server, which queues it (see "Providers", Queued messages); the conversation ends with the queued
+row (`QueuedMessageItem` in `items.tsx`: "Queued · sent when the turn ends", its text and skills,
+Edit and Cancel; palette "Edit queued message" and "Cancel queued message"), and a user item
+sent from the queue says "Sent during the turn" or "Sent when the turn ended". While a question
+waits, the composer sends
 `question.answer` with its text as the answer's typed text. Questions are drawn by the question
 card (see "Question card"). The working clock reads the running turn's `startedAt` and redraws each second;
 it is display only, the state still comes from `turns`. A pending approval takes the focus, and
@@ -2695,6 +2730,28 @@ the palette's approval commands (`keybindings.approvalAllowOnce|approvalAllowSes
 plain keys, so they do nothing in text fields) answer it. A thread whose step a waiting run asks
 to review (`gateRunForThread`: the gate after this step, or before the next) shows the run view's
 `GateBar` above the composer, and the palette's Continue run and Stop run apply to that run.
+
+**Drafts** (`chat/drafts.ts`, agent workbench spec 49). The composer of a chat or step thread
+takes `draftKey` (the thread id) and keeps its text and chips in the browser's `localStorage`
+(`wow.composerDraft.<threadId>`, chips as `Skill` rows), written on every change and removed when
+empty, so switching threads and a restart bring it back and Send clears it. A send that finishes
+after the user moved to another thread clears only the stored draft of the thread it was sent
+from. The Assistant view keeps no draft, since its text may hold a secret, and `/chat/new` none.
+
+**Commands in the `/` list** (`chat/slash-commands.ts`, spec 58 to 61). The composer of the open
+chat thread (`commandSource`: instance, folder, thread; not in the context panel or the Assistant
+view) lists a "Commands" group above the skills. `slashCommandTable` names each `/name` and the
+palette command it runs (`/model` `modelBar.chooseModel`, `/effort`, `/mode`, `/plan`
+`modelBar.mode.plan`, `/compact` `chat.compact`, `/clear` `chat.clear`, `/fork`, `/rename`
+`chat.renameThread`, `/done` `chat.markDone`, `/stop` `chat.stop`, `/open`); an entry shows only
+while that command is in the palette, which the shell publishes to `paletteCommandsStore`. A pick
+takes the typed `/word` out of the text and runs the command with the palette's context. Below
+them, "Claude Code commands" lists the provider's own (`provider.listCommands`, asked once per
+connection, instance and folder) without names wow lists or skills the list shows; a pick puts
+`/name ` in the text, sent as typed. `chat.clear` opens `/chat/new` with the thread's instance,
+project, folder and `DraftState.settings` (model, effort, mode), which the new thread starts
+from instead of the usual defaults; the old thread stays. `chat.compact` sends the provider's
+compact message while no turn runs.
 
 **Composer bar** (`chat/model-bar.tsx`, agent workbench spec 1 to 8, 10). `ModelBar` sits in the
 composer's bottom row, left of Stop and Send (the composer takes it as `bar` and its keys as

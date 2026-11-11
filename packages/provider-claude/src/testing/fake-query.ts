@@ -5,6 +5,7 @@ import type {
   PermissionMode,
   PermissionResult,
   PermissionUpdate,
+  SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
 import { readFileSync } from 'node:fs';
 import type { ClaudeQuery, Options, QueryFunction, SDKMessage, SDKUserMessage } from '../sdk.js';
@@ -61,6 +62,8 @@ export const errorResult = (subtype: 'error_during_execution', sessionId: string
 export class FakeQuery implements ClaudeQuery {
   readonly options: Options;
   readonly prompts: string[] = [];
+  // The priority each user message came with (a message handed to a running turn has one).
+  readonly priorities: Array<string | undefined> = [];
   readonly permissionResults: PermissionResult[] = [];
   readonly calls: string[] = [];
   readonly #prompt: AsyncIterable<SDKUserMessage>;
@@ -80,6 +83,7 @@ export class FakeQuery implements ClaudeQuery {
     for await (const user of this.#prompt) {
       const content = user.message.content;
       this.prompts.push(typeof content === 'string' ? content : '');
+      this.priorities.push(user.priority);
       this.#interrupted = false;
       for (const step of this.#turns[turn] ?? []) {
         if (this.#interrupted) break;
@@ -141,6 +145,22 @@ export class FakeQuery implements ClaudeQuery {
         supportedEffortLevels: ['low', 'medium', 'high'],
       },
       { value: 'haiku', displayName: 'Haiku', description: 'Fastest' },
+    ]);
+  }
+
+  supportedCommands(): Promise<SlashCommand[]> {
+    return Promise.resolve([
+      {
+        name: 'compact',
+        description: 'Clear history but keep a summary',
+        argumentHint: '',
+        builtin: true,
+      },
+      {
+        name: 'release-notes',
+        description: 'Write the release notes (invented)',
+        argumentHint: '<version>',
+      },
     ]);
   }
 

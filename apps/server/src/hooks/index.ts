@@ -9,6 +9,7 @@ export { outlookMode, type OutlookMode } from './outlook.js';
 export {
   MockProviderAdapter,
   ProviderAdapters,
+  mockClaudeCommands,
   mockCodexModels,
   prefersMockProviders,
   type MockScript,

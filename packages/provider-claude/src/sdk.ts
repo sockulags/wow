@@ -7,6 +7,7 @@ import type {
   PermissionMode,
   SDKMessage,
   SDKUserMessage,
+  SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
 
 // The part of the Agent SDK's `Query` the adapter uses, with only the fields it reads. Tests
@@ -17,6 +18,7 @@ export interface ClaudeQuery extends AsyncIterable<SDKMessage> {
   setPermissionMode(mode: PermissionMode): Promise<void>;
   applyFlagSettings(settings: { effortLevel?: EffortLevel | null }): Promise<void>;
   supportedModels(): Promise<ModelInfo[]>;
+  supportedCommands(): Promise<SlashCommand[]>;
   getContextUsage(options?: {
     detail?: 'summary' | 'full';
   }): Promise<{ totalTokens: number; maxTokens: number }>;

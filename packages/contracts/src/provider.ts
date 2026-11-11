@@ -66,9 +66,34 @@ export const ProviderCommand = z.discriminatedUnion('type', [
     permissionMode: PermissionMode,
   }),
   z.object({ type: z.literal('listModels') }),
+  // A message for the thread's running turn (agent workbench spec 51). The adapter answers
+  // `HandOverResult`: taken when its provider took the message into the turn, as Claude Code's
+  // own queue does; not taken when it cannot (Codex, or no turn runs there), and the server then
+  // sends it when the turn ends.
+  z.object({ type: z.literal('handOver'), threadId: z.string().min(1), prompt: z.string().min(1) }),
+  // The provider's own slash commands for a folder (spec 60), answered as `ProviderSlashCommand[]`.
+  // `threadId` lets an adapter ask the thread's live session; a provider that reports none
+  // answers an empty list.
+  z.object({
+    type: z.literal('listCommands'),
+    cwd: z.string().min(1),
+    threadId: z.string().min(1).optional(),
+  }),
   z.object({ type: z.literal('test') }),
 ]);
 export type ProviderCommand = z.infer<typeof ProviderCommand>;
+
+export const HandOverResult = z.object({ taken: z.boolean() });
+export type HandOverResult = z.infer<typeof HandOverResult>;
+
+// One of the provider's own slash commands (Claude Code's built-in, user and project commands).
+// A pick goes to the provider as text, `/name` and what follows.
+export const ProviderSlashCommand = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+  argumentHint: z.string().optional(),
+});
+export type ProviderSlashCommand = z.infer<typeof ProviderSlashCommand>;
 
 export const ApprovalKind = z.enum(['command', 'fileChange', 'tool']);
 export type ApprovalKind = z.infer<typeof ApprovalKind>;

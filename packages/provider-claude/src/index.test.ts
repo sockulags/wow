@@ -902,6 +902,59 @@ describe('@wow/provider-claude', () => {
     expect(h.queries[1]?.options.resume).toBe('sess-1');
   });
 
+  // Agent workbench spec 51: a message written during the turn goes into the session's input
+  // the way Claude Code's own queue takes it, so the server shows it sent.
+  it('hands a message to the running turn with priority next', async () => {
+    const later = released();
+    const h = harness([
+      [assistantText('1', 'Reading the readme.'), later.step, result(0.01)],
+      [assistantText('2', 'And the summary.'), result(0.02)],
+    ]);
+    const started = h.next('textDelta');
+    await h.adapter.send(startTurn());
+    await started;
+    expect(
+      await h.adapter.send({ type: 'handOver', threadId: 't1', prompt: 'Then sum it up' }),
+    ).toEqual({ taken: true });
+    const first = h.next('turnCompleted');
+    later.release();
+    await first;
+    // The fake answers the message after the result, as a turn Claude Code starts by itself.
+    await h.next('turnCompleted');
+    expect(h.events).toContainEqual({ type: 'turnStartedByProvider', threadId: 't1' });
+    expect(h.queries[0]?.prompts).toEqual(['What is in the readme?', 'Then sum it up']);
+    expect(h.queries[0]?.priorities).toEqual([undefined, 'next']);
+  });
+
+  it('takes no message when no turn runs', async () => {
+    const h = harness([[result(0.01)], [result(0.02)]]);
+    expect(await h.adapter.send({ type: 'handOver', threadId: 't1', prompt: 'Hello' })).toEqual({
+      taken: false,
+    });
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(await h.adapter.send({ type: 'handOver', threadId: 't1', prompt: 'Late' })).toEqual({
+      taken: false,
+    });
+    expect(h.queries[0]?.prompts).toEqual(['What is in the readme?']);
+  });
+
+  // Spec 60: Claude Code's own commands for the thread's folder, from a probe opened there.
+  it("lists Claude Code's commands from a probe in the folder and closes it", async () => {
+    const h = harness([]);
+    expect(await h.adapter.send({ type: 'listCommands', cwd: '/work/demo' })).toEqual([
+      { name: 'compact', description: 'Clear history but keep a summary' },
+      {
+        name: 'release-notes',
+        description: 'Write the release notes (invented)',
+        argumentHint: '<version>',
+      },
+    ]);
+    expect(h.queries[0]?.options.cwd).toBe('/work/demo');
+    expect(h.queries[0]?.closed).toBe(true);
+  });
+
   it('rejects an effort Claude does not know', async () => {
     const h = harness([]);
     await expect(h.adapter.send(startTurn({ effort: 'extreme' }))).rejects.toThrow(

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  HandOverResult,
   ApprovalDecision,
   ProviderAdapter,
   ProviderCommand,
@@ -338,6 +339,12 @@ export class CodexAdapter implements ProviderAdapter {
         return { appliesTo: 'nextTurn' };
       case 'listModels':
         return this.#listModels(await this.#connect());
+      // A message written during a turn waits for it to end (agent workbench spec 51), and Codex
+      // reports no slash commands of its own (spec 60).
+      case 'handOver':
+        return { taken: false } satisfies HandOverResult;
+      case 'listCommands':
+        return [];
       case 'test':
         return this.#test();
     }
