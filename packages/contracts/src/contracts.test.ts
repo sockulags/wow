@@ -927,3 +927,31 @@ describe('app assistant', () => {
     ).toEqual(['https://a.example.invalid', 'ada@example.invalid']);
   });
 });
+
+describe('page reads in the history', () => {
+  const pageRead = {
+    id: 'run:r1',
+    projectId: 'tea',
+    runId: 'r1',
+    host: 'confluence',
+    hostName: 'wiki.example.invalid',
+    pages: [],
+    fetchedAt: '2026-11-03T09:00:00.000Z',
+    error: null,
+  };
+
+  it('loads a pages.synced event from before, and one that only moves the times', () => {
+    for (const payload of [
+      { projectId: 'tea', reads: [pageRead] },
+      {
+        projectId: 'tea',
+        reads: [],
+        fetched: { at: '2026-11-03T09:10:00.000Z', ids: ['run:r1'] },
+      },
+    ]) {
+      expect(
+        DomainEvent.safeParse({ kind: 'pages.synced', aggregate: 'pages:tea', payload }).success,
+      ).toBe(true);
+    }
+  });
+});

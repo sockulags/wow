@@ -2,6 +2,7 @@ import {
   isEventTrigger,
   isLivePlanRunState,
   isLiveRunState,
+  touchPageRead,
   type DomainEvent,
   type Project,
   type ProviderUpdateRun,
@@ -156,7 +157,14 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           .run();
       }
       return ['ticketReads'];
-    case 'pages.synced':
+    case 'pages.synced': {
+      const { fetched } = event.payload;
+      for (const id of fetched?.ids ?? []) {
+        const stored = tx.select().from(pageReads).where(eq(pageReads.id, id)).get();
+        if (!stored || !fetched) continue;
+        const { fetchedAt, pages } = touchPageRead(stored, fetched.at);
+        tx.update(pageReads).set({ fetchedAt, pages }).where(eq(pageReads.id, id)).run();
+      }
       for (const read of event.payload.reads) {
         tx.insert(pageReads)
           .values(read)
@@ -164,6 +172,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           .run();
       }
       return ['pageReads'];
+    }
     case 'planRun.changed': {
       const { planRun } = event.payload;
       tx.insert(planRuns)

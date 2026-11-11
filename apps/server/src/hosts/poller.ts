@@ -880,6 +880,7 @@ export class HostPoller implements BackgroundService {
     const adapter: PageAdapter | undefined = config
       ? (this.#deps.confluenceAdapter ?? createConfluenceHost)(config, host.name, {
           timeoutMs: settings.get('trackers.requestTimeoutMs'),
+          pageMaxBytes: settings.get('hosts.pageMaxBytes'),
           longestWaitMs: settings.get('hosts.longestWaitMinutes') * 60_000,
           clock: this.#clock,
           ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),

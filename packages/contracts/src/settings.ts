@@ -1118,6 +1118,16 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'minutes',
   }),
+  'hosts.pageMaxBytes': defineSetting({
+    schema: z.number().int().min(1000).max(20_000_000),
+    group: 'hosts',
+    label: 'Largest Confluence page kept',
+    description:
+      'A Confluence page whose rendered body is larger than this is not stored; the Pages tab says so and links to the page on the host.',
+    default: 1_000_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
   'viewer.maxFileBytes': defineSetting({
     schema: z.number().int().min(1000).max(50_000_000),
     group: 'viewer',

@@ -689,11 +689,17 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     aggregate: Id,
     payload: z.object({ projectId: Id, reads: z.array(TicketRead) }),
   }),
-  // Page reads as they now are.
+  // Page reads as they now are. `fetched` names the reads whose host answered the same as last
+  // time: only their times move (touchPageRead), so unchanged page bodies are not written into
+  // the history again every round. Absent on events from before.
   z.object({
     kind: z.literal('pages.synced'),
     aggregate: Id,
-    payload: z.object({ projectId: Id, reads: z.array(PageRead) }),
+    payload: z.object({
+      projectId: Id,
+      reads: z.array(PageRead),
+      fetched: z.object({ at: Timestamp, ids: z.array(Id).min(1) }).optional(),
+    }),
   }),
   z.object({
     kind: z.literal('planRun.changed'),

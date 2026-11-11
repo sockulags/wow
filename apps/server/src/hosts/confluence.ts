@@ -1,4 +1,4 @@
-import type { JiraAuthMode, Page } from '@wow/contracts';
+import { settingsRegistry, type JiraAuthMode, type Page } from '@wow/contracts';
 import { jiraAuthorization } from '../trackers/jira.js';
 import {
   TrackerError,
@@ -31,7 +31,10 @@ export interface ConfluenceSignIn {
   readonly token: string;
 }
 
-export interface ConfluenceHostOptions extends RequestOptions, WaitOptions {}
+export interface ConfluenceHostOptions extends RequestOptions, WaitOptions {
+  // `hosts.pageMaxBytes`: a larger body is not kept.
+  readonly pageMaxBytes?: number;
+}
 
 // A link to a page on the Confluence site, as found in a text.
 export interface FoundPageLink {
@@ -114,6 +117,7 @@ export function createConfluenceHost(
   const bounded = waitBound(options);
   // A redirect (a sign-in page, another site) is turned down instead of followed with the token.
   const requestOptions: RequestOptions = { ...options, redirect: 'manual' };
+  const pageMaxBytes = options.pageMaxBytes ?? settingsRegistry['hosts.pageMaxBytes'].default;
   let requests = 0;
   let waitUntil: Date | undefined;
 
@@ -168,6 +172,15 @@ export function createConfluenceHost(
     }
     const version = field(field(content, 'version'), 'number');
     const webui = text(field(field(content, '_links'), 'webui'));
+    const body = text(field(field(field(content, 'body'), 'view'), 'value'));
+    const bytes = Buffer.byteLength(body, 'utf8');
+    if (bytes > pageMaxBytes) {
+      throw new MissingPage(
+        'failed',
+        `${name} answered ${described(page)} with ${bytes} bytes, more than the ${pageMaxBytes} wow keeps; open it on the host, or raise the limit in Settings → Hosts.`,
+        'hosts.pageMaxBytes',
+      );
+    }
     return {
       id: own,
       title: text(field(content, 'title')),
@@ -176,7 +189,7 @@ export function createConfluenceHost(
         typeof version === 'number' && Number.isSafeInteger(version) && version > 0
           ? version
           : null,
-      body: text(field(field(field(content, 'body'), 'view'), 'value')),
+      body,
       // The address is made from the stored site, never taken whole from the answer.
       url:
         hostLink(webui.startsWith('/') ? `${base}${webui}` : '') ??

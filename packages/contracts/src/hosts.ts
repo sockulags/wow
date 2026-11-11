@@ -254,6 +254,14 @@ export const PageRead = z.object({
 });
 export type PageRead = z.infer<typeof PageRead>;
 
+// A page read after a round in which the host answered just what it answered before: every page
+// and the read that had no error were fetched again at `at`, and nothing else changed.
+export const touchPageRead = (read: PageRead, at: string): PageRead => ({
+  ...read,
+  fetchedAt: read.error === null ? at : read.fetchedAt,
+  pages: read.pages.map((page) => (page.error === null ? { ...page, fetchedAt: at } : page)),
+});
+
 // One run's linked pages as one poll found them.
 export const PageReadOutcome = z.object({
   runId: Id,

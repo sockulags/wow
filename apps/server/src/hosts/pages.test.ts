@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { snapshot } from '../core/subscriptions.js';
-import { providerInstances } from '../db/schema.js';
+import { events, providerInstances } from '../db/schema.js';
 import { startServer, type RunningServer } from '../server.js';
 import { confluenceLinksIn, confluencePageOf } from './confluence.js';
 import { MockConfluence, type MockPage } from './mock-confluence.js';
@@ -427,6 +427,50 @@ describe('when Confluence refuses or does not answer (spec 31, 32)', () => {
     expect(gone?.error).toMatchObject({ kind: 'refused', setting: null });
     expect(gone?.error?.message).toContain('shows no page 123');
     expect(gone?.error?.message).toContain('may have been deleted or moved');
+    expect(kept).toMatchObject({ fetchedAt: now.toISOString(), error: null });
+    expect(pageRead()?.error).toBeNull();
+  });
+
+  it('writes a round that read the same pages as a time only, not the bodies again', async () => {
+    const synced = () =>
+      server.database.db
+        .select()
+        .from(events)
+        .all()
+        .filter((event) => event.kind === 'pages.synced');
+    const before = synced().length;
+    const stored = pageRead();
+    await server.hosts.poll();
+    const [round] = synced().slice(before);
+    expect(synced()).toHaveLength(before + 1);
+    expect(round?.payload).toEqual({
+      projectId: 'tea',
+      reads: [],
+      fetched: { at: now.toISOString(), ids: ['run:r1'] },
+    });
+    expect(JSON.stringify(round?.payload)).not.toContain('whistle');
+    expect(pageRead()).toEqual({
+      ...stored,
+      fetchedAt: now.toISOString(),
+      pages: stored?.pages.map((page) => ({ ...page, fetchedAt: now.toISOString() })),
+    });
+
+    // A page that changed is written whole again.
+    confluence.pages = [{ ...design, version: 5, body: '<p>New whistle.</p>' }, notes];
+    now = new Date('2026-11-03T09:20:00.000Z');
+    await server.hosts.poll();
+    expect(synced().at(-1)?.payload).toMatchObject({ reads: [{ id: 'run:r1' }] });
+    expect(pageRead()?.pages[0]?.page?.body).toBe('<p>New whistle.</p>');
+  });
+
+  it('keeps no page larger than hosts.pageMaxBytes and names that setting', async () => {
+    set('hosts.pageMaxBytes', 1000);
+    confluence.pages = [{ ...design, body: `<p>${'tea '.repeat(400)}</p>` }, notes];
+    await server.hosts.poll();
+    const [large, kept] = pageRead()?.pages ?? [];
+    expect(large?.page?.body).toBe(design.body);
+    expect(large?.error).toMatchObject({ kind: 'failed', setting: 'hosts.pageMaxBytes' });
+    expect(large?.error?.message).toContain('more than the 1000 wow keeps');
     expect(kept).toMatchObject({ fetchedAt: now.toISOString(), error: null });
     expect(pageRead()?.error).toBeNull();
   });

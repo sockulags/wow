@@ -498,7 +498,9 @@ palette ("Run: show changes" and so on) and in the address, so a reload shows th
   failing check names and review comments; the Jira ticket with key, summary, status, assignee,
   type and description; and the Confluence pages the ticket, the pull request or the intent link
   to. Each has a "Last fetched" line, **Refresh now** and **Open on host**. A tab with nothing to
-  show says why.
+  show says why. A page larger than `hosts.pageMaxBytes` (1,000,000 bytes by default) is not kept:
+  its line says so and points to that setting. A page Confluence no longer shows (deleted, moved
+  or restricted) says to check the link.
 
 ### Files in the side panel
 

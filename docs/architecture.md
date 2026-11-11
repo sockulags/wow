@@ -1055,7 +1055,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `trackers.jira.*`, `trackers.github.*`, `trackers.gitlab.*` and `trackers.confluence.*` ones
   are project-scoped, see "Backlog and trackers")
 - hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount`,
-  `hosts.longestWaitMinutes` (see "Hosts")
+  `hosts.longestWaitMinutes`, `hosts.pageMaxBytes` (see "Hosts")
 - triggers: `triggers.eventsEnabled`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
 - diff: `diff.maxFileBytes`, `diff.maxFiles` (the "Changes" page, see "Run base and changes")
@@ -1566,8 +1566,13 @@ the token works, so the link is what to check; a 429 with `Retry-After` leaves t
 timeout are `failed`, and after such a failure the site is not asked again that round. A project
 without the site gets a `notSetUp` read naming `trackers.confluence.baseUrl` for every live run;
 one without the token (or the email on Cloud) names that setting only for runs that link to a
-page. The round ends in one internal `pages.sync` command per project; `core/pages.ts` stores
-`page_reads` rows through `pages.synced` (topic `pageReads`). Each `PageLink` keeps its last page
+page. A body larger than `hosts.pageMaxBytes` (UTF-8 bytes) is not kept: that page fails
+(`failed`, naming the setting) and keeps its last body. The round ends in one internal
+`pages.sync` command per project; `core/pages.ts` stores `page_reads` rows through
+`pages.synced` (topic `pageReads`). A read whose host answered exactly what it answered before
+is not written again: the event names it in `fetched {at, ids}` and the projection moves only its
+times (`touchPageRead` in contracts), so unchanged bodies do not go into the history every round;
+events from before have no `fetched`. Each `PageLink` keeps its last page
 and time beside its own error; the row's `error` is what kept wow from asking or the round's
 first refusal or failure (a missing page is only the page's), and its `fetchedAt` the last round
 without one. The rows go with their project.
