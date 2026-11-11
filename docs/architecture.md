@@ -1396,7 +1396,8 @@ adapter.
 the tracker client's HTTP helper (`trackers/http.ts`) and the project's GitHub tracker settings
 as `trackers/resolve.ts` resolves them, so Enterprise Server is the same code under
 `https://<host>/api/v3`. A plan's pull requests are found with one search
-(`GET /search/issues?q="Intent-Unit: <intent-id>/" in:body is:pr repo:<owner>/<repo>`), and only
+(`GET /search/issues?q="<intent-id>" in:body is:pr repo:<owner>/<repo>`; not the whole phrase
+`Intent-Unit: <intent-id>/`, which a line in bold, underscores or quote marks does not hold), and only
 a body that really has an `Intent-Unit: <intent-id>/<unit-key>` line counts (every such line is
 taken, also as a list item, quoted with `>`, in bold, backticks or quote marks, or with
 punctuation or words after the key; `intentUnitLines`
@@ -1429,7 +1430,8 @@ the token in the `PRIVATE-TOKEN` header and nowhere else: GitLab requests do not
 (fetch would carry that header to another origin), and a 3xx answer is `failed` and asks to check
 the URL. Merge requests fill the role of pull
 requests: a plan's are found with one
-`GET /projects/<id>/merge_requests?state=all&search="Intent-Unit: <intent-id>/"&in=description`,
+`GET /projects/<id>/merge_requests?state=all&search=<intent-id>/&in=description` (the id, not the
+whole phrase, for the same reason as on GitHub),
 filtered to descriptions that really carry the line, falling back to the newest
 `hosts.listFallbackCount` when the search is turned down (400, 405, 422, 501); a run's is the
 newest with `source_branch=<branch>`. `iid` is the number, shown as `!12` (`changeRequestRef`,

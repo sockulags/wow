@@ -256,7 +256,9 @@ export function createGitLabHost(
       return waitUntil && waitUntil > short ? waitUntil : short;
     },
     async findForIntent(intentId) {
-      const search = encodeURIComponent(`Intent-Unit: ${intentId}/`);
+      // Only `<intent-id>/` is searched for: a line in bold, underscores or quote marks does not
+      // hold the phrase `Intent-Unit: <intent-id>/`, and the lines are read below.
+      const search = encodeURIComponent(`${intentId}/`);
       const all = await getOr(
         `${project}/merge_requests?state=all&search=${search}&in=description&order_by=created_at&sort=desc&per_page=${pageSize}`,
         noSearch,
@@ -266,7 +268,7 @@ export function createGitLabHost(
           ),
         (body) => list(body).flatMap((item) => found(item) ?? []),
       );
-      // The search matches words; only a description with the line itself counts.
+      // The search matches the id anywhere; only a description with the line itself counts.
       return all.filter((request) => request.units.some((unit) => unit.intentId === intentId));
     },
     async findForBranch(branch) {

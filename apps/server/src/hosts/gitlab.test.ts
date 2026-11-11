@@ -309,11 +309,34 @@ describe('a project on a GitLab host (spec 34)', () => {
     // One search, the nested path as one encoded id, and GitHub never asked.
     const searches = asked().filter((request) => request.includes('search='));
     expect(searches).toEqual([
-      `/projects/${encoded}/merge_requests?state=all&search=${encodeURIComponent(`Intent-Unit: ${intentId}/`)}&in=description&order_by=created_at&sort=desc&per_page=100`,
+      `/projects/${encoded}/merge_requests?state=all&search=${encodeURIComponent(`${intentId}/`)}&in=description&order_by=created_at&sort=desc&per_page=100`,
     ]);
     expect(asked().every((request) => request.startsWith(`/projects/${encoded}/`))).toBe(true);
     expect(github.requests).toEqual([]);
     expect(gitlab.requests.every((request) => request.token === TOKEN)).toBe(true);
+  });
+
+  it('finds a merge request whose line is in bold, underscores or quote marks', async () => {
+    gitlab.mergeRequests = [
+      { ...merged, description: `**Intent-Unit:** ${intentId}/U1` },
+      { ...open, description: `__Intent-Unit__: \`${intentId}/U2\`.` },
+      { ...open, iid: 16, branch: 'agent/U3-time', description: `Intent-Unit: "${intentId}/U3"` },
+      {
+        ...open,
+        iid: 18,
+        branch: 'agent/notes',
+        description: `Notes on ${intentId}/U4, no claim.`,
+      },
+    ];
+    await follow();
+    expect(asked().some((request) => request.includes('search='))).toBe(true);
+    expect(statuses()).toEqual({
+      U1: 'delivered',
+      U2: 'claimed',
+      U3: 'claimed',
+      U4: 'waiting',
+      U5: 'blocked',
+    });
   });
 
   it('reads the newest merge requests when the host turns the search down', async () => {

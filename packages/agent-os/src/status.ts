@@ -13,27 +13,36 @@ export interface UnitReference {
   readonly unitKey: string;
 }
 
+const trailingMarks = new Set('`*_"\'”’.,;:!?)]');
+
+function withoutTrailingMarks(text: string): string {
+  let end = text.length;
+  while (end > 0 && trailingMarks.has(text.charAt(end - 1))) end -= 1;
+  return text.slice(0, end);
+}
+
 // Every `Intent-Unit: <intent-id>/<unit-key>` line of a pull request body. A pull request that
 // delivers several units carries one line each. People write the line as a list item, quoted, in
 // bold, backticks or quote marks, or with a full stop or words after it; a claim that is missed
 // shows the unit as ready, so those still count.
 export function intentUnitLines(body: string): UnitReference[] {
   const found: UnitReference[] = [];
+  const seen = new Set<string>();
   for (const line of body.split(/\r?\n/)) {
+    // The intent id may not start with a character the marks before it can take, and the marks
+    // after the key are cut off without a regex: either overlap backtracks in time that grows with
+    // the square of a long line, and a pull request body is anyone's text.
     const match =
-      /^\s*(?:>\s*)*(?:[-*+]\s+)?[`*_"'“‘]*Intent-Unit[`*_]*:[\s`*_"'“‘]*([^\s/`*"'“‘]+)\/(\S+)(?:\s.*)?$/i.exec(
+      /^\s*(?:>\s*)*(?:[-*+]\s+)?[`*_"'“‘]*Intent-Unit[`*_]*:[\s`*_"'“‘]*([^\s/`*_"'“‘][^\s/`*"'“‘]*)\/(\S+)(?:\s.*)?$/i.exec(
         line,
       );
-    const unitKey = match?.[2]?.replace(/[`*_"'”’.,;:!?)\]]+$/, '');
+    const unitKey = match?.[2] === undefined ? undefined : withoutTrailingMarks(match[2]);
     if (!match?.[1] || !unitKey) continue;
-    const reference = { intentId: match[1], unitKey };
-    if (
-      !found.some(
-        (other) => other.intentId === reference.intentId && other.unitKey === reference.unitKey,
-      )
-    ) {
-      found.push(reference);
-    }
+    // The intent id holds no slash, so the joined pair names one reference.
+    const joined = `${match[1]}/${unitKey}`;
+    if (seen.has(joined)) continue;
+    seen.add(joined);
+    found.push({ intentId: match[1], unitKey });
   }
   return found;
 }

@@ -267,7 +267,9 @@ export function createGitHubHost(
       return waitUntil && waitUntil > short ? waitUntil : short;
     },
     async findForIntent(intentId) {
-      const query = `"Intent-Unit: ${intentId}/" in:body is:pr repo:${config.owner}/${config.repo}`;
+      // Only the intent id is searched for: a line in bold, underscores or quote marks does not
+      // hold the phrase `Intent-Unit: <intent-id>/`, and the lines are read below.
+      const query = `"${intentId}" in:body is:pr repo:${config.owner}/${config.repo}`;
       const all = await getOr(
         `${base}/search/issues?q=${encodeURIComponent(query)}&per_page=${pageSize}`,
         noSearch,
@@ -277,7 +279,7 @@ export function createGitHubHost(
           ),
         (body) => list(field(body, 'items')).flatMap((item) => found(item) ?? []),
       );
-      // The search matches words; only a body with the line itself counts.
+      // The search matches the id anywhere; only a body with the line itself counts.
       return all.filter((request) => request.units.some((unit) => unit.intentId === intentId));
     },
     async findForBranch(branch) {

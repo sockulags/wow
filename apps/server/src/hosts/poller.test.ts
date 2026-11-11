@@ -284,6 +284,24 @@ describe('unit status from pull requests (spec 23, 24, 26, 27)', () => {
     ]);
   });
 
+  it('finds a pull request whose line is in bold, underscores or quote marks', async () => {
+    host.pulls = [
+      { ...merged, body: `**Intent-Unit:** ${intentId}/U1` },
+      { ...open, body: `__Intent-Unit__: \`${intentId}/U2\`.` },
+      { ...open, number: 16, branch: 'agent/U3-time', body: `Intent-Unit: "${intentId}/U3"` },
+      { ...open, number: 18, branch: 'agent/notes', body: `Notes on ${intentId}/U4, no claim.` },
+    ];
+    await follow();
+    expect(asked().some((url) => url.startsWith('/search/'))).toBe(true);
+    expect(statuses()).toEqual({
+      U1: 'delivered',
+      U2: 'claimed',
+      U3: 'claimed',
+      U4: 'waiting',
+      U5: 'blocked',
+    });
+  });
+
   it('makes no unit of a stale plan ready and names the stale file', async () => {
     await writePlan({ 'spec.md': specMd(2) });
     await follow();
@@ -509,7 +527,7 @@ describe('what a poll asks (spec 29, 30)', () => {
     await follow();
     host.requests.length = 0;
     await server.hosts.poll();
-    const search = `/search/issues?q=${encodeURIComponent(`"Intent-Unit: ${intentId}/" in:body is:pr repo:acme/tea`)}&per_page=100`;
+    const search = `/search/issues?q=${encodeURIComponent(`"${intentId}" in:body is:pr repo:acme/tea`)}&per_page=100`;
     // The merged pull request is known and does not change, so it is not read again.
     expect(asked()).toEqual([
       search,

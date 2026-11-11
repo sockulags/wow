@@ -183,4 +183,26 @@ describe('Intent-Unit lines', () => {
       })),
     );
   });
+
+  // A body is anyone's text, and GitLab allows about a megabyte of it. Each line below made a
+  // regex backtrack in time that grows with the square of its length, which at this size runs
+  // for many minutes and so cannot finish inside the test's time limit.
+  it('reads a megabyte of marks that never make a line in one pass', () => {
+    const size = 1_000_000;
+    const hostile = [
+      `Intent-Unit:${'_'.repeat(size)}`,
+      `Intent-Unit: 2026-01-tea-timer/U1${'.'.repeat(size)}x`,
+      `Intent-Unit${'*'.repeat(size)}`,
+      `Intent-Unit: ${'`'.repeat(size)}`,
+      `${'> '.repeat(size / 2)}x`,
+    ];
+    expect(intentUnitLines(hostile.join('\n'))).toEqual([
+      { intentId: '2026-01-tea-timer', unitKey: `U1${'.'.repeat(size)}x` },
+    ]);
+    const lines = Array.from(
+      { length: size / 20 },
+      (_, index) => `Intent-Unit: 2026-01-tea-timer/U${index}`,
+    );
+    expect(intentUnitLines(lines.join('\n'))).toHaveLength(lines.length);
+  });
 });
