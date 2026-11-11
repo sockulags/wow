@@ -85,8 +85,10 @@ test.describe('first start', () => {
     await codex.getByRole('button', { name: 'Test' }).click();
     await expect(codex.getByRole('alert')).toHaveText(e2eFirstStartCodexError);
     await expect(codex.getByTestId('provider-status')).toHaveText('Error');
-    await page.reload();
+    // The gate stays up in this window; after a reload an install with an instance is not gated
+    // (an existing install is never locked out), and Assistant shows the same step.
     await expect(step(page).getByRole('heading', { name: 'Connect an agent' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Sections' })).toHaveCount(0);
 
     // One that passes opens the assistant, which greets with what is set up and what is missing.
     await claude.getByRole('button', { name: 'Test' }).click();
@@ -118,9 +120,10 @@ test.describe('first start', () => {
   test('a colleague starts from a setup file @app-assistant-22 @app-assistant-24', async ({
     page,
   }) => {
-    // As on a new machine: with the setting back on and no agent connected, the step is all
-    // there is again, at once and after a reload.
-    await page.goto('/settings/providers');
+    // As on a new machine: with the setting back on and no provider instance at all (the Codex
+    // one the first case made goes too), the step is all there is again, at once and after a
+    // reload.
+    await removeInstance(page, 'Codex');
     await page.getByRole('switch', { name: 'Offer setup at start' }).click();
     await expect(step(page).getByRole('heading', { name: 'Connect an agent' })).toBeVisible();
     await page.reload();
