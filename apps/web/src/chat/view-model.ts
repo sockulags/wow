@@ -10,6 +10,7 @@ import {
   type Skill,
   type Thread,
   type ThreadItem,
+  type Turn,
 } from '@wow/contracts';
 import { threadTitle } from './model';
 
@@ -129,8 +130,19 @@ export function starterSkills(skills: readonly Skill[], count: number): Skill[] 
 export const pendingApproval = (approvals: readonly Approval[]): Approval | undefined =>
   approvals.find((approval) => approval.decision === null);
 
-export const pendingQuestion = (questions: readonly Question[]): Question | undefined =>
-  questions.find((question) => question.answer === null);
+// Only a question of the running turn waits: once its turn ends it takes no answer (spec 5), and
+// the composer goes back to sending messages.
+export const pendingQuestion = (
+  questions: readonly Question[],
+  items: readonly ThreadItem[],
+  running: Turn | undefined,
+): Question | undefined => {
+  if (!running) return undefined;
+  const turnOf = new Map(items.map((item) => [item.id, item.turnId]));
+  return questions.find(
+    (question) => question.answer === null && turnOf.get(question.itemId) === running.id,
+  );
+};
 
 function lastText(items: readonly ThreadItem[], kind: ThreadItem['kind']): string | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1) {

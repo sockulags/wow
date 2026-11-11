@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
 import type { ComposerHandle } from '@/chat/composer';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
+import type { QuestionHold } from '@/chat/question-card';
 import { ThreadConversation } from '@/chat/thread-view';
 import { providerLabel } from '@/chat/view-model';
 import { Banner } from '@/components/banner';
@@ -239,6 +240,35 @@ export function AssistantView() {
       (id) => instances.find((entry) => entry.id === id)?.name,
     );
 
+  // Typed answers on a card go through the same check as a typed message (questions spec 10).
+  const questionHold: QuestionHold<Held> = {
+    check: (replies) => {
+      setSaved(undefined);
+      for (const reply of replies.values()) {
+        const found = holdOf(reply.text);
+        if (found) return found;
+      }
+      return null;
+    },
+    render: (current, controls) => (
+      <HeldLine
+        held={current}
+        onPut={
+          current.field
+            ? async (replaces) => {
+                const message = await storeHeld(current, replaces);
+                controls.replaceText((text) => withoutSecret(current, text));
+                controls.dismiss();
+                setSaved(message);
+              }
+            : undefined
+        }
+        onSend={controls.sendAnyway}
+        onDismiss={controls.dismiss}
+      />
+    ),
+  };
+
   const extraAfter = (item: ThreadItem): ReactNode => {
     const ask = askOf(item);
     const questions = askedQuestionsOf(item);
@@ -251,31 +281,8 @@ export function AssistantView() {
             item={item}
             request={questions}
             state={askState(item, items ?? [], turns ?? [])}
-            check={(replies) => {
-              setSaved(undefined);
-              for (const reply of replies.values()) {
-                const found = holdOf(reply.text);
-                if (found) return found;
-              }
-              return null;
-            }}
-            renderHold={(current, controls) => (
-              <HeldLine
-                held={current}
-                onPut={
-                  current.field
-                    ? async (replaces) => {
-                        const message = await storeHeld(current, replaces);
-                        controls.replaceText((text) => withoutSecret(current, text));
-                        controls.dismiss();
-                        setSaved(message);
-                      }
-                    : undefined
-                }
-                onSend={controls.sendAnyway}
-                onDismiss={controls.dismiss}
-              />
-            )}
+            check={questionHold.check}
+            renderHold={questionHold.render}
           />
         )}
         {ask?.kind === 'secretField' && <SecretFieldCard request={ask.request} guide={ask.guide} />}
@@ -366,6 +373,7 @@ export function AssistantView() {
             setHeld(found ?? undefined);
             return found === null;
           },
+          questionHold,
           notice,
         }}
       />

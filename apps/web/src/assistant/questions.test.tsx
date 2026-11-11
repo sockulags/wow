@@ -8,9 +8,11 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { RuntimeProvider } from '@/app/runtime';
+import { ChatQuestions } from '@/chat/items';
+import type { QuestionHold } from '@/chat/question-card';
 import { createTestRuntime } from '@/test/render';
 import { HeldLine } from './assistant-view';
-import { holdMessage } from './model';
+import { holdMessage, type Held } from './model';
 import { AssistantQuestions, askState } from './questions';
 
 // The assistant's questions in the Assistant view (questions-and-models plan U1, spec 9, 10).
@@ -75,6 +77,11 @@ describe('where the assistant asked (spec 9)', () => {
     });
     const other = item('other', 2, 'user', { text: 'Never mind' }, 1);
     expect(askState(ask, [ask, other], [turn(0, 'completed')])).toEqual({ kind: 'closed' });
+    // A stopped turn's questions take no answer (spec 5).
+    expect(askState(ask, [ask], [turn(0, 'interrupted')])).toEqual({
+      kind: 'closed',
+      stopped: true,
+    });
   });
 });
 
@@ -127,5 +134,75 @@ describe('a typed answer that looks like a secret (spec 10)', () => {
     await user.click(screen.getByRole('button', { name: 'Send anyway' }));
     expect(JSON.stringify(sent)).toContain('"type":"thread.answerQuestions"');
     expect(JSON.stringify(sent)).toContain(`"text":"use ${githubToken}"`);
+  });
+
+  it("is held the same way on an agent's question card in the Assistant conversation", async () => {
+    const user = userEvent.setup();
+    const sent: unknown[] = [];
+    const runtime = createTestRuntime();
+    const hold: QuestionHold<Held> = {
+      check: (replies) => {
+        for (const reply of replies.values()) {
+          const held = holdMessage(reply.text, defaultSecretPatterns, []);
+          if (held) return held;
+        }
+        return null;
+      },
+      render: (held, controls) => (
+        <HeldLine
+          held={held}
+          onPut={undefined}
+          onSend={controls.sendAnyway}
+          onDismiss={controls.dismiss}
+        />
+      ),
+    };
+    const asked = item(
+      'provider-question',
+      1,
+      'question',
+      {
+        questionId: 'assistant:q1',
+        question: 'Which kettle?',
+        options: [{ label: 'Glass kettle' }],
+        multiSelect: false,
+      },
+      0,
+    );
+    render(
+      <RuntimeProvider
+        runtime={{
+          ...runtime,
+          connection: {
+            request: (method: string, params: unknown) => {
+              sent.push({ method, params });
+              return Promise.resolve({ seqs: [] });
+            },
+            subscribe: () => () => undefined,
+          } as never,
+        }}
+      >
+        <ChatQuestions
+          items={[asked]}
+          questions={[
+            {
+              id: 'assistant:q1',
+              threadId: 'assistant',
+              itemId: 'provider-question',
+              request: {},
+              answer: null,
+              answeredAt: null,
+            },
+          ]}
+          turnEnded={false}
+          hold={hold}
+        />
+      </RuntimeProvider>,
+    );
+    await user.type(screen.getByRole('textbox', { name: 'Other' }), `use ${githubToken}{Enter}`);
+    expect(screen.getByTestId('held-message').textContent).toContain('Send anyway');
+    expect(sent).toEqual([]);
+    await user.click(screen.getByRole('button', { name: 'Send anyway' }));
+    expect(JSON.stringify(sent)).toContain('"type":"question.answer"');
   });
 });

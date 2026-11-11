@@ -2260,14 +2260,20 @@ text), `replyProblem` (empty, a label that is not offered, two picks on a single
   the line to the row and the reply into the item's payload (`QuestionItemPayload.reply`), which
   the card reads. Events and items from before the card have no `reply`, `header` or `askId`:
   the card shows the row's `answer` text and one card per question, as before. A waiting
-  question still makes the thread `needs_you`, so runs list a waiting step as before.
+  question still makes the thread `needs_you`, so runs list a waiting step as before. Only a
+  question of the running turn counts as open (`ReadModel.openRequests`, and the composer's
+  `pendingQuestion` in the web): one left when its turn ended keeps its row unanswered, shows
+  "Not answered", and holds up nothing.
 - **The assistant's questions.** `ask_questions` (see "Assistant") changes nothing; the view reads
   the call (`askedQuestionsOf` in `packages/contracts/src/asked.ts`: a call of
   `ask_questions` whose output says `asked`). The answer is the user's next message:
   `thread.answerQuestions {threadId, itemId, replies}` (only the assistant's thread; refused while
-  its turn runs, when a reply is missing or has a problem, and when a turn started after the
+  its turn runs, when a reply is missing or has a problem, when a turn started after the
   call's: "These questions were not answered before the next message, so they can no longer be
-  answered."). It starts a turn like `thread.sendMessage`, with `askAnswerText` as the user item's
+  answered.", and when the call's turn was stopped). The tool refuses a second ask while a turn
+  that already asked runs, so a turn has one card. That the turn ends at the ask rests on the
+  tool's note and the instruction text; the server does not stop the turn, and a card stays
+  "Answer when the assistant has finished its turn" until it ends. It starts a turn like `thread.sendMessage`, with `askAnswerText` as the user item's
   text, `TextItemPayload.answers {askItemId, replies}` on the item, and `askAnswerPrompt` ("[From
   wow] The user answered your questions (ask_questions) on the card: …") after wow's other notes
   in the prompt. The conversation shows such a user item as a short note, since the card shows

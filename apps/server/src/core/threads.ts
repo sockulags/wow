@@ -354,10 +354,18 @@ export function decideThread(
         );
       }
       // The next message ends the questions: answered, or left for something the user wrote.
-      if (read.lastTurn(stored.id)?.id !== item.turnId) {
+      const asked = read.lastTurn(stored.id);
+      if (asked?.id !== item.turnId) {
         throw new CommandRejected(
           'conflict',
           'These questions were not answered before the next message, so they can no longer be answered.',
+        );
+      }
+      // A stopped turn takes no answer, as an agent's question in a stopped turn (spec 5).
+      if (asked.state === 'interrupted') {
+        throw new CommandRejected(
+          'conflict',
+          'The turn that asked these questions was stopped, so they can no longer be answered.',
         );
       }
       if (command.replies.length !== ask.questions.length) {

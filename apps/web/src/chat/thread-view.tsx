@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
 import { Composer, type ComposerHandle } from './composer';
+import type { QuestionHold } from './question-card';
 import { useDispatch, useTopic } from './data';
 import {
   ChatQuestions,
@@ -262,6 +263,8 @@ export interface ConversationExtras {
   readonly placeholder?: string;
   readonly blockedReason?: string | undefined;
   beforeSend?(text: string): boolean;
+  // The same check for what is typed on an agent's question card.
+  readonly questionHold?: QuestionHold;
   readonly notice?: ReactNode;
 }
 
@@ -309,7 +312,7 @@ export function ThreadConversation({
   const message = (text: string) => send({ type: 'thread.sendMessage', threadId, text });
   const stop = () => void send({ type: 'thread.interrupt', threadId });
   const approval = pendingApproval(approvals);
-  const question = pendingQuestion(questions);
+  const question = pendingQuestion(questions, items ?? [], running);
   const gateRun = gateRunForThread(thread, runs);
   const context = latestContext(items ?? []);
   const retryText = lastUserMessage(items ?? []);
@@ -394,6 +397,7 @@ export function ThreadConversation({
                         items={entry.items}
                         questions={questions}
                         turnEnded={itemContext(entry.items[0]?.turnId ?? '', entry.id).turnEnded}
+                        hold={extras?.questionHold}
                       />
                     </li>
                   ) : (

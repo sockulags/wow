@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   notifications as notificationRows,
   providerInstances,
+  questions,
   skills,
   threadItems,
   threads,
@@ -385,6 +386,77 @@ describe('workflow runs', () => {
     expect(run().state).toBe('stopped');
     expect(adapters[0]?.sent.map((command) => command.type)).toEqual(['startTurn', 'interrupt']);
     expect(thread('r1.s1')?.state).toBe('failed');
+  });
+
+  it('lists the run as running while its step waits for an answer, and the answer resumes the step (questions spec 7)', async () => {
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'wf-ask',
+      name: 'Asking',
+      steps: [step('a')],
+    });
+    script = (command) => {
+      if (command.type === 'startTurn') {
+        return [
+          {
+            type: 'questionAsked',
+            threadId: command.threadId,
+            questionId: 'ask-1:0',
+            askId: 'ask-1',
+            header: 'Kettle',
+            question: 'Which kettle should the tea timer start?',
+            options: [{ label: 'Glass kettle' }, { label: 'Steel kettle' }],
+            multiSelect: false,
+          },
+        ];
+      }
+      if (command.type === 'answerQuestion') {
+        return [
+          { type: 'textDelta', threadId: 'r9.a', itemId: 'r9.a-b', delta: 'Glass it is.' },
+          { type: 'turnCompleted', threadId: 'r9.a' },
+        ];
+      }
+      return [];
+    };
+    const asked = new Promise<void>((resolve) => {
+      const check = () => {
+        if (thread('r9.a')?.state !== 'needs_you') return;
+        off();
+        resolve();
+      };
+      const off = server.engine.onCommit(check);
+    });
+    dispatch({ type: 'workflowRun.start', runId: 'r9', workflowId: 'wf-ask', projectId: 'p1' });
+    await asked;
+    // Where runs are listed the run is running, as with any step that waits for its thread; the
+    // step's thread is listed as needing you.
+    expect(run('r9')).toMatchObject({ state: 'running' });
+    expect(run('r9').steps[0]).toMatchObject({ state: 'running', threadId: 'r9.a' });
+    const [question] = server.database.db
+      .select()
+      .from(questions)
+      .where(eq(questions.threadId, 'r9.a'))
+      .all();
+    if (!question) throw new Error('no question');
+
+    dispatch({
+      type: 'question.answer',
+      answers: [
+        { questionId: question.id, reply: { picked: ['Glass kettle'], text: 'the clean one' } },
+      ],
+    });
+    expect(thread('r9.a')?.state).toBe('working');
+    const done = await runBecomes((current) => current.state === 'done', 'r9');
+    expect(done.steps[0]).toMatchObject({ state: 'done', finalMessage: 'Glass it is.' });
+    expect(
+      adapters
+        .flatMap((adapter) => adapter.sent)
+        .find((command) => command.type === 'answerQuestion'),
+    ).toEqual({
+      type: 'answerQuestion',
+      questionId: 'ask-1:0',
+      answer: { picked: ['Glass kettle'], text: 'the clean one' },
+    });
   });
 
   it('rejects runs that cannot start and step changes under a live run', async () => {

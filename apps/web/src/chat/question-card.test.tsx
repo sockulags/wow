@@ -168,6 +168,21 @@ describe('the keyboard and the palette (spec 4)', () => {
     ]);
   });
 
+  it('leaves the keys of a focused Send button to the button', async () => {
+    const user = userEvent.setup();
+    const { sent } = card([kettle]);
+    await user.click(screen.getByRole('radio', { name: /Glass kettle/ }));
+    const send = screen.getByRole('button', { name: /Send/ });
+    send.focus();
+    await user.keyboard('2x');
+    expect(screen.getByRole('radio', { name: /Glass kettle/ }).getAttribute('aria-checked')).toBe(
+      'true',
+    );
+    expect((screen.getByRole('textbox', { name: 'Other' }) as HTMLInputElement).value).toBe('');
+    await user.keyboard(' ');
+    expect(sent()).toEqual([{ kettle: { picked: ['Glass kettle'], text: '' } }]);
+  });
+
   it('offers going to the card, each choice, Other and send in the palette, acting on the card', async () => {
     const user = userEvent.setup();
     const { sent } = card([kettle, teas]);

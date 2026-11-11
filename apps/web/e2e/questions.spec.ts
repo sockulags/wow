@@ -45,7 +45,7 @@ async function startThread(page: Page, message: string) {
 test.describe('the question card in a chat thread', () => {
   test.beforeEach(({ page }) => serverInfo(page, e2eHome));
 
-  test('answer a question with a choice and with text in a chat thread @questions-1 @questions-2 @questions-3 @questions-4 @questions-6 @questions-7', async ({
+  test('answer a question with a choice and with text in a chat thread @questions-1 @questions-2 @questions-3 @questions-4 @questions-6', async ({
     page,
   }) => {
     await startThread(page, 'Ask me two questions');
@@ -108,6 +108,12 @@ test.describe('the question card in a chat thread', () => {
     await expect(card.getByRole('radio')).toHaveCount(0);
     await expect(card.getByRole('textbox')).toHaveCount(0);
     await expect(card.getByRole('button')).toHaveCount(0);
+    // The composer sends messages again, and the thread answers them.
+    await expect(composer(page)).toHaveAttribute('placeholder', /^(?!.*answer)/);
+    await composer(page).fill('Hello again');
+    await composer(page).press('Enter');
+    await expect(conversation(page).getByText('You said: Hello again')).toBeVisible();
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
     await page.reload();
     await expect(
       conversation(page).getByRole('region', { name: 'Question' }).getByTestId('question-closed'),

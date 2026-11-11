@@ -44,6 +44,13 @@ export interface HoldControls {
   dismiss(): void;
 }
 
+// A check that holds typed answers before they are sent, and what the card shows while it holds
+// them; the Assistant view gives one to every card in its conversation.
+export interface QuestionHold<H = unknown> {
+  check(replies: ReadonlyMap<string, QuestionReply>): H | null;
+  render(held: H, controls: HoldControls): ReactNode;
+}
+
 export interface QuestionCardProps<H> {
   readonly id: string;
   readonly questions: readonly CardQuestion[];
@@ -193,8 +200,9 @@ export function QuestionCard<H>({
       focusRow(active + (event.key === 'ArrowDown' ? 1 : -1));
       return;
     }
+    // A focused button (Send, a hold's choices) keeps its own keys.
+    if (event.target instanceof HTMLButtonElement) return;
     if (event.key === 'Enter') {
-      if (event.target instanceof HTMLButtonElement) return;
       event.preventDefault();
       send();
       return;

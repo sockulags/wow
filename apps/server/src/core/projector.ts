@@ -794,10 +794,19 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(approvals)
         .where(and(eq(approvals.threadId, threadId), isNull(approvals.decision)))
         .get()?.n ?? 0) +
+      // A question left when its turn ended takes no answer any more, so nothing waits on it.
       (tx
         .select({ n: count() })
         .from(questions)
-        .where(and(eq(questions.threadId, threadId), isNull(questions.answeredAt)))
+        .innerJoin(threadItems, eq(threadItems.id, questions.itemId))
+        .innerJoin(turns, eq(turns.id, threadItems.turnId))
+        .where(
+          and(
+            eq(questions.threadId, threadId),
+            isNull(questions.answeredAt),
+            eq(turns.state, 'running'),
+          ),
+        )
         .get()?.n ?? 0),
     calendarItem: (id) => tx.select().from(calendarItems).where(eq(calendarItems.id, id)).get(),
     cardOccurrences: (cardId) => readCardOccurrences(tx, cardId),

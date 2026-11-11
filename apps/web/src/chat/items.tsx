@@ -31,7 +31,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { errorMessage, useDispatch } from './data';
-import { QuestionCard, type CardQuestion, type QuestionStatus } from './question-card';
+import {
+  QuestionCard,
+  type CardQuestion,
+  type QuestionHold,
+  type QuestionStatus,
+} from './question-card';
 import { formatCost, formatTokens } from './model';
 import { failedToolCalls, formatElapsed } from './view-model';
 
@@ -342,10 +347,12 @@ export function ChatQuestions({
   items,
   questions,
   turnEnded,
+  hold,
 }: {
   items: readonly ThreadItem[];
   questions: readonly Question[];
   turnEnded: boolean;
+  hold?: QuestionHold | undefined;
 }) {
   const send = useDispatch();
   const asked = items.flatMap((item) => {
@@ -382,6 +389,7 @@ export function ChatQuestions({
           answers: [...replies].map(([questionId, reply]) => ({ questionId, reply })),
         })
       }
+      {...(hold ? { check: hold.check, renderHold: hold.render } : {})}
     />
   );
 }

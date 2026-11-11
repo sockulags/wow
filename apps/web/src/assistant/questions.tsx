@@ -19,7 +19,7 @@ import type { Held } from './model';
 export type AskState =
   | { readonly kind: 'open'; readonly waiting: boolean }
   | { readonly kind: 'answered'; readonly replies: readonly QuestionReply[] }
-  | { readonly kind: 'closed' };
+  | { readonly kind: 'closed'; readonly stopped?: boolean };
 
 // What the conversation says about one ask: the user message that answered it, else whether a
 // message came after it, else whether the assistant's turn still runs.
@@ -37,6 +37,8 @@ export function askState(
   }
   if (later.length > 0) return { kind: 'closed' };
   const turn = turns.find((entry) => entry.id === item.turnId);
+  // A stopped turn's questions take no answer (spec 5).
+  if (turn?.state === 'interrupted') return { kind: 'closed', stopped: true };
   return { kind: 'open', waiting: turn?.state === 'running' };
 }
 
@@ -71,7 +73,11 @@ export function AssistantQuestions({
     <QuestionCard
       id={item.id}
       questions={questions}
-      closedReason="a message was sent before an answer."
+      closedReason={
+        state.kind === 'closed' && state.stopped
+          ? 'the turn was stopped before an answer was sent.'
+          : 'a message was sent before an answer.'
+      }
       waitReason={
         state.kind === 'open' && state.waiting
           ? 'Answer when the assistant has finished its turn.'
