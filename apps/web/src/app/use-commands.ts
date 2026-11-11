@@ -10,6 +10,8 @@ import { validateCalendarSearch } from '@/calendar/search';
 import { chatCommands } from '@/chat/commands';
 import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
+import { activeSkillComposer, skillComposerStore } from '@/chat/composer-store';
+import { skillComposerCommands } from '@/chat/skill-commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
@@ -100,6 +102,7 @@ export function useCommands(gated = false): {
   const staticCommands = useMemo(() => buildCommands(), []);
   const connectShown = useStore(connectStore, (state) => state.shown > 0);
   const questionCard = useStore(questionStore, activeQuestionCard);
+  const skillComposer = useStore(skillComposerStore, activeSkillComposer);
   const all = useMemo(() => {
     const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
@@ -180,6 +183,7 @@ export function useCommands(gated = false): {
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
       }),
       ...questionCommands(questionCard),
+      ...skillComposerCommands(skillComposer),
       ...assistantCommands({
         changes: assistantChanges ?? [],
         proposals: assistantProposals ?? [],
@@ -244,6 +248,7 @@ export function useCommands(gated = false): {
     ruleAt,
     connectShown,
     questionCard,
+    skillComposer,
   ]);
   const commands = useMemo(
     () => (gated ? all.filter((command) => gateCommand(command.id)) : all),

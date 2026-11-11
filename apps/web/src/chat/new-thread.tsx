@@ -2,6 +2,7 @@ import {
   providerChatOptions,
   type ProviderInstance,
   type ProviderModel,
+  type SkillRef,
   type Thread,
 } from '@wow/contracts';
 import { Link, useNavigate } from '@tanstack/react-router';
@@ -86,6 +87,7 @@ export function NewThreadView() {
   const skills = useTopic('skills') ?? [];
   const backlog = useTopic('backlogItems') ?? [];
   const starterCount = useSetting('chat.starterCount');
+  const skillTrigger = useSetting('chat.skillTrigger');
   const picked = useStore(draft);
   const composer = useRef<ComposerHandle>(null);
   const [typingFolder, setTypingFolder] = useState(false);
@@ -150,7 +152,7 @@ export function NewThreadView() {
         ? 'Pick a model first'
         : undefined;
 
-  const start = async (text: string) => {
+  const start = async (text: string, chosen?: readonly SkillRef[]) => {
     if (!instance || !settings || blockedReason) throw new Error(blockedReason);
     const threadId = globalThis.crypto.randomUUID();
     await send({
@@ -159,10 +161,15 @@ export function NewThreadView() {
       providerInstanceId: instance.id,
       ...(project ? { projectId: project.id } : {}),
       cwd: cwd.trim(),
-      title: titleFromMessage(text),
+      title: titleFromMessage(text) || (chosen ?? []).map((skill) => skill.name).join(' '),
       ...settings,
     });
-    await send({ type: 'thread.sendMessage', threadId, text });
+    await send({
+      type: 'thread.sendMessage',
+      threadId,
+      text,
+      ...(chosen ? { skills: [...chosen] } : {}),
+    });
     draft.setState({ projectId: undefined, cwd: undefined, providerInstanceId: undefined });
     await navigate({ to: '/chat/$threadId', params: { threadId } });
   };
@@ -298,7 +305,7 @@ export function NewThreadView() {
           running={false}
           disabled={!instance}
           blockedReason={blockedReason}
-          placeholder="What should the agent do? Type $ to pick a skill."
+          placeholder={`What should the agent do? Type ${skillTrigger} to pick a skill.`}
           onSend={start}
         />
         {(starters.length > 0 || recentThread || openItems.length > 0) && (
@@ -311,9 +318,7 @@ export function NewThreadView() {
                     <Button
                       size="xs"
                       variant="outline"
-                      onClick={() =>
-                        composer.current?.setText(`${skill.invocations[instance.kind]} `)
-                      }
+                      onClick={() => composer.current?.addSkill(skill)}
                     >
                       {skill.name}
                     </Button>

@@ -582,13 +582,38 @@ and keeps invocations and the tail that follow each other on one line, as a step
 extra prompt always were. `promptShown` is the same without the texts: what the thread shows.
 
 Chat: `thread.sendMessage {threadId, text, skills?: SkillRef[]}` sends the skills in their order
-before the text, built-in ones filled with the project's verdict lines (no artifacts, no unit).
+before the text (`text` may be empty when there are skills), built-in ones filled with the project's verdict lines (no artifacts, no unit).
 A skill that is gone refuses the message with its name; the assistant thread takes no skills.
 
 Every user message item stores `TextItemPayload.skills?: SentSkill[]` (`{name, source, text?,
 invocation?, reason?}`): the text that was sent for a wow skill, the invocation for a folder
 skill, and why wow attached a built-in one. `text` is what the user typed, or for a step the
 prompt without the wow skills' texts. Older items have no `skills`.
+
+### Skills in the composer
+
+The composer (`apps/web/src/chat/composer.tsx`, wow skills spec 16 to 20) stays a plain text box
+with the picked skills held beside the text, not a rich editor: chips are a list in front of the
+text box (`ComposerSkillChip` in `chat/skill-chip.tsx`), so caret handling stays the browser's.
+The list opens only where an input event of type `insertText` typed `chat.skillTrigger` (global,
+default `/`) at the start of the text or after whitespace (`typedTrigger` in `chat/model.ts`);
+it stays open while the caret is in the word after it (`skillQuery`) and closes for good once the
+caret leaves. A paste, a path (`src/app`) or a date never opens it, and only a pick makes a chip:
+text is never parsed into chips. A pick takes the trigger and query out of the text
+(`withoutQuery`) and adds the `Skill`; `skillRefOf` names it on the wire as `SkillRef` (`source`
+for wow and own skills, `plugin:name` for a Claude plugin's skill). Backspace at caret 0 removes
+the last chip; ArrowLeft at caret 0 focuses the last chip, and on a chip the arrows move between
+chips and back to caret 0, Backspace or Delete remove it. `onSend(text, skills?)` gets the
+skills only when chips were picked, so `thread.sendMessage` carries `skills` and may have empty
+`text` (the server refuses a message with neither). A queued message keeps its chips. Retry
+sends the last user item's text and skills again (`lastUserSent`). A composer without
+`providerKind` (the Assistant view) takes no skills. The composer on screen that takes skills
+registers in `skillComposerStore` (`chat/composer-store.ts`), which feeds the palette's "Pick a
+skill for the message" (inserts the trigger at the caret) and "Remove skill <name> from the
+message" (`chat/skill-commands.ts`). A user item with `skills` draws them as `SentSkillChip`s
+above its text; each opens a popover with the text sent (or the invocation) and the reason for
+an attached built-in skill. Items without `skills` (older messages, `$name` in their text) are
+drawn as before. New-thread starters add their skill as a chip (`ComposerHandle.addSkill`).
 
 ## Workflow engine
 
@@ -1261,7 +1286,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
   `providers.offerSetup`
-- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.starterCount`
+- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.starterCount`,
+  `chat.skillTrigger`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.maxOccurrences` (see "Repeating cards"),
@@ -2177,7 +2203,7 @@ Assistant (the composer is blocked with the same sentence); with no thread yet i
 the sentence. The conversation is the chat view's `ThreadConversation` with
 `ConversationExtras` (`chat/thread-view.tsx`): rows after an item, rows at the end, the
 composer's ref, placeholder, blocked reason, a check before send and a notice line. Nothing of
-the chat view is copied. The `$` skill picker is off there. With `chat.groupToolCalls` on (the
+the chat view is copied. The skill list and chips are off there (no `providerKind`). With `chat.groupToolCalls` on (the
 default), `groupToolCalls` (`chat/view-model.ts`) draws consecutive tool calls of one turn as one
 row (`ToolCallGroup`): the latest call, the count and how many failed; any other item, a new turn,
 or a call that has rows after it (change rows, proposals, cards) ends the run. Its open state is
@@ -2478,9 +2504,9 @@ permission mode, and its project or folder; then the instance defaults. Folders 
 project (`recentFolders` over `threads`) and "Another folder…" (`Runtime.pickFolder`, a typed path
 in the browser build) replace a separate working-directory field. Starters under the composer come
 from `skills`, open `backlogItems` and the last active thread (`chat.starterCount`). The composer
-focuses on `/chat/new` and on opening a thread; its `$` picker is a cmdk `Command` with
+focuses on `/chat/new` and on opening a thread; its skill list is a cmdk `Command` with
 `shouldFilter={false}` whose selection the text box moves (focus stays in the text box), grouped by
-`skillGroup` (Project, User, Plugins). A message written while a turn runs is held in the composer
+`skillGroupOf` (see "Skills in the composer"). A message written while a turn runs is held in the composer
 and sent when `turns` says the turn ended; while a question waits, the composer sends
 `question.answer` with its text as the answer's typed text. Questions are drawn by the question
 card (see "Question card"). The working clock reads the running turn's `startedAt` and redraws each second;
