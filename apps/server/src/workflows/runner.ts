@@ -290,9 +290,13 @@ export class WorkflowRunner {
       step !== undefined &&
       (step.gateAfterCondition?.includes('checks') === true || ruleAsksAbout(step, 'checks'));
     const artifactsMissing: string[] = [];
-    if (step && folder !== undefined && asksArtifacts) {
+    if (step && asksArtifacts) {
       for (const glob of step.expectedArtifacts) {
-        if ((await this.#deps.detectArtifacts(folder, [glob])).length === 0) {
+        // With no folder to look in (the project is gone), nothing was found.
+        if (
+          folder === undefined ||
+          (await this.#deps.detectArtifacts(folder, [glob])).length === 0
+        ) {
           artifactsMissing.push(glob);
         }
       }

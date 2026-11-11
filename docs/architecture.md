@@ -541,8 +541,8 @@ When the step ends the engine judges them; no model does.
   taken off and nothing else is, so `- APPROVED`, `APPROVED.` or `approved` do not count.
 - `artifacts` holds when every one of the step's `expectedArtifacts` globs found a file. The
   runner looks for each glob on its own and reports the ones that found nothing
-  (`workflowRun.stepCompleted.artifactsMissing`). A step that names no expected artifacts fails
-  the part.
+  (`workflowRun.stepCompleted.artifactsMissing`); with no folder to look in (the project row is
+  gone) every glob found nothing. A step that names no expected artifacts fails the part.
 - `checks` holds when the run's pull request has every check successful, read from the host
   after the step ended (see below).
 
@@ -1446,7 +1446,8 @@ its step has most likely just pushed; later rounds ask about it like any live ru
 `hosts.sync` of each read decides the gate. The poller also keeps one timer for the earliest end
 of such a wait (`workflows.gateChecksTimeoutMinutes` after the step ended, for the run's
 project) and then sends `workflowRun.checkGate` (`checkGates()`; see "Gates that pass by
-themselves" under "Workflow engine"). Per project it resolves the GitHub settings and the
+themselves" under "Workflow engine"). At start it calls `checkGates()` once after the first
+reads, so a wait that ran out while the server was stopped ends even when no read is stored. Per project it resolves the GitHub settings and the
 folder's branch (`TrackerService.githubHost`; without a token nothing is asked and the reads
 say which setting is missing; the shared token goes only to a host the user chose, so when the
 API URL comes from the folder's git remote and is neither the stored `trackers.github.baseUrl`'s

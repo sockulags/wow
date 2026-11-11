@@ -193,6 +193,9 @@ export class HostPoller implements BackgroundService {
     );
     this.#seen = new Set(this.#scopeIds(this.#targets()));
     this.#gatesNoticed();
+    // A wait that ran out while the server was stopped gets no timer; the read above may store
+    // nothing that ends it.
+    this.#background(this.#enqueue(() => Promise.resolve(this.checkGates())));
     this.#background(this.poll());
     this.#schedule();
   }

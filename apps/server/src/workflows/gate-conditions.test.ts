@@ -11,10 +11,12 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CommandRejected } from '../core/orchestrator.js';
 import {
   notifications,
+  projects,
   providerInstances,
   threads,
   workflowRuns,
@@ -35,11 +37,14 @@ const bellBranch = 'agent/U2-bell';
 let root: string;
 let project: string;
 let server: RunningServer;
+let options: Parameters<typeof startServer>[0];
 let host: MockGitHub;
 let now: Date;
 // What the invented agent answers, by the skill its prompt starts with.
 let answers: Record<string, string>;
 let prompts: string[];
+// Runs as a turn starts, before it is answered.
+let onTurn: () => void;
 let timers: { callback: () => void; delayMs: number }[];
 const ceiling = process.env['GIT_CEILING_DIRECTORIES'];
 
@@ -199,11 +204,12 @@ beforeEach(async () => {
   now = new Date('2026-11-03T09:00:00.000Z');
   answers = { 'check-work': 'Looked at the bell.\n\nAPPROVED', wrap: 'Wrapped up.' };
   prompts = [];
+  onTurn = () => undefined;
   timers = [];
   host = new MockGitHub({ owner: 'acme', repo: 'tea', webUrl: 'https://ghe.example.invalid' });
   host.token = TOKEN;
   host.pulls = [checks(passed('test'))];
-  server = await startServer({
+  options = {
     home: path.join(root, 'wow home'),
     env: {},
     platform: 'linux',
@@ -227,6 +233,7 @@ beforeEach(async () => {
             if (command.type !== 'startTurn') return [];
             const { threadId, prompt } = command;
             prompts.push(prompt);
+            onTurn();
             const skill = Object.keys(answers).find((name) => prompt.startsWith(`/${name}`));
             // A message the test sends beside the run and that is never answered.
             if (prompt === 'hang') return [];
@@ -244,7 +251,8 @@ beforeEach(async () => {
           }),
       },
     },
-  });
+  };
+  server = await startServer(options);
   db().insert(providerInstances).values(instance).run();
   dispatch({ type: 'project.create', projectId: 'tea', name: 'Tea timer', cwd: project });
   set('trackers.github.baseUrl', api);
@@ -313,6 +321,23 @@ describe('the artifacts part through the runner (spec 54, 55)', () => {
     expect(gate()).toMatchObject({
       state: 'waitingForUser',
       parts: [{ part: 'artifacts', state: 'failed', detail: 'Nothing found for docs/*.md' }],
+    });
+  });
+
+  it('does not hold when the project row is gone at the step end, so nothing could be looked at', async () => {
+    await mkdir(path.join(project, 'docs'));
+    await writeFile(path.join(project, 'docs', 'bell.md'), '# Invented notes\n');
+    // The row goes while the step's turn is answered, before the runner looks for the files.
+    answers['check-work'] = 'Looked.';
+    onTurn = () => db().delete(projects).where(eq(projects.id, 'tea')).run();
+    createWorkflow(expecting);
+    await start();
+    expect(run().state).toBe('waiting');
+    expect(gate()).toMatchObject({
+      state: 'waitingForUser',
+      parts: [
+        { part: 'artifacts', state: 'failed', detail: 'Nothing found for docs/*.md, readme.md' },
+      ],
     });
   });
 
@@ -469,6 +494,27 @@ describe('the checks part (spec 54 to 56)', () => {
     host.pulls = [checks(passed('test'))];
     await poll();
     expect(gate()?.state).toBe('waitingForUser');
+  });
+
+  it('ends at start a wait that ran out while the server was stopped, even when no read is stored', async () => {
+    host.pulls = [checks(going('test'))];
+    createWorkflow({ gateAfterCondition: ['checks'] });
+    await start();
+    expect(gate()?.state).toBe('waitingForChecks');
+    // Its project's row is gone, so the read at start stores nothing for the run.
+    db().delete(projects).where(eq(projects.id, 'tea')).run();
+    await server.stop();
+
+    minutes(45);
+    server = await startServer(options);
+    await server.hosts.idle();
+    await settle();
+    expect(run().state).toBe('waiting');
+    expect(gate()).toMatchObject({
+      state: 'waitingForUser',
+      parts: [{ part: 'checks', state: 'failed' }],
+    });
+    expect(waitingNotices()).toHaveLength(1);
   });
 
   it("uses the project's own wait, and a poll after it also ends the wait", async () => {
