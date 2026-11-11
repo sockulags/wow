@@ -581,7 +581,9 @@ export function CardDialog({ cards }: { cards: readonly CalendarItem[] }) {
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && close()}>
+      {/* The Repeat section makes the form taller than a short window, so it scrolls. */}
       <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
         onCloseAutoFocus={(event) => {
           const target = returnFocus.current;
           returnFocus.current = null;
