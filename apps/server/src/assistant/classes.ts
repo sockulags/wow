@@ -269,6 +269,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'thread.answerQuestions': refused(
     'Only the user answers your questions, on their card. End your turn and wait for the answer.',
   ),
+  'thread.retry': chatOnly,
   'thread.interrupt': chatOnly,
   'thread.configure': chatOnly,
   'thread.setPinned': chatOnly,

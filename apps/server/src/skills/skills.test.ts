@@ -603,6 +603,31 @@ describe('built-in skills attached by themselves (spec 12, 13)', () => {
     ]);
   });
 
+  it("sends a step's thread its message again on Retry as the step sent it, not as chat skills", async () => {
+    const prompt = await startStep({}, true);
+    expect(prompt).toContain('Intent-Unit: demo/U2');
+    const sentBefore = (firstItem('r1.ship')?.payload as TextItemPayload).skills;
+    dispatch({ type: 'thread.retry', threadId: 'r1.ship' });
+    const prompts = startTurns()
+      .filter((turn) => turn.threadId === 'r1.ship')
+      .map((turn) => turn.prompt);
+    expect(prompts).toEqual([prompt, prompt]);
+    const items = server.database.db
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, 'r1.ship'))
+      .all()
+      .filter((item) => item.kind === 'user');
+    expect(items.map((item) => (item.payload as TextItemPayload).skills)).toEqual([
+      sentBefore,
+      sentBefore,
+    ]);
+    createThread('chat', 'claude-work');
+    expect(() => dispatch({ type: 'thread.retry', threadId: 'chat' })).toThrow(
+      "Only a workflow step's thread is retried this way",
+    );
+  });
+
   it('attaches nothing with the setting off, and keeps the sentences wow added before', async () => {
     dispatch({
       type: 'setting.set',

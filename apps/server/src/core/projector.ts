@@ -4,7 +4,8 @@ import {
   isLivePlanRunState,
   isLiveRunState,
   touchPageRead,
-  type DomainEvent,
+  DomainEvent,
+  TextItemPayload,
   type Project,
   type ProviderUpdateRun,
   type Skill,
@@ -22,6 +23,7 @@ import {
   calendarItems,
   cardOccurrences,
   changeRequests,
+  events,
   hostReads,
   ticketReads,
   pageReads,
@@ -790,6 +792,28 @@ export function readModel(tx: DbOrTx): ReadModel {
       tx.select().from(turns).where(eq(turns.threadId, threadId)).orderBy(desc(turns.index)).get(),
     turnCount: (threadId) =>
       tx.select({ n: count() }).from(turns).where(eq(turns.threadId, threadId)).get()?.n ?? 0,
+    // The prompt is only in the stored event, which says what the provider was sent.
+    lastSent: (threadId) => {
+      const started = tx
+        .select({ kind: events.kind, aggregate: events.aggregate, payload: events.payload })
+        .from(events)
+        .where(and(eq(events.kind, 'turn.started'), eq(events.aggregate, threadId)))
+        .orderBy(desc(events.seq))
+        .all();
+      for (const row of started) {
+        const event = DomainEvent.safeParse(row);
+        if (!event.success || event.data.kind !== 'turn.started') continue;
+        const { item, start } = event.data.payload;
+        if (item.kind !== 'user') continue;
+        const payload = TextItemPayload.safeParse(item.payload);
+        if (!payload.success) continue;
+        const { text, skills: sent } = payload.data;
+        if (text.trim() !== '' || (sent ?? []).length > 0) {
+          return { text, prompt: start.prompt, skills: sent };
+        }
+      }
+      return undefined;
+    },
     nextItemIndex: (threadId) => {
       const last = tx
         .select({ index: max(threadItems.index) })

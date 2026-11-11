@@ -654,7 +654,13 @@ names the skills. A run stored before (no `wowSkills`), or an engine context wit
 `skillFor`, keeps the old prompt: `invocationFor(step)`, the expected artifacts in the handover
 and the Intent-Unit line in the unit text. A step held while the user's own turn runs keeps its
 prompt (`heldPrompt`) with `heldShown` and `heldSkills`, and goes as `thread.sendPrepared` like
-any step's turn. A `workflows.unitPromptTemplate` stored before wow skills that spells out
+any step's turn. Retry in a step's thread (a thread with a `stepId`) sends `thread.retry
+{threadId}`: the orchestrator reads the thread's last `turn.started` whose user item has text or
+skills from the event store (the prompt is not projected) and starts a turn with the same text,
+prompt and skills, so a step's skills are not resolved again as chat skills; it is refused for
+any other thread, whose Retry sends `thread.sendMessage`. A sent chip of a Claude plugin skill
+(stored as `plugin:name`) shows `name` with the plugins mark, as the composer's chip does. A
+`workflows.unitPromptTemplate` stored before wow skills that spells out
 `Intent-Unit: {{intentId}}/{{unitKey}}` itself keeps the line; `wow-pull-request` then gets an
 empty `intentUnitLine`, so the line is still sent once.
 

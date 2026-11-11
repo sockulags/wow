@@ -100,6 +100,11 @@ export const skillGroup = (skill: Pick<Skill, 'source' | 'invocations'>): SkillG
 export const sentSkillGroup = (skill: SentSkill): SkillGroup =>
   skillGroupOf({ source: skill.source, invocations: { claude: skill.invocation ?? '' } });
 
+// The name a sent skill's chip shows: a plugin skill is named `plugin:name` when it is sent, but
+// shows its own name with the plugins mark, as in the composer.
+export const sentSkillName = (skill: SentSkill): string =>
+  sentSkillGroup(skill) === 'plugins' ? skill.name.slice(skill.name.indexOf(':') + 1) : skill.name;
+
 export const skillSourceLabels: Readonly<Record<Skill['source'], string>> = {
   'user-claude': 'Claude user skills',
   'user-codex': 'Codex user skills',

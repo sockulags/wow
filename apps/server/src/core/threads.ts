@@ -47,6 +47,7 @@ type ThreadCommand = Extract<
       | 'thread.greetAssistant'
       | 'thread.sendMessage'
       | 'thread.sendPrepared'
+      | 'thread.retry'
       | 'thread.answerQuestions'
       | 'thread.interrupt'
       | 'thread.configure'
@@ -367,6 +368,28 @@ export function decideThread(
           prompt: command.prompt,
           assistant: false,
           skills: command.skills,
+        }),
+      ];
+    }
+    case 'thread.retry': {
+      const thread = requireThread(read, command.threadId);
+      if (thread.stepId === null) {
+        throw new CommandRejected(
+          'rejected',
+          "Only a workflow step's thread is retried this way; send the message again instead.",
+        );
+      }
+      if (read.runningTurn(thread.id)) {
+        throw new CommandRejected('rejected', `Thread ${thread.id} already has a running turn`);
+      }
+      const sent = read.lastSent(thread.id);
+      if (!sent) throw new CommandRejected('rejected', 'This thread has no message to send again');
+      return [
+        turnStarted(read, thread, now, {
+          text: sent.text,
+          prompt: sent.prompt,
+          assistant: false,
+          skills: sent.skills,
         }),
       ];
     }

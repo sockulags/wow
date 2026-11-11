@@ -408,7 +408,8 @@ workflow step, its run says "Waiting for an answer" in the list of runs and in t
 While a turn runs, the thread shows how long it has been working. You can write the next message
 meanwhile: Enter queues it, and it is sent when the turn ends. **Send now** stops the turn and
 sends it; the cross puts it back in the composer. A failed turn shows **Retry** (sends your last
-message again) and **Resume** (sends `chat.resumePrompt`) in the error row.
+message again; in a workflow step's thread it sends the last message exactly as it went, the
+step's skills and their texts included) and **Resume** (sends `chat.resumePrompt`) in the error row.
 
 ### Skills
 

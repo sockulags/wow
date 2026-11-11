@@ -12,7 +12,7 @@ import {
 import type { KeyboardEvent, Ref } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { sentSkillGroup } from './view-model';
+import { sentSkillGroup, sentSkillName } from './view-model';
 
 // A picked skill shows as a chip: its name with a mark for its group (wow skills spec 17, 18).
 
@@ -79,29 +79,30 @@ export function ComposerSkillChip({
 // conversation names the skill without showing all of it (wow skills spec 14).
 export function SentSkillChip({ skill }: { skill: SentSkill }) {
   const group = sentSkillGroup(skill);
+  const name = sentSkillName(skill);
   return (
     <Popover>
       <PopoverTrigger asChild>
         <Badge asChild variant="secondary">
           <button
             type="button"
-            aria-label={chipName(skill.name, group)}
+            aria-label={chipName(name, group)}
             data-testid="skill-chip"
             className="cursor-pointer hover:bg-secondary/80"
           >
             <SkillMark group={group} />
-            <span className="font-mono">{skill.name}</span>
+            <span className="font-mono">{name}</span>
           </button>
         </Badge>
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        aria-label={`Skill ${skill.name}`}
+        aria-label={`Skill ${name}`}
         className="flex max-h-96 w-96 flex-col gap-2 overflow-y-auto text-xs"
       >
         <div className="flex items-center gap-1.5 font-medium">
           <SkillMark group={group} />
-          <span className="font-mono">{skill.name}</span>
+          <span className="font-mono">{name}</span>
           <span className="ml-auto font-normal text-muted-foreground">
             {skillGroupLabels[group]}
           </span>
