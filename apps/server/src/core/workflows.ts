@@ -330,23 +330,23 @@ function checksReading(
     return null;
   }
   const request = changeRequests.find((row) => hostRead.changeRequestIds.includes(row.id));
-  if (!request) return { state: 'noPullRequest', branch: hostRead.branch };
+  if (!request) return { state: 'noPullRequest', branch: hostRead.branch, host: hostRead.host };
   // Checks for another commit say nothing about what the step left: the host may not have seen
   // the push yet, or the step did not push. Wait for a read of this commit, or for the wait to
   // run out.
   if (typeof headSha === 'string' && request.headSha !== headSha) return null;
-  const { number } = request;
+  const { number, host } = request;
   const named = (state: 'success' | 'failure' | 'pending') =>
     request.checks.filter((check) => check.state === state).map((check) => check.name);
   switch (request.checkState) {
     case 'success':
-      return { state: 'success', number, checks: named('success') };
+      return { state: 'success', number, host, checks: named('success') };
     case 'failure':
-      return { state: 'failure', number, failing: named('failure') };
+      return { state: 'failure', number, host, failing: named('failure') };
     case 'pending':
-      return { state: 'pending', number, running: named('pending') };
+      return { state: 'pending', number, host, running: named('pending') };
     case 'none':
-      return { state: 'none', number };
+      return { state: 'none', number, host };
   }
 }
 

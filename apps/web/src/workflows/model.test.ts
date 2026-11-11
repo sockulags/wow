@@ -13,6 +13,7 @@ import {
   blocking,
   draftFromTemplate,
   draftOf,
+  eventSummary,
   gateMessage,
   gateOf,
   gateRunForThread,
@@ -255,6 +256,28 @@ const workflow: Workflow = {
 };
 
 describe('run view helpers', () => {
+  it('words what started an event run as its host does', () => {
+    const event = {
+      triggerId: 'tr1',
+      event: 'merged' as const,
+      changeRequestId: 'tea:12',
+      number: 12,
+      url: 'https://gitlab.example.invalid/tea/-/merge_requests/12',
+      branch: 'agent/U2-bell',
+      commentUrl: null,
+      commentAuthor: null,
+    };
+    expect(eventSummary({ ...event, headRef: 'refs/pull/12/head' })).toBe(
+      'pull request merged on pull request #12',
+    );
+    expect(eventSummary({ ...event, headRef: 'refs/merge-requests/12/head' })).toBe(
+      'merge request merged on merge request !12',
+    );
+    expect(
+      eventSummary({ ...event, event: 'checksFailed', headRef: 'refs/merge-requests/12/head' }),
+    ).toBe('checks failed on merge request !12');
+  });
+
   it('reads the gate the run waits at', () => {
     const after = gateOf(run());
     expect(after).toEqual({ stepIndex: 0, position: 'after' });

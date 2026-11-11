@@ -1,4 +1,4 @@
-import { triggerEventLabels, type RunEvent } from '@wow/contracts';
+import { runEventHost, triggerEventLabel, type RunEvent } from '@wow/contracts';
 
 // Renders the `workflows.handoverTemplate` setting. `{{name}}` is replaced by the value and
 // `{{#name}}…{{/name}}` is kept only when the value is not empty, so an unused part of the
@@ -40,7 +40,7 @@ export function eventValues(
 ): Pick<HandoverValues, keyof typeof noEvent> {
   if (!event) return noEvent;
   return {
-    event: triggerEventLabels[event.event].toLowerCase(),
+    event: triggerEventLabel(event.event, runEventHost(event)).toLowerCase(),
     pullRequestNumber: String(event.number),
     pullRequestUrl: event.url,
     pullRequestBranch: event.branch,

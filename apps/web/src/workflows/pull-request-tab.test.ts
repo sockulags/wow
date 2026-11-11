@@ -35,5 +35,8 @@ describe('the run’s pull request', () => {
     expect(emptyPullRequest(read({ changeRequestIds: [] }))).toBe(
       'No pull request has the branch agent/U2-bell as its head.',
     );
+    expect(emptyPullRequest(read({ host: 'gitlab', changeRequestIds: [] }))).toBe(
+      'No merge request has the branch agent/U2-bell as its head.',
+    );
   });
 });

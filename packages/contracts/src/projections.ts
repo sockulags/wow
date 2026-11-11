@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { HostKind } from './hosts.js';
 import {
   ApprovalDecision,
   ApprovalKind,
@@ -358,6 +359,15 @@ export const RunEvent = z.object({
   commentAuthor: z.string().nullable(),
 });
 export type RunEvent = z.infer<typeof RunEvent>;
+
+// The host a run's event came from, by the ref its head is fetched from: GitLab's merge
+// requests are `refs/merge-requests/<n>/head`. GitHub for runs from before refs were kept.
+export const runEventHost = (event: Pick<RunEvent, 'headRef'>): HostKind =>
+  event.headRef?.startsWith('refs/merge-requests/') ? 'gitlab' : 'github';
+
+// An event's label in the host's own words: a GitLab merge request is merged, not a pull request.
+export const triggerEventLabel = (event: TriggerEvent, host: HostKind): string =>
+  event === 'merged' && host === 'gitlab' ? 'Merge request merged' : triggerEventLabels[event];
 
 export const WorkflowRun = z.object({
   id: Id,

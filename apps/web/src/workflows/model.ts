@@ -1,13 +1,17 @@
 import {
   alwaysStops,
+  changeRequestName,
   GatePart,
   gatePartLabels,
   providerChatOptions,
   rulesForTemplate,
   rulesFromTemplate,
+  runEventHost,
+  triggerEventLabel,
   type GatePartResult,
   type ProviderInstance,
   type ProviderModel,
+  type RunEvent,
   type Skill,
   type StepRun,
   type StepRunState,
@@ -529,4 +533,12 @@ export function artifactPath(cwd: string, relative: string): string {
   const separator = windows ? '\\' : '/';
   const base = cwd.replace(/[\\/]+$/, '');
   return `${base}${separator}${relative.split('/').join(separator)}`;
+}
+
+// What started an event's run, in the host's words: "pull request merged on pull request #21",
+// "merge request merged on merge request !12".
+export function eventSummary(event: RunEvent): string {
+  const host = runEventHost(event);
+  const name = changeRequestName({ host, number: event.number });
+  return `${triggerEventLabel(event.event, host).toLowerCase()} on ${name.charAt(0).toLowerCase()}${name.slice(1)}`;
 }

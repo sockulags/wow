@@ -33,12 +33,13 @@ export function runPullRequest(
 // Why there is nothing to show, in the order the user can do something about it.
 export function emptyPullRequest(read: HostRead | undefined): string {
   if (!read) return 'The host has not been asked about this run yet.';
+  const noun = read.host === 'gitlab' ? 'merge request' : 'pull request';
   if (read.fetchedAt === null)
-    return 'The host could not be read, so this run has no pull request to show.';
+    return `The host could not be read, so this run has no ${noun} to show.`;
   if (read.branch === null) {
-    return 'The run’s folder is on no branch, so there is no pull request to look for.';
+    return `The run’s folder is on no branch, so there is no ${noun} to look for.`;
   }
-  return `No pull request has the branch ${read.branch} as its head.`;
+  return `No ${noun} has the branch ${read.branch} as its head.`;
 }
 
 export function PullRequestTab({ run }: { readonly run: WorkflowRun }) {

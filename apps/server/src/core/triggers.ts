@@ -1,7 +1,9 @@
 import {
+  changeRequestRef,
   isCardTrigger,
   isEventTrigger,
   isLiveRunState,
+  triggerEventLabel,
   triggerEventLabels,
   type AppNotification,
   type CalendarItem,
@@ -511,7 +513,7 @@ function fireEvent(
     aggregate: trigger.id,
     payload: { triggerId: trigger.id, eventId: happened.id, runId: startedRunId, at: context.now },
   });
-  const what = `${triggerEventLabels[trigger.event]} · #${request.number}`;
+  const what = `${triggerEventLabel(trigger.event, request.host)} · ${changeRequestRef(request)}`;
   const event: RunEvent = {
     triggerId: trigger.id,
     event: trigger.event,

@@ -1,4 +1,4 @@
-import { runFolder, triggerEventLabels, type StepRun, type WorkflowStep } from '@wow/contracts';
+import { runFolder, type StepRun, type WorkflowStep } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import {
   CalendarIcon,
@@ -32,6 +32,7 @@ import { TicketTab } from './ticket-tab';
 import { WorkingCopyLine } from './working-copy-line';
 import {
   attemptLabel,
+  eventSummary,
   gateOf,
   gateStanding,
   passedByItself,
@@ -298,8 +299,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
         </div>
         {run.event && (
           <p data-testid="run-event" className="text-xs text-muted-foreground">
-            Started by an event: {triggerEventLabels[run.event.event].toLowerCase()} on pull request
-            #{run.event.number}
+            Started by an event: {eventSummary(run.event)}
             {run.event.branch !== '' && (
               <>
                 {' '}

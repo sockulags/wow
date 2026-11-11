@@ -1451,7 +1451,9 @@ review comments, without GitLab's system notes, linked as `<merge request>#note_
 403 are `refused` and name `trackers.gitlab.token`, as does 404 on the project; a 429 with
 `Retry-After`, or `RateLimit-Remaining`/`RateLimit-Reset`, leaves the site alone like GitHub's
 limit; anything else and a timeout are `failed`. Unit status reasons say "Merge request !12 is
-merged". GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
+merged", and so do the gate's checks part (`ChecksReading.host`), an event run's line,
+notification and handover (`runEventHost`, `triggerEventLabel`) and the Pull request tab's empty
+text. GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
 GitLab the server tests and the e2e server share.
 
 **Poller** (`apps/server/src/hosts/poller.ts`, started with the scheduler and stopped right

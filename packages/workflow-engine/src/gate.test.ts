@@ -305,6 +305,21 @@ describe('the checks part', () => {
     ],
     ['no checks yet', { state: 'none', number: 14 }, 'Pull request #14 shows no checks yet'],
     [
+      'no checks yet on a GitLab merge request',
+      { state: 'none', number: 12, host: 'gitlab' },
+      'Merge request !12 shows no checks yet',
+    ],
+    [
+      'GitLab checks still running',
+      { state: 'pending', number: 12, host: 'gitlab', running: ['test'] },
+      'Checks of merge request !12 are still running: test',
+    ],
+    [
+      'no merge request',
+      { state: 'noPullRequest', branch: 'agent/U2-bell', host: 'gitlab' },
+      'No merge request found yet for branch agent/U2-bell',
+    ],
+    [
       'a host that did not answer',
       { state: 'unavailable', message: 'ghe.example.invalid did not answer' },
       'ghe.example.invalid did not answer',
