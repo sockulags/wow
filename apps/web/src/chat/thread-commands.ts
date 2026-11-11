@@ -26,6 +26,13 @@ export const threadListStore = createStore<ThreadListState>(() => ({
   focusRequest: 0,
 }));
 
+// The server's message-text hits for what is typed in the palette (spec 69), written by
+// `usePaletteThreadSearch`; `query` is empty while there are none.
+export const paletteThreadHits = createStore<{
+  readonly query: string;
+  readonly ids: ReadonlySet<string>;
+}>(() => ({ query: '', ids: new Set() }));
+
 export const isArchived = (thread: Pick<Thread, 'archived'>): boolean => thread.archived ?? false;
 export const isUnread = (thread: Pick<Thread, 'seen'>): boolean => thread.seen === false;
 
@@ -91,15 +98,22 @@ export interface ThreadCommandData {
   readonly openThread: Thread | undefined;
   // The chat view is open, so the list is on screen.
   readonly inChat: boolean;
+  // The project chip picked in the list.
+  readonly projectId?: string | undefined;
+  // The threads the server found for the palette's text by what was said in them.
+  readonly found?: { readonly query: string; readonly ids: ReadonlySet<string> } | undefined;
 }
 
 // Palette commands of the thread list: filter, rename, archive, mark unread, next unread, and
-// every thread by title and project, archived ones included.
+// the project chips, and every thread by title, project and (from the server) message text,
+// archived ones included.
 export function threadListCommands({
   threads,
   projects,
   openThread,
   inChat,
+  projectId,
+  found,
 }: ThreadCommandData): AppCommand[] {
   const commands: AppCommand[] = [
     {
@@ -114,6 +128,37 @@ export function threadListCommands({
       },
     },
   ];
+  // The same projects the list has chips for.
+  const chips = projects.filter((project) =>
+    threads.some((thread) => thread.projectId === project.id),
+  );
+  if (chips.length > 1) {
+    const showProject =
+      (id: string | undefined): AppCommand['run'] =>
+      ({ navigate }) => {
+        if (!inChat) void navigate({ to: '/chat' });
+        threadListStore.setState({ projectId: id });
+      };
+    for (const project of chips) {
+      if (project.id === projectId) continue;
+      commands.push({
+        id: `chat.threadsOf.${project.id}`,
+        title: `Show threads of ${project.name}`,
+        group: 'Chat',
+        keywords: ['project', 'chip', 'thread list', 'narrow'],
+        run: showProject(project.id),
+      });
+    }
+    if (projectId !== undefined) {
+      commands.push({
+        id: 'chat.threadsOfAll',
+        title: 'Show threads of all projects',
+        group: 'Chat',
+        keywords: ['project', 'chip', 'thread list'],
+        run: showProject(undefined),
+      });
+    }
+  }
   const next = nextUnread(listOrder(threads), openThread?.id);
   if (next) {
     commands.push({
@@ -190,6 +235,7 @@ export function threadListCommands({
       detail: `Thread · ${isArchived(thread) ? 'Archived' : state}`,
       needsYou: thread.state === 'needs_you' && !isArchived(thread),
       recentAt: thread.updatedAt,
+      ...(found && found.query !== '' && found.ids.has(thread.id) ? { foundBy: found.query } : {}),
       run: ({ navigate }) =>
         void navigate({ to: '/chat/$threadId', params: { threadId: thread.id } }),
     });

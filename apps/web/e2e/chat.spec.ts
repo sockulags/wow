@@ -522,6 +522,9 @@ test.describe('chat', () => {
     const palette = page.getByRole('dialog');
     await palette.getByRole('combobox').fill('whistle census');
     await expect(palette.getByRole('option', { name: /Kettle whistle census/ })).toBeVisible();
+    // The palette finds it by words only in a message too.
+    await palette.getByRole('combobox').fill('teapot minor');
+    await expect(palette.getByRole('option', { name: /Kettle whistle census/ })).toBeVisible();
     await palette.getByRole('combobox').fill('archive thread');
     await page.keyboard.press('Enter');
 
@@ -561,6 +564,10 @@ test.describe('chat', () => {
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/\/chat$/);
     await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    // Opening it again reads it.
+    await renamed.click();
+    await expect(page.getByRole('heading', { name: 'Kettle whistle census' })).toBeVisible();
+    await expect(renamed.getByTestId('thread-unread')).toHaveCount(0);
   });
 
   test('finds threads and actions in the palette', async ({ page }) => {

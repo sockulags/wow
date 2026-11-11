@@ -21,6 +21,11 @@ export function openDatabase(file: string): Database {
   const sqlite = new Sqlite(file);
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
+  // SQLite's lower() and LIKE fold ASCII letters only; the thread search needs "Über" to match
+  // "über" too.
+  sqlite.function('wow_lower', { deterministic: true }, (text: unknown) =>
+    typeof text === 'string' ? text.toLowerCase() : text,
+  );
   const db = drizzle({ client: sqlite, schema, casing: 'snake_case' });
   migrate(db, { migrationsFolder });
   return { db, sqlite, close: () => sqlite.close() };

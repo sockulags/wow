@@ -17,6 +17,7 @@ import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindi
 import { paletteScore, startList, displayTitle } from './palette-model';
 import { useLayout, useRuntime, useSetting } from './runtime';
 import { takePanelFocusRequest } from '@/panel/panel-state';
+import { usePaletteThreadSearch } from '@/chat/thread-search';
 import { sections } from './sections';
 
 const groupOrder: readonly Group[] = [
@@ -46,6 +47,7 @@ export function CommandPalette({
   const recentCount = useSetting('appearance.paletteRecent');
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [search, setSearch] = useState('');
+  usePaletteThreadSearch(open ? search : '');
   const setOpen = (paletteOpen: boolean) => {
     layout.setState({ paletteOpen });
     if (!paletteOpen) setSearch('');
@@ -88,7 +90,9 @@ export function CommandPalette({
     const binding = command.keybinding ? settingValue(values, command.keybinding) : undefined;
     return (
       <CommandItem
-        key={command.id}
+        // cmdk scores an item only when it mounts or the text changes, so one the server found
+        // after the text was typed mounts again to be scored.
+        key={command.foundBy === undefined ? command.id : `${command.id}\n${command.foundBy}`}
         value={command.id}
         keywords={[command.value ?? command.title]}
         onSelect={() => {

@@ -5,7 +5,8 @@ import { projects, threadItems, threads } from '../db/schema.js';
 // The thread list's filter and the palette (agent workbench spec 66, 69): a thread matches when
 // every typed word is in its title, its project's name or the text of one of its messages.
 // Archived threads are found too. Message text is searched in SQLite with LIKE, so a long
-// history is not loaded into memory; LIKE ignores case for ASCII letters only.
+// history is not loaded into memory; the text is lowered by `wow_lower` (database.ts), which folds
+// every letter, not only ASCII ones.
 
 const words = (query: string) => query.toLowerCase().split(/\s+/).filter(Boolean);
 
@@ -38,7 +39,7 @@ export function searchThreads(db: Db, query: string): string[] {
                 and(
                   inArray(threadItems.threadId, rest),
                   inArray(threadItems.kind, ['user', 'assistant_text']),
-                  sql`json_extract(${threadItems.payload}, '$.text') like ${likePattern(word)} escape '\\'`,
+                  sql`wow_lower(json_extract(${threadItems.payload}, '$.text')) like ${likePattern(word)} escape '\\'`,
                 ),
               )
               .all()

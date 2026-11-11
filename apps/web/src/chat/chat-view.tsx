@@ -1,4 +1,4 @@
-import { rpcMethods, type Thread } from '@wow/contracts';
+import type { Thread } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import { MessagesSquareIcon, PinIcon, PlusIcon, SearchIcon } from 'lucide-react';
@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import { useDispatch, useTopic } from './data';
 import { groupThreads } from './model';
 import { filteredThreads, isArchived, isUnread, threadListStore } from './thread-commands';
+import { useThreadSearch } from './thread-search';
 import { stateDotClass } from './thread-view';
 import { listTitle } from './view-model';
 
@@ -27,33 +28,10 @@ const baseName = (path: string) =>
     .split(/[\\/]/)
     .at(-1) || path;
 
-// The server's answer to `threads.search` for the filter as typed, or undefined while none
-// arrived for it yet.
-function useMessageHits(filter: string): ReadonlySet<string> | undefined {
-  const { connection } = useRuntime();
-  const [answer, setAnswer] = useState<{ query: string; ids: ReadonlySet<string> }>();
-  const query = filter.trim();
-  useEffect(() => {
-    if (!connection || query === '') return undefined;
-    let current = true;
-    connection.request('threads.search', { query }).then(
-      (result) => {
-        if (!current) return;
-        const { threadIds } = rpcMethods['threads.search'].result.parse(result);
-        setAnswer({ query, ids: new Set(threadIds) });
-      },
-      () => undefined,
-    );
-    return () => {
-      current = false;
-    };
-  }, [connection, query]);
-  return answer?.query === query ? answer.ids : undefined;
-}
-
 // The open thread is read as soon as it is on screen in a focused window, and again whenever a
 // turn ends or a request arrives while it is (spec 70). "Mark unread" changes neither, so it
-// stays unread until the thread is opened again.
+// stays unread while the thread stays open; leaving the thread forgets what was handled, so
+// opening it again reads it.
 function useMarkSeen(threads: readonly Thread[] | undefined) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const send = useDispatch();
@@ -74,7 +52,11 @@ function useMarkSeen(threads: readonly Thread[] | undefined) {
   const mark = thread ? `${thread.id}@${thread.updatedAt}` : undefined;
   const unread = thread !== undefined && isUnread(thread);
   useEffect(() => {
-    if (!focused || mark === undefined || handled.current === mark) return;
+    if (mark === undefined) {
+      handled.current = undefined;
+      return;
+    }
+    if (!focused || handled.current === mark) return;
     handled.current = mark;
     if (unread && openId)
       void send({ type: 'thread.markSeen', threadId: openId }).catch(() => undefined);
@@ -95,7 +77,7 @@ function ThreadList() {
   const focusRequest = useStore(threadListStore, (state) => state.focusRequest);
   const filterField = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const hits = useMessageHits(filter);
+  const { hits, error: searchError } = useThreadSearch(filter);
   useMarkSeen(threads);
   useEffect(() => {
     if (focusRequest === 0) return;
@@ -184,6 +166,15 @@ function ThreadList() {
             className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2"
           />
         </div>
+        {searchError && (
+          <p
+            role="alert"
+            data-testid="thread-search-error"
+            className="px-1 text-2xs text-state-failed"
+          >
+            Messages could not be searched: {searchError}
+          </p>
+        )}
         {chips.length > 1 && (
           <ToggleGroup
             type="single"

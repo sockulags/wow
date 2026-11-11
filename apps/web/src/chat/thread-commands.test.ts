@@ -3,6 +3,7 @@ import type { Connection } from '@wow/client-runtime';
 import { describe, expect, it, vi } from 'vitest';
 import type { CommandContext } from '@/app/commands';
 import { worksInTextFields } from '@/app/keybindings';
+import { paletteScore } from '@/app/palette-model';
 import { onScreen, openThreadOf } from '@/app/notifications';
 import {
   filteredThreads,
@@ -196,6 +197,63 @@ describe('palette commands of the thread list (spec 67 to 69)', () => {
         (command) => command.id,
       ),
     ).toContain('chat.unarchiveThread');
+  });
+
+  it('narrows the list to a project from the palette, and back to all projects', () => {
+    const { navigate, context: ctx } = context();
+    const twoProjects = [
+      ...projects,
+      { id: 'p-tea', name: 'Tea' },
+      { id: 'p-empty', name: 'Empty' },
+    ];
+    const listed = [...threads, thread('Steep', { projectId: 'p-tea' })];
+    const first = threadListCommands({
+      threads: listed,
+      projects: twoProjects,
+      openThread: undefined,
+      inChat: false,
+    });
+    // A project without a thread has no chip, so no command either.
+    expect(
+      first.filter((command) => command.id.startsWith('chat.threadsOf')).map((c) => c.title),
+    ).toEqual(['Show threads of Garden', 'Show threads of Tea']);
+    first.find((command) => command.id === 'chat.threadsOf.p-tea')?.run(ctx);
+    expect(navigate).toHaveBeenCalledWith({ to: '/chat' });
+    expect(threadListStore.getState().projectId).toBe('p-tea');
+    const narrowed = threadListCommands({
+      threads: listed,
+      projects: twoProjects,
+      openThread: undefined,
+      inChat: true,
+      projectId: 'p-tea',
+    });
+    expect(narrowed.map((command) => command.id)).not.toContain('chat.threadsOf.p-tea');
+    narrowed.find((command) => command.id === 'chat.threadsOfAll')?.run(ctx);
+    expect(threadListStore.getState().projectId).toBeUndefined();
+    expect(
+      threadListCommands({ threads, projects, openThread: undefined, inChat: true }).map(
+        (command) => command.id,
+      ),
+    ).not.toContain('chat.threadsOfAll');
+  });
+
+  it('finds a thread by a word only in its messages for the text the server searched', () => {
+    const commands = threadListCommands({
+      threads,
+      projects,
+      openThread: undefined,
+      inChat: false,
+      found: { query: 'teapot dawn', ids: new Set(['Old musings']) },
+    });
+    const musings = commands.find((command) => command.id === 'thread.Old musings');
+    const kettle = commands.find((command) => command.id === 'thread.Kettle timer');
+    expect(musings && paletteScore(musings, ' Teapot  dawn ')).toBeGreaterThan(0);
+    expect(musings && paletteScore(musings, 'teapot')).toBe(0);
+    expect(kettle && paletteScore(kettle, 'teapot dawn')).toBe(0);
+    // A match in the command's own words still ranks above one found in messages.
+    expect(musings && paletteScore(musings, 'old')).toBeGreaterThan(
+      (musings && paletteScore(musings, 'teapot dawn')) ?? 1,
+    );
   });
 
   it('focuses the filter from anywhere, opening the chat first', () => {

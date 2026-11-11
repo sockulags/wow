@@ -51,6 +51,9 @@ export interface AppCommand {
   readonly recentAt?: string;
   // Only listed once the user types (old cards, every settings page).
   readonly searchOnly?: boolean;
+  // The palette text the server found this for by something other than its words here (a thread
+  // whose messages hold the typed words); it matches that text.
+  readonly foundBy?: string;
   run(context: CommandContext): void;
 }
 

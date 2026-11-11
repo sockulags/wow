@@ -2,7 +2,7 @@ import type { Approval, ApprovalDecision, Project, ProviderInstance, Thread } fr
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
 import { canMarkDone } from './model';
-import { threadListCommands } from './thread-commands';
+import { threadListCommands, type ThreadCommandData } from './thread-commands';
 import { providerLabel } from './view-model';
 
 export interface ChatCommandData {
@@ -16,6 +16,8 @@ export interface ChatCommandData {
   // The chat view is open: its contextual commands (switch provider) only exist there.
   readonly inChat?: boolean;
   readonly projects?: readonly Project[];
+  // The thread list's project chip and the palette's message-text hits.
+  readonly threadList?: Pick<ThreadCommandData, 'projectId' | 'found'>;
 }
 
 const approvalCommands: ReadonlyArray<{
@@ -42,6 +44,7 @@ export function chatCommands({
   approval,
   inChat = openThread !== undefined,
   projects = [],
+  threadList,
 }: ChatCommandData): AppCommand[] {
   const commands: AppCommand[] = [
     {
@@ -158,6 +161,8 @@ export function chatCommands({
       projects,
       openThread,
       inChat: inChat || openThread !== undefined,
+      projectId: threadList?.projectId,
+      found: threadList?.found,
     }),
   );
   return commands;

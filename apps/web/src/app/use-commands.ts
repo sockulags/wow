@@ -12,6 +12,7 @@ import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
 import { activeSkillComposer, skillComposerStore } from '@/chat/composer-store';
 import { skillComposerCommands } from '@/chat/skill-commands';
+import { paletteThreadHits, threadListStore } from '@/chat/thread-commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
@@ -102,6 +103,8 @@ export function useCommands(gated = false): {
   const ruleBuilder = useStore(rulesStore, (state) => state.builder);
   const ruleAt = useStore(rulesStore, (state) => state.at);
   const staticCommands = useMemo(() => buildCommands(), []);
+  const listProjectId = useStore(threadListStore, (state) => state.projectId);
+  const paletteHits = useStore(paletteThreadHits);
   const connectShown = useStore(connectStore, (state) => state.shown > 0);
   const questionCard = useStore(questionStore, activeQuestionCard);
   const skillComposer = useStore(skillComposerStore, activeSkillComposer);
@@ -139,6 +142,7 @@ export function useCommands(gated = false): {
         approval: pendingApproval(approvals ?? []),
         inChat: pathname.startsWith('/chat'),
         projects: projects ?? [],
+        threadList: { projectId: listProjectId, found: paletteHits },
       }),
       ...workflowCommands({
         workflows: workflows ?? [],
@@ -254,6 +258,8 @@ export function useCommands(gated = false): {
     connectShown,
     questionCard,
     skillComposer,
+    listProjectId,
+    paletteHits,
   ]);
   const commands = useMemo(
     () => (gated ? all.filter((command) => gateCommand(command.id)) : all),

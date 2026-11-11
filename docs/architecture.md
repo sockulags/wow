@@ -2711,14 +2711,22 @@ The list has a filter field on top (`keybindings.threadFilter`, Ctrl+Shift+F any
 more than one project, a chip per project. The filter matches titles and project names in the
 app at once and asks the server `threads.search` (`core/thread-search.ts`) for the rest: every
 typed word must be in the title, the project's name or the text of a user or assistant message,
-which SQLite searches with `LIKE` (case is ignored for ASCII letters only). Archived threads
+which SQLite searches with `LIKE` over `wow_lower(text)`, a function `openDatabase` registers
+so case is ignored for every letter, not only ASCII ones. The question is asked again when the
+threads topic changes or the connection opens again, and a failed search says so under the
+field (`chat/thread-search.ts`). Archived threads
 show only for a filter, marked "Archived". Arrow keys move between rows, Enter opens one, and
 Enter in the filter opens the first. The list's state (filter, chip, which title is being
 edited, a focus request) is a zustand store in `chat/thread-commands.ts`, beside the palette
 commands Filter threads, Rename thread (`keybindings.renameThread`, F2, which like every
 function key also works in a text field), Archive thread or Unarchive thread, Mark unread and
-Next unread thread (`keybindings.nextBoldThread`, Alt+Shift+Down). The palette's thread entries
-carry the project name as a keyword and say "Archived" for an archived thread. The header's
+Next unread thread (`keybindings.nextBoldThread`, Alt+Shift+Down), and, while there are chips,
+"Show threads of <project>" and "Show threads of all projects". The palette's thread entries
+carry the project name as a keyword and say "Archived" for an archived thread. The palette asks
+`threads.search` for its text as well (`usePaletteThreadSearch`, into the `paletteThreadHits`
+store): a thread found there gets `foundBy` (the text), which `paletteScore` matches below any
+match in the command's own words; such an item gets a new React key, since cmdk scores an item
+only when it mounts or the text changes. The header's
 title (`chat/thread-title.tsx`) is a button that edits it.
 
 `thread.rename {threadId, title}` stores `thread.renamed` (an empty title is refused);
@@ -2728,8 +2736,9 @@ thread, which belongs to its run; there is no delete. `thread.markSeen` and
 keeps its order. The server sets `seen` false itself when a turn ends or a thread starts to need
 the user (an approval or a question), for every thread but the assistant's. The web app sends
 `thread.markSeen` when the open thread is on screen in a focused window and is unread, once per
-`updatedAt`: so a turn ending while the user watches leaves it read, and "Mark unread" (which
-then leaves for `/chat`) keeps it bold until the thread is opened again. Unread rows are bold
+`updatedAt` while it stays open: so a turn ending while the user watches leaves it read, and
+"Mark unread" (which then leaves for `/chat`) keeps it bold until the thread is opened again;
+leaving the thread forgets the handled `updatedAt`, so opening it again reads it. Unread rows are bold
 with a dot.
 
 Chat notifications are stored by the server in the same `decideProviderEvents` pass, for

@@ -253,4 +253,13 @@ describe('the thread list (spec 67 to 70)', () => {
     expect(searchThreads(database.db, 'kettle_')).toEqual(['t3']);
     expect(searchThreads(database.db, 'e%l')).toEqual([]);
   });
+
+  it('matches a capital letter outside ASCII in a message whatever the case typed', () => {
+    create('t4', 'Notes');
+    dispatch({ type: 'thread.sendMessage', threadId: 't4', text: 'Über den Tee mit Émile' });
+
+    expect(searchThreads(database.db, 'über')).toEqual(['t4']);
+    expect(searchThreads(database.db, 'ÜBER')).toEqual(['t4']);
+    expect(searchThreads(database.db, 'émile')).toEqual(['t4']);
+  });
 });
