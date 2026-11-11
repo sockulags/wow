@@ -30,6 +30,10 @@ export function runPullRequest(
   return id === undefined ? undefined : requests.find((request) => request.id === id);
 }
 
+// The tab's name: GitLab calls it a merge request.
+export const pullRequestTabLabel = (read: HostRead | undefined): string =>
+  read?.host === 'gitlab' ? 'Merge request' : 'Pull request';
+
 // Why there is nothing to show, in the order the user can do something about it.
 export function emptyPullRequest(read: HostRead | undefined): string {
   if (!read) return 'The host has not been asked about this run yet.';

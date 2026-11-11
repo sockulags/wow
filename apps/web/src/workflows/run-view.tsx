@@ -20,11 +20,12 @@ import { isBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
 import { useContextPanelShown } from '@/panel/panel-state';
 import { shownFile } from '@/panel/viewer';
+import { runRead } from '@/plans/model';
 import { Artifact } from './artifact-link';
 import { runTabs, type RunSearch } from './changes';
 import { ChangesTab } from './changes-tab';
 import { GateBar } from './gate-bar';
-import { PullRequestTab } from './pull-request-tab';
+import { PullRequestTab, pullRequestTabLabel } from './pull-request-tab';
 import { PagesTab } from './pages-tab';
 import { PathTab } from './path-tab';
 import { ArtifactsTab } from './review-tabs';
@@ -192,6 +193,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
   const instances = useTopic('providerInstances') ?? [];
   const cards = useTopic('calendarItems') ?? [];
   const backlog = useTopic('backlogItems') ?? [];
+  const hostReads = useTopic('hostReads') ?? [];
   const { when, zone } = useDateFormat();
   const [error, setError] = useState<string>();
 
@@ -248,6 +250,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
   const item = backlog.find((candidate) => candidate.id === run.backlogItemId);
   const gate = gateOf(run);
   const tab = search.tab ?? 'steps';
+  const pullRequestLabel = pullRequestTabLabel(runRead(hostReads, run.id));
   // The panel's conversation carries the gate bar; without it (closed, or showing a file) the
   // answers stay reachable here.
   const gateInPanel = gate !== undefined && panelShown && !fileInPanel;
@@ -345,7 +348,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
                 search={id === 'steps' ? {} : { tab: id }}
                 replace
               >
-                {label}
+                {id === 'pullRequest' ? pullRequestLabel : label}
               </Link>
             </Button>
           ))}
@@ -364,7 +367,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
           <ArtifactsTab run={run} workflow={workflow} project={project} />
         </div>
       ) : tab === 'pullRequest' ? (
-        <div role="tabpanel" aria-label="Pull request" className="min-h-0 flex-1">
+        <div role="tabpanel" aria-label={pullRequestLabel} className="min-h-0 flex-1">
           <PullRequestTab run={run} />
         </div>
       ) : tab === 'ticket' ? (

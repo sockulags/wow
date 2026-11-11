@@ -118,31 +118,41 @@ export const hostLink = (value: unknown): string | null => {
   return protocol === 'https:' || protocol === 'http:' ? value : null;
 };
 
-// An address ends at a bracket it did not open: `(https://…/Plan+(draft))` keeps `(draft)` but
-// not the markdown link's own closing bracket.
-function balanced(candidate: string): string {
-  let round = 0;
-  let square = 0;
-  for (let index = 0; index < candidate.length; index += 1) {
-    const char = candidate[index];
-    if (char === '(') round += 1;
-    else if (char === '[') square += 1;
-    else if (char === ')' && (round -= 1) < 0) return candidate.slice(0, index);
-    else if (char === ']' && (square -= 1) < 0) return candidate.slice(0, index);
-  }
-  return candidate;
-}
+// What ends a web address in a text, besides a bracket it did not open.
+const addressStop = new Set('<>"\'`{}|\\^');
+const sentenceEnd = new Set('.,;:!?*_~');
 
 // Every web address written in a text (markdown, wiki markup or plain), in order and once each.
 // Only http and https addresses; the end of a sentence or of a markdown link is not part of one.
-export function webLinksIn(text: string): string[] {
+// An address keeps brackets it opens and closes itself (`Plan+(draft)`), ends at one it did not
+// open (a markdown link's own `)` or `]`), and leaves out one it opens and never closes. Each
+// character is read once, so a long text without spaces costs no more than its length; `meter`
+// counts the characters read, for the tests.
+export function webLinksIn(text: string, meter: { steps: number } = { steps: 0 }): string[] {
   const found = new Set<string>();
-  const pattern = /https?:\/\/[^\s<>"'`{}|\\^]+/gi;
-  for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
-    const address = balanced(match[0]);
-    // What follows a cut address (`](https://…)`) may hold the next one.
-    pattern.lastIndex = match.index + Math.max(address.length, 1);
-    const link = hostLink(address.replace(/[.,;:!?*_~]+$/, ''));
+  const scheme = /https?:\/\//gi;
+  for (let match = scheme.exec(text); match !== null; match = scheme.exec(text)) {
+    let round = 0;
+    let square = 0;
+    let end = match.index + match[0].length;
+    let closed = end;
+    for (; end < text.length; end += 1) {
+      const char = text.charAt(end);
+      if (/\s/.test(char) || addressStop.has(char)) break;
+      if (char === '(') round += 1;
+      else if (char === '[') square += 1;
+      else if (char === ')' && (round -= 1) < 0) break;
+      else if (char === ']' && (square -= 1) < 0) break;
+      if (round === 0 && square === 0) closed = end + 1;
+    }
+    meter.steps += end - match.index;
+    // The search goes on after everything read, so no character is read twice; what follows a
+    // cut address (`](https://…)`) may still hold the next one.
+    scheme.lastIndex = end;
+    let last = closed;
+    while (last > match.index && sentenceEnd.has(text.charAt(last - 1))) last -= 1;
+    meter.steps += closed - last;
+    const link = hostLink(text.slice(match.index, last));
     if (link !== null) found.add(link);
   }
   return [...found];

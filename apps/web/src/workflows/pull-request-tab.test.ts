@@ -1,6 +1,6 @@
 import type { ChangeRequest, HostRead } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
-import { emptyPullRequest, runPullRequest } from './pull-request-tab';
+import { emptyPullRequest, pullRequestTabLabel, runPullRequest } from './pull-request-tab';
 
 const read = (changes: Partial<HostRead> = {}): HostRead => ({
   id: 'run:r1',
@@ -16,6 +16,12 @@ const read = (changes: Partial<HostRead> = {}): HostRead => ({
 });
 
 describe('the run’s pull request', () => {
+  it('is named a merge request on GitLab', () => {
+    expect(pullRequestTabLabel(read({ host: 'gitlab' }))).toBe('Merge request');
+    expect(pullRequestTabLabel(read())).toBe('Pull request');
+    expect(pullRequestTabLabel(undefined)).toBe('Pull request');
+  });
+
   it('is the one its read names', () => {
     const request = { id: 'tea:14', number: 14 } as ChangeRequest;
     const other = { id: 'tea:12', number: 12 } as ChangeRequest;

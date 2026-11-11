@@ -24,6 +24,7 @@ import {
 } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { MockGitHub, type MockCheckRun, type MockPullRequest } from '../hosts/mock-github.js';
+import { MockGitLab } from '../hosts/mock-gitlab.js';
 import { startServer, type RunningServer } from '../server.js';
 
 // Review loop spec 54 to 57 on the server: a gate whose condition passes or holds the run,
@@ -396,6 +397,39 @@ describe('the checks part (spec 54 to 56)', () => {
       ],
     });
     expect(waitingNotices()).toHaveLength(1);
+  });
+
+  it('names a GitLab merge request as one in the failing check', async () => {
+    const site = 'https://gitlab.example.invalid';
+    const gitlab = new MockGitLab({ projectPath: 'acme/tea', webUrl: site });
+    gitlab.token = 'glpat-invented-token-for-tests';
+    gitlab.mergeRequests = [
+      {
+        iid: 14,
+        title: 'Ring the bell at zero',
+        description: 'Invented for the tests.',
+        state: 'opened',
+        branch: bellBranch,
+        sha: git(project, 'rev-parse', 'HEAD').trim(),
+        pipeline: { id: 7, status: 'failed', jobs: [{ name: 'test', status: 'failed' }] },
+      },
+    ];
+    git(project, 'remote', 'set-url', 'origin', `${site}/acme/tea.git`);
+    await server.stop();
+    server = await startServer({ ...options, fetch: gitlab.fetch(site) });
+    set('trackers.gitlab.baseUrl', site);
+    set(
+      'trackers.gitlab.token',
+      await server.secrets.set('setting:trackers.gitlab.token', gitlab.token),
+    );
+    createWorkflow({ gateAfterCondition: ['checks'] });
+    await start();
+    expect(gate()).toMatchObject({
+      state: 'waitingForUser',
+      parts: [
+        { part: 'checks', state: 'failed', detail: 'Merge request !14 has failing checks: test' },
+      ],
+    });
   });
 
   it('waits for checks while they run and passes when a poll shows success', async () => {

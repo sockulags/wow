@@ -1452,8 +1452,10 @@ review comments, without GitLab's system notes, linked as `<merge request>#note_
 `Retry-After`, or `RateLimit-Remaining`/`RateLimit-Reset`, leaves the site alone like GitHub's
 limit; anything else and a timeout are `failed`. Unit status reasons say "Merge request !12 is
 merged", and so do the gate's checks part (`ChecksReading.host`), an event run's line,
-notification and handover (`runEventHost`, `triggerEventLabel`) and the Pull request tab's empty
-text. GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
+notification and handover (`runEventHost`, `triggerEventLabel`), and the Pull request tab's name
+and empty text, which read "Merge request" on a run whose host read is GitLab
+(`pullRequestTabLabel`). The trigger forms keep "Pull request merged": they have no host to go
+by. GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
 GitLab the server tests and the e2e server share.
 
 **Poller** (`apps/server/src/hosts/poller.ts`, started with the scheduler and stopped right
@@ -1548,8 +1550,10 @@ read from the project's `plans.intentsDirectory` with links left out (`readInten
 `trackers.confluence.baseUrl`'s scheme, host, port and path, and names a page:
 `/pages/viewpage.action?pageId=<id>` and `/spaces/<space>/pages/<id>/…` by id (`ref`
 `id:<id>`), `/display/<space>/<title>` by title (`title:<space>/<title>`, `+` read as a
-space). `webLinksIn` keeps brackets an address opens and closes itself (`Plan+(draft)`) and ends
-an address at one it did not open (a markdown link's own `)` or `]`). Links to another site are dropped before anything is asked, so the Confluence token never
+space). `webLinksIn` keeps brackets an address opens and closes itself (`Plan+(draft)`), ends
+an address at one it did not open (a markdown link's own `)` or `]`), and leaves out one it opens
+and never closes; it reads each character of the text once, so a long text without spaces costs
+no more than its length. Links to another site are dropped before anything is asked, so the Confluence token never
 goes anywhere but the stored site. A run with no links gets a row with no pages and no error,
 and costs no request. Each linked page is asked for once a round,
 `GET <base>/rest/api/content/<id>?expand=body.view,version,space` or
