@@ -136,6 +136,14 @@ test.describe('assistant', () => {
       'Settings → Trackers, for every project',
     );
     await expect(card.getByTestId('assistant-secret-state')).toHaveText('Not set');
+    // The guide wow ships for GitLab, built from the address just set (U4, spec 15).
+    const guide = card.getByRole('group', { name: 'Token guide for GitLab' });
+    await expect(guide).toContainText('written for GitLab 16.9 and later');
+    await expect(guide).toContainText('read_api');
+    await expect(guide.getByRole('link').first()).toHaveAttribute(
+      'href',
+      /\/gitlab\/-\/user_settings\/personal_access_tokens\?name=wow&scopes=read_api$/,
+    );
 
     const field = card.getByLabel('GitLab token');
     await expect(field).toHaveAttribute('type', 'password');
@@ -207,6 +215,22 @@ test.describe('assistant', () => {
     await held.getByRole('button', { name: 'Send anyway' }).click();
     await expect(users).toHaveCount(sent + 1);
     await expect(composer(page)).toHaveValue('');
+  });
+
+  test('the assistant says why it does not work @app-assistant-19 @app-assistant-20', async ({
+    page,
+  }) => {
+    await page.goto('/assistant');
+    await say(page, 'Why does this not work?');
+    const tool = conversation(page).getByTestId('item-tool_call').last();
+    await expect(tool).toContainText('diagnose_setup');
+    const reply = conversation(page).getByTestId('item-assistant_text').last();
+    await expect(reply).toContainText(/\d+ things? (is|are) failing\./);
+    // The seeded workflow names a skill that is not installed; the reply says so and where.
+    await expect(reply).toContainText(
+      'Workflow Brew report, step report: It runs the skill brew-report, which is not installed on this machine.',
+    );
+    await expect(reply).toContainText('Fix it in Workflows → Brew report.');
   });
 
   test('the assistant offers to take project work to the chat view @app-assistant-3', async ({

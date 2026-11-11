@@ -19,7 +19,35 @@ const userText = (prompt: string) => prompt.split('\n\n').at(-1) ?? prompt;
 const noteOf = (prompt: string) =>
   prompt.startsWith('[From wow') ? prompt.slice(0, prompt.lastIndexOf('\n\n')) : null;
 
-function scenario(text: string, trackerUrl: string): { steps: Step[]; answer: string } {
+interface Scenario {
+  readonly steps: Step[];
+  readonly answer: string;
+  // An answer made from what the tools answered, in the order called.
+  readonly reply?: (results: readonly string[]) => string;
+}
+
+interface Problem {
+  readonly what: string;
+  readonly reason: string;
+  readonly place: { readonly label: string };
+}
+
+// What a real agent would say from diagnose_setup's answer: each failing thing with its reason
+// and place, or that nothing fails.
+function diagnosisReply(results: readonly string[]): string {
+  const { summary, problems } = JSON.parse(results[0] ?? '{}') as {
+    summary?: string;
+    problems?: Problem[];
+  };
+  return [
+    summary ?? 'wow did not answer.',
+    ...(problems ?? []).map(
+      (problem) => `- ${problem.what}: ${problem.reason} Fix it in ${problem.place.label}.`,
+    ),
+  ].join('\n');
+}
+
+function scenario(text: string, trackerUrl: string): Scenario {
   if (/work hours/i.test(text)) {
     return {
       steps: [
@@ -57,7 +85,14 @@ function scenario(text: string, trackerUrl: string): { steps: Step[]; answer: st
         { tool: 'show_secret_field', args: { key: 'trackers.gitlab.token' } },
       ],
       answer:
-        'I set the GitLab address. Create a personal access token with read_api on your GitLab, under Preferences → Access tokens, and put it in the field above; I never see it.',
+        "I set the GitLab address. The steps from wow's guide are above the field: create a personal access token with read_api on your GitLab and put it in the field; I never see it.",
+    };
+  }
+  if (/not work/i.test(text)) {
+    return {
+      steps: [{ tool: 'diagnose_setup', args: {} }],
+      answer: '',
+      reply: diagnosisReply,
     };
   }
   if (/kettle test/i.test(text)) {
@@ -97,7 +132,8 @@ export class AssistantMockAgent implements ProviderAdapter {
 
   async #turn(threadId: string, prompt: string): Promise<void> {
     const text = userText(prompt);
-    const { steps, answer } = scenario(text, this.#trackerUrl);
+    const { steps, answer, reply: replyOf } = scenario(text, this.#trackerUrl);
+    const results: string[] = [];
     this.#emit({ type: 'session', threadId, providerSessionId: `assistant-session-${threadId}` });
     for (const step of steps) {
       const itemId = `${threadId}-tool-${++made}`;
@@ -109,6 +145,7 @@ export class AssistantMockAgent implements ProviderAdapter {
         input: step.args,
       });
       const result = await this.#tools().call(step.tool, step.args);
+      results.push(result.text);
       this.#emit({ type: 'toolCallOutput', threadId, itemId, output: result.text });
       this.#emit({
         type: 'toolCallCompleted',
@@ -118,9 +155,10 @@ export class AssistantMockAgent implements ProviderAdapter {
       });
     }
     const note = noteOf(prompt);
+    const said = replyOf ? replyOf(results) : answer;
     const reply = note
-      ? `${answer}\n\nwow told me:\n\n${note.split('\n').slice(1).join('\n')}`
-      : answer;
+      ? `${said}\n\nwow told me:\n\n${note.split('\n').slice(1).join('\n')}`
+      : said;
     this.#emit({
       type: 'textDelta',
       threadId,

@@ -26,6 +26,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import path from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
 import {
+  e2eAssistantBrokenWorkflowId,
   e2eAssistantHome,
   e2eBinDir,
   e2eBinary,
@@ -993,6 +994,27 @@ if (home === e2ePanelHome) {
     body: 'Invented notes for the panel tests.',
     projectId: e2eProjectId,
     workflowId: e2ePanelWorkflowId,
+  });
+}
+
+if (home === e2eAssistantHome) {
+  server.engine.dispatch('seed-assistant-broken-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eAssistantBrokenWorkflowId,
+    name: 'Brew report',
+    steps: [
+      {
+        id: 'report',
+        skillName: 'brew-report',
+        providerInstanceId: e2eProviderInstanceId,
+        model: 'mock-model',
+        effort: 'default',
+        permissionMode: 'default',
+        gateBefore: false,
+        gateAfter: true,
+        expectedArtifacts: [],
+      },
+    ],
   });
 }
 
