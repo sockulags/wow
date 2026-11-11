@@ -582,7 +582,8 @@ previous}` or `skill.deleted {skill}` in the skills projection at once; `SkillsS
   not YAML, a name starting with `wow-`, and (`SkillsService.refusal`) a `SKILL.md` in that
   folder the list does not show. The assistant's and the setup file's change records keep the
   folder and the file (`skillFolder`, `skillFile`, not shown) so their undo sends the same
-  restore. From the assistant create, update and delete are proposals and restore is refused
+  restore; the record's `expect` holds the file the change left, so a hand edit of any line since
+  refuses the undo ("its SKILL.md is not the file this change left"). From the assistant create, update and delete are proposals and restore is refused
   (see "Assistant"); a setup file carries own skills (see "Setup file").
 
 **Settings → Skills** (`apps/web/src/settings/skills.ts`, `skills-section.tsx`; wow skills spec

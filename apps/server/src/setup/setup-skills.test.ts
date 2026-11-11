@@ -231,6 +231,24 @@ describe('own skills in a setup file (wow skills spec 8)', () => {
     expect(ownSkills(other)[0]).toMatchObject({ text: '', file: handWritten });
   });
 
+  it('refuses Undo of a replaced skill whose file was edited by hand since', async () => {
+    const dir = ownSkillDir(home('other'), 'kettle-check');
+    const handWritten = ['---', 'name: kettle-check', 'allowed-tools: Read', '---', ''].join('\n');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'SKILL.md'), handWritten);
+    await other.skills.refresh();
+    const { text } = save(source);
+    await write(other, { type: 'setup.apply', applicationId: 'a4', name: 'team.yaml', text });
+    const applied = await readFile(path.join(dir, 'SKILL.md'), 'utf8');
+    const edited = applied.replace('allowed-tools: Read', 'allowed-tools: Read, Grep');
+    await writeFile(path.join(dir, 'SKILL.md'), edited);
+    await other.skills.refresh();
+    expect(() => on(other, { type: 'setup.undo', applicationId: 'a4' })).toThrow(
+      /cannot be undone\. .*it changed again since \(its SKILL\.md is not the file this change left\)/,
+    );
+    expect(await readFile(path.join(dir, 'SKILL.md'), 'utf8')).toBe(edited);
+  });
+
   it('marks no workflow whose step follows a skill the same file brings', () => {
     on(source, {
       type: 'workflow.create',

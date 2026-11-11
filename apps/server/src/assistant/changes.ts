@@ -611,12 +611,20 @@ export function changeOf(
     commandType: command.type,
     ...shown,
     target,
-    expect:
-      after === null ? null : before === null ? without(after, bookkeeping) : pick(after, changed),
+    expect: expectOf(before, after, changed),
     inverse: inverseOf(command, before, changed),
     state: 'applied',
     undoneAt: null,
   };
+}
+
+// What the target holds right after the change, for undoRefusal. An own skill's Undo puts its
+// whole file back, so the file the change left is held too: a hand edit of any other line since
+// refuses the Undo.
+function expectOf(before: Row | null, after: Row | null, changed: readonly string[]): Row | null {
+  if (after === null) return null;
+  const held = before === null ? without(after, bookkeeping) : pick(after, changed);
+  return typeof after['skillFile'] === 'string' ? { ...held, skillFile: after['skillFile'] } : held;
 }
 
 // Why a change cannot be undone any more: the thing no longer holds what the change left
@@ -640,7 +648,9 @@ export function undoRefusal(
     const now = moved.map((key) =>
       key === 'value'
         ? `it is now ${show(key, current[key], read)}`
-        : `${key} is now ${show(key, current[key], read)}`,
+        : key === 'skillFile'
+          ? 'its SKILL.md is not the file this change left'
+          : `${key} is now ${show(key, current[key], read)}`,
     );
     return `it changed again since (${now.join('; ')})`;
   })();
