@@ -334,7 +334,8 @@ one card; wow works out its occurrences.
   has passed shows how it went (Done, Failed, Missed, or Skipped when the card's earlier run was
   still going) and opens its run; one still to come opens the card. When one card has more
   occurrences in the days shown than `calendar.maxOccurrences`, the first ones are drawn and a
-  line above the grid says so.
+  line above the grid says so. When the occurrences cannot be read from the server, a banner says
+  so and **Try again** reads them once more.
 - **Move**: drag an occurrence to another time, or its lower edge, or use Alt+Up and Alt+Down.
   That changes the time or length of the series, not of one day. An occurrence stays on its day
   (to change the days, edit the rule), and one that has passed does not move.

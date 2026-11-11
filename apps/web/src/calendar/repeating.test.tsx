@@ -118,7 +118,10 @@ interface Sent {
   readonly params: unknown;
 }
 
-function runtimeWith(answer: CalendarRange, box: Outbox<Sent>): Runtime {
+// The range read's answer: a range, or what the connection does instead.
+type Answer = CalendarRange | (() => Promise<unknown>);
+
+function runtimeWith(answer: Answer, box: Outbox<Sent>): Runtime {
   const topics: Readonly<Record<string, unknown[]>> = {
     calendarItems: [card],
     workflowRuns: [run],
@@ -128,7 +131,9 @@ function runtimeWith(answer: CalendarRange, box: Outbox<Sent>): Runtime {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
     request: (method: string, params: unknown) => {
       box.record({ method, params });
-      if (method === 'calendar.occurrences') return Promise.resolve(answer);
+      if (method === 'calendar.occurrences') {
+        return typeof answer === 'function' ? answer() : Promise.resolve(answer);
+      }
       return Promise.resolve({ commandId: 'c', seqs: [], duplicate: false });
     },
     subscribe(topic: string, _params: unknown, onData: (rows: unknown[]) => void) {
@@ -158,13 +163,13 @@ const commandsSent = (box: Outbox<Sent>): Command[] =>
     .filter((entry) => entry.method === 'dispatch')
     .map((entry) => (entry.params as { command: Command }).command);
 
-async function showWeek(answer: CalendarRange = range()) {
+async function showWeek(answer: Answer = range()) {
   const box = outbox<Sent>();
   const shown = await renderApp('/calendar?view=week&date=2026-11-18', runtimeWith(answer, box));
   await act(() =>
     box.until((sent) => sent.some((entry) => entry.method === 'calendar.occurrences')),
   );
-  const grid = await screen.findByRole('group', { name: 'Calendar grid' });
+  const grid = await screen.findByRole('group', { name: /^Calendar grid/ });
   return { ...shown, box, grid };
 }
 
@@ -217,6 +222,11 @@ describe('the Repeat section', () => {
     );
   });
 });
+
+// What the range read answers while the server cannot, with what it cannot parse, and at last.
+const restarting = (): Promise<unknown> => Promise.reject(new Error('Server is restarting'));
+const unreadable = (): Promise<unknown> => Promise.resolve({ from: 'not a range' });
+const readable = (): Promise<unknown> => Promise.resolve(range());
 
 describe('occurrences in the week', () => {
   it('are drawn from the range read, marked as repeating, with their own state', async () => {
@@ -273,6 +283,32 @@ describe('occurrences in the week', () => {
         end: at(18, 8, 0),
       },
     ]);
+  });
+
+  it('says when the range cannot be read, and reads it again on Try again', async () => {
+    let answer = restarting;
+    const { grid, box } = await showWeek(() => answer());
+    const reads = () => box.sent.filter((entry) => entry.method === 'calendar.occurrences').length;
+    const failed = await screen.findByTestId('occurrences-failed');
+    expect(failed.textContent).toContain('Repeating cards could not be read.');
+    expect(failed.textContent).toContain('Server is restarting. Their occurrences are not shown.');
+    expect(within(grid).queryAllByRole('button', { name: /^Standup notes, / })).toEqual([]);
+
+    answer = unreadable;
+    const before = reads();
+    fireEvent.click(within(failed).getByRole('button', { name: 'Try again' }));
+    await act(() => box.until(() => reads() > before));
+    expect(screen.getByTestId('occurrences-failed').textContent).toContain(
+      'The server answered with occurrences wow cannot read.',
+    );
+    answer = readable;
+    fireEvent.click(
+      within(screen.getByTestId('occurrences-failed')).getByRole('button', { name: 'Try again' }),
+    );
+    expect(await within(grid).findAllByRole('button', { name: /^Standup notes, / })).toHaveLength(
+      5,
+    );
+    expect(screen.queryByTestId('occurrences-failed')).toBeNull();
   });
 
   it('says when a card has more occurrences than are shown', async () => {

@@ -206,7 +206,8 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const days = visibleDays(view, anchor, prefs.firstDayOfWeek, showWeekends);
   const cards = useMemo(() => items.filter((item) => item.source === 'local'), [items]);
   // Repeating cards are drawn from the server's occurrences in the shown range (spec 15).
-  const shownRange = useCalendarRange(viewRange(days, zone), [items, triggers, runs]);
+  const rangeRead = useCalendarRange(viewRange(days, zone), [items, triggers, runs]);
+  const shownRange = rangeRead.range;
   const blocks = useMemo(
     () => calendarBlocks(items, shownRange, runs ?? []),
     [items, shownRange, runs],
@@ -410,6 +411,23 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           </div>
         </ShellToolbar>
         <OutlookBanner status={status} zone={zone} onRetry={refresh} />
+        {rangeRead.error !== undefined && (
+          <Banner
+            tone="error"
+            testId="occurrences-failed"
+            actions={
+              <Button size="xs" variant="outline" onClick={rangeRead.retry}>
+                <RefreshCwIcon />
+                Try again
+              </Button>
+            }
+          >
+            <span className="font-medium">Repeating cards could not be read.</span>{' '}
+            <span className="text-muted-foreground">
+              {rangeRead.error.replace(/\.$/, '')}. Their occurrences are not shown.
+            </span>
+          </Banner>
+        )}
         {hidden.length > 0 && (
           <Banner tone="info" testId="occurrences-more">
             <span className="font-medium">Some occurrences are not shown.</span>{' '}

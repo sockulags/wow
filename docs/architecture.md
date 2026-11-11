@@ -2706,7 +2706,9 @@ Repeating cards (recurring cards spec 11 to 17, `occurrences.ts`). The view read
 `calendar.occurrences` for the days it shows (`viewRange`: local midnight of the first day to
 local midnight after the last, in the calendar's zone) through `useCalendarRange`, and reads
 again whenever the `calendarItems`, `triggers` or `workflowRuns` rows change; an answer for
-another range is dropped. Single cards are still drawn from their topic rows, so nothing about
+another range is dropped. A read that is refused, or whose answer does not parse, is kept as an
+error for that range: an error banner "Repeating cards could not be read" with Try again, which
+reads once more. Single cards are still drawn from their topic rows, so nothing about
 them changed; each occurrence of a repeating card becomes a block of its own
 (`occurrenceBlocks`), a copy of the card with the occurrence's start and end and the id
 `<cardId>@<date>`, so layout, roving focus and drag work on it unchanged. `TimeGrid` takes the

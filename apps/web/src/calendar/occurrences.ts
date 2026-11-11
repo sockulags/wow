@@ -144,14 +144,24 @@ export function notShown(
   return cards.filter((card) => more.has(card.id));
 }
 
+export interface CalendarRangeRead {
+  readonly range: CalendarRange | undefined;
+  // Why the last read of the shown range failed: the request was refused or its answer could
+  // not be read. The calendar then says so instead of showing no repeating card at all.
+  readonly error: string | undefined;
+  readonly retry: () => void;
+}
+
 // Reads the range from the server, and again whenever a card, a trigger or a run changes, since
 // any of them can move, add or finish an occurrence. The newest answer wins.
 export function useCalendarRange(
   range: { readonly from: string; readonly to: string } | undefined,
   changes: readonly unknown[],
-): CalendarRange | undefined {
+): CalendarRangeRead {
   const { connection } = useRuntime();
   const [answer, setAnswer] = useState<CalendarRange>();
+  const [failure, setFailure] = useState<{ from: string; to: string; message: string }>();
+  const [attempt, setAttempt] = useState(0);
   const from = range?.from;
   const to = range?.to;
   useEffect(() => {
@@ -159,16 +169,30 @@ export function useCalendarRange(
     let current = true;
     connection.request('calendar.occurrences', { from, to }).then(
       (result) => {
+        if (!current) return;
         const parsed = CalendarRange.safeParse(result);
-        if (current && parsed.success) setAnswer(parsed.data);
+        if (parsed.success) {
+          setAnswer(parsed.data);
+          setFailure(undefined);
+        } else {
+          setFailure({ from, to, message: 'The server answered with occurrences wow cannot read' });
+        }
       },
-      () => undefined,
+      (error: unknown) => {
+        if (current) {
+          setFailure({ from, to, message: error instanceof Error ? error.message : String(error) });
+        }
+      },
     );
     return () => {
       current = false;
     };
     // The topic rows are what asks for a new read: their identity changes on every push. The
     // caller passes the same number of them on every render.
-  }, [connection, from, to, ...changes]);
-  return answer && answer.from === from && answer.to === to ? answer : undefined;
+  }, [connection, from, to, attempt, ...changes]);
+  return {
+    range: answer && answer.from === from && answer.to === to ? answer : undefined,
+    error: failure && failure.from === from && failure.to === to ? failure.message : undefined,
+    retry: () => setAttempt((count) => count + 1),
+  };
 }
