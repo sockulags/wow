@@ -2,6 +2,7 @@ import {
   settingsRegistry,
   ProjectWorkOffer,
   SecretFieldRequest,
+  TokenGuide,
   ToolCallItemPayload,
   assistantProjectWorkTool,
   assistantSecretFieldTool,
@@ -81,8 +82,28 @@ export function placeRows(
 }
 
 export type Ask =
-  | { readonly kind: 'secretField'; readonly request: SecretFieldRequest }
+  | {
+      readonly kind: 'secretField';
+      readonly request: SecretFieldRequest;
+      // The token guide the tool answered with (spec 15), shown above the field; null for a
+      // secret that is not a host token, or an answer that is not in yet.
+      readonly guide: TokenGuide | null;
+    }
   | { readonly kind: 'projectWork'; readonly offer: ProjectWorkOffer };
+
+const GuideAnswer = z.object({ guide: TokenGuide });
+
+// The guide in what the secret field tool answered, read from the stored tool result.
+function guideOf(output: string): TokenGuide | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  const answer = GuideAnswer.safeParse(parsed);
+  return answer.success ? answer.data.guide : null;
+}
 
 // The card a tool call of the agent asks for, read from what it called the tool with.
 export function askOf(item: ThreadItem): Ask | null {
@@ -92,7 +113,9 @@ export function askOf(item: ThreadItem): Ask | null {
   const tool = assistantToolOf(payload.data.name);
   if (tool === assistantSecretFieldTool) {
     const request = SecretFieldRequest.safeParse(payload.data.input);
-    return request.success ? { kind: 'secretField', request: request.data } : null;
+    return request.success
+      ? { kind: 'secretField', request: request.data, guide: guideOf(payload.data.output) }
+      : null;
   }
   if (tool === assistantProjectWorkTool) {
     const offer = ProjectWorkOffer.safeParse(payload.data.input);

@@ -4,6 +4,7 @@ import {
   type AssistantChange,
   type AssistantProposal,
   type ThreadItem,
+  type TokenGuide,
 } from '@wow/contracts';
 import {
   RouterProvider,
@@ -153,6 +154,7 @@ describe('placing rows in the conversation (spec 7, 13)', () => {
     expect(askOf(field)).toEqual({
       kind: 'secretField',
       request: { key: 'trackers.gitlab.token', projectId: 'tea' },
+      guide: null,
     });
     expect(askOf(work)).toEqual({ kind: 'projectWork', offer: { text: 'Fix the kettle test' } });
     expect(askOf(toolCall('mcp__wow__read_settings', {}))).toBeNull();
@@ -279,6 +281,87 @@ describe('a secret field card (spec 14)', () => {
   it('draws nothing for a setting that is not secret', async () => {
     await show(<SecretFieldCard request={{ key: 'trackers.gitlab.baseUrl' }} />);
     expect(screen.queryByRole('region')).toBeNull();
+  });
+});
+
+const gitlabGuide: TokenGuide = {
+  service: 'gitlab',
+  host: 'GitLab',
+  writtenFor: 'GitLab 16.9 and later, self-managed and gitlab.com',
+  tokenSetting: 'trackers.gitlab.token',
+  address: 'https://gitlab.example.invalid',
+  addressNeeded: null,
+  steps: [
+    {
+      text: 'Open Access tokens under your avatar → Edit profile.',
+      link: 'https://gitlab.example.invalid/-/user_settings/personal_access_tokens?name=wow&scopes=read_api',
+    },
+    { text: 'Press Create personal access token.', link: null },
+  ],
+  rights: ['read_api: wow reads merge requests.'],
+  copy: 'The token GitLab shows once after Create, starting with glpat-.',
+};
+
+describe('the token guide on a secret field card (spec 15)', () => {
+  it('is read from what the secret field tool answered', () => {
+    const field = toolCall(
+      'mcp__wow__show_secret_field',
+      { key: 'trackers.gitlab.token' },
+      JSON.stringify({ outcome: 'shown', secret: 'not set', guide: gitlabGuide }),
+    );
+    expect(askOf(field)).toEqual({
+      kind: 'secretField',
+      request: { key: 'trackers.gitlab.token' },
+      guide: gitlabGuide,
+    });
+    const unparsed = toolCall('mcp__wow__show_secret_field', { key: 'trackers.gitlab.token' }, '{');
+    expect(askOf(unparsed)).toMatchObject({ guide: null });
+  });
+
+  it("shows the steps with links to the user's host, the rights, what to copy and the versions, above the field", async () => {
+    await show(<SecretFieldCard request={{ key: 'trackers.gitlab.token' }} guide={gitlabGuide} />);
+    const card = screen.getByRole('region', { name: 'Secret field: GitLab token' });
+    const guide = within(card).getByRole('group', { name: 'Token guide for GitLab' });
+    expect(guide.textContent).toContain(
+      'GitLab · written for GitLab 16.9 and later, self-managed and gitlab.com',
+    );
+    expect(
+      within(guide)
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual([
+      expect.stringContaining('Open Access tokens') as string,
+      'Press Create personal access token.',
+      'read_api: wow reads merge requests.',
+    ]);
+    expect(within(guide).getByRole('link').getAttribute('href')).toBe(
+      'https://gitlab.example.invalid/-/user_settings/personal_access_tokens?name=wow&scopes=read_api',
+    );
+    expect(guide.textContent).toContain('What to copy: The token GitLab shows once');
+    const field = within(card).getByLabelText('GitLab token');
+    expect(guide.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('says which address to fill in first, with a link to its place', async () => {
+    await show(
+      <SecretFieldCard
+        request={{ key: 'trackers.gitlab.token' }}
+        guide={{
+          ...gitlabGuide,
+          address: null,
+          addressNeeded: {
+            key: 'trackers.gitlab.baseUrl',
+            label: 'GitLab URL',
+            place: { label: 'Settings → Trackers', path: '/settings/trackers' },
+          },
+          steps: [{ text: 'Fill in GitLab URL in Settings → Trackers first.', link: null }],
+        }}
+      />,
+    );
+    const guide = screen.getByRole('group', { name: 'Token guide for GitLab' });
+    expect(
+      within(guide).getByRole('link', { name: 'Settings → Trackers' }).getAttribute('href'),
+    ).toBe('/settings/trackers');
   });
 });
 

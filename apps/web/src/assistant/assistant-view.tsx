@@ -204,7 +204,7 @@ export function AssistantView() {
     if (!ask && !placed) return null;
     return (
       <div className="flex flex-col gap-2">
-        {ask?.kind === 'secretField' && <SecretFieldCard request={ask.request} />}
+        {ask?.kind === 'secretField' && <SecretFieldCard request={ask.request} guide={ask.guide} />}
         {ask?.kind === 'projectWork' && <ProjectWorkCard offer={ask.offer} />}
         {placed && <Rows placed={placed} />}
       </div>

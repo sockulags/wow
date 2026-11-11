@@ -4,17 +4,20 @@ import {
   settingGroupTitles,
   type ProjectWorkOffer,
   type SecretFieldRequest,
+  type TokenGuide,
 } from '@wow/contracts';
 import { useNavigate } from '@tanstack/react-router';
-import { KeyRoundIcon, MessagesSquareIcon } from 'lucide-react';
+import { ExternalLinkIcon, KeyRoundIcon, MessagesSquareIcon } from 'lucide-react';
 import { useId } from 'react';
 import { useRuntime } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
+import { HostLink } from '@/plans/host-read';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SecretField } from '@/settings/secret-field';
 import { TestConnection } from '@/settings/trackers-section';
 import { registry } from './model';
+import { PlaceLink } from './rows';
 
 // The cards a tool call of the assistant asks for (app assistant spec 3, 14, 16).
 
@@ -31,10 +34,67 @@ function useStoredRef(key: string, projectId: string | undefined): unknown {
   return rows?.find((row) => row.key === key && row.scope === scope)?.value ?? null;
 }
 
-// The setting's name, where the value goes, a password field with Save, and Test connection.
-// The value goes to the secret store through the settings page's own field; the card says "Set"
-// once a reference is stored and shows what the test answered, never the value.
-export function SecretFieldCard({ request }: { request: SecretFieldRequest }) {
+// The steps of the token guide wow ships (spec 15): where to make the token, with links to the
+// user's own host, which rights it needs, what to copy, and the versions it was written for.
+export function TokenGuideSteps({ guide }: { guide: TokenGuide }) {
+  return (
+    <div
+      role="group"
+      aria-label={`Token guide for ${guide.host}`}
+      data-testid="assistant-token-guide"
+      className="flex flex-col gap-1.5 text-xs"
+    >
+      <p className="text-muted-foreground">
+        {guide.host} · written for {guide.writtenFor}
+      </p>
+      <ol className="flex list-decimal flex-col gap-1 pl-4">
+        {guide.steps.map((step) => (
+          <li key={step.text}>
+            {step.text}
+            {step.link && (
+              <>
+                {' '}
+                <HostLink href={step.link}>
+                  {step.link}
+                  <ExternalLinkIcon aria-hidden className="size-3" />
+                </HostLink>
+              </>
+            )}
+          </li>
+        ))}
+      </ol>
+      {guide.addressNeeded && (
+        <p>
+          Fill in {guide.addressNeeded.label}: <PlaceLink place={guide.addressNeeded.place} />
+        </p>
+      )}
+      <div>
+        <p className="font-medium">Rights it needs</p>
+        <ul className="flex list-disc flex-col gap-0.5 pl-4">
+          {guide.rights.map((right) => (
+            <li key={right}>{right}</li>
+          ))}
+        </ul>
+      </div>
+      <p>
+        <span className="font-medium">What to copy: </span>
+        {guide.copy}
+      </p>
+    </div>
+  );
+}
+
+// The setting's name, where the value goes, the token guide's steps, a password field with
+// Save, and Test connection. The value goes to the secret store through the settings page's own
+// field; the card says "Set" once a reference is stored and shows what the test answered, never
+// the value.
+export function SecretFieldCard({
+  request,
+  guide = null,
+}: {
+  request: SecretFieldRequest;
+  guide?: TokenGuide | null;
+}) {
   const id = useId();
   const definition = registry[request.key];
   const projects = useTopic('projects');
@@ -68,6 +128,7 @@ export function SecretFieldCard({ request }: { request: SecretFieldRequest }) {
         </Badge>
       </div>
       <div className="flex flex-col gap-2 pl-6">
+        {guide && <TokenGuideSteps guide={guide} />}
         <SecretField
           id={`${id}-value`}
           label={definition.label}
