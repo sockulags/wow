@@ -3,6 +3,7 @@ import { settingValue } from '@wow/client-runtime';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef } from 'react';
 import { useStore } from 'zustand';
+import { assistantCommands } from '@/assistant/commands';
 import { backlogCommands } from '@/backlog/commands';
 import { calendarCommands } from '@/calendar/commands';
 import { validateCalendarSearch } from '@/calendar/search';
@@ -65,6 +66,8 @@ export function useCommands(): {
   const hostReads = useTopic('hostReads');
   const ticketReads = useTopic('ticketReads');
   const pageReads = useTopic('pageReads');
+  const assistantChanges = useTopic('assistantChanges');
+  const assistantProposals = useTopic('assistantProposals');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
@@ -153,6 +156,10 @@ export function useCommands(): {
         items: backlogItems ?? [],
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
       }),
+      ...assistantCommands({
+        changes: assistantChanges ?? [],
+        proposals: assistantProposals ?? [],
+      }),
       ...panelCommands(panelSelection(pathname, locationSearch)),
       ...viewerCommands({
         viewer,
@@ -192,6 +199,8 @@ export function useCommands(): {
     schedulerPaused,
     backlogItems,
     openBacklogItemId,
+    assistantChanges,
+    assistantProposals,
     viewer,
     page,
     pageReads,

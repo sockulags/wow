@@ -10,14 +10,16 @@ import {
   MapIcon,
   MessagesSquareIcon,
   SettingsIcon,
+  SparklesIcon,
   WorkflowIcon,
   type LucideIcon,
 } from 'lucide-react';
 
 export interface Section {
-  readonly id: 'calendar' | 'chat' | 'workflows' | 'plans' | 'backlog' | 'settings';
+  readonly id: 'calendar' | 'chat' | 'workflows' | 'plans' | 'backlog' | 'assistant' | 'settings';
   readonly title: string;
-  readonly path: '/calendar' | '/chat' | '/workflows' | '/plans' | '/backlog' | '/settings';
+  readonly path:
+    '/calendar' | '/chat' | '/workflows' | '/plans' | '/backlog' | '/assistant' | '/settings';
   readonly icon: LucideIcon;
   readonly keybinding:
     | 'keybindings.goCalendar'
@@ -25,6 +27,7 @@ export interface Section {
     | 'keybindings.goWorkflows'
     | 'keybindings.goPlans'
     | 'keybindings.goBacklog'
+    | 'keybindings.goAssistant'
     | 'keybindings.goSettings';
 }
 
@@ -64,6 +67,13 @@ export const sections: readonly Section[] = [
     path: '/backlog',
     icon: ListTodoIcon,
     keybinding: 'keybindings.goBacklog',
+  },
+  {
+    id: 'assistant',
+    title: 'Assistant',
+    path: '/assistant',
+    icon: SparklesIcon,
+    keybinding: 'keybindings.goAssistant',
   },
   {
     id: 'settings',

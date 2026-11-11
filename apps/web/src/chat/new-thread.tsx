@@ -116,8 +116,14 @@ export function NewThreadView() {
   // The work starts in the composer (audit A-11).
   const ready = instances !== undefined && instances.length > 0;
   useEffect(() => {
-    if (ready) composer.current?.focus();
-  }, [ready]);
+    if (!ready) return;
+    // Text handed over from elsewhere (the assistant's "Open in Chat") starts the message.
+    const { text } = draft.getState();
+    if (text !== undefined) {
+      draft.setState({ text: undefined });
+      composer.current?.setText(text);
+    } else composer.current?.focus();
+  }, [ready, draft]);
 
   if (instances && instances.length === 0) {
     return (

@@ -19,6 +19,7 @@ export type CommandGroup =
   | 'Workflows'
   | 'Plans'
   | 'Backlog'
+  | 'Assistant'
   | 'Navigation'
   | 'Settings'
   | 'Actions';

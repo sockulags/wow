@@ -7,6 +7,7 @@ import {
   redirect,
   type RouterHistory,
 } from '@tanstack/react-router';
+import { AssistantView } from '@/assistant/assistant-view';
 import { CalendarView } from '@/calendar/calendar-view';
 import { validateCalendarSearch } from '@/calendar/search';
 import { ChatHome, ChatLayout } from '@/chat/chat-view';
@@ -191,6 +192,12 @@ const backlogItemRoute = createRoute({
   },
 });
 
+const assistantRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/assistant',
+  component: AssistantView,
+});
+
 const settingsIndexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
@@ -229,6 +236,7 @@ const routeTree = rootRoute.addChildren([
   ]),
   plansRoute.addChildren([plansIndexRoute, planRoute]),
   backlogRoute.addChildren([backlogIndexRoute, newBacklogItemRoute, backlogItemRoute]),
+  assistantRoute,
   settingsIndexRoute,
   settingsProjectsRoute,
   settingsGroupRoute,
