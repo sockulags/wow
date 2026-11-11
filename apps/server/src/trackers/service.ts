@@ -279,6 +279,13 @@ export class TrackerService {
     };
   }
 
+  // The GitHub API address a project's own token is sent to (see githubHost): stored for the
+  // project, else the host of its folder's git remote, else the shared one.
+  async githubAddress(projectId: string): Promise<string> {
+    const value = (await this.#context(projectId)).get('trackers.github.baseUrl')?.value;
+    return typeof value === 'string' ? value : '';
+  }
+
   // The project's GitHub host as the poller reads it: the same settings a publish uses, the
   // host's name and the branch the project folder is on. Without a token nothing is set up, and
   // the folder's git is not asked.

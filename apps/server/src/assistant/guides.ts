@@ -21,6 +21,7 @@ import type { Reader, ReaderDeps } from './readers.js';
 
 export type GuideKind =
   | 'github.com'
+  | 'ghe.com'
   | 'github-enterprise'
   | 'gitlab'
   | 'jira-pat'
@@ -68,6 +69,14 @@ export const guides: Readonly<Record<GuideKind, GuideData>> = {
     service: 'github',
     host: 'github.com',
     writtenFor: 'github.com as of November 2026',
+    steps: github,
+    rights: githubRights,
+    copy: githubCopy,
+  },
+  'ghe.com': {
+    service: 'github',
+    host: 'GitHub Enterprise Cloud with data residency (GHE.com)',
+    writtenFor: 'GitHub Enterprise Cloud on GHE.com as of November 2026',
     steps: github,
     rights: githubRights,
     copy: githubCopy,
@@ -205,10 +214,16 @@ function siteOf(stored: string): URL | null {
 
 const webOf = (url: URL) => `${url.origin}${trimmed(url.pathname)}`;
 
+const dataResidency = /^(?:api\.)?([a-z0-9-]+)\.ghe\.com$/i;
+
 // The web pages of a GitHub host from its API address: https://api.github.com is github.com,
-// and GitHub Enterprise Server serves its API under https://<host>/api/v3.
+// GitHub Enterprise Cloud with data residency serves its API at https://api.<name>.ghe.com
+// for the pages at https://<name>.ghe.com, and GitHub Enterprise Server serves its API under
+// https://<host>/api/v3.
 function githubWeb(api: URL): { kind: GuideKind; web: string } {
   if (api.hostname === 'api.github.com') return { kind: 'github.com', web: 'https://github.com' };
+  const tenant = dataResidency.exec(api.hostname)?.[1];
+  if (tenant) return { kind: 'ghe.com', web: `https://${tenant.toLowerCase()}.ghe.com` };
   const prefix = trimmed(api.pathname).replace(/\/api\/v3$/i, '');
   return { kind: 'github-enterprise', web: `${api.origin}${prefix}` };
 }
@@ -286,12 +301,14 @@ export const serviceOfToken = (key: string): TrackerConnection | undefined => {
     : undefined;
 };
 
-// The guide as it applies to a project, or to the shared settings without one.
-export function guideFor(
+// The guide as it applies to a project, or to the shared settings without one. A project's
+// GitHub token goes where the poller sends it: the project's own address, else its git
+// remote's host, else the shared address.
+export async function guideFor(
   service: TrackerConnection,
   projectId: string | undefined,
   deps: ReaderDeps,
-): TokenGuide {
+): Promise<TokenGuide> {
   let place: AssistantPlace = {
     label: `Settings → ${settingGroupTitles.trackers}`,
     path: '/settings/trackers',
@@ -307,11 +324,11 @@ export function guideFor(
   };
   const authMode =
     service === 'jira' || service === 'confluence' ? `trackers.${service}.authMode` : null;
-  return tokenGuide(
-    service,
-    { baseUrl: read(`trackers.${service}.baseUrl`), authMode: authMode ? read(authMode) : '' },
-    place,
-  );
+  const baseUrl =
+    service === 'github' && projectId !== undefined
+      ? await deps.trackers.githubAddress(projectId)
+      : read(`trackers.${service}.baseUrl`);
+  return tokenGuide(service, { baseUrl, authMode: authMode ? read(authMode) : '' }, place);
 }
 
 export const guideReaders = {
@@ -319,9 +336,9 @@ export const guideReaders = {
     description:
       "How to make the token for Jira, GitHub, GitLab or Confluence, from the guide wow ships: the page on the user's own host (built from the stored address), the steps, the rights it needs and what to copy, and the host versions the guide was written for. Use it instead of what you remember; if it says the address is needed first, ask for that. Give a projectId for a project's own settings.",
     input: TokenGuideRequest,
-    read: ({ service, projectId }, deps) => ({
+    read: async ({ service, projectId }, deps) => ({
       outcome: 'guide',
-      guide: guideFor(service, projectId, deps),
+      guide: await guideFor(service, projectId, deps),
       note: 'Tell the user these steps in your words, with the links as they are, and say which versions the guide was written for. Put the field in front of them with show_secret_field; never ask for the token in the conversation.',
     }),
   } satisfies Reader<typeof TokenGuideRequest>,

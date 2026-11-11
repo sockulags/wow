@@ -48,7 +48,7 @@ export const asks = {
         setting: { key, label: definition.label },
         target,
         secret: set ? 'set' : 'not set',
-        ...(service ? { guide: guideFor(service, projectId, deps) } : {}),
+        ...(service ? { guide: await guideFor(service, projectId, deps) } : {}),
         note: service
           ? "The user sees the field in the conversation with the guide's steps above it. Say where to create the token, which rights it needs and what to copy, from the guide and not from memory, then wait for them. When they say it is saved, read the setting or run test_connection."
           : 'The user sees the field in the conversation. Say where to create the value and which rights it needs, then wait for them. When they say it is saved, read the setting or run test_connection.',

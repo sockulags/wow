@@ -1684,13 +1684,17 @@ three kinds and nothing else.
 
 - Guides (`assistant/guides.ts`, `read_token_guide {service, projectId?}`,
   `assistantTokenGuideTool`) answer a `TokenGuide` from data that ships with wow (spec 15): one
-  entry per host kind and sign-in (github.com, GitHub Enterprise Server, GitLab, Jira and
-  Confluence with a personal access token or as Cloud), each naming the host versions it was
-  written for, the steps, the rights reading needs and what to copy. Links are built from the
-  address stored for the scope asked (`trackers.<x>.baseUrl` resolved for the project, so a
-  project's own address wins; the git remote's host is not used): a GitHub API URL
+  entry per host kind and sign-in (github.com, GitHub Enterprise Cloud with data residency,
+  GitHub Enterprise Server, GitLab, Jira and Confluence with a personal access token or as
+  Cloud), each naming the host versions it was written for, the steps, the rights reading needs
+  and what to copy. Links are built from the address stored for the scope asked
+  (`trackers.<x>.baseUrl` resolved for the project, so a project's own address wins). A
+  project's GitHub guide follows the poller's host rule for a project's own token
+  (`TrackerService.githubAddress`): the project's stored API URL, else its git remote's host,
+  else the shared one; without a project it is the shared address. A GitHub API URL
   `https://<host>/api/v3` becomes `https://<host>`, `https://api.github.com` becomes github.com,
-  and Atlassian Cloud API tokens link to the Atlassian account page. Links and `address` are
+  `https://api.<name>.ghe.com` becomes `https://<name>.ghe.com`, and Atlassian Cloud API tokens
+  link to the Atlassian account page. Links and `address` are
   built from the parsed address with its user name, password, query and fragment dropped, so an
   address like `https://reader:pass@host` never puts the password in a link. Without an address
   the guide has one step, fill in the address first, and `addressNeeded` names the setting and

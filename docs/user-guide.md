@@ -884,13 +884,15 @@ back.
 When a GitLab, GitHub, Jira or Confluence token is needed, the assistant puts the token's field in
 the conversation with the steps from a guide that ships with wow, never from what the agent
 remembers. The guide links to the token page on your own host, built from the address stored in
-Settings → Trackers (or the project's own), says which rights reading needs, what to copy, and
-which host versions it was written for:
+Settings → Trackers (or the project's own; a project's own GitHub token is linked on the host of
+the project's git remote when the project stores no GitHub API URL, since that is where wow sends
+it), says which rights reading needs, what to copy, and which host versions it was written for:
 
 | Host and sign-in                                   | Written for                                 | Rights                                                             |
 | -------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------ |
 | github.com                                         | github.com, November 2026                   | classic token, `repo` (`public_repo` for public repositories only) |
 | GitHub Enterprise Server                           | 3.10 to 3.17                                | classic token, `repo`                                              |
+| GitHub Enterprise Cloud with data residency        | GHE.com, November 2026                      | classic token, `repo`                                              |
 | GitLab                                             | 16.9 and later, self-managed and gitlab.com | `read_api`                                                         |
 | Jira Server or Data Center (personal access token) | 8.14 and later                              | your own account: Browse projects, Create issues for Publish       |
 | Jira Cloud (API token)                             | November 2026                               | your own account, plus your email in Jira email                    |
