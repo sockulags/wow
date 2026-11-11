@@ -130,6 +130,8 @@ beforeEach(async () => {
     defaultEffort: 'high',
     defaultPermissionMode: 'default',
   });
+  // The assistant writes steps only on an instance that passed its test (models spec 16).
+  await server.providerService.test('claude-work');
   asUser({
     type: 'skill.create',
     skill: { name: 'kettle-check', description: 'Before any tea step.', text: 'Boil first.' },
