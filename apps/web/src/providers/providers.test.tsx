@@ -288,6 +288,20 @@ describe('first start', () => {
     expect(screen.getByRole('navigation', { name: 'Sections' })).toBeTruthy();
   });
 
+  it('never gates an install that already has an instance, even one whose test failed', async () => {
+    const server = firstStartServer([work]);
+    await renderApp('/calendar', runtimeFor(server.connection, {}));
+    expect(await screen.findByRole('navigation', { name: 'Sections' })).toBeTruthy();
+    expect(screen.queryByTestId('first-start')).toBeNull();
+  });
+
+  it('gates an install without any instance', async () => {
+    const server = firstStartServer([]);
+    await renderApp('/calendar', runtimeFor(server.connection, {}));
+    expect(await screen.findByTestId('first-start')).toBeTruthy();
+    expect(screen.queryByRole('navigation', { name: 'Sections' })).toBeNull();
+  });
+
   it('waits for the test of an instance that was never tested', async () => {
     const server = firstStartServer([{ ...work, status: 'unknown', statusMessage: null }]);
     await renderApp('/calendar', runtimeFor(server.connection, {}));

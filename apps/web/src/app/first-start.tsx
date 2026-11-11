@@ -8,11 +8,12 @@ import { useRuntime, useSetting } from './runtime';
 // The first-start gate (app assistant spec 25, 26; spec Decisions: it reuses the provider
 // onboarding and stands in front of the app only while no provider is connected).
 //
-// It is up while `providers.offerSetup` is on and no provider instance has passed its test. An
-// instance the server has not tested yet is tested at start (ProviderDialogs), so the gate waits
-// for that answer instead of showing for a moment. Once it is up it stays until an instance
-// passes, even while a Test it started runs. When one passes, the setting is turned off, so a
-// provider removed later leaves the app usable (spec 27), and the assistant opens to greet.
+// It goes up only for an install without any provider instance, while `providers.offerSetup`
+// is on. An install that has an instance, whatever its status (an upgrade whose instance fails
+// its test today), is never gated: the Assistant view's own connect step covers a provider that
+// does not work. Once it is up it stays until an instance passes, even while the instances its
+// Test buttons create fail. When one passes, the setting is turned off, so a provider removed
+// later leaves the app usable (spec 27), and the assistant opens to greet.
 
 export interface FirstStartState {
   // The gate went up in this window.
@@ -31,14 +32,13 @@ export function useFirstStart(): boolean {
   const instances = useTopic('providerInstances');
   const up = useStore(firstStartStore, (state) => state.up);
   const passed = instances?.some((instance) => instance.status === 'ready') ?? false;
-  const untested = instances?.some((instance) => instance.status === 'unknown') ?? false;
   const gated =
     connection !== undefined &&
     settingsReady &&
     offer &&
     instances !== undefined &&
     !passed &&
-    (up || !untested);
+    (up || instances.length === 0);
 
   useEffect(() => {
     if (gated && !up) firstStartStore.setState({ up: true });

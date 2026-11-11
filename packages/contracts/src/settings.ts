@@ -425,7 +425,7 @@ export const settingsRegistry = {
     group: 'providers',
     label: 'Offer setup at start',
     description:
-      'Show the first-start step "Connect an agent" in front of the app while no provider instance has passed its test. It turns off once one passes, so a provider removed later does not hide the app again; the Assistant view then shows the same step.',
+      'Show the first-start step "Connect an agent" in front of the app while there is no provider instance at all; an install with an instance is never held behind it. It turns off once one passes, so a provider removed later does not hide the app again; the Assistant view then shows the same step.',
     default: true,
     scope: 'global',
   }),

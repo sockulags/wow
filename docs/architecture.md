@@ -1869,9 +1869,11 @@ the chat view is copied. The `$` skill picker is off there.
 to gate the app only while no provider is connected, so the gate is a client view over state the
 server already has: the `providerInstances` topic and the global setting `providers.offerSetup`
 (`personal: machine`, so a setup file never carries it). `useFirstStart` puts the gate up while
-the setting is on and no instance has `status: ready`. An instance still `unknown` is tested at
-start, so the gate waits for that answer instead of flashing over an install that is fine; once
-up it stays up through a Test it started. The Shell then draws only `ConnectAgentStep` (no
+the setting is on and there is no provider instance at all. An install with any instance,
+whatever its status, is never gated, so an existing install whose instance fails its test after
+an upgrade is not locked out; the Assistant view's own connect step covers it. Once up the gate
+stays up until an instance has `status: ready`, through the instances its Test buttons create
+and that fail. The Shell then draws only `ConnectAgentStep` (no
 sidebar, no route), and the palette offers only `connect.claude`, `connect.codex`, `setup.start`,
 the palette itself and the theme. The step shows Claude Code and Codex side by side with the
 binary `provider.detect` found, Test (which dispatches `providerInstance.create` from the detected

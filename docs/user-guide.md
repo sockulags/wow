@@ -37,13 +37,14 @@ pnpm --filter @wow/desktop start
 
 ### The first window
 
-On first start the app starts its local server. While no provider has passed its test, the whole
+On first start the app starts its local server. When no provider is set up yet, the whole
 window is one step, **Connect an agent**: Claude Code and Codex side by side, each with the binary
 found on your `PATH` (or a line saying it is not installed), a **Test** button and, when the test
 fails, the reason in words (for example that you are not signed in). **Test** creates the
 provider instance if there is none of that kind yet and runs the same test as Settings →
 Providers. Nothing else of the app shows until one test passes; the palette offers "Connect
-Claude Code", "Connect Codex" and "Start from a setup file" meanwhile.
+Claude Code", "Connect Codex" and "Start from a setup file" meanwhile. An install that already
+has a provider, even one whose test fails, opens as usual; Assistant then shows the same step.
 
 Below the two agents is **Start from a setup file**: a colleague's file (see "A setup to share"
 under "Assistant") is previewed and applied as one step before you connect, and its secrets are
