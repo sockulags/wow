@@ -6,6 +6,7 @@ import {
   ruleConditionText,
   secretPatterns,
   settingGroupTitles,
+  settingsRegistry,
   triggerEventLabels,
   type AssistantChangeRecord,
   type AssistantPlace,
@@ -18,6 +19,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import type { DecideContext, ReadModel } from '../core/orchestrator.js';
 import { triggersPath } from '../core/triggers.js';
+import { resolveStored } from '../settings/service.js';
 
 // What the server keeps about a command of the assistant: for an ordinary change, what changed,
 // from what to what, where it lives and the commands that take it back (spec 7, 8); for a
@@ -107,17 +109,32 @@ export function snapshot(target: AssistantTarget, read: ReadModel): Row | null {
   return row ? { ...row } : null;
 }
 
-const clip = (text: string): string => (text.length > 160 ? `${text.slice(0, 159)}…` : text);
+const VALUE_LENGTH_KEY = 'assistant.valueLength';
+
+const valueLength = (read: ReadModel): number =>
+  z
+    .number()
+    .catch(settingsRegistry[VALUE_LENGTH_KEY].default)
+    .parse(
+      resolveStored(VALUE_LENGTH_KEY, settingsRegistry[VALUE_LENGTH_KEY], {}, (scope) =>
+        read.setting(VALUE_LENGTH_KEY, scope),
+      ).value,
+    );
+
+const clip = (text: string, read: ReadModel): string => {
+  const length = valueLength(read);
+  return text.length > length ? `${text.slice(0, length - 1)}…` : text;
+};
 
 // A proposal line with its values shortened to what the card shows and the whole of each kept
 // beside it, so nothing is accepted unseen. The secret net has run on the whole values first,
 // so a value cut short cannot leave half a secret behind.
-function shortened(line: AssistantProposalLine): AssistantProposalLine {
+function shortened(line: AssistantProposalLine, read: ReadModel): AssistantProposalLine {
   const { what, from, to } = line;
   const next: AssistantProposalLine = {
     what,
-    from: from === null ? null : clip(from),
-    to: to === null ? null : clip(to),
+    from: from === null ? null : clip(from, read),
+    to: to === null ? null : clip(to, read),
   };
   return {
     ...next,
@@ -132,7 +149,7 @@ const stepNames = (steps: readonly WorkflowStep[]): string =>
 // One value in words. Ids of things the user named are shown by their names. A setup preview
 // says its values the same way.
 export const show = (key: string, value: unknown, read: ReadModel): string =>
-  clip(showWhole(key, value, read));
+  clip(showWhole(key, value, read), read);
 
 // The same words as `show`, not shortened: for a proposal, which keeps the whole value.
 function showWhole(key: string, value: unknown, read: ReadModel): string {
@@ -904,7 +921,7 @@ export function proposalOf(
     }
   })();
   const hidden = hideSecretsDeep(card, patternsOf(read, context)) as typeof card;
-  const shown = { ...hidden, lines: hidden.lines.map(shortened) };
+  const shown = { ...hidden, lines: hidden.lines.map((line) => shortened(line, read)) };
   return {
     id,
     at: context.now,

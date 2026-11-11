@@ -1086,7 +1086,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
 - assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,
   `assistant.effort`, `assistant.instructions`, `assistant.greeting`,
-  `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.secretPatterns` (see
+  `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.valueLength`,
+  `assistant.secretPatterns` (see
   "Assistant")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
@@ -1949,8 +1950,8 @@ the window's own.
   provider's naming itself.
 - Change row (`ChangeRow`): "what: from → to · place" with Undo (`assistant.undo`); greyed with
   "Undone" when the topic says so; a refused Undo shows the server's reason under it.
-- Proposal card (`ProposalCard`): the title, one line per change (a value past 160 characters
-  is cut there, and the line carries the whole of it in `fromFull`/`toFull`, shown under "Was:
+- Proposal card (`ProposalCard`): the title, one line per change (a value past
+  `assistant.valueLength` (160) characters is cut there, and the line carries the whole of it in `fromFull`/`toFull`, shown under "Was:
   show all of it" / "Becomes: show all of it"; the secret net runs on the whole value before it
   is cut), the place, Yes
   (`assistant.proposal.accept`) and No, which opens an optional reason field and sends
@@ -2090,7 +2091,7 @@ command the app would refuse (rules that point nowhere, a workflow with a live r
 file with its line. The preview (`SetupPreview`) has `added` (nothing stored or a new workflow)
 and `replaced` (a stored value or an existing workflow), each a `{what, from, to}` line with
 `full`, the whole new value as YAML or text, whenever `to` does not say all of it (a text past
-the 160 characters a line shows, a list, a workflow's steps with their prompts and rules), so
+the `assistant.valueLength` characters a line shows, a list, a workflow's steps with their prompts and rules), so
 the view can show it on request and nothing is applied unseen; `marked`
 for a workflow whose skill is not installed ("skill not installed: brew-report") or whose
 provider kind has no instance here; and `toFillIn` with label and place, without the secrets

@@ -1117,6 +1117,24 @@ describe('proposals', () => {
     expect(Object.keys(proposals().at(-1)?.lines[0] ?? {})).toEqual(['what', 'from', 'to']);
   });
 
+  it('shorten values to assistant.valueLength characters', async () => {
+    asUser({ type: 'setting.set', key: 'assistant.valueLength', scope: 'global', value: 20 });
+    const patterns = ['never-matches-kettle-lid-0', 'never-matches-kettle-lid-1'];
+    await call('set_setting', {
+      key: 'assistant.secretPatterns',
+      scope: 'global',
+      value: patterns,
+    });
+    const [line] = proposals().at(-1)?.lines ?? [];
+    expect(line?.to).toBe(`${patterns.join(', ').slice(0, 19)}…`);
+    await call('set_setting', {
+      key: 'workflows.handoverTemplate',
+      scope: 'global',
+      value: 'A handover longer than twenty characters.',
+    });
+    expect(changes().at(-1)?.to).toBe('A handover longer t…');
+  });
+
   it('ask before a tracker address changes at any scope while a project holds its own token: the token is never sent to the new host first', async () => {
     // The shared token is gone; only the project has one, and the address it resolves is global.
     asUser({ type: 'setting.reset', key: 'trackers.github.token', scope: 'global' });

@@ -1306,6 +1306,15 @@ export const settingsRegistry = {
     default: 5,
     scope: 'global',
   }),
+  'assistant.valueLength': defineSetting({
+    schema: z.number().int().min(20).max(10_000),
+    group: 'assistant',
+    label: 'Longest value on a change or proposal line',
+    description:
+      'A value longer than this many characters is cut short on the change rows and proposal cards the assistant leaves. A proposal keeps the whole value beside it, to show on request.',
+    default: 160,
+    scope: 'global',
+  }),
   'assistant.secretPatterns': defineSetting({
     schema: z.array(SecretPattern),
     group: 'assistant',

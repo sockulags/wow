@@ -858,8 +858,8 @@ trigger, "for units" or "own working copy" on a workflow, resuming the scheduler
 policy `run`, `hosts.polling` or `triggers.eventsEnabled` on, `viewer.htmlScripts` on, any
 change to `triggers.forkPullRequests`, and
 starting a run ("Start <workflow> in <project>"). A card with a workflow that starts sooner than
-`assistant.startSoonMinutes` (15) from now is a proposal too. A long value is cut short on its
-line; "show all of it" under the line opens the whole of it. The palette has Yes and No for every
+`assistant.startSoonMinutes` (15) from now is a proposal too. A value longer than `assistant.valueLength` (160) characters is cut
+short on its line; "show all of it" under the line opens the whole of it. The palette has Yes and No for every
 waiting proposal and Undo for every change.
 
 It never answers a gate: approving, sending back or stopping a run is yours, and wow refuses those
