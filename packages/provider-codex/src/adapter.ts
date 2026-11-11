@@ -12,6 +12,7 @@ import type {
 import {
   CompatibilityCache,
   checkInstalledCodex,
+  installedCodexLacks,
   generateJsonSchema,
   type GenerateSchema,
   type SchemaLaunch,
@@ -34,6 +35,7 @@ import {
 } from './install.js';
 import { permissionMode, sandboxPolicy } from './permissions.js';
 import { runCommand, spawnCodexAppServer, type RunCommand, type SpawnCodex } from './process.js';
+import { toolsOnlyMode, toolsOnlySandbox, toolsOnlySettings, toolsOnlyUses } from './toolset.js';
 import { codexProtocolFingerprint } from './protocol/generated/fingerprint.js';
 import {
   type GetAccountResponse,
@@ -104,6 +106,8 @@ interface ThreadState {
   // False after the app-server restarted: the thread has to be resumed before the next turn.
   loaded: boolean;
   sandbox: SandboxMode;
+  // Started with a toolset: only the app's tools, for as long as the thread lives.
+  readonly toolsOnly: boolean;
   turnId: string | null;
   lastFinishedTurnId: string | null;
   lastError: string | null;
@@ -265,6 +269,8 @@ export class CodexAdapter implements ProviderAdapter {
   #connection: CodexConnection | null = null;
   #ready: Promise<CodexConnection> | null = null;
   #serverVersion: string | null = null;
+  // Per codex version: what a tools-only thread needs and this codex lacks.
+  readonly #toolsOnlyLacks = new Map<string, Promise<string[]>>();
   #starts = 0;
   #disposed = false;
 
@@ -303,6 +309,8 @@ export class CodexAdapter implements ProviderAdapter {
         return this.#startTurn(command);
       case 'interrupt':
         return this.#interrupt(command.threadId);
+      case 'closeThread':
+        return this.#forget(command.threadId);
       case 'answerApproval':
         return this.#answerApproval(command.approvalId, command.decision);
       case 'answerQuestion':
@@ -407,16 +415,24 @@ export class CodexAdapter implements ProviderAdapter {
 
   async #startTurn(command: StartTurn): Promise<unknown> {
     try {
-      const mode = permissionMode(command.permissionMode);
+      const { toolset } = command;
+      const mode = toolset ? toolsOnlyMode : permissionMode(command.permissionMode);
       const connection = await this.#connect();
       let thread = this.#threads.get(command.threadId);
       if (thread?.turnId) throw new CodexError('state', 'A turn is already running in this thread');
+      if (thread && thread.toolsOnly !== (toolset !== undefined))
+        throw new CodexError(
+          'state',
+          `This thread was started ${thread.toolsOnly ? 'with' : 'without'} the app's tools only and cannot change that`,
+        );
       if (!thread || !thread.loaded) {
+        if (toolset) await this.#requireToolsOnly();
         const settings = {
           cwd: command.cwd,
           model: command.model,
           approvalPolicy: mode.approvalPolicy,
           sandbox: mode.sandbox,
+          ...(toolset ? toolsOnlySettings(toolset, command.instructions) : {}),
         };
         const resumeId = thread?.codexId ?? command.resumeId;
         const response = resumeId
@@ -426,7 +442,12 @@ export class CodexAdapter implements ProviderAdapter {
               excludeTurns: true,
             })
           : await connection.request('thread/start', settings);
-        thread = this.#register(command.threadId, response.thread.id, mode.sandbox);
+        thread = this.#register(
+          command.threadId,
+          response.thread.id,
+          mode.sandbox,
+          toolset !== undefined,
+        );
         this.#emit({
           type: 'session',
           threadId: command.threadId,
@@ -441,7 +462,9 @@ export class CodexAdapter implements ProviderAdapter {
         effort: command.effort,
         approvalPolicy: mode.approvalPolicy,
       };
-      if (mode.sandbox !== thread.sandbox) {
+      if (toolset) {
+        params.sandboxPolicy = toolsOnlySandbox;
+      } else if (mode.sandbox !== thread.sandbox) {
         params.sandboxPolicy = sandboxPolicy(mode.sandbox);
         thread.sandbox = mode.sandbox;
       }
@@ -456,7 +479,49 @@ export class CodexAdapter implements ProviderAdapter {
     }
   }
 
-  #register(wowId: string, codexId: string, sandbox: SandboxMode): ThreadState {
+  // A tools-only thread needs options an older or newer codex may not have. The tested version
+  // has them (the generated types say so); any other is asked for its schema, once per version.
+  async #requireToolsOnly(): Promise<void> {
+    const version = this.#serverVersion;
+    const tested = this.#fingerprint.codexVersion;
+    if (version === tested) return;
+    const sentence = (why: string) =>
+      new CodexError(
+        'unsupported',
+        `${why}, so the assistant cannot run on it. Update codex to ${tested}.`,
+      );
+    if (!version)
+      throw sentence(
+        "This codex does not report its version and wow cannot tell whether it takes wow's tools",
+      );
+    let lacks = this.#toolsOnlyLacks.get(version);
+    if (!lacks) {
+      lacks = (async () =>
+        installedCodexLacks(toolsOnlyUses, this.#options.generateSchema ?? generateJsonSchema, {
+          binaryPath: this.#options.instance.binaryPath || 'codex',
+          env: await this.#environment(),
+          timeoutMs: (this.#options.testTimeoutMs ?? (() => defaultTestTimeoutMs))(),
+        }))();
+      this.#toolsOnlyLacks.set(version, lacks);
+      lacks.catch(() => this.#toolsOnlyLacks.delete(version));
+    }
+    let missing: string[];
+    try {
+      missing = await lacks;
+    } catch (error) {
+      if (error instanceof CodexError && error.code === 'unsupported')
+        throw sentence(
+          `codex ${version} cannot describe its app-server protocol and wow cannot tell whether it takes wow's tools`,
+        );
+      throw error;
+    }
+    if (missing.length > 0)
+      throw sentence(
+        `codex ${version} cannot be given wow's tools when a thread starts (it has no ${missing.join(', ')})`,
+      );
+  }
+
+  #register(wowId: string, codexId: string, sandbox: SandboxMode, toolsOnly: boolean): ThreadState {
     const previous = this.#threads.get(wowId);
     if (previous) this.#byCodexId.delete(previous.codexId);
     const thread: ThreadState = {
@@ -464,6 +529,7 @@ export class CodexAdapter implements ProviderAdapter {
       codexId,
       loaded: true,
       sandbox,
+      toolsOnly,
       turnId: null,
       lastFinishedTurnId: null,
       lastError: null,
@@ -475,6 +541,20 @@ export class CodexAdapter implements ProviderAdapter {
     this.#threads.set(wowId, thread);
     this.#byCodexId.set(codexId, thread);
     return thread;
+  }
+
+  // The app-server has no request that unloads a thread, so the adapter forgets it: the next
+  // turn of the wow thread starts or resumes a codex thread from what that command says.
+  #forget(threadId: string): unknown {
+    const thread = this.#threads.get(threadId);
+    if (!thread) return { closed: false };
+    this.#threads.delete(threadId);
+    this.#byCodexId.delete(thread.codexId);
+    for (const [id, approval] of this.#approvals)
+      if (approval.codexThreadId === thread.codexId) this.#approvals.delete(id);
+    for (const [id, input] of this.#inputs)
+      if (input.codexThreadId === thread.codexId) this.#inputs.delete(id);
+    return { closed: true };
   }
 
   async #interrupt(threadId: string): Promise<unknown> {
@@ -675,6 +755,20 @@ export class CodexAdapter implements ProviderAdapter {
       return;
     }
     const threadId = thread.wowId;
+    // A tools-only thread never gets more than it started with, and the user is not asked.
+    if (thread.toolsOnly) {
+      switch (message.method) {
+        case 'item/commandExecution/requestApproval':
+        case 'item/fileChange/requestApproval':
+          connection.respond(message.id, message.method, { decision: 'decline' });
+          return;
+        case 'item/permissions/requestApproval':
+          connection.respond(message.id, message.method, { permissions: {}, scope: 'turn' });
+          return;
+        default:
+          break;
+      }
+    }
     switch (message.method) {
       case 'item/commandExecution/requestApproval': {
         const approvalId = this.#newId();

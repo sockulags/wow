@@ -1,5 +1,7 @@
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { CalendarResult, UnreadMailResult, findJoinUrl, parseResponseLine } from './protocol.js';
+import { CalendarResult, findJoinUrl, parseResponseLine, resultSchemas } from './protocol.js';
 import { prefersMock } from './source.js';
 
 const appointment = {
@@ -40,7 +42,6 @@ describe('bridge protocol', () => {
     expect(
       CalendarResult.safeParse({ items: [{ ...appointment, start: '2026-11-02 09:15' }] }).success,
     ).toBe(false);
-    expect(UnreadMailResult.safeParse({ items: [], unreadCount: -1 }).success).toBe(false);
   });
 
   it('finds a Teams link in the body before the location', () => {
@@ -53,6 +54,18 @@ describe('bridge protocol', () => {
       'https://teams.microsoft.com/l/meetup-join/19%3ameeting_b',
     );
     expect(findJoinUrl('see https://example.com/meet', 'Room 1')).toBeNull();
+  });
+
+  // bridge.ps1 cannot run here, so its request switch is read as text: the script and the protocol
+  // answer the same operations, and none of them reads anything but the calendar (spec 4).
+  it('asks Outlook for calendar items only, in the protocol and in bridge.ps1', async () => {
+    const script = await readFile(fileURLToPath(new URL('../bridge.ps1', import.meta.url)), 'utf8');
+    const handled = [...script.matchAll(/^\s+'(\w+)' \{ Invoke-/gm)].map((match) => match[1]);
+    const calendarOnly = ['ping', 'calendar', 'open', 'profile'];
+    expect(handled).toEqual(calendarOnly);
+    expect(Object.keys(resultSchemas)).toEqual(calendarOnly);
+    // GetDefaultFolder(6) is the inbox; the calendar is folder 9.
+    expect(script).not.toMatch(/GetDefaultFolder\(6\)|\[UnRead\]|ReceivedTime|SenderName/);
   });
 
   it('uses the mock off Windows or when asked', () => {

@@ -3,6 +3,7 @@ export {
   initialStepRuns,
   missedTriggerOutcome,
   pendingGate,
+  reviewedStepIndex,
   renderStepPrompt,
   RunRejected,
   startRun,
@@ -14,4 +15,44 @@ export {
   type RunInput,
   type Transition,
 } from './engine.js';
-export { bulletList, renderHandover, stepPrompt, type HandoverValues } from './handover.js';
+export {
+  artifactsPart,
+  checksPart,
+  gateCondition,
+  verdictLine,
+  verdictPart,
+  type ChecksReading,
+  type GateSettings,
+} from './gate.js';
+export {
+  bulletList,
+  eventValues,
+  renderGoBack,
+  renderHandover,
+  renderSendBack,
+  renderUnitPrompt,
+  stepPrompt,
+  type GoBackValues,
+  type HandoverValues,
+  type SendBackValues,
+  type UnitPromptValues,
+} from './handover.js';
+export {
+  failedRule,
+  hasRules,
+  limitSentence,
+  readVerdict,
+  ruleAsksAbout,
+  ruleThatHolds,
+  type RuleSettings,
+  type VerdictLines,
+} from './rules.js';
+export {
+  advancePlanRun,
+  planRunRefusal,
+  stopPlanRun,
+  waitingSentences,
+  type PlanRunAdvance,
+  type PlanRunDecision,
+  type PlanRunStart,
+} from './plan-run.js';

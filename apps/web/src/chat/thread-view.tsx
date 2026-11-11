@@ -1,7 +1,19 @@
-import { providerChatOptions, type ProviderInstance, type Thread } from '@wow/contracts';
+import {
+  providerChatOptions,
+  type ProviderInstance,
+  type Thread,
+  type ThreadItem,
+} from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { CircleCheckIcon, PinIcon, RotateCcwIcon, SearchXIcon, Undo2Icon } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { useSetting } from '@/app/runtime';
 import { IconButton, WithTooltip } from '@/components/hint';
 import { EmptyState } from '@/components/states';
@@ -232,6 +244,18 @@ export function ThreadView({ threadId }: { threadId: string }) {
   );
 }
 
+// What the Assistant view adds to a conversation without a copy of it: rows after an item and
+// at the end, and its own composer text, check and notice. Skills are not offered there.
+export interface ConversationExtras {
+  after?(item: ThreadItem): ReactNode;
+  readonly end?: ReactNode;
+  readonly composerRef?: RefObject<ComposerHandle | null>;
+  readonly placeholder?: string;
+  readonly blockedReason?: string | undefined;
+  beforeSend?(text: string): boolean;
+  readonly notice?: ReactNode;
+}
+
 // A thread's conversation, its gate bar and its composer: the chat view's thread and, narrower,
 // the context panel's step thread (owner decision F-1), so both answer the same way.
 export function ThreadConversation({
@@ -239,12 +263,14 @@ export function ThreadConversation({
   instance,
   autoFocus = false,
   compact = false,
+  extras,
 }: {
   thread: Thread;
   instance: ProviderInstance | undefined;
   autoFocus?: boolean;
   // The context panel: no centered column, tighter padding.
   compact?: boolean;
+  extras?: ConversationExtras;
 }) {
   const threadId = thread.id;
   const send = useDispatch();
@@ -259,11 +285,12 @@ export function ThreadConversation({
   const resumePrompt = useSetting('chat.resumePrompt');
   const { when } = useDateFormat();
   const { container, onScroll } = useStickToBottom(items);
-  const composer = useRef<ComposerHandle>(null);
+  const ownComposer = useRef<ComposerHandle>(null);
+  const composer = extras?.composerRef ?? ownComposer;
 
   useEffect(() => {
     if (autoFocus) composer.current?.focus();
-  }, [autoFocus, threadId]);
+  }, [autoFocus, threadId, composer]);
 
   const running = runningTurn(turns);
   const last = lastTurn(turns);
@@ -314,7 +341,7 @@ export function ThreadConversation({
       ? 'Answer the request above'
       : running
         ? 'Write the next message; it is sent when the turn ends'
-        : 'Message the agent. Type $ to pick a skill.';
+        : (extras?.placeholder ?? 'Message the agent. Type $ to pick a skill.');
 
   const column = compact ? 'w-full px-3' : 'mx-auto w-full max-w-3xl px-4';
   return (
@@ -327,15 +354,21 @@ export function ThreadConversation({
       >
         <div className={column}>
           <ol aria-label="Conversation" className="flex flex-col gap-3">
-            {(items ?? []).map((item) => (
-              <ConversationItem
-                key={item.id}
-                item={item}
-                approvals={approvals}
-                questions={questions}
-                context={itemContext(item.turnId, item.id)}
-              />
-            ))}
+            {(items ?? []).map((item) => {
+              const after = extras?.after?.(item);
+              return (
+                <Fragment key={item.id}>
+                  <ConversationItem
+                    item={item}
+                    approvals={approvals}
+                    questions={questions}
+                    context={itemContext(item.turnId, item.id)}
+                  />
+                  {after && <li>{after}</li>}
+                </Fragment>
+              );
+            })}
+            {extras?.end && <li>{extras.end}</li>}
           </ol>
           {running && thread.state === 'working' && (
             <div className="mt-3">
@@ -355,11 +388,14 @@ export function ThreadConversation({
         )}
         <Composer
           ref={composer}
-          providerKind={instance?.kind}
+          providerKind={extras ? undefined : instance?.kind}
           running={running !== undefined && !question}
           placeholder={placeholder}
+          blockedReason={extras?.blockedReason}
           onSend={answerQuestion ?? message}
           onStop={stop}
+          notice={extras?.notice}
+          {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
           footer={
             (showMeter && context) || (canResume && !errorId) ? (
               <div className="flex min-h-6 flex-wrap items-center gap-3">

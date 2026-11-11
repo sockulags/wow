@@ -3,7 +3,7 @@
 A personal desktop control surface for one developer's working day. It puts three things on one
 screen:
 
-- **Calendar** (day and week): meetings and unread mail from the local Outlook client, plus local
+- **Calendar** (day and week): meetings from the local Outlook client, plus local
   cards that exist only in the app. A card with a workflow is a scheduled trigger.
 - **Chat**: threads run by Codex (`codex app-server`) or Claude Code (Claude Agent SDK), with
   streaming, tool calls, approvals, agent questions, model and effort choice, and `$skill` picking.
@@ -16,10 +16,16 @@ the server owns processes, files and Git; the UI is dumb and renders persisted s
 
 ## Status
 
-Planning. The delivery plan is `intents/2026-11-wow-app/plan.md`, the behavior is
-`intents/2026-11-wow-app/spec.md`, and the technical decisions are `docs/architecture.md`. The
-plan is executed by the workflow in `.claude/workflows/build-wow.js` with at most three agents at
-a time.
+The app (`intents/2026-11-wow-app`) and the review loop (`intents/2026-11-review-loop`: review
+at a gate, plans, working copies, host reading, event triggers and gates that pass by themselves)
+are built; workflow branches (`intents/2026-11-workflow-branches`) are delivered too, and so is
+the app assistant (`intents/2026-11-app-assistant`: one conversation that operates wow, with
+change rows and Undo, proposals that wait for a yes, secret fields, a setup file to share, and
+the first-start step "Connect an agent"). Each intent's behavior is in its `spec.md` and its
+delivery units in its `plan.md`; the technical decisions are in `docs/architecture.md`.
+`pnpm e2e --grep @review-loop` and `pnpm e2e --grep @app-assistant` run the end-to-end cases each
+ground truth names. The manual Windows checks with real hosts and a real provider
+(`docs/windows-smoke.md`, sections 9 and 10) are still to be run.
 
 ## Develop
 

@@ -10,7 +10,14 @@ import {
   ThreadState,
 } from './provider.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
-import { StepRun, WorkflowRunState, WorkflowStep } from './workflow.js';
+import {
+  FileHash,
+  PathVisit,
+  StepRun,
+  WorkflowRunState,
+  WorkflowStep,
+  WorkingCopy,
+} from './workflow.js';
 
 // Row shapes of the projection tables in docs/architecture.md, as clients receive them through
 // subscriptions. Absent optional columns arrive as null, because that is what SQLite stores.
@@ -54,8 +61,14 @@ export const ProviderInstance = z.object({
 });
 export type ProviderInstance = z.infer<typeof ProviderInstance>;
 
+// The assistant thread is the one conversation that operates wow itself (app assistant spec 1).
+// Absent means an ordinary chat thread, as every thread stored before the assistant is.
+export const ThreadKind = z.enum(['chat', 'assistant']);
+export type ThreadKind = z.infer<typeof ThreadKind>;
+
 export const Thread = z.object({
   id: Id,
+  kind: ThreadKind.optional(),
   projectId: Id.nullable(),
   cwd: z.string().min(1),
   branch: z.string().nullable(),
@@ -231,18 +244,6 @@ export const CalendarItem = z.object({
 });
 export type CalendarItem = z.infer<typeof CalendarItem>;
 
-export const MailItem = z.object({
-  id: Id,
-  externalId: z.string().min(1),
-  folder: z.string(),
-  from: z.string(),
-  subject: z.string(),
-  receivedAt: Timestamp,
-  unread: z.boolean(),
-  snippet: z.string(),
-});
-export type MailItem = z.infer<typeof MailItem>;
-
 // Calendar preferences read from Outlook (F-8). Each part is null when Outlook does not say. The
 // calendar settings default to these and fall back to the system's when they are null.
 export const OutlookProfile = z.object({
@@ -260,8 +261,6 @@ export const OutlookStatus = z.object({
   lastError: z.string().nullable(),
   // The first failed poll since the last good one: "Outlook unavailable since <time>".
   unavailableSince: Timestamp.nullable(),
-  // Unread mail in the configured folders, including messages beyond the rail's limit.
-  unreadCount: z.number().int().nonnegative(),
   bridgeVersion: z.string().nullable(),
   // The last profile Outlook returned; kept while Outlook is unavailable.
   profile: OutlookProfile.nullable(),
@@ -300,10 +299,60 @@ export const Workflow = z.object({
   name: z.string().min(1),
   templateKind: z.string().nullable(),
   steps: z.array(WorkflowStep),
+  // "Own working copy": each run works in a Git worktree of its own instead of the project
+  // folder (review loop spec 36, 39). Absent means off.
+  ownWorkingCopy: z.boolean().optional(),
+  // "For units": a plan run may run this workflow once per unit of a plan (review loop spec 40).
+  // Absent means off.
+  forUnits: z.boolean().optional(),
+  // How often one step may start in a run before the run waits for the user (workflow branches
+  // spec 9). Absent or null: the `workflows.maxStepVisits` setting.
+  maxStepVisits: z.number().int().min(1).max(50).nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
 export type Workflow = z.infer<typeof Workflow>;
+
+// The unit a run delivers, for a run that a plan run started (review loop spec 40). Every step's
+// prompt names it, and the plan run is told when the run ends.
+export const RunUnit = z.object({
+  planRunId: Id,
+  // `<projectId>:<intentId>`, the plan's row.
+  planId: Id,
+  intentId: z.string().min(1),
+  unitKey: z.string().min(1),
+  title: z.string(),
+});
+export type RunUnit = z.infer<typeof RunUnit>;
+
+// A card trigger fires at the card's start; an event trigger fires when polling first sees
+// something happen on a pull request wow follows (review loop spec 48).
+export const TriggerKind = z.enum(['card', 'event']);
+export type TriggerKind = z.infer<typeof TriggerKind>;
+
+export const TriggerEvent = z.enum(['merged', 'checksFailed', 'commentAdded']);
+export type TriggerEvent = z.infer<typeof TriggerEvent>;
+
+export const triggerEventLabels: Readonly<Record<TriggerEvent, string>> = {
+  merged: 'Pull request merged',
+  checksFailed: 'Checks failed',
+  commentAdded: 'Review comment added',
+};
+
+// What started a run that an event trigger started (review loop spec 48, 51). Every step's
+// handover names the pull request and the event. A review comment is carried as its link and
+// author only: text someone else wrote never becomes part of a prompt wow writes.
+export const RunEvent = z.object({
+  triggerId: Id,
+  event: TriggerEvent,
+  changeRequestId: Id,
+  number: z.number().int().positive(),
+  url: z.string().min(1),
+  branch: z.string(),
+  commentUrl: z.string().min(1).nullable(),
+  commentAuthor: z.string().nullable(),
+});
+export type RunEvent = z.infer<typeof RunEvent>;
 
 export const WorkflowRun = z.object({
   id: Id,
@@ -316,24 +365,84 @@ export const WorkflowRun = z.object({
   steps: z.array(StepRun),
   startedAt: Timestamp,
   endedAt: Timestamp.nullable(),
+  // The commit the working folder was on when the run's first step began (review loop spec 10).
+  // Null for a run from before bases were recorded, and for a folder that was not a repository.
+  baseSha: z.string().min(1).nullable().optional(),
+  // The files that already differed from the base at that moment, so the first step is not
+  // credited with changes that were there before it.
+  baseFiles: z.array(FileHash).nullable().optional(),
+  // The run's own working copy; absent or null for a run that works in the project folder.
+  workingCopy: WorkingCopy.nullable().optional(),
+  // Absent or null for a run nobody started for a unit.
+  unit: RunUnit.nullable().optional(),
+  // Absent or null for a run no event trigger started.
+  event: RunEvent.nullable().optional(),
+  // Every step visit in the order it happened, with why the run went where it went next
+  // (workflow branches spec 18). Absent or null for a run from before paths were kept.
+  path: z.array(PathVisit).nullable().optional(),
 });
 export type WorkflowRun = z.infer<typeof WorkflowRun>;
+
+// The folder a run works in: its own working copy when it has one, else the project folder.
+export const runFolder = (run: Pick<WorkflowRun, 'workingCopy'>, projectFolder: string): string =>
+  run.workingCopy?.path ?? projectFolder;
 
 export const TriggerState = z.enum(['scheduled', 'fired', 'missed', 'cancelled']);
 export type TriggerState = z.infer<typeof TriggerState>;
 
+// One table for both kinds. The fields of the other kind are null, because that is what SQLite
+// stores; `isCardTrigger` and `isEventTrigger` narrow a row to the fields its kind has.
 export const Trigger = z.object({
   id: Id,
-  calendarItemId: Id,
+  kind: TriggerKind,
   workflowId: Id,
-  runAt: Timestamp,
-  zone: z.string().min(1),
-  state: TriggerState,
+  // Card: the run the trigger started. Event: the last run it started.
   runId: Id.nullable(),
+  // Card triggers only.
+  calendarItemId: Id.nullable(),
+  runAt: Timestamp.nullable(),
+  zone: z.string().min(1).nullable(),
+  state: TriggerState.nullable(),
   // A missed trigger the card offers a one-click "Run now" for (missed policy `mark`).
   offerRunNow: z.boolean(),
+  // Event triggers only: the project whose pull requests it listens to, what it listens for,
+  // and whether it is on.
+  projectId: Id.nullable(),
+  event: TriggerEvent.nullable(),
+  enabled: z.boolean().nullable(),
+  createdAt: Timestamp.nullable(),
 });
 export type Trigger = z.infer<typeof Trigger>;
+
+export type CardTrigger = Trigger & {
+  kind: 'card';
+  calendarItemId: string;
+  runAt: string;
+  zone: string;
+  state: TriggerState;
+};
+
+export type EventTrigger = Trigger & {
+  kind: 'event';
+  projectId: string;
+  event: TriggerEvent;
+  enabled: boolean;
+  createdAt: string;
+};
+
+export const isCardTrigger = (trigger: Trigger): trigger is CardTrigger =>
+  trigger.kind === 'card' &&
+  trigger.calendarItemId !== null &&
+  trigger.runAt !== null &&
+  trigger.zone !== null &&
+  trigger.state !== null;
+
+export const isEventTrigger = (trigger: Trigger): trigger is EventTrigger =>
+  trigger.kind === 'event' &&
+  trigger.projectId !== null &&
+  trigger.event !== null &&
+  trigger.enabled !== null &&
+  trigger.createdAt !== null;
 
 // What the server tells the user about without being asked: a run started by a trigger, a run
 // waiting at a gate, a failed run or trigger. The desktop app shows them as system notifications,
@@ -373,6 +482,121 @@ export const Skill = z.object({
   invocations: z.object({ claude: z.string(), codex: z.string() }),
 });
 export type Skill = z.infer<typeof Skill>;
+
+// Plans: what the files of one intent folder say (intents/<id>/{intent,spec,plan}.md), read by
+// the server's plans service. Only a unit's status and the change request it links to can come
+// from a host, and only for a followed plan.
+export const PlanFileKind = z.enum(['intent', 'spec', 'plan']);
+export type PlanFileKind = z.infer<typeof PlanFileKind>;
+
+export const PlanProblem = z.object({
+  file: PlanFileKind,
+  line: z.number().int().positive(),
+  message: z.string().min(1),
+});
+export type PlanProblem = z.infer<typeof PlanProblem>;
+
+// A spec or plan file. `stale` is set when it was built on an older revision than its source
+// file (the intent for a spec, the spec for a plan) is at now.
+export const PlanFile = z.object({
+  rev: z.number().int().positive().nullable(),
+  status: z.string().nullable(),
+  stale: z
+    .object({ builtOn: z.number().int().positive(), current: z.number().int().positive() })
+    .nullable(),
+});
+export type PlanFile = z.infer<typeof PlanFile>;
+
+export const PlanSource = z.enum(['files', 'issues']);
+export type PlanSource = z.infer<typeof PlanSource>;
+
+// A unit's status (review loop spec 23 and 24). From the pull requests of a followed plan:
+// delivered, claimed, blocked, ready or waiting. From the files alone: blocked or unknown.
+export const PlanUnitStatus = z.enum([
+  'delivered',
+  'claimed',
+  'blocked',
+  'ready',
+  'waiting',
+  'unknown',
+]);
+export type PlanUnitStatus = z.infer<typeof PlanUnitStatus>;
+
+export const PlanUnit = z.object({
+  key: z.string().min(1),
+  title: z.string(),
+  line: z.number().int().positive(),
+  dependsOn: z.array(z.string().min(1)),
+  blocked: z.string().nullable(),
+  // Every agent-os contract field with what the unit's `### KEY` section says for it, null for a
+  // field the section does not have. The whole list is null for `source: issues` and for a unit
+  // without a section.
+  contract: z.array(z.object({ name: z.string().min(1), value: z.string().nullable() })).nullable(),
+  status: PlanUnitStatus,
+  // Why the status is what it is, in words the view shows as they are.
+  statusReason: z.string(),
+  // The change request that delivered or claims the unit (a `changeRequests` row), if any.
+  changeRequestId: Id.nullable().default(null),
+});
+export type PlanUnit = z.infer<typeof PlanUnit>;
+
+export const PlanIntent = z.object({
+  // `<projectId>:<intentId>`.
+  id: Id,
+  projectId: Id,
+  intentId: z.string().min(1),
+  title: z.string().min(1),
+  hasIntent: z.boolean(),
+  status: z.string().nullable(),
+  rev: z.number().int().positive().nullable(),
+  spec: PlanFile.nullable(),
+  plan: PlanFile.nullable(),
+  source: PlanSource.nullable(),
+  units: z.array(PlanUnit),
+  problems: z.array(PlanProblem),
+  // The user follows this plan: wow asks the host about its pull requests (spec 27 and 29).
+  followed: z.boolean().default(false),
+});
+export type PlanIntent = z.infer<typeof PlanIntent>;
+
+// A plan run works through a plan's ready units, one ordinary run per unit and one at a time
+// (review loop spec 40 to 47). `running` while a unit's run is live, `waiting` while units remain
+// and none is ready, `done` when every unit is delivered, `failed` when a unit's run failed or
+// was stopped and `workflows.planRunOnFailure` is `stop`, `stopped` by the user.
+export const PlanRunState = z.enum(['running', 'waiting', 'done', 'failed', 'stopped']);
+export type PlanRunState = z.infer<typeof PlanRunState>;
+
+export const isLivePlanRunState = (state: PlanRunState): boolean =>
+  state === 'running' || state === 'waiting';
+
+// One unit the plan run started a run for, in the order they started. A unit is started at most
+// once in a plan run, whatever became of its run.
+export const PlanRunUnit = z.object({
+  unitKey: z.string().min(1),
+  title: z.string(),
+  runId: Id,
+  outcome: z.enum(['running', 'done', 'failed', 'stopped']),
+});
+export type PlanRunUnit = z.infer<typeof PlanRunUnit>;
+
+export const PlanRun = z.object({
+  id: Id,
+  // `<projectId>:<intentId>`, the plan's row.
+  planId: Id,
+  projectId: Id,
+  intentId: z.string().min(1),
+  workflowId: Id,
+  state: PlanRunState,
+  units: z.array(PlanRunUnit),
+  // While waiting: one sentence per unit that is not delivered, such as "U2 waits for U1 to
+  // merge" (spec 41). Empty otherwise.
+  waitingFor: z.array(z.string()),
+  // Why it ended as failed, or what a start that could not happen said.
+  message: z.string().nullable(),
+  startedAt: Timestamp,
+  endedAt: Timestamp.nullable(),
+});
+export type PlanRun = z.infer<typeof PlanRun>;
 
 export const SettingRow = z.object({
   key: z.string().min(1),

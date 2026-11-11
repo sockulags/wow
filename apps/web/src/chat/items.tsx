@@ -27,6 +27,7 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CodeBlock } from '@/components/code-block';
 import { WithTooltip } from '@/components/hint';
+import { Markdown } from '@/components/markdown';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -93,45 +94,14 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
   );
 }
 
-// Assistant text with its fenced code blocks highlighted. A fence still being streamed (not
-// closed yet) stays plain text until it closes.
-export function splitFences(
-  text: string,
-): ReadonlyArray<{ readonly code: boolean; readonly text: string; readonly language: string }> {
-  const parts: { code: boolean; text: string; language: string }[] = [];
-  const fence = /^```([\w+-]*)[^\n]*\n([\s\S]*?)^```[ \t]*$/gm;
-  let at = 0;
-  for (const match of text.matchAll(fence)) {
-    if (match.index > at)
-      parts.push({ code: false, text: text.slice(at, match.index), language: '' });
-    parts.push({ code: true, text: (match[2] ?? '').replace(/\n$/, ''), language: match[1] ?? '' });
-    at = match.index + match[0].length;
-  }
-  if (at < text.length) parts.push({ code: false, text: text.slice(at), language: '' });
-  return parts;
-}
-
+// Assistant text through the shared markdown renderer. While it streams, an unfinished table or
+// fence stays plain text until it is complete.
 function AssistantText({ payload, streaming }: { payload: TextItemPayload; streaming: boolean }) {
   return (
-    <div className="text-sm leading-relaxed whitespace-pre-wrap" aria-busy={streaming}>
-      {splitFences(payload.text).map((part, index) =>
-        part.code ? (
-          <CodeBlock
-            // Parts only grow at the end while streaming, so the index is a stable key.
-            key={index}
-            code={part.text}
-            language={part.language}
-            className="my-2 text-xs whitespace-pre"
-          />
-        ) : (
-          <span key={index}>{part.text.replace(/^\n/, '')}</span>
-        ),
-      )}
+    <div aria-busy={streaming}>
+      <Markdown text={payload.text} streaming={streaming} />
       {streaming && (
-        <span
-          aria-hidden
-          className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-foreground/60 align-middle"
-        />
+        <span aria-hidden className="mt-1 block h-3.5 w-1.5 animate-pulse bg-foreground/60" />
       )}
     </div>
   );

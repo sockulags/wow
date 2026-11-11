@@ -1,10 +1,4 @@
-import type {
-  Appointment,
-  BridgeErrorCode,
-  PingResult,
-  ProfileResult,
-  UnreadMailResult,
-} from './protocol.js';
+import type { Appointment, BridgeErrorCode, PingResult, ProfileResult } from './protocol.js';
 
 export interface CalendarWindow {
   // Instants as ISO strings with an offset; the bridge converts them to Outlook's local time.
@@ -13,12 +7,12 @@ export interface CalendarWindow {
 }
 
 // Where the server reads Outlook from: the PowerShell COM bridge on Windows, fixtures elsewhere.
-// Read-only apart from `open`, which only asks Outlook to show an item.
+// Read-only apart from `open`, which only asks Outlook to show a meeting. Only the calendar and the
+// calendar profile are read (spec 4).
 export interface OutlookSource {
   readonly kind: 'bridge' | 'mock';
   ping(): Promise<PingResult>;
   calendar(window: CalendarWindow): Promise<Appointment[]>;
-  unreadMail(folders: readonly string[], limit: number): Promise<UnreadMailResult>;
   open(entryId: string): Promise<void>;
   // Work hours, first day of the week, time zone and address (F-8). Still read-only.
   profile(): Promise<ProfileResult>;

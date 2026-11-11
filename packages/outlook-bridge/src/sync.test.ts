@@ -4,15 +4,14 @@ import { MockOutlookSource } from './mock-source.js';
 import {
   OutlookSync,
   diffCalendar,
-  diffMail,
   type OutlookCalendarEntry,
   type OutlookFailure,
-  type OutlookMailEntry,
   type OutlookSink,
   type OutlookSnapshot,
   type OutlookSyncSettings,
 } from './sync.js';
-import { FakeClock } from './testing.js';
+import { PowershellOutlookSource } from './powershell-source.js';
+import { FakeBridge, FakeClock } from './testing.js';
 
 const zone = 'Europe/Stockholm';
 
@@ -24,7 +23,6 @@ beforeAll(async () => {
 // Stands in for the server: applies diffs to in-memory tables the way it applies them to SQLite.
 class TableSink implements OutlookSink {
   calendar = new Map<string, OutlookCalendarEntry>();
-  mail = new Map<string, OutlookMailEntry>();
   status: {
     lastSyncAt: string | null;
     lastError: OutlookFailure | null;
@@ -41,9 +39,6 @@ class TableSink implements OutlookSink {
     const calendar = diffCalendar([...this.calendar.values()], snapshot);
     for (const id of calendar.remove) this.calendar.delete(id);
     for (const row of calendar.upsert) this.calendar.set(row.id, row);
-    const mail = diffMail([...this.mail.values()], snapshot.mail);
-    for (const id of mail.remove) this.mail.delete(id);
-    for (const row of mail.upsert) this.mail.set(row.id, row);
     this.status = {
       lastSyncAt: snapshot.at,
       lastError: null,
@@ -66,9 +61,6 @@ function setup(overrides: Partial<OutlookSyncSettings> = {}) {
     zone,
     firstDayOfWeek: 'monday',
     lookaheadDays: 6,
-    folders: ['Inbox'],
-    mailRail: true,
-    mailLimit: 50,
     ...overrides,
   };
   const sync = new OutlookSync({ source, sink, clock, settings: () => settings });
@@ -96,12 +88,6 @@ describe('OutlookSync', () => {
     );
     expect(sink.calendar.get('outlook:mock-architecture-sync')?.state).toBe('cancelled');
     expect(sink.calendar.get('outlook:mock-offsite')?.allDay).toBe(true);
-    expect([...sink.mail.keys()]).toEqual([
-      'outlook-mail:mock-mail-build',
-      'outlook-mail:mock-mail-review',
-      'outlook-mail:mock-mail-offsite',
-    ]);
-    expect(sink.snapshots[0]?.unreadCount).toBe(3);
     expect(sink.status).toEqual({
       lastSyncAt: '2026-11-04T09:00:00.000Z',
       lastError: null,
@@ -124,7 +110,6 @@ describe('OutlookSync', () => {
       appointments: fixtures.appointments
         .filter((item) => item.entryId !== 'mock-one-on-one')
         .map((item) => (item.entryId === 'mock-lunch' ? { ...item, time: '12:30' } : item)),
-      messages: fixtures.messages.filter((message) => message.entryId !== 'mock-mail-build'),
     });
     await sync.syncOnce();
     expect(sink.calendar.get('outlook:mock-lunch')?.start).toBe('2026-11-04T11:30:00.000Z');
@@ -132,7 +117,6 @@ describe('OutlookSync', () => {
       false,
     );
     expect(sink.calendar.has('outlook:last-month')).toBe(true);
-    expect(sink.mail.has('outlook-mail:mock-mail-build')).toBe(false);
   });
 
   it('keeps cached rows and reports since when Outlook became unavailable', async () => {
@@ -193,13 +177,51 @@ describe('OutlookSync', () => {
     expect(standup?.organizer).toBe('Ada Lindqvist');
   });
 
-  it('clears the mail rail when it is turned off', async () => {
-    const { sync, sink, change } = setup();
-    await sync.syncOnce();
-    change({ mailRail: false });
-    await sync.syncOnce();
-    expect(sink.mail.size).toBe(0);
-    expect(sink.snapshots.at(-1)?.unreadCount).toBe(0);
+  it('asks the mock for the calendar and its profile only (spec 4)', async () => {
+    const { sync, sink, source } = setup();
+    expect(await sync.syncOnce()).toBe('synced');
+    expect(source.asked).toEqual(['ping', 'profile', 'calendar']);
+    expect(Object.keys(sink.snapshots[0] ?? {}).toSorted()).toEqual([
+      'at',
+      'bridgeVersion',
+      'calendar',
+      'profile',
+      'window',
+    ]);
+  });
+
+  it('asks the PowerShell bridge for the calendar and its profile only (spec 4)', async () => {
+    const clock = new FakeClock('2026-11-04T09:00:00Z');
+    const bridge = new FakeBridge();
+    const answers: Record<string, unknown> = {
+      ping: { version: '1', outlook: 'available', message: null },
+      profile: { timeZoneId: null, workHoursXml: null, firstDayOfWeek: null, address: null },
+      calendar: { items: [] },
+    };
+    // Answers each request as soon as it is written, the way a quick Outlook would.
+    bridge.write = (line: string) => {
+      const request = JSON.parse(line) as { id: number; op: string };
+      bridge.requests.push(request);
+      queueMicrotask(() => bridge.reply(request.id, answers[request.op]));
+    };
+    const source = new PowershellOutlookSource({
+      requestTimeoutMs: () => 5000,
+      clock,
+      spawn: () => bridge,
+    });
+    const sink = new TableSink();
+    const sync = new OutlookSync({
+      source,
+      sink,
+      clock,
+      settings: () => ({ pollSeconds: 60, zone, firstDayOfWeek: 'monday', lookaheadDays: 6 }),
+    });
+    expect(await sync.syncOnce()).toBe('synced');
+    expect(bridge.requests.map((request) => request['op'])).toEqual([
+      'ping',
+      'profile',
+      'calendar',
+    ]);
   });
 
   it('polls on outlook.pollSeconds, reading the setting each time, and stops cleanly', async () => {
@@ -244,9 +266,6 @@ describe('OutlookSync', () => {
         zone,
         firstDayOfWeek: 'monday',
         lookaheadDays: 1,
-        folders: ['Inbox'],
-        mailRail: true,
-        mailLimit: 5,
       }),
     });
     sync.start();
@@ -263,6 +282,5 @@ describe('OutlookSync', () => {
     await sync.syncOnce();
     const snapshot = sink.snapshots[0] as OutlookSnapshot;
     expect(diffCalendar([...sink.calendar.values()], snapshot)).toEqual({ upsert: [], remove: [] });
-    expect(diffMail([...sink.mail.values()], snapshot.mail)).toEqual({ upsert: [], remove: [] });
   });
 });

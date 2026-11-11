@@ -1,13 +1,18 @@
 import { z } from 'zod';
+import { AssistantChange, AssistantProposal } from './assistant.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
+import { RunDiff, RunDiffParams } from './diff.js';
+import { FileReadParams, FileReadResult } from './files.js';
+import { ChangeRequest, HostRead, HostRefreshParams, PageRead, TicketRead } from './hosts.js';
 import {
   Approval,
   BacklogItem,
   BacklogRemote,
   CalendarItem,
-  MailItem,
   AppNotification,
   OutlookStatus,
+  PlanIntent,
+  PlanRun,
   Project,
   ProviderInstance,
   Question,
@@ -28,20 +33,29 @@ import {
   ProviderTestResult,
 } from './provider.js';
 import { SecretRef } from './settings.js';
-import { ProjectGit, ProjectTrackers, PublishProject, TrackerValueSource } from './trackers.js';
+import { SetupApplication, SetupRead, SetupSaved } from './setup.js';
+import {
+  ProjectGit,
+  ProjectTrackers,
+  PublishProject,
+  TrackerConnection,
+  TrackerValueSource,
+} from './trackers.js';
 
 // Subscription topics: one per projection. Thread-scoped topics need a threadId so a client
 // never receives every item of every thread.
 export const subscriptionTopics = {
   projects: { row: Project, threadScoped: false },
   providerInstances: { row: ProviderInstance, threadScoped: false },
+  // Chat threads and the threads of workflow steps; never the assistant thread.
   threads: { row: Thread, threadScoped: false },
+  // The assistant thread: no row before it was first opened, one row after.
+  assistantThread: { row: Thread, threadScoped: false },
   turns: { row: Turn, threadScoped: true },
   threadItems: { row: ThreadItem, threadScoped: true },
   approvals: { row: Approval, threadScoped: true },
   questions: { row: Question, threadScoped: true },
   calendarItems: { row: CalendarItem, threadScoped: false },
-  mailItems: { row: MailItem, threadScoped: false },
   outlookStatus: { row: OutlookStatus, threadScoped: false },
   backlogItems: { row: BacklogItem, threadScoped: false },
   workflows: { row: Workflow, threadScoped: false },
@@ -49,7 +63,17 @@ export const subscriptionTopics = {
   triggers: { row: Trigger, threadScoped: false },
   notifications: { row: AppNotification, threadScoped: false },
   skills: { row: Skill, threadScoped: false },
+  planIntents: { row: PlanIntent, threadScoped: false },
+  planRuns: { row: PlanRun, threadScoped: false },
+  changeRequests: { row: ChangeRequest, threadScoped: false },
+  hostReads: { row: HostRead, threadScoped: false },
+  ticketReads: { row: TicketRead, threadScoped: false },
+  pageReads: { row: PageRead, threadScoped: false },
   settings: { row: SettingRow, threadScoped: false },
+  assistantChanges: { row: AssistantChange, threadScoped: false },
+  assistantProposals: { row: AssistantProposal, threadScoped: false },
+  // Setup files applied here, in the order applied, with their Undo state.
+  setupApplications: { row: SetupApplication, threadScoped: false },
 } as const;
 
 export type SubscriptionTopic = keyof typeof subscriptionTopics;
@@ -110,10 +134,12 @@ export type TrackerPreview = z.infer<typeof TrackerPreview>;
 // "Test connection" in Settings → Trackers: signs in with the stored settings and says as whom
 // (audit E-08). `missing` names settings still empty; nothing is sent while any are.
 export const TrackerTestResult = z.object({
-  service: TrackerService,
+  service: TrackerConnection,
   ok: z.boolean(),
-  // The signed-in account: Jira display name and email, or the GitHub login.
+  // The signed-in account: Jira display name and email, the GitHub login or the GitLab user.
   account: z.string().nullable(),
+  // The host's version where it says one (GitLab), so the user knows which API wow talks to.
+  version: z.string().nullable(),
   message: z.string(),
   missing: z.array(z.string()),
 });
@@ -185,6 +211,14 @@ export const rpcMethods = {
     params: z.object({ providerInstanceId: z.string().min(1) }),
     result: z.array(ProviderModel),
   },
+  // Asks for the assistant thread (app assistant spec 1, 27): makes it when it is not there yet,
+  // moves it when the settings name another provider instance, model or effort, and answers the
+  // thread as it is now. When no connected instance can run it, `problem` says why in words and
+  // nothing was changed; a thread made earlier is still answered, so its conversation shows.
+  'assistant.open': {
+    params: NoParams,
+    result: z.object({ thread: Thread.nullable(), problem: z.string().nullable() }),
+  },
   // Looks for each provider's CLI on the server's PATH and its config directory (first run).
   'provider.detect': {
     params: NoParams,
@@ -200,7 +234,7 @@ export const rpcMethods = {
     params: NoParams,
     result: z.object({ protection: SecretProtection, names: z.array(z.string()) }),
   },
-  // Asks Outlook to show a mail or calendar item (spec 4). Nothing in Outlook changes.
+  // Asks Outlook to show a meeting (spec 1). Nothing in Outlook changes.
   'outlook.open': {
     params: z.object({ entryId: z.string().min(1) }),
     result: z.object({ opened: z.literal(true) }),
@@ -215,9 +249,34 @@ export const rpcMethods = {
     params: NoParams,
     result: z.object({ skills: z.array(Skill) }),
   },
+  // Reads every project's intents folder now and answers with the intents found. Files only; no
+  // host is asked.
+  'plans.refresh': {
+    params: NoParams,
+    result: z.object({ intents: z.array(PlanIntent) }),
+  },
+  // "Refresh now" (review loop spec 30): asks the host once about one followed plan, one run, or
+  // everything wow follows, whatever the polling settings say, and answers with what is stored
+  // for them afterwards. A host that fails is an answer (the read's `error`), not an RPC error.
+  'hosts.refresh': {
+    params: HostRefreshParams,
+    result: z.object({ reads: z.array(HostRead) }),
+  },
   // Looks for each started step's expected artifacts in the project folder (behavior 26, run
   // view open) and stores what it finds.
   'workflowRuns.detectArtifacts': {
+    params: z.object({ runId: z.string().min(1) }),
+    result: WorkflowRun,
+  },
+  // What the run changed in its working folder since its base commit: the changed files, or one
+  // file's diff when `path` is given. Read only; git runs with hooks off.
+  'workflowRuns.diff': {
+    params: RunDiffParams,
+    result: RunDiff,
+  },
+  // "Remove working copy" (review loop spec 37): deletes a kept working copy of a run that has
+  // ended, with whatever is uncommitted or unpushed in it. The app asks before it calls this.
+  'workflowRuns.removeWorkingCopy': {
     params: z.object({ runId: z.string().min(1) }),
     result: WorkflowRun,
   },
@@ -226,6 +285,12 @@ export const rpcMethods = {
   'workflows.matchArtifacts': {
     params: z.object({ projectId: z.string().min(1), globs: z.array(z.string().min(1)) }),
     result: z.object({ files: z.array(z.string()) }),
+  },
+  // Reads one file of a run for the viewer. Only files inside the run's working folder or the
+  // project folder are read; anything else is answered as `refused` with the reason.
+  'files.read': {
+    params: FileReadParams,
+    result: FileReadResult,
   },
   // Each project folder's git status and remotes, for the rows in Settings → Projects. Read only.
   'projects.git': {
@@ -243,7 +308,7 @@ export const rpcMethods = {
   },
   // Signs in with the settings as they apply to the project, or the defaults without one.
   'trackers.test': {
-    params: z.object({ service: TrackerService, projectId: z.string().min(1).optional() }),
+    params: z.object({ service: TrackerConnection, projectId: z.string().min(1).optional() }),
     result: TrackerTestResult,
   },
   // Creates the issue and stores its key and URL on the item. Refused when the item already has
@@ -251,6 +316,18 @@ export const rpcMethods = {
   'trackers.publish': {
     params: TrackerPublishParams,
     result: BacklogRemote,
+  },
+  // "Save setup to a file" (app assistant spec 21): the setup as YAML. Nothing is written on
+  // the server; the app hands the text to the user as a file.
+  'setup.save': {
+    params: NoParams,
+    result: SetupSaved,
+  },
+  // Reads a setup file and says what applying it would add and replace, or why it is refused
+  // (spec 22, 23). Nothing is stored; `setup.apply` reads the text again.
+  'setup.preview': {
+    params: z.object({ text: z.string() }),
+    result: SetupRead,
   },
 } as const satisfies Record<string, { params: z.ZodType; result: z.ZodType }>;
 

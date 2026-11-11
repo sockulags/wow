@@ -1,7 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { e2ePanelCardId, e2ePanelHome, e2ePanelTrackerPort } from './env';
+import { e2ePanelCardId, e2ePanelHome, e2ePanelTrackerPort, e2eViewerWorkflowId } from './env';
+import { sketchPath, sketching, sketchUse } from './sketch';
 
 // The context panel (owner decisions F-1, F-2) against its own copy of the e2e server, whose home
 // seeds a card tomorrow at 10:00 that runs a one-step workflow with a gate after the step. The
@@ -66,8 +67,8 @@ test.describe('context panel', () => {
     await expect(details.getByTestId('fact-State')).toHaveText('Needs you');
     await expect(thread.getByRole('combobox', { name: 'Message' })).toBeVisible();
     const gate = thread.getByRole('region', { name: 'Gate' });
-    await expect(gate).toContainText('check-work finished. Continue ends the run.');
-    await gate.getByRole('button', { name: 'Continue' }).click();
+    await expect(gate).toContainText('check-work finished. Approve ends the run.');
+    await gate.getByRole('button', { name: 'Approve' }).click();
     await expect(gate).toBeHidden();
     await expect(details.getByTestId('fact-State')).toHaveText('Done');
     await expect(card).toHaveAccessibleName(/, done$/);
@@ -175,6 +176,161 @@ test.describe('context panel', () => {
     await expect(panel(page)).toBeVisible();
     await expect(panel(page)).not.toHaveAttribute('data-overlay');
     await toggle.click();
+    await expect(panel(page)).toBeHidden();
+  });
+});
+
+// Starts a run of the viewer workflow: its step leaves the invented files in `review/` as found
+// artifacts and waits at its gate.
+async function startViewerRun(runId: string): Promise<void> {
+  const response = await fetch(
+    `http://127.0.0.1:${e2ePanelTrackerPort}/run?workflowId=${e2eViewerWorkflowId}&runId=${runId}`,
+    { method: 'POST' },
+  );
+  expect(response.ok).toBe(true);
+}
+
+// What the mock tracker port received; a request from the viewer's HTML page shows up as /leak….
+async function leaks(): Promise<string[]> {
+  const response = await fetch(`http://127.0.0.1:${e2ePanelTrackerPort}/requests`);
+  const received = (await response.json()) as { path: string }[];
+  return received.map((entry) => entry.path).filter((entry) => entry.startsWith('/leak'));
+}
+
+test.describe('file viewer', () => {
+  test('an artifact opens in the side panel @review-loop-6 @review-loop-7', async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    // Every answer the page or a frame in it got from anywhere.
+    const answered: string[] = [];
+    page.on('response', (response) => answered.push(response.url()));
+    await startViewerRun('viewer-e2e-run');
+    await page.goto('/workflows/runs/viewer-e2e-run');
+
+    const step = page.getByRole('list', { name: 'Run steps' }).getByTestId('run-step').first();
+    const artifacts = step.getByRole('list', { name: 'Artifacts of check-work' });
+    await expect(artifacts.getByRole('button', { name: /^Open review\// })).toHaveCount(5);
+    // Spec 9: nothing on the page points at the disk any more.
+    await expect(page.locator('a[href^="file:"]')).toHaveCount(0);
+    // The run waits at its gate, so the panel shows the step's conversation (spec 14).
+    await expect(panel(page).getByTestId('panel-step-thread')).toContainText('Step 1 of 1');
+
+    // Markdown is rendered, next to the run view, which stays where it was.
+    await artifacts.getByRole('button', { name: 'Open review/notes.md' }).click();
+    const viewer = panel(page).getByRole('region', { name: 'File viewer' });
+    await expect(viewer.getByTestId('viewer-path')).toHaveText('review/notes.md');
+    await expect(viewer.getByRole('heading', { name: 'Review notes' })).toBeVisible();
+    await expect(viewer.getByRole('table')).toContainText('Keeps the query after a reload');
+    await expect(viewer).toContainText('Markdown');
+    await expect(step).toBeVisible();
+    await viewer.getByRole('button', { name: 'Copy path' }).click();
+    // The server answers with the resolved path, which differs from the temp folder as written
+    // where that is a link or, on Windows, a short name.
+    expect(await page.evaluate('navigator.clipboard.readText()')).toBe(
+      await realpath(path.join(e2ePanelHome, 'review', 'notes.md')),
+    );
+
+    // Back to conversation: the step's thread with its gate is there again.
+    await viewer.getByRole('button', { name: 'Back to conversation' }).click();
+    await expect(viewer).toBeHidden();
+    await expect(panel(page).getByTestId('panel-step-thread')).toContainText('Step 1 of 1');
+    await expect(panel(page).getByRole('region', { name: 'Gate' })).toBeVisible();
+
+    // A picture is fitted to the panel, with a switch to its own size.
+    await artifacts.getByRole('button', { name: 'Open review/screen.png' }).click();
+    const picture = viewer.getByRole('img', { name: 'review/screen.png' });
+    await expect(picture).toBeVisible();
+    const shownWidth = () => picture.evaluate((element) => element.getBoundingClientRect().width);
+    expect(await shownWidth()).toBeLessThan(640);
+    await viewer.getByRole('button', { name: 'Full size' }).click();
+    await expect(viewer.getByRole('button', { name: 'Fit to panel' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(await shownWidth()).toBe(640);
+
+    // Other text shows as code.
+    await artifacts.getByRole('button', { name: 'Open review/checks.json' }).click();
+    await expect(viewer.getByTestId('viewer-text')).toContainText('"suite": "search-panel"');
+
+    // A binary file that is no picture is not read, and the panel says why.
+    await artifacts.getByRole('button', { name: 'Open review/archive.bin' }).click();
+    await expect(viewer.getByTestId('viewer-refusal')).toContainText(
+      'review/archive.bin is a binary file',
+    );
+
+    // HTML shows as a page in a frame that runs nothing while viewer.htmlScripts is off.
+    await artifacts.getByRole('button', { name: 'Open review/report.html' }).click();
+    const frame = viewer.getByTestId('viewer-html');
+    const report = frame.contentFrame();
+    await expect(frame).toHaveAttribute('sandbox', '');
+    await expect(report.getByRole('heading', { name: 'Search panel report' })).toBeVisible();
+    await expect(report.locator('#scripts')).toHaveText('Scripts: off');
+
+    // With the setting on its scripts run, and still reach neither the app nor the network.
+    await page.goto('/settings/viewer');
+    const scripts = page.getByRole('switch', { name: 'Run scripts in HTML files' });
+    await scripts.click();
+    await expect(scripts).toBeChecked();
+    await page.goto('/workflows/runs/viewer-e2e-run');
+    // The palette opens an artifact too.
+    await expect(artifacts.getByRole('button', { name: /^Open review\// })).toHaveCount(5);
+    await page.keyboard.press('Control+k');
+    await page.getByRole('dialog').getByRole('combobox').fill('open artifact report');
+    await expect(page.getByRole('dialog').getByRole('option').first()).toContainText(
+      'Open artifact: review/report.html',
+    );
+    await page.keyboard.press('Enter');
+    await expect(frame).toHaveAttribute('sandbox', 'allow-scripts');
+    await expect(report.locator('#scripts')).toHaveText('Scripts: on');
+    await expect(report.locator('#app')).toHaveText('App: blocked, storage: blocked');
+    await expect(report.locator('#network')).toHaveText('Network: blocked');
+    // WebRTC is not there for the page's script, a script in an attribute does not run, and a
+    // frame inside the page neither runs its own script nor lends its window.
+    await expect(report.locator('#webrtc')).toHaveText('WebRTC: blocked, from a frame: blocked');
+    await report.getByRole('button', { name: 'Handler: off' }).click();
+    await expect(report.getByRole('button', { name: 'Handler: off' })).toBeVisible();
+    // The page's picture, link, fetch and STUN address all name the mock tracker port: the
+    // browser got no answer from it and nothing arrived there, not a datagram either.
+    await report.getByRole('link', { name: 'A link out' }).click();
+    await expect(report.getByRole('heading', { name: 'Search panel report' })).toBeHidden();
+    expect(answered.filter((url) => url.includes('/leak'))).toEqual([]);
+    expect(await leaks()).toEqual([]);
+
+    // The palette goes back to the conversation. The click took the focus into the frame, which
+    // keeps its keys to itself, so the focus has to come back to the app first.
+    await viewer.getByTestId('viewer-path').click();
+    await page.keyboard.press('Control+k');
+    await page.getByRole('dialog').getByRole('combobox').fill('back to conversation');
+    await page.keyboard.press('Enter');
+    await expect(viewer).toBeHidden();
+    await expect(panel(page).getByTestId('panel-step-thread')).toBeVisible();
+
+    // Leave the server as the other panel tests expect it: scripts off. The panel was shown for
+    // the gate without its setting being turned on, so it is closed away from the run.
+    await page.goto('/settings/viewer');
+    await scripts.click();
+    await expect(scripts).not.toBeChecked();
+    await expect(panel(page)).toBeHidden();
+  });
+});
+
+test.describe('sketch', () => {
+  test.skip(!sketching, 'Set WOW_E2E_SKETCHES to write the screenshots');
+  test.use(sketchUse);
+
+  test('the file viewer in the side panel', async ({ page }) => {
+    await startViewerRun('viewer-sketch-run');
+    await page.goto('/workflows/runs/viewer-sketch-run');
+    const step = page.getByRole('list', { name: 'Run steps' }).getByTestId('run-step').first();
+    await step.getByRole('button', { name: 'Open review/notes.md' }).click();
+    const viewer = panel(page).getByRole('region', { name: 'File viewer' });
+    await expect(viewer.getByRole('table')).toBeVisible();
+    await expect(viewer.locator('.shiki')).toBeVisible();
+    await page.screenshot({ path: sketchPath('2026-11-review-loop', 'file-viewer') });
+    await page.keyboard.press('Control+j');
     await expect(panel(page)).toBeHidden();
   });
 });

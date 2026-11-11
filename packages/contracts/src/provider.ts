@@ -18,6 +18,18 @@ const PermissionMode = z.string().min(1);
 export const ApprovalDecision = z.enum(['allowOnce', 'allowSession', 'deny']);
 export type ApprovalDecision = z.infer<typeof ApprovalDecision>;
 
+// Tools of the app handed to an agent: one MCP server reached over HTTP with a bearer token. A
+// turn that carries a toolset gets these tools and no others (no file, shell or network tool,
+// no settings or tools of the user's own), whatever its permission mode says. How that is done
+// is each adapter's business.
+export const ProviderToolset = z.object({
+  // The name the agent knows the server by.
+  name: z.string().regex(/^[a-z][a-z0-9_]*$/),
+  url: z.url(),
+  token: z.string().min(1),
+});
+export type ProviderToolset = z.infer<typeof ProviderToolset>;
+
 export const ProviderCommand = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('startTurn'),
@@ -28,8 +40,14 @@ export const ProviderCommand = z.discriminatedUnion('type', [
     effort: Effort,
     permissionMode: PermissionMode,
     resumeId: z.string().min(1).optional(),
+    toolset: ProviderToolset.optional(),
+    // What the agent is told it is for, in place of the provider's own instructions for coding.
+    instructions: z.string().min(1).optional(),
   }),
   z.object({ type: z.literal('interrupt'), threadId: z.string().min(1) }),
+  // Ends the thread's live session in this adapter, if it has one, without a turn event. The
+  // provider's stored conversation stays; a later startTurn opens a new session.
+  z.object({ type: z.literal('closeThread'), threadId: z.string().min(1) }),
   z.object({
     type: z.literal('answerApproval'),
     approvalId: z.string().min(1),
@@ -152,6 +170,8 @@ export interface ProviderChatOptions {
   readonly defaultEffort: string | null;
   // The message that compacts the conversation, or null when the provider has no such action.
   readonly compactPrompt: string | null;
+  // The mode the assistant thread is stored with: the one that asks for nothing and allows least.
+  readonly assistantPermissionMode: string;
 }
 
 export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOptions>> = {
@@ -166,6 +186,7 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
     ],
     defaultEffort: 'default',
     compactPrompt: '/compact',
+    assistantPermissionMode: 'dontAsk',
   },
   codex: {
     permissionModes: [
@@ -176,6 +197,7 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
     ],
     defaultEffort: null,
     compactPrompt: null,
+    assistantPermissionMode: 'read-only',
   },
 };
 

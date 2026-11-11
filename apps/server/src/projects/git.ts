@@ -1,6 +1,13 @@
-import type { GitHubRemote, GitRemote, ProjectGitStatus } from '@wow/contracts';
+import type {
+  DiffFileStatus,
+  GitHubRemote,
+  GitLabProject,
+  GitRemote,
+  ProjectGitStatus,
+} from '@wow/contracts';
 import { execFile } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
+import { devNull } from 'node:os';
 import path from 'node:path';
 
 // What a project folder's git repository says about its trackers (owner decision F-4): the
@@ -80,6 +87,29 @@ export function parseRemoteUrl(name: string, raw: string): GitRemote {
     return { name, url, host, path: repoPath, github: githubOf(host, repoPath) };
   }
   return { name, url, host: null, path: null, github: null };
+}
+
+// The GitLab project a remote points at, when the remote is on the GitLab site the user stored
+// (`trackers.gitlab.baseUrl`). Any host can run GitLab, so only the stored site says that one
+// does; the remote's own host is never enough. The path keeps every nested group
+// (`group/sub/app`). A site under a sub-path (https://example.com/gitlab) has that prefix in its
+// https remotes, which is not part of the project path.
+export function gitLabProjectOf(
+  remote: GitRemote | undefined,
+  baseUrl: string,
+): GitLabProject | null {
+  if (!remote?.host || !remote.path || !URL.canParse(baseUrl)) return null;
+  const site = new URL(baseUrl);
+  if (site.hostname.toLowerCase() !== remote.host) return null;
+  const prefix = cleanPath(site.pathname);
+  const web = /^https?:\/\//i.test(remote.url);
+  const projectPath =
+    web && prefix !== null && remote.path.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)
+      ? remote.path.slice(prefix.length + 1)
+      : remote.path;
+  const parts = projectPath.split('/');
+  if (parts.length < 2 || parts.some((part) => part === '')) return null;
+  return { host: remote.host, path: projectPath };
 }
 
 // `git remote -v` prints each remote twice, "(fetch)" and "(push)"; the fetch URL is the one
@@ -185,11 +215,22 @@ export interface GitRunOptions {
 
 type GitResult = { ok: true; stdout: string } | { ok: false; missing: boolean; message: string };
 
-function runGit(folder: string, args: readonly string[], options: GitRunOptions) {
+// A repository's config can name programs git runs while it only reads: hooks, a file system
+// monitor, and (per command) external diff and text conversion programs. wow runs none of them.
+const neverRun = ['-c', `core.hooksPath=${devNull}`, '-c', 'core.fsmonitor=false'];
+// Paths come back as they are, not quoted and escaped.
+const plainPaths = ['-c', 'core.quotePath=false'];
+
+function runGit(
+  folder: string,
+  args: readonly string[],
+  options: GitRunOptions,
+  config: readonly string[] = [],
+) {
   return new Promise<GitResult>((resolve) => {
     execFile(
       options.git ?? 'git',
-      ['-C', folder, ...args],
+      [...neverRun, ...plainPaths, ...config, '-C', folder, ...args],
       {
         timeout: options.timeoutMs,
         windowsHide: true,
@@ -200,6 +241,8 @@ function runGit(folder: string, args: readonly string[], options: GitRunOptions)
           // Never wait for a password prompt or take an optional lock in the user's repository.
           GIT_TERMINAL_PROMPT: '0',
           GIT_OPTIONAL_LOCKS: '0',
+          // A file name is a name, never a pattern.
+          GIT_LITERAL_PATHSPECS: '1',
           LC_ALL: 'C',
         },
       },
@@ -287,4 +330,406 @@ export async function readHistoryTexts(
   return [...(branches.ok ? branches.stdout.split('\n') : []), ...(log.ok ? [log.stdout] : [])]
     .map((text) => text.trim())
     .filter((text) => text !== '');
+}
+
+// What a run's Changes tab needs (review loop spec 10 to 13). Everything below only reads: no
+// index refresh is written (optional locks are off) and no object is added.
+
+export type HeadCommit =
+  | { readonly status: 'ok'; readonly sha: string }
+  | {
+      readonly status: 'noCommit' | 'noRepository' | 'gitUnavailable' | 'folderMissing';
+      readonly message: string | null;
+    };
+
+// The commit the folder is on. `noCommit` is a repository that has none yet.
+export async function readHeadCommit(folder: string, options: GitRunOptions): Promise<HeadCommit> {
+  const found = await stat(folder).catch(() => undefined);
+  if (!found?.isDirectory()) return { status: 'folderMissing', message: null };
+  const repository = await runGit(folder, ['rev-parse', '--git-dir'], options);
+  if (!repository.ok) {
+    if (repository.missing) {
+      return { status: 'gitUnavailable', message: 'git was not found on the PATH' };
+    }
+    return {
+      status: 'noRepository',
+      message: /not a git repository/i.test(repository.message) ? null : repository.message,
+    };
+  }
+  const head = await runGit(folder, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], options);
+  const sha = head.ok ? head.stdout.trim() : '';
+  return sha === '' ? { status: 'noCommit', message: null } : { status: 'ok', sha };
+}
+
+export interface ChangedPath {
+  // Relative to the folder, with forward slashes, as git names it.
+  readonly path: string;
+  readonly oldPath: string | null;
+  readonly status: DiffFileStatus;
+  // False for a new file git does not know yet; its lines are not counted here.
+  readonly tracked: boolean;
+  readonly added: number | null;
+  readonly removed: number | null;
+  readonly binary: boolean;
+}
+
+export type ChangedPaths =
+  | { readonly ok: true; readonly files: ChangedPath[] }
+  | { readonly ok: false; readonly baseMissing: boolean; readonly message: string };
+
+// Compares the folder as it is now with the base commit, so committed and uncommitted work both
+// count. Line endings follow the repository's attributes, because git converts the working file
+// the way a commit would before it compares. The folder may be a subfolder of its repository.
+const diffArgs = (base: string, renames: boolean) => [
+  'diff',
+  '--no-ext-diff',
+  '--no-textconv',
+  '--no-color',
+  '--relative',
+  renames ? '-M' : '--no-renames',
+  base,
+];
+
+const statusOf = (letter: string): DiffFileStatus =>
+  letter === 'A' || letter === 'C'
+    ? 'added'
+    : letter === 'D'
+      ? 'deleted'
+      : letter === 'R'
+        ? 'renamed'
+        : 'modified';
+
+const records = (output: string) => {
+  const parts = output.split('\0');
+  // The output ends with a NUL, which leaves one empty piece.
+  if (parts.at(-1) === '') parts.pop();
+  return parts;
+};
+
+// `--name-status -z`: "M", path; or "R100", old path, new path.
+export function parseNameStatus(
+  output: string,
+): Pick<ChangedPath, 'path' | 'oldPath' | 'status'>[] {
+  const parts = records(output);
+  const files: Pick<ChangedPath, 'path' | 'oldPath' | 'status'>[] = [];
+  for (let at = 0; at < parts.length;) {
+    const letter = (parts[at] ?? '').charAt(0);
+    const moved = letter === 'R' || letter === 'C';
+    const oldPath = moved ? (parts[at + 1] ?? '') : null;
+    const filePath = parts[at + (moved ? 2 : 1)] ?? '';
+    at += moved ? 3 : 2;
+    if (filePath === '') continue;
+    files.push({
+      path: filePath,
+      oldPath: letter === 'R' ? oldPath : null,
+      status: statusOf(letter),
+    });
+  }
+  return files;
+}
+
+export interface LineCount {
+  readonly added: number | null;
+  readonly removed: number | null;
+  readonly binary: boolean;
+}
+
+// `--numstat -z`: "3<tab>1<tab>path", or "3<tab>1<tab>" followed by the old and the new path of
+// a rename. A binary file has "-" for both counts.
+export function parseNumstat(output: string): Map<string, LineCount> {
+  const parts = records(output);
+  const counts = new Map<string, LineCount>();
+  for (let at = 0; at < parts.length;) {
+    const [added = '', removed = '', name = ''] = (parts[at] ?? '').split('\t');
+    const filePath = name === '' ? (parts[at + 2] ?? '') : name;
+    at += name === '' ? 3 : 1;
+    const binary = added === '-' || removed === '-';
+    counts.set(filePath, {
+      added: binary ? null : Number(added),
+      removed: binary ? null : Number(removed),
+      binary,
+    });
+  }
+  return counts;
+}
+
+// Every file that differs from the base: tracked files by what git compares, and new files git
+// does not ignore. `renames` off lists a moved file as one deleted and one added path, which is
+// what a per-path content hash needs.
+export async function listChangedPaths(
+  folder: string,
+  base: string,
+  options: GitRunOptions,
+  renames = true,
+): Promise<ChangedPaths> {
+  const known = await runGit(folder, ['cat-file', '-e', `${base}^{commit}`], options);
+  if (!known.ok) return { ok: false, baseMissing: !known.missing, message: known.message };
+  const [names, counts, untracked] = await Promise.all([
+    runGit(folder, [...diffArgs(base, renames), '--name-status', '-z', '--'], options),
+    runGit(folder, [...diffArgs(base, renames), '--numstat', '-z', '--'], options),
+    runGit(folder, ['ls-files', '--others', '--exclude-standard', '-z'], options),
+  ]);
+  for (const result of [names, counts, untracked]) {
+    if (!result.ok) return { ok: false, baseMissing: false, message: result.message };
+  }
+  if (!names.ok || !counts.ok || !untracked.ok) throw new Error('unreachable');
+  const lines = parseNumstat(counts.stdout);
+  const files = new Map<string, ChangedPath>();
+  for (const entry of parseNameStatus(names.stdout)) {
+    const count = lines.get(entry.path);
+    files.set(entry.path, {
+      ...entry,
+      tracked: true,
+      added: count?.added ?? null,
+      removed: count?.removed ?? null,
+      binary: count?.binary ?? false,
+    });
+  }
+  for (const filePath of records(untracked.stdout)) {
+    // A folder that is a repository of its own is listed with a trailing slash; it is not a file.
+    if (filePath === '' || filePath.endsWith('/') || files.has(filePath)) continue;
+    files.set(filePath, {
+      path: filePath,
+      oldPath: null,
+      status: 'added',
+      tracked: false,
+      added: null,
+      removed: null,
+      binary: false,
+    });
+  }
+  return {
+    ok: true,
+    files: [...files.values()].toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+  };
+}
+
+// One tracked file's unified diff against the base, from its first hunk on ('' when only the
+// name or the mode changed). Undefined when git fails, which includes a diff too long to hold.
+export async function readPatch(
+  folder: string,
+  base: string,
+  file: Pick<ChangedPath, 'path' | 'oldPath'>,
+  options: GitRunOptions,
+): Promise<string | undefined> {
+  const paths = file.oldPath === null ? [file.path] : [file.oldPath, file.path];
+  const result = await runGit(folder, [...diffArgs(base, true), '--', ...paths], options);
+  if (!result.ok) return undefined;
+  const text = result.stdout;
+  const start = text.startsWith('@@') ? 0 : text.indexOf('\n@@');
+  return start === -1 ? '' : text.slice(start === 0 ? 0 : start + 1);
+}
+
+// How many paths one command names, so a long list never meets the command line's length limit
+// on Windows.
+const pathsPerCommand = 100;
+
+// The size each path had in the base commit. Paths the base does not hold are left out.
+export async function readBaseSizes(
+  folder: string,
+  base: string,
+  paths: readonly string[],
+  options: GitRunOptions,
+): Promise<Map<string, number>> {
+  const sizes = new Map<string, number>();
+  for (let at = 0; at < paths.length; at += pathsPerCommand) {
+    const chunk = paths.slice(at, at + pathsPerCommand);
+    const result = await runGit(folder, ['ls-tree', '-l', '-z', base, '--', ...chunk], options);
+    if (!result.ok) continue;
+    for (const record of records(result.stdout)) {
+      const match = /^\d+ blob [0-9a-f]+ +(\d+)\t([\s\S]+)$/.exec(record);
+      if (match) sizes.set(match[2] ?? '', Number(match[1]));
+    }
+  }
+  return sizes;
+}
+
+// What a run's own working copy needs (review loop spec 36 to 38). These are the only git
+// commands wow runs that write: a fetch into the project's repository and a worktree beside it.
+// Hooks stay off as for every other command, so making a working copy runs nothing a repository
+// declares.
+
+export type GitOutcome = { readonly ok: true } | { readonly ok: false; readonly message: string };
+
+const outcomeOf = (result: GitResult): GitOutcome =>
+  result.ok ? { ok: true } : { ok: false, message: result.message };
+
+// Brings the remote's branches up to date in the project's repository. Tags and submodules are
+// left alone, and nothing in the project folder itself changes.
+export async function fetchRemote(
+  folder: string,
+  remote: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(
+      folder,
+      ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', remote],
+      options,
+    ),
+  );
+}
+
+// The branch the remote calls its default (`refs/remotes/<remote>/HEAD`, which a clone sets), or
+// null when the repository does not say.
+export async function readRemoteDefaultBranch(
+  folder: string,
+  remote: string,
+  options: GitRunOptions,
+): Promise<string | null> {
+  const prefix = `refs/remotes/${remote}/`;
+  const head = await runGit(folder, ['symbolic-ref', '--quiet', `${prefix}HEAD`], options);
+  const ref = head.ok ? head.stdout.trim() : '';
+  return ref.startsWith(prefix) && ref.length > prefix.length ? ref.slice(prefix.length) : null;
+}
+
+// Asks the remote itself which branch is its default, for a repository that was not cloned and
+// so never stored it. Null when the remote does not answer or does not say.
+export async function askRemoteDefaultBranch(
+  folder: string,
+  remote: string,
+  options: GitRunOptions,
+): Promise<string | null> {
+  const listed = await runGit(folder, ['ls-remote', '--symref', remote, 'HEAD'], options);
+  if (!listed.ok) return null;
+  return /^ref: refs\/heads\/(\S+)\s+HEAD$/m.exec(listed.stdout)?.[1] ?? null;
+}
+
+// The commit a ref names, or null when there is none.
+export async function readCommit(
+  folder: string,
+  ref: string,
+  options: GitRunOptions,
+): Promise<string | null> {
+  const found = await runGit(
+    folder,
+    ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`],
+    options,
+  );
+  const sha = found.ok ? found.stdout.trim() : '';
+  return sha === '' ? null : sha;
+}
+
+// The branch the folder is on, or null on no branch.
+export async function readCurrentBranch(
+  folder: string,
+  options: GitRunOptions,
+): Promise<string | null> {
+  const branch = await runGit(folder, ['symbolic-ref', '--quiet', '--short', 'HEAD'], options);
+  return branch.ok ? branch.stdout.trim() || null : null;
+}
+
+// Windows refuses paths over 260 characters unless git is told to use long ones.
+const longPaths = ['-c', 'core.longpaths=true'];
+
+// A worktree of the project's repository at `target`, on the commit and on no branch.
+export async function addWorktree(
+  folder: string,
+  target: string,
+  commit: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(folder, ['worktree', 'add', '--detach', target, commit], options, longPaths),
+  );
+}
+
+// A worktree on a branch the repository has. Git refuses when another folder is on the branch.
+export async function addBranchWorktree(
+  folder: string,
+  target: string,
+  branch: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(await runGit(folder, ['worktree', 'add', target, branch], options, longPaths));
+}
+
+// A worktree on a new local branch that follows the remote's branch of the same name.
+export async function addTrackingWorktree(
+  folder: string,
+  target: string,
+  branch: string,
+  remote: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(
+      folder,
+      ['worktree', 'add', '--track', '-b', branch, target, `${remote}/${branch}`],
+      options,
+      longPaths,
+    ),
+  );
+}
+
+// Removes the worktree and its folder. Without `force` git refuses when a tracked file is
+// changed or an untracked one is there, which is the last guard against losing work.
+export async function removeWorktree(
+  folder: string,
+  target: string,
+  force: boolean,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(
+      folder,
+      ['worktree', 'remove', ...(force ? ['--force'] : []), target],
+      options,
+      longPaths,
+    ),
+  );
+}
+
+// Forgets worktrees whose folder is gone.
+export async function pruneWorktrees(folder: string, options: GitRunOptions): Promise<GitOutcome> {
+  return outcomeOf(await runGit(folder, ['worktree', 'prune'], options));
+}
+
+export interface Unpushed {
+  readonly uncommittedFiles: number;
+  readonly unpushedCommits: number;
+  readonly newestSubject: string | null;
+  readonly branch: string | null;
+}
+
+// What the folder holds that would be gone with it: files that are changed or new and not
+// committed (ignored files do not count), and commits that neither a branch on a remote nor the
+// commit the folder started at reaches. Undefined when git cannot say.
+export async function readUnpushed(
+  folder: string,
+  startSha: string | null,
+  options: GitRunOptions,
+): Promise<Unpushed | undefined> {
+  const reached = ['--not', '--remotes', ...(startSha === null ? [] : [startSha])];
+  // Every commit HEAD has been on, not only where it is now: a working copy starts on no branch,
+  // so a commit made there and then left (by switching to another commit or branch) is reached
+  // by nothing but this folder's own history of HEAD, which goes away with the folder.
+  const visited = await runGit(folder, ['reflog', 'show', '--format=%H', 'HEAD'], options);
+  const tips = [
+    'HEAD',
+    ...new Set(visited.ok ? visited.stdout.split('\n').filter((sha) => sha !== '') : []),
+  ];
+  const [status, count, newest, branch] = await Promise.all([
+    runGit(folder, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], options),
+    runGit(folder, ['rev-list', '--count', ...tips, ...reached], options),
+    runGit(folder, ['log', '-n1', '--format=%s', ...tips, ...reached], options),
+    readCurrentBranch(folder, options),
+  ]);
+  if (!status.ok || !count.ok) return undefined;
+  let uncommittedFiles = 0;
+  const entries = records(status.stdout);
+  for (let at = 0; at < entries.length; at += 1) {
+    uncommittedFiles += 1;
+    // A rename or copy is followed by the path it came from.
+    if (/^[RC]|^.[RC]/.test(entries[at] ?? '')) at += 1;
+  }
+  const unpushedCommits = Number(count.stdout.trim());
+  if (!Number.isInteger(unpushedCommits)) return undefined;
+  const subject = newest.ok ? newest.stdout.trim() : '';
+  return {
+    uncommittedFiles,
+    unpushedCommits,
+    newestSubject: unpushedCommits > 0 && subject !== '' ? subject : null,
+    branch,
+  };
 }

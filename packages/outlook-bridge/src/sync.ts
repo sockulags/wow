@@ -5,7 +5,7 @@ import {
   type Weekday,
 } from '@wow/contracts';
 import { parseProfile } from './profile.js';
-import { bodySnippet, type Appointment, type UnreadMessage } from './protocol.js';
+import { bodySnippet, type Appointment } from './protocol.js';
 import {
   OutlookError,
   systemClock,
@@ -16,8 +16,8 @@ import {
 } from './source.js';
 import { calendarWindow } from './zone.js';
 
-// Rows in the shape of the `calendar_items` (source 'outlook') and `mail_items` projections. The
-// server stores them; this package decides what they contain and what changed.
+// Rows in the shape of the `calendar_items` projection (source 'outlook'). The server stores them;
+// this package decides what they contain and what changed.
 
 export type OutlookItemState = 'scheduled' | 'cancelled';
 
@@ -36,17 +36,6 @@ export interface OutlookCalendarEntry {
   readonly snippet: string | null;
   readonly busyStatus: number | null;
   readonly state: OutlookItemState;
-}
-
-export interface OutlookMailEntry {
-  readonly id: string;
-  readonly externalId: string;
-  readonly folder: string;
-  readonly from: string;
-  readonly subject: string;
-  readonly receivedAt: string;
-  readonly unread: true;
-  readonly snippet: string;
 }
 
 // Occurrences of a recurring meeting share the series' EntryID, so the occurrence start is part of
@@ -81,26 +70,10 @@ export function toCalendarEntry(appointment: Appointment, zone: string): Outlook
   };
 }
 
-export function toMailEntry(message: UnreadMessage): OutlookMailEntry {
-  return {
-    id: `outlook-mail:${message.entryId}`,
-    externalId: message.entryId,
-    folder: message.folder,
-    from: message.from,
-    subject: message.subject,
-    receivedAt: new Date(message.receivedAt).toISOString(),
-    unread: true,
-    snippet: message.snippet,
-  };
-}
-
 export interface OutlookSnapshot {
   readonly at: string;
   readonly window: CalendarWindow;
   readonly calendar: readonly OutlookCalendarEntry[];
-  // Empty when the mail rail is off, so the rail's rows are cleared.
-  readonly mail: readonly OutlookMailEntry[];
-  readonly unreadCount: number;
   readonly bridgeVersion: string;
   // Null when Outlook could not say this poll (the sink keeps the last one).
   readonly profile: OutlookProfile | null;
@@ -155,31 +128,12 @@ export function diffCalendar(
   };
 }
 
-// The mail rail mirrors what is unread now, so anything not returned is gone.
-export function diffMail(
-  existing: readonly OutlookMailEntry[],
-  mail: readonly OutlookMailEntry[],
-): RowChanges<OutlookMailEntry> {
-  const before = new Map(existing.map((row) => [row.id, row]));
-  const seen = new Set(mail.map((row) => row.id));
-  return {
-    upsert: mail.filter((row) => {
-      const old = before.get(row.id);
-      return !old || !sameRow(old, row);
-    }),
-    remove: existing.filter((row) => !seen.has(row.id)).map((row) => row.id),
-  };
-}
-
 export interface OutlookSyncSettings {
   readonly pollSeconds: number;
   // The settings as stored: "outlook" follows the profile read in the same poll.
   readonly zone: string;
   readonly firstDayOfWeek: Weekday | typeof FROM_OUTLOOK;
   readonly lookaheadDays: number;
-  readonly folders: readonly string[];
-  readonly mailRail: boolean;
-  readonly mailLimit: number;
 }
 
 export interface OutlookSyncOptions {
@@ -258,15 +212,10 @@ export class OutlookSync {
         lookaheadDays: settings.lookaheadDays,
       });
       const appointments = await this.#source.calendar(window);
-      const mail = settings.mailRail
-        ? await this.#source.unreadMail(settings.folders, settings.mailLimit)
-        : { items: [], unreadCount: 0 };
       snapshot = {
         at,
         window,
         calendar: appointments.map((appointment) => toCalendarEntry(appointment, zone)),
-        mail: mail.items.map(toMailEntry),
-        unreadCount: mail.unreadCount,
         bridgeVersion: ping.version,
         profile,
       };
@@ -287,8 +236,8 @@ export class OutlookSync {
     return 'synced';
   }
 
-  // A profile Outlook cannot read (an old mailbox, a missing work-hours message) is not a failed
-  // poll: the calendar and mail still sync, and the settings keep their fallback.
+  // A profile Outlook cannot read (an old profile, a missing work-hours message) is not a failed
+  // poll: the calendar still syncs, and the settings keep their fallback.
   async #readProfile(now: Date): Promise<OutlookProfile | null> {
     try {
       const profile = parseProfile(await this.#source.profile(), now);

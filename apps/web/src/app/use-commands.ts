@@ -1,6 +1,9 @@
+import { runFolder } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef } from 'react';
+import { useStore } from 'zustand';
+import { assistantCommands } from '@/assistant/commands';
 import { backlogCommands } from '@/backlog/commands';
 import { calendarCommands } from '@/calendar/commands';
 import { validateCalendarSearch } from '@/calendar/search';
@@ -8,20 +11,36 @@ import { chatCommands } from '@/chat/commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
-import { providerCommands } from '@/providers/commands';
+import { connectCommands, providerCommands } from '@/providers/commands';
+import { connectStore } from '@/providers/connect-step';
+import { setupCommands } from '@/settings/setup';
 import { formatWhen } from '@/lib/format';
-import { panelCommands } from '@/panel/commands';
+import { panelCommands, viewerCommands } from '@/panel/commands';
 import { panelSelection } from '@/panel/model';
+import { planCommands } from '@/plans/commands';
+import { openPlan, runRead } from '@/plans/model';
+import { runPullRequest } from '@/workflows/pull-request-tab';
+import { runTicketRead } from '@/workflows/ticket-tab';
 import { useCalendarPrefs } from '@/calendar/prefs';
 import { pendingApproval } from '@/chat/view-model';
+import { changesStore } from '@/workflows/changes';
 import { workflowCommands } from '@/workflows/commands';
+import { gateStore } from '@/workflows/gate';
+import { rulesStore } from '@/workflows/rules';
 import { gateRunForThread } from '@/workflows/model';
+import { triggersPath } from '@/workflows/triggers';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
 import { updateCommands } from './updates';
 import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
-import { useRuntime, useSetting, useUpdateState } from './runtime';
+import { useLayout, useRuntime, useSetting, useUpdateState } from './runtime';
 
-export function useCommands(): {
+// While the first-start gate is up only the step is on screen, so the palette offers only what
+// acts on it and on the window.
+const gateCommand = (id: string) =>
+  id.startsWith('connect.') ||
+  ['setup.start', 'palette.open', 'appearance.toggleTheme'].includes(id);
+
+export function useCommands(gated = false): {
   readonly commands: readonly AppCommand[];
   readonly context: CommandContext;
 } {
@@ -42,20 +61,38 @@ export function useCommands(): {
   const workflows = useTopic('workflows');
   const runs = useTopic('workflowRuns');
   const templates = useSetting('workflows.templates');
+  const alwaysStopSkills = useSetting('workflows.alwaysStopSkills');
   const calendarItems = useTopic('calendarItems');
   const triggers = useTopic('triggers');
   const schedulerPaused = useSetting('scheduler.paused');
   const outlookProfile = useTopic('outlookStatus')?.[0]?.profile;
   const showWeekends = useSetting('calendar.showWeekends');
-  const mailRailCollapsed = useSetting('outlook.mailRailCollapsed');
   const backlogItems = useTopic('backlogItems');
+  const planIntents = useTopic('planIntents');
+  const planRuns = useTopic('planRuns');
+  const changeRequests = useTopic('changeRequests');
+  const hostReads = useTopic('hostReads');
+  const ticketReads = useTopic('ticketReads');
+  const pageReads = useTopic('pageReads');
+  const assistantChanges = useTopic('assistantChanges');
+  const assistantProposals = useTopic('assistantProposals');
+  const setupApplications = useTopic('setupApplications');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
     [pathname, locationSearch],
   );
+  const viewer = useLayout((state) => state.viewer);
+  const page = useLayout((state) => state.page);
+  const changedFiles = useStore(changesStore, (state) =>
+    state.runId === openRunId ? state.files : undefined,
+  );
+  const sendBackRunId = useStore(gateStore, (state) => state.sendBack?.runId);
+  const ruleBuilder = useStore(rulesStore, (state) => state.builder);
+  const ruleAt = useStore(rulesStore, (state) => state.at);
   const staticCommands = useMemo(() => buildCommands(), []);
-  const commands = useMemo(() => {
+  const connectShown = useStore(connectStore, (state) => state.shown > 0);
+  const all = useMemo(() => {
     const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
     const cards = (calendarItems ?? []).filter((item) => item.source === 'local');
@@ -65,6 +102,7 @@ export function useCommands(): {
     const openRun =
       runs?.find((run) => run.id === openRunId) ??
       (openThread ? gateRunForThread(openThread, runs ?? []) : undefined);
+    const openRunProject = projects?.find((project) => project.id === openRun?.projectId);
     return [
       // Cards say when they are ("Card · Tomorrow 10:00").
       ...calendarCommands({
@@ -74,7 +112,6 @@ export function useCommands(): {
         schedulerPaused,
         profile: outlookProfile,
         showWeekends,
-        mailRailCollapsed,
       }).map((command) => {
         const start = command.id.startsWith('card.')
           ? cardStart.get(command.id.slice(5))
@@ -93,14 +130,57 @@ export function useCommands(): {
         workflows: workflows ?? [],
         runs: runs ?? [],
         templates,
+        alwaysStopSkills,
         openRun,
+        runView:
+          openRunId !== undefined && openRun?.id === openRunId
+            ? {
+                runId: openRunId,
+                search: locationSearch,
+                changedFiles: changedFiles ?? [],
+                project: openRunProject,
+                folder: openRunProject && runFolder(openRun, openRunProject.cwd),
+                pullRequest: runPullRequest(
+                  runRead(hostReads ?? [], openRunId),
+                  changeRequests ?? [],
+                ),
+                ticket: runTicketRead(ticketReads ?? [], openRunId)?.ticket ?? undefined,
+              }
+            : undefined,
+        sendBackRunId,
+        rules: { builder: ruleBuilder, at: ruleAt, focus: undefined },
         formatWhen: when,
+        triggers,
+        projects,
+        onTriggers: pathname === triggersPath,
+      }),
+      ...planCommands({
+        intents: planIntents ?? [],
+        projects: projects ?? [],
+        openIntent: openPlan(pathname, planIntents ?? []),
+        changeRequests,
+        planRuns,
+        workflows,
       }),
       ...backlogCommands({
         items: backlogItems ?? [],
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
       }),
+      ...assistantCommands({
+        changes: assistantChanges ?? [],
+        proposals: assistantProposals ?? [],
+      }),
+      ...setupCommands(setupApplications ?? []),
       ...panelCommands(panelSelection(pathname, locationSearch)),
+      ...viewerCommands({
+        viewer,
+        pathname,
+        openRun,
+        projects: projects ?? [],
+        page,
+        pageReads: pageReads ?? [],
+      }),
+      ...connectCommands(connectShown),
       ...providerCommands(instances ?? []),
       ...projectCommands(projects ?? []),
       ...updateCommands(updateState),
@@ -110,7 +190,6 @@ export function useCommands(): {
     calendarZone,
     outlookProfile,
     showWeekends,
-    mailRailCollapsed,
     approvals,
     pathname,
     locationSearch,
@@ -124,6 +203,7 @@ export function useCommands(): {
     workflows,
     runs,
     templates,
+    alwaysStopSkills,
     openRunId,
     calendarItems,
     calendarSearch,
@@ -131,7 +211,27 @@ export function useCommands(): {
     schedulerPaused,
     backlogItems,
     openBacklogItemId,
+    assistantChanges,
+    assistantProposals,
+    setupApplications,
+    viewer,
+    page,
+    pageReads,
+    planIntents,
+    planRuns,
+    changeRequests,
+    hostReads,
+    ticketReads,
+    changedFiles,
+    sendBackRunId,
+    ruleBuilder,
+    ruleAt,
+    connectShown,
   ]);
+  const commands = useMemo(
+    () => (gated ? all.filter((command) => gateCommand(command.id)) : all),
+    [all, gated],
+  );
   const context = useMemo(
     () => ({ navigate, settings, layout, draft, connection, updates }),
     [navigate, settings, layout, draft, connection, updates],

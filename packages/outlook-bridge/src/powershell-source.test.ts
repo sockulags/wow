@@ -28,15 +28,15 @@ describe('PowershellOutlookSource', () => {
     const { source, bridges, current } = setup();
     expect(bridges).toHaveLength(0);
     const ping = source.ping();
-    const mail = source.unreadMail(['Inbox'], 10);
+    const calendar = source.calendar({ from: '2026-11-02T00:00:00Z', to: '2026-11-09T00:00:00Z' });
     expect(current().requests).toEqual([
       { id: 1, op: 'ping' },
-      { id: 2, op: 'unreadMail', folders: ['Inbox'], limit: 10 },
+      { id: 2, op: 'calendar', from: '2026-11-02T00:00:00Z', to: '2026-11-09T00:00:00Z' },
     ]);
-    current().reply(2, { items: [], unreadCount: 3 });
+    current().reply(2, { items: [] });
     current().emit('not json from a profile script');
     current().reply(1, { version: '1', outlook: 'available', message: null });
-    await expect(mail).resolves.toEqual({ items: [], unreadCount: 3 });
+    await expect(calendar).resolves.toEqual([]);
     await expect(ping).resolves.toMatchObject({ version: '1' });
     expect(source.starts).toBe(1);
   });

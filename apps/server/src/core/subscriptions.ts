@@ -1,5 +1,5 @@
 import { subscriptionTopics, type SubscribeParams, type SubscriptionTopic } from '@wow/contracts';
-import { asc, desc, eq } from 'drizzle-orm';
+import { asc, desc, eq, getTableColumns, ne, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
@@ -16,7 +16,14 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
       case 'providerInstances':
         return db.select().from(t.providerInstances).orderBy(asc(t.providerInstances.name)).all();
       case 'threads':
-        return db.select().from(t.threads).orderBy(asc(t.threads.createdAt)).all();
+        return db
+          .select()
+          .from(t.threads)
+          .where(ne(t.threads.kind, 'assistant'))
+          .orderBy(asc(t.threads.createdAt))
+          .all();
+      case 'assistantThread':
+        return db.select().from(t.threads).where(eq(t.threads.kind, 'assistant')).all();
       case 'turns':
         return db
           .select()
@@ -37,9 +44,6 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
         return db.select().from(t.questions).where(eq(t.questions.threadId, threadId)).all();
       case 'calendarItems':
         return db.select().from(t.calendarItems).orderBy(asc(t.calendarItems.start)).all();
-      case 'mailItems':
-        // Newest first, as the mail rail shows them (spec 4).
-        return db.select().from(t.mailItems).orderBy(desc(t.mailItems.receivedAt)).all();
       case 'outlookStatus':
         return readOutlookStatus(db);
       case 'backlogItems':
@@ -49,12 +53,73 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
       case 'workflowRuns':
         return db.select().from(t.workflowRuns).orderBy(asc(t.workflowRuns.startedAt)).all();
       case 'triggers':
-        return db.select().from(t.triggers).orderBy(asc(t.triggers.runAt)).all();
+        // Card triggers by their time, then event triggers in the order they were made.
+        return db
+          .select()
+          .from(t.triggers)
+          .orderBy(asc(t.triggers.runAt), asc(t.triggers.createdAt), asc(t.triggers.id))
+          .all();
       case 'notifications':
         // Newest first.
         return db.select().from(t.notifications).orderBy(desc(t.notifications.at)).all();
       case 'skills':
         return db.select().from(t.skills).orderBy(asc(t.skills.name)).all();
+      case 'planIntents':
+        return db
+          .select()
+          .from(t.planIntents)
+          .orderBy(asc(t.planIntents.projectId), asc(t.planIntents.intentId))
+          .all();
+      case 'planRuns':
+        return db.select().from(t.planRuns).orderBy(asc(t.planRuns.startedAt)).all();
+      case 'changeRequests':
+        return db
+          .select()
+          .from(t.changeRequests)
+          .orderBy(asc(t.changeRequests.projectId), asc(t.changeRequests.number))
+          .all();
+      case 'hostReads':
+        return db.select().from(t.hostReads).orderBy(asc(t.hostReads.id)).all();
+      case 'ticketReads':
+        return db.select().from(t.ticketReads).orderBy(asc(t.ticketReads.id)).all();
+      case 'pageReads':
+        return db.select().from(t.pageReads).orderBy(asc(t.pageReads.id)).all();
+      case 'assistantChanges': {
+        // In the order they were made (spec 13): the insertion order of the table. Without what
+        // Undo puts back: it holds real values and is the server's alone.
+        const {
+          expect: _expect,
+          inverse: _inverse,
+          ...shown
+        } = getTableColumns(t.assistantChanges);
+        return db
+          .select(shown)
+          .from(t.assistantChanges)
+          .orderBy(sql`rowid`)
+          .all();
+      }
+      case 'assistantProposals': {
+        // Without the held command and what it was proposed for.
+        const {
+          command: _command,
+          basis: _basis,
+          ...shown
+        } = getTableColumns(t.assistantProposals);
+        return db
+          .select(shown)
+          .from(t.assistantProposals)
+          .orderBy(sql`rowid`)
+          .all();
+      }
+      case 'setupApplications': {
+        // Without what Undo puts back: it holds real values and is the server's alone.
+        const { parts: _parts, ...shown } = getTableColumns(t.setupApplications);
+        return db
+          .select(shown)
+          .from(t.setupApplications)
+          .orderBy(sql`rowid`)
+          .all();
+      }
       case 'settings':
         return db
           .select()

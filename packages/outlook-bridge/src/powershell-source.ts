@@ -10,7 +10,6 @@ import {
   type BridgeResult,
   type PingResult,
   type ProfileResult,
-  type UnreadMailResult,
 } from './protocol.js';
 import {
   OutlookError,
@@ -117,10 +116,6 @@ export class PowershellOutlookSource implements OutlookSource {
 
   async calendar(window: CalendarWindow): Promise<Appointment[]> {
     return (await this.#request({ op: 'calendar', from: window.from, to: window.to })).items;
-  }
-
-  unreadMail(folders: readonly string[], limit: number): Promise<UnreadMailResult> {
-    return this.#request({ op: 'unreadMail', folders, limit });
   }
 
   async open(entryId: string): Promise<void> {

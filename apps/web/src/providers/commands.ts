@@ -1,6 +1,7 @@
 import { ProviderKind, providerSetup, type ProviderInstance } from '@wow/contracts';
 import type { AppCommand, CommandContext } from '@/app/commands';
 import type { ProviderDialog } from '@/app/runtime';
+import { agentNames, connectStore } from './connect-step';
 
 const open =
   (dialog: ProviderDialog) =>
@@ -52,4 +53,17 @@ export function providerCommands(instances: readonly ProviderInstance[]): AppCom
     );
   }
   return commands;
+}
+
+// While the step "Connect an agent" is on screen (first start, or the Assistant view without a
+// provider): Test each agent from the palette, as its card's button does.
+export function connectCommands(shown: boolean): AppCommand[] {
+  if (!shown) return [];
+  return ProviderKind.options.map((kind) => ({
+    id: `connect.${kind}`,
+    title: `Connect ${agentNames[kind]}`,
+    group: 'Settings',
+    keywords: ['connect', 'agent', 'provider', 'test', 'first start', kind],
+    run: () => connectStore.setState({ wanted: kind }),
+  }));
 }

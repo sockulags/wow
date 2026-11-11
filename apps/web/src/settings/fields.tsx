@@ -59,6 +59,7 @@ export const unitDisplay: Readonly<Record<SettingUnit, { suffix: string; factor:
   days: { suffix: 'days', factor: 1 },
   pixels: { suffix: 'px', factor: 1 },
   percent: { suffix: '%', factor: 1 },
+  bytes: { suffix: 'KB', factor: 1000 },
 };
 
 // A value as a person reads it, for "Default: …" and the like.

@@ -1,28 +1,43 @@
 import {
+  alwaysStops,
+  hostReadId,
+  isLiveRunState,
+  ruleProblems,
   type AppNotification,
   type CardState,
+  type ChangeRequest,
   type DomainEvent,
+  type HostRead,
   type RunEffect,
+  type RunEvent,
+  type RunUnit,
   type ServerCommand,
+  type StepGate,
   type Thread,
   type Workflow,
   type WorkflowChanges,
   type WorkflowRun,
   type WorkflowStep,
+  type WorkingCopy,
 } from '@wow/contracts';
 import {
   advance,
   pendingGate,
+  reviewedStepIndex,
   RunRejected,
   startRun,
+  type ChecksReading,
   type EngineContext,
   type RunInput,
   type Transition,
 } from '@wow/workflow-engine';
 import { invocationsFor } from '@wow/skills';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveStored } from '../settings/service.js';
 import { backlogFollowsRun } from './backlog.js';
+import { decideThread } from './threads.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 
 // Decisions for workflow definitions and runs. Run transitions come from the pure workflow
@@ -33,6 +48,15 @@ type WorkflowCommand = Extract<
   ServerCommand,
   { type: `workflow.${string}` } | { type: `workflowRun.${string}` }
 >;
+
+export const engineCall = <T>(call: () => T): T => {
+  try {
+    return call();
+  } catch (error) {
+    if (error instanceof RunRejected) throw new CommandRejected('rejected', error.message);
+    throw error;
+  }
+};
 
 export const isWorkflowCommand = (command: ServerCommand): command is WorkflowCommand =>
   command.type.startsWith('workflow.') || command.type.startsWith('workflowRun.');
@@ -47,6 +71,8 @@ export function decideWorkflow(
       if (read.workflow(command.workflowId)) {
         throw new CommandRejected('conflict', `Workflow ${command.workflowId} already exists`);
       }
+      refuseConditions(command.steps, read, context);
+      refuseRules(command.steps);
       return [
         {
           kind: 'workflow.created',
@@ -56,6 +82,11 @@ export function decideWorkflow(
             name: command.name,
             templateKind: command.templateKind ?? null,
             steps: command.steps,
+            ...(command.ownWorkingCopy ? { ownWorkingCopy: true } : {}),
+            ...(command.forUnits ? { forUnits: true } : {}),
+            ...(typeof command.maxStepVisits === 'number'
+              ? { maxStepVisits: command.maxStepVisits }
+              : {}),
             createdAt: context.now,
             updatedAt: context.now,
           },
@@ -77,7 +108,27 @@ export function decideWorkflow(
             `Workflow ${workflow.name} has a run in progress; stop it before changing the steps`,
           );
         }
+        refuseConditions(command.steps, read, context);
+        refuseRules(command.steps);
         changes.steps = command.steps;
+      }
+      // Read when a step is about to start, so a run that is going follows the new number.
+      if (
+        command.maxStepVisits !== undefined &&
+        command.maxStepVisits !== (workflow.maxStepVisits ?? null)
+      ) {
+        changes.maxStepVisits = command.maxStepVisits;
+      }
+      // Runs that exist keep the folder they started in; the switch is read when a run starts.
+      if (
+        command.ownWorkingCopy !== undefined &&
+        command.ownWorkingCopy !== (workflow.ownWorkingCopy ?? false)
+      ) {
+        changes.ownWorkingCopy = command.ownWorkingCopy;
+      }
+      // A plan run that is going keeps its workflow; the switch is read when one starts.
+      if (command.forUnits !== undefined && command.forUnits !== (workflow.forUnits ?? false)) {
+        changes.forUnits = command.forUnits;
       }
       if (Object.keys(changes).length === 0) return [];
       return [
@@ -105,12 +156,22 @@ export function decideWorkflow(
       if (read.workflow(workflow.id)) {
         throw new CommandRejected('conflict', `Workflow ${workflow.id} already exists`);
       }
+      refuseConditions(workflow.steps, read, context);
+      refuseRules(workflow.steps);
       return [{ kind: 'workflow.created', aggregate: workflow.id, payload: workflow }];
     }
     case 'workflowRun.start':
       return startRunEvents(command.type, command, read, context);
     case 'workflowRun.continue':
       return runInput(command.type, command.runId, { type: 'continue' }, read, context);
+    case 'workflowRun.sendBack':
+      return runInput(
+        command.type,
+        command.runId,
+        { type: 'sendBack', note: command.note },
+        read,
+        context,
+      );
     case 'workflowRun.stop':
       return runInput(command.type, command.runId, { type: 'stop' }, read, context);
     case 'workflowRun.stepCompleted':
@@ -122,7 +183,30 @@ export function decideWorkflow(
           stepId: command.stepId,
           finalMessage: command.finalMessage,
           artifactsFound: command.artifactsFound,
+          artifactsMissing: command.artifactsMissing,
+          fileHashes: command.fileHashes,
+          headSha: command.headSha,
         },
+        read,
+        context,
+      );
+    case 'workflowRun.checkGate': {
+      const run = read.run(command.runId);
+      if (!run) throw new CommandRejected('not_found', `No run ${command.runId}`);
+      return gateChecksEvents(
+        command.type,
+        run,
+        read.hostReads(run.projectId).find((row) => row.id === hostReadId('run', run.id)),
+        read.changeRequests(run.projectId),
+        read,
+        context,
+      );
+    }
+    case 'workflowRun.baseRecorded':
+      return runInput(
+        command.type,
+        command.runId,
+        { type: 'baseRecorded', baseSha: command.baseSha, files: command.files },
         read,
         context,
       );
@@ -130,7 +214,12 @@ export function decideWorkflow(
       return runInput(
         command.type,
         command.runId,
-        { type: 'stepFailed', stepId: command.stepId, error: command.error },
+        {
+          type: 'stepFailed',
+          stepId: command.stepId,
+          error: command.error,
+          stopped: command.stopped,
+        },
         read,
         context,
       );
@@ -142,7 +231,194 @@ export function decideWorkflow(
         read,
         context,
       );
+    case 'workflowRun.workingCopyReady': {
+      const { run, copy } = runWithCopy(read, command.runId, ['pending']);
+      const { startSha, defaultBranch, note } = command;
+      return [
+        runChanged(command.type, {
+          ...run,
+          workingCopy: { ...copy, state: 'ready', startSha, defaultBranch, note },
+        }),
+      ];
+    }
+    case 'workflowRun.workingCopyFailed': {
+      const { run, copy } = runWithCopy(read, command.runId, ['pending']);
+      const failed: WorkflowRun = {
+        ...run,
+        workingCopy: { ...copy, state: 'failed', error: command.error },
+      };
+      // A run stopped while its working copy was being made has ended already.
+      if (!isLiveRunState(run.state)) return [runChanged(command.type, failed)];
+      const workflow = requireWorkflow(read, run.workflowId);
+      const engineContext = runContext(read, context, run.projectId, null);
+      const transition = engineCall(() =>
+        advance(workflow, failed, { type: 'setupFailed', error: command.error }, engineContext),
+      );
+      return transitionEvents(command.type, workflow, run, transition, read, context);
+    }
+    case 'workflowRun.workingCopySettled': {
+      const { run, copy } = runWithCopy(read, command.runId, ['ready', 'kept', 'failed']);
+      if (isLiveRunState(run.state)) {
+        throw new CommandRejected('rejected', `Run ${run.id} still works in its working copy`);
+      }
+      const { state, unpushed, error } = command;
+      return [
+        runChanged(command.type, { ...run, workingCopy: { ...copy, state, unpushed, error } }),
+      ];
+    }
   }
+}
+
+const ALWAYS_STOP_KEY = 'workflows.alwaysStopSkills';
+
+// A condition belongs to a gate after a step, and never to the gate after a skill that plans or
+// specifies (review loop spec 57). Workflows belong to no project, so the list is the one set
+// for all projects; the engine applies the run's project's list again when a step ends.
+function refuseConditions(
+  steps: readonly WorkflowStep[],
+  read: ReadModel,
+  context: DecideContext,
+): void {
+  const listed = stringList(resolvedSetting(ALWAYS_STOP_KEY, read, context, undefined));
+  for (const step of steps) {
+    if (!step.gateAfterCondition) continue;
+    if (!step.gateAfter) {
+      throw new CommandRejected(
+        'rejected',
+        `Step ${step.skillName} has a condition but no gate after it: a condition lets a gate pass by itself, so add the gate or take the condition away`,
+      );
+    }
+    if (alwaysStops(step.skillName, listed)) {
+      throw new CommandRejected(
+        'rejected',
+        `The gate after ${step.skillName} always waits for you: skills that plan or specify cannot get a condition (${ALWAYS_STOP_KEY})`,
+      );
+    }
+  }
+}
+
+// A workflow whose rules cannot be followed is not stored (workflow branches spec 16). The
+// reason names the step and the rule, the way the builder marks it.
+function refuseRules(steps: readonly WorkflowStep[]): void {
+  const [problem] = ruleProblems(steps);
+  if (!problem) return;
+  const step = steps.find((entry) => entry.id === problem.stepId);
+  throw new CommandRejected(
+    'rejected',
+    `Step ${step?.skillName ?? problem.stepId}, rule ${problem.rule + 1}: ${problem.reason}`,
+  );
+}
+
+// What the host showed about the checks of the run's pull request since the step ended. Null
+// when nothing was read since then: an older read says nothing about what the step pushed.
+function checksReading(
+  { since, headSha }: Pick<StepGate, 'since' | 'headSha'>,
+  hostRead: HostRead | undefined,
+  changeRequests: readonly ChangeRequest[],
+): ChecksReading | null {
+  if (!hostRead) return null;
+  if (hostRead.error) {
+    return hostRead.error.kind === 'notSetUp'
+      ? { state: 'notSetUp', message: hostRead.error.message }
+      : { state: 'unavailable', message: hostRead.error.message };
+  }
+  if (hostRead.fetchedAt === null || Date.parse(hostRead.fetchedAt) < Date.parse(since)) {
+    return null;
+  }
+  const request = changeRequests.find((row) => hostRead.changeRequestIds.includes(row.id));
+  if (!request) return { state: 'noPullRequest', branch: hostRead.branch };
+  // Checks for another commit say nothing about what the step left: the host may not have seen
+  // the push yet, or the step did not push. Wait for a read of this commit, or for the wait to
+  // run out.
+  if (typeof headSha === 'string' && request.headSha !== headSha) return null;
+  const { number } = request;
+  const named = (state: 'success' | 'failure' | 'pending') =>
+    request.checks.filter((check) => check.state === state).map((check) => check.name);
+  switch (request.checkState) {
+    case 'success':
+      return { state: 'success', number, checks: named('success') };
+    case 'failure':
+      return { state: 'failure', number, failing: named('failure') };
+    case 'pending':
+      return { state: 'pending', number, running: named('pending') };
+    case 'none':
+      return { state: 'none', number };
+  }
+}
+
+// A gate that waits for its pull request's checks is looked at again (review loop spec 56):
+// after a host read, with the rows that read leaves, or when the wait has run out. A run that
+// does not wait for checks is left alone.
+export function gateChecksEvents(
+  cause: string,
+  run: WorkflowRun,
+  hostRead: HostRead | undefined,
+  changeRequests: readonly ChangeRequest[],
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const current = run.steps[run.currentStep];
+  if (run.state !== 'waiting' || current?.gate?.state !== 'waitingForChecks') return [];
+  return runInput(
+    cause,
+    run.id,
+    {
+      type: 'gateChecks',
+      stepId: current.stepId,
+      reading: checksReading(current.gate, hostRead, changeRequests),
+    },
+    read,
+    context,
+  );
+}
+
+// A change to the run that the engine has no part in: what became of its working copy.
+const runChanged = (cause: string, run: WorkflowRun): DomainEvent => ({
+  kind: 'workflowRun.changed',
+  aggregate: run.id,
+  payload: { cause, run, effects: [] },
+});
+
+function runWithCopy(read: ReadModel, runId: string, states: readonly WorkingCopy['state'][]) {
+  const run = read.run(runId);
+  if (!run) throw new CommandRejected('not_found', `No run ${runId}`);
+  const copy = run.workingCopy;
+  if (!copy) throw new CommandRejected('rejected', `Run ${runId} has no working copy`);
+  if (!states.includes(copy.state)) {
+    throw new CommandRejected('rejected', `The working copy of run ${runId} is ${copy.state}`);
+  }
+  return { run, copy };
+}
+
+const WORKSPACES_ROOT_KEY = 'workspaces.root';
+
+// The project's name as a folder name: short, so the path stays well under what Windows allows.
+const folderSlug = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 16)
+    .replace(/-+$/, '');
+
+// Where a run's own working copy goes: `workspaces.root` (inside wow's own folder unless it is a
+// full path) and a folder named after the project and the run. Decided here, without touching
+// the disk, so the threads of the run's steps can be created with it as their `cwd`.
+export function workingCopyPath(
+  root: string,
+  home: string | undefined,
+  projectName: string,
+  runId: string,
+): string {
+  if (!path.isAbsolute(root) && home === undefined) {
+    throw new CommandRejected(
+      'rejected',
+      `${WORKSPACES_ROOT_KEY} is "${root}", which is not a full path, and this server has no folder of its own to put it in`,
+    );
+  }
+  const id = createHash('sha256').update(runId).digest('hex').slice(0, 8);
+  const slug = folderSlug(projectName);
+  return path.join(path.resolve(home ?? '', root), slug === '' ? id : `${slug}-${id}`);
 }
 
 export interface RunStart {
@@ -151,9 +427,16 @@ export interface RunStart {
   readonly projectId: string;
   readonly calendarItemId?: string | null | undefined;
   readonly backlogItemId?: string | null | undefined;
+  // The unit the run delivers, when a plan run starts it.
+  readonly unit?: RunUnit | undefined;
+  // What started the run, when an event trigger did, and the working copy the pull request
+  // already has, if any.
+  readonly event?: RunEvent | undefined;
+  readonly existingCopy?: { readonly run: WorkflowRun; readonly copy: WorkingCopy } | undefined;
 }
 
-// A new run of the workflow: a client's Run now, a card's Run now or a firing trigger.
+// A new run of the workflow: a client's Run now, a card's Run now, a firing trigger or a plan
+// run's next unit.
 export function startRunEvents(
   cause: string,
   start: RunStart,
@@ -164,9 +447,8 @@ export function startRunEvents(
     throw new CommandRejected('conflict', `Run ${start.runId} already exists`);
   }
   const workflow = requireWorkflow(read, start.workflowId);
-  if (!read.project(start.projectId)) {
-    throw new CommandRejected('not_found', `No project ${start.projectId}`);
-  }
+  const project = read.project(start.projectId);
+  if (!project) throw new CommandRejected('not_found', `No project ${start.projectId}`);
   for (const step of workflow.steps) {
     if (!read.providerInstance(step.providerInstanceId)) {
       throw new CommandRejected(
@@ -185,11 +467,59 @@ export function startRunEvents(
         projectId: start.projectId,
         calendarItemId: start.calendarItemId ?? null,
         backlogItemId: start.backlogItemId ?? null,
+        unit: start.unit,
+        event: start.event,
       },
       engineContext,
     ),
   );
-  return transitionEvents(cause, workflow, undefined, transition, read, context);
+  // A unit's run always works in its own working copy (review loop spec 40), and so does a run
+  // an event started (spec 48).
+  if (!workflow.ownWorkingCopy && !start.unit && !start.event) {
+    return transitionEvents(cause, workflow, undefined, transition, read, context);
+  }
+  // The pull request's working copy is there already: the run works in it beside the run that
+  // made it. Nothing is made, and the workspaces service removes it only when no run that
+  // works in it is still going.
+  if (start.existingCopy) {
+    const { run: owner, copy } = start.existingCopy;
+    const shared: WorkingCopy = {
+      path: copy.path,
+      state: 'ready',
+      startSha: copy.startSha,
+      defaultBranch: copy.defaultBranch,
+      note: `This run works in the working copy that run ${owner.id} made for the pull request.`,
+      unpushed: null,
+      error: null,
+    };
+    const run = { ...transition.run, workingCopy: shared };
+    return transitionEvents(cause, workflow, undefined, { ...transition, run }, read, context);
+  }
+  // The folder is only named here. The workspaces service makes it before the first step gets
+  // its prompt, and the run fails there when it cannot (review loop spec 36, 38).
+  const definition = context.registry[WORKSPACES_ROOT_KEY];
+  if (!definition) throw new Error(`${WORKSPACES_ROOT_KEY} is missing from the settings registry`);
+  const { value } = resolveStored(WORKSPACES_ROOT_KEY, definition, {}, (scope) =>
+    read.setting(WORKSPACES_ROOT_KEY, scope),
+  );
+  const workingCopy: WorkingCopy = {
+    path: workingCopyPath(
+      typeof value === 'string' ? value : String(definition.default),
+      context.home,
+      project.name,
+      start.runId,
+    ),
+    state: 'pending',
+    startSha: null,
+    defaultBranch: null,
+    note: null,
+    unpushed: null,
+    error: null,
+    // An event's run starts on the pull request's branch (spec 48).
+    ...(start.event && start.event.branch !== '' ? { branch: start.event.branch } : {}),
+  };
+  const run = { ...transition.run, workingCopy };
+  return transitionEvents(cause, workflow, undefined, { ...transition, run }, read, context);
 }
 
 export function runInput(
@@ -222,6 +552,34 @@ function transitionEvents(
 ): DomainEvent[] {
   const { run, effects } = transition;
   if (before && effects.length === 0 && isDeepStrictEqual(before, run)) return [];
+  // A step that runs again gets its turn in its own thread in this commit. When the user asked
+  // for that (Approve, Send back) and the thread cannot take it, the command is refused. When a
+  // rule or the list got there by itself, nobody is there to refuse to: that step fails with
+  // the reason, so the run does not stay "running" without a turn.
+  const rerun = effects.find((effect) => effect.type === 'sendBack');
+  const refusal = rerun ? sendBackRefusal(rerun, read) : undefined;
+  if (rerun && refusal !== undefined) {
+    if (USER_CAUSES.has(cause)) throw new CommandRejected('rejected', refusal);
+    const engineContext = runContext(read, context, run.projectId, null);
+    const failed = engineCall(() =>
+      advance(
+        workflow,
+        run,
+        // No rule for a failed step is followed: it could send the run straight back here.
+        { type: 'stepFailed', stepId: rerun.stepId, error: refusal, stopped: true },
+        engineContext,
+      ),
+    );
+    const kept = effects.filter((effect) => effect !== rerun);
+    return transitionEvents(
+      cause,
+      workflow,
+      before,
+      { run: failed.run, effects: [...kept, ...failed.effects] },
+      read,
+      context,
+    );
+  }
   const events: DomainEvent[] = [];
   const later: RunEffect[] = [];
   for (const effect of effects) {
@@ -233,6 +591,9 @@ function transitionEvents(
         payload: { threadId: effect.threadId, state: effect.state, updatedAt: context.now },
       });
       continue;
+    }
+    if (effect.type === 'sendBack') {
+      events.push(...sendBackTurn(effect, read, context));
     }
     if (effect.type === 'startStep') {
       const step = workflow.steps.find((entry) => entry.id === effect.stepId) as WorkflowStep;
@@ -253,6 +614,42 @@ function transitionEvents(
   events.push(...runNotifications(workflow, run, effects, read, context));
   events.push(...backlogFollowsRun(run, read));
   return events;
+}
+
+const USER_CAUSES: ReadonlySet<string> = new Set(['workflowRun.continue', 'workflowRun.sendBack']);
+
+// Why a step cannot run again in its thread right now, if it cannot.
+function sendBackRefusal(
+  effect: Extract<RunEffect, { type: 'sendBack' }>,
+  read: ReadModel,
+): string | undefined {
+  if (!read.thread(effect.threadId)) {
+    return `The thread of step ${effect.stepId} no longer exists, so it cannot be sent back`;
+  }
+  if (read.runningTurn(effect.threadId)) {
+    return "The step's thread is still answering a message. Wait for it or stop that turn, then send back.";
+  }
+  return undefined;
+}
+
+// The turn of a step that runs again in its own thread: sent back at its gate (review loop spec
+// 16), or reached again by a rule or the list (workflow branches spec 7, 8). It starts in the same commit as
+// the run change and in the step's own thread, which is never created again. A step is running
+// exactly while its own turn is, so the runner can take the next turn that ends in the thread as
+// the step's outcome: a message the user typed at the gate has ended by now or refuses the send
+// back here.
+function sendBackTurn(
+  effect: Extract<RunEffect, { type: 'sendBack' }>,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const refusal = sendBackRefusal(effect, read);
+  if (refusal !== undefined) throw new CommandRejected('rejected', refusal);
+  return decideThread(
+    { type: 'thread.sendMessage', threadId: effect.threadId, text: effect.prompt },
+    read,
+    context,
+  );
 }
 
 // Every run state has a card state of the same name; `waiting` is what the card shows as "needs
@@ -284,14 +681,16 @@ function cardFollowsRun(
 
 const NOTIFICATIONS_KEY = 'scheduler.notifications';
 
-export function notificationsEnabled(read: ReadModel, context: DecideContext): boolean {
-  const definition = context.registry[NOTIFICATIONS_KEY];
+// Whether a global on/off setting is on, as stored or by its default.
+export function globalSettingOn(key: string, read: ReadModel, context: DecideContext): boolean {
+  const definition = context.registry[key];
   if (!definition) return false;
-  const { value } = resolveStored(NOTIFICATIONS_KEY, definition, {}, (scope) =>
-    read.setting(NOTIFICATIONS_KEY, scope),
-  );
+  const { value } = resolveStored(key, definition, {}, (scope) => read.setting(key, scope));
   return value === true;
 }
+
+export const notificationsEnabled = (read: ReadModel, context: DecideContext): boolean =>
+  globalSettingOn(NOTIFICATIONS_KEY, read, context);
 
 export const runPath = (runId: string) => `/workflows/runs/${runId}`;
 
@@ -314,8 +713,22 @@ function runNotifications(
     const body = [workflow.name, step?.skillName, card?.title].filter(Boolean).join(' · ');
     const waiting = notice.reason === 'waiting';
     const gate = pendingGate(run);
+    // A step sent back waits again as a new attempt, which is told again (review loop spec 19).
+    const reviewed = reviewedStepIndex(run);
+    const attempt = reviewed === undefined ? undefined : run.steps[reviewed]?.attempt;
+    // The limit can be reached again after the user let the step run once more.
+    const held = gate ? run.steps[gate.stepIndex] : undefined;
+    const limit = held?.gate?.state === 'waitingAtLimit' ? `:limit-${held.attempt ?? 1}` : '';
+    // A run that a rule sent back waits again before a step it has already been at; without
+    // the visit in the id the second wait would be dropped as a repeat of the first.
+    const again =
+      gate?.position === 'before' && held?.endedAt !== undefined
+        ? `:visit-${run.path?.length ?? 0}`
+        : '';
     const id = waiting
-      ? `${run.id}:waiting:${notice.stepId ?? ''}:${gate?.position ?? ''}`
+      ? `${run.id}:waiting:${notice.stepId ?? ''}:${gate?.position ?? ''}${
+          attempt === undefined ? '' : `:attempt-${attempt}`
+        }${limit}${again}`
       : `${run.id}:failed`;
     const notification: AppNotification = {
       id,
@@ -347,7 +760,8 @@ function stepThread(
   return {
     id: threadId,
     projectId: run.projectId,
-    cwd: project?.cwd ?? '.',
+    // A run with its own working copy never works in the project folder (review loop spec 36).
+    cwd: run.workingCopy?.path ?? project?.cwd ?? '.',
     branch: null,
     providerInstanceId: step.providerInstanceId,
     providerSessionId: null,
@@ -372,22 +786,53 @@ function runContext(
 ): EngineContext {
   return {
     now: context.now,
-    handoverTemplate: resolvedHandoverTemplate(read, context, projectId),
+    handoverTemplate: resolvedTemplate(HANDOVER_KEY, read, context, projectId),
+    sendBackTemplate: resolvedTemplate(SEND_BACK_KEY, read, context, projectId),
+    unitPromptTemplate: resolvedTemplate(UNIT_PROMPT_KEY, read, context, projectId),
+    goBackTemplate: resolvedTemplate(GO_BACK_KEY, read, context, projectId),
+    verdictApprovedLine: resolvedTemplate(VERDICT_KEY, read, context, projectId),
+    verdictChangesRequestedLine: resolvedTemplate(CHANGES_REQUESTED_KEY, read, context, projectId),
+    verdictBlockedLine: resolvedTemplate(BLOCKED_KEY, read, context, projectId),
+    maxStepVisits: Number(resolvedSetting(MAX_VISITS_KEY, read, context, projectId)),
+    alwaysStopSkills: stringList(resolvedSetting(ALWAYS_STOP_KEY, read, context, projectId)),
+    gateChecksTimeoutMinutes: Number(resolvedSetting(CHECKS_TIMEOUT_KEY, read, context, projectId)),
     invocationFor: (step) => invocationFor(read, step),
     backlogBody,
   };
 }
 
 const HANDOVER_KEY = 'workflows.handoverTemplate';
+const SEND_BACK_KEY = 'workflows.sendBackTemplate';
+const UNIT_PROMPT_KEY = 'workflows.unitPromptTemplate';
 
-function resolvedHandoverTemplate(read: ReadModel, context: DecideContext, projectId: string) {
-  const definition = context.registry[HANDOVER_KEY];
-  if (!definition) throw new Error(`${HANDOVER_KEY} is missing from the settings registry`);
-  const { value } = resolveStored(HANDOVER_KEY, definition, { projectId }, (scope) =>
-    read.setting(HANDOVER_KEY, scope),
-  );
-  return typeof value === 'string' ? value : String(definition.default);
+const GO_BACK_KEY = 'workflows.goBackTemplate';
+const VERDICT_KEY = 'workflows.verdictApprovedLine';
+const CHANGES_REQUESTED_KEY = 'workflows.verdictChangesRequestedLine';
+const BLOCKED_KEY = 'workflows.verdictBlockedLine';
+const MAX_VISITS_KEY = 'workflows.maxStepVisits';
+const CHECKS_TIMEOUT_KEY = 'workflows.gateChecksTimeoutMinutes';
+
+// The setting as it applies to the project, or to all projects without one.
+function resolvedSetting(
+  key: string,
+  read: ReadModel,
+  context: DecideContext,
+  projectId: string | undefined,
+): unknown {
+  const definition = context.registry[key];
+  if (!definition) throw new Error(`${key} is missing from the settings registry`);
+  return resolveStored(key, definition, projectId === undefined ? {} : { projectId }, (scope) =>
+    read.setting(key, scope),
+  ).value;
 }
+
+function resolvedTemplate(key: string, read: ReadModel, context: DecideContext, projectId: string) {
+  const value = resolvedSetting(key, read, context, projectId);
+  return typeof value === 'string' ? value : String(context.registry[key]?.default);
+}
+
+const stringList = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : [];
 
 // The step's skill as its provider invokes it. A step names a skill by its name, or a Claude
 // plugin skill by plugin:name. Skills are matched by name; with several of that name the
@@ -420,13 +865,4 @@ function requireWorkflow(read: ReadModel, workflowId: string): Workflow {
   const workflow = read.workflow(workflowId);
   if (!workflow) throw new CommandRejected('not_found', `No workflow ${workflowId}`);
   return workflow;
-}
-
-function engineCall(call: () => Transition): Transition {
-  try {
-    return call();
-  } catch (error) {
-    if (error instanceof RunRejected) throw new CommandRejected('rejected', error.message);
-    throw error;
-  }
 }

@@ -4,16 +4,22 @@ import {
   createSettingsStore,
   type Connection,
   type ConnectionState,
+  type SettingValues,
 } from '@wow/client-runtime';
 import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand';
+import { firstStartStore } from '@/app/first-start';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
+import { setupStore } from '@/settings/setup';
 import { renderApp } from '@/test/render';
+import { connectCommands } from './commands';
+import { connectStore } from './connect-step';
 
-// Settings → Providers and the first-run wizard against a fake server connection (spec 31, 32).
+// Settings → Providers, the first-run wizard and the first-start step "Connect an agent" against
+// a fake server connection (app spec 31, 32; app assistant spec 25 to 27).
 
 interface FakeServer {
   readonly connection: Connection;
@@ -62,11 +68,15 @@ function fakeServer(
   };
 }
 
-const runtimeFor = (connection: Connection): Runtime => ({
+// The first-start gate stays down unless a case asks for it.
+const runtimeFor = (
+  connection: Connection,
+  initial: SettingValues = { 'providers.offerSetup': false },
+): Runtime => ({
   connection,
   layout: createLayoutStore(),
   draft: createDraftStore(),
-  settings: createSettingsStore(createMemorySettingsSource()),
+  settings: createSettingsStore(createMemorySettingsSource(undefined, initial)),
 });
 
 const work: ProviderInstance = {
@@ -94,7 +104,7 @@ const dispatched = (server: FakeServer) =>
     .map((request) => (request.params as { command: unknown }).command);
 
 describe('first-run wizard', () => {
-  it('opens when the server has no instance, creates the detected CLIs and tests them', async () => {
+  it('opens from "Detect installed providers", creates the detected CLIs and tests them', async () => {
     const user = userEvent.setup();
     const server = fakeServer(
       (method) => {
@@ -112,7 +122,9 @@ describe('first-run wizard', () => {
       },
       { providerInstances: [] },
     );
-    await renderApp('/calendar', runtimeFor(server.connection));
+    const runtime = runtimeFor(server.connection);
+    runtime.layout.setState({ providerDialog: { type: 'wizard' } });
+    await renderApp('/calendar', runtime);
 
     const wizard = await screen.findByRole('dialog', { name: 'Set up providers' });
     const list = await within(wizard).findByRole('list', { name: 'Detected providers' });
@@ -170,11 +182,191 @@ describe('first-run wizard', () => {
     const server = fakeServer((method) => (method === 'provider.detect' ? [] : []), {
       providerInstances: [],
     });
-    const runtime = runtimeFor(server.connection);
-    await renderApp('/calendar', runtime);
+    const runtime = runtimeFor(server.connection, {});
+    runtime.layout.setState({ providerDialog: { type: 'wizard' } });
+    await renderApp('/settings/providers', runtime);
     const wizard = await screen.findByRole('dialog', { name: 'Set up providers' });
     await user.click(within(wizard).getByRole('button', { name: 'Not now' }));
     expect(runtime.settings.getState().values['providers.offerSetup']).toBe(false);
+  });
+});
+
+const created = (server: FakeServer, kind: string) =>
+  dispatched(server).find(
+    (command) =>
+      (command as { type: string; kind?: string }).type === 'providerInstance.create' &&
+      (command as { kind?: string }).kind === kind,
+  ) as { providerInstanceId: string } | undefined;
+
+describe('first start', () => {
+  const detected = [
+    { kind: 'claude', binaryPath: '/opt/bin/claude', configDir: '/home/me/.claude' },
+    { kind: 'codex', binaryPath: '/opt/bin/codex', configDir: '/home/me/.codex' },
+  ];
+  const codexError = 'Codex is not signed in. Run "codex login", then test again.';
+  const firstStartServer = (initial: unknown[] = []) =>
+    fakeServer(
+      (method, params) => {
+        if (method === 'provider.detect') return detected;
+        if (method === 'provider.test') {
+          const id = (params as { providerInstanceId: string }).providerInstanceId;
+          return id.startsWith('codex')
+            ? { ok: false, account: null, version: null, message: codexError }
+            : { ok: true, account: 'me@example.invalid', version: '2.1.316', message: null };
+        }
+        if (method === 'dispatch') return { commandId: 'x', seqs: [1], duplicate: false };
+        if (method === 'assistant.open') return { thread: null, problem: null };
+        return [];
+      },
+      { providerInstances: initial },
+    );
+  beforeEach(() => firstStartStore.setState({ up: false, greet: false }));
+  afterEach(() => vi.restoreAllMocks());
+
+  it('shows only "Connect an agent", with the binary found, Test and the error in words @app-assistant-25', async () => {
+    const user = userEvent.setup();
+    const server = firstStartServer();
+    await renderApp('/calendar', runtimeFor(server.connection, {}));
+
+    const step = await screen.findByTestId('first-start');
+    expect(within(step).getByRole('heading', { name: 'Connect an agent' })).toBeTruthy();
+    expect(screen.queryByRole('navigation', { name: 'Sections' })).toBeNull();
+    const claude = within(step).getByRole('region', { name: 'Claude Code' });
+    const codex = within(step).getByRole('region', { name: 'Codex' });
+    expect((await within(claude).findByTestId('path-text')).textContent).toBe('/opt/bin/claude');
+    expect(within(codex).getByTestId('path-text').textContent).toBe('/opt/bin/codex');
+    expect(within(step).getByRole('button', { name: 'Start from a setup file' })).toBeTruthy();
+
+    await user.click(within(codex).getByRole('button', { name: 'Test' }));
+    const id = created(server, 'codex')?.providerInstanceId;
+    expect(id).toMatch(/^codex/);
+    expect(server.requests).toContainEqual({
+      method: 'provider.test',
+      params: { providerInstanceId: id },
+    });
+    expect((await within(codex).findByRole('alert')).textContent).toBe(codexError);
+    server.publish('providerInstances', [
+      { ...work, id, kind: 'codex', name: 'Codex', status: 'error', statusMessage: codexError },
+    ]);
+    // A failed test keeps the step up.
+    expect(screen.getByTestId('first-start')).toBeTruthy();
+
+    // The palette offers only what acts on the step.
+    await user.keyboard('{Control>}k{/Control}');
+    const palette = await screen.findByRole('dialog');
+    const search = within(palette).getByRole('combobox');
+    await user.type(search, 'connect');
+    const offered = (await within(palette).findAllByRole('option')).map(
+      (option) => option.textContent ?? '',
+    );
+    expect(offered.filter((text) => text.includes('Connect '))).toHaveLength(2);
+    await user.clear(search);
+    await user.type(search, 'calendar');
+    expect(within(palette).queryAllByRole('option')).toEqual([]);
+  });
+
+  it('opens the assistant once an agent passes, and stays down when it is removed later @app-assistant-26 @app-assistant-27', async () => {
+    const user = userEvent.setup();
+    const server = firstStartServer();
+    const runtime = runtimeFor(server.connection, {});
+    const { router } = await renderApp('/calendar', runtime);
+    const step = await screen.findByTestId('first-start');
+    const claude = within(step).getByRole('region', { name: 'Claude Code' });
+    await within(claude).findByTestId('path-text');
+    await user.click(within(claude).getByRole('button', { name: 'Test' }));
+    const id = created(server, 'claude')?.providerInstanceId;
+    expect(id).toMatch(/^claude/);
+
+    server.publish('providerInstances', [
+      { ...work, id, name: 'Claude', env: {}, status: 'ready', statusMessage: null },
+    ]);
+    expect(await screen.findByRole('navigation', { name: 'Sections' })).toBeTruthy();
+    expect(router.state.location.pathname).toBe('/assistant');
+    expect(runtime.settings.getState().values['providers.offerSetup']).toBe(false);
+
+    // Removed later: the app stays usable, and Assistant shows the same step.
+    server.publish('providerInstances', []);
+    expect(screen.queryByTestId('first-start')).toBeNull();
+    expect(screen.getByRole('navigation', { name: 'Sections' })).toBeTruthy();
+  });
+
+  it('never gates an install that already has an instance, even one whose test failed', async () => {
+    const server = firstStartServer([work]);
+    await renderApp('/calendar', runtimeFor(server.connection, {}));
+    expect(await screen.findByRole('navigation', { name: 'Sections' })).toBeTruthy();
+    expect(screen.queryByTestId('first-start')).toBeNull();
+  });
+
+  it('gates an install without any instance', async () => {
+    const server = firstStartServer([]);
+    await renderApp('/calendar', runtimeFor(server.connection, {}));
+    expect(await screen.findByTestId('first-start')).toBeTruthy();
+    expect(screen.queryByRole('navigation', { name: 'Sections' })).toBeNull();
+  });
+
+  it('waits for the test of an instance that was never tested', async () => {
+    const server = firstStartServer([{ ...work, status: 'unknown', statusMessage: null }]);
+    await renderApp('/calendar', runtimeFor(server.connection, {}));
+    expect(await screen.findByRole('navigation', { name: 'Sections' })).toBeTruthy();
+    expect(screen.queryByTestId('first-start')).toBeNull();
+    expect(server.requests).toContainEqual({
+      method: 'provider.test',
+      params: { providerInstanceId: 'claude-work' },
+    });
+  });
+
+  it('opens the setup file picker of the step in the Assistant view from the palette, and keeps the file', async () => {
+    const user = userEvent.setup();
+    const picked = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {});
+    const server = fakeServer(
+      (method) => {
+        if (method === 'provider.detect') return [];
+        if (method === 'assistant.open') return { thread: null, problem: null };
+        if (method === 'setup.preview') {
+          return {
+            outcome: 'ready',
+            preview: {
+              added: [{ what: 'Interval (Hosts)', from: '60 (default)', to: '600' }],
+              replaced: [],
+              marked: [],
+              toFillIn: [],
+              warnings: [],
+            },
+          };
+        }
+        return [];
+      },
+      { providerInstances: [] },
+    );
+    const { router } = await renderApp('/assistant', runtimeFor(server.connection));
+    const step = await screen.findByRole('heading', { name: 'Connect an agent' });
+    await user.keyboard('{Control>}k{/Control}');
+    const palette = await screen.findByRole('dialog');
+    await user.type(within(palette).getByRole('combobox'), 'start from a setup file');
+    await user.keyboard('{Enter}');
+    expect(router.state.location.pathname).toBe('/assistant');
+    expect(picked).toHaveBeenCalledOnce();
+    const input = screen.getByLabelText('Setup file to start from');
+    expect(picked.mock.contexts[0]).toBe(input);
+    expect(step.isConnected).toBe(true);
+    await user.upload(input, new File(['version: 1\n'], 'team.yaml', { type: 'application/yaml' }));
+    expect(await screen.findByRole('dialog', { name: 'Start from team.yaml' })).toBeTruthy();
+    expect(server.requests).toContainEqual({
+      method: 'setup.preview',
+      params: { text: 'version: 1\n' },
+    });
+    setupStore.setState({ draft: undefined, pickWanted: false });
+  });
+
+  it('offers "Connect Claude Code" and "Connect Codex" only while the step is on screen', () => {
+    expect(connectCommands(false)).toEqual([]);
+    expect(connectCommands(true).map((command) => [command.id, command.title])).toEqual([
+      ['connect.claude', 'Connect Claude Code'],
+      ['connect.codex', 'Connect Codex'],
+    ]);
+    connectCommands(true)[1]?.run({} as never);
+    expect(connectStore.getState().wanted).toBe('codex');
+    connectStore.setState({ wanted: undefined });
   });
 });
 

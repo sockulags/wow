@@ -8,6 +8,7 @@
     { "path": "packages/provider-codex" },
     { "path": "packages/outlook-bridge" },
     { "path": "packages/skills" },
+    { "path": "packages/agent-os" },
     { "path": "packages/workflow-engine" },
     { "path": "packages/secrets" },
     { "path": "apps/server" },

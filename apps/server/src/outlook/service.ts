@@ -13,7 +13,7 @@ import type { BackgroundService, OutlookMode, ServiceContext } from '../hooks/in
 
 // Polls Outlook (the bridge on Windows, the mock elsewhere) and stores what it read through
 // `outlook.sync` / `outlook.fail` commands, so the cache and the "unavailable" banner are
-// projections like everything else. Only reads; `open` asks Outlook to show an item.
+// projections like everything else. Only reads the calendar; `open` asks Outlook to show a meeting.
 
 export interface OutlookService extends BackgroundService {
   readonly mode: OutlookMode;
@@ -47,8 +47,6 @@ export function snapshotCommand(snapshot: OutlookSnapshot) {
       organizer: entry.organizer,
       state: entry.state,
     })),
-    mail: snapshot.mail.map((entry) => ({ ...entry })),
-    unreadCount: snapshot.unreadCount,
     bridgeVersion: snapshot.bridgeVersion,
     profile: snapshot.profile,
   };
@@ -87,9 +85,6 @@ export async function startOutlookService(
       zone: settings.get('calendar.zone'),
       firstDayOfWeek: settings.get('calendar.firstDayOfWeek'),
       lookaheadDays: settings.get('calendar.lookaheadDays'),
-      folders: settings.get('outlook.folders'),
-      mailRail: settings.get('outlook.mailRail'),
-      mailLimit: settings.get('outlook.mailLimit'),
     }),
     ...(options.clock ? { clock: options.clock } : {}),
     onError: (error) => context.logger.error('outlook sync failed', error),

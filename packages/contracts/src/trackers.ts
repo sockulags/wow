@@ -75,10 +75,22 @@ export const TrackerSuggestion = z.object({
 });
 export type TrackerSuggestion = z.infer<typeof TrackerSuggestion>;
 
+// The GitLab project a remote points at, when the remote is on the GitLab host the user stored in
+// `trackers.gitlab.baseUrl`. Nested groups stay in `path` (`group/sub/app`); the API takes the
+// whole path, URL-encoded, as one project id.
+export const GitLabProject = z.object({
+  host: z.string().min(1),
+  path: z.string().min(1),
+});
+export type GitLabProject = z.infer<typeof GitLabProject>;
+
 export const ProjectTrackers = z.object({
   projectId: z.string().min(1),
   git: ProjectGit,
-  // Every trackers.jira.* and trackers.github.* setting as it applies to this project.
+  // The GitLab project of the primary remote, or null when that remote is not on the stored
+  // GitLab host. While it is set, the remote names no GitHub repository.
+  gitlab: GitLabProject.nullable(),
+  // Every trackers.jira.*, trackers.github.* and trackers.gitlab.* setting as it applies to this project.
   settings: z.array(ResolvedTrackerSetting),
   suggestions: z.array(TrackerSuggestion),
 });
@@ -93,7 +105,25 @@ export const trackerAccountKeys: ReadonlySet<string> = new Set([
   'trackers.jira.token',
   'trackers.github.baseUrl',
   'trackers.github.token',
+  'trackers.gitlab.baseUrl',
+  'trackers.gitlab.token',
+  'trackers.confluence.baseUrl',
+  'trackers.confluence.authMode',
+  'trackers.confluence.email',
+  'trackers.confluence.token',
 ]);
+
+// The accounts "Test connection" signs in to. GitLab (merge requests) and Confluence (linked
+// pages) are read only, so they are not publish targets.
+export const TrackerConnection = z.enum(['jira', 'github', 'gitlab', 'confluence']);
+export type TrackerConnection = z.infer<typeof TrackerConnection>;
+
+export const trackerConnectionLabels: Readonly<Record<TrackerConnection, string>> = {
+  jira: 'Jira',
+  github: 'GitHub',
+  gitlab: 'GitLab',
+  confluence: 'Confluence',
+};
 
 // How a publish found its project: chosen in the dialog, or from the item's card or run.
 export const PublishProjectSource = z.enum(['chosen', 'card', 'run']);

@@ -38,7 +38,9 @@ export function jiraIssuePayload(config: JiraConfig, issue: NewIssue) {
   };
 }
 
-export function jiraAuthorization(config: JiraConfig): string {
+export function jiraAuthorization(
+  config: Pick<JiraConfig, 'authMode' | 'email' | 'token'>,
+): string {
   if (config.authMode === 'pat') return `Bearer ${config.token}`;
   return `Basic ${Buffer.from(`${config.email}:${config.token}`, 'utf8').toString('base64')}`;
 }

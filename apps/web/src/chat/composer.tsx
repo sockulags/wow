@@ -38,6 +38,11 @@ export interface ComposerProps {
   onStop?(): void;
   // Context meter and resume action, shown under the text box.
   readonly footer?: ReactNode;
+  // Looked at when Send is pressed, before anything is sent or queued; false keeps the text in
+  // the box (the Assistant view holds a message that looks like a secret).
+  beforeSend?(text: string): boolean;
+  // A line above the text box, such as why a message was held.
+  readonly notice?: ReactNode;
 }
 
 // The `$` picker (spec 18): a cmdk list grouped by where each skill comes from. The focus stays
@@ -122,6 +127,8 @@ export function Composer({
   onSend,
   onStop,
   footer,
+  beforeSend,
+  notice,
 }: ComposerProps) {
   const pickerId = useId();
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -223,6 +230,7 @@ export function Composer({
       setError(blockedReason);
       return;
     }
+    if (beforeSend && !beforeSend(message)) return;
     if (running) {
       setQueued(queued === undefined ? message : `${queued}\n\n${message}`);
       update('', 0);
@@ -275,6 +283,7 @@ export function Composer({
 
   return (
     <div className="flex flex-col gap-1.5">
+      {notice}
       {queued !== undefined && (
         <div
           data-testid="queued-message"

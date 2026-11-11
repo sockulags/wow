@@ -3,10 +3,9 @@ import {
   BRIDGE_PROTOCOL_VERSION,
   findJoinUrl,
   type Appointment,
+  type BridgeOp,
   type PingResult,
   type ProfileResult,
-  type UnreadMailResult,
-  type UnreadMessage,
 } from './protocol.js';
 import {
   OutlookError,
@@ -38,6 +37,8 @@ export interface MockOutlookOptions {
 export class MockOutlookSource implements OutlookSource {
   readonly kind = 'mock';
   readonly opened: string[] = [];
+  // Every operation asked of it, in order, so tests can see what a sync reads from Outlook.
+  readonly asked: BridgeOp[] = [];
   #fixtures: OutlookFixtures;
   #unavailable: string | null = null;
   readonly #clock: Clock;
@@ -59,6 +60,7 @@ export class MockOutlookSource implements OutlookSource {
   }
 
   async ping(): Promise<PingResult> {
+    this.asked.push('ping');
     return this.#unavailable === null
       ? { version: `mock-${BRIDGE_PROTOCOL_VERSION}`, outlook: 'available', message: null }
       : {
@@ -69,6 +71,7 @@ export class MockOutlookSource implements OutlookSource {
   }
 
   async calendar(window: CalendarWindow): Promise<Appointment[]> {
+    this.asked.push('calendar');
     this.#assertAvailable();
     const from = new Date(window.from);
     const to = new Date(window.to);
@@ -85,31 +88,15 @@ export class MockOutlookSource implements OutlookSource {
     return items.toSorted((a, b) => Date.parse(a.start) - Date.parse(b.start));
   }
 
-  async unreadMail(folders: readonly string[], limit: number): Promise<UnreadMailResult> {
-    this.#assertAvailable();
-    const now = this.#clock.now().getTime();
-    const wanted = new Set(folders.map((folder) => folder.toLowerCase()));
-    const unread: UnreadMessage[] = this.#fixtures.messages
-      .filter((message) => wanted.has(message.folder.toLowerCase()))
-      .toSorted((a, b) => a.minutesAgo - b.minutesAgo)
-      .map((message) => ({
-        entryId: message.entryId,
-        folder: message.folder,
-        from: message.from,
-        subject: message.subject,
-        receivedAt: new Date(now - message.minutesAgo * 60_000).toISOString(),
-        snippet: message.snippet,
-      }));
-    return { items: unread.slice(0, limit), unreadCount: unread.length };
-  }
-
   async open(entryId: string): Promise<void> {
+    this.asked.push('open');
     this.#assertAvailable();
     this.opened.push(entryId);
   }
 
   // A fixture profile without a zone answers with the zone the fixtures are written in.
   async profile(): Promise<ProfileResult> {
+    this.asked.push('profile');
     this.#assertAvailable();
     const profile = this.#fixtures.profile;
     return profile.timeZoneId === null

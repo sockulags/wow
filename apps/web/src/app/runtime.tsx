@@ -32,6 +32,31 @@ export type CardDialog =
   | { readonly type: 'create'; readonly start: string; readonly end: string }
   | { readonly type: 'edit'; readonly cardId: string };
 
+// The file the context panel shows in place of the conversation (review loop spec 6). `from` is
+// the route it was opened on: the viewer belongs to that view and is gone on any other.
+export interface ViewerFile {
+  readonly runId: string;
+  // As the run names it: relative to its folder, with forward slashes.
+  readonly path: string;
+  // The full path as the client names it, for "Copy path" until the server has answered.
+  readonly fullPath: string;
+  // What the server read, once it has: the kind it is shown as and the path it resolved.
+  readonly read:
+    | { readonly kind: 'markdown' | 'html' | 'text' | 'image'; readonly absolutePath: string }
+    | undefined;
+  readonly from: string;
+  // A picture at its own size instead of fitted to the panel.
+  readonly fullSize: boolean;
+}
+
+// The linked Confluence page the context panel shows in place of the conversation (review loop
+// spec 35), by the run and the link's `ref`. The page itself is the server's last read of it.
+export interface ViewerPage {
+  readonly runId: string;
+  readonly ref: string;
+  readonly from: string;
+}
+
 // UI-only state: which panels and dialogs are open. Everything else comes from the server (or,
 // without one, from the in-memory settings source).
 export interface LayoutState {
@@ -42,6 +67,8 @@ export interface LayoutState {
   // Set by "Focus context panel" when the panel still has to open; the panel takes the focus once
   // it is there and clears it.
   readonly contextPanelFocus: boolean;
+  readonly viewer: ViewerFile | undefined;
+  readonly page: ViewerPage | undefined;
   readonly paletteOpen: boolean;
   readonly providerDialog: ProviderDialog | undefined;
   readonly projectDialog: ProjectDialog | undefined;
@@ -55,6 +82,8 @@ export const createLayoutStore = (): LayoutStore =>
     sidebarOpen: true,
     contextPanelPeek: false,
     contextPanelFocus: false,
+    viewer: undefined,
+    page: undefined,
     paletteOpen: false,
     providerDialog: undefined,
     projectDialog: undefined,

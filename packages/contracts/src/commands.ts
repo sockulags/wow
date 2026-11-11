@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AssistantChange, AssistantProposal } from './assistant.js';
 import {
   AppNotification,
   Approval,
@@ -7,9 +8,10 @@ import {
   BacklogState,
   CalendarItem,
   CardState,
-  MailItem,
   OutlookItemState,
   OutlookProfile,
+  PlanIntent,
+  PlanRun,
   Project,
   ProviderInstance,
   ProviderInstanceStatus,
@@ -17,13 +19,25 @@ import {
   Skill,
   Thread,
   ThreadItem,
+  ThreadKind,
   Trigger,
+  TriggerEvent,
   Turn,
   TurnState,
   Usage,
   Workflow,
   WorkflowRun,
 } from './projections.js';
+import {
+  ChangeRequest,
+  HostKind,
+  HostRead,
+  HostReadOutcome,
+  PageRead,
+  PageReadOutcome,
+  TicketRead,
+  TicketReadOutcome,
+} from './hosts.js';
 import {
   ApprovalDecision,
   ProviderEvent,
@@ -33,7 +47,8 @@ import {
   ThreadState,
 } from './provider.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
-import { RunEffect, WorkflowStep } from './workflow.js';
+import { SetupApplication } from './setup.js';
+import { FileHash, RunEffect, UnpushedWork, WorkflowStep } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
 // add their own members to both unions.
@@ -121,6 +136,19 @@ export const Command = z.discriminatedUnion('type', [
     effort: z.string().min(1),
     permissionMode: z.string().min(1),
   }),
+  // Makes the one assistant thread, or brings it in line with the provider instance, model and
+  // effort the settings name now (app assistant spec 1). Refused with the reason when no
+  // connected instance can run it (spec 27). The fallbacks are what the instance itself offers,
+  // used only when neither the settings nor the instance name a model or an effort.
+  z.object({
+    type: z.literal('thread.openAssistant'),
+    fallbackModel: z.string().min(1).optional(),
+    fallbackEffort: z.string().min(1).optional(),
+  }),
+  // The assistant's first turn after the first-start step (app assistant spec 24, 26). The
+  // conversation shows `assistant.greeting` as the user's line; the agent also gets wow's note
+  // of what is set up, what a first run still needs and what a setup file left to fill in.
+  z.object({ type: z.literal('thread.greetAssistant') }),
   // Starts a turn with the thread's current model, effort and permission mode (spec 14, 17).
   z.object({ type: z.literal('thread.sendMessage'), threadId: Id, text: z.string().min(1) }),
   // Stops the running turn; what it produced so far stays (spec 23).
@@ -177,6 +205,9 @@ export const Command = z.discriminatedUnion('type', [
     name: z.string().min(1),
     templateKind: z.string().min(1).optional(),
     steps: WorkflowSteps,
+    ownWorkingCopy: z.boolean().optional(),
+    forUnits: z.boolean().optional(),
+    maxStepVisits: Workflow.shape.maxStepVisits,
   }),
   z.object({
     type: z.literal('workflow.update'),
@@ -184,6 +215,10 @@ export const Command = z.discriminatedUnion('type', [
     name: z.string().min(1).optional(),
     templateKind: z.string().min(1).nullable().optional(),
     steps: WorkflowSteps.optional(),
+    ownWorkingCopy: z.boolean().optional(),
+    forUnits: z.boolean().optional(),
+    // Null takes the workflow's own number away, so the setting applies again.
+    maxStepVisits: Workflow.shape.maxStepVisits,
   }),
   z.object({ type: z.literal('workflow.delete'), workflowId: Id }),
   // Undo of a delete: puts the row the client still holds back as it was.
@@ -199,6 +234,10 @@ export const Command = z.discriminatedUnion('type', [
   // The user's answer at a gate (behaviors 9 to 11).
   z.object({ type: z.literal('workflowRun.continue'), runId: Id }),
   z.object({ type: z.literal('workflowRun.stop'), runId: Id }),
+  // The other answer at a gate (review loop spec 16 to 18): the reviewed step runs again in its
+  // thread with the note. The server refuses an empty note with a reason, so it is not a schema
+  // error.
+  z.object({ type: z.literal('workflowRun.sendBack'), runId: Id, note: z.string() }),
   // Backlog items stay in wow until the user publishes one (behavior 28).
   z.object({
     type: z.literal('backlog.create'),
@@ -232,9 +271,80 @@ export const Command = z.discriminatedUnion('type', [
     end: Timestamp,
     zone: z.string().min(1),
   }),
+  // Follow or stop following a plan (`<projectId>:<intentId>`). A followed plan's pull requests
+  // are read from the project's host; unfollowing forgets what was read for it.
+  z.object({ type: z.literal('plan.follow'), planId: Id, followed: z.boolean() }),
+  // "Run ready units": works through the plan's ready units with a workflow marked "For units",
+  // one run per unit and one at a time (review loop spec 40 to 47).
+  z.object({ type: z.literal('planRun.start'), planRunId: Id, planId: Id, workflowId: Id }),
+  // Stops the live unit run and starts no further unit (spec 45).
+  z.object({ type: z.literal('planRun.stop'), planRunId: Id }),
+  // An event trigger (review loop spec 48): runs of the workflow start when polling first sees
+  // the event on a pull request wow follows in the project. New triggers are on.
+  z.object({
+    type: z.literal('trigger.create'),
+    triggerId: Id,
+    projectId: Id,
+    event: TriggerEvent,
+    workflowId: Id,
+  }),
+  z.object({ type: z.literal('trigger.setEnabled'), triggerId: Id, enabled: z.boolean() }),
+  // Event triggers only; a card's trigger goes with its card.
+  z.object({ type: z.literal('trigger.delete'), triggerId: Id }),
+  // The user's Yes to a proposal of the assistant (app assistant spec 9, 10): the command the
+  // proposal holds is applied. Refused from the assistant's own origin.
+  z.object({ type: z.literal('assistant.proposal.accept'), proposalId: Id }),
+  // The user's No, with an optional reason for the assistant's next turn.
+  z.object({
+    type: z.literal('assistant.proposal.decline'),
+    proposalId: Id,
+    reason: z.string().optional(),
+  }),
+  // Takes back one change the assistant made (spec 8). Refused when the thing changed again
+  // since, with what changed.
+  z.object({ type: z.literal('assistant.undo'), changeId: Id }),
+  // "Start from a setup file" (app assistant spec 22): the file's text is read again, checked
+  // and applied as one step that `setup.undo` takes back. `name` is the file's name as picked.
+  z.object({
+    type: z.literal('setup.apply'),
+    applicationId: Id,
+    name: z.string().trim().min(1),
+    text: z.string(),
+  }),
+  // Takes back every change one setup file made, or none when something it set changed since.
+  z.object({ type: z.literal('setup.undo'), applicationId: Id }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command['type'];
+
+// The server's whole record of a change the assistant made. Beside what the conversation shows
+// it keeps what Undo needs: the values the change left behind (null when it removed the thing)
+// and the commands that take it back. Undo is refused when the thing no longer holds `expect`.
+// These hold real values, so they stay on the server and are not part of the topic's rows.
+export const AssistantChangeRecord = AssistantChange.extend({
+  expect: z.record(z.string(), z.unknown()).nullable(),
+  inverse: z.array(Command),
+});
+export type AssistantChangeRecord = z.infer<typeof AssistantChangeRecord>;
+
+// The server's whole record of a proposal: the command the assistant sent, kept as it was, and
+// the state its title and lines were written from. Nothing of the command is applied until
+// `assistant.proposal.accept` arrives with the user's origin, and then only while the state
+// still is `basis`: a yes is for what the card said. Null in a row from before it was recorded.
+export const AssistantProposalRecord = AssistantProposal.extend({
+  command: Command,
+  basis: z.record(z.string(), z.unknown()).nullable(),
+});
+export type AssistantProposalRecord = z.infer<typeof AssistantProposalRecord>;
+
+// The server's whole record of an applied setup file: beside what Settings shows, one change
+// record per thing it set, each with the values it left and the commands that take it back.
+// Undo is refused while any of them no longer holds; it then takes back every one, newest
+// first. These hold real values, so they are not part of the topic's rows.
+export const SetupApplicationRecord = SetupApplication.extend({
+  parts: z.array(AssistantChangeRecord),
+});
+export type SetupApplicationRecord = z.infer<typeof SetupApplicationRecord>;
 
 // One Outlook calendar row as the sync delivers it; the server fills in the local-only fields.
 export const OutlookCalendarRow = CalendarItem.pick({
@@ -294,8 +404,6 @@ export const InternalCommand = z.discriminatedUnion('type', [
     at: Timestamp,
     window: z.object({ from: Timestamp, to: Timestamp }),
     calendar: z.array(OutlookCalendarRow),
-    mail: z.array(MailItem),
-    unreadCount: z.number().int().nonnegative(),
     bridgeVersion: z.string(),
     // Null when Outlook could not say this poll; the stored profile is then kept.
     profile: OutlookProfile.nullable(),
@@ -310,6 +418,41 @@ export const InternalCommand = z.discriminatedUnion('type', [
   }),
   // Replaces the skills projection with a fresh scan; the server's skills watcher sends it.
   z.object({ type: z.literal('skills.sync'), skills: z.array(Skill) }),
+  // Replaces the plans projection with a fresh read of every project's intents folder; the
+  // server's plans service sends it.
+  z.object({ type: z.literal('plans.sync'), intents: z.array(PlanIntent) }),
+  // What the host poller read for one project: every scope it asked about (a followed plan or a
+  // run) with its outcome, and the change requests it read. The orchestrator stores what
+  // changed and works out the unit statuses of the project's followed plans again.
+  z.object({
+    type: z.literal('hosts.sync'),
+    projectId: Id,
+    at: Timestamp,
+    host: HostKind,
+    hostName: z.string(),
+    reads: z.array(HostReadOutcome),
+    changeRequests: z.array(ChangeRequest),
+  }),
+  // What the host poller read about the tickets of one project's runs (review loop spec 33).
+  z.object({
+    type: z.literal('tickets.sync'),
+    projectId: Id,
+    at: Timestamp,
+    hostName: z.string(),
+    reads: z.array(TicketReadOutcome),
+  }),
+  // What the host poller read about the pages the texts of one project's runs link to (review
+  // loop spec 35).
+  z.object({
+    type: z.literal('pages.sync'),
+    projectId: Id,
+    at: Timestamp,
+    hostName: z.string(),
+    reads: z.array(PageReadOutcome),
+  }),
+  // Something a plan run depends on changed (its unit's run ended, or the plan's unit statuses
+  // did): decide again what it does next. The plan runs service sends it.
+  z.object({ type: z.literal('planRun.advance'), planRunId: Id }),
   // What the workflow runner reports after a step's turn ended.
   z.object({
     type: z.literal('workflowRun.stepCompleted'),
@@ -317,17 +460,54 @@ export const InternalCommand = z.discriminatedUnion('type', [
     stepId: Id,
     finalMessage: z.string(),
     artifactsFound: z.array(z.string()),
+    // The step's expected artifact globs that matched no file.
+    artifactsMissing: z.array(z.string()).optional(),
+    fileHashes: z.array(FileHash).optional(),
+    // The commit the run's folder is on, for a gate that waits for that commit's checks.
+    headSha: z.string().optional(),
+  }),
+  // Look again at a gate that waits for its pull request's checks: the host poller sends it when
+  // `workflows.gateChecksTimeoutMinutes` has passed since the step ended.
+  z.object({ type: z.literal('workflowRun.checkGate'), runId: Id, stepId: Id }),
+  // The commit the run's folder was on when its first step began, and what already differed.
+  z.object({
+    type: z.literal('workflowRun.baseRecorded'),
+    runId: Id,
+    baseSha: z.string().min(1),
+    files: z.array(FileHash),
   }),
   z.object({
     type: z.literal('workflowRun.stepFailed'),
     runId: Id,
     stepId: Id,
     error: z.string(),
+    // The user interrupted the step's turn. Such a step follows no rule.
+    stopped: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('workflowRun.artifactsFound'),
     runId: Id,
     found: z.array(z.object({ stepId: Id, paths: z.array(z.string()) })),
+  }),
+  // The run's working copy exists: the commit it was made at, the default branch that commit
+  // was read from, and a note when that is not the fetched tip.
+  z.object({
+    type: z.literal('workflowRun.workingCopyReady'),
+    runId: Id,
+    startSha: z.string().min(1),
+    defaultBranch: z.string().nullable(),
+    note: z.string().nullable(),
+  }),
+  // The working copy could not be made. The run fails before its first step (review loop
+  // spec 38).
+  z.object({ type: z.literal('workflowRun.workingCopyFailed'), runId: Id, error: z.string() }),
+  // What became of the working copy after the run ended, or after "Remove working copy".
+  z.object({
+    type: z.literal('workflowRun.workingCopySettled'),
+    runId: Id,
+    state: z.enum(['kept', 'removed']),
+    unpushed: UnpushedWork.nullable(),
+    error: z.string().nullable(),
   }),
   // The scheduler's tick found the trigger due (spec 8). `runAt` is the time it saw, so a card
   // moved in the meantime does not fire.
@@ -404,7 +584,14 @@ export const ThreadChanges = Thread.pick({
 }).partial();
 export type ThreadChanges = z.infer<typeof ThreadChanges>;
 
-export const WorkflowChanges = Workflow.pick({ name: true, templateKind: true, steps: true })
+export const WorkflowChanges = Workflow.pick({
+  name: true,
+  templateKind: true,
+  steps: true,
+  ownWorkingCopy: true,
+  forUnits: true,
+  maxStepVisits: true,
+})
   .partial()
   .extend({ updatedAt: Workflow.shape.updatedAt });
 export type WorkflowChanges = z.infer<typeof WorkflowChanges>;
@@ -473,6 +660,41 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     aggregate: z.literal('skills'),
     payload: z.object({ upserted: z.array(Skill), removed: z.array(Id) }),
   }),
+  z.object({
+    kind: z.literal('plans.synced'),
+    aggregate: z.literal('plans'),
+    payload: z.object({ upserted: z.array(PlanIntent), removed: z.array(Id) }),
+  }),
+  // Host rows as they now are, and the ones that went (an unfollowed plan, a change request no
+  // read names any more).
+  z.object({
+    kind: z.literal('hosts.synced'),
+    aggregate: Id,
+    payload: z.object({
+      projectId: Id,
+      reads: z.array(HostRead),
+      removedReads: z.array(Id),
+      changeRequests: z.array(ChangeRequest),
+      removedChangeRequests: z.array(Id),
+    }),
+  }),
+  // Ticket reads as they now are.
+  z.object({
+    kind: z.literal('tickets.synced'),
+    aggregate: Id,
+    payload: z.object({ projectId: Id, reads: z.array(TicketRead) }),
+  }),
+  // Page reads as they now are.
+  z.object({
+    kind: z.literal('pages.synced'),
+    aggregate: Id,
+    payload: z.object({ projectId: Id, reads: z.array(PageRead) }),
+  }),
+  z.object({
+    kind: z.literal('planRun.changed'),
+    aggregate: Id,
+    payload: z.object({ cause: z.string().min(1), planRun: PlanRun }),
+  }),
   z.object({ kind: z.literal('workflow.created'), aggregate: Id, payload: Workflow }),
   z.object({
     kind: z.literal('workflow.updated'),
@@ -499,6 +721,24 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       threadId: Id,
       providerInstanceId: Id,
       changes: ThreadChanges,
+      updatedAt: Timestamp,
+    }),
+  }),
+  // The assistant thread moved to another provider instance. The provider's own session stays
+  // behind with the old instance unless the new one reads the same config folder.
+  z.object({
+    kind: z.literal('thread.providerChanged'),
+    aggregate: Id,
+    payload: z.object({
+      threadId: Id,
+      // The instance it left, whose live session for the thread is closed. Absent in events
+      // stored before it was recorded.
+      previousProviderInstanceId: Id.optional(),
+      providerInstanceId: Id,
+      providerSessionId: z.string().min(1).nullable(),
+      model: z.string().min(1),
+      effort: z.string().min(1),
+      permissionMode: z.string().min(1),
       updatedAt: Timestamp,
     }),
   }),
@@ -532,6 +772,9 @@ export const DomainEvent = z.discriminatedUnion('kind', [
         effort: z.string().min(1),
         permissionMode: z.string().min(1),
         resumeId: z.string().min(1).nullable(),
+        // Set for the assistant thread: the provider service then hands the turn wow's tools,
+        // the instruction text and the app's empty folder. The token is never stored here.
+        kind: ThreadKind.optional(),
       }),
     }),
   }),
@@ -627,7 +870,48 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   }),
   // The trigger row as it now is.
   z.object({ kind: z.literal('trigger.set'), aggregate: Id, payload: Trigger }),
+  z.object({
+    kind: z.literal('trigger.deleted'),
+    aggregate: Id,
+    payload: z.object({ triggerId: Id }),
+  }),
+  // An event trigger saw its event. Stored so the same event never fires the trigger again;
+  // `runId` is null when the run could not start.
+  z.object({
+    kind: z.literal('trigger.eventSeen'),
+    aggregate: Id,
+    payload: z.object({ triggerId: Id, eventId: Id, runId: Id.nullable(), at: Timestamp }),
+  }),
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
+  // An ordinary change the assistant made, stored in the same commit as the change itself.
+  z.object({ kind: z.literal('assistant.changed'), aggregate: Id, payload: AssistantChangeRecord }),
+  z.object({ kind: z.literal('setup.applied'), aggregate: Id, payload: SetupApplicationRecord }),
+  z.object({
+    kind: z.literal('setup.undone'),
+    aggregate: Id,
+    payload: z.object({ applicationId: Id, at: Timestamp }),
+  }),
+  z.object({
+    kind: z.literal('assistant.changeUndone'),
+    aggregate: Id,
+    payload: z.object({ changeId: Id, at: Timestamp }),
+  }),
+  // A command of the assistant that waits for the user's yes; nothing else was changed.
+  z.object({
+    kind: z.literal('assistant.proposed'),
+    aggregate: Id,
+    payload: AssistantProposalRecord,
+  }),
+  z.object({
+    kind: z.literal('assistant.proposalAnswered'),
+    aggregate: Id,
+    payload: z.object({
+      proposalId: Id,
+      state: z.enum(['accepted', 'declined']),
+      reason: z.string().nullable(),
+      at: Timestamp,
+    }),
+  }),
   z.object({ kind: z.literal('backlog.created'), aggregate: Id, payload: BacklogItem }),
   // Edits by the user, "Plan on calendar", and the item following its run (behavior 29).
   z.object({
@@ -653,9 +937,6 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       at: Timestamp,
       calendarUpsert: z.array(CalendarItem),
       calendarRemove: z.array(Id),
-      mailUpsert: z.array(MailItem),
-      mailRemove: z.array(Id),
-      unreadCount: z.number().int().nonnegative(),
       bridgeVersion: z.string(),
       // Absent in events stored before Outlook profiles were read.
       profile: OutlookProfile.nullable().optional(),

@@ -42,7 +42,7 @@ describe('shell', () => {
       within(nav)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['Calendar', 'Chat', 'Workflows', 'Backlog', 'Settings']);
+    ).toEqual(['Calendar', 'Chat', 'Workflows', 'Plans', 'Backlog', 'Assistant', 'Settings']);
   });
 
   it('opens the palette with Ctrl+K and navigates with the keyboard', async () => {
@@ -131,7 +131,14 @@ describe('shell', () => {
       'Scheduler',
       'Workflows',
       'Skills',
+      'Plans',
       'Trackers',
+      'Hosts',
+      'Event triggers',
+      'Viewer',
+      'Changes',
+      'Working copies',
+      'Assistant',
       'Appearance',
       'Keybindings',
       'Advanced',

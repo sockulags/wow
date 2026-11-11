@@ -9,9 +9,12 @@ import { useBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
 import { BacklogPanel } from './backlog-panel';
 import { CalendarPanel, useCalendarPanelTitle } from './calendar-panel';
+import { FileViewer } from './file-viewer';
+import { PageViewer } from './page-viewer';
 import { clampPanelWidth, hasSelection, panelSelection, type PanelSelection } from './model';
 import { CONTEXT_PANEL_ID, closeContextPanel, takePanelFocusRequest } from './panel-state';
 import { ThreadPanel } from './thread-panel';
+import { shownFile, shownPage } from './viewer';
 import { RunPanel, WorkflowPanel } from './workflow-panel';
 
 // What the empty panel says it would show, per view.
@@ -152,6 +155,16 @@ export function ContextPanel() {
   const [preview, setPreview] = useState<number>();
   const ref = useRef<HTMLElement>(null);
   const selection = panelSelection(pathname, search);
+  // A file opened from this view takes the place of the conversation until "Back".
+  const file = shownFile(
+    useLayout((state) => state.viewer),
+    pathname,
+  );
+  // So does a linked page.
+  const page = shownPage(
+    useLayout((state) => state.page),
+    pathname,
+  );
   const width = preview ?? storedWidth;
 
   // "Focus context panel" on a closed panel: take the focus once it is on screen.
@@ -197,7 +210,11 @@ export function ContextPanel() {
       />
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pr-2 pl-4">
         <h2 className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
-          {selection.view === 'calendar' && selection.itemId ? (
+          {file ? (
+            'File'
+          ) : page ? (
+            'Page'
+          ) : selection.view === 'calendar' && selection.itemId ? (
             <CalendarTitle itemId={selection.itemId} />
           ) : (
             titles[selection.view]
@@ -213,7 +230,13 @@ export function ContextPanel() {
         </IconButton>
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
-        <PanelBody selection={selection} />
+        {file ? (
+          <FileViewer key={`${file.runId}\n${file.path}`} file={file} />
+        ) : page ? (
+          <PageViewer key={`${page.runId}\n${page.ref}`} page={page} />
+        ) : (
+          <PanelBody selection={selection} />
+        )}
       </div>
     </aside>
   );

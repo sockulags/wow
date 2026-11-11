@@ -132,3 +132,11 @@
 .dark .wow-code .shiki span {
   color: var(--shiki-dark);
 }
+
+/* Mermaid output (components/mermaid-diagram.tsx) fits the message width. */
+.wow-diagram svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}

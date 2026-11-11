@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { WorkflowTemplate, type WorkflowTemplateStep } from './workflow.js';
+import { SecretPattern, defaultAssistantInstructions, defaultSecretPatterns } from './assistant.js';
+import {
+  alwaysStopSkillDefaults,
+  WorkflowTemplate,
+  type WorkflowTemplateStep,
+} from './workflow.js';
 
 // Every tunable value in wow is one entry here. The server validates writes against `schema`, and
 // the settings UI renders fields from it, so adding a setting needs no other code.
@@ -15,7 +20,14 @@ export const SettingGroup = z.enum([
   'scheduler',
   'workflows',
   'skills',
+  'plans',
   'trackers',
+  'hosts',
+  'triggers',
+  'viewer',
+  'diff',
+  'workspaces',
+  'assistant',
   'appearance',
   'keybindings',
   'desktop',
@@ -23,6 +35,30 @@ export const SettingGroup = z.enum([
   'advanced',
 ]);
 export type SettingGroup = z.infer<typeof SettingGroup>;
+
+// The name of each group's page under Settings.
+export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
+  providers: 'Providers',
+  chat: 'Chat',
+  calendar: 'Calendar',
+  outlook: 'Outlook',
+  scheduler: 'Scheduler',
+  workflows: 'Workflows',
+  skills: 'Skills',
+  plans: 'Plans',
+  trackers: 'Trackers',
+  hosts: 'Hosts',
+  triggers: 'Event triggers',
+  viewer: 'Viewer',
+  diff: 'Changes',
+  workspaces: 'Working copies',
+  assistant: 'Assistant',
+  appearance: 'Appearance',
+  keybindings: 'Keybindings',
+  desktop: 'Desktop',
+  updates: 'Updates',
+  advanced: 'Advanced',
+};
 
 // Where a stored value applies: 'global', 'project:<id>' or 'provider:<id>'. Reads resolve
 // provider over project over global over the registry default.
@@ -39,8 +75,16 @@ export const LogLevel = z.enum(['error', 'warn', 'info', 'debug']);
 export type LogLevel = z.infer<typeof LogLevel>;
 
 // The unit a number setting is stored in. The settings page shows it as a suffix and shows
-// milliseconds as seconds, so labels carry no unit.
-export const SettingUnit = z.enum(['ms', 'seconds', 'minutes', 'days', 'pixels', 'percent']);
+// milliseconds as seconds and bytes as kilobytes, so labels carry no unit.
+export const SettingUnit = z.enum([
+  'ms',
+  'seconds',
+  'minutes',
+  'days',
+  'pixels',
+  'percent',
+  'bytes',
+]);
 export type SettingUnit = z.infer<typeof SettingUnit>;
 
 // How the settings page names one value of an enum setting; the stored value stays the id.
@@ -63,7 +107,13 @@ export interface SettingDefinition<S extends z.ZodType = z.ZodType> {
   readonly options?: Readonly<Record<string, SettingOption>>;
   // Show the choices as a radio group with descriptions instead of a select.
   readonly radio?: boolean;
+  // Why a setup file leaves the value out (app assistant spec 21): an account name, a value
+  // that only fits this computer, or one only this person can say. Absent: it travels.
+  readonly personal?: SettingPersonal;
 }
+
+export const SettingPersonal = z.enum(['account', 'machine', 'person']);
+export type SettingPersonal = z.infer<typeof SettingPersonal>;
 
 const defineSetting = <S extends z.ZodType>(definition: SettingDefinition<S>) => definition;
 
@@ -187,6 +237,20 @@ const keybinding = (label: string, description: string, binding: string) =>
     scope: 'global',
   });
 
+// A folder inside a project, written relative to it. It may not leave the project folder, so a
+// setting cannot point the plans reader at other files on the machine.
+export const IntentsDirectory = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(
+    (value) =>
+      !/^([A-Za-z]:|[\\/]|~)/.test(value) &&
+      !value.split(/[\\/]/).some((segment) => segment === '..') &&
+      value.split(/[\\/]/).some((segment) => segment !== '' && segment !== '.'),
+    { message: 'Use a folder inside the project, such as intents or docs/intents' },
+  );
+
 // A tracker's base URL: http or https, or empty while the tracker is not set up.
 export const TrackerUrl = z
   .string()
@@ -211,12 +275,23 @@ const templateStep = (
   expectedArtifacts: string[] = [],
 ): WorkflowTemplateStep => ({ skillName, gateBefore: false, gateAfter, expectedArtifacts });
 
+// The review loops back to delivery until it approves (workflow branches spec 20).
+const checkWorkStep: WorkflowTemplateStep = {
+  ...templateStep('check-work', false),
+  rules: [
+    {
+      when: { fact: 'verdict', is: 'changesRequested' },
+      goTo: { type: 'skill', skillName: 'deliver-work' },
+    },
+  ],
+};
+
 // Behavior 25. The agent-os skill names appear only here, as editable defaults.
 export const defaultWorkflowTemplates: WorkflowTemplate[] = [
   {
     kind: 'bug',
     name: 'Bug',
-    steps: [templateStep('deliver-work', false), templateStep('check-work', false)],
+    steps: [templateStep('deliver-work', false), checkWorkStep],
   },
   {
     kind: 'feature',
@@ -225,7 +300,7 @@ export const defaultWorkflowTemplates: WorkflowTemplate[] = [
       templateStep('capture-intent', true, ['intents/*/intent.md', 'intents/*/spec.md']),
       templateStep('plan-work', true, ['intents/*/plan.md']),
       templateStep('deliver-work', false),
-      templateStep('check-work', false),
+      checkWorkStep,
     ],
   },
   {
@@ -236,7 +311,7 @@ export const defaultWorkflowTemplates: WorkflowTemplate[] = [
       templateStep('plan-work', true, ['intents/*/plan.md']),
       templateStep('shape-work', true),
       templateStep('deliver-work', false),
-      templateStep('check-work', false),
+      checkWorkStep,
     ],
   },
 ];
@@ -254,10 +329,57 @@ export const defaultHandoverTemplate = [
   '{{#previousArtifacts}}Artifacts from earlier steps:',
   '{{previousArtifacts}}',
   '{{/previousArtifacts}}',
+  '{{#previousError}}The previous step ({{previousStep}}) failed with:',
+  '',
+  '{{previousError}}',
+  '{{/previousError}}',
   '{{#expectedArtifacts}}This step is expected to produce:',
   '{{expectedArtifacts}}',
   '{{/expectedArtifacts}}',
+  '{{#event}}This run was started by an event: {{event}}.',
+  'Pull request #{{pullRequestNumber}}: {{pullRequestUrl}}',
+  'Branch: {{pullRequestBranch}}',
+  '{{/event}}',
+  '{{#commentUrl}}The review comment, by {{commentAuthor}}: {{commentUrl}}',
+  'Its text is left out here on purpose; read it at that link.',
+  '{{/commentUrl}}',
 ].join('\n');
+
+export const defaultSendBackTemplate = [
+  'The reviewer looked at the result of this step and sent it back.',
+  '',
+  "Reviewer's note:",
+  '',
+  '{{note}}',
+  '',
+  'Do the step ({{skill}}) again in this conversation with the note taken into account, and end with your result as before.',
+].join('\n');
+
+// What a step is told in its own thread when a rule of a later step sends the run back to it
+// (workflow branches spec 7).
+export const defaultGoBackTemplate = [
+  'The step {{fromStep}} sent the work back to this step: {{reason}}.',
+  '',
+  '{{#message}}What {{fromStep}} ended with:',
+  '',
+  '{{message}}',
+  '',
+  '{{/message}}Do the step ({{skill}}) again in this conversation with that taken into account, and end with your result as before.',
+].join('\n');
+
+// What a plan run tells every step of a unit's run (review loop spec 40). The last line is how
+// wow finds the unit's pull request afterwards.
+export const defaultUnitPromptTemplate = [
+  'This run delivers one unit of a plan.',
+  '',
+  'Intent: {{intentId}}',
+  'Unit: {{unitKey}} {{unitTitle}}',
+  '',
+  'When you open a pull request for it, put this line in its body: Intent-Unit: {{intentId}}/{{unitKey}}',
+].join('\n');
+
+export const PlanRunOnFailure = z.enum(['stop', 'skip']);
+export type PlanRunOnFailure = z.infer<typeof PlanRunOnFailure>;
 
 export const defaultSkillDirectories = [
   '~/.claude/skills',
@@ -298,11 +420,12 @@ export const settingsRegistry = {
     unit: 'ms',
   }),
   'providers.offerSetup': defineSetting({
+    personal: 'machine',
     schema: z.boolean(),
     group: 'providers',
     label: 'Offer setup at start',
     description:
-      'Open the setup guide for providers and projects when wow starts without a provider instance. "Not now" in the guide turns this off.',
+      'Show the first-start step "Connect an agent" in front of the app while there is no provider instance at all; an install with an instance is never held behind it. It turns off once one passes, so a provider removed later does not hide the app again; the Assistant view then shows the same step.',
     default: true,
     scope: 'global',
   }),
@@ -334,6 +457,7 @@ export const settingsRegistry = {
     scope: 'global',
   }),
   'calendar.zone': defineSetting({
+    personal: 'person',
     schema: TimeZoneSetting,
     group: 'calendar',
     label: 'Time zone',
@@ -343,6 +467,7 @@ export const settingsRegistry = {
     scope: 'global',
   }),
   'calendar.firstDayOfWeek': defineSetting({
+    personal: 'person',
     schema: WeekdaySetting,
     group: 'calendar',
     label: 'First day of the week',
@@ -353,6 +478,7 @@ export const settingsRegistry = {
     options: weekdayOptions,
   }),
   'calendar.workHours': defineSetting({
+    personal: 'person',
     schema: WorkHoursSetting,
     group: 'calendar',
     label: 'Work hours',
@@ -429,19 +555,10 @@ export const settingsRegistry = {
     schema: z.number().int().min(15).max(3600),
     group: 'outlook',
     label: 'Poll interval',
-    description: 'How often calendar items and unread mail are read from Outlook.',
+    description: 'How often calendar items are read from Outlook.',
     default: 60,
     scope: 'global',
     unit: 'seconds',
-  }),
-  'outlook.folders': defineSetting({
-    schema: z.array(z.string().min(1)).min(1),
-    group: 'outlook',
-    label: 'Mail folders',
-    description:
-      'Folders whose unread mail is shown in the mail rail. "Inbox" is the default inbox; other names are looked up under it, then at the top of the mailbox.',
-    default: ['Inbox'],
-    scope: 'global',
   }),
   'outlook.requestTimeoutMs': defineSetting({
     schema: z.number().int().min(1000).max(300000),
@@ -452,31 +569,6 @@ export const settingsRegistry = {
     default: 20000,
     scope: 'global',
     unit: 'ms',
-  }),
-  'outlook.mailRail': defineSetting({
-    schema: z.boolean(),
-    group: 'outlook',
-    label: 'Mail rail',
-    description: 'Read unread mail from Outlook and show it next to the calendar.',
-    default: true,
-    scope: 'global',
-  }),
-  'outlook.mailRailCollapsed': defineSetting({
-    schema: z.boolean(),
-    group: 'outlook',
-    label: 'Mail rail collapsed',
-    description:
-      'Fold the mail rail to a narrow strip with the unread count. The rail button, the palette and its key change it.',
-    default: false,
-    scope: 'global',
-  }),
-  'outlook.mailLimit': defineSetting({
-    schema: z.number().int().min(1).max(500),
-    group: 'outlook',
-    label: 'Mail rail size',
-    description: 'Most unread messages read per poll, newest first. The count covers all of them.',
-    default: 50,
-    scope: 'global',
   }),
   'scheduler.tickSeconds': defineSetting({
     schema: z.number().int().min(1).max(3600),
@@ -540,6 +632,7 @@ export const settingsRegistry = {
     scope: 'global',
   }),
   'desktop.autostart': defineSetting({
+    personal: 'machine',
     schema: z.boolean(),
     group: 'desktop',
     label: 'Start at sign-in',
@@ -604,7 +697,14 @@ export const settingsRegistry = {
         'previousMessage',
         'backlogBody',
         'previousArtifacts',
+        'previousError',
         'expectedArtifacts',
+        'event',
+        'pullRequestNumber',
+        'pullRequestUrl',
+        'pullRequestBranch',
+        'commentUrl',
+        'commentAuthor',
       ],
     }),
     group: 'workflows',
@@ -614,7 +714,114 @@ export const settingsRegistry = {
     default: defaultHandoverTemplate,
     scope: 'project',
   }),
+  'workflows.sendBackTemplate': defineSetting({
+    schema: z.string().meta({ widget: 'template', placeholders: ['note', 'skill', 'attempt'] }),
+    group: 'workflows',
+    label: 'Send back text',
+    description:
+      "The message a step gets in its own thread when you send it back at a gate. {{note}} is what you wrote, {{skill}} the step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
+    default: defaultSendBackTemplate,
+    scope: 'project',
+  }),
+  'workflows.goBackTemplate': defineSetting({
+    schema: z.string().meta({
+      widget: 'template',
+      placeholders: ['fromStep', 'reason', 'message', 'skill', 'attempt'],
+    }),
+    group: 'workflows',
+    label: 'Go back text',
+    description:
+      "The message a step gets in its own thread when a rule of a later step sends the run back to it. {{fromStep}} is the step that sent it back, {{reason}} the fact that held, {{message}} that step's final message (or its error), {{skill}} this step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
+    default: defaultGoBackTemplate,
+    scope: 'project',
+  }),
+  'workflows.unitPromptTemplate': defineSetting({
+    schema: z
+      .string()
+      .meta({ widget: 'template', placeholders: ['intentId', 'unitKey', 'unitTitle'] }),
+    group: 'workflows',
+    label: 'Unit text',
+    description:
+      "What every step is told about its unit when a plan run starts the workflow for one. It goes after the step's skill and before the handover. {{intentId}} is the intent's folder name, {{unitKey}} the unit's key and {{unitTitle}} its title; a {{#name}}…{{/name}} section is left out when that value is empty.",
+    default: defaultUnitPromptTemplate,
+    scope: 'project',
+  }),
+  'workflows.planRunOnFailure': defineSetting({
+    schema: PlanRunOnFailure,
+    group: 'workflows',
+    label: "When a unit's run fails",
+    description: 'What a plan run does when the run of one of its units fails or is stopped.',
+    default: 'stop',
+    scope: 'project',
+    radio: true,
+    options: {
+      stop: {
+        label: 'Stop the plan run',
+        description: 'No further unit starts until you start a plan run again.',
+      },
+      skip: {
+        label: 'Leave the unit and go on',
+        description: 'The next ready unit starts. Units that depend on the one left stay waiting.',
+      },
+    },
+  }),
+  'workflows.verdictApprovedLine': defineSetting({
+    schema: z.string().trim().min(1),
+    group: 'workflows',
+    label: 'Approved verdict line',
+    description:
+      'The line a step\'s final message must end with for the "Approved verdict" part of a gate\'s condition to hold. Only the last line that is not empty counts; backticks or bold around it are ignored.',
+    default: 'APPROVED',
+    scope: 'project',
+  }),
+  'workflows.verdictChangesRequestedLine': defineSetting({
+    schema: z.string().trim().min(1),
+    group: 'workflows',
+    label: 'Changes requested verdict line',
+    description:
+      'The line a step\'s final message ends with for a rule on the verdict "changes requested" to hold. Read like the approved line: only the last line that is not empty counts.',
+    default: 'CHANGES_REQUESTED',
+    scope: 'project',
+  }),
+  'workflows.verdictBlockedLine': defineSetting({
+    schema: z.string().trim().min(1),
+    group: 'workflows',
+    label: 'Blocked verdict line',
+    description:
+      'The line a step\'s final message ends with for a rule on the verdict "blocked" to hold. Read like the approved line: only the last line that is not empty counts.',
+    default: 'BLOCKED',
+    scope: 'project',
+  }),
+  'workflows.maxStepVisits': defineSetting({
+    schema: z.number().int().min(1).max(50),
+    group: 'workflows',
+    label: 'Step starts before a run waits for you',
+    description:
+      'How often one step may start in a run. When a rule or the order of the steps would start it once more, the run waits for you there: Approve lets the step run once more, Stop ends the run. A workflow can set its own number.',
+    default: 3,
+    scope: 'project',
+  }),
+  'workflows.alwaysStopSkills': defineSetting({
+    schema: z.array(z.string().trim().min(1)),
+    group: 'workflows',
+    label: 'Skills that always stop',
+    description:
+      'The gate after a step with one of these skills always waits for you and cannot get a condition. capture-intent, plan-work, design-work and shape-work always stop, whether they are listed or not; add the skills your project plans or specifies with. The builder and saving a workflow use the list as set for all projects.',
+    default: [...alwaysStopSkillDefaults],
+    scope: 'project',
+  }),
+  'workflows.gateChecksTimeoutMinutes': defineSetting({
+    schema: z.number().int().min(1).max(1440),
+    group: 'workflows',
+    label: 'Wait for checks at a gate',
+    description:
+      "How long a gate whose condition includes the pull request's checks waits for them to finish after its step ended. After that the run waits for you.",
+    default: 30,
+    scope: 'project',
+    unit: 'minutes',
+  }),
   'skills.directories': defineSetting({
+    personal: 'machine',
     schema: z.array(z.string().min(1)),
     group: 'skills',
     label: 'Skill directories',
@@ -630,6 +837,25 @@ export const settingsRegistry = {
     description: 'Also offer skills from installed Claude Code plugins, invoked as /plugin:skill.',
     default: true,
     scope: 'global',
+  }),
+  'plans.intentsDirectory': defineSetting({
+    schema: IntentsDirectory,
+    group: 'plans',
+    label: 'Intents folder',
+    description:
+      'Folder inside a project whose <id>/intent.md, spec.md and plan.md files the Plans view reads. wow only reads them.',
+    default: 'intents',
+    scope: 'project',
+  }),
+  'plans.writeSettleMs': defineSetting({
+    schema: z.number().int().min(0).max(10_000),
+    group: 'plans',
+    label: 'Wait for a file to settle',
+    description:
+      'How long an intent, spec or plan file must stay the same size before it is read again after a change, so a file is not read halfway through a save.',
+    default: 200,
+    scope: 'global',
+    unit: 'ms',
   }),
   'trackers.jira.baseUrl': defineSetting({
     schema: TrackerUrl,
@@ -660,6 +886,7 @@ export const settingsRegistry = {
     },
   }),
   'trackers.jira.email': defineSetting({
+    personal: 'account',
     schema: z.string().trim(),
     group: 'trackers',
     label: 'Jira email',
@@ -713,6 +940,7 @@ export const settingsRegistry = {
     secret: true,
   }),
   'trackers.github.owner': defineSetting({
+    personal: 'account',
     schema: z.string().trim(),
     group: 'trackers',
     label: 'GitHub owner',
@@ -737,6 +965,72 @@ export const settingsRegistry = {
     description: 'Labels every issue published to GitHub gets. Leave empty for none.',
     default: [],
     scope: 'project',
+  }),
+  'trackers.gitlab.baseUrl': defineSetting({
+    schema: TrackerUrl,
+    group: 'trackers',
+    label: 'GitLab URL',
+    description:
+      'The GitLab site, such as https://gitlab.example.com. A project whose git remote is on this host reads its merge requests from it; its token goes nowhere else.',
+    default: '',
+    scope: 'project',
+  }),
+  'trackers.gitlab.token': defineSetting({
+    schema: SecretSetting,
+    group: 'trackers',
+    label: 'GitLab token',
+    description:
+      'A personal or project access token with read_api. Stored in the wow secret store and never shown again.',
+    default: null,
+    scope: 'project',
+    secret: true,
+  }),
+  'trackers.confluence.baseUrl': defineSetting({
+    schema: TrackerUrl,
+    group: 'trackers',
+    label: 'Confluence URL',
+    description:
+      'Address of your Confluence site, such as https://acme.atlassian.net/wiki for Confluence Cloud or https://confluence.example.com for Server or Data Center. Only pages on this site that a ticket, pull request or intent links to are read; its token goes nowhere else.',
+    default: '',
+    scope: 'project',
+  }),
+  'trackers.confluence.authMode': defineSetting({
+    schema: JiraAuthMode,
+    group: 'trackers',
+    label: 'Confluence sign-in',
+    description: 'How wow signs in to Confluence.',
+    default: 'pat',
+    scope: 'project',
+    radio: true,
+    options: {
+      'cloud-basic': {
+        label: 'Confluence Cloud',
+        description: 'Your Atlassian email and an API token.',
+      },
+      pat: {
+        label: 'Confluence Server or Data Center',
+        description: 'A personal access token, sent as a bearer token.',
+      },
+    },
+  }),
+  'trackers.confluence.email': defineSetting({
+    personal: 'account',
+    schema: z.string().trim(),
+    group: 'trackers',
+    label: 'Confluence email',
+    description: 'Your Atlassian account email. Only used for Confluence Cloud.',
+    default: '',
+    scope: 'project',
+  }),
+  'trackers.confluence.token': defineSetting({
+    schema: SecretSetting,
+    group: 'trackers',
+    label: 'Confluence token',
+    description:
+      'An API token for Confluence Cloud, or a personal access token for Confluence Server or Data Center, allowed to read the linked pages. Stored in the wow secret store and never shown again.',
+    default: null,
+    scope: 'project',
+    secret: true,
   }),
   'trackers.requestTimeoutMs': defineSetting({
     schema: z.number().int().min(1000).max(300_000),
@@ -765,6 +1059,211 @@ export const settingsRegistry = {
     description:
       'How many recent commits of a project wow reads to suggest its Jira project key from references such as ABC-123. 0 turns the suggestion off.',
     default: 200,
+    scope: 'global',
+  }),
+  'triggers.eventsEnabled': defineSetting({
+    schema: z.boolean(),
+    group: 'triggers',
+    label: 'Start runs from events',
+    description:
+      'Let event triggers start a workflow run when polling first sees a pull request merged, its checks fail or a review comment arrive. Off: events seen meanwhile start nothing, also not later. A paused scheduler does the same.',
+    default: true,
+    scope: 'global',
+  }),
+  'triggers.ignoredCommentAuthors': defineSetting({
+    personal: 'account',
+    schema: z.array(z.string().trim().min(1)),
+    group: 'triggers',
+    label: 'Accounts whose comments start nothing',
+    description:
+      "Host account names whose review comments never start a run, for example the account your agents write as. A comment that arrives while the trigger's own run for that pull request is still going starts nothing either, so a run that answers a review cannot start the next one.",
+    default: [],
+    scope: 'global',
+  }),
+  'hosts.polling': defineSetting({
+    schema: z.boolean(),
+    group: 'hosts',
+    label: 'Ask the hosts on a timer',
+    description:
+      'Read pull requests of followed plans and live runs from their host at every interval. Off: nothing is asked until you press Refresh now, except once when a unit run of a plan run ends and once when a gate starts waiting for the checks of a pull request. A paused scheduler also stops it.',
+    default: true,
+    scope: 'global',
+  }),
+  'hosts.pollSeconds': defineSetting({
+    schema: z.number().int().min(10).max(86_400),
+    group: 'hosts',
+    label: 'Interval',
+    description:
+      'How often wow asks the hosts. A host that says its request limit is used up is left alone until the limit resets, however short this is.',
+    default: 60,
+    scope: 'global',
+    unit: 'seconds',
+  }),
+  'hosts.listFallbackCount': defineSetting({
+    schema: z.number().int().min(1).max(100),
+    group: 'hosts',
+    label: 'Pull requests read without search',
+    description:
+      "On a host without search, how many of the repository's newest pull requests are read to find a plan's own.",
+    default: 30,
+    scope: 'global',
+  }),
+  'viewer.maxFileBytes': defineSetting({
+    schema: z.number().int().min(1000).max(50_000_000),
+    group: 'viewer',
+    label: 'Largest file shown',
+    description:
+      'A file larger than this is not read when you open it in the side panel; the panel says so instead.',
+    default: 2_000_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
+  'viewer.htmlScripts': defineSetting({
+    schema: z.boolean(),
+    group: 'viewer',
+    label: 'Run scripts in HTML files',
+    description:
+      'Let an HTML file shown in the side panel run the scripts written in it. Scripts in attributes such as onclick stay off, and the page still cannot reach the app, the network or the disk.',
+    default: false,
+    scope: 'global',
+  }),
+  'viewer.highlightMaxBytes': defineSetting({
+    schema: z.number().int().min(0).max(50_000_000),
+    group: 'viewer',
+    label: 'Largest file highlighted',
+    description:
+      'A text file larger than this is shown as plain text, because coloring a very long file makes the app slow. 0 turns coloring off.',
+    default: 200_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
+  'diff.maxFileBytes': defineSetting({
+    schema: z.number().int().min(1000).max(1_000_000),
+    group: 'diff',
+    label: 'Largest file compared',
+    description:
+      "A changed file larger than this is listed in a run's Changes tab with its status and size, without its lines.",
+    default: 400_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
+  'diff.maxFiles': defineSetting({
+    schema: z.number().int().min(10).max(20_000),
+    group: 'diff',
+    label: 'Most files listed',
+    description:
+      "How many changed files a run's Changes tab lists and remembers per step. The tab says how many it left out.",
+    default: 2_000,
+    scope: 'global',
+  }),
+  'workspaces.root': defineSetting({
+    personal: 'machine',
+    schema: z.string().trim().min(1),
+    group: 'workspaces',
+    label: 'Folder for working copies',
+    description:
+      'Where runs of a workflow with "Own working copy" get their copy of the project. A full path, or a folder name inside wow\'s own folder. On Windows a short path leaves more room for long file names.',
+    default: 'workspaces',
+    scope: 'global',
+  }),
+  'workspaces.fetchBeforeCreate': defineSetting({
+    schema: z.boolean(),
+    group: 'workspaces',
+    label: 'Fetch before making a working copy',
+    description:
+      "Fetch the project's remote first, so a working copy starts at the newest commit of the default branch. Off, or when the fetch fails: it starts at the commit this computer already has, and the run says so.",
+    default: true,
+    scope: 'project',
+  }),
+  'workspaces.gitTimeoutMs': defineSetting({
+    schema: z.number().int().min(1_000).max(3_600_000),
+    group: 'workspaces',
+    label: 'Git timeout',
+    description:
+      'How long fetching, making or removing a working copy may take. A fetch that takes longer counts as failed; a working copy that cannot be made in time fails its run.',
+    default: 120_000,
+    scope: 'global',
+    unit: 'ms',
+  }),
+  'assistant.providerInstanceId': defineSetting({
+    personal: 'machine',
+    schema: z.string(),
+    group: 'assistant',
+    label: 'Provider',
+    description:
+      'The provider instance that runs the assistant, by its id. Empty: the first connected instance that may run it.',
+    default: '',
+    scope: 'global',
+  }),
+  'assistant.allowCodex': defineSetting({
+    schema: z.boolean(),
+    group: 'assistant',
+    label: 'Let the assistant run on Codex',
+    description:
+      'Off: the assistant runs only on Claude Code, and never on a Codex instance even when one is chosen above. On Codex the assistant can run read-only shell commands, so it can read files on this computer, including files that hold secrets. wow cannot switch that off in Codex. Only the assistant itself is kept off Codex; chat threads and workflow steps are not affected.',
+    default: false,
+    scope: 'global',
+  }),
+  'assistant.model': defineSetting({
+    schema: z.string(),
+    group: 'assistant',
+    label: 'Model',
+    description: "The model the assistant uses. Empty: the provider instance's default model.",
+    default: '',
+    scope: 'global',
+  }),
+  'assistant.effort': defineSetting({
+    schema: z.string(),
+    group: 'assistant',
+    label: 'Effort',
+    description: "How hard the assistant thinks. Empty: the provider instance's default effort.",
+    default: '',
+    scope: 'global',
+  }),
+  'assistant.instructions': defineSetting({
+    schema: z.string().trim().min(1).meta({ widget: 'template', placeholders: [] }),
+    group: 'assistant',
+    label: 'Instructions',
+    description:
+      "What the assistant's agent is told it is for, in place of the provider's own instructions for coding: it operates wow only, never asks for a secret, and sends other work to the chat view. What it can do is decided by the tools it is given, not by this text. A changed text applies from the next message on Claude Code, and on Codex from the next start of the assistant's session (after wow or the provider instance restarts).",
+    default: defaultAssistantInstructions,
+    scope: 'global',
+  }),
+  'assistant.greeting': defineSetting({
+    schema: z.string().trim().min(1),
+    group: 'assistant',
+    label: 'First message',
+    description:
+      'What wow sends to the assistant for you when the first-start step is done, so it greets you with what is set up, what a first run still needs and what a setup file left to fill in. The conversation shows it as your message.',
+    default: 'I just connected an agent. What is set up, and what does a first run still need?',
+    scope: 'global',
+  }),
+  'assistant.startSoonMinutes': defineSetting({
+    schema: z.number().int().min(0).max(1440),
+    group: 'assistant',
+    label: 'A card this soon waits for a yes',
+    description:
+      'When the assistant puts a card with a workflow on the calendar this close to now, or in the past, the card would start a run almost at once, so it is shown as a proposal first. A card further ahead is made at once and can be undone.',
+    default: 15,
+    scope: 'global',
+    unit: 'minutes',
+  }),
+  'assistant.diagnosisLimit': defineSetting({
+    schema: z.number().int().min(1).max(100),
+    group: 'assistant',
+    label: 'Failures a diagnosis lists',
+    description:
+      'When the assistant is asked why something does not work, it lists at most this many failed runs, failed triggers and cards that did not start, newest first, of each.',
+    default: 5,
+    scope: 'global',
+  }),
+  'assistant.secretPatterns': defineSetting({
+    schema: z.array(SecretPattern),
+    group: 'assistant',
+    label: 'Text that looks like a secret',
+    description:
+      'Regular expressions, matched without regard to case. Text that matches one is replaced by "[hidden]" before anything the assistant reads or wrote is stored. This is a net for mistakes: tokens and passwords belong in their own fields and never in the conversation.',
+    default: [...defaultSecretPatterns],
     scope: 'global',
   }),
   'appearance.theme': defineSetting({
@@ -805,6 +1304,7 @@ export const settingsRegistry = {
     options: { comfortable: { label: 'Comfortable' }, compact: { label: 'Compact' } },
   }),
   'appearance.paletteRecent': defineSetting({
+    personal: 'machine',
     schema: z.number().int().min(0).max(20),
     group: 'appearance',
     label: 'Recent items in the palette',
@@ -856,6 +1356,12 @@ export const settingsRegistry = {
   'keybindings.goChat': keybinding('Go to Chat', 'Open the chat.', 'Mod+2'),
   'keybindings.goWorkflows': keybinding('Go to Workflows', 'Open the workflows.', 'Mod+3'),
   'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+4'),
+  'keybindings.goPlans': keybinding('Go to Plans', 'Open the plans.', 'Mod+5'),
+  'keybindings.goAssistant': keybinding(
+    'Go to Assistant',
+    'Open the assistant, the chat that runs wow for you.',
+    'Mod+6',
+  ),
   'keybindings.goSettings': keybinding('Go to Settings', 'Open the settings.', 'Mod+,'),
   'keybindings.calendarToday': keybinding('Calendar: today', 'Show today in the calendar.', 'T'),
   'keybindings.calendarNext': keybinding(
@@ -890,21 +1396,51 @@ export const settingsRegistry = {
     'Open the form for a new card on the day the calendar shows (while the calendar is open).',
     'C',
   ),
-  'keybindings.toggleMailRail': keybinding(
-    'Toggle mail rail',
-    'Fold or unfold the unread mail rail next to the calendar (while the calendar is open).',
-    'M',
-  ),
   'keybindings.newThread': keybinding('New thread', 'Start a new chat thread.', 'Mod+Alt+N'),
   'keybindings.stopTurn': keybinding(
     'Stop turn',
     'Interrupt the running turn of the open thread. What it produced so far stays.',
     'Mod+.',
   ),
-  'keybindings.continueRun': keybinding(
-    'Continue run',
-    "Continue the workflow run waiting at a gate, from its run view or the waiting step's thread.",
+  'keybindings.gateApprove': keybinding(
+    'Approve',
+    "Approve the step a workflow run waits for you on, so the run continues, from its run view or the waiting step's thread.",
     'Mod+Enter',
+  ),
+  'keybindings.gateSendBack': keybinding(
+    'Send back',
+    "Open the note field to send the step a workflow run waits for you on back to its agent, from its run view or the waiting step's thread.",
+    'Mod+Shift+Enter',
+  ),
+  'keybindings.runChanges': keybinding(
+    'Run: show changes',
+    'Switch the open workflow run between its steps and its Changes tab.',
+    'Mod+Shift+D',
+  ),
+  'keybindings.runPath': keybinding(
+    'Run: show path',
+    'Switch the open workflow run between its steps and its Path tab.',
+    'Mod+Shift+Y',
+  ),
+  'keybindings.changesStepOnly': keybinding(
+    'Changes: this step only',
+    "Narrow the open run's Changes tab to the files the step under review changed, and back (while the tab is open).",
+    'O',
+  ),
+  'keybindings.ruleAdd': keybinding(
+    'Rule: add',
+    'Add a rule under "After this step" to the step being edited in the workflow builder.',
+    'Alt+R',
+  ),
+  'keybindings.ruleMoveUp': keybinding(
+    'Rule: move up',
+    'Move the rule that has the keyboard one place up in its step, so it is tried earlier (in the workflow builder).',
+    'Alt+ArrowUp',
+  ),
+  'keybindings.ruleMoveDown': keybinding(
+    'Rule: move down',
+    'Move the rule that has the keyboard one place down in its step, so it is tried later (in the workflow builder).',
+    'Alt+ArrowDown',
   ),
   'keybindings.stopRun': keybinding(
     'Stop run',
@@ -927,6 +1463,7 @@ export const settingsRegistry = {
     'D',
   ),
   'advanced.port': defineSetting({
+    personal: 'machine',
     schema: z.number().int().min(0).max(65535),
     group: 'advanced',
     label: 'Server port',
@@ -955,7 +1492,7 @@ export const settingsRegistry = {
     group: 'advanced',
     label: 'Secret store timeout',
     description:
-      'How long one DPAPI protect or unprotect call may take on Windows before it is stopped and reported as failed.',
+      'How long one DPAPI protect or unprotect call may take on Windows before it is stopped and reported as failed, and how long a write keeps trying to replace the secrets file while another program has it open.',
     default: 30_000,
     scope: 'global',
     unit: 'ms',

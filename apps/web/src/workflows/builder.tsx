@@ -1,4 +1,12 @@
-import type { ProviderInstance, Skill, Workflow, WorkflowTemplate } from '@wow/contracts';
+import type {
+  GatePart,
+  ProviderInstance,
+  RuleProblem,
+  Skill,
+  StepRule,
+  Workflow,
+  WorkflowTemplate,
+} from '@wow/contracts';
 import { Link, useNavigate } from '@tanstack/react-router';
 import {
   ArrowDownIcon,
@@ -15,7 +23,7 @@ import {
   SearchXIcon,
   Trash2Icon,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
 import { errorMessage, useDispatch, useModels, useTopic } from '@/chat/data';
 import { ThreadSettings } from '@/chat/thread-settings';
@@ -24,9 +32,13 @@ import { ChoiceSelect } from '@/components/choice-select';
 import { Combobox } from '@/components/combobox';
 import { FormField } from '@/components/form-field';
 import { IconButton, WithTooltip } from '@/components/hint';
+import { MermaidDiagram } from '@/components/mermaid-diagram';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { notify, offerUndo } from '@/lib/feedback';
 import { useDateFormat } from '@/lib/format';
@@ -34,9 +46,12 @@ import { cn } from '@/lib/utils';
 import {
   applyStepChanges,
   blocking,
+  conditionOffered,
   draftFromTemplate,
   draftOf,
   emptyDraft,
+  gatePartChoices,
+  gateParts,
   moveStep,
   newStep,
   parseGlobs,
@@ -49,12 +64,16 @@ import {
   sortRuns,
   stepDefaults,
   stepsOf,
+  toggleGatePart,
   validateDraft,
   waitsAt,
   type DraftProblem,
   type DraftStep,
   type WorkflowDraft,
 } from './model';
+import { diagramText, pathsDiagram } from './paths-diagram';
+import { draftRuleProblems, rulesStore, withRules } from './rules';
+import { StepRules } from './step-rules';
 
 // New steps run on the first instance whose test passed, else the first (audit C-03). A
 // workflow outlives any one chat, so the last thread's instance is not a good guess here.
@@ -141,50 +160,122 @@ function useArtifactMatches(globs: readonly string[], projectId: string | undefi
 
 // Between two steps (and before the first and after the last): whether the run waits for you
 // there. One toggle per position, so a gate is a visible stop in the chain, not a checkbox.
-function GateDivider({ on, label, onToggle }: { on: boolean; label: string; onToggle(): void }) {
+function GateDivider({
+  on,
+  label,
+  onToggle,
+  children,
+}: {
+  on: boolean;
+  label: string;
+  onToggle(): void;
+  children?: ReactNode;
+}) {
   return (
-    <li className="group/gate flex items-center gap-2 px-3 py-0.5" data-testid="gate-divider">
-      <span
-        aria-hidden
-        className={cn(
-          'h-px flex-1 border-t',
-          on ? 'border-dashed border-state-needs-you/70' : 'border-transparent',
-        )}
-      />
-      <Button
-        type="button"
-        size="xs"
-        variant="ghost"
-        aria-pressed={on}
-        aria-label={label}
-        onClick={onToggle}
-        className={cn(
-          on
-            ? 'text-foreground [&_svg]:text-state-needs-you'
-            : 'text-muted-foreground opacity-40 group-hover/gate:opacity-100 focus-visible:opacity-100',
-        )}
-      >
-        <HourglassIcon />
-        {on ? 'Waits for you' : 'Add a gate'}
-      </Button>
-      <span
-        aria-hidden
-        className={cn(
-          'h-px flex-1 border-t',
-          on ? 'border-dashed border-state-needs-you/70' : 'border-transparent',
-        )}
-      />
+    <li className="group/gate flex flex-col gap-1 px-3 py-0.5" data-testid="gate-divider">
+      <div className="flex items-center gap-2">
+        <span
+          aria-hidden
+          className={cn(
+            'h-px flex-1 border-t',
+            on ? 'border-dashed border-state-needs-you/70' : 'border-transparent',
+          )}
+        />
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          aria-pressed={on}
+          aria-label={label}
+          onClick={onToggle}
+          className={cn(
+            on
+              ? 'text-foreground [&_svg]:text-state-needs-you'
+              : 'text-muted-foreground opacity-40 group-hover/gate:opacity-100 focus-visible:opacity-100',
+          )}
+        >
+          <HourglassIcon />
+          {on ? 'Waits for you' : 'Add a gate'}
+        </Button>
+        <span
+          aria-hidden
+          className={cn(
+            'h-px flex-1 border-t',
+            on ? 'border-dashed border-state-needs-you/70' : 'border-transparent',
+          )}
+        />
+      </div>
+      {children}
     </li>
+  );
+}
+
+// "Pass by itself when" for the gate after a step (review loop spec 54, 57): three parts to
+// choose from. A skill that plans or specifies gets no choice, only the reason.
+function GateConditionEditor({
+  step,
+  number,
+  alwaysStop,
+  onToggle,
+}: {
+  step: DraftStep | undefined;
+  // The step's place in the chain, counted from one.
+  number: number;
+  alwaysStop: readonly string[];
+  onToggle(part: GatePart): void;
+}) {
+  const id = useId();
+  if (!step?.gateAfter) return null;
+  if (!conditionOffered(step, alwaysStop)) {
+    return (
+      <p data-testid="gate-always-stops" className="text-center text-xs text-muted-foreground">
+        {step.skillName} plans or specifies, so this gate always waits for you.
+      </p>
+    );
+  }
+  const chosen = step.gateAfterCondition ?? [];
+  const noArtifacts = chosen.includes('artifacts') && parseGlobs(step.artifactsText).length === 0;
+  return (
+    <fieldset
+      data-testid="gate-condition-editor"
+      aria-describedby={noArtifacts ? `${id}-hint` : undefined}
+      className="mx-auto flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs"
+    >
+      <legend className="sr-only">{`Pass the gate after step ${number} by itself when`}</legend>
+      <span aria-hidden className="basis-full font-medium">
+        Pass by itself when
+      </span>
+      {gateParts.map((part) => (
+        <span key={part} className="flex items-center gap-1.5">
+          <Checkbox
+            id={`${id}-${part}`}
+            checked={chosen.includes(part)}
+            onCheckedChange={() => onToggle(part)}
+          />
+          <Label htmlFor={`${id}-${part}`} className="text-xs font-normal">
+            {gatePartChoices[part]}
+          </Label>
+        </span>
+      ))}
+      {noArtifacts && (
+        <p id={`${id}-hint`} className="basis-full text-muted-foreground">
+          Step {number} names no expected artifacts yet, so this part cannot hold.
+        </p>
+      )}
+    </fieldset>
   );
 }
 
 interface StepEditorProps {
   readonly step: DraftStep;
   readonly index: number;
-  readonly count: number;
+  // Every step of the draft, for the targets of this step's rules.
+  readonly steps: readonly DraftStep[];
   readonly instances: readonly ProviderInstance[];
   readonly skills: readonly Skill[];
   readonly problems: readonly DraftProblem[];
+  // What the server would refuse about this step's rules.
+  readonly ruleProblems: readonly RuleProblem[];
   readonly dragging: boolean;
   readonly expanded: boolean;
   readonly runProject: { readonly id: string; readonly name: string } | undefined;
@@ -200,10 +291,11 @@ interface StepEditorProps {
 function StepEditor({
   step,
   index,
-  count,
+  steps,
   instances,
   skills,
   problems,
+  ruleProblems,
   dragging,
   expanded,
   runProject,
@@ -228,17 +320,33 @@ function StepEditor({
   const globs = parseGlobs(step.artifactsText);
   const matches = useArtifactMatches(globs, runProject?.id);
   const label = `Step ${index + 1}`;
+  const count = steps.length;
+  const ruleCount = step.rules?.length ?? 0;
   const summary = [
     instance ? providerLabel(instance, instances) : 'No provider',
     step.model,
     globs.length > 0 ? `${globs.length} artifact${globs.length === 1 ? '' : 's'}` : undefined,
+    ruleCount > 0 ? `${ruleCount} rule${ruleCount === 1 ? '' : 's'}` : undefined,
   ]
     .filter(Boolean)
     .join(' · ');
+  // An open step marks the rule itself; a closed one says it on its line.
+  const shownProblems = expanded
+    ? problems
+    : [
+        ...problems,
+        ...ruleProblems.map(({ rule, reason }) => ({ message: `Rule ${rule + 1}: ${reason}.` })),
+      ];
   return (
     <li
       aria-label={label}
       data-testid="workflow-step"
+      onFocus={() => {
+        // The step being edited is the one the rule keys and palette commands add to.
+        if (rulesStore.getState().at?.stepId !== step.id) {
+          rulesStore.setState({ at: { stepId: step.id, rule: undefined } });
+        }
+      }}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
@@ -246,7 +354,9 @@ function StepEditor({
       }}
       className={cn(
         'flex flex-col rounded-md border bg-card',
-        problems.some((problem) => !problem.warning) ? 'border-destructive/60' : 'border-border',
+        problems.some((problem) => !problem.warning) || ruleProblems.length > 0
+          ? 'border-destructive/60'
+          : 'border-border',
         dragging && 'opacity-50',
       )}
     >
@@ -396,11 +506,12 @@ function StepEditor({
               />
             </FormField>
           </div>
+          <StepRules step={step} index={index} steps={steps} problems={ruleProblems} />
         </div>
       )}
-      {problems.length > 0 && (
+      {shownProblems.length > 0 && (
         <div className="px-3 pb-2 pl-9">
-          <Problems problems={problems} />
+          <Problems problems={shownProblems} />
         </div>
       )}
     </li>
@@ -475,11 +586,25 @@ function Builder({
 
   const problems = validateDraft(draft, instances, skills);
   const shown = attempted ? problems : problems.filter((problem) => problem.warning);
-  const steps = stepsOf(draft);
+  const alwaysStop = useSetting('workflows.alwaysStopSkills');
+  const steps = stepsOf(draft, alwaysStop);
+  const ownWorkingCopy = draft.ownWorkingCopy ?? false;
+  // The palette switches it on the stored workflow; the draft follows so Save does not undo it.
+  const storedOwnCopy = workflow?.ownWorkingCopy ?? false;
+  useEffect(() => {
+    setDraft((current) => ({ ...current, ownWorkingCopy: storedOwnCopy }));
+  }, [storedOwnCopy]);
+  const forUnits = draft.forUnits ?? false;
+  const storedForUnits = workflow?.forUnits ?? false;
+  useEffect(() => {
+    setDraft((current) => ({ ...current, forUnits: storedForUnits }));
+  }, [storedForUnits]);
   const dirty =
     !workflow ||
     workflow.name !== draft.name.trim() ||
     workflow.templateKind !== draft.templateKind ||
+    (workflow.ownWorkingCopy ?? false) !== ownWorkingCopy ||
+    (workflow.forUnits ?? false) !== forUnits ||
     !sameJson(workflow.steps, steps);
   const firstInstance = preferredInstance(instances);
   const runProject = projects.find((candidate) => candidate.id === projectId) ?? projects[0];
@@ -509,6 +634,32 @@ function Builder({
   };
   const move = (from: number, to: number) =>
     edit((current) => ({ ...current, steps: moveStep(current.steps, from, to) }));
+  const toggleCondition = (stepIndex: number, part: GatePart) =>
+    edit((current) => ({
+      ...current,
+      steps: current.steps.map((step, index) =>
+        index === stepIndex ? toggleGatePart(step, part) : step,
+      ),
+    }));
+  // The rules' buttons, keys and palette commands change the draft through the rules store, and
+  // a step whose rules change opens.
+  const [setRules] = useState(() => (stepId: string, rules: readonly StepRule[]) => {
+    setSaved(false);
+    setDraft((current) => ({
+      ...current,
+      steps: current.steps.map((step) => (step.id === stepId ? withRules(step, rules) : step)),
+    }));
+    setExpanded((current) => (current.has(stepId) ? current : new Set([...current, stepId])));
+  });
+  useEffect(() => {
+    rulesStore.setState({ builder: { steps: draft.steps, setRules } });
+  }, [draft.steps, setRules]);
+  useEffect(
+    () => () => rulesStore.setState({ builder: undefined, at: undefined, focus: undefined }),
+    [],
+  );
+  const ruleProblems = useMemo(() => draftRuleProblems(draft.steps), [draft.steps]);
+  const diagram = useMemo(() => pathsDiagram(draft.steps), [draft.steps]);
   const toggle = (stepId: string) =>
     setExpanded((current) => {
       const next = new Set(current);
@@ -518,9 +669,13 @@ function Builder({
     });
 
   const applyTemplate = (chosen: WorkflowTemplate | undefined) => {
-    const next = chosen
-      ? draftFromTemplate(chosen, firstInstance, draft.name)
-      : { ...emptyDraft, name: draft.name };
+    const next = {
+      ...(chosen
+        ? draftFromTemplate(chosen, firstInstance, draft.name)
+        : { ...emptyDraft, name: draft.name }),
+      ownWorkingCopy,
+      forUnits,
+    };
     edit(() => next);
     setExpanded(new Set(workflow ? [] : next.steps.map((step) => step.id)));
     setReplacing(false);
@@ -551,6 +706,8 @@ function Builder({
           name: draft.name.trim(),
           templateKind: draft.templateKind,
           steps,
+          ownWorkingCopy,
+          forUnits,
         });
         setSaved(true);
       } else {
@@ -561,6 +718,8 @@ function Builder({
           name: draft.name.trim(),
           ...(draft.templateKind === null ? {} : { templateKind: draft.templateKind }),
           steps,
+          ...(ownWorkingCopy ? { ownWorkingCopy } : {}),
+          ...(forUnits ? { forUnits } : {}),
         });
         notify.success(`Workflow ${draft.name.trim()} created`);
         await navigate({ to: '/workflows/$workflowId', params: { workflowId } });
@@ -771,6 +930,34 @@ function Builder({
                 </div>
               </FormField>
             )}
+            <WithTooltip label="Each run works in its own Git working copy under the working copies folder, made at the newest commit of the default branch. Your project folder is left alone.">
+              <div className="flex h-8 items-center gap-2">
+                <Switch
+                  id="workflow-own-copy"
+                  checked={ownWorkingCopy}
+                  onCheckedChange={(checked) =>
+                    edit((current) => ({ ...current, ownWorkingCopy: checked }))
+                  }
+                />
+                <Label htmlFor="workflow-own-copy" className="text-xs font-normal">
+                  Own working copy
+                </Label>
+              </div>
+            </WithTooltip>
+            <WithTooltip label="A plan run may use this workflow: “Run ready units” in the Plans view runs it once for each ready unit, always in an own working copy, and tells every step which unit it works on.">
+              <div className="flex h-8 items-center gap-2">
+                <Switch
+                  id="workflow-for-units"
+                  checked={forUnits}
+                  onCheckedChange={(checked) =>
+                    edit((current) => ({ ...current, forUnits: checked }))
+                  }
+                />
+                <Label htmlFor="workflow-for-units" className="text-xs font-normal">
+                  For units
+                </Label>
+              </div>
+            </WithTooltip>
             <div className="ml-auto flex items-center gap-1">
               {workflow && (
                 <Button
@@ -898,82 +1085,114 @@ function Builder({
             </p>
           )}
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          <ol aria-label="Steps" className="flex flex-col">
-            {draft.steps.map((step, index) => (
-              <StepPosition
-                key={step.id}
-                draft={draft}
-                index={index}
-                onToggleGate={() => edit((current) => setGate(current, index))}
+        {/* Wide enough, the steps and the diagram scroll side by side, each on its own. */}
+        <div className="@container flex min-h-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto @3xl:flex-row @3xl:overflow-hidden">
+            <div className="min-w-0 shrink-0 px-4 py-3 @3xl:flex-1 @3xl:shrink @3xl:overflow-y-auto">
+              <ol aria-label="Steps" className="flex flex-col">
+                {draft.steps.map((step, index) => (
+                  <StepPosition
+                    key={step.id}
+                    draft={draft}
+                    index={index}
+                    alwaysStop={alwaysStop}
+                    onToggleGate={() => edit((current) => setGate(current, index))}
+                    onTogglePart={toggleCondition}
+                  >
+                    <StepEditor
+                      step={step}
+                      index={index}
+                      steps={draft.steps}
+                      instances={instances}
+                      skills={skills}
+                      problems={shown.filter((problem) => problem.stepId === step.id)}
+                      ruleProblems={ruleProblems.filter((problem) => problem.stepId === step.id)}
+                      dragging={dragIndex === index}
+                      expanded={expanded.has(step.id)}
+                      runProject={runProject}
+                      onToggle={() => toggle(step.id)}
+                      onChange={changeStep}
+                      onRemove={(stepId) =>
+                        edit((current) => ({
+                          ...current,
+                          steps: current.steps.filter((candidate) => candidate.id !== stepId),
+                        }))
+                      }
+                      onMove={move}
+                      onDragStart={setDragIndex}
+                      onDragEnd={() => setDragIndex(undefined)}
+                      onDrop={(to) => {
+                        if (dragIndex !== undefined) move(dragIndex, to);
+                        setDragIndex(undefined);
+                      }}
+                    />
+                  </StepPosition>
+                ))}
+                {draft.steps.length > 0 && (
+                  <GateDivider
+                    on={waitsAt(draft, draft.steps.length)}
+                    label="Gate after the last step"
+                    onToggle={() => edit((current) => setGate(current, current.steps.length))}
+                  >
+                    <GateConditionEditor
+                      step={draft.steps.at(-1)}
+                      number={draft.steps.length}
+                      alwaysStop={alwaysStop}
+                      onToggle={(part) => toggleCondition(draft.steps.length - 1, part)}
+                    />
+                  </GateDivider>
+                )}
+              </ol>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                onClick={() => {
+                  const step = newStep(firstInstance);
+                  edit((current) => ({ ...current, steps: [...current.steps, step] }));
+                  setExpanded((current) => new Set([...current, step.id]));
+                }}
               >
-                <StepEditor
-                  step={step}
-                  index={index}
-                  count={draft.steps.length}
-                  instances={instances}
-                  skills={skills}
-                  problems={shown.filter((problem) => problem.stepId === step.id)}
-                  dragging={dragIndex === index}
-                  expanded={expanded.has(step.id)}
-                  runProject={runProject}
-                  onToggle={() => toggle(step.id)}
-                  onChange={changeStep}
-                  onRemove={(stepId) =>
-                    edit((current) => ({
-                      ...current,
-                      steps: current.steps.filter((candidate) => candidate.id !== stepId),
-                    }))
-                  }
-                  onMove={move}
-                  onDragStart={setDragIndex}
-                  onDragEnd={() => setDragIndex(undefined)}
-                  onDrop={(to) => {
-                    if (dragIndex !== undefined) move(dragIndex, to);
-                    setDragIndex(undefined);
-                  }}
-                />
-              </StepPosition>
-            ))}
+                <PlusIcon />
+                Add step
+              </Button>
+              {workflow && <RunsOfWorkflow workflow={workflow} />}
+            </div>
             {draft.steps.length > 0 && (
-              <GateDivider
-                on={waitsAt(draft, draft.steps.length)}
-                label="Gate after the last step"
-                onToggle={() => edit((current) => setGate(current, current.steps.length))}
-              />
+              <section
+                aria-label="Paths"
+                data-testid="paths-diagram"
+                className="flex shrink-0 flex-col gap-1 px-4 py-3 @3xl:w-80 @3xl:overflow-y-auto @3xl:pl-0"
+              >
+                <h3 className="px-2 text-xs font-medium text-muted-foreground">
+                  Paths a run can take
+                </h3>
+                <MermaidDiagram source={diagram} shown={diagramText} />
+              </section>
             )}
-          </ol>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="mt-2"
-            onClick={() => {
-              const step = newStep(firstInstance);
-              edit((current) => ({ ...current, steps: [...current.steps, step] }));
-              setExpanded((current) => new Set([...current, step.id]));
-            }}
-          >
-            <PlusIcon />
-            Add step
-          </Button>
-          {workflow && <RunsOfWorkflow workflow={workflow} />}
+          </div>
         </div>
       </form>
     </div>
   );
 }
 
-// The gate before a step, then the step.
+// The gate before a step, then the step. The gate is stored on the step before it, and so is
+// its condition.
 function StepPosition({
   draft,
   index,
+  alwaysStop,
   onToggleGate,
+  onTogglePart,
   children,
 }: {
   draft: WorkflowDraft;
   index: number;
+  alwaysStop: readonly string[];
   onToggleGate(): void;
+  onTogglePart(stepIndex: number, part: GatePart): void;
   children: ReactNode;
 }) {
   return (
@@ -984,7 +1203,16 @@ function StepPosition({
           index === 0 ? 'Gate before step 1' : `Gate between step ${index} and step ${index + 1}`
         }
         onToggle={onToggleGate}
-      />
+      >
+        {index > 0 && (
+          <GateConditionEditor
+            step={draft.steps[index - 1]}
+            number={index}
+            alwaysStop={alwaysStop}
+            onToggle={(part) => onTogglePart(index - 1, part)}
+          />
+        )}
+      </GateDivider>
       {children}
     </>
   );

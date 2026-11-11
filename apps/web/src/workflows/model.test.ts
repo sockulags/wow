@@ -10,7 +10,6 @@ import { workflowCommands } from './commands';
 import {
   applyStepChanges,
   artifactPath,
-  artifactUrl,
   blocking,
   draftFromTemplate,
   draftOf,
@@ -86,6 +85,31 @@ describe('workflow drafts', () => {
       'intents/*/intent.md',
       'intents/*/spec.md',
     ]);
+  });
+
+  it('gives check-work of a workflow made from Feature the rule back to deliver-work (workflow branches spec 20)', () => {
+    const draft = draftFromTemplate(feature, instance.id, '');
+    const deliver = draft.steps[2];
+    expect(deliver?.skillName).toBe('deliver-work');
+    expect(draft.steps.map((step) => step.rules)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      [
+        {
+          when: { fact: 'verdict', is: 'changesRequested' },
+          goTo: { type: 'step', stepId: deliver?.id },
+        },
+      ],
+    ]);
+    // It is saved with the workflow, and a stored template without rules gives none.
+    expect(stepsOf(draft)[3]?.rules).toEqual(draft.steps[3]?.rules);
+    const stored = {
+      ...feature,
+      steps: feature.steps.map(({ rules: _rules, ...step }) => step),
+    };
+    const plain = draftFromTemplate(stored, instance.id, '');
+    expect(plain.steps.some((step) => step.rules !== undefined)).toBe(false);
   });
 
   it('keeps a typed name when a template is applied', () => {
@@ -235,7 +259,7 @@ describe('run view helpers', () => {
     const after = gateOf(run());
     expect(after).toEqual({ stepIndex: 0, position: 'after' });
     expect(gateMessage(after!, workflow)).toBe(
-      'capture-intent finished. Continue starts plan-work.',
+      'capture-intent finished. Approve starts plan-work.',
     );
     const before = run({
       currentStep: 1,
@@ -256,13 +280,7 @@ describe('run view helpers', () => {
     expect(sortRuns([old, done, live]).map((entry) => entry.id)).toEqual(['c', 'a', 'b']);
   });
 
-  it('links artifacts inside the project folder on Windows and POSIX', () => {
-    expect(artifactUrl('C:\\work\\demo', 'intents/my app/spec.md')).toBe(
-      'file:///C:/work/demo/intents/my%20app/spec.md',
-    );
-    expect(artifactUrl('/home/me/demo/', 'intents/x/spec.md')).toBe(
-      'file:///home/me/demo/intents/x/spec.md',
-    );
+  it('names an artifact by its full path on Windows and POSIX', () => {
     expect(artifactPath('C:\\work\\demo', 'intents/x/spec.md')).toBe(
       'C:\\work\\demo\\intents\\x\\spec.md',
     );
@@ -288,7 +306,11 @@ describe('workflowCommands', () => {
       'New workflow from template: Bug',
       'New workflow from template: Feature',
       'New workflow from template: Initiative',
+      'Go to event triggers',
+      'New event trigger',
       'Feature',
+      'Feature: run in an own working copy',
+      'Feature: use for plan units',
       'Feature',
     ]);
   });
@@ -312,11 +334,13 @@ describe('workflowCommands', () => {
     });
   });
 
-  it('offers Continue and Stop for the open run at a gate, and only Stop while it runs', () => {
-    expect(titles(run())).toContain('Continue run');
+  it('offers Approve, Send back and Stop for the open run at a gate, and only Stop while it runs', () => {
+    expect(titles(run())).toContain('Run: approve');
+    expect(titles(run())).toContain('Run: send back');
     expect(titles(run())).toContain('Stop run');
     const running = run({ state: 'running' });
-    expect(titles(running)).not.toContain('Continue run');
+    expect(titles(running)).not.toContain('Run: approve');
+    expect(titles(running)).not.toContain('Run: send back');
     expect(titles(running)).toContain('Stop run');
     expect(titles(run({ state: 'done' }))).not.toContain('Stop run');
   });
@@ -384,6 +408,13 @@ describe('templates from the builder (E-05)', () => {
         { skillName: 'check-work' },
       ],
     });
+    // The rule goes with the template, naming its step by the skill.
+    expect(added.templates.at(-1)?.steps.map((step) => step.rules)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      feature.steps[3]?.rules,
+    ]);
     const replaced = saveAsTemplate(added.templates, { steps: draft.steps.slice(0, 1) }, 'feature');
     if (typeof replaced === 'string') throw new Error(replaced);
     expect(replaced.kind).toBe('feature');

@@ -1,10 +1,4 @@
-import type {
-  CalendarItem,
-  Command,
-  MailItem,
-  OutlookCalendarRow,
-  ServerCommand,
-} from '@wow/contracts';
+import type { CalendarItem, Command, OutlookCalendarRow, ServerCommand } from '@wow/contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase, type Database } from '../db/database.js';
 import { diffOutlookCalendar } from './calendar.js';
@@ -29,7 +23,6 @@ const rejection = (command: ServerCommand) => {
   return undefined;
 };
 const items = () => snapshot(database.db, { topic: 'calendarItems' }) as CalendarItem[];
-const mail = () => snapshot(database.db, { topic: 'mailItems' }) as MailItem[];
 const status = () => snapshot(database.db, { topic: 'outlookStatus' })[0];
 const eventCount = () =>
   (database.sqlite.prepare('select count(*) as n from events').get() as { n: number }).n;
@@ -59,26 +52,13 @@ const standup = (day: string, overrides: Partial<OutlookCalendarRow> = {}): Outl
   ...overrides,
 });
 
-const message = (id: string, receivedAt: string): MailItem => ({
-  id: `outlook-mail:${id}`,
-  externalId: id,
-  folder: 'Inbox',
-  from: 'Build Robot',
-  subject: `Message ${id}`,
-  receivedAt,
-  unread: true,
-  snippet: 'Invented',
-});
-
 const window = { from: '2026-11-02T00:00:00.000Z', to: '2026-11-09T00:00:00.000Z' };
 
-const sync = (calendar: OutlookCalendarRow[], messages: MailItem[] = []): ServerCommand => ({
+const sync = (calendar: OutlookCalendarRow[]): ServerCommand => ({
   type: 'outlook.sync',
   at: now,
   window,
   calendar,
-  mail: messages,
-  unreadCount: messages.length,
   bridgeVersion: 'mock-1',
   profile: null,
 });
@@ -164,25 +144,18 @@ describe('cards', () => {
 });
 
 describe('outlook sync', () => {
-  it('caches Outlook items and mail and records the status', () => {
+  it('caches Outlook items and records the status', () => {
     run(card);
-    run(
-      sync(
-        [standup('2026-11-03'), standup('2026-11-04')],
-        [message('a', '2026-11-02T07:00:00.000Z'), message('b', '2026-11-02T07:30:00.000Z')],
-      ),
-    );
+    run(sync([standup('2026-11-03'), standup('2026-11-04')]));
     expect(items().map((item) => [item.id, item.source])).toEqual([
       ['outlook:standup@2026-11-03T08:15:00.000Z', 'outlook'],
       ['card-1', 'local'],
       ['outlook:standup@2026-11-04T08:15:00.000Z', 'outlook'],
     ]);
-    expect(mail().map((row) => row.id)).toEqual(['outlook-mail:b', 'outlook-mail:a']);
     expect(status()).toEqual({
       lastSyncAt: now,
       lastError: null,
       unavailableSince: null,
-      unreadCount: 2,
       bridgeVersion: 'mock-1',
       profile: null,
     });
@@ -235,23 +208,23 @@ describe('outlook sync', () => {
   });
 
   it('stores only what changed', () => {
-    run(sync([standup('2026-11-03')], [message('a', '2026-11-02T07:00:00.000Z')]));
+    run(sync([standup('2026-11-03')]));
     now = '2026-11-02T08:01:00.000Z';
-    run(sync([standup('2026-11-03')], [message('a', '2026-11-02T07:00:00.000Z')]));
+    run(sync([standup('2026-11-03')]));
     const last = database.sqlite
       .prepare('select payload from events order by seq desc limit 1')
       .get() as { payload: string };
-    expect(JSON.parse(last.payload)).toMatchObject({
+    expect(JSON.parse(last.payload)).toEqual({
       at: '2026-11-02T08:01:00.000Z',
       calendarUpsert: [],
       calendarRemove: [],
-      mailUpsert: [],
-      mailRemove: [],
+      bridgeVersion: 'mock-1',
+      profile: null,
     });
   });
 
   it('keeps the cache on failure, records the error once, and clears it on the next sync', () => {
-    run(sync([standup('2026-11-03')], [message('a', '2026-11-02T07:00:00.000Z')]));
+    run(sync([standup('2026-11-03')]));
     const failure: ServerCommand = {
       type: 'outlook.fail',
       at: '2026-11-02T08:01:00.000Z',
@@ -269,12 +242,10 @@ describe('outlook sync', () => {
       unavailableSince: '2026-11-02T08:01:00.000Z',
     });
     expect(items()).toHaveLength(1);
-    expect(mail()).toHaveLength(1);
 
     now = '2026-11-02T08:03:00.000Z';
     run(sync([standup('2026-11-03')]));
-    expect(status()).toMatchObject({ lastError: null, unavailableSince: null, unreadCount: 0 });
-    expect(mail()).toEqual([]);
+    expect(status()).toMatchObject({ lastError: null, unavailableSince: null });
   });
 
   it('reads the stored Outlook rows for the diff, never the cards', () => {

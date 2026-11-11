@@ -1,18 +1,22 @@
-import type { ServerMessage } from '@wow/contracts';
+import { settingsRegistry, type ServerMessage } from '@wow/contracts';
 import { discoverClaudeFolders } from '@wow/provider-claude';
 import { discoverCodexFolders } from '@wow/provider-codex';
 import { SecretStore, defaultProtector, type Protector } from '@wow/secrets';
 import type { WatchFactory } from '@wow/skills';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { assistantMcpPath, createMcpHandler, type AssistantEndpoint } from './assistant/mcp.js';
+import { AssistantTools } from './assistant/tools.js';
 import { Engine } from './core/engine.js';
 import { Subscriptions } from './core/subscriptions.js';
 import { openDatabase, type Database } from './db/database.js';
 import { projects, providerInstances } from './db/schema.js';
+import { eq } from 'drizzle-orm';
 import {
   ProviderAdapters,
   outlookMode,
@@ -20,9 +24,11 @@ import {
   type ServerHooks,
   type ServiceContext,
 } from './hooks/index.js';
+import { HostPoller } from './hosts/poller.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
 import type { OutlookService } from './outlook/service.js';
 import { discoverProjects } from './projects/discover.js';
+import { readCurrentBranch, readHeadCommit } from './projects/git.js';
 import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
 import { ProviderUpdates, createNpmRunner, type RunNpm } from './providers/update.js';
@@ -30,10 +36,16 @@ import { closeConnection, createHandlers, type Connection } from './rpc/handlers
 import { route } from './rpc/router.js';
 import { Scheduler, type SchedulerTimers } from './scheduler/service.js';
 import { SettingsService } from './settings/service.js';
+import { PlansService } from './plans/service.js';
+import { readIntentTexts } from './hosts/intent-texts.js';
+import { PlanRuns } from './plans/plan-runs.js';
+import type { PlansWatchFactory } from './plans/watch.js';
 import { SkillsService } from './skills/service.js';
 import { TrackerService } from './trackers/service.js';
 import { detectArtifacts, type ArtifactDetector } from './workflows/artifacts.js';
+import { changesOptions, readRunBase, snapshotChanges } from './workflows/changes.js';
 import { WorkflowRunner } from './workflows/runner.js';
+import { Workspaces } from './workspaces/service.js';
 
 export const serverInfoFileName = 'server.json';
 export const databaseFileName = 'wow.sqlite';
@@ -67,12 +79,16 @@ export interface StartOptions {
   readonly userHome?: string;
   // Replaces the chokidar watcher on the skill folders, for tests.
   readonly watchSkills?: WatchFactory;
+  // Replaces the chokidar watcher on the projects' intents folders, for tests.
+  readonly watchPlans?: PlansWatchFactory;
   readonly detectArtifacts?: ArtifactDetector;
   // The time the engine stamps and the scheduler compares triggers with, for tests.
   readonly clock?: () => Date;
   // Replaces the scheduler's timer, for tests that call `scheduler.tick()` themselves.
   readonly schedulerTimers?: SchedulerTimers;
-  // Replaces the global fetch the tracker clients use, for tests.
+  // Replaces the host poller's timer, for tests that call `hosts.poll()` themselves.
+  readonly hostTimers?: SchedulerTimers;
+  // Replaces the global fetch the tracker clients and the host poller use, for tests.
   readonly fetch?: typeof fetch;
   // Runs npm for "Update Codex" (`provider.update`); tests and the e2e server pass a fake one.
   readonly runNpm?: RunNpm;
@@ -90,11 +106,16 @@ export interface RunningServer {
   readonly secrets: SecretStore;
   readonly providers: ProviderAdapters;
   readonly skills: SkillsService;
+  readonly plans: PlansService;
   readonly workflows: WorkflowRunner;
+  readonly workspaces: Workspaces;
   readonly providerService: ProviderService;
   readonly providerUpdates: ProviderUpdates;
   readonly scheduler: Scheduler;
   readonly trackers: TrackerService;
+  readonly hosts: HostPoller;
+  // Where the assistant's tools are reached and the token that opens them (see "Assistant").
+  readonly assistant: AssistantEndpoint;
   readonly logger: Logger;
   stop(): Promise<void>;
 }
@@ -128,6 +149,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   let logger: Logger = createLogger(() => 'info', options.logSink);
   const engine = new Engine(database.db, {
     onListenerError: (error) => logger.error('commit listener failed', error),
+    home,
     ...(options.clock ? { clock: options.clock } : {}),
   });
   const settings = new SettingsService(database.db, engine);
@@ -140,8 +162,11 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       defaultProtector(options.platform ?? process.platform, {
         timeoutMs: () => settings.get('advanced.secretsTimeoutMs'),
       }),
+    replaceWaitMs: () => settings.get('advanced.secretsTimeoutMs'),
   });
   const providers = new ProviderAdapters(options.hooks?.providers ?? {}, env);
+  // Known once the server listens; the assistant's turn asks for it when it starts.
+  let assistantAccess: { url: string; token: string } | undefined;
   const providerService = new ProviderService({
     db: database.db,
     engine,
@@ -149,11 +174,23 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     settings,
     secrets,
     logger,
+    home,
+    assistant: () => assistantAccess,
   });
+  const workspaces = new Workspaces({ db: database.db, engine, settings, logger });
   const workflows = new WorkflowRunner({
     db: database.db,
     engine,
     detectArtifacts: options.detectArtifacts ?? detectArtifacts,
+    changes: {
+      base: (folder) => readRunBase(folder, changesOptions(settings)),
+      head: async (folder) => {
+        const head = await readHeadCommit(folder, changesOptions(settings).git);
+        return head.status === 'ok' ? head.sha : undefined;
+      },
+      snapshot: (folder, baseSha) => snapshotChanges(folder, baseSha, changesOptions(settings)),
+    },
+    prepare: (runId) => workspaces.prepare(runId),
     logger,
   });
   const providerUpdates = new ProviderUpdates({
@@ -170,6 +207,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   providerService.recover();
   // Set once the Outlook hook has started, which happens after the socket listens.
   let outlook: OutlookService | undefined;
+  // First, so a run whose working copy was being made fails with that reason.
+  workspaces.recover();
   workflows.recover();
   const skills = new SkillsService({
     db: database.db,
@@ -179,6 +218,13 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     userHome: options.userHome ?? homedir(),
     ...(options.watchSkills ? { watch: options.watchSkills } : {}),
   });
+  const plans = new PlansService({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    ...(options.watchPlans ? { watch: options.watchPlans } : {}),
+  });
   const trackers = new TrackerService({
     db: database.db,
     engine,
@@ -187,6 +233,33 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
+  const hosts = new HostPoller({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    resolve: (projectId) => trackers.githubHost(projectId),
+    resolveGitLab: (projectId) => trackers.gitlabHost(projectId),
+    resolveJira: (projectId) => trackers.jiraHost(projectId),
+    resolveConfluence: (projectId) => trackers.confluenceHost(projectId),
+    intentTexts: async (projectId, intentId) => {
+      const project = database.db.select().from(projects).where(eq(projects.id, projectId)).get();
+      if (!project) return [];
+      const setting = settings.get('plans.intentsDirectory', { projectId });
+      return readIntentTexts(project, setting, intentId);
+    },
+    workingCopyBranch: (folder) =>
+      readCurrentBranch(folder, { timeoutMs: settings.get('trackers.gitTimeoutMs') }),
+    ...(options.clock ? { clock: options.clock } : {}),
+    ...(options.hostTimers ? { timers: options.hostTimers } : {}),
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
+  const planRuns = new PlanRuns({
+    db: database.db,
+    engine,
+    logger,
+    readPlan: (planId) => hosts.readPlan(planId),
+  });
   const handlers = createHandlers({
     engine,
     subscriptions,
@@ -194,10 +267,13 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     secrets,
     db: database.db,
     skills,
+    plans,
     workflows,
+    workspaces,
     providers: providerService,
     providerUpdates,
     trackers,
+    hosts,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     discoverProjects: () =>
       discoverProjects({
@@ -209,13 +285,38 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       }),
     outlook: () => outlook,
     info: { version, home },
+    clock: options.clock ?? (() => new Date()),
   });
 
   const token = randomBytes(32).toString('base64url');
   const expected = Buffer.from(token);
+  // A token of its own: what opens the assistant's tools does not open the app's connection,
+  // and the other way round.
+  const assistantToken = randomBytes(32).toString('base64url');
+  const assistantTools = new AssistantTools({
+    db: database.db,
+    engine,
+    settings,
+    secrets,
+    trackers,
+    logger,
+    clock: options.clock ?? (() => new Date()),
+    registry: settingsRegistry,
+  });
+  const mcp = createMcpHandler({ tools: assistantTools, token: assistantToken, version, logger });
+  // One port for both: the WebSocket upgrade for the app, and plain HTTP for the assistant's
+  // tools only.
+  const http = createServer((request, response) => {
+    const { pathname } = new URL(request.url ?? '/', 'http://127.0.0.1');
+    if (pathname === assistantMcpPath) {
+      void mcp(request, response);
+      return;
+    }
+    response.writeHead(426, { 'content-type': 'text/plain' });
+    response.end('Upgrade Required');
+  });
   const wss = new WebSocketServer({
-    host: '127.0.0.1',
-    port: options.port ?? settings.get('advanced.port'),
+    server: http,
     verifyClient: ({ req }, done) => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       if (tokensMatch(expected, url.searchParams.get('token'))) done(true);
@@ -224,19 +325,22 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   });
   try {
     await new Promise<void>((resolve, reject) => {
-      wss.once('listening', resolve);
-      wss.once('error', reject);
+      http.once('listening', resolve);
+      http.once('error', reject);
+      http.listen(options.port ?? settings.get('advanced.port'), '127.0.0.1');
     });
   } catch (error) {
     await workflows.stop();
+    await workspaces.stop();
     await providerService.stop();
     database.close();
     throw error;
   }
-  const address = wss.address();
+  const address = http.address();
   if (typeof address !== 'object' || address === null)
     throw new Error('WebSocket server has no TCP address');
   const port = address.port;
+  assistantAccess = { url: `http://127.0.0.1:${port}${assistantMcpPath}`, token: assistantToken };
 
   wss.on('connection', (socket: WebSocket) => {
     const send = (message: ServerMessage) => {
@@ -285,7 +389,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.schedulerTimers ? { timers: options.schedulerTimers } : {}),
   });
-  const services: BackgroundService[] = [workflows];
+  const services: BackgroundService[] = [workspaces, workflows];
   const stopServices = async () => {
     for (const service of services.splice(0).toReversed()) {
       try {
@@ -299,12 +403,20 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     services.push(skills);
     // A folder that cannot be read must not keep the server from starting.
     await skills.start().catch((error: unknown) => logger.error('skill scan failed', error));
+    services.push(plans);
+    await plans.start().catch((error: unknown) => logger.error('plan read failed', error));
+    // After the plans are read and the runs recovered, so a plan run sees both as they are now.
+    services.push(planRuns);
+    planRuns.recover();
     const mode = outlookMode(options.platform ?? process.platform, env);
     if (options.hooks?.outlook) {
       outlook = await options.hooks.outlook(mode, context);
       services.push(outlook);
     }
     for (const start of options.hooks?.services ?? []) services.push(await start(context));
+    // The host poller runs beside the scheduler and stops right after it.
+    services.push(hosts);
+    hosts.start();
     // Last, so it stops first: no trigger fires into services that are already gone.
     services.push(scheduler);
     scheduler.start();
@@ -312,6 +424,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     await stopServices();
     await providerService.stop();
     wss.close();
+    http.close();
     await rm(infoFile, { force: true });
     database.close();
     throw error;
@@ -328,6 +441,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       await trackers.idle();
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
+      http.closeAllConnections();
+      await new Promise<void>((resolve) => http.close(() => resolve()));
       // Leave the file alone if another server instance has replaced it meanwhile.
       const current = await readServerInfo(home).catch(() => undefined);
       if (current?.token === token) await rm(infoFile, { force: true });
@@ -346,11 +461,15 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     secrets,
     providers,
     skills,
+    plans,
     workflows,
+    workspaces,
     providerService,
     providerUpdates,
     scheduler,
     trackers,
+    hosts,
+    assistant: { ...assistantAccess, tools: assistantTools },
     logger,
     stop,
   };

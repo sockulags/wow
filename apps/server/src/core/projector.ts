@@ -1,19 +1,29 @@
 import {
+  isEventTrigger,
+  isLivePlanRunState,
   isLiveRunState,
   type DomainEvent,
   type Project,
   type ProviderUpdateRun,
   type SubscriptionTopic,
 } from '@wow/contracts';
-import { and, count, desc, eq, inArray, isNull, max } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, isNull, max, ne, sql } from 'drizzle-orm';
 import type { DbOrTx } from '../db/database.js';
 import {
   approvals,
+  assistantChanges,
+  assistantProposals,
+  setupApplications,
   backlogItems,
   calendarItems,
-  mailItems,
+  changeRequests,
+  hostReads,
+  ticketReads,
+  pageReads,
   notifications,
   outlookStatus,
+  planIntents,
+  planRuns,
   projects,
   providerInstances,
   questions,
@@ -21,12 +31,16 @@ import {
   skills,
   threadItems,
   threads,
+  triggerEvents,
   triggers,
   turns,
   workflowRuns,
   workflows,
 } from '../db/schema.js';
 import type { ReadModel } from './orchestrator.js';
+
+// The assistant thread is a row of the same table, shown through a topic of its own.
+const threadTopics: SubscriptionTopic[] = ['threads', 'assistantThread'];
 
 // Applies one event to the projection tables inside the caller's transaction and says which
 // subscription topics changed.
@@ -49,7 +63,32 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .run();
       // A thread keeps its folder and becomes a folder thread; its history stays readable.
       tx.update(threads).set({ projectId: null }).where(eq(threads.projectId, id)).run();
-      return ['projects', 'settings', 'threads'];
+      tx.delete(hostReads).where(eq(hostReads.projectId, id)).run();
+      tx.delete(changeRequests).where(eq(changeRequests.projectId, id)).run();
+      tx.delete(ticketReads).where(eq(ticketReads.projectId, id)).run();
+      tx.delete(pageReads).where(eq(pageReads.projectId, id)).run();
+      // Its event triggers have nothing left to listen to. Card triggers have no project here;
+      // the calendar cancels those.
+      const gone = tx
+        .select({ id: triggers.id })
+        .from(triggers)
+        .where(eq(triggers.projectId, id))
+        .all()
+        .map((row) => row.id);
+      if (gone.length > 0) {
+        tx.delete(triggerEvents).where(inArray(triggerEvents.triggerId, gone)).run();
+        tx.delete(triggers).where(inArray(triggers.id, gone)).run();
+      }
+      return [
+        'projects',
+        'settings',
+        'threads',
+        'hostReads',
+        'changeRequests',
+        'ticketReads',
+        'pageReads',
+        'triggers',
+      ];
     }
     case 'setting.changed':
       tx.insert(settings)
@@ -73,6 +112,65 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         tx.delete(skills).where(inArray(skills.id, event.payload.removed)).run();
       }
       return ['skills'];
+    case 'plans.synced':
+      for (const intent of event.payload.upserted) {
+        tx.insert(planIntents)
+          .values(intent)
+          .onConflictDoUpdate({ target: planIntents.id, set: intent })
+          .run();
+      }
+      if (event.payload.removed.length > 0) {
+        tx.delete(planIntents).where(inArray(planIntents.id, event.payload.removed)).run();
+      }
+      return ['planIntents'];
+    case 'hosts.synced': {
+      const { payload } = event;
+      for (const read of payload.reads) {
+        tx.insert(hostReads)
+          .values(read)
+          .onConflictDoUpdate({ target: hostReads.id, set: read })
+          .run();
+      }
+      if (payload.removedReads.length > 0) {
+        tx.delete(hostReads).where(inArray(hostReads.id, payload.removedReads)).run();
+      }
+      for (const request of payload.changeRequests) {
+        tx.insert(changeRequests)
+          .values(request)
+          .onConflictDoUpdate({ target: changeRequests.id, set: request })
+          .run();
+      }
+      if (payload.removedChangeRequests.length > 0) {
+        tx.delete(changeRequests)
+          .where(inArray(changeRequests.id, payload.removedChangeRequests))
+          .run();
+      }
+      return ['hostReads', 'changeRequests'];
+    }
+    case 'tickets.synced':
+      for (const read of event.payload.reads) {
+        tx.insert(ticketReads)
+          .values(read)
+          .onConflictDoUpdate({ target: ticketReads.id, set: read })
+          .run();
+      }
+      return ['ticketReads'];
+    case 'pages.synced':
+      for (const read of event.payload.reads) {
+        tx.insert(pageReads)
+          .values(read)
+          .onConflictDoUpdate({ target: pageReads.id, set: read })
+          .run();
+      }
+      return ['pageReads'];
+    case 'planRun.changed': {
+      const { planRun } = event.payload;
+      tx.insert(planRuns)
+        .values(planRun)
+        .onConflictDoUpdate({ target: planRuns.id, set: planRun })
+        .run();
+      return ['planRuns'];
+    }
     case 'workflow.created':
       tx.insert(workflows).values(event.payload).run();
       return ['workflows'];
@@ -159,13 +257,22 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
     }
     case 'thread.created':
       tx.insert(threads).values(event.payload).run();
-      return ['threads'];
+      return threadTopics;
     case 'thread.configured':
       tx.update(threads)
         .set({ ...event.payload.changes, updatedAt: event.payload.updatedAt })
         .where(eq(threads.id, event.payload.threadId))
         .run();
-      return ['threads'];
+      return threadTopics;
+    case 'thread.providerChanged': {
+      const { threadId, providerInstanceId, providerSessionId, model, effort } = event.payload;
+      const { permissionMode, updatedAt } = event.payload;
+      tx.update(threads)
+        .set({ providerInstanceId, providerSessionId, model, effort, permissionMode, updatedAt })
+        .where(eq(threads.id, threadId))
+        .run();
+      return threadTopics;
+    }
     case 'thread.sessionStarted':
       tx.update(threads)
         .set({
@@ -174,19 +281,19 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         })
         .where(eq(threads.id, event.payload.threadId))
         .run();
-      return ['threads'];
+      return threadTopics;
     case 'thread.pinned':
       tx.update(threads)
         .set({ pinned: event.payload.pinned })
         .where(eq(threads.id, event.payload.threadId))
         .run();
-      return ['threads'];
+      return threadTopics;
     case 'thread.stateChanged':
       tx.update(threads)
         .set({ state: event.payload.state, updatedAt: event.payload.updatedAt })
         .where(eq(threads.id, event.payload.threadId))
         .run();
-      return ['threads'];
+      return threadTopics;
     case 'turn.started': {
       const { turn, item } = event.payload;
       tx.insert(turns).values(turn).run();
@@ -195,7 +302,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .set({ state: 'working', updatedAt: turn.startedAt })
         .where(eq(threads.id, turn.threadId))
         .run();
-      return ['turns', 'threadItems', 'threads'];
+      return ['turns', 'threadItems', ...threadTopics];
     }
     case 'turn.interruptRequested':
       return [];
@@ -216,7 +323,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .set({ state: threadState, updatedAt: endedAt })
         .where(eq(threads.id, threadId))
         .run();
-      return ['turns', 'threadItems', 'threads'];
+      return ['turns', 'threadItems', ...threadTopics];
     }
     case 'threadItem.added':
       tx.insert(threadItems).values(event.payload).run();
@@ -299,10 +406,51 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .onConflictDoUpdate({ target: triggers.id, set: event.payload })
         .run();
       return ['triggers'];
+    case 'trigger.deleted':
+      tx.delete(triggerEvents).where(eq(triggerEvents.triggerId, event.payload.triggerId)).run();
+      tx.delete(triggers).where(eq(triggers.id, event.payload.triggerId)).run();
+      return ['triggers'];
+    case 'trigger.eventSeen': {
+      const { triggerId, eventId, runId, at } = event.payload;
+      tx.insert(triggerEvents)
+        .values({ triggerId, eventId, runId, at })
+        .onConflictDoNothing()
+        .run();
+      return [];
+    }
     case 'notification.sent':
       // A transition performed twice tells the user once.
       tx.insert(notifications).values(event.payload).onConflictDoNothing().run();
       return ['notifications'];
+    case 'assistant.changed':
+      tx.insert(assistantChanges).values(event.payload).run();
+      return ['assistantChanges'];
+    case 'assistant.changeUndone':
+      tx.update(assistantChanges)
+        .set({ state: 'undone', undoneAt: event.payload.at })
+        .where(eq(assistantChanges.id, event.payload.changeId))
+        .run();
+      return ['assistantChanges'];
+    case 'setup.applied':
+      tx.insert(setupApplications).values(event.payload).run();
+      return ['setupApplications'];
+    case 'setup.undone':
+      tx.update(setupApplications)
+        .set({ state: 'undone', undoneAt: event.payload.at })
+        .where(eq(setupApplications.id, event.payload.applicationId))
+        .run();
+      return ['setupApplications'];
+    case 'assistant.proposed':
+      tx.insert(assistantProposals).values(event.payload).run();
+      return ['assistantProposals'];
+    case 'assistant.proposalAnswered': {
+      const { proposalId, state, reason, at } = event.payload;
+      tx.update(assistantProposals)
+        .set({ state, reason, answeredAt: at })
+        .where(eq(assistantProposals.id, proposalId))
+        .run();
+      return ['assistantProposals'];
+    }
     case 'backlog.created':
       tx.insert(backlogItems).values(event.payload).run();
       return ['backlogItems'];
@@ -330,7 +478,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .run();
       return ['backlogItems'];
     case 'outlook.synced': {
-      const { calendarUpsert, calendarRemove, mailUpsert, mailRemove } = event.payload;
+      const { calendarUpsert, calendarRemove } = event.payload;
       const topics: SubscriptionTopic[] = ['outlookStatus'];
       for (const row of calendarUpsert) {
         tx.insert(calendarItems)
@@ -346,20 +494,10 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           .run();
       }
       if (calendarUpsert.length > 0 || calendarRemove.length > 0) topics.push('calendarItems');
-      for (const row of mailUpsert) {
-        tx.insert(mailItems)
-          .values(row)
-          .onConflictDoUpdate({ target: mailItems.id, set: row })
-          .run();
-      }
-      if (mailRemove.length > 0)
-        tx.delete(mailItems).where(inArray(mailItems.id, mailRemove)).run();
-      if (mailUpsert.length > 0 || mailRemove.length > 0) topics.push('mailItems');
       const status = {
         lastSyncAt: event.payload.at,
         lastError: null,
         unavailableSince: null,
-        unreadCount: event.payload.unreadCount,
         bridgeVersion: event.payload.bridgeVersion,
         // A poll that could not read the profile keeps the one stored.
         ...(event.payload.profile ? { profile: event.payload.profile } : {}),
@@ -391,7 +529,6 @@ const outlookStatusColumns = {
   lastSyncAt: outlookStatus.lastSyncAt,
   lastError: outlookStatus.lastError,
   unavailableSince: outlookStatus.unavailableSince,
-  unreadCount: outlookStatus.unreadCount,
   bridgeVersion: outlookStatus.bridgeVersion,
   profile: outlookStatus.profile,
 };
@@ -431,10 +568,20 @@ export function readModel(tx: DbOrTx): ReadModel {
         .get() !== undefined,
     providerInstance: (id) =>
       tx.select().from(providerInstances).where(eq(providerInstances.id, id)).get(),
+    providerInstances: () =>
+      tx
+        .select()
+        .from(providerInstances)
+        .orderBy(sql`rowid`)
+        .all(),
     instanceUsage: (id) => ({
+      // The assistant thread does not hold an instance: it moves to another one (spec 27).
       threads:
-        tx.select({ n: count() }).from(threads).where(eq(threads.providerInstanceId, id)).get()
-          ?.n ?? 0,
+        tx
+          .select({ n: count() })
+          .from(threads)
+          .where(and(eq(threads.providerInstanceId, id), ne(threads.kind, 'assistant')))
+          .get()?.n ?? 0,
       runningTurns:
         tx
           .select({ n: count() })
@@ -449,8 +596,37 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(settings)
         .where(and(eq(settings.key, key), eq(settings.scope, scope)))
         .get(),
+    settingStored: (key) =>
+      tx
+        .select({ scope: settings.scope, value: settings.value })
+        .from(settings)
+        .where(eq(settings.key, key))
+        .all(),
     skills: () => tx.select().from(skills).all(),
+    planIntents: () => tx.select().from(planIntents).all(),
+    planRun: (id) => tx.select().from(planRuns).where(eq(planRuns.id, id)).get(),
+    livePlanRun: (planId) =>
+      tx
+        .select()
+        .from(planRuns)
+        .where(eq(planRuns.planId, planId))
+        .all()
+        .find((row) => isLivePlanRunState(row.state)),
+    hostReads: (projectId) =>
+      tx.select().from(hostReads).where(eq(hostReads.projectId, projectId)).all(),
+    ticketReads: (projectId) =>
+      tx.select().from(ticketReads).where(eq(ticketReads.projectId, projectId)).all(),
+    pageReads: (projectId) =>
+      tx.select().from(pageReads).where(eq(pageReads.projectId, projectId)).all(),
+    changeRequests: (projectId) =>
+      tx.select().from(changeRequests).where(eq(changeRequests.projectId, projectId)).all(),
     workflow: (id) => tx.select().from(workflows).where(eq(workflows.id, id)).get(),
+    workflows: () =>
+      tx
+        .select()
+        .from(workflows)
+        .orderBy(sql`rowid`)
+        .all(),
     run: (id) => tx.select().from(workflowRuns).where(eq(workflowRuns.id, id)).get(),
     hasLiveRun: (workflowId) =>
       tx
@@ -460,7 +636,56 @@ export function readModel(tx: DbOrTx): ReadModel {
         .all()
         .some((row) => isLiveRunState(row.state)),
     backlogItem: (id) => tx.select().from(backlogItems).where(eq(backlogItems.id, id)).get(),
+    assistantChange: (id) =>
+      tx.select().from(assistantChanges).where(eq(assistantChanges.id, id)).get(),
+    setupApplication: (id) =>
+      tx.select().from(setupApplications).where(eq(setupApplications.id, id)).get(),
+    lastSetupApplication: () =>
+      tx
+        .select()
+        .from(setupApplications)
+        .where(eq(setupApplications.state, 'applied'))
+        .orderBy(desc(setupApplications.at), desc(sql`rowid`))
+        .get(),
+    assistantProposal: (id) =>
+      tx.select().from(assistantProposals).where(eq(assistantProposals.id, id)).get(),
+    assistantAnswers: (since) => ({
+      proposals: tx
+        .select()
+        .from(assistantProposals)
+        .where(
+          since === undefined
+            ? ne(assistantProposals.state, 'pending')
+            : gt(assistantProposals.answeredAt, since),
+        )
+        .orderBy(asc(assistantProposals.answeredAt))
+        .all(),
+      undone: tx
+        .select()
+        .from(assistantChanges)
+        .where(
+          since === undefined
+            ? eq(assistantChanges.state, 'undone')
+            : gt(assistantChanges.undoneAt, since),
+        )
+        .orderBy(asc(assistantChanges.undoneAt))
+        .all(),
+    }),
     trigger: (id) => tx.select().from(triggers).where(eq(triggers.id, id)).get(),
+    eventTriggers: (projectId) =>
+      tx
+        .select()
+        .from(triggers)
+        .where(eq(triggers.projectId, projectId))
+        .orderBy(asc(triggers.createdAt), asc(triggers.id))
+        .all()
+        .filter(isEventTrigger),
+    triggerEventSeen: (triggerId, eventId) =>
+      tx
+        .select({ at: triggerEvents.at })
+        .from(triggerEvents)
+        .where(and(eq(triggerEvents.triggerId, triggerId), eq(triggerEvents.eventId, eventId)))
+        .get() !== undefined,
     backlogItemHasLiveRun: (id) =>
       tx
         .select({ state: workflowRuns.state })
@@ -506,7 +731,6 @@ export function readModel(tx: DbOrTx): ReadModel {
     calendarItem: (id) => tx.select().from(calendarItems).where(eq(calendarItems.id, id)).get(),
     outlookCalendarItems: () =>
       tx.select().from(calendarItems).where(eq(calendarItems.source, 'outlook')).all(),
-    mailItems: () => tx.select().from(mailItems).all(),
     outlookStatus: () => readOutlookStatus(tx)[0],
   };
 }

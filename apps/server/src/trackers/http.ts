@@ -17,6 +17,9 @@ export interface CreatedIssue {
 export interface RequestOptions {
   readonly timeoutMs: number;
   readonly fetch?: typeof fetch;
+  // 'manual': a redirect is not followed but turned down. For a token in a header of its own,
+  // which fetch would carry to whatever origin the redirect names (it only drops Authorization).
+  readonly redirect?: 'manual';
 }
 
 // The tracker refused the issue or could not be reached. The message is shown to the user as is.
@@ -30,24 +33,39 @@ export class TrackerError extends Error {
   }
 }
 
+// The headers of the answer a TrackerError came from, for a caller that reads the host's request
+// limit from them. Kept beside the error, so the error stays a message and a status.
+const answerHeaders = new WeakMap<TrackerError, Headers>();
+export const headersOf = (error: TrackerError): Headers | undefined => answerHeaders.get(error);
+
 export const trimBase = (url: string) => url.trim().replace(/\/+$/, '');
 
-export function postJson(
+export async function postJson(
   service: string,
   url: string,
   headers: Record<string, string>,
   body: unknown,
   options: RequestOptions,
 ): Promise<unknown> {
-  return requestJson(service, 'POST', url, headers, body, options);
+  return (await requestJson(service, 'POST', url, headers, body, options)).body;
 }
 
-export function getJson(
+export async function getJson(
   service: string,
   url: string,
   headers: Record<string, string>,
   options: RequestOptions,
 ): Promise<unknown> {
+  return (await requestJson(service, 'GET', url, headers, undefined, options)).body;
+}
+
+// A GET that also hands back the answer's headers (request limits, for the host poller).
+export function getJsonAnswer(
+  service: string,
+  url: string,
+  headers: Record<string, string>,
+  options: RequestOptions,
+): Promise<{ body: unknown; headers: Headers }> {
   return requestJson(service, 'GET', url, headers, undefined, options);
 }
 
@@ -58,7 +76,7 @@ async function requestJson(
   headers: Record<string, string>,
   body: unknown,
   options: RequestOptions,
-): Promise<unknown> {
+): Promise<{ body: unknown; headers: Headers }> {
   const send = options.fetch ?? globalThis.fetch;
   let response: Response;
   try {
@@ -71,6 +89,7 @@ async function requestJson(
       },
       ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(options.timeoutMs),
+      ...(options.redirect ? { redirect: options.redirect } : {}),
     });
   } catch (error) {
     const reason =
@@ -81,16 +100,27 @@ async function requestJson(
           : String(error);
     throw new TrackerError(`${service} could not be reached: ${reason}`);
   }
+  if (
+    options.redirect === 'manual' &&
+    (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400))
+  ) {
+    throw new TrackerError(
+      `${service} redirected to another address (${response.status}); wow does not send the token there. Check the URL in Settings → Trackers.`,
+      response.status,
+    );
+  }
   const text = await response.text();
   const parsed = parseJson(text);
   if (!response.ok) {
     const detail = errorDetail(parsed) ?? (text.trim().slice(0, 300) || response.statusText);
-    throw new TrackerError(
+    const refused = new TrackerError(
       `${service} answered ${response.status}${detail ? `: ${detail}` : ''}`,
       response.status,
     );
+    answerHeaders.set(refused, response.headers);
+    throw refused;
   }
-  return parsed;
+  return { body: parsed, headers: response.headers };
 }
 
 function parseJson(text: string): unknown {
@@ -104,11 +134,14 @@ function parseJson(text: string): unknown {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-// Jira answers {errorMessages: [], errors: {field: message}}; GitHub {message, errors: [...]}.
+// Jira answers {errorMessages: [], errors: {field: message}}; GitHub {message, errors: [...]};
+// GitLab {message} or, for a token it turns down, {error, error_description}.
 function errorDetail(body: unknown): string | undefined {
   if (!isRecord(body)) return undefined;
   const parts: string[] = [];
   if (typeof body['message'] === 'string') parts.push(body['message']);
+  if (typeof body['error_description'] === 'string') parts.push(body['error_description']);
+  else if (typeof body['error'] === 'string') parts.push(body['error']);
   if (Array.isArray(body['errorMessages'])) {
     parts.push(...body['errorMessages'].filter((entry) => typeof entry === 'string'));
   }

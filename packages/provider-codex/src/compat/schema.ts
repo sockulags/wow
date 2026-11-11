@@ -512,6 +512,26 @@ export function fingerprintOf(
   return { codexVersion, methods };
 }
 
+// Which of these methods and fields a release does not define at all, whatever their types.
+// For options the adapter sends only on some threads and cannot do without there.
+export function missingFields(
+  files: SchemaFiles,
+  uses: Readonly<Record<string, MethodUse>>,
+): string[] {
+  const missing: string[] = [];
+  for (const [method, use] of Object.entries(uses)) {
+    const extracted = extractMethod(files, method, use);
+    if (!extracted.defined) {
+      missing.push(method);
+      continue;
+    }
+    for (const side of ['params', 'result'] as const)
+      for (const field of extracted[side])
+        if (!field.shape) missing.push(`${method} ${side}.${field.path}`);
+  }
+  return missing;
+}
+
 export interface CompatibilityReport {
   readonly compatible: boolean;
   // What breaks wow on this release: missing methods and fields, changed types.

@@ -20,6 +20,9 @@
       "path": "../../packages/skills"
     },
     {
+      "path": "../../packages/agent-os"
+    },
+    {
       "path": "../../packages/workflow-engine"
     },
     {

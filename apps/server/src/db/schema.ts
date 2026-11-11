@@ -1,25 +1,60 @@
 import type {
+  AssistantChangeRecord,
+  AssistantChangeState,
+  AssistantPlace,
+  AssistantProposalLine,
+  AssistantProposalState,
+  AssistantTarget,
   ApprovalDecision,
   ApprovalKind,
   BacklogRemote,
   BacklogState,
   CalendarItemSource,
+  ChangeRequestState,
+  CheckState,
+  Command,
+  FileHash,
+  HostCheck,
+  HostError,
+  HostKind,
+  HostReadScope,
   NotificationKind,
   OutlookProfile,
+  PlanFile,
+  PlanProblem,
+  PlanRunState,
+  PlanRunUnit,
+  PlanSource,
+  PlanUnit,
   ProviderInstanceStatus,
   ProviderKind,
   ProviderUpdate,
   ProviderUpdateRun,
+  ReviewComment,
+  RunEvent,
+  RunUnit,
   SecretRef,
+  SetupApplicationState,
+  SetupFillIn,
+  SetupMark,
   SkillSource,
+  PageLink,
+  PathVisit,
   StepRun,
   ThreadItemKind,
+  ThreadKind,
   ThreadState,
+  Ticket,
+  TicketSource,
+  TriggerEvent,
+  TriggerKind,
   TriggerState,
   TurnState,
+  UnitRef,
   Usage,
   WorkflowRunState,
   WorkflowStep,
+  WorkingCopy,
 } from '@wow/contracts';
 import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
@@ -61,6 +96,7 @@ export const threads = sqliteTable(
   'threads',
   {
     id: text().primaryKey(),
+    kind: text().$type<ThreadKind>().notNull().default('chat'),
     projectId: text(),
     cwd: text().notNull(),
     branch: text(),
@@ -160,24 +196,12 @@ export const calendarItems = sqliteTable(
   (table) => [index('calendar_items_start_idx').on(table.start)],
 );
 
-export const mailItems = sqliteTable('mail_items', {
-  id: text().primaryKey(),
-  externalId: text().notNull(),
-  folder: text().notNull(),
-  from: text().notNull(),
-  subject: text().notNull(),
-  receivedAt: text().notNull(),
-  unread: bool().notNull(),
-  snippet: text().notNull(),
-});
-
 // A single row; the id only exists so the row can be upserted.
 export const outlookStatus = sqliteTable('outlook_status', {
   id: integer().primaryKey(),
   lastSyncAt: text(),
   lastError: text(),
   unavailableSince: text(),
-  unreadCount: integer().notNull().default(0),
   bridgeVersion: text(),
   profile: json<OutlookProfile>(),
 });
@@ -198,6 +222,9 @@ export const workflows = sqliteTable('workflows', {
   name: text().notNull(),
   templateKind: text(),
   steps: json<WorkflowStep[]>().notNull(),
+  ownWorkingCopy: bool().notNull().default(false),
+  forUnits: bool().notNull().default(false),
+  maxStepVisits: integer(),
   createdAt: text().notNull(),
   updatedAt: text().notNull(),
 });
@@ -213,24 +240,69 @@ export const workflowRuns = sqliteTable('workflow_runs', {
   steps: json<StepRun[]>().notNull(),
   startedAt: text().notNull(),
   endedAt: text(),
+  baseSha: text(),
+  baseFiles: json<FileHash[]>(),
+  workingCopy: json<WorkingCopy>(),
+  unit: json<RunUnit>(),
+  event: json<RunEvent>(),
+  path: json<PathVisit[]>(),
 });
 
+// Plan runs: one row per "Run ready units", kept after it ended.
+export const planRuns = sqliteTable(
+  'plan_runs',
+  {
+    id: text().primaryKey(),
+    planId: text().notNull(),
+    projectId: text().notNull(),
+    intentId: text().notNull(),
+    workflowId: text().notNull(),
+    state: text().$type<PlanRunState>().notNull(),
+    units: json<PlanRunUnit[]>().notNull(),
+    waitingFor: json<string[]>().notNull(),
+    message: text(),
+    startedAt: text().notNull(),
+    endedAt: text(),
+  },
+  (table) => [index('plan_runs_plan_idx').on(table.planId)],
+);
+
+// Card triggers and event triggers in one table. The columns of the other kind are null.
 export const triggers = sqliteTable(
   'triggers',
   {
     id: text().primaryKey(),
-    calendarItemId: text().notNull(),
+    kind: text().$type<TriggerKind>().notNull().default('card'),
+    calendarItemId: text(),
     workflowId: text().notNull(),
-    runAt: text().notNull(),
-    zone: text().notNull(),
-    state: text().$type<TriggerState>().notNull(),
+    runAt: text(),
+    zone: text(),
+    state: text().$type<TriggerState>(),
     runId: text(),
     offerRunNow: bool().notNull().default(false),
+    projectId: text(),
+    event: text().$type<TriggerEvent>(),
+    enabled: bool(),
+    createdAt: text(),
   },
   (table) => [
     index('triggers_due_idx').on(table.state, table.runAt),
     index('triggers_card_idx').on(table.calendarItemId),
+    index('triggers_project_idx').on(table.projectId),
   ],
+);
+
+// The events an event trigger has seen, by the id the host gives them, so a repeated poll
+// starts nothing (review loop spec 49).
+export const triggerEvents = sqliteTable(
+  'trigger_events',
+  {
+    triggerId: text().notNull(),
+    eventId: text().notNull(),
+    runId: text(),
+    at: text().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.triggerId, table.eventId] })],
 );
 
 export const notifications = sqliteTable('notifications', {
@@ -244,6 +316,53 @@ export const notifications = sqliteTable('notifications', {
   calendarItemId: text(),
 });
 
+// What the assistant changed, with the record Undo needs, in the order it happened.
+export const assistantChanges = sqliteTable('assistant_changes', {
+  id: text().primaryKey(),
+  at: text().notNull(),
+  commandType: text().notNull(),
+  what: text().notNull(),
+  from: text(),
+  to: text(),
+  place: json<AssistantPlace>().notNull(),
+  target: json<AssistantTarget>().notNull(),
+  expect: json<Record<string, unknown>>(),
+  inverse: json<Command[]>().notNull(),
+  state: text().$type<AssistantChangeState>().notNull(),
+  undoneAt: text(),
+});
+
+// Commands of the assistant that wait for the user's yes.
+export const assistantProposals = sqliteTable('assistant_proposals', {
+  id: text().primaryKey(),
+  at: text().notNull(),
+  commandType: text().notNull(),
+  title: text().notNull(),
+  lines: json<AssistantProposalLine[]>().notNull(),
+  place: json<AssistantPlace>().notNull(),
+  command: json<Command>().notNull(),
+  // What the title and lines were written from; an accept is refused once it no longer holds.
+  basis: json<Record<string, unknown>>(),
+  state: text().$type<AssistantProposalState>().notNull(),
+  answeredAt: text(),
+  reason: text(),
+});
+
+// Setup files applied here (app assistant spec 22), with what Undo puts back, in the order
+// applied.
+export const setupApplications = sqliteTable('setup_applications', {
+  id: text().primaryKey(),
+  at: text().notNull(),
+  name: text().notNull(),
+  added: json<AssistantProposalLine[]>().notNull(),
+  replaced: json<AssistantProposalLine[]>().notNull(),
+  marked: json<SetupMark[]>().notNull(),
+  toFillIn: json<SetupFillIn[]>().notNull(),
+  parts: json<AssistantChangeRecord[]>().notNull(),
+  state: text().$type<SetupApplicationState>().notNull(),
+  undoneAt: text(),
+});
+
 export const skills = sqliteTable('skills', {
   id: text().primaryKey(),
   name: text().notNull(),
@@ -252,6 +371,83 @@ export const skills = sqliteTable('skills', {
   source: text().$type<SkillSource>().notNull(),
   manualOnly: bool().notNull(),
   invocations: json<{ claude: string; codex: string }>().notNull(),
+});
+
+// One row per intent folder of a project, as its files read (packages/agent-os).
+export const planIntents = sqliteTable('plan_intents', {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  intentId: text().notNull(),
+  title: text().notNull(),
+  hasIntent: bool().notNull(),
+  status: text(),
+  rev: integer(),
+  spec: json<PlanFile>(),
+  plan: json<PlanFile>(),
+  source: text().$type<PlanSource>(),
+  units: json<PlanUnit[]>().notNull(),
+  problems: json<PlanProblem[]>().notNull(),
+  followed: bool().notNull().default(false),
+});
+
+// What was last read from a host for one followed plan (`plan:<id>`) or one run (`run:<id>`).
+export const hostReads = sqliteTable('host_reads', {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  scope: text().$type<HostReadScope>().notNull(),
+  host: text().$type<HostKind>().notNull(),
+  hostName: text().notNull(),
+  branch: text(),
+  changeRequestIds: json<string[]>().notNull(),
+  fetchedAt: text(),
+  error: json<HostError>(),
+});
+
+// What was last read about one run's ticket (`run:<id>`), with the ticket itself.
+export const ticketReads = sqliteTable('ticket_reads', {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  runId: text().notNull(),
+  host: text().$type<HostKind>().notNull(),
+  hostName: text().notNull(),
+  key: text(),
+  source: text().$type<TicketSource>(),
+  ticket: json<Ticket>(),
+  fetchedAt: text(),
+  error: json<HostError>(),
+});
+
+// What was last read about the pages one run's texts link to (`run:<id>`), with the pages.
+export const pageReads = sqliteTable('page_reads', {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  runId: text().notNull(),
+  host: text().$type<HostKind>().notNull(),
+  hostName: text().notNull(),
+  pages: json<PageLink[]>().notNull(),
+  fetchedAt: text(),
+  error: json<HostError>(),
+});
+
+// Pull requests as last read, one row per project and number.
+export const changeRequests = sqliteTable('change_requests', {
+  id: text().primaryKey(),
+  projectId: text().notNull(),
+  host: text().$type<HostKind>().notNull(),
+  number: integer().notNull(),
+  title: text().notNull(),
+  url: text().notNull(),
+  state: text().$type<ChangeRequestState>().notNull(),
+  draft: bool().notNull(),
+  mergedAt: text(),
+  headBranch: text().notNull(),
+  headSha: text().notNull(),
+  units: json<UnitRef[]>().notNull(),
+  checkState: text().$type<CheckState>().notNull(),
+  checks: json<HostCheck[]>().notNull(),
+  comments: json<ReviewComment[]>().notNull(),
+  newestCommentId: text(),
+  links: json<string[]>().notNull().default([]),
 });
 
 export const settings = sqliteTable(

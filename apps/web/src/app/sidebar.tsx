@@ -4,14 +4,17 @@ import { useTopic } from '@/chat/data';
 import { cn } from '@/lib/utils';
 import { sections, type Section } from './sections';
 
-// "Needs you" counts per section (audit A-22): threads that wait for an answer and workflow runs
-// that wait at a gate. Read from the server's rows; nothing is counted locally.
+// "Needs you" counts per section (audit A-22): threads that wait for an answer, workflow runs
+// that wait at a gate and the assistant's proposals that wait for a yes. Read from the server's
+// rows; nothing is counted locally.
 function useNeedsYou(): Partial<Record<Section['id'], number>> {
   const threads = useTopic('threads');
   const runs = useTopic('workflowRuns');
+  const proposals = useTopic('assistantProposals');
   return {
     chat: threads?.filter((thread) => thread.state === 'needs_you').length ?? 0,
     workflows: runs?.filter((run) => run.state === 'waiting').length ?? 0,
+    assistant: proposals?.filter((proposal) => proposal.state === 'pending').length ?? 0,
   };
 }
 

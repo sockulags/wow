@@ -4,8 +4,8 @@ import path from 'node:path';
 import { choose } from './controls';
 import { e2eHome, e2eOutlookControlPort } from './env';
 
-// U9 ground truth against the mock Outlook (WOW_OUTLOOK=mock, e2e/server.ts): Outlook items and
-// mail render, the banner shows on a mock failure, and a card created, moved and resized by mouse
+// U9 ground truth against the mock Outlook (WOW_OUTLOOK=mock, e2e/server.ts): Outlook items
+// render, the banner shows on a mock failure, and a card created, moved and resized by mouse
 // is still there after a reload. The fixtures sit relative to today in the machine's zone, which
 // the browser and the server share.
 
@@ -116,7 +116,7 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
 }
 
 test.describe('calendar', () => {
-  test('shows Outlook items read-only with the Teams link, and unread mail', async ({ page }) => {
+  test('shows Outlook items read-only with the Teams link', async ({ page }) => {
     await page.goto(`/calendar?view=day&date=${localDay()}`);
     const view = calendar(page);
     const lunch = view.getByRole('button', { name: 'Lunch with Eli, 12:00–13:00, read-only' });
@@ -156,31 +156,6 @@ test.describe('calendar', () => {
     ).toBeVisible();
     await page.goto(`/calendar?view=day&date=${localDay(3)}`);
     await expect(view.getByLabel(`All day ${localDay(3)}`)).toContainText('Planning offsite');
-
-    const rail = page.getByRole('complementary', { name: 'Unread mail' });
-    await expect(rail.getByLabel('3 unread')).toBeVisible();
-    const messages = rail.getByRole('list', { name: 'Unread messages' }).getByRole('button');
-    await expect(messages).toHaveText([
-      /Nightly build for lantern-web passed/,
-      /Notes before tomorrow's design review/,
-      /Offsite agenda draft/,
-    ]);
-    // One Tab stop for the list; the arrow keys move between messages.
-    await messages.first().focus();
-    await page.keyboard.press('ArrowDown');
-    await expect(messages.nth(1)).toBeFocused();
-    await messages.first().click();
-    await expect(page.getByText('Opened in Outlook').first()).toBeVisible();
-    expect(await control('/opened', 'GET')).toContain('mock-mail-build');
-
-    // The rail folds to its count and back, from its button and its key.
-    await rail.getByRole('button', { name: 'Collapse mail rail' }).click();
-    await expect(rail.getByRole('button', { name: 'Show mail rail, 3 unread' })).toBeVisible();
-    await expect(messages).toHaveCount(0);
-    await page.reload();
-    await expect(rail.getByRole('button', { name: 'Show mail rail, 3 unread' })).toBeVisible();
-    await page.keyboard.press('m');
-    await expect(messages).toHaveCount(3);
   });
 
   test('shows a banner while Outlook is unavailable and keeps the cached items', async ({
@@ -197,16 +172,39 @@ test.describe('calendar', () => {
     await expect(banner).toContainText(/Outlook unavailable since \d\d:\d\d/);
     await expect(banner).toContainText('Outlook is not running');
     await expect(lunch).toBeVisible();
-    const rail = page.getByRole('complementary', { name: 'Unread mail' });
-    await expect(
-      rail.getByRole('list', { name: 'Unread messages' }).getByRole('button'),
-    ).toHaveCount(3);
-    await expect(rail.getByTestId('mail-stale')).toContainText(/Last read \d\d:\d\d/);
 
     await control('/unavailable', 'DELETE');
     await banner.getByRole('button', { name: 'Try again' }).click();
     await expect(banner).toBeHidden();
-    await expect(rail.getByTestId('mail-stale')).toHaveCount(0);
+  });
+
+  // Spec 4 (plan U18): Outlook is read for meetings only, and nothing else of Outlook is shown or
+  // offered.
+  test('shows no mail rail, count or command, and the grid spans the width', async ({ page }) => {
+    const anyMention = /mail|unread/i;
+    for (const view of ['day', 'week']) {
+      await page.goto(`/calendar?view=${view}&date=${localDay()}`);
+      const grid = calendar(page);
+      await expect(grid.getByRole('button', { name: /^Team standup/ }).first()).toBeVisible();
+      await expect(page.getByRole('complementary')).toHaveCount(0);
+      await expect(page.getByText(anyMention)).toHaveCount(0);
+      await expect(page.getByRole('button', { name: anyMention })).toHaveCount(0);
+      // The calendar takes all the room its row has.
+      const row = await grid.locator('..').boundingBox();
+      const own = await grid.boundingBox();
+      expect(own && row && Math.abs(own.width - row.width)).toBeLessThanOrEqual(1);
+
+      await page.keyboard.press('Control+k');
+      const palette = page.getByRole('dialog');
+      await palette.getByRole('combobox').fill('mail');
+      await expect(palette.getByRole('option', { name: anyMention })).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await expect(palette).toBeHidden();
+    }
+    // The server asked the mock Outlook for the calendar and its profile, never anything else.
+    const asked = (await control('/asked', 'GET')) as string[];
+    expect(asked.filter((op) => !['calendar', 'open', 'ping', 'profile'].includes(op))).toEqual([]);
+    expect(asked).toContain('calendar');
   });
 
   test('creates, moves and resizes a card, and it stays after a reload', async ({ page }) => {
@@ -238,6 +236,8 @@ test.describe('calendar', () => {
 
     await page.reload();
     await expect(card).toHaveAccessibleName('Focus block, 17:00–18:30');
+    // The reload opened the grid at now again.
+    await reveal(page, 14 * 60);
 
     // A click makes a card of the configured length; the dialog deletes it again.
     const slot = await pointAt(column, 15 * 60);

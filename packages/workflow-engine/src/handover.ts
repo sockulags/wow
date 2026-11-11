@@ -1,3 +1,5 @@
+import { triggerEventLabels, type RunEvent } from '@wow/contracts';
+
 // Renders the `workflows.handoverTemplate` setting. `{{name}}` is replaced by the value and
 // `{{#name}}…{{/name}}` is kept only when the value is not empty, so an unused part of the
 // template (no backlog item, first step) leaves no stray heading.
@@ -7,16 +9,93 @@ export interface HandoverValues {
   readonly previousMessage: string;
   readonly backlogBody: string;
   readonly previousArtifacts: string;
+  // The error of the step the run came from, when that step failed and a rule sent the run on.
+  readonly previousError: string;
   readonly expectedArtifacts: string;
+  // For a run an event trigger started: what happened and on which pull request. Empty
+  // otherwise. A review comment is named by its link and author, never by its text.
+  readonly event: string;
+  readonly pullRequestNumber: string;
+  readonly pullRequestUrl: string;
+  readonly pullRequestBranch: string;
+  readonly commentUrl: string;
+  readonly commentAuthor: string;
+}
+
+const noEvent = {
+  event: '',
+  pullRequestNumber: '',
+  pullRequestUrl: '',
+  pullRequestBranch: '',
+  commentUrl: '',
+  commentAuthor: '',
+};
+
+// A name from the host as one short word in a prompt: letters, digits and the few marks account
+// names use. Anything else someone could put into a display name is dropped.
+const plainName = (name: string): string => name.replace(/[^\p{L}\p{N}._@[\]-]/gu, '').slice(0, 64);
+
+export function eventValues(
+  event: RunEvent | null | undefined,
+): Pick<HandoverValues, keyof typeof noEvent> {
+  if (!event) return noEvent;
+  return {
+    event: triggerEventLabels[event.event].toLowerCase(),
+    pullRequestNumber: String(event.number),
+    pullRequestUrl: event.url,
+    pullRequestBranch: event.branch,
+    commentUrl: event.commentUrl ?? '',
+    commentAuthor:
+      event.commentUrl === null ? '' : plainName(event.commentAuthor ?? '') || 'someone',
+  };
 }
 
 const SECTION = /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g;
 const PLACEHOLDER = /\{\{(\w+)\}\}/g;
 
-const valueOf = (values: HandoverValues, name: string): string =>
-  Object.hasOwn(values, name) ? values[name as keyof HandoverValues] : '';
+type TemplateValues = Readonly<Record<string, string>>;
 
-export function renderHandover(template: string, values: HandoverValues): string {
+const valueOf = (values: TemplateValues, name: string): string =>
+  Object.hasOwn(values, name) ? (values[name] ?? '') : '';
+
+export const renderHandover = (template: string, values: HandoverValues): string =>
+  renderTemplate(template, { ...values });
+
+// What `workflows.sendBackTemplate` can name: the reviewer's note, the step's skill and the
+// number of the attempt that starts.
+export interface SendBackValues {
+  readonly note: string;
+  readonly skill: string;
+  readonly attempt: string;
+}
+
+export const renderSendBack = (template: string, values: SendBackValues): string =>
+  renderTemplate(template, { ...values });
+
+// What `workflows.goBackTemplate` can name: the step whose rule sent the run back, the fact that
+// held, what that step ended with, and this step's skill and attempt.
+export interface GoBackValues {
+  readonly fromStep: string;
+  readonly reason: string;
+  readonly message: string;
+  readonly skill: string;
+  readonly attempt: string;
+}
+
+export const renderGoBack = (template: string, values: GoBackValues): string =>
+  renderTemplate(template, { ...values });
+
+// What `workflows.unitPromptTemplate` can name: the unit a plan run started the run for.
+export interface UnitPromptValues {
+  readonly intentId: string;
+  readonly unitKey: string;
+  readonly unitTitle: string;
+}
+
+export const renderUnitPrompt = (template: string, values: UnitPromptValues): string =>
+  renderTemplate(template, { ...values });
+
+function renderTemplate(template: string, values: TemplateValues): string {
   const sections = template.replace(SECTION, (_match, name: string, body: string) =>
     valueOf(values, name).trim() === '' ? '' : body,
   );
@@ -29,9 +108,14 @@ export function renderHandover(template: string, values: HandoverValues): string
 export const bulletList = (lines: readonly string[]): string =>
   lines.map((line) => `- ${line}`).join('\n');
 
-// The step prompt: the skill invocation for the step's provider, the step's extra prompt, then
-// the rendered handover after a blank line.
-export function stepPrompt(invocation: string, extraPrompt: string | undefined, handover: string) {
+// The step prompt: the skill invocation for the step's provider and the step's extra prompt,
+// then the unit text of a unit's run, then the rendered handover, each after a blank line.
+export function stepPrompt(
+  invocation: string,
+  extraPrompt: string | undefined,
+  handover: string,
+  unit = '',
+) {
   const head = [invocation, extraPrompt?.trim() ?? ''].filter((part) => part !== '').join(' ');
-  return handover === '' ? head : `${head}\n\n${handover}`;
+  return [head, unit, handover].filter((part) => part !== '').join('\n\n');
 }

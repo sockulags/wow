@@ -26,7 +26,6 @@ import { formatWhen } from '@/lib/format';
 import { CardDialog } from './card-dialog';
 import { newCardRange, runNowCardIds } from './commands';
 import { stepDays, visibleDays, type CalendarViewKind } from './layout';
-import { MailRail } from './mail-rail';
 import { useCalendarPrefs, useOutlookProfile } from './prefs';
 import { anchorDate, type CalendarSearch } from './search';
 import {
@@ -41,7 +40,6 @@ import {
   systemZone,
 } from './time';
 import { TimeGrid } from './time-grid';
-import { useBelow } from '@/lib/use-breakpoint';
 import { useContextPanelShown } from '@/panel/panel-state';
 import { calendarZoom, presetHeight, zoomBounds, zoomPercent, zoomPresets } from './zoom';
 
@@ -186,15 +184,7 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const cardMinutes = useSetting('calendar.cardMinutes');
   const showWeekends = useSetting('calendar.showWeekends');
   const maxColumns = useSetting('calendar.weekMaxColumns');
-  const mailRail = useSetting('outlook.mailRail');
-  const mailRailCollapsed = useSetting('outlook.mailRailCollapsed');
-  // A narrow window, or the context panel next to the calendar, folds the rail on its own;
-  // opening it then only lasts until it is folded again.
-  const narrow = useBelow('narrow');
   const panelShown = useContextPanelShown();
-  const crowded = narrow || panelShown;
-  const [railPeek, setRailPeek] = useState(false);
-  const railCollapsed = mailRailCollapsed || (crowded && !railPeek);
   const zoom = calendarZoom(settings);
   const pendingHeight = useStore(zoom.store, (state) => state.pending);
   const floor = useStore(zoom.store, (state) => state.floor);
@@ -393,22 +383,6 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           />
         </Stale>
       </section>
-      {mailRail && (
-        <MailRail
-          status={status}
-          zone={zone}
-          collapsed={railCollapsed}
-          onCollapsedChange={(next) => {
-            if (crowded) {
-              setRailPeek(!next);
-              if (!next && mailRailCollapsed)
-                void settings.write('outlook.mailRailCollapsed', false);
-              return;
-            }
-            void settings.write('outlook.mailRailCollapsed', next);
-          }}
-        />
-      )}
       <CardDialog cards={cards} />
     </div>
   );

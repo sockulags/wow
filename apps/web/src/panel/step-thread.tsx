@@ -8,11 +8,17 @@ import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { GateBar } from '@/workflows/gate-bar';
-import { gateOf, stepDisplayState, stepStateDotClass, stepStateLabels } from '@/workflows/model';
+import {
+  attemptLabel,
+  gateOf,
+  stepDisplayState,
+  stepStateDotClass,
+  stepStateLabels,
+} from '@/workflows/model';
 import { activeStep } from './model';
 
 // The live thread of a run's active step, next to the calendar or the run view (owner decisions
-// F-1, F-2): its conversation, the gate's Continue and Stop, and the composer for the step.
+// F-1, F-2): its conversation, the gate's Approve, Send back and Stop, and the composer for the step.
 export function RunStepThread({
   run,
   workflow,
@@ -36,6 +42,7 @@ export function RunStepThread({
     : undefined;
   const shownState = stepRun ? stepDisplayState(stepRun) : 'not_started';
   const gate = gateOf(run);
+  const attempt = attemptLabel(stepRun);
 
   return (
     <section
@@ -53,6 +60,7 @@ export function RunStepThread({
             Step {active.index + 1} of {run.steps.length}
           </span>
           {step && <span className="text-muted-foreground"> · {step.skillName}</span>}
+          {attempt && <span className="text-muted-foreground"> · {attempt}</span>}
         </span>
         <span className="shrink-0 text-2xs text-muted-foreground">
           {stepStateLabels[shownState]}
@@ -77,7 +85,7 @@ export function RunStepThread({
             title="This step has not started"
             description={
               gate
-                ? 'The run waits for you before this step. Continue starts it.'
+                ? 'The run waits for you before this step. Approve starts it.'
                 : 'Its thread appears here as soon as the step starts.'
             }
           />

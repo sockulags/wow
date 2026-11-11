@@ -12,8 +12,8 @@ release workflow will not publish a tag whose notes still say "pending".
 ## Machine
 
 - Windows 11, a normal (non-admin) user account.
-- Classic Outlook desktop with a mail profile that has meetings this week (at least one recurring
-  meeting and one with a Teams link) and some unread mail.
+- Classic Outlook desktop with a profile that has meetings this week (at least one recurring
+  meeting and one with a Teams link) and some unread messages in the Inbox.
 - `claude` and `codex` CLIs installed, on `PATH`, and logged in (`claude` and `codex` each answer
   a prompt in a terminal).
 - A scratch Git repository to use as the project folder. Nothing in it should matter.
@@ -29,17 +29,24 @@ version and the CI run it came from.
 - [ ] wow starts when the installer finishes; the window opens on the calendar.
 - [ ] `%USERPROFILE%\.wow` holds `wow.sqlite`, `server.json` and `desktop.log`. `desktop.log` has
       "server listening" and no error about `better-sqlite3`.
-- [ ] The "Set up providers" dialog lists `claude` and `codex` with their config folders.
-- [ ] Create both instances. Each test shows the logged-in account and version, or a readable
-      error.
+- [ ] Only the step "Connect an agent" shows, with no sidebar: Claude Code and Codex side by
+      side, each with the binary found on the `PATH`, a Test button, and "Start from a setup
+      file" below.
+- [ ] Test the agent you are not signed in to (or rename its binary for a moment): the card
+      says why in words and the step stays.
+- [ ] Test the other one: the step goes away, the Assistant opens and its first answer lists what
+      is set up and that a first run still needs a project and a workflow.
+- [ ] Settings → Providers lists the instance with its account and version. Add the second CLI
+      there, or with "Detect installed providers" in the palette.
 
 ## 2. Outlook
 
 - [ ] Week view shows this week's Outlook meetings at their times, each with a lock marker.
 - [ ] A recurring meeting appears once per occurrence.
 - [ ] A meeting with a Teams link shows "Join Teams meeting"; clicking it opens Teams.
-- [ ] The mail rail shows the unread count and the newest messages; clicking one opens it in
-      Outlook.
+- [ ] After the update that reads Outlook for meetings only, the calendar still loads this
+      week's meetings, the time grid takes the whole width, and nothing in wow shows the Inbox or
+      its unread messages.
 - [ ] Move a meeting in Outlook. Within `outlook.pollSeconds` (60 s by default) it moves in wow,
       without a restart.
 - [ ] Open a modal dialog in Outlook (for example File → Options) and press "Refresh Outlook". The
@@ -74,6 +81,12 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       one, and answering it continues the turn.
 - [ ] The turn ends with usage.
 - [ ] Type `$`: picking a skill inserts `$name`.
+- [ ] The assistant on Codex. With only the Codex instance connected and "Let the assistant run
+      on Codex" off (Settings → Assistant, the default), the assistant says it does not run on
+      Codex and why, and no codex turn starts. Turn the setting on and send the assistant a
+      message that asks it to run `Get-ChildItem env:` and to list the MCP servers it has: the
+      command shows no variable of the instance (no API key), and the only server is `wow`, none
+      from your own `config.toml`. Write down what codex printed.
 
 ## 5. Secrets
 
@@ -106,6 +119,78 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       icon.
 - [ ] Turn off `desktop.closeToTray`: closing the window quits wow.
 
-## 9. Uninstall
+## 9. Hosts, review and working copies
+
+The manual check from the review loop spec's "Ground truth"
+(`intents/2026-11-review-loop/spec.md`). It needs a project whose remote is on your GitHub
+Enterprise Server, with a plan under its `intents` folder whose units carry `Intent-Unit:` lines in
+their pull requests, a Jira site with an issue for one of those pull requests (its key in the pull
+request title or branch), and a Confluence page that the issue description links to. Use invented
+or throwaway content; nothing here writes to the hosts.
+
+The three steps the spec asks for:
+
+- [ ] **A followed plan shows unit status from GitHub Enterprise with a personal access token.**
+      Put a GitHub Enterprise personal access token in Settings → Trackers (API URL
+      `https://<host>/api/v3`), open the plan in Plans (Ctrl+5) and turn Follow on: units with
+      pull requests show Delivered or Claimed with a link, state and checks, the others Ready,
+      Waiting or Blocked, and "Last fetched" names the host. Write down the host's version from
+      Test connection.
+- [ ] **A Jira ticket and a Confluence page open beside a run.** With the Jira and Confluence
+      sites and personal access tokens in Settings → Trackers, start a run on the pull request's
+      branch. The Ticket tab shows key, summary, status, assignee, type and description with
+      Open on host; the Pages tab lists the linked page, and opening it shows its body in the
+      side panel next to the run, with no script run.
+- [ ] **A working copy is created and removed under a path with spaces.** Set `workspaces.root`
+      to a folder whose path has spaces (for example `C:\Users\<you>\wow work copies`). Turn
+      on "Own working copy" for a workflow and run it: the run header shows the working copy
+      under that folder, Explorer shows the folder, and the project folder is untouched. Let the
+      run end with nothing unpushed: the copy is removed. Run it again, leave a file uncommitted
+      and stop the run: the copy is kept and lists what is unpushed; "Remove working copy" asks
+      first and then removes it. Write down how long the first step took (it installs
+      dependencies in the fresh copy).
+
+Further checks against the same hosts:
+
+- [ ] Start a run in a project folder that is on a branch with a pull request: the Pull request
+      tab shows it with its checks, the failing check names and review comments.
+- [ ] Turn `hosts.polling` off: "Last fetched" stops moving; Refresh now moves it once.
+- [ ] Put a wrong token in: the plan names the host and points to the GitHub token setting; the
+      token appears nowhere in the view or in `desktop.log`.
+- [ ] If a GitLab site is available: with `trackers.gitlab.baseUrl` and a token, a plan of a
+      project on it shows unit status from merge requests, and Test connection shows the
+      version.
+- [ ] Optional: create an event trigger (Workflows → Triggers → New trigger, "Pull request
+      merged") and merge a followed pull request on the host: one run starts within
+      `hosts.pollSeconds`, and polling again starts no second one.
+
+## 10. Assistant
+
+The manual check from the app assistant spec's "Ground truth"
+(`intents/2026-11-app-assistant/spec.md`). It needs a GitLab you can make a personal access token
+on (gitlab.com or your own), a real Claude Code sign-in, and nothing secret in the conversation.
+
+- [ ] **Set a GitLab host through the assistant, fill the token in the field, and see the test
+      pass.** In Assistant (Ctrl+6) write "Our projects are on GitLab at <address>". A change row
+      "GitLab URL: … · Settings → Trackers" appears with Undo, then the GitLab token's field with
+      the guide's steps. Follow the link in the guide: write down whether it opens the token page
+      of your GitLab version, and which version that is. Create a token with `read_api`, paste it
+      in the field, Save: the card says "Set". Test connection: it passes and names your account.
+- [ ] **The token is nowhere else.** Search the conversation (Ctrl+F) for the first characters of
+      the token: no match. Search `%USERPROFILE%\.wow` with
+      `Select-String -Path "$env:USERPROFILE\.wow\*.log","$env:USERPROFILE\.wow\wow.sqlite" -Pattern "<token>" -SimpleMatch`:
+      no match.
+- [ ] Paste the token into the composer and press Enter: the message is held, with "Put it in
+      GitLab token" and "Send anyway". Press the cross; nothing was sent.
+- [ ] Ask the assistant to read `C:\Windows\win.ini` and to run `dir`: it says it cannot, and no
+      tool row reads a file or runs a command.
+- [ ] Ask it to start a run of a workflow: a card "Start <workflow> in <project>" waits for Yes.
+      Press No.
+- [ ] Settings → Advanced → Save setup to a file. Open the file: no token, no project folder, no
+      email; `trackers.gitlab.token` is listed under `toFillIn`.
+- [ ] Remove the assistant's provider instance in Settings → Providers (or sign it out and test
+      it): Assistant says so and shows "Connect an agent"; the calendar and chat still work.
+
+## 11. Uninstall
 
 - [ ] Uninstall from Settings → Apps. `%USERPROFILE%\.wow` stays (your data).

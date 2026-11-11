@@ -1,32 +1,29 @@
 import { useEffect, useRef } from 'react';
-import { useLayout, useRuntime, useSetting } from '@/app/runtime';
+import { useLayout, useRuntime } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
 import { FirstRunWizard } from './first-run-wizard';
 import { InstanceEditor } from './instance-editor';
 import { draftFromInstance, emptyDraft, testInstance } from './model';
 
-// Opens the first-run wizard once when the server has no provider instance (unless "Not now"
-// turned providers.offerSetup off), tests instances that were never tested, and renders whichever
-// provider dialog the settings page or a palette command asked for.
+// Tests instances that were never tested, and renders whichever provider dialog the settings
+// page or a palette command asked for. With no instance, the first-start gate (app/first-start)
+// shows the step "Connect an agent" instead of opening the wizard; the wizard stays one palette
+// command away ("Detect installed providers").
 export function ProviderDialogs() {
   const { connection, layout } = useRuntime();
   const dialog = useLayout((state) => state.providerDialog);
   const instances = useTopic('providerInstances');
-  const offerSetup = useSetting('providers.offerSetup');
-  const offered = useRef(false);
+  const tested = useRef(false);
 
   useEffect(() => {
-    if (offered.current || !connection || instances === undefined) return;
-    offered.current = true;
-    if (instances.length === 0 && offerSetup && layout.getState().providerDialog === undefined) {
-      layout.setState({ providerDialog: { type: 'wizard' } });
-    }
+    if (tested.current || !connection || instances === undefined) return;
+    tested.current = true;
     // An instance never tested says "Not tested" until someone presses Test; test it now
     // instead (audit E-03). The result arrives through the subscription.
     for (const instance of instances) {
       if (instance.status === 'unknown') void testInstance(connection, instance.id);
     }
-  }, [connection, instances, layout, offerSetup]);
+  }, [connection, instances]);
 
   const close = () => layout.setState({ providerDialog: undefined });
   if (!dialog) return null;

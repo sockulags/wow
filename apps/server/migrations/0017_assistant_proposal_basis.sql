@@ -1,0 +1,1 @@
+ALTER TABLE `assistant_proposals` ADD `basis` text;

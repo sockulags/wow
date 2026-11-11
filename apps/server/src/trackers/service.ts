@@ -9,6 +9,8 @@ import {
   type PublishProject,
   type ResolvedTrackerSetting,
   type TrackerPreview,
+  type GitLabProject,
+  type TrackerConnection,
   type TrackerTestResult,
   type TrackerService as TrackerKind,
 } from '@wow/contracts';
@@ -27,6 +29,7 @@ import {
 } from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import {
+  gitLabProjectOf,
   guessJiraKeys,
   readFolderGit,
   readHistoryTexts,
@@ -35,10 +38,13 @@ import {
 } from '../projects/git.js';
 import type { SettingsService } from '../settings/service.js';
 import { createGitHubIssue, type GitHubConfig } from './github.js';
+import type { GitLabConfig } from './gitlab.js';
 import { TrackerError, type NewIssue, type RequestOptions } from './http.js';
+import type { JiraSignIn } from '../hosts/jira.js';
+import type { ConfluenceSignIn } from '../hosts/confluence.js';
 import { createJiraIssue, type JiraConfig } from './jira.js';
 import { publishTarget, resolveTrackerSettings, trackerSuggestions } from './resolve.js';
-import { gitHubWhoAmI, jiraWhoAmI } from './whoami.js';
+import { confluenceWhoAmI, gitHubWhoAmI, gitLabWhoAmI, jiraWhoAmI } from './whoami.js';
 
 // The settings a sign-in needs; the project key or repository only matter when publishing.
 const signInKeys = new Set([
@@ -47,6 +53,11 @@ const signInKeys = new Set([
   'trackers.jira.token',
   'trackers.github.baseUrl',
   'trackers.github.token',
+  'trackers.gitlab.baseUrl',
+  'trackers.gitlab.token',
+  'trackers.confluence.baseUrl',
+  'trackers.confluence.email',
+  'trackers.confluence.token',
 ]);
 
 // Reads a project folder's git state; tests replace it.
@@ -68,9 +79,43 @@ export interface TrackerServiceDeps {
   readonly git?: GitReader;
 }
 
-type Configured<T> =
+export type Configured<T> =
   | { readonly config: T; readonly missing: readonly [] }
   | { readonly config: undefined; readonly missing: readonly string[] };
+
+export interface ProjectGitHubHost {
+  readonly github: Configured<GitHubConfig>;
+  // github.com or the Enterprise host; empty while the API URL is not set.
+  readonly name: string;
+  readonly branch: string | null;
+}
+
+export interface ProjectGitLabHost {
+  readonly gitlab: Configured<GitLabConfig>;
+  // The GitLab site's host.
+  readonly name: string;
+  readonly branch: string | null;
+}
+
+export interface ProjectConfluenceHost {
+  readonly confluence: Configured<ConfluenceSignIn>;
+  // The stored site, which links must be on to be read; empty while not set.
+  readonly baseUrl: string;
+  // The Confluence site's host; empty while the URL is not set.
+  readonly name: string;
+}
+
+export interface ProjectJiraHost {
+  readonly jira: Configured<JiraSignIn>;
+  // The Jira site's host; empty while the URL is not set.
+  readonly name: string;
+  // The project's Jira key, for finding ticket keys in titles and branch names. May be empty.
+  readonly projectKey: string;
+  // The branch the project folder is on, read only when it is needed.
+  readonly branch: () => Promise<string | null>;
+}
+
+const trimmed = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
 const serviceNames: Readonly<Record<TrackerKind, string>> = { jira: 'Jira', github: 'GitHub' };
 
@@ -164,11 +209,22 @@ export class TrackerService {
     return profile.success ? profile.data.address : null;
   }
 
+  // The GitLab project of the folder's primary remote, when that remote is on the GitLab site
+  // stored for the project (or as the default).
+  #gitlabProject(projectId: string | null, git: ProjectGit | null): GitLabProject | null {
+    const primary = git?.remotes.find((remote) => remote.name === git.primary);
+    const site = this.#deps.settings.resolve(
+      'trackers.gitlab.baseUrl',
+      projectId ? { projectId } : {},
+    ).value;
+    return gitLabProjectOf(primary, typeof site === 'string' ? site : '');
+  }
+
   #resolve(projectId: string | null, git: ProjectGit | null): ResolvedTrackerSetting[] {
     const primary = git?.remotes.find((remote) => remote.name === git.primary);
     return resolveTrackerSettings({
       resolve: (key) => this.#deps.settings.resolve(key, projectId ? { projectId } : {}),
-      github: primary?.github ?? null,
+      github: this.#gitlabProject(projectId, git) ? null : (primary?.github ?? null),
       outlookAddress: this.#outlookAddress(),
     });
   }
@@ -213,6 +269,7 @@ export class TrackerService {
     return {
       projectId,
       git,
+      gitlab: this.#gitlabProject(project.id, git),
       settings,
       suggestions: trackerSuggestions({
         settings,
@@ -220,6 +277,102 @@ export class TrackerService {
         jiraKeys: guessJiraKeys(git.branch ? [git.branch, ...texts] : texts),
       }),
     };
+  }
+
+  // The project's GitHub host as the poller reads it: the same settings a publish uses, the
+  // host's name and the branch the project folder is on. Without a token nothing is set up, and
+  // the folder's git is not asked.
+  //
+  // The poller sends the token without anyone pressing a button, so it goes only to a host the
+  // user chose: the API URL they stored, or the remote's host when it is the one they stored or
+  // when the token is the project's own. A folder's git remote alone can name any host, and a
+  // publish shows its target before the user confirms; a poll does not.
+  async githubHost(projectId: string): Promise<ProjectGitHubHost | undefined> {
+    const project = this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
+    if (!project) return undefined;
+    const tokenSetting = this.#deps.settings.resolve('trackers.github.token', { projectId });
+    const token = tokenSetting.value;
+    if (!SecretRef.safeParse(token).success) {
+      return {
+        github: { config: undefined, missing: ['trackers.github.token'] },
+        name: '',
+        branch: null,
+      };
+    }
+    const git = await this.#folderGit(project.id, project.cwd);
+    const values = new Map(this.#resolve(project.id, git).map((entry) => [entry.key, entry]));
+    const api = values.get('trackers.github.baseUrl');
+    const name = hostOf(String(api?.value ?? '')) ?? '';
+    const stored = this.#deps.settings.resolve('trackers.github.baseUrl', { projectId }).value;
+    const chosen =
+      api?.source !== 'gitRemote' ||
+      tokenSetting.source.startsWith('project:') ||
+      hostOf(String(stored)) === name;
+    if (!chosen) {
+      return {
+        github: { config: undefined, missing: ['trackers.github.baseUrl'] },
+        name,
+        branch: git.branch,
+      };
+    }
+    return { github: await this.#github(values), name, branch: git.branch };
+  }
+
+  // The project's GitLab site as the poller reads merge requests from it (review loop spec 34),
+  // or undefined when the project's remote is not on the stored GitLab site, so its host is
+  // GitHub. The site is always one the user stored, so the token goes only there.
+  async gitlabHost(projectId: string): Promise<ProjectGitLabHost | undefined> {
+    const project = this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
+    if (!project) return undefined;
+    const site = this.#deps.settings.resolve('trackers.gitlab.baseUrl', { projectId }).value;
+    if (typeof site !== 'string' || site === '') return undefined;
+    const git = await this.#folderGit(project.id, project.cwd);
+    const gitlab = this.#gitlabProject(project.id, git);
+    if (!gitlab) return undefined;
+    const token = await this.#token(
+      this.#deps.settings.resolve('trackers.gitlab.token', { projectId }).value,
+    );
+    return {
+      gitlab:
+        token === ''
+          ? { config: undefined, missing: ['trackers.gitlab.token'] }
+          : { config: { baseUrl: site, token, projectPath: gitlab.path }, missing: [] },
+      name: hostOf(site) ?? gitlab.host,
+      branch: git.branch,
+    };
+  }
+
+  // The project's Jira site as the poller reads tickets from it: the same sign-in a publish uses.
+  // The site is always one the user stored (a git remote never names it), so the token goes
+  // only there.
+  async jiraHost(projectId: string): Promise<ProjectJiraHost | undefined> {
+    const project = this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
+    if (!project) return undefined;
+    const values = new Map(this.#resolve(project.id, null).map((entry) => [entry.key, entry]));
+    const config = await this.#jiraConfig(values);
+    const missing = [
+      config.baseUrl === '' && 'trackers.jira.baseUrl',
+      config.authMode === 'cloud-basic' && config.email === '' && 'trackers.jira.email',
+      config.token === '' && 'trackers.jira.token',
+    ].filter((entry): entry is string => typeof entry === 'string');
+    return {
+      jira: missing.length === 0 ? { config, missing: [] } : { config: undefined, missing },
+      name: hostOf(config.baseUrl) ?? '',
+      projectKey: config.projectKey,
+      branch: async () => (await this.#folderGit(project.id, project.cwd)).branch,
+    };
+  }
+
+  // The project's Confluence site as the poller reads linked pages from it (review loop spec 35).
+  // The site is always one the user stored, and only links to it are read, so the token goes only
+  // there.
+  async confluenceHost(projectId: string): Promise<ProjectConfluenceHost | undefined> {
+    const project = this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
+    if (!project) return undefined;
+    const confluence = await this.#confluence(project.id);
+    const site = this.#deps.settings.resolve('trackers.confluence.baseUrl', { projectId }).value;
+    const baseUrl = typeof site === 'string' ? site : '';
+    return { confluence, baseUrl, name: hostOf(baseUrl) ?? '' };
   }
 
   // Whose settings apply to the item: see publishTarget.
@@ -293,21 +446,54 @@ export class TrackerService {
 
   // "Test connection": signs in with what applies to the project (or the defaults) and says as
   // whom. Failures are answers, not errors, so the page can show them next to the button.
-  async test(service: TrackerKind, projectId?: string): Promise<TrackerTestResult> {
+  async test(service: TrackerConnection, projectId?: string): Promise<TrackerTestResult> {
     const options = this.#options();
-    const values = await this.#context(projectId ?? null);
     const result = (
       ok: boolean,
       account: string | null,
       message: string,
       missing: string[] = [],
+      version: string | null = null,
     ) => ({
       service,
       ok,
       account,
+      version,
       message,
       missing,
     });
+    if (service === 'gitlab') {
+      const { config, missing } = await this.#gitlab(projectId ?? null);
+      if (!config) {
+        return result(false, null, `Fill in ${missing.map(labelOf).join(', ')} first.`, [
+          ...missing,
+        ]);
+      }
+      try {
+        const { account, version } = await gitLabWhoAmI(config, options);
+        const on = version ? ` on GitLab ${version}` : '';
+        return result(true, account, `Signed in as ${account}${on}.`, [], version);
+      } catch (error) {
+        if (error instanceof TrackerError) return result(false, null, error.message);
+        throw error;
+      }
+    }
+    if (service === 'confluence') {
+      const { config, missing } = await this.#confluence(projectId ?? null);
+      if (!config) {
+        return result(false, null, `Fill in ${missing.map(labelOf).join(', ')} first.`, [
+          ...missing,
+        ]);
+      }
+      try {
+        const account = await confluenceWhoAmI(config, options);
+        return result(true, account, `Signed in as ${account}.`);
+      } catch (error) {
+        if (error instanceof TrackerError) return result(false, null, error.message);
+        throw error;
+      }
+    }
+    const values = await this.#context(projectId ?? null);
     try {
       const { missing } =
         service === 'jira' ? await this.#jira(values) : await this.#github(values);
@@ -436,6 +622,43 @@ export class TrackerService {
       repo: text('trackers.github.repo'),
       labels: stringList(values.get('trackers.github.labels')?.value),
     };
+  }
+
+  // GitLab as Test connection signs in to it: the site and token, and the project's path when its
+  // remote is on that site, so the test also says whether the token may read the project.
+  async #gitlab(projectId: string | null): Promise<Configured<GitLabConfig>> {
+    const project = projectId ? this.#project(projectId) : undefined;
+    const git = project ? await this.#folderGit(project.id, project.cwd) : null;
+    const context = projectId ? { projectId } : {};
+    const site = this.#deps.settings.resolve('trackers.gitlab.baseUrl', context).value;
+    const baseUrl = typeof site === 'string' ? site : '';
+    const token = await this.#token(
+      this.#deps.settings.resolve('trackers.gitlab.token', context).value,
+    );
+    const missing = [
+      baseUrl === '' && 'trackers.gitlab.baseUrl',
+      token === '' && 'trackers.gitlab.token',
+    ].filter((entry): entry is string => typeof entry === 'string');
+    if (missing.length > 0) return { config: undefined, missing };
+    const projectPath = this.#gitlabProject(projectId, git)?.path ?? '';
+    return { config: { baseUrl, token, projectPath }, missing: [] };
+  }
+
+  async #confluence(projectId: string | null): Promise<Configured<ConfluenceSignIn>> {
+    const context = projectId ? { projectId } : {};
+    const read = (key: string) => this.#deps.settings.resolve(key, context).value;
+    const config: ConfluenceSignIn = {
+      baseUrl: trimmed(read('trackers.confluence.baseUrl')),
+      authMode: read('trackers.confluence.authMode') === 'cloud-basic' ? 'cloud-basic' : 'pat',
+      email: trimmed(read('trackers.confluence.email')),
+      token: await this.#token(read('trackers.confluence.token')),
+    };
+    const missing = [
+      config.baseUrl === '' && 'trackers.confluence.baseUrl',
+      config.authMode === 'cloud-basic' && config.email === '' && 'trackers.confluence.email',
+      config.token === '' && 'trackers.confluence.token',
+    ].filter((entry): entry is string => typeof entry === 'string');
+    return missing.length === 0 ? { config, missing: [] } : { config: undefined, missing };
   }
 
   async #jira(

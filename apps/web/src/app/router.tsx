@@ -7,6 +7,7 @@ import {
   redirect,
   type RouterHistory,
 } from '@tanstack/react-router';
+import { AssistantView } from '@/assistant/assistant-view';
 import { CalendarView } from '@/calendar/calendar-view';
 import { validateCalendarSearch } from '@/calendar/search';
 import { ChatHome, ChatLayout } from '@/chat/chat-view';
@@ -20,9 +21,13 @@ import {
   NewItemView,
   validateBacklogItemSearch,
 } from '@/backlog/backlog-view';
+import { validatePlanSearch } from '@/plans/model';
+import { PlansHome, PlansLayout, PlanView } from '@/plans/plans-view';
 import { NotFoundView } from '@/views/empty-views';
 import { EditWorkflowView, NewWorkflowView } from '@/workflows/builder';
+import { validateRunSearch } from '@/workflows/changes';
 import { RunView } from '@/workflows/run-view';
+import { TriggersTab } from '@/workflows/triggers-tab';
 import { WorkflowsHome, WorkflowsLayout } from '@/workflows/workflows-view';
 import { isSettingGroup, settingsByGroup } from './sections';
 import { Shell } from './shell';
@@ -107,12 +112,20 @@ const newWorkflowRoute = createRoute({
   },
 });
 
+const triggersRoute = createRoute({
+  getParentRoute: () => workflowsRoute,
+  path: '/triggers',
+  component: TriggersTab,
+});
+
 const workflowRunRoute = createRoute({
   getParentRoute: () => workflowsRoute,
   path: '/runs/$runId',
+  // `?tab=changes` opens the Changes tab, with `file` and `stepOnly`, so palette commands can.
+  validateSearch: validateRunSearch,
   component: function WorkflowRunRoute() {
     const { runId } = workflowRunRoute.useParams();
-    return <RunView key={runId} runId={runId} />;
+    return <RunView key={runId} runId={runId} search={workflowRunRoute.useSearch()} />;
   },
 });
 
@@ -122,6 +135,30 @@ const workflowRoute = createRoute({
   component: function WorkflowRoute() {
     const { workflowId } = workflowRoute.useParams();
     return <EditWorkflowView key={workflowId} workflowId={workflowId} />;
+  },
+});
+
+const plansRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/plans',
+  component: PlansLayout,
+});
+
+const plansIndexRoute = createRoute({
+  getParentRoute: () => plansRoute,
+  path: '/',
+  component: PlansHome,
+});
+
+const planRoute = createRoute({
+  getParentRoute: () => plansRoute,
+  path: '/$projectId/$intentId',
+  // `?unit=<key>` opens that unit's contract, so palette commands can.
+  validateSearch: validatePlanSearch,
+  component: function PlanRoute() {
+    const { projectId, intentId } = planRoute.useParams();
+    const { unit } = planRoute.useSearch();
+    return <PlanView projectId={projectId} intentId={intentId} openUnit={unit} />;
   },
 });
 
@@ -155,6 +192,12 @@ const backlogItemRoute = createRoute({
   },
 });
 
+const assistantRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/assistant',
+  component: AssistantView,
+});
+
 const settingsIndexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
@@ -186,11 +229,14 @@ const routeTree = rootRoute.addChildren([
   chatRoute.addChildren([chatIndexRoute, newThreadRoute, threadRoute]),
   workflowsRoute.addChildren([
     workflowsIndexRoute,
+    triggersRoute,
     newWorkflowRoute,
     workflowRunRoute,
     workflowRoute,
   ]),
+  plansRoute.addChildren([plansIndexRoute, planRoute]),
   backlogRoute.addChildren([backlogIndexRoute, newBacklogItemRoute, backlogItemRoute]),
+  assistantRoute,
   settingsIndexRoute,
   settingsProjectsRoute,
   settingsGroupRoute,

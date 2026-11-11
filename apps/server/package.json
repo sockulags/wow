@@ -1,6 +1,6 @@
 {
   "name": "@wow/server",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -12,6 +12,8 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@wow/agent-os": "workspace:*",
     "@wow/contracts": "workspace:*",
     "@wow/outlook-bridge": "workspace:*",
     "@wow/provider-claude": "workspace:*",
@@ -20,9 +22,11 @@
     "@wow/skills": "workspace:*",
     "@wow/workflow-engine": "workspace:*",
     "better-sqlite3": "^13.0.3",
+    "chokidar": "^5.0.0",
     "drizzle-orm": "^0.45.4",
     "fast-glob": "^3.3.3",
     "ws": "^8.22.1",
+    "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

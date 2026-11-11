@@ -1,12 +1,30 @@
-import type { RunEffect, ServerCommand, TurnState, WorkflowRun } from '@wow/contracts';
+import {
+  runFolder,
+  type FileHash,
+  type RunEffect,
+  type ServerCommand,
+  type TurnState,
+  type WorkflowRun,
+} from '@wow/contracts';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { ruleAsksAbout } from '@wow/workflow-engine';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
 import { projects, threadItems, threads, turns, workflowRuns, workflows } from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import type { ArtifactDetector } from './artifacts.js';
+import type { RunBase } from './changes.js';
+
+// Reads the run's folder through git for the Changes tab; both answer undefined when git cannot
+// say (not a repository, not installed, timed out).
+export interface RunChanges {
+  base(folder: string): Promise<RunBase | undefined>;
+  // The commit the folder is on, or undefined when it has none or git cannot say.
+  head?(folder: string): Promise<string | undefined>;
+  snapshot(folder: string, baseSha: string): Promise<FileHash[] | undefined>;
+}
 
 export type RunNotification = Extract<RunEffect, { type: 'notify' }>;
 export type RunNotificationListener = (notification: RunNotification) => void;
@@ -15,6 +33,10 @@ export interface RunnerDeps {
   readonly db: Db;
   readonly engine: Engine;
   readonly detectArtifacts: ArtifactDetector;
+  readonly changes: RunChanges;
+  // Resolves when the run's folder is there to work in, or with the reason it could not be made
+  // (the run has failed by then). Runs in the project folder resolve at once.
+  readonly prepare?: (runId: string) => Promise<string | undefined>;
   readonly logger: Logger;
 }
 
@@ -91,7 +113,7 @@ export class WorkflowRunner {
     }
   }
 
-  // Looks for every started step's expected artifacts in the project folder and stores them.
+  // Looks for every started step's expected artifacts in the run's folder and stores them.
   async detectArtifacts(runId: string): Promise<void> {
     const { db } = this.#deps;
     const run = this.#run(runId);
@@ -104,7 +126,10 @@ export class WorkflowRunner {
       if (stepRun.state === 'not_started') continue;
       const step = workflow.steps.find((entry) => entry.id === stepRun.stepId);
       if (!step) continue;
-      const paths = await this.#deps.detectArtifacts(project.cwd, step.expectedArtifacts);
+      const paths = await this.#deps.detectArtifacts(
+        runFolder(run, project.cwd),
+        step.expectedArtifacts,
+      );
       found.push({ stepId: step.id, paths });
     }
     if (found.length === 0) return;
@@ -132,9 +157,12 @@ export class WorkflowRunner {
     void tracked.finally(() => this.#pending.delete(tracked));
   }
 
-  #perform(effect: RunEffect): void {
+  async #perform(effect: RunEffect): Promise<void> {
     switch (effect.type) {
       case 'startStep':
+        // No prompt is sent while the run's own working copy is not there (review loop spec 38).
+        if ((await this.#deps.prepare?.(effect.runId)) !== undefined) return;
+        await this.#recordBase(effect.runId);
         this.#startStep(effect);
         return;
       case 'interrupt':
@@ -148,9 +176,36 @@ export class WorkflowRunner {
         for (const listener of this.#listeners) listener(effect);
         return;
       case 'setThreadState':
-        // Stored by the transition itself; nothing to perform.
+      case 'sendBack':
+        // Stored by the transition itself (a send back starts its turn in the same commit);
+        // nothing to perform.
         return;
     }
+  }
+
+  // Before the run's first step does anything, the commit its folder is on is stored as the
+  // run's base (review loop spec 10). A folder git cannot read leaves the run without one.
+  async #recordBase(runId: string): Promise<void> {
+    const run = this.#run(runId);
+    if (!run || run.baseSha) return;
+    const first = run.steps.every(
+      (step, index) => index === run.currentStep || step.state === 'not_started',
+    );
+    if (!first || run.steps[run.currentStep]?.endedAt) return;
+    const project = this.#project(run.projectId);
+    if (!project) return;
+    const folder = runFolder(run, project.cwd);
+    const base = await this.#deps.changes.base(folder).catch((error: unknown) => {
+      this.#deps.logger.warn('reading the run base failed', error);
+      return undefined;
+    });
+    if (!base) return;
+    this.#dispatch(`workflow:${runId}:base`, {
+      type: 'workflowRun.baseRecorded',
+      runId,
+      baseSha: base.baseSha,
+      files: base.files,
+    });
   }
 
   #startStep(effect: Extract<RunEffect, { type: 'startStep' }>): void {
@@ -200,6 +255,8 @@ export class WorkflowRunner {
     const run = this.#run(runId);
     const stepRun = run?.steps.find((entry) => entry.stepId === stepId);
     // A stopped run, or a later turn the user sent in the step's thread: not the step's outcome.
+    // A send-back turn is the step's outcome again: it starts in the commit that sets the step
+    // running, and no other turn can run in the thread beside it.
     if (!run || stepRun?.state !== 'running' || stepRun.threadId !== threadId) return;
     const commandId = `workflow:${turn.id}:ended`;
     if (turn.state !== 'completed') {
@@ -211,20 +268,56 @@ export class WorkflowRunner {
           turn.state === 'interrupted'
             ? 'The turn was interrupted'
             : (this.#errorOf(turn.id) ?? 'The turn failed'),
+        // An interrupted turn is the user stopping the step: no rule is followed for it.
+        ...(turn.state === 'interrupted' ? { stopped: true } : {}),
       });
       return;
     }
     const workflow = db.select().from(workflows).where(eq(workflows.id, run.workflowId)).get();
-    const project = db.select().from(projects).where(eq(projects.id, run.projectId)).get();
+    const project = this.#project(run.projectId);
     const step = workflow?.steps.find((entry) => entry.id === stepId);
+    const folder = project ? runFolder(run, project.cwd) : undefined;
     const artifactsFound =
-      step && project ? await this.#deps.detectArtifacts(project.cwd, step.expectedArtifacts) : [];
+      step && folder !== undefined
+        ? await this.#deps.detectArtifacts(folder, step.expectedArtifacts)
+        : [];
+    // The facts a gate's condition or a rule of the step asks about are read now, at the step's
+    // end. Which globs found nothing, when every expected artifact is asked for:
+    const asksArtifacts =
+      step !== undefined &&
+      (step.gateAfterCondition?.includes('artifacts') === true || ruleAsksAbout(step, 'artifacts'));
+    const asksChecks =
+      step !== undefined &&
+      (step.gateAfterCondition?.includes('checks') === true || ruleAsksAbout(step, 'checks'));
+    const artifactsMissing: string[] = [];
+    if (step && folder !== undefined && asksArtifacts) {
+      for (const glob of step.expectedArtifacts) {
+        if ((await this.#deps.detectArtifacts(folder, [glob])).length === 0) {
+          artifactsMissing.push(glob);
+        }
+      }
+    }
+    const headSha =
+      folder !== undefined && asksChecks
+        ? await this.#deps.changes.head?.(folder).catch(() => undefined)
+        : undefined;
+    const { baseSha } = run;
+    const fileHashes =
+      folder !== undefined && baseSha
+        ? await this.#deps.changes.snapshot(folder, baseSha).catch((error: unknown) => {
+            this.#deps.logger.warn('reading what the step changed failed', error);
+            return undefined;
+          })
+        : undefined;
     this.#dispatch(commandId, {
       type: 'workflowRun.stepCompleted',
       runId,
       stepId,
       finalMessage: this.#lastText(turn.id, 'assistant_text', 'text') ?? '',
       artifactsFound,
+      ...(asksArtifacts ? { artifactsMissing } : {}),
+      ...(fileHashes ? { fileHashes } : {}),
+      ...(headSha === undefined ? {} : { headSha }),
     });
   }
 
@@ -244,6 +337,10 @@ export class WorkflowRunner {
     if (typeof payload !== 'object' || payload === null) return undefined;
     const value: unknown = (payload as Record<string, unknown>)[field];
     return typeof value === 'string' ? value : undefined;
+  }
+
+  #project(projectId: string) {
+    return this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
   }
 
   #run(runId: string): WorkflowRun | undefined {

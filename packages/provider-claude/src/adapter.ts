@@ -34,8 +34,14 @@ import {
 } from './sdk.js';
 
 type StartTurn = Extract<ProviderCommand, { type: 'startTurn' }>;
+type Toolset = NonNullable<StartTurn['toolset']>;
 type Listener = (event: ProviderEvent) => void;
 type PermissionOptions = Parameters<CanUseTool>[2];
+
+// The mode of a turn that only has the app's tools: what is not allowed is denied, never asked.
+const toolsOnlyMode = 'dontAsk';
+// How Claude Code names the tools of an MCP server.
+const toolPrefix = (toolset: Toolset) => `mcp__${toolset.name}__`;
 
 // "default" leaves the effort to Claude Code (the model's default or the user's /effort).
 const defaultEffort = 'default';
@@ -84,6 +90,10 @@ interface Session {
   model: string;
   effort: string;
   permissionMode: string;
+  // Started with a toolset: only the app's tools, for the life of the session.
+  readonly toolsOnly: boolean;
+  // The instruction text the session was opened with; a turn with another text reopens it.
+  readonly instructions: string | undefined;
   providerSessionId: string | undefined;
   turnActive: boolean;
   interrupted: boolean;
@@ -190,6 +200,9 @@ export class ClaudeAdapter implements ProviderAdapter {
       case 'answerQuestion':
         this.#settle(this.#questions, command.questionId, command.answer, 'question');
         return { ok: true };
+      case 'closeThread':
+        this.#close(command.threadId);
+        return { ok: true };
       case 'setModel': {
         const session = this.#sessions.get(command.threadId);
         if (session?.query && session.model !== command.model) {
@@ -202,7 +215,7 @@ export class ClaudeAdapter implements ProviderAdapter {
         const mode = command.permissionMode;
         if (!isPermissionMode(mode)) throw new Error(`Unknown Claude permission mode "${mode}"`);
         const session = this.#sessions.get(command.threadId);
-        if (session?.query && session.permissionMode !== mode) {
+        if (session?.query && !session.toolsOnly && session.permissionMode !== mode) {
           await session.query.setPermissionMode(mode);
           session.permissionMode = mode;
         }
@@ -230,6 +243,16 @@ export class ClaudeAdapter implements ProviderAdapter {
     for (const listener of this.#listeners) listener(event);
   }
 
+  // Ends the thread's live session without a turn event; the next turn opens a new one.
+  #close(threadId: string): void {
+    const session = this.#sessions.get(threadId);
+    if (!session) return;
+    this.#sessions.delete(threadId);
+    this.#cancelPending(threadId);
+    session.input.end();
+    session.query?.close();
+  }
+
   #options(env: Record<string, string>, stderr: string[]): Options {
     const options: Options = {
       env: {
@@ -250,7 +273,36 @@ export class ClaudeAdapter implements ProviderAdapter {
     return options;
   }
 
-  async #startTurn(command: StartTurn): Promise<void> {
+  // What a turn with a toolset changes (app assistant spec 2): the agent gets the app's MCP
+  // server and nothing else. No built-in tool, so no file, shell or network tool; no settings of
+  // the user or a project, so none of their permission rules, hooks, plugins, skills, MCP servers
+  // or CLAUDE.md; no launch arguments, which could bring any of those back.
+  #toolsOnly(options: Options, toolset: Toolset, instructions: string | undefined): void {
+    options.settingSources = [];
+    options.extraArgs = {};
+    options.tools = [];
+    options.mcpServers = {
+      [toolset.name]: {
+        type: 'http',
+        url: toolset.url,
+        headers: { Authorization: `Bearer ${toolset.token}` },
+      },
+    };
+    options.strictMcpConfig = true;
+    options.allowedTools = [`${toolPrefix(toolset)}*`];
+    options.permissionMode = toolsOnlyMode;
+    // Should Claude Code ask all the same, the answer is no for anything but the app's tools.
+    options.canUseTool = (toolName, input) =>
+      Promise.resolve(
+        toolName.startsWith(toolPrefix(toolset))
+          ? { behavior: 'allow', updatedInput: input }
+          : { behavior: 'deny', message: `This conversation only has the ${toolset.name} tools.` },
+      );
+    if (instructions !== undefined) options.systemPrompt = instructions;
+  }
+
+  async #startTurn(input: StartTurn): Promise<void> {
+    const command: StartTurn = input.toolset ? { ...input, permissionMode: toolsOnlyMode } : input;
     if (command.effort !== defaultEffort && !isEffortLevel(command.effort)) {
       throw new Error(`Unknown Claude effort "${command.effort}"`);
     }
@@ -260,7 +312,18 @@ export class ClaudeAdapter implements ProviderAdapter {
     let session = this.#sessions.get(command.threadId);
     if (session?.turnActive)
       throw new Error(`Thread ${command.threadId} already has a running turn`);
-    if (session?.query) {
+    if (session && session.toolsOnly !== (command.toolset !== undefined)) {
+      throw new Error(
+        `Thread ${command.threadId} was started ${session.toolsOnly ? 'with' : 'without'} the app's tools only and cannot change that`,
+      );
+    }
+    // The instruction text is fixed when Claude Code starts, so a changed text needs a new
+    // process. It goes on with the same conversation.
+    if (session?.toolsOnly && session.instructions !== command.instructions) {
+      const resumeId = command.resumeId ?? session.providerSessionId;
+      this.#close(command.threadId);
+      session = await this.#open({ ...command, ...(resumeId ? { resumeId } : {}) });
+    } else if (session?.query) {
       const query = session.query;
       if (session.model !== command.model) await query.setModel(command.model);
       if (session.permissionMode !== command.permissionMode)
@@ -290,6 +353,8 @@ export class ClaudeAdapter implements ProviderAdapter {
       model: command.model,
       effort: command.effort,
       permissionMode: command.permissionMode,
+      toolsOnly: command.toolset !== undefined,
+      instructions: command.toolset ? command.instructions : undefined,
       providerSessionId: command.resumeId,
       turnActive: false,
       interrupted: false,
@@ -315,6 +380,7 @@ export class ClaudeAdapter implements ProviderAdapter {
           options.allowDangerouslySkipPermissions = true;
       }
       if (command.resumeId) options.resume = command.resumeId;
+      if (command.toolset) this.#toolsOnly(options, command.toolset, command.instructions);
       session.query = this.#query({ prompt: session.input, options });
     } catch (error) {
       this.#sessions.delete(command.threadId);
@@ -332,9 +398,11 @@ export class ClaudeAdapter implements ProviderAdapter {
     } catch (error) {
       failure = describeError(error);
     } finally {
-      if (this.#sessions.get(session.threadId) === session) this.#sessions.delete(session.threadId);
+      // A session that was closed has given its thread up; a newer one may hold it by now.
+      const current = this.#sessions.get(session.threadId) === session;
+      if (current) this.#sessions.delete(session.threadId);
       session.input.end();
-      this.#cancelPending(session.threadId);
+      if (current) this.#cancelPending(session.threadId);
       if (session.turnActive) {
         session.turnActive = false;
         if (session.interrupted) {

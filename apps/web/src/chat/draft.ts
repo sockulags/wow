@@ -6,6 +6,8 @@ export interface DraftState {
   readonly providerInstanceId: string | undefined;
   readonly projectId: string | undefined;
   readonly cwd: string | undefined;
+  // The first message's text, put in the composer when the draft opens.
+  readonly text?: string | undefined;
 }
 
 export type DraftStore = StoreApi<DraftState>;

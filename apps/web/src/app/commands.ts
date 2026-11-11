@@ -4,6 +4,7 @@ import type { useNavigate } from '@tanstack/react-router';
 import type { DraftStore } from '@/chat/draft';
 import type { LayoutStore } from './runtime';
 import type { UpdatesClient } from './updates';
+import { toggleDiagramSource } from '@/components/mermaid';
 import { toggleContextPanel, toggleContextPanelFocus } from '@/panel/panel-state';
 import { sections, settingGroupTitles, settingsByGroup } from './sections';
 
@@ -16,7 +17,9 @@ export type CommandGroup =
   | 'Threads'
   | 'Chat'
   | 'Workflows'
+  | 'Plans'
   | 'Backlog'
+  | 'Assistant'
   | 'Navigation'
   | 'Settings'
   | 'Actions';
@@ -113,6 +116,13 @@ export function buildCommands(): readonly AppCommand[] {
         const current = settingValue(settings.getState().values, 'appearance.theme');
         void settings.write('appearance.theme', current === 'dark' ? 'light' : 'dark');
       },
+    },
+    {
+      id: 'markdown.toggleDiagramSource',
+      title: 'Toggle diagram source',
+      group: 'Actions',
+      keywords: ['mermaid', 'chart', 'markdown', 'code'],
+      run: toggleDiagramSource,
     },
   ];
 

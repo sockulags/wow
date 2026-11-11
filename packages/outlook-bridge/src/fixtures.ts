@@ -35,16 +35,6 @@ const FixtureAppointment = z
   );
 export type FixtureAppointment = z.infer<typeof FixtureAppointment>;
 
-const FixtureMessage = z.object({
-  entryId: z.string().min(1),
-  folder: z.string().min(1),
-  from: z.string(),
-  subject: z.string(),
-  minutesAgo: z.number().int().nonnegative(),
-  snippet: z.string(),
-});
-export type FixtureMessage = z.infer<typeof FixtureMessage>;
-
 // What the mock answers to `profile`, in the bridge's own shape. Without a profile.json it says
 // nothing, like an Outlook whose work hours were never set.
 export const emptyProfile: ProfileResult = {
@@ -56,7 +46,6 @@ export const emptyProfile: ProfileResult = {
 
 export const OutlookFixtures = z.object({
   appointments: z.array(FixtureAppointment),
-  messages: z.array(FixtureMessage),
   profile: ProfileResult.default(emptyProfile),
 });
 export type OutlookFixtures = z.infer<typeof OutlookFixtures>;
@@ -70,14 +59,12 @@ export async function loadFixtures(dir: string = defaultFixturesDir): Promise<Ou
   const calendar = z
     .object({ appointments: z.array(z.unknown()) })
     .parse(await read('calendar.json'));
-  const mail = z.object({ messages: z.array(z.unknown()) }).parse(await read('mail.json'));
   const profile = await read('profile.json').catch((error: unknown) => {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
   });
   return OutlookFixtures.parse({
     appointments: calendar.appointments,
-    messages: mail.messages,
     profile,
   });
 }

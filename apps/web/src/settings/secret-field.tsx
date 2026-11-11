@@ -1,5 +1,5 @@
 import { SecretRef } from '@wow/contracts';
-import { dispatch } from '@wow/client-runtime';
+import { dispatch, type Connection, type SettingsStore } from '@wow/client-runtime';
 import { useState } from 'react';
 import { useRuntime } from '@/app/runtime';
 import { errorMessage } from '@/chat/data';
@@ -12,6 +12,33 @@ import { Input } from '@/components/ui/input';
 export const settingSecretName = (key: string, projectId?: string) =>
   projectId ? `setting:project:${projectId}:${key}` : `setting:${key}`;
 
+// Puts the value in the secret store and its reference in the setting, the shared one or the
+// project's own. The value goes nowhere else.
+export async function storeSecretSetting(
+  { connection, settings }: { connection: Connection; settings: SettingsStore },
+  settingKey: string,
+  projectId: string | undefined,
+  value: string,
+): Promise<void> {
+  const ref = SecretRef.parse(
+    await connection.request('secrets.set', {
+      name: settingSecretName(settingKey, projectId),
+      value,
+    }),
+  );
+  if (projectId) {
+    await dispatch(connection, {
+      type: 'setting.set',
+      key: settingKey,
+      scope: `project:${projectId}`,
+      value: ref,
+    });
+  } else {
+    const result = await settings.write(settingKey, ref);
+    if (!result.ok) throw new Error(result.issues.join('; '));
+  }
+}
+
 // A setting marked `secret` stores only a reference (architecture "Secrets"): the value goes to
 // the secret store with `secrets.set` and is never sent back, so the field only says whether one
 // is stored. Clearing resets the setting and deletes the stored value.
@@ -22,6 +49,7 @@ export function SecretField({
   value,
   describedBy,
   projectId,
+  storedLabel = 'Saved',
 }: {
   id: string;
   label: string;
@@ -30,6 +58,8 @@ export function SecretField({
   describedBy?: string | undefined;
   // Stores the project's own value (scope `project:<id>`) instead of the shared one.
   projectId?: string | undefined;
+  // What the status line says once a value is stored.
+  storedLabel?: string;
 }) {
   const { connection, settings } = useRuntime();
   const [text, setText] = useState('');
@@ -53,23 +83,7 @@ export function SecretField({
   const save = () =>
     run(async () => {
       if (!connection) return;
-      const ref = SecretRef.parse(
-        await connection.request('secrets.set', {
-          name: settingSecretName(settingKey, projectId),
-          value: text,
-        }),
-      );
-      if (projectId) {
-        await dispatch(connection, {
-          type: 'setting.set',
-          key: settingKey,
-          scope: `project:${projectId}`,
-          value: ref,
-        });
-      } else {
-        const result = await settings.write(settingKey, ref);
-        if (!result.ok) throw new Error(result.issues.join('; '));
-      }
+      await storeSecretSetting({ connection, settings }, settingKey, projectId, text);
       setText('');
     });
 
@@ -135,7 +149,7 @@ export function SecretField({
         />
       </div>
       <p data-testid={`${id}-status`} className="text-xs text-muted-foreground">
-        {stored ? 'Saved' : 'Not set'}
+        {stored ? storedLabel : 'Not set'}
         {!connection && '. Connect to the wow server to save one.'}
       </p>
       {error && (

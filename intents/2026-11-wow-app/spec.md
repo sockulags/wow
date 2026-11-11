@@ -1,7 +1,7 @@
 ---
 intent: 2026-11-wow-app
-rev: 1
-built_on: intent@1
+rev: 2
+built_on: intent@2
 status: accepted
 ---
 
@@ -9,8 +9,8 @@ status: accepted
 
 ## Summary
 
-You open one window in the morning. On the left is the week, with your Outlook meetings, a strip
-of unread mail, and the cards you put there yourself. Some cards carry a workflow: at the card's
+You open one window in the morning. On the left is the week, with your Outlook meetings and the
+cards you put there yourself. Some cards carry a workflow: at the card's
 time the app starts the first step as an agent thread, and the card turns yellow when the agent
 needs your answer. On the right is the chat with that thread, where you answer, approve commands,
 pick the model, and continue to the next step. A workflow is a list of skills you built in the
@@ -30,9 +30,9 @@ to Outlook, Jira or GitHub unless you press a button that says so.
 3. Given Outlook is not running or the bridge fails, when the calendar is shown, then the last
    cached items are shown with a visible "Outlook unavailable since <time>" banner and the rest of
    the app keeps working.
-4. Given the mail rail is enabled, when there is unread mail in the configured folders, then the
-   rail shows sender, subject, received time and a count, newest first, and clicking an item opens
-   it in Outlook.
+4. Given Outlook holds unread mail, when the calendar is shown, then no mail is shown anywhere in
+   the app, the calendar uses the width the mail rail took, and nothing about mail is asked of
+   Outlook, stored or offered as a setting. (Revision 1 showed unread mail in a rail here.)
 5. Given the day or week view, when the user creates a card by clicking or dragging a time range,
    then a local card is stored with title, start, duration, optional project, optional backlog item,
    optional workflow, and it never appears in Outlook.
@@ -140,12 +140,24 @@ to Outlook, Jira or GitHub unless you press a button that says so.
     version with the same `~/.wow` data. Updates are on by default and can be turned off in
     settings; "Check for updates" in the palette checks now.
 
+## Interface
+
+The screens of revision 1 were built before specs had this section; they are as
+`docs/user-guide.md` describes them. This revision changes one.
+
+- Owner, calendar day and week views. Decided: (delegated) the mail rail and its collapse control
+  are removed and the time grid takes their width; the Outlook banner and meeting details stay as
+  they are. Rejected: keeping the rail behind a setting that is off by default (the owner sees no
+  purpose in mail here, and a hidden feature still has to be kept working). Sketch: none; the
+  change removes a region.
+
 ## Boundaries and non-goals
 
 - Outlook is read-only. Local cards never leave the app.
-- No worktrees, diffs, terminal, checkpoints, side chats or browser panel in this version. The
-  data model must not prevent them (a thread has a `cwd` and an optional `branch`).
-- No tracker polling after publishing.
+- No mail. Outlook is read for meetings only.
+- No terminal, checkpoints, side chats or browser panel. Working copies, the diff of a run and
+  reading back from the hosts are specified by `2026-11-review-loop`, not here.
+- Publishing a backlog item reads nothing back from the tracker.
 - One user, one machine, local only. No auth beyond the local WebSocket token.
 - The server never runs a command declared by a repository on its own; agents do that inside
   their own permission model.
@@ -211,3 +223,7 @@ to Outlook, Jira or GitHub unless you press a button that says so.
 - 2026-11-02 (U17): the update state lives in the desktop main process and reaches the web app
   through the preload bridge, not the server: only the desktop can act on it. "Restart to update"
   says so when a turn or workflow run is running, and the user decides (plan U17 open risk).
+- rev 2 (2026-11-10): unread mail removed (behavior 4 now says no mail is shown or read), after the
+  intent's revision 2. The boundaries no longer rule out working copies, diffs and reading from
+  hosts, which `2026-11-review-loop` specifies. An Interface section is added. Taken by the agent on
+  the owner's instruction to carry on while he was away; open to change in review.

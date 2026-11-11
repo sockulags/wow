@@ -1,23 +1,33 @@
-import { SettingGroup, settingsRegistry, type SettingDefinition } from '@wow/contracts';
+import {
+  SettingGroup,
+  settingGroupTitles,
+  settingsRegistry,
+  type SettingDefinition,
+} from '@wow/contracts';
 import {
   CalendarDaysIcon,
   ListTodoIcon,
+  MapIcon,
   MessagesSquareIcon,
   SettingsIcon,
+  SparklesIcon,
   WorkflowIcon,
   type LucideIcon,
 } from 'lucide-react';
 
 export interface Section {
-  readonly id: 'calendar' | 'chat' | 'workflows' | 'backlog' | 'settings';
+  readonly id: 'calendar' | 'chat' | 'workflows' | 'plans' | 'backlog' | 'assistant' | 'settings';
   readonly title: string;
-  readonly path: '/calendar' | '/chat' | '/workflows' | '/backlog' | '/settings';
+  readonly path:
+    '/calendar' | '/chat' | '/workflows' | '/plans' | '/backlog' | '/assistant' | '/settings';
   readonly icon: LucideIcon;
   readonly keybinding:
     | 'keybindings.goCalendar'
     | 'keybindings.goChat'
     | 'keybindings.goWorkflows'
+    | 'keybindings.goPlans'
     | 'keybindings.goBacklog'
+    | 'keybindings.goAssistant'
     | 'keybindings.goSettings';
 }
 
@@ -45,11 +55,25 @@ export const sections: readonly Section[] = [
     keybinding: 'keybindings.goWorkflows',
   },
   {
+    id: 'plans',
+    title: 'Plans',
+    path: '/plans',
+    icon: MapIcon,
+    keybinding: 'keybindings.goPlans',
+  },
+  {
     id: 'backlog',
     title: 'Backlog',
     path: '/backlog',
     icon: ListTodoIcon,
     keybinding: 'keybindings.goBacklog',
+  },
+  {
+    id: 'assistant',
+    title: 'Assistant',
+    path: '/assistant',
+    icon: SparklesIcon,
+    keybinding: 'keybindings.goAssistant',
   },
   {
     id: 'settings',
@@ -60,21 +84,7 @@ export const sections: readonly Section[] = [
   },
 ];
 
-export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
-  providers: 'Providers',
-  chat: 'Chat',
-  calendar: 'Calendar',
-  outlook: 'Outlook',
-  scheduler: 'Scheduler',
-  workflows: 'Workflows',
-  skills: 'Skills',
-  trackers: 'Trackers',
-  appearance: 'Appearance',
-  keybindings: 'Keybindings',
-  desktop: 'Desktop',
-  updates: 'Updates',
-  advanced: 'Advanced',
-};
+export { settingGroupTitles };
 
 export type SettingEntry = readonly [key: string, definition: SettingDefinition];
 
