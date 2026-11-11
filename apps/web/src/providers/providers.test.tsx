@@ -8,11 +8,12 @@ import {
 } from '@wow/client-runtime';
 import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand';
 import { firstStartStore } from '@/app/first-start';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
+import { setupStore } from '@/settings/setup';
 import { renderApp } from '@/test/render';
 import { connectCommands } from './commands';
 import { connectStore } from './connect-step';
@@ -220,6 +221,7 @@ describe('first start', () => {
       { providerInstances: initial },
     );
   beforeEach(() => firstStartStore.setState({ up: false, greet: false }));
+  afterEach(() => vi.restoreAllMocks());
 
   it('shows only "Connect an agent", with the binary found, Test and the error in words @app-assistant-25', async () => {
     const user = userEvent.setup();
@@ -311,6 +313,49 @@ describe('first start', () => {
       method: 'provider.test',
       params: { providerInstanceId: 'claude-work' },
     });
+  });
+
+  it('opens the setup file picker of the step in the Assistant view from the palette, and keeps the file', async () => {
+    const user = userEvent.setup();
+    const picked = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {});
+    const server = fakeServer(
+      (method) => {
+        if (method === 'provider.detect') return [];
+        if (method === 'assistant.open') return { thread: null, problem: null };
+        if (method === 'setup.preview') {
+          return {
+            outcome: 'ready',
+            preview: {
+              added: [{ what: 'Interval (Hosts)', from: '60 (default)', to: '600' }],
+              replaced: [],
+              marked: [],
+              toFillIn: [],
+              warnings: [],
+            },
+          };
+        }
+        return [];
+      },
+      { providerInstances: [] },
+    );
+    const { router } = await renderApp('/assistant', runtimeFor(server.connection));
+    const step = await screen.findByRole('heading', { name: 'Connect an agent' });
+    await user.keyboard('{Control>}k{/Control}');
+    const palette = await screen.findByRole('dialog');
+    await user.type(within(palette).getByRole('combobox'), 'start from a setup file');
+    await user.keyboard('{Enter}');
+    expect(router.state.location.pathname).toBe('/assistant');
+    expect(picked).toHaveBeenCalledOnce();
+    const input = screen.getByLabelText('Setup file to start from');
+    expect(picked.mock.contexts[0]).toBe(input);
+    expect(step.isConnected).toBe(true);
+    await user.upload(input, new File(['version: 1\n'], 'team.yaml', { type: 'application/yaml' }));
+    expect(await screen.findByRole('dialog', { name: 'Start from team.yaml' })).toBeTruthy();
+    expect(server.requests).toContainEqual({
+      method: 'setup.preview',
+      params: { text: 'version: 1\n' },
+    });
+    setupStore.setState({ draft: undefined, pickWanted: false });
   });
 
   it('offers "Connect Claude Code" and "Connect Codex" only while the step is on screen', () => {

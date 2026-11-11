@@ -1981,7 +1981,10 @@ input; its text goes to `setup.preview`), the preview dialog with "Read before y
 warnings) first, the lists Added, Replaced (a line with `full` opens "Show all of it"), Marked
 and To fill in afterwards and Apply, or the problems with their lines, and a row per
 applied file with Undo or "Undone". The palette has "Save setup to a file", "Start from a setup
-file" (opens Settings → Advanced and its file picker, through `setupStore.pickWanted`) and "Undo
+file" (through `setupStore.pickWanted`: while a "Connect an agent" step is on screen, at first
+start or in the Assistant view, that step owns the picker and the palette stays where it is,
+counted in `setupStore.stepPickers`; otherwise it opens Settings → Advanced and its picker) and
+"Undo
 setup from <name>" for every applied file (the newest before typing). No keybinding: these are
 rare.
 

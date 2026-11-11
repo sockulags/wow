@@ -172,7 +172,13 @@ export function ConnectAgentStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wanted]);
 
-  // The palette's "Start from a setup file" opens the picker here while the step is up.
+  // The palette's "Start from a setup file" opens the picker here while the step is on screen,
+  // wherever it is (the gate or the Assistant view), and does not go to Settings.
+  useEffect(() => {
+    setupStore.setState((state) => ({ stepPickers: state.stepPickers + 1 }));
+    return () => setupStore.setState((state) => ({ stepPickers: state.stepPickers - 1 }));
+  }, []);
+
   useEffect(() => {
     if (!pickWanted) return;
     setupStore.setState({ pickWanted: false });

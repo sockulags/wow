@@ -20,12 +20,18 @@ export interface SetupDraft {
 
 export interface SetupState {
   readonly draft: SetupDraft | undefined;
-  // "Start from a setup file" was asked for from the palette; Settings → Advanced opens the
-  // file picker once it shows.
+  // "Start from a setup file" was asked for from the palette; the picker that owns it opens.
   readonly pickWanted: boolean;
+  // How many "Connect an agent" steps are on screen. While one is, it owns the picker and the
+  // palette stays where it is; otherwise Settings → Advanced owns it.
+  readonly stepPickers: number;
 }
 
-export const setupStore = createStore<SetupState>(() => ({ draft: undefined, pickWanted: false }));
+export const setupStore = createStore<SetupState>(() => ({
+  draft: undefined,
+  pickWanted: false,
+  stepPickers: 0,
+}));
 
 // Hands the text to the browser as a download; the desktop app asks where to save it.
 function download(fileName: string, text: string): void {
@@ -94,6 +100,7 @@ export const undoSetup = (connection: Connection, application: SetupApplication)
 
 export function askForSetupFile({ navigate }: CommandContext): void {
   setupStore.setState({ pickWanted: true });
+  if (setupStore.getState().stepPickers > 0) return;
   void navigate({ to: '/settings/$group', params: { group: 'advanced' } });
 }
 
