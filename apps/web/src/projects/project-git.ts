@@ -2,16 +2,29 @@ import { ProjectGit, type GitRemote, type Project, type ProjectGitStatus } from 
 import { useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useRuntime } from '@/app/runtime';
+import { useTopic } from '@/chat/data';
 
 const Answer = z.object({ projects: z.array(ProjectGit) });
 
 // Each project folder's git status and remotes, read by the server (owner decision F-4, audit
-// E-12). Asked again when a project is added, removed or moved to another folder.
+// E-12). Asked again when a project is added, removed or moved to another folder, and when a
+// stored GitLab site changes, since that decides each project's code host.
 export function useProjectsGit(
   projects: readonly Project[] | undefined,
 ): ReadonlyMap<string, ProjectGit> | undefined {
   const { connection } = useRuntime();
   const [found, setFound] = useState<ReadonlyMap<string, ProjectGit>>();
+  const settingRows = useTopic('settings');
+  const sites = useMemo(
+    () =>
+      JSON.stringify(
+        (settingRows ?? [])
+          .filter((row) => row.key === 'trackers.gitlab.baseUrl')
+          .map((row) => [row.scope, row.value])
+          .toSorted(([a], [b]) => String(a).localeCompare(String(b))),
+      ),
+    [settingRows],
+  );
   const folders = useMemo(
     () => projects?.map((project) => `${project.id}\u0000${project.cwd}`).join('\n'),
     [projects],
@@ -30,7 +43,7 @@ export function useProjectsGit(
     return () => {
       current = false;
     };
-  }, [connection, folders]);
+  }, [connection, folders, sites]);
   return found;
 }
 

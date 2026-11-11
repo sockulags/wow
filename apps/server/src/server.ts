@@ -1,4 +1,4 @@
-import { settingsRegistry, type ServerMessage } from '@wow/contracts';
+import { settingsRegistry, type HostKind, type ServerMessage } from '@wow/contracts';
 import { discoverClaudeFolders } from '@wow/provider-claude';
 import { discoverCodexFolders } from '@wow/provider-codex';
 import { SecretStore, defaultProtector, type Protector } from '@wow/secrets';
@@ -147,9 +147,12 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const database = openDatabase(path.join(home, databaseFileName));
   // Assigned right below; the engine needs a logger before the settings service exists.
   let logger: Logger = createLogger(() => 'info', options.logSink);
+  // Assigned once the tracker service exists; it caches each project's code host.
+  let codeHost: ((projectId: string) => HostKind | undefined) | undefined;
   const engine = new Engine(database.db, {
     onListenerError: (error) => logger.error('commit listener failed', error),
     home,
+    codeHost: (projectId) => codeHost?.(projectId),
     ...(options.clock ? { clock: options.clock } : {}),
   });
   const settings = new SettingsService(database.db, engine);
@@ -234,6 +237,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
+  codeHost = (projectId) => trackers.codeHost(projectId);
   const hosts = new HostPoller({
     db: database.db,
     engine,

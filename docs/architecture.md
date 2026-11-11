@@ -256,7 +256,7 @@ ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode
 ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | toolCallStarted |
                  toolCallOutput | toolCallCompleted | approvalRequested | questionAsked |
                  taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
-                 | turnStartedByProvider | backgroundTasks {tasks [{id, description}]}
+                 | turnStartedByProvider | backgroundTasks {tasks [{id, description, agent?}]}
 ```
 
 **Turns the provider starts.** Claude Code goes on with a thread by itself when background work
@@ -264,17 +264,23 @@ it started (a background subagent or shell command) ends: the open `query()` str
 output and a second `result` without a prompt from wow. The adapter reports that turn with
 `turnStartedByProvider` at its first top-level `stream_event`, `assistant` or `result` message
 while no turn runs, and ends it with the usual `turnCompleted`, `turnFailed` or `turnInterrupted`;
-`interrupt` stops it like any turn. The orchestrator makes it turn `<threadId>:turn:<n>` with no
+`interrupt` stops it like any turn. A `system/task_notification` for a background agent
+(`task_type` `local_agent`) while no turn runs starts that turn at once, because Claude Code
+answers it and the agent leaves the background list before the turn's first output. The
+orchestrator makes it turn `<threadId>:turn:<n>` with no
 user item (`turn.startedByProvider`): the thread goes to `working`, its items, usage and end are
 stored as for any turn, and the thread ends `idle`, `needs_you` or `failed` the same way. While a
 turn wow started runs, `turnStartedByProvider` is ignored and the output stays in that turn. A
 message sent while Claude Code's own turn runs goes into its input queue; Claude Code answers it
 after (or within) that turn. `backgroundTasks` is the SDK's level signal
-(`system/background_tasks_changed`, Claude Code's own `ambient` tasks left out), stored as the
-thread's `backgroundTasks` (`thread.backgroundChanged`); the chat shows "Waiting for background
+(`system/background_tasks_changed`, Claude Code's own `ambient` tasks left out; `agent: true`
+marks a `local_agent` task), stored as the thread's `backgroundTasks` (`thread.backgroundChanged`); the chat shows "Waiting for background
 work" while it is not empty and no turn runs. When Claude Code exits with background work and no
-turn running, the adapter reports a started and failed turn; at startup `recover()` fails such a
-turn for every thread still listing background work. Codex: the generated app-server schema
+turn running, the adapter reports a started and failed turn. At startup `recover()` fails such a
+turn only for a thread of a running workflow step that still lists a background agent; every other
+thread only gets its list cleared and keeps its state. When `ProviderService` releases an adapter
+(its instance edited or deleted), it clears the list of the instance's threads, since the disposed
+adapter reports nothing more; `closeThread` clears it in the adapter. Codex: the generated app-server schema
 does not say whether codex starts turns by itself; the adapter treats a `turn/started` it did not
 ask for (no `turn/start` on its way, no running turn) as `turnStartedByProvider`, and reports no
 background work.
@@ -576,7 +582,8 @@ previous}` or `skill.deleted {skill}` in the skills projection at once; `SkillsS
   not YAML, a name starting with `wow-`, and (`SkillsService.refusal`) a `SKILL.md` in that
   folder the list does not show. The assistant's and the setup file's change records keep the
   folder and the file (`skillFolder`, `skillFile`, not shown) so their undo sends the same
-  restore. From the assistant create, update and delete are proposals and restore is refused
+  restore; the record's `expect` holds the file the change left, so a hand edit of any line since
+  refuses the undo ("its SKILL.md is not the file this change left"). From the assistant create, update and delete are proposals and restore is refused
   (see "Assistant"); a setup file carries own skills (see "Setup file").
 
 **Settings → Skills** (`apps/web/src/settings/skills.ts`, `skills-section.tsx`; wow skills spec
@@ -602,7 +609,13 @@ folder skill, invoked as before (`plugin:name` for a Claude plugin's), or a buil
 reserved name; `source: 'yours'` keeps an own skill apart from a folder skill of the same name,
 and each is listed with its own group. `skillToSend(skills, ref, providerKind, values)` answers a
 wow skill's text (a built-in one filled) or a folder skill's invocation, or nothing for a wow
-skill that is not in the list. `promptWithSkills(parts, tail)` puts each wow skill's text as its
+skill that is not in the list. Two hand-written folders can give own skills the same name, and a
+`SkillRef` names a skill by name only, so for such a name it answers `refused` with
+`ambiguousOwnSkill` (contracts `skills.ts`), the sentence that names every folder: the message is
+refused with it, a step fails before it starts with it, and `skill.update` and `skill.delete` of
+that name are refused. Every skill list shows the folder beside such a skill
+(`sharedOwnSkillFolders`; the builder's one choice names both folders, and `read_skills` gives
+`folder` and `cannotUse`). `promptWithSkills(parts, tail)` puts each wow skill's text as its
 own block marked with its name:
 
 ```text
@@ -906,11 +919,15 @@ dispatches `thread.sendMessage` with the rendered prompt (`thread.sendPrepared` 
 with skills, see "Skills of a step"), so the provider service starts the turn
 like any other, and `interrupt` dispatches `thread.interrupt`. A step ends when the persisted
 `turn.ended` of its thread does: completed becomes `workflowRun.stepCompleted` with the turn's
-last assistant text as the final message (a completed turn that leaves the thread's
-`backgroundTasks` non-empty does not end the step: the step ends with the turn Claude Code starts
-once that work ends, and its final message, gate, verdict and artifacts are read then; background
-work that ends before the turn's result leaves no signal, so a turn Claude Code starts after such a
-result is shown in the thread but is not the step's outcome), the artifacts found and the step's file hashes (see
+last assistant text as the final message (a completed turn that leaves a background agent in the thread's
+`backgroundTasks` does not end the step: the step ends with the turn Claude Code starts
+once that work ends, and its final message, gate, verdict and artifacts are read then; a step
+waits only for background agents, never for a background shell command such as a dev server or a
+watcher, which may never end, though the chat shows both; when the list loses its last agent and no
+turn runs, because the agent ended without Claude Code going on or the session was closed or
+released, the runner ends the step with its last completed turn on `thread.backgroundChanged`;
+background work that ends before the turn's result leaves no signal, so a turn Claude Code starts
+after such a result is shown in the thread but is not the step's outcome), the artifacts found and the step's file hashes (see
 "Run base and changes"), failed (with the turn's error
 item) or interrupted becomes `workflowRun.stepFailed`. Command ids derive from the turn, so a
 repeated report is a duplicate. A step with no model, effort or permission mode fails instead of
@@ -1795,7 +1812,13 @@ and empty text, which read "Merge request" on a run whose host read is GitLab
 (`pullRequestTabLabel`). The Triggers tab's rows, its palette commands and New trigger's event
 choices say "Merge request merged" for a project whose newest host read is GitLab, or, before
 any read, whose `ProjectGit.codeHost` is (`projectCodeHost(reads, projectId, unread)` in
-`packages/contracts/src/hosts.ts`, used from `apps/web/src/workflows/triggers.ts`), and the default handover names
+`packages/contracts/src/hosts.ts`, used from `apps/web/src/workflows/triggers.ts`; the web's
+`useProjectsGit` asks `projects.git` again when a stored `trackers.gitlab.baseUrl` changes). The
+server words the same way before any read: `TrackerService` caches each project's
+`ProjectGit.codeHost` (`codeHost(projectId)`, read at start, when a project is made or moved and
+when a GitLab site is stored), the engine hands it to `DecideContext.codeHost`, and `codeHostOf`
+(`core/orchestrator.ts`) is used by the duplicate-trigger refusal and the assistant's change rows
+and proposals; the assistant's diagnosis reads the cache directly. The default handover names
 the event's request with `pullRequestName` ("Merge request !12" or "Pull request #14"). GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
 GitLab the server tests and the e2e server share.
 

@@ -533,23 +533,26 @@ describe('provider service', () => {
     expect(rows('threadItems').at(-1)).toMatchObject({ turnId: 't1:turn:0' });
   });
 
-  it('fails the turn background work would have started when the server stopped', async () => {
+  // Only a workflow step waits for a turn after background work (workflows.test.ts covers it);
+  // a chat thread that was idle stays as it was.
+  it('clears the background work of an idle chat thread on restart without failing it', async () => {
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Hi' });
     const first = committed('turn.ended');
     adapter.emit(
-      { type: 'backgroundTasks', threadId: 't1', tasks: [{ id: 'bg-1', description: 'Count' }] },
+      {
+        type: 'backgroundTasks',
+        threadId: 't1',
+        tasks: [{ id: 'bg-1', description: 'Count', agent: true }],
+      },
       { type: 'turnCompleted', threadId: 't1' },
     );
     await first;
-    const recovered = committed('turn.ended');
+    const before = thread();
+    const recovered = committed('thread.backgroundChanged');
     service.recover();
     await recovered;
-    expect(rows('turns').at(-1)).toMatchObject({ index: 1, state: 'failed' });
-    expect(thread()).toMatchObject({ state: 'failed', backgroundTasks: [] });
-    expect(rows('threadItems').at(-1)).toMatchObject({
-      kind: 'error',
-      payload: { message: 'The server stopped while the agent was waiting for background work' },
-    });
+    expect(rows('turns')).toHaveLength(1);
+    expect(thread()).toMatchObject({ state: before?.state, backgroundTasks: [] });
   });
 
   it('fails the turn when the provider refuses to start it', async () => {

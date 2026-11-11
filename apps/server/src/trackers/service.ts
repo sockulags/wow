@@ -10,6 +10,7 @@ import {
   type ResolvedTrackerSetting,
   type TrackerPreview,
   type GitLabProject,
+  type HostKind,
   type TrackerConnection,
   type TrackerTestResult,
   type TrackerService as TrackerKind,
@@ -151,25 +152,66 @@ export class TrackerService {
   // One publish per item at a time, so a double click creates one issue.
   readonly #inFlight = new Map<string, Promise<BacklogRemote>>();
   readonly #cleanups = new Set<Promise<void>>();
+  // The code host each project's git data names, for wording before any host read (the decide
+  // context and the assistant's diagnosis cannot wait for git). The count drops a late answer.
+  readonly #codeHosts = new Map<string, { readonly host: HostKind; readonly read: number }>();
+  #codeHostReads = 0;
 
   constructor(deps: TrackerServiceDeps) {
     this.#deps = deps;
     this.#git = deps.git ?? defaultGit;
-    // A removed project's settings go with it (core/projects.ts); its own tokens go here.
     deps.engine.onCommit((commit) => {
       for (const { event } of commit.events) {
-        if (event.kind !== 'project.deleted') continue;
-        const cleanup = this.#forgetProjectSecrets(event.payload.projectId).finally(() =>
-          this.#cleanups.delete(cleanup),
-        );
-        this.#cleanups.add(cleanup);
+        if (event.kind === 'project.deleted') {
+          // A removed project's settings go with it (core/projects.ts); its own tokens go here.
+          this.#codeHosts.delete(event.payload.projectId);
+          this.#track(this.#forgetProjectSecrets(event.payload.projectId));
+        } else if (event.kind === 'project.created') {
+          this.#track(this.refreshCodeHosts(event.payload.id));
+        } else if (event.kind === 'project.updated' && event.payload.changes.cwd !== undefined) {
+          this.#track(this.refreshCodeHosts(event.payload.projectId));
+        } else if (
+          (event.kind === 'setting.changed' || event.kind === 'setting.reset') &&
+          event.payload.key === 'trackers.gitlab.baseUrl'
+        ) {
+          this.#track(this.refreshCodeHosts());
+        }
       }
     });
+    this.#track(this.refreshCodeHosts());
   }
 
-  // Settles once the tokens of removed projects are deleted; for tests and shutdown.
+  // Settles once the tokens of removed projects are deleted and the code hosts are read again;
+  // for tests and shutdown.
   async idle(): Promise<void> {
-    await Promise.all(this.#cleanups);
+    while (this.#cleanups.size > 0) await Promise.all(this.#cleanups);
+  }
+
+  // The code host the project's git data named when last read; undefined before that.
+  codeHost(projectId: string): HostKind | undefined {
+    return this.#codeHosts.get(projectId)?.host;
+  }
+
+  // Reads the git data of one project, or of every project, for codeHost.
+  async refreshCodeHosts(projectId?: string): Promise<void> {
+    const rows = this.#deps.db.select().from(projects).all();
+    await Promise.all(
+      rows
+        .filter((project) => projectId === undefined || project.id === projectId)
+        .map((project) =>
+          this.#folderGit(project.id, project.cwd).catch((error: unknown) => {
+            this.#deps.logger.warn('could not read the git data of a project', {
+              projectId: project.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }),
+        ),
+    );
+  }
+
+  #track(work: Promise<void>): void {
+    const tracked = work.finally(() => this.#cleanups.delete(tracked));
+    this.#cleanups.add(tracked);
   }
 
   async #forgetProjectSecrets(projectId: string): Promise<void> {
@@ -197,13 +239,31 @@ export class TrackerService {
   }
 
   async #folderGit(projectId: string, cwd: string): Promise<ProjectGit> {
+    const read = (this.#codeHostReads += 1);
     const git: ProjectGit = {
       projectId,
       ...(await this.#git.folder(cwd, this.#gitOptions())),
       codeHost: 'github',
     };
     // The rule gitlabHost gives the poller: GitLab when the remote is on the stored site.
-    return this.#gitlabProject(projectId, git) ? { ...git, codeHost: 'gitlab' } : git;
+    const result: ProjectGit = this.#gitlabProject(projectId, git)
+      ? { ...git, codeHost: 'gitlab' }
+      : git;
+    const known = this.#codeHosts.get(projectId);
+    if ((known === undefined || known.read < read) && this.#projectExists(projectId)) {
+      this.#codeHosts.set(projectId, { host: result.codeHost, read });
+    }
+    return result;
+  }
+
+  #projectExists(projectId: string): boolean {
+    return (
+      this.#deps.db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .get() !== undefined
+    );
   }
 
   // Every project's git status and remotes, for Settings → Projects (audit E-12).

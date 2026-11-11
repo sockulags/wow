@@ -573,6 +573,56 @@ describe('an own skill written by hand (spec 6)', () => {
   });
 });
 
+// An own skill named brew in a folder of its own, as written by hand.
+const twin = (folder: string, text: string) =>
+  writeSkill(path.join(wowHome, 'skills'), folder, text).then(() =>
+    writeFile(
+      path.join(wowHome, 'skills', folder, 'SKILL.md'),
+      `---\nname: brew\ndescription: ${folder}\n---\n\n${text}\n`,
+    ),
+  );
+describe('two hand-made folders with the same skill name', () => {
+  const refusal =
+    'Two of your skills are named brew, in the folders brew-a and brew-b. Rename one in its SKILL.md so wow knows which to use.';
+
+  beforeEach(async () => {
+    await twin('brew-a', 'Brew green tea.');
+    await twin('brew-b', 'Brew black tea.');
+    await server.skills.refresh();
+  });
+
+  it('lists both but sends, runs, changes and deletes neither, naming both folders', async () => {
+    expect(skillList().filter((skill) => skill.name === 'brew')).toHaveLength(2);
+    createThread('t1', 'claude-work');
+    expect(() =>
+      dispatch({
+        type: 'thread.sendMessage',
+        threadId: 't1',
+        text: 'Go',
+        skills: [{ name: 'brew', source: 'yours' }],
+      }),
+    ).toThrow(refusal);
+    expect(() =>
+      dispatch({
+        type: 'skill.update',
+        skill: { name: 'brew', description: 'Either', text: 'Brew any tea.' },
+      }),
+    ).toThrow(refusal);
+    expect(() => dispatch({ type: 'skill.delete', name: 'brew' })).toThrow(refusal);
+
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'wf',
+      name: 'Brew',
+      steps: [step('brew', { skillName: 'brew', skillSource: 'yours' })],
+    });
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf', projectId: 'p1' });
+    const failed = await runBecomes('r1', (row) => row.state !== 'running');
+    expect(failed.steps[0]?.error).toBe(`The step cannot start. ${refusal}`);
+    expect(startTurns()).toEqual([]);
+  });
+});
+
 describe('the same name in Yours and in a folder (spec 9)', () => {
   it('lists both with their groups, and running one sends only that one', async () => {
     await writeSkill(path.join(userHome, '.claude', 'skills'), 'tidy');

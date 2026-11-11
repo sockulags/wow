@@ -415,7 +415,8 @@ When Claude starts work in the background (a background agent or command) and en
 wait for it, the thread says "Waiting for background work" and names it. When that work ends,
 Claude goes on by itself: the new turn appears in the thread as it runs, without a message from
 you, its usage is counted, **Stop** stops it, and the thread is marked as after any turn. Should
-the server stop while Claude waits, the thread shows a failed turn; send a message to go on.
+the server stop while Claude waits, the waiting line goes away; only a workflow step that waited
+for a background agent shows a failed turn (send a message to go on).
 
 ### Skills
 
@@ -552,7 +553,9 @@ of the three offers **Undo**. A name that is not allowed or already taken is ref
 reason, and nothing is saved. wow keeps each skill as a `SKILL.md` file under its home folder
 (`~/.wow/skills/<name>/SKILL.md`); a file you put there by hand is listed after **Refresh skills**.
 Editing such a file changes only its name, description and text and keeps every other line of its
-frontmatter, and **Undo** of an edit or a delete puts the file back exactly as it was.
+frontmatter, and **Undo** of an edit or a delete puts the file back exactly as it was. When two
+folders name a skill the same, both are listed with their folder beside the name, and wow sends,
+runs, edits and deletes neither until you rename one in its `SKILL.md`; it says which folders.
 Your skills come first in every skill list. The palette has **New skill**, and **Edit skill** and
 **Delete skill** for each of yours.
 
@@ -600,8 +603,11 @@ first, because a stopped run cannot be continued. The next step's prompt is its 
 `workflows.handoverTemplate` (by default the previous step's final message and the expected
 artifact paths). Stopping a run keeps all its threads.
 
-A step whose turn ends while Claude still runs background work is not done yet: it ends with the
-turn Claude starts by itself once that work ends, and that turn's last message is the step's. When
+A step whose turn ends while a background agent of Claude's still runs is not done yet: it ends
+with the turn Claude starts by itself once that agent ends, and that turn's last message is the
+step's. A step does not wait for a background command such as a dev server or a watcher, which may
+never end. If the agent ends and Claude does not go on, or Claude's session is closed, the step
+ends with its last turn. When
 the background work ends before Claude ends its turn, wow cannot tell that Claude will go on, and
 the step ends with the first turn.
 

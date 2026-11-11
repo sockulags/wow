@@ -10,14 +10,14 @@ import {
   type ProviderInstance,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
-import { eq, ne } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { AssistantRedactor } from '../assistant/redact.js';
 import { prepareAssistantFolder } from '../assistant/thread.js';
 import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
-import { providerInstances, threads, turns } from '../db/schema.js';
+import { providerInstances, threads, turns, workflowRuns } from '../db/schema.js';
 import type { ProviderAdapters } from '../hooks/providers.js';
 import type { Logger } from '../logger.js';
 import type { SettingsService } from '../settings/service.js';
@@ -77,12 +77,22 @@ export class ProviderService {
       ]);
     }
     const waiting = this.#deps.db
-      .select({ id: threads.id })
+      .select({
+        id: threads.id,
+        runId: threads.runId,
+        stepId: threads.stepId,
+        tasks: threads.backgroundTasks,
+      })
       .from(threads)
       .where(ne(threads.backgroundTasks, []))
       .all();
-    for (const { id: threadId } of waiting) {
+    for (const { id: threadId, runId, stepId, tasks } of waiting) {
       if (running.has(threadId)) continue;
+      // Only a running workflow step waited for a turn; any other thread keeps its state.
+      if (!tasks.some((task) => task.agent === true) || !this.#stepRunning(runId, stepId)) {
+        this.#dispatch(threadId, [{ type: 'backgroundTasks', threadId, tasks: [] }]);
+        continue;
+      }
       this.#dispatch(threadId, [
         { type: 'backgroundTasks', threadId, tasks: [] },
         { type: 'turnStartedByProvider', threadId },
@@ -93,6 +103,16 @@ export class ProviderService {
         },
       ]);
     }
+  }
+
+  #stepRunning(runId: string | null, stepId: string | null): boolean {
+    if (runId === null || stepId === null) return false;
+    const run = this.#deps.db
+      .select({ steps: workflowRuns.steps })
+      .from(workflowRuns)
+      .where(eq(workflowRuns.id, runId))
+      .get();
+    return run?.steps.some((step) => step.stepId === stepId && step.state === 'running') === true;
   }
 
   async test(providerInstanceId: string): Promise<ProviderTestResult> {
@@ -272,6 +292,18 @@ export class ProviderService {
     adapter
       ?.dispose()
       .catch((error: unknown) => this.#deps.logger.error('provider adapter failed to stop', error));
+    // The disposed adapter reports nothing more, so the background work it listed is gone.
+    if (adapter) {
+      const listed = this.#deps.db
+        .select({ id: threads.id })
+        .from(threads)
+        .where(
+          and(eq(threads.providerInstanceId, providerInstanceId), ne(threads.backgroundTasks, [])),
+        )
+        .all();
+      for (const { id } of listed)
+        this.#enqueue({ type: 'backgroundTasks', threadId: id, tasks: [] });
+    }
     for (const name of secrets) {
       this.#deps.secrets
         .delete(name)
