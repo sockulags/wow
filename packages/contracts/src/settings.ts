@@ -1463,6 +1463,11 @@ export const settingsRegistry = {
     'Open the form for a new card on the day the calendar shows (while the calendar is open).',
     'C',
   ),
+  'keybindings.calendarDeleteCard': keybinding(
+    'Delete card',
+    'Ask how to delete the card that has the focus in the calendar: a single card, or for a repeating card this occurrence or the whole series.',
+    'Delete',
+  ),
   'keybindings.newThread': keybinding('New thread', 'Start a new chat thread.', 'Mod+Alt+N'),
   'keybindings.stopTurn': keybinding(
     'Stop turn',

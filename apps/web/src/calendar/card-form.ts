@@ -1,5 +1,26 @@
-import type { CalendarItem, Project, Workflow, WorkflowRun } from '@wow/contracts';
-import { addDays, atMinute, formatMinutes, formatTime, parseClockTime, parseIsoDate } from './time';
+import {
+  repeatMaxCount,
+  repeatMaxInterval,
+  RepeatRule,
+  RepeatWeekday,
+  repeatWeekdays,
+  type CalendarItem,
+  type Project,
+  type Workflow,
+  type WorkflowRun,
+} from '@wow/contracts';
+import {
+  addDays,
+  atMinute,
+  formatMinutes,
+  formatShortDay,
+  formatTime,
+  isoDate,
+  localDate,
+  parseClockTime,
+  parseIsoDate,
+  weekdayOf,
+} from './time';
 
 // The card dialog's rules, apart from React so they are tested on their own.
 
@@ -12,7 +33,114 @@ export interface CardFormValues {
   readonly workflowId: string;
   readonly backlogItemId: string;
   readonly body: string;
+  readonly repeat: RepeatDraft;
 }
+
+// The Repeat section as typed (recurring cards spec 16). Numbers stay text until the form is
+// sent, so a half-typed value can be shown with its reason.
+export interface RepeatDraft {
+  readonly frequency: 'none' | RepeatRule['frequency'];
+  readonly interval: string;
+  readonly weekdays: readonly RepeatWeekday[];
+  readonly end: RepeatRule['end']['kind'];
+  readonly endDate: string;
+  readonly count: string;
+}
+
+export const noRepeat: RepeatDraft = {
+  frequency: 'none',
+  interval: '1',
+  weekdays: [],
+  end: 'never',
+  endDate: '',
+  count: '10',
+};
+
+export function repeatDraft(rule: RepeatRule | null | undefined): RepeatDraft {
+  if (!rule) return noRepeat;
+  return {
+    frequency: rule.frequency,
+    interval: String(rule.interval),
+    weekdays: rule.weekdays,
+    end: rule.end.kind,
+    endDate: rule.end.kind === 'on' ? rule.end.date : '',
+    count: rule.end.kind === 'after' ? String(rule.end.count) : noRepeat.count,
+  };
+}
+
+// The weekday a weekly rule starts with: the day of the card's date.
+export function weekdayOfDate(date: string): RepeatWeekday | undefined {
+  const day = parseIsoDate(date);
+  if (!day) return undefined;
+  const parsed = RepeatWeekday.safeParse(weekdayOf(day).slice(0, 3));
+  return parsed.success ? parsed.data : undefined;
+}
+
+export type RepeatResult =
+  | { readonly ok: true; readonly rule: RepeatRule | null }
+  | {
+      readonly ok: false;
+      readonly field: 'interval' | 'endDate' | 'count';
+      readonly message: string;
+    };
+
+const wholeNumber = (text: string): number | undefined =>
+  /^\s*\d+\s*$/.test(text) ? Number(text) : undefined;
+
+// The rule the form describes, or why it describes none. `date` is the card's first day: an end
+// before it would leave the series without its own first occurrence.
+export function repeatRule(draft: RepeatDraft, date: string): RepeatResult {
+  if (draft.frequency === 'none') return { ok: true, rule: null };
+  const interval = wholeNumber(draft.interval);
+  if (interval === undefined || interval < 1 || interval > repeatMaxInterval) {
+    return {
+      ok: false,
+      field: 'interval',
+      message: `Give a whole number from 1 to ${repeatMaxInterval}`,
+    };
+  }
+  let end: RepeatRule['end'] = { kind: 'never' };
+  if (draft.end === 'on') {
+    if (!parseIsoDate(draft.endDate))
+      return { ok: false, field: 'endDate', message: 'Give a date' };
+    if (draft.endDate < date) {
+      return { ok: false, field: 'endDate', message: 'Ends before the first time' };
+    }
+    end = { kind: 'on', date: draft.endDate };
+  } else if (draft.end === 'after') {
+    const count = wholeNumber(draft.count);
+    if (count === undefined || count < 1 || count > repeatMaxCount) {
+      return {
+        ok: false,
+        field: 'count',
+        message: `Give a whole number from 1 to ${repeatMaxCount}`,
+      };
+    }
+    end = { kind: 'after', count };
+  }
+  const weekdays =
+    draft.frequency === 'weekly'
+      ? repeatWeekdays.filter((day) => draft.weekdays.includes(day))
+      : [];
+  const parsed = RepeatRule.safeParse({ frequency: draft.frequency, interval, weekdays, end });
+  return parsed.success
+    ? { ok: true, rule: parsed.data }
+    : { ok: false, field: 'interval', message: parsed.error.issues[0]?.message ?? 'Not a rule' };
+}
+
+export const sameRule = (a: RepeatRule | null | undefined, b: RepeatRule | null | undefined) =>
+  JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+// "Mon 16 Nov, 08:30": when a card's trigger fires next, as the server set it, in the zone the
+// calendar shows.
+export function nextFireText(nextAt: string, zone: string): string {
+  const at = new Date(nextAt);
+  return `${formatShortDay(localDate(at, zone))}, ${formatTime(at, zone)}`;
+}
+
+// The day an instant falls on in a card's own zone, as the server names occurrences.
+export const cardDay = (instant: string, zone: string): string =>
+  isoDate(localDate(new Date(instant), zone));
 
 export type FormRange =
   | { readonly ok: true; readonly start: string; readonly end: string; readonly minutes: number }

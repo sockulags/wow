@@ -6,6 +6,8 @@ import {
 } from '@wow/contracts';
 import { dispatch, settingValue, type SettingValues } from '@wow/client-runtime';
 import type { AppCommand, CommandContext } from '@/app/commands';
+import { notify, offerUndo } from '@/lib/feedback';
+import { cardDay } from './card-form';
 import { stepDays, type CalendarViewKind } from './layout';
 import { calendarPrefs } from './prefs';
 import { anchorDate, todayIn, type CalendarSearch } from './search';
@@ -236,6 +238,58 @@ export function calendarCommands({
           cardId: card.id,
           runId: globalThis.crypto.randomUUID(),
         }).catch(() => undefined);
+      },
+    });
+  }
+
+  // A repeating card's own actions (recurring cards spec 12): skip the occurrence its trigger
+  // fires at next, and delete the series (which asks first, in the card's form).
+  for (const card of cards) {
+    if (!card.repeat) continue;
+    const nextAt = card.nextAt;
+    if (nextAt) {
+      const date = cardDay(nextAt, card.zone);
+      commands.push({
+        id: `card.skipNext.${card.id}`,
+        title: `Skip next occurrence: ${cardTitle(card)}`,
+        value: `Skip next occurrence ${cardTitle(card)} ${card.id}`,
+        group: 'Cards',
+        keywords: ['repeat', 'repeating', 'occurrence', 'skip', 'series'],
+        run: ({ connection }) => {
+          if (!connection) return;
+          const before = card.skippedDates ?? [];
+          dispatch(connection, { type: 'card.skipOccurrence', cardId: card.id, date }).then(
+            () =>
+              offerUndo({
+                message: 'Occurrence skipped',
+                description: `${cardTitle(card)}, ${date}`,
+                undoneMessage: 'Occurrence restored',
+                undo: () =>
+                  dispatch(connection, {
+                    type: 'card.update',
+                    cardId: card.id,
+                    skippedDates: [...before],
+                  }),
+              }),
+            (error: unknown) =>
+              notify.error('The occurrence could not be skipped', {
+                description: error instanceof Error ? error.message : String(error),
+              }),
+          );
+        },
+      });
+    }
+    commands.push({
+      id: `card.deleteSeries.${card.id}`,
+      title: `Delete series: ${cardTitle(card)}`,
+      value: `Delete series ${cardTitle(card)} ${card.id}`,
+      group: 'Cards',
+      keywords: ['repeat', 'repeating', 'occurrence', 'remove', 'series'],
+      searchOnly: true,
+      run: (context) => {
+        const day = isoDate(localDate(new Date(card.start), zoneSetting(context)));
+        void context.navigate({ to: '/calendar', search: { ...search, date: day } });
+        context.layout.setState({ cardDialog: { type: 'edit', cardId: card.id, deleting: true } });
       },
     });
   }

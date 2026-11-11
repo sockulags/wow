@@ -25,6 +25,13 @@ export const cardStateLabels: Readonly<Record<CardState, string>> = {
   missed: 'Missed',
 };
 
+// An occurrence of a repeating card can also have been skipped, because the card's earlier run
+// was still going (recurring cards spec 7).
+export const occurrenceStateLabels: Readonly<Record<CardState | 'skipped', string>> = {
+  ...cardStateLabels,
+  skipped: 'Skipped',
+};
+
 export const timeRange = (item: Pick<CalendarItem, 'start' | 'end'>, zone: string): string =>
   `${formatTime(new Date(item.start), zone)}–${formatTime(new Date(item.end), zone)}`;
 

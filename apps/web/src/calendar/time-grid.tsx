@@ -1,5 +1,12 @@
-import type { CalendarItem, CardState, WorkHours } from '@wow/contracts';
-import { AlertTriangleIcon, LockIcon, PlayIcon, VideoIcon, WorkflowIcon } from 'lucide-react';
+import type { CalendarItem, WorkHours } from '@wow/contracts';
+import {
+  AlertTriangleIcon,
+  LockIcon,
+  PlayIcon,
+  Repeat2Icon,
+  VideoIcon,
+  WorkflowIcon,
+} from 'lucide-react';
 import {
   useEffect,
   useLayoutEffect,
@@ -13,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { eventToBinding, normalizeBinding } from '@/app/keybindings';
 import { cardTitle } from './commands';
 import {
   applyCardKey,
@@ -22,7 +30,7 @@ import {
   stopKey,
   type GridStop,
 } from './grid-keys';
-import { cardKind, cardState, cardStateLabels, meetingPlace, timeRange } from './items';
+import { cardKind, cardState, meetingPlace, occurrenceStateLabels, timeRange } from './items';
 import {
   allDayItemsOn,
   capColumns,
@@ -33,6 +41,7 @@ import {
   type OverflowChip,
   type PlacedItem,
 } from './layout';
+import type { OccurrenceState, ShownOccurrence } from './occurrences';
 import { OutlookDetails, type NewCardRange } from './outlook-details';
 import {
   atMinute,
@@ -130,7 +139,7 @@ type Gesture =
     };
 
 // Only triggers carry a state color; plain cards keep the neutral event border.
-const stateBorder: Readonly<Record<CardState, string>> = {
+const stateBorder: Readonly<Record<OccurrenceState, string>> = {
   scheduled: 'border-l-muted-foreground',
   running: 'border-l-state-working',
   waiting: 'border-l-state-needs-you bg-state-needs-you/15',
@@ -138,9 +147,10 @@ const stateBorder: Readonly<Record<CardState, string>> = {
   failed: 'border-l-state-failed',
   stopped: 'border-l-muted-foreground',
   missed: 'border-l-state-failed',
+  skipped: 'border-l-muted-foreground',
 };
 
-const stateText: Readonly<Record<CardState, string>> = {
+const stateText: Readonly<Record<OccurrenceState, string>> = {
   scheduled: 'text-muted-foreground',
   running: 'text-state-working',
   waiting: 'text-state-needs-you',
@@ -148,12 +158,13 @@ const stateText: Readonly<Record<CardState, string>> = {
   failed: 'text-state-failed',
   stopped: 'text-muted-foreground',
   missed: 'text-state-failed',
+  skipped: 'text-muted-foreground',
 };
 
-export function StateBadge({ state }: { state: CardState }) {
+export function StateBadge({ state }: { state: OccurrenceState }) {
   return (
     <span data-testid="card-state" className={cn('text-2xs font-medium', stateText[state])}>
-      {cardStateLabels[state]}
+      {occurrenceStateLabels[state]}
     </span>
   );
 }
@@ -164,19 +175,29 @@ const blockTime = (item: CalendarItem, zone: string, day: LocalDate) =>
     ? `until ${timeRange(item, zone).split('–')[1] ?? ''}`
     : timeRange(item, zone);
 
-const itemLabel = (item: CalendarItem, zone: string): string => {
+// What a card block says: its own state, or for an occurrence of a repeating card the state of
+// that occurrence (none for one that ran nothing).
+const blockState = (
+  item: CalendarItem,
+  occurrence: ShownOccurrence | undefined,
+): OccurrenceState | null =>
+  cardKind(item) !== 'trigger' ? null : occurrence ? occurrence.state : cardState(item);
+
+const itemLabel = (item: CalendarItem, zone: string, occurrence?: ShownOccurrence): string => {
   if (item.source !== 'local') {
     const cancelled = item.state === 'cancelled' ? ', cancelled' : '';
     return `${item.title}, ${timeRange(item, zone)}${cancelled}, read-only`;
   }
   const kind = cardKind(item);
+  const state = blockState(item, occurrence);
   const suffix =
-    kind === 'trigger'
-      ? `, ${cardStateLabels[cardState(item)].toLowerCase()}`
-      : kind === 'unrunnable'
-        ? ', no project, will not run'
+    kind === 'unrunnable'
+      ? ', no project, will not run'
+      : state
+        ? `, ${occurrenceStateLabels[state].toLowerCase()}`
         : '';
-  return `${cardTitle(item)}, ${timeRange(item, zone)}${suffix}`;
+  const repeats = occurrence ? ', repeats' : '';
+  return `${cardTitle(item)}, ${timeRange(item, zone)}${repeats}${suffix}`;
 };
 
 // Everything a narrow block may cut off, on hover and on keyboard focus (audit A-15, B-13).
@@ -365,13 +386,18 @@ function CardBlock({
   selected,
   dragging,
   onRunNow,
+  occurrence,
 }: BlockProps & {
   readonly dragging: boolean;
   // Set for a missed card whose trigger offers "Run now" (spec 12).
   readonly onRunNow: (() => void) | undefined;
+  // Set for one occurrence of a repeating card (recurring cards spec 15).
+  readonly occurrence: ShownOccurrence | undefined;
 }) {
-  const state = cardState(item);
+  const state = blockState(item, occurrence);
   const kind = cardKind(item);
+  // A reached occurrence stays where it was: it opens its run and does not move.
+  const fixed = occurrence?.record != null;
   const layout = blockLines(heightPx, {
     extra: kind === 'unrunnable' ? 1 : 0,
     button: onRunNow !== undefined,
@@ -381,11 +407,13 @@ function CardBlock({
       lines={[
         cardTitle(item),
         blockTime(item, zone, day),
-        kind === 'trigger'
-          ? cardStateLabels[state]
+        occurrence ? 'Repeats' : undefined,
+        state
+          ? occurrenceStateLabels[state]
           : kind === 'unrunnable'
             ? 'No project, will not run'
             : undefined,
+        occurrence?.record?.reason,
       ]}
       disabled={dragging}
     >
@@ -395,12 +423,14 @@ function CardBlock({
         data-item="card"
         data-kind={kind}
         data-stop={stop}
-        aria-label={itemLabel(item, zone)}
+        data-repeating={occurrence ? '' : undefined}
+        aria-label={itemLabel(item, zone, occurrence)}
         aria-current={selected ? 'true' : undefined}
         className={cn(
           blockBase,
-          'cursor-grab touch-none border-event-card-border bg-event-card shadow-xs select-none',
-          kind === 'trigger' && cn('border-l-[3px]', stateBorder[state]),
+          'touch-none border-event-card-border bg-event-card shadow-xs select-none',
+          fixed ? 'cursor-pointer' : 'cursor-grab',
+          kind === 'trigger' && cn('border-l-[3px]', stateBorder[state ?? 'scheduled']),
           kind === 'unrunnable' && 'border-dashed',
           dragging && 'cursor-grabbing opacity-80 shadow-md',
           selected && selectedBlock,
@@ -417,7 +447,14 @@ function CardBlock({
             <AlertTriangleIcon aria-hidden className="mt-0.5 size-3 shrink-0 text-warning" />
           )}
           <Title lines={layout.titleLines}>{cardTitle(item)}</Title>
-          {kind === 'trigger' && (
+          {occurrence && (
+            <Repeat2Icon
+              aria-hidden
+              data-testid="card-repeats"
+              className="mt-0.5 size-3 shrink-0 text-muted-foreground @max-[3rem]:hidden"
+            />
+          )}
+          {state && (
             <span className="shrink-0 @max-[7rem]:hidden">
               <StateBadge state={state} />
             </span>
@@ -455,11 +492,13 @@ function CardBlock({
             Run now
           </Button>
         )}
-        <span
-          data-resize
-          aria-hidden
-          className="absolute inset-x-0 bottom-0 h-1.5 cursor-ns-resize"
-        />
+        {!fixed && (
+          <span
+            data-resize
+            aria-hidden
+            className="absolute inset-x-0 bottom-0 h-1.5 cursor-ns-resize"
+          />
+        )}
       </div>
     </BlockTooltip>
   );
@@ -601,6 +640,12 @@ export interface TimeGridProps {
   onRunNow?(cardId: string): void;
   // Stores a moved or resized card; the grid shows the new place until the server's row matches.
   onChange(cardId: string, range: Range): Promise<unknown>;
+  // The occurrences of repeating cards among `items`, by item id. An occurrence moves within its
+  // own day only, and one already reached does not move at all.
+  readonly occurrences?: ReadonlyMap<string, ShownOccurrence>;
+  // The key that asks how to delete the focused card (keybindings.calendarDeleteCard).
+  readonly deleteKey?: string;
+  onDelete?(itemId: string): void;
 }
 
 type ShownDay = {
@@ -630,12 +675,18 @@ export function TimeGrid({
   runNowIds,
   onRunNow,
   onChange,
+  occurrences,
+  deleteKey,
+  onDelete,
 }: TimeGridProps) {
+  // The panel shows the card, whichever of its occurrences was chosen.
+  const cardIdOf = (itemId: string): string => occurrences?.get(itemId)?.cardId ?? itemId;
   // True when the panel takes the item; the caller opens it in place otherwise.
   const select = (itemId: string): boolean => {
-    onSelect?.(itemId);
+    onSelect?.(cardIdOf(itemId));
     return panelShown;
   };
+  const fixedItem = (itemId: string): boolean => occurrences?.get(itemId)?.record != null;
   const columnsRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [gesture, setGesture] = useState<Gesture>();
@@ -866,11 +917,15 @@ export function TimeGrid({
       const to = snapMinute(minute, snap);
       if (to !== gesture.to) setGesture({ ...gesture, to });
     } else if (gesture.kind === 'move') {
+      if (fixedItem(gesture.card.id)) return;
       const next = snapMinute(minute - gesture.grab, snap);
-      if (next !== gesture.minute || dayIndex !== gesture.dayIndex) {
-        setGesture({ ...gesture, minute: next, dayIndex, moved: true });
+      // An occurrence moves within its day; another day would be a change of the rule.
+      const toDay = occurrences?.has(gesture.card.id) ? gesture.dayIndex : dayIndex;
+      if (next !== gesture.minute || toDay !== gesture.dayIndex) {
+        setGesture({ ...gesture, minute: next, dayIndex: toDay, moved: true });
       }
     } else {
+      if (fixedItem(gesture.card.id)) return;
       const end = Math.max(gesture.top + snap, snapMinute(minute, snap));
       if (end !== gesture.end) setGesture({ ...gesture, end, moved: true });
     }
@@ -927,10 +982,22 @@ export function TimeGrid({
       return;
     }
     const item = itemOfStop(key);
+    const binding = eventToBinding(event);
+    if (
+      item?.source === 'local' &&
+      onDelete &&
+      deleteKey &&
+      binding !== undefined &&
+      binding === normalizeBinding(deleteKey)
+    ) {
+      event.preventDefault();
+      onDelete(item.id);
+      return;
+    }
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       // Enter on the card the panel already shows opens its form.
-      const shownInPanel = panelShown && item?.id === selectedId;
+      const shownInPanel = panelShown && item !== undefined && cardIdOf(item.id) === selectedId;
       if (item && !shownInPanel && select(item.id)) return;
       if (shownInPanel && item?.source !== 'local') return;
       if (item?.source === 'local') onEdit(item.id);
@@ -941,7 +1008,11 @@ export function TimeGrid({
     const change = cardKeyChange(event, snap);
     if (!change) return;
     event.preventDefault();
+    if (fixedItem(item.id)) return;
     const range = applyCardKey(preview(item), change, zone, snap);
+    const occurrence = occurrences?.get(item.id);
+    if (occurrence && isoDate(localDate(new Date(range.start), item.zone)) !== occurrence.date)
+      return;
     commit(item, range);
     const landed = days.findIndex((day) => sameDate(day, localDate(new Date(range.start), zone)));
     const next = stopKey(landed === -1 ? Number(key.split(':')[0]) : landed, item.id);
@@ -1116,7 +1187,7 @@ export function TimeGrid({
                         heightPx,
                         stop: key,
                         active: rovingStop === key,
-                        selected: panelShown && selectedId === placed.item.id,
+                        selected: panelShown && selectedId === cardIdOf(placed.item.id),
                       };
                       return (
                         <div
@@ -1141,6 +1212,7 @@ export function TimeGrid({
                             <CardBlock
                               {...common}
                               dragging={draggingId === placed.item.id}
+                              occurrence={occurrences?.get(placed.item.id)}
                               onRunNow={
                                 onRunNow && runNowIds?.has(placed.item.id)
                                   ? () => onRunNow(placed.item.id)

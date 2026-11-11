@@ -317,6 +317,41 @@ Plain cards show no state. A card with a workflow but no project is drawn dashed
 will not run". The form says what a trigger will do ("Starts at 16:30 in Demo · 4 steps, 2
 gates"), warns when it will not run, and links to its run once it has one.
 
+### Repeating cards
+
+A card can repeat, so a workflow runs on a schedule: a daily report, a weekly review. It stays
+one card; wow works out its occurrences.
+
+- **Make one**: in the card form, **Repeat** sets how often (Daily, Weekly or Monthly), **Every**
+  how many days, weeks or months, **On days** the weekdays of a weekly card (Monday to Friday for
+  every weekday), and **Stops** when: never, on a last day, or after a number of times. The form
+  says the rule in words ("Every weekday at 08:30, until 19 December 2026") and, once saved, when
+  the card fires next. The card's date and times are its first occurrence; every later one has
+  the same clock time and length in the card's zone, also across a daylight saving change. A
+  monthly card on the 31st has no occurrence in a month without one. "Does not repeat" makes it a
+  single card again.
+- **In the calendar** every occurrence in the days shown is drawn with a repeat mark. One that
+  has passed shows how it went (Done, Failed, Missed, or Skipped when the card's earlier run was
+  still going) and opens its run; one still to come opens the card. When one card has more
+  occurrences in the days shown than `calendar.maxOccurrences`, the first ones are drawn and a
+  line above the grid says so.
+- **Move**: drag an occurrence to another time, or its lower edge, or use Alt+Up and Alt+Down.
+  That changes the time or length of the series, not of one day. An occurrence stays on its day
+  (to change the days, edit the rule), and one that has passed does not move.
+- **Edit**: changing the title, time, workflow, project or rule changes every occurrence that has
+  not started. Occurrences that ran keep their runs.
+- **Delete**: **Delete…** in the form, or the **Delete** key (`keybindings.calendarDeleteCard`)
+  on a card in the grid, asks **This occurrence** or **The whole series**. This occurrence skips
+  that day only; the whole series deletes the card, and asks first whether to stop a run that is
+  going. **Undo** brings back either, a series with its rule and skipped days.
+- **Palette**: "Skip next occurrence: <title>" skips the day the card fires next, and "Delete
+  series: <title>" opens the same choice.
+
+A repeating trigger starts one run per occurrence, named with its day. If the run of an earlier
+occurrence is still going, the occurrence starts nothing and a notification says it was skipped.
+After wow was closed or paused over several occurrences, only the latest follows
+`scheduler.missedPolicy`; the older ones are recorded as missed.
+
 ## Chat
 
 ### Starting a thread

@@ -27,15 +27,31 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { offerUndo } from '@/lib/feedback';
 import { cn } from '@/lib/utils';
+import { cardKind as cardKindOf } from './items';
 import {
   durationLabel,
   formRange,
   lastUsedProjectId,
+  nextFireText,
+  repeatDraft,
+  repeatRule,
+  sameRule,
   triggerSummary,
   type CardFormValues,
+  type RepeatDraft,
 } from './card-form';
 import { useCalendarPrefs } from './prefs';
-import { clockTime, formatZone, isoDate, localDate, minuteOfDay, systemZone } from './time';
+import { RepeatSection } from './repeat-section';
+import {
+  clockTime,
+  formatShortDay,
+  formatZone,
+  isoDate,
+  localDate,
+  minuteOfDay,
+  parseIsoDate,
+  systemZone,
+} from './time';
 
 function initialForm(
   dialog: CardDialogState,
@@ -54,8 +70,34 @@ function initialForm(
     workflowId: card?.workflowId ?? '',
     backlogItemId: card?.backlogItemId ?? '',
     body: card?.body ?? '',
+    repeat: repeatDraft(card?.repeat),
   };
 }
+
+// What Delete asks before it deletes (recurring cards spec 12): which part of a repeating card,
+// and whether to stop a run that is going.
+type Asking = 'which' | 'stopRun' | undefined;
+
+// Undo of a deleted card creates it again with the same id and fields, a series with its rule
+// and the days skipped by hand (spec 13).
+const recreate = (card: CalendarItem): Command => ({
+  type: 'card.create',
+  cardId: card.id,
+  title: card.title,
+  start: card.start,
+  end: card.end,
+  zone: card.zone,
+  ...(card.body ? { body: card.body } : {}),
+  ...(card.projectId ? { projectId: card.projectId } : {}),
+  ...(card.workflowId ? { workflowId: card.workflowId } : {}),
+  ...(card.backlogItemId ? { backlogItemId: card.backlogItemId } : {}),
+  ...(card.repeat ? { repeat: card.repeat, skippedDates: card.skippedDates ?? [] } : {}),
+});
+
+const dayText = (date: string) => {
+  const day = parseIsoDate(date);
+  return day ? formatShortDay(day) : date;
+};
 
 const orNull = (value: string) => (value === '' ? null : value);
 
@@ -81,8 +123,14 @@ function CardForm({
   const runs = useTopic('workflowRuns');
   const run = card?.runId ? runs?.find((entry) => entry.id === card.runId) : undefined;
   const liveRun = run && isLiveRunState(run.state) ? run : undefined;
-  // Deleting a card whose run is live asks first whether to stop the run (spec 13).
-  const [askStopRun, setAskStopRun] = useState(false);
+  const repeating = card?.repeat !== null && card?.repeat !== undefined;
+  // The occurrence the dialog was opened from, for "This occurrence".
+  const occurrenceDate = dialog.type === 'edit' && repeating ? dialog.date : undefined;
+  // Deleting a card whose run is live asks first whether to stop the run (spec 13); a repeating
+  // card first asks whether to delete one occurrence or the series.
+  const [asking, setAsking] = useState<Asking>(() =>
+    dialog.type === 'edit' && dialog.deleting ? 'which' : undefined,
+  );
   const [form, setForm] = useState(() =>
     initialForm(dialog, card, zone, lastUsedProjectId(cards, projects)),
   );
@@ -92,6 +140,9 @@ function CardForm({
   const set = (changes: Partial<CardFormValues>) =>
     setForm((current) => ({ ...current, ...changes }));
   const range = formRange(form, zone);
+  const repeat = repeatRule(form.repeat, form.date);
+  const setRepeat = (changes: Partial<RepeatDraft>) =>
+    setForm((current) => ({ ...current, repeat: { ...current.repeat, ...changes } }));
   const title = form.title.trim();
   const workflow = workflows.find((entry) => entry.id === form.workflowId);
   const project = projects.find((entry) => entry.id === form.projectId);
@@ -108,7 +159,28 @@ function CardForm({
     card.projectId !== null &&
     (run === undefined || !isLiveRunState(run.state)) &&
     (card.state === 'missed' || card.state === 'failed');
-  const blocked = !range.ok ? range.message : title === '' ? 'Give the card a title' : undefined;
+  const blocked = !range.ok
+    ? range.message
+    : title === ''
+      ? 'Give the card a title'
+      : !repeat.ok
+        ? repeat.message
+        : undefined;
+  // When the card's trigger fires next is the server's to say; while the form differs from the
+  // stored card it is the time as saved.
+  const unsaved =
+    !card ||
+    !range.ok ||
+    range.start !== card.start ||
+    range.end !== card.end ||
+    !repeat.ok ||
+    !sameRule(repeat.rule, card.repeat);
+  const next =
+    card && card.repeat && cardKindOf(card) === 'trigger'
+      ? card.nextAt
+        ? `Fires next ${nextFireText(card.nextAt, zone)}${unsaved ? ', as saved' : ''}`
+        : 'Nothing more fires.'
+      : undefined;
 
   const send = async (command: Command) => {
     setBusy(true);
@@ -136,22 +208,35 @@ function CardForm({
     });
     if (!deleted) return;
     offerUndo({
-      message: 'Card deleted',
+      message: repeating ? 'Series deleted' : 'Card deleted',
       description: card.title,
-      undoneMessage: 'Card restored',
-      undo: () =>
-        dispatch({
-          type: 'card.create',
-          cardId: card.id,
-          title: card.title,
-          start: card.start,
-          end: card.end,
-          zone: card.zone,
-          ...(card.body ? { body: card.body } : {}),
-          ...(card.projectId ? { projectId: card.projectId } : {}),
-          ...(card.workflowId ? { workflowId: card.workflowId } : {}),
-          ...(card.backlogItemId ? { backlogItemId: card.backlogItemId } : {}),
-        }),
+      undoneMessage: repeating ? 'Series restored' : 'Card restored',
+      undo: () => dispatch(recreate(card)),
+    });
+  };
+
+  // "The whole series", or a single card: a live run asks first.
+  const removeAll = () => {
+    if (liveRun) setAsking('stopRun');
+    else void remove();
+  };
+
+  // "This occurrence": that day is skipped and the rest of the series stays. Undo puts the list
+  // of skipped days back as it was.
+  const skipOccurrence = async () => {
+    if (!card || !occurrenceDate) return;
+    const before = card.skippedDates ?? [];
+    const skipped = await send({
+      type: 'card.skipOccurrence',
+      cardId: card.id,
+      date: occurrenceDate,
+    });
+    if (!skipped) return;
+    offerUndo({
+      message: 'Occurrence skipped',
+      description: `${card.title}, ${dayText(occurrenceDate)}`,
+      undoneMessage: 'Occurrence restored',
+      undo: () => dispatch({ type: 'card.update', cardId: card.id, skippedDates: [...before] }),
     });
   };
 
@@ -160,6 +245,7 @@ function CardForm({
     if (title === '') setTitleMissing(true);
     if (!range.ok || title === '') return;
     const times = { start: range.start, end: range.end };
+    if (!repeat.ok) return;
     if (dialog.type === 'create') {
       void send({
         type: 'card.create',
@@ -171,6 +257,7 @@ function CardForm({
         ...(form.projectId ? { projectId: form.projectId } : {}),
         ...(form.workflowId ? { workflowId: form.workflowId } : {}),
         ...(form.backlogItemId ? { backlogItemId: form.backlogItemId } : {}),
+        ...(repeat.rule ? { repeat: repeat.rule } : {}),
       });
     } else {
       void send({
@@ -182,6 +269,8 @@ function CardForm({
         projectId: orNull(form.projectId),
         workflowId: orNull(form.workflowId),
         backlogItemId: orNull(form.backlogItemId),
+        // Only a changed rule is sent: making a card single again is an edit of its own.
+        ...(sameRule(repeat.rule, card?.repeat) ? {} : { repeat: repeat.rule }),
       });
     }
   };
@@ -323,6 +412,16 @@ function CardForm({
           </div>
         )}
       </fieldset>
+      <RepeatSection
+        draft={form.repeat}
+        result={repeat}
+        date={form.date}
+        start={range.ok ? range.start : undefined}
+        zone={zone}
+        firstDayOfWeek={firstDayOfWeek}
+        next={next}
+        onChange={setRepeat}
+      />
       <FormField id="card-backlog" label="Backlog item">
         <Combobox
           id="card-backlog"
@@ -354,7 +453,48 @@ function CardForm({
           {error}
         </p>
       )}
-      {askStopRun && dialog.type === 'edit' && liveRun && (
+      {asking === 'which' && dialog.type === 'edit' && card && (
+        <div
+          role="alertdialog"
+          aria-label={repeating ? 'Delete which?' : 'Delete the card?'}
+          className="grid gap-2 rounded-md border border-destructive/50 p-3 text-xs"
+        >
+          <p>
+            {repeating
+              ? occurrenceDate
+                ? `Delete only ${dayText(occurrenceDate)}, or every occurrence of this card?`
+                : 'Delete every occurrence of this card? To leave out one day, open it from the calendar.'
+              : 'Delete this card?'}
+          </p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(undefined)}>
+              Cancel
+            </Button>
+            {occurrenceDate && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => void skipOccurrence()}
+              >
+                This occurrence
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={busy}
+              autoFocus
+              onClick={removeAll}
+            >
+              {repeating ? 'The whole series' : 'Delete card'}
+            </Button>
+          </div>
+        </div>
+      )}
+      {asking === 'stopRun' && dialog.type === 'edit' && liveRun && (
         <div
           role="alertdialog"
           aria-label="Stop the run?"
@@ -366,7 +506,7 @@ function CardForm({
             are kept either way.
           </p>
           <div className="flex flex-wrap justify-end gap-2">
-            <Button type="button" size="sm" variant="ghost" onClick={() => setAskStopRun(false)}>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(undefined)}>
               Cancel
             </Button>
             <Button
@@ -396,10 +536,10 @@ function CardForm({
             type="button"
             variant="ghost"
             className="mr-auto text-destructive hover:text-destructive"
-            disabled={busy || askStopRun}
-            onClick={() => (liveRun ? setAskStopRun(true) : void remove())}
+            disabled={busy || asking !== undefined}
+            onClick={() => (repeating ? setAsking('which') : removeAll())}
           >
-            Delete card
+            {repeating ? 'Delete…' : 'Delete card'}
           </Button>
         )}
         <Button type="button" variant="outline" onClick={onDone}>
@@ -457,7 +597,11 @@ export function CardDialog({ cards }: { cards: readonly CalendarItem[] }) {
         </DialogHeader>
         {dialog && open && (
           <CardForm
-            key={dialog.type === 'edit' ? dialog.cardId : `${dialog.start}/${dialog.end}`}
+            key={
+              dialog.type === 'edit'
+                ? `${dialog.cardId}/${dialog.date ?? ''}/${dialog.deleting ? 'delete' : ''}`
+                : `${dialog.start}/${dialog.end}`
+            }
             dialog={dialog}
             card={card}
             cards={cards}

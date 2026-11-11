@@ -2546,6 +2546,40 @@ Undo (`offerUndo`, owner decision F-9), which creates the card again with the sa
 a card whose run is live first asks "Stop run and delete" or "Keep run and delete". The dialog
 gives focus back to whatever had it when it opened.
 
+Repeating cards (recurring cards spec 11 to 17, `occurrences.ts`). The view reads
+`calendar.occurrences` for the days it shows (`viewRange`: local midnight of the first day to
+local midnight after the last, in the calendar's zone) through `useCalendarRange`, and reads
+again whenever the `calendarItems`, `triggers` or `workflowRuns` rows change; an answer for
+another range is dropped. Single cards are still drawn from their topic rows, so nothing about
+them changed; each occurrence of a repeating card becomes a block of its own
+(`occurrenceBlocks`), a copy of the card with the occurrence's start and end and the id
+`<cardId>@<date>`, so layout, roving focus and drag work on it unchanged. `TimeGrid` takes the
+`occurrences` map (`ShownOccurrence`: card, day, `next`, `record`, state, run) beside the items.
+An occurrence block carries a repeat icon (`data-repeating`) and "repeats" in its accessible name.
+Its state comes from the server's record: a fired occurrence shows its run's state, otherwise
+Failed, Missed or Skipped (`occurrenceStateLabels`); an occurrence without a record shows
+Scheduled only when it is the trigger's next one or after the card's `nextAt` (both the server's
+times), and nothing for a day that went by before the card existed. A reached occurrence opens
+its run and cannot be moved or resized; any other opens the card form with `cardDialog.date` set.
+A drag or Alt+Up/Down sends `card.moveOccurrence` and stays within the occurrence's day (a move
+to another day, by pointer or Alt+Left/Right, is not offered); the series takes the new time.
+A record that offers "Run now" puts the button on that block. When the answer's `more` names a
+card, a banner (`occurrences-more`) says its first `calendar.maxOccurrences` are shown.
+
+The card form has a **Repeat** fieldset (`repeat-section.tsx`, rules in `card-form.ts`:
+`RepeatDraft`, `repeatRule`, `repeatDraft`). Interval and count are bounded by `repeatMaxInterval`
+and `repeatMaxCount`, a last day before the card's date is refused, and a weekly rule starts with
+the date's weekday chosen. The rule is said with contracts' `repeatRuleWords`, the same words the
+assistant's change rows use, and a stored repeating trigger says "Fires next <day>, <time>" from
+its `nextAt` (", as saved" while the form differs from the stored card). `card.update` sends
+`repeat` only when the rule changed. For a repeating card, Delete asks "This occurrence"
+(`card.skipOccurrence`, offered only when the form was opened from an occurrence; Undo sends
+`card.update` with the skipped days as they were) or "The whole series" (`card.delete`, asking
+about a live run as before; Undo sends `card.create` with `repeat` and `skippedDates`).
+`keybindings.calendarDeleteCard` (Delete) on a focused card in the grid opens the form at that
+question (`cardDialog.deleting`); for a single card it asks "Delete this card?". The context
+panel lists a repeating card's rule in words.
+
 Outlook items are read-only: a lock marker, "Teams meeting" instead of a raw Teams link
 (`meetingPlace`), Join, struck through when cancelled. A click or Enter opens their details popover
 (`outlook-details.tsx`): time, place, organizer, the body snippet, Join, "Open in Outlook"
@@ -2612,7 +2646,9 @@ a click still records the selection and opens the dialog or popover as before.
 
 Palette commands: today, next, previous, day view, week view, zoom in, zoom out and reset zoom
 (on the calendar only, with their keys), hide or show weekends,
-New card, Refresh Outlook, and one "Edit card" entry per card.
+New card, Refresh Outlook, one "Edit card" entry per card, and for a repeating card "Skip next
+occurrence: <title>" (the day of its `nextAt` in the card's zone, with Undo) and "Delete series:
+<title>" (opens the form at the delete question).
 
 ## Context panel
 
