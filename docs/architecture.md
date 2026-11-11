@@ -1776,9 +1776,11 @@ pending yes somewhere else with an ordinary change, and a held step list never o
 what the user changed by hand since. Otherwise the command is decided as the user's and the
 row is marked accepted in the same transaction; if the app refuses it now, the accept is
 rejected with the reason and the proposal stays open. `assistant.proposal.decline
-{proposalId, reason?}` marks it declined and keeps the reason. The three answer commands
-(`accept`, `decline`, `undo`) are in the table as refused, so they only work with the user's
-origin.
+{proposalId, reason?}` marks it declined and keeps the reason; a reason in which `findSecret`
+finds something is refused with the held message's sentence (`heldSecretSentence`), so the
+typed text is not kept in the command receipt either, and the view checks the same before it
+sends. The three answer commands (`accept`, `decline`, `undo`) are in the table as refused, so
+they only work with the user's origin.
 
 **What the agent reports is netted too** (`assistant/redact.ts`, `AssistantRedactor`, one per
 provider service). The provider service passes every provider event of the assistant thread
@@ -1836,8 +1838,9 @@ the chat view is copied. The `$` skill picker is off there.
   "Undone" when the topic says so; a refused Undo shows the server's reason under it.
 - Proposal card (`ProposalCard`): the title, one line per change, the place, Yes
   (`assistant.proposal.accept`) and No, which opens an optional reason field and sends
-  `assistant.proposal.decline`. A refused Yes (stale, or the app refuses it now) shows the
-  reason and still offers No.
+  `assistant.proposal.decline`. A reason that looks like a secret is not sent and the card
+  says why. A refused Yes (stale, or the app refuses it now) shows the reason and still offers
+  No.
 - Secret field card (`SecretFieldCard`), drawn after a `show_secret_field` call: the setting's
   label, where the value goes, the settings page's own `SecretField` (password field and Save,
   through `storeSecretSetting`: `secrets.set` and then `setting.set` with the reference) and,

@@ -326,6 +326,10 @@ const secretKinds: ReadonlyArray<{
   { test: /^-----BEGIN/, kind: 'a private key', settingKey: null },
 ];
 
+// Why text that looks like a secret was not sent: a held message (spec 17) and a No's reason.
+export const heldSecretSentence = (kind: string): string =>
+  `Not sent: this looks like ${kind}. Secrets go in their field, where the assistant never sees them.`;
+
 // The first part of `text` that the patterns of `assistant.secretPatterns` match, or null. The
 // server hides the same matches with `hideSecrets`.
 export function findSecret(text: string, patterns: readonly RegExp[]): SecretMatch | null {

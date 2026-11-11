@@ -323,6 +323,26 @@ describe("the net over the agent's own reports (spec 18)", () => {
 });
 
 describe("the user's answers in the agent's next turn (spec 8, 10)", () => {
+  it('refuses a No whose reason looks like a secret with the held sentence, and keeps nothing of it', async () => {
+    await call('set_setting', { key: 'viewer.htmlScripts', scope: 'global', value: true });
+    const [proposal] = rows<AssistantProposal>('assistantProposals');
+    expect(() =>
+      dispatch({
+        type: 'assistant.proposal.decline',
+        proposalId: proposal?.id ?? '',
+        reason: `Not now, use ${lookalike}`,
+      }),
+    ).toThrow(
+      'Not sent: this looks like a GitLab token. Secrets go in their field, where the assistant never sees them.',
+    );
+    expect(rows<AssistantProposal>('assistantProposals')[0]?.state).toBe('pending');
+    const stored = JSON.stringify([
+      server.database.db.select().from(events).all(),
+      server.database.db.select().from(commandReceipts).all(),
+    ]);
+    expect(stored).not.toContain(lookalike);
+  });
+
   it('a Yes, a No with its reason and an Undo reach the next prompt once, and the message shows alone', async () => {
     const changed = await call('set_setting', {
       key: 'calendar.showWeekends',
@@ -343,7 +363,7 @@ describe("the user's answers in the agent's next turn (spec 8, 10)", () => {
     dispatch({
       type: 'assistant.proposal.decline',
       proposalId: no?.id ?? '',
-      reason: `Not now, my key is ${lookalike}`,
+      reason: 'Not now, https://reader:hunter2pass@gitlab.example.invalid is the host',
     });
     dispatch({ type: 'assistant.undo', changeId: change?.id ?? '' });
     tick();
@@ -354,7 +374,7 @@ describe("the user's answers in the agent's next turn (spec 8, 10)", () => {
     const [, second, third] = prompts();
     expect(second).toContain(`Yes to "${yes?.title}": it is applied.`);
     expect(second).toContain(
-      `No to "${no?.title}": nothing changed. Their reason: Not now, my key is ${hiddenText}`,
+      `No to "${no?.title}": nothing changed. Their reason: Not now, https://gitlab.example.invalid is the host`,
     );
     expect(second).toContain(`Undid "${change?.what}" (Settings → Calendar).`);
     expect(second?.endsWith('\n\nWhat now?')).toBe(true);

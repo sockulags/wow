@@ -1,8 +1,11 @@
-import type {
-  AssistantChange,
-  AssistantPlace,
-  AssistantProposal,
-  AssistantProposalLine,
+import {
+  findSecret,
+  heldSecretSentence,
+  secretPatterns as compiled,
+  type AssistantChange,
+  type AssistantPlace,
+  type AssistantProposal,
+  type AssistantProposalLine,
 } from '@wow/contracts';
 import { useNavigate } from '@tanstack/react-router';
 import {
@@ -132,14 +135,17 @@ const answered: Readonly<Record<AssistantProposal['state'], string>> = {
 };
 
 // A card that lists exactly what would change, with Yes and No (spec 9, 10). No asks for an
-// optional reason, which goes to the assistant with its next turn. Yes can be refused when the
-// thing changed since; the card says why and still offers No.
+// optional reason, which goes to the assistant with its next turn; a reason that looks like a
+// secret (`assistant.secretPatterns`) is not sent, as a held message is not (spec 17). Yes can
+// be refused when the thing changed since; the card says why and still offers No.
 export function ProposalCard({
   proposal,
+  secretPatterns,
   onYes,
   onNo,
 }: {
   proposal: AssistantProposal;
+  secretPatterns: readonly string[];
   onYes(): Promise<unknown>;
   onNo(reason: string | undefined): Promise<unknown>;
 }) {
@@ -147,7 +153,15 @@ export function ProposalCard({
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState('');
   const pending = proposal.state === 'pending';
-  const decline = () => run(() => onNo(reason.trim() === '' ? undefined : reason.trim()));
+  const decline = () => {
+    const typed = reason.trim();
+    const secret = typed === '' ? null : findSecret(typed, compiled(secretPatterns));
+    run(() =>
+      secret
+        ? Promise.reject(new Error(heldSecretSentence(secret.kind)))
+        : onNo(typed === '' ? undefined : typed),
+    );
+  };
   return (
     <section
       aria-label={`Proposal: ${proposal.title}`}

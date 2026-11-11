@@ -1,4 +1,4 @@
-import { assistantThreadId, rpcMethods, type ThreadItem } from '@wow/contracts';
+import { assistantThreadId, heldSecretSentence, rpcMethods, type ThreadItem } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { KeyRoundIcon, SparklesIcon, XIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -69,7 +69,7 @@ function useOpenProblem(subscribed: boolean): {
   return state;
 }
 
-function Rows({ placed }: { placed: Placed }) {
+function Rows({ placed, patterns }: { placed: Placed; patterns: readonly string[] }) {
   const send = useDispatch();
   if (placed.changes.length === 0 && placed.proposals.length === 0) return null;
   return (
@@ -85,6 +85,7 @@ function Rows({ placed }: { placed: Placed }) {
         <ProposalCard
           key={proposal.id}
           proposal={proposal}
+          secretPatterns={patterns}
           onYes={() => send({ type: 'assistant.proposal.accept', proposalId: proposal.id })}
           onNo={(reason) =>
             send({
@@ -122,10 +123,7 @@ function HeldLine({
     >
       <div className="flex flex-wrap items-center gap-2">
         <KeyRoundIcon aria-hidden className="size-3.5 shrink-0 text-warning" />
-        <p className="min-w-0 flex-1">
-          Not sent: this looks like {held.match.kind}. Secrets go in their field, where the
-          assistant never sees them.
-        </p>
+        <p className="min-w-0 flex-1">{heldSecretSentence(held.match.kind)}</p>
         {onPut && held.field && (
           <Button
             size="xs"
@@ -224,7 +222,7 @@ export function AssistantView() {
       <div className="flex flex-col gap-2">
         {ask?.kind === 'secretField' && <SecretFieldCard request={ask.request} guide={ask.guide} />}
         {ask?.kind === 'projectWork' && <ProjectWorkCard offer={ask.offer} />}
-        {placed && <Rows placed={placed} />}
+        {placed && <Rows placed={placed} patterns={patterns} />}
       </div>
     );
   };
@@ -286,7 +284,7 @@ export function AssistantView() {
         extras={{
           after: extraAfter,
           ...(rest.changes.length + rest.proposals.length > 0
-            ? { end: <Rows placed={rest} /> }
+            ? { end: <Rows placed={rest} patterns={patterns} /> }
             : {}),
           composerRef: composer,
           placeholder: 'Tell the assistant what to set up or change in wow',

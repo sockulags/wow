@@ -1,4 +1,11 @@
-import { Command, hideSecrets, type DomainEvent, type ServerCommand } from '@wow/contracts';
+import {
+  Command,
+  findSecret,
+  heldSecretSentence,
+  hideSecrets,
+  type DomainEvent,
+  type ServerCommand,
+} from '@wow/contracts';
 import {
   acceptRefusal,
   changeOf,
@@ -96,13 +103,12 @@ export function* decideInSteps(
     case 'assistant.proposal.decline': {
       const proposal = pendingProposal(read, command.proposalId);
       const reason = command.reason?.trim();
+      const patterns = patternsOf(read, context);
+      // Refused rather than hidden, so the typed text is not kept with the command either.
+      const secret = reason ? findSecret(reason, patterns) : null;
+      if (secret) throw new CommandRejected('rejected', heldSecretSentence(secret.kind));
       yield [
-        answered(
-          proposal.id,
-          'declined',
-          reason ? hideSecrets(reason, patternsOf(read, context)) : null,
-          context,
-        ),
+        answered(proposal.id, 'declined', reason ? hideSecrets(reason, patterns) : null, context),
       ];
       return;
     }

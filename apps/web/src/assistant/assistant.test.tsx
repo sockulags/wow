@@ -204,6 +204,7 @@ describe('a proposal card (spec 9, 10)', () => {
     const yes = vi.fn<() => Promise<void>>(() => Promise.resolve());
     await show(
       <ProposalCard
+        secretPatterns={defaultSecretPatterns}
         proposal={proposal()}
         onYes={yes}
         onNo={vi.fn<(reason: string | undefined) => Promise<void>>()}
@@ -220,7 +221,12 @@ describe('a proposal card (spec 9, 10)', () => {
   it('No takes an optional reason', async () => {
     const no = vi.fn<(reason: string | undefined) => Promise<void>>(() => Promise.resolve());
     await show(
-      <ProposalCard proposal={proposal()} onYes={vi.fn<() => Promise<void>>()} onNo={no} />,
+      <ProposalCard
+        proposal={proposal()}
+        secretPatterns={defaultSecretPatterns}
+        onYes={vi.fn<() => Promise<void>>()}
+        onNo={no}
+      />,
     );
     await userEvent.click(screen.getByRole('button', { name: 'No' }));
     await userEvent.type(
@@ -236,10 +242,33 @@ describe('a proposal card (spec 9, 10)', () => {
     expect(no).toHaveBeenCalledWith(undefined);
   });
 
+  it('does not send a reason that looks like a secret and says why', async () => {
+    const no = vi.fn<(reason: string | undefined) => Promise<void>>(() => Promise.resolve());
+    await show(
+      <ProposalCard
+        proposal={proposal()}
+        secretPatterns={defaultSecretPatterns}
+        onYes={vi.fn<() => Promise<void>>()}
+        onNo={no}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'No' }));
+    await userEvent.type(
+      screen.getByRole('textbox', { name: 'Reason for no (optional)' }),
+      'Use glpat-abcdefghijklmnopqrstuvwxyz0123 instead',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Say no' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Not sent: this looks like a GitLab token. Secrets go in their field, where the assistant never sees them.',
+    );
+    expect(no).not.toHaveBeenCalled();
+  });
+
   it('a refused Yes shows the reason and still offers No', async () => {
     const reason = '"Turn on scripts in HTML files" was proposed for how things were then.';
     await show(
       <ProposalCard
+        secretPatterns={defaultSecretPatterns}
         proposal={proposal()}
         onYes={() => Promise.reject(new Error(reason))}
         onNo={vi.fn<(reason: string | undefined) => Promise<void>>()}
@@ -253,6 +282,7 @@ describe('a proposal card (spec 9, 10)', () => {
   it('says how it was answered, with the reason of a No', async () => {
     await show(
       <ProposalCard
+        secretPatterns={defaultSecretPatterns}
         proposal={proposal({ state: 'declined', answeredAt: at, reason: 'Not now' })}
         onYes={vi.fn<() => Promise<void>>()}
         onNo={vi.fn<(reason: string | undefined) => Promise<void>>()}
