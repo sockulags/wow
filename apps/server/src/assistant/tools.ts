@@ -60,18 +60,25 @@ export const changeTools = {
   create_card: {
     type: 'card.create',
     newId: 'cardId',
+    withheld: ['skippedDates'],
     description:
-      'Puts a card on the calendar. Times are instants with an offset; zone is the IANA zone they were meant in. With a project and a workflow the card starts that workflow at its start time.',
+      'Puts a card on the calendar. Times are instants with an offset; zone is the IANA zone they were meant in. With a project and a workflow the card starts that workflow at its start time. For anything that recurs, give repeat and make one card: start and end are the first occurrence, and every later one has the same local time and length in zone. repeat is {frequency: "daily"|"weekly"|"monthly", interval (1 = every day, week or month), weekdays (weekly only, e.g. ["mon","tue","wed","thu","fri"]), end: {kind: "never"} | {kind: "on", date: "YYYY-MM-DD"} | {kind: "after", count}}. Monthly falls on the start\'s day of the month. Never make one card per day.',
   },
   update_card: {
     type: 'card.update',
     description:
-      'Moves, renames or relinks a card. Give only what changes; null takes a link away.',
+      'Moves, renames or relinks a card, or changes how it repeats. Give only what changes; null takes a link away, and repeat: null makes a repeating card happen once. On a repeating card a change applies to every occurrence that has not started; the ones that ran keep their runs.',
+  },
+  skip_card_occurrence: {
+    type: 'card.skipOccurrence',
+    description:
+      "Skips one occurrence of a repeating card: date is its day (YYYY-MM-DD) in the card's zone. The rest of the series is untouched. read_calendar lists the occurrences and when each card fires next.",
   },
   delete_card: {
     type: 'card.delete',
     withheld: ['stopRun'],
-    description: 'Removes a card. Refused while its run is live.',
+    description:
+      'Removes a card; a repeating card goes with its whole series. To leave out one occurrence, use skip_card_occurrence. Refused while its run is live.',
   },
   start_card_run: {
     type: 'card.runNow',

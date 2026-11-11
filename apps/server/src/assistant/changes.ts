@@ -1,9 +1,11 @@
 import {
   Command,
+  RepeatRule,
   SecretPattern,
   gatePartLabels,
   hideSecretsDeep,
   projectCodeHost,
+  repeatRuleWords,
   ruleConditionText,
   secretPatterns,
   settingGroupTitles,
@@ -15,6 +17,7 @@ import {
   type AssistantProposalRecord,
   type AssistantProposalLine,
   type AssistantTarget,
+  type CalendarItem,
   type WorkflowStep,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
@@ -35,7 +38,8 @@ const eventLabel = (event: TriggerEvent, projectId: string, read: ReadModel): st
   triggerEventLabel(event, projectCodeHost(read.hostReads(projectId), projectId));
 
 // A row's own bookkeeping, which says nothing about what the user or the assistant changed.
-const bookkeeping: ReadonlySet<string> = new Set(['updatedAt']);
+// A card's next fire time follows its trigger.
+const bookkeeping: ReadonlySet<string> = new Set(['updatedAt', 'nextAt']);
 
 // The patterns of `assistant.secretPatterns` as stored, or the registry's when none is stored.
 export function patternsOf(read: ReadModel, context: DecideContext): RegExp[] {
@@ -67,6 +71,7 @@ export function targetOf(command: Command): AssistantTarget | undefined {
     case 'card.create':
     case 'card.update':
     case 'card.delete':
+    case 'card.skipOccurrence':
       return { kind: 'card', id: command.cardId };
     case 'backlog.create':
     case 'backlog.update':
@@ -184,17 +189,37 @@ function showWhole(key: string, value: unknown, read: ReadModel): string {
   return JSON.stringify(value);
 }
 
+// A card's rule is said in words with its time (recurring cards spec 18); the other fields as
+// `show` says them.
+function showField(row: Row, key: string, read: ReadModel): string {
+  if (key === 'repeat') {
+    const rule = RepeatRule.safeParse(row['repeat']);
+    if (!rule.success) return 'does not repeat';
+    const start = row['start'];
+    const zone = row['zone'];
+    return clip(
+      repeatRuleWords(
+        rule.data,
+        typeof start === 'string' && typeof zone === 'string' ? { start, zone } : undefined,
+      ),
+      read,
+    );
+  }
+  if (key === 'skippedDates' && Array.isArray(row[key]) && row[key].length === 0) return 'none';
+  return show(key, row[key], read);
+}
+
 function fields(row: Row, keys: readonly string[], read: ReadModel): string {
   const [only] = keys;
-  if (keys.length === 1 && only !== undefined) return show(only, row[only], read);
-  return keys.map((key) => `${key}: ${show(key, row[key], read)}`).join('; ');
+  if (keys.length === 1 && only !== undefined) return showField(row, only, read);
+  return keys.map((key) => `${key}: ${showField(row, key, read)}`).join('; ');
 }
 
 // The fields that say what a new or removed thing is.
 const identity: Readonly<Record<AssistantTarget['kind'], readonly string[]>> = {
   setting: ['value'],
   project: ['name', 'cwd'],
-  card: ['title', 'start', 'end', 'projectId', 'workflowId'],
+  card: ['title', 'start', 'end', 'projectId', 'workflowId', 'repeat'],
   backlogItem: ['title'],
   workflow: ['name', 'steps'],
   plan: ['followed'],
@@ -344,18 +369,30 @@ function inverseOf(command: Command, before: Row | null, changed: readonly strin
           {
             type: 'card.update',
             cardId: command.cardId,
-            ...named([
-              'title',
-              'start',
-              'end',
-              'zone',
-              'body',
-              'projectId',
-              'backlogItemId',
-              'workflowId',
-            ]),
+            ...named(
+              [
+                'title',
+                'start',
+                'end',
+                'zone',
+                'body',
+                'projectId',
+                'backlogItemId',
+                'workflowId',
+                'repeat',
+                'skippedDates',
+              ],
+              { skippedDates: [] },
+            ),
           },
         ];
+      // The day goes back into the series.
+      case 'card.skipOccurrence':
+        return [
+          { type: 'card.update', cardId: command.cardId, skippedDates: before?.['skippedDates'] },
+        ];
+      // The whole series comes back, with its rule and the days skipped by hand (recurring
+      // cards spec 13); what its occurrences did is still kept.
       case 'card.delete':
         return [
           {
@@ -371,11 +408,21 @@ function inverseOf(command: Command, before: Row | null, changed: readonly strin
                 'projectId',
                 'backlogItemId',
                 'workflowId',
+                'repeat',
+                'skippedDates',
               ]),
               new Set(
-                ['body', 'projectId', 'backlogItemId', 'workflowId'].filter(
-                  (key) => (before?.[key] ?? null) === null,
-                ),
+                [
+                  'body',
+                  'projectId',
+                  'backlogItemId',
+                  'workflowId',
+                  'repeat',
+                  'skippedDates',
+                ].filter((key) => {
+                  const value = before?.[key] ?? null;
+                  return value === null || (Array.isArray(value) && value.length === 0);
+                }),
               ),
             ),
           },
@@ -694,7 +741,14 @@ export function basisOf(command: Command, read: ReadModel): Row {
         const projectId = command.projectId === undefined ? card?.projectId : command.projectId;
         return {
           card: card
-            ? pick({ ...card }, ['title', 'start', 'workflowId', 'projectId', 'backlogItemId'])
+            ? pick({ ...card }, [
+                'title',
+                'start',
+                'workflowId',
+                'projectId',
+                'backlogItemId',
+                'repeat',
+              ])
             : null,
           workflow: workflow(workflowId),
           project: project(projectId),
@@ -740,6 +794,26 @@ export function acceptRefusal(
 }
 
 const onOff = (value: boolean | undefined): string => (value ? 'on' : 'off');
+
+// The rule of a card a held update would leave, in words, when the update touches it or the
+// card repeats.
+function repeatLines(
+  card: CalendarItem | undefined,
+  command: Extract<Command, { type: 'card.update' }>,
+): AssistantProposalLine[] {
+  const was = card?.repeat ?? null;
+  const next = command.repeat === undefined ? was : command.repeat;
+  if (was === null && next === null) return [];
+  const start = command.start ?? card?.start;
+  const zone = command.zone ?? card?.zone;
+  const words = (rule: RepeatRule | null, at: string | undefined) =>
+    rule === null
+      ? 'does not repeat'
+      : repeatRuleWords(rule, at && zone ? { start: at, zone } : undefined);
+  const from = words(was, card?.start);
+  const to = words(next, start);
+  return from === to ? [{ what: 'Repeats', from: null, to }] : [{ what: 'Repeats', from, to }];
+}
 
 // What a held command would change, in the words the proposal card shows. The command has
 // already passed the app's own checks, so what it names exists.
@@ -901,9 +975,20 @@ export function proposalOf(
           command.type === 'card.create'
             ? command.title
             : (read.backlogItem(command.backlogItemId)?.title ?? command.backlogItemId);
+        const rule = command.type === 'card.create' ? command.repeat : undefined;
+        const lines: AssistantProposalLine[] = [{ what: 'Card', from: null, to: title }];
+        if (rule) {
+          lines.push({
+            what: 'Repeats',
+            from: null,
+            to: repeatRuleWords(rule, { start: command.start, zone: command.zone }),
+          });
+        }
         return {
-          title: `Start ${workflowName(command.workflowId ?? '')} in ${projectName(command.projectId ?? '')} from a card at ${command.start}`,
-          lines: [{ what: 'Card', from: null, to: title }],
+          title: rule
+            ? `Start ${workflowName(command.workflowId ?? '')} in ${projectName(command.projectId ?? '')} from a repeating card, first at ${command.start}`
+            : `Start ${workflowName(command.workflowId ?? '')} in ${projectName(command.projectId ?? '')} from a card at ${command.start}`,
+          lines,
           place: cardPlace(command.cardId, false),
         };
       }
@@ -921,6 +1006,7 @@ export function proposalOf(
             ...(command.start !== undefined && command.start !== moved?.start
               ? [{ what: 'Starts', from: moved?.start ?? null, to: command.start }]
               : []),
+            ...repeatLines(moved, command),
           ],
           place: cardPlace(command.cardId, moved !== undefined),
         };

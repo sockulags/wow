@@ -1,8 +1,10 @@
 import {
+  repeatRuleWords,
   SecretRef,
   SettingGroup,
   TrackerConnection,
   isCardTrigger,
+  type CalendarOccurrence,
   type SettingDefinition,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
@@ -10,6 +12,7 @@ import { asc, desc } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
+import { readCalendarRange } from '../core/series.js';
 import { runPath } from '../core/workflows.js';
 import type { SettingsService } from '../settings/service.js';
 import type { TrackerService } from '../trackers/service.js';
@@ -214,7 +217,7 @@ export const readers = {
   }),
   read_calendar: reader({
     description:
-      "Calendar cards with what they start, and Outlook meetings with their times and titles only. Without a range: from now for the calendar's lookahead.",
+      "Calendar cards with what they start, and Outlook meetings with their times and titles only. Without a range: from now for the calendar's lookahead. A repeating card is one card: it lists its rule in words, when it fires next, the days skipped by hand and its occurrences in the range with what happened at those already reached.",
     input: z
       .object({
         from: z.iso.datetime({ offset: true }).optional(),
@@ -227,15 +230,21 @@ export const readers = {
         to === undefined
           ? new Date(start.getTime() + deps.settings.get('calendar.lookaheadDays') * 86_400_000)
           : new Date(to);
-      const rows = deps.db
-        .select()
-        .from(t.calendarItems)
-        .orderBy(asc(t.calendarItems.start))
-        .all()
-        .filter(
-          (item) =>
-            Date.parse(item.end) >= start.getTime() && Date.parse(item.start) <= end.getTime(),
-        );
+      const rows = deps.db.select().from(t.calendarItems).orderBy(asc(t.calendarItems.start)).all();
+      const range =
+        end.getTime() > start.getTime()
+          ? readCalendarRange(
+              deps.db,
+              { from: start.toISOString(), to: end.toISOString() },
+              deps.settings.get('calendar.maxOccurrences'),
+            )
+          : { occurrences: [] as CalendarOccurrence[], more: [] as string[] };
+      const inRange = new Map<string, CalendarOccurrence[]>();
+      for (const occurrence of range.occurrences) {
+        const kept = inRange.get(occurrence.cardId);
+        if (kept) kept.push(occurrence);
+        else inRange.set(occurrence.cardId, [occurrence]);
+      }
       const times = (item: (typeof rows)[number]) => ({
         title: item.title,
         start: item.start,
@@ -246,7 +255,7 @@ export const readers = {
         from: start.toISOString(),
         to: end.toISOString(),
         cards: rows
-          .filter((item) => item.source === 'local')
+          .filter((item) => item.source === 'local' && inRange.has(item.id))
           .map((item) => ({
             id: item.id,
             ...times(item),
@@ -255,10 +264,32 @@ export const readers = {
             backlogItemId: item.backlogItemId,
             runId: item.runId,
             state: item.state,
+            nextAt: item.nextAt,
+            ...(item.repeat
+              ? {
+                  repeat: item.repeat,
+                  repeats: repeatRuleWords(item.repeat, { start: item.start, zone: item.zone }),
+                  skippedDates: item.skippedDates,
+                  occurrences: (inRange.get(item.id) ?? []).map((occurrence) => ({
+                    date: occurrence.date,
+                    start: occurrence.start,
+                    end: occurrence.end,
+                    outcome: occurrence.record?.outcome ?? null,
+                    runId: occurrence.record?.runId ?? null,
+                    reason: occurrence.record?.reason ?? null,
+                  })),
+                  moreOccurrences: range.more.includes(item.id),
+                }
+              : {}),
             path: `/calendar?item=${encodeURIComponent(item.id)}`,
           })),
         meetings: rows
-          .filter((item) => item.source === 'outlook')
+          .filter(
+            (item) =>
+              item.source === 'outlook' &&
+              Date.parse(item.end) >= start.getTime() &&
+              Date.parse(item.start) <= end.getTime(),
+          )
           .map((item) => ({ ...times(item), allDay: item.allDay, state: item.state })),
       };
     },
@@ -390,6 +421,7 @@ export const readers = {
                 workflowId: trigger.workflowId,
                 cardId: trigger.calendarItemId,
                 card: cards.get(trigger.calendarItemId) ?? null,
+                // For a repeating card, the next occurrence it fires at.
                 runAt: trigger.runAt,
                 zone: trigger.zone,
                 state: trigger.state,
