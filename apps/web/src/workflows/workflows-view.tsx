@@ -6,12 +6,13 @@ import { Button } from '@/components/ui/button';
 import { useTopic } from '@/chat/data';
 import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { runStateDotClass, runStateLabels, sortRuns } from './model';
+import { runStateDotClass, runStateLabel, sortRuns } from './model';
 import { eventTriggers, triggersPath } from './triggers';
 
 function WorkflowList() {
   const workflows = useTopic('workflows') ?? [];
   const runs = useTopic('workflowRuns') ?? [];
+  const threads = useTopic('threads') ?? [];
   const projects = useTopic('projects') ?? [];
   const triggerCount = eventTriggers(useTopic('triggers') ?? []).length;
   const onTriggers = useRouterState({
@@ -110,7 +111,7 @@ function WorkflowList() {
                         {names.get(run.workflowId) ?? 'Workflow'}
                       </span>
                       <span className="shrink-0 text-2xs text-muted-foreground">
-                        {runStateLabels[run.state]}
+                        {runStateLabel(run, threads)}
                       </span>
                     </span>
                     <span

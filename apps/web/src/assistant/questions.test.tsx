@@ -1,14 +1,19 @@
 import {
   defaultSecretPatterns,
   type AskQuestionsRequest,
+  type Command,
+  type Thread,
   type ThreadItem,
   type Turn,
 } from '@wow/contracts';
+import { type Connection, type ConnectionState } from '@wow/client-runtime';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { createStore } from 'zustand';
 import { RuntimeProvider } from '@/app/runtime';
 import { ChatQuestions } from '@/chat/items';
+import { ThreadConversation } from '@/chat/thread-view';
 import type { QuestionHold } from '@/chat/question-card';
 import { createTestRuntime } from '@/test/render';
 import { HeldLine } from './assistant-view';
@@ -204,5 +209,91 @@ describe('a typed answer that looks like a secret (spec 10)', () => {
     expect(sent).toEqual([]);
     await user.click(screen.getByRole('button', { name: 'Send anyway' }));
     expect(JSON.stringify(sent)).toContain('"type":"question.answer"');
+  });
+
+  it('is held on a lone agent question drawn in the Assistant conversation', async () => {
+    const user = userEvent.setup();
+    const sent: Command[] = [];
+    const asked = item('lone-question', 1, 'question', {
+      questionId: 'assistant:q2',
+      question: 'Which kettle?',
+      options: [{ label: 'Glass kettle' }],
+      multiSelect: false,
+    });
+    const thread: Thread = {
+      id: 'assistant',
+      projectId: null,
+      cwd: '/home/tea/assistant',
+      branch: null,
+      providerInstanceId: 'claude-home',
+      providerSessionId: null,
+      title: 'Assistant',
+      model: '',
+      effort: '',
+      permissionMode: 'default',
+      state: 'needs_you',
+      pinned: false,
+      runId: null,
+      stepId: null,
+      createdAt: '2026-11-10T08:00:00.000Z',
+      updatedAt: '2026-11-10T08:00:00.000Z',
+    };
+    const topics: Readonly<Record<string, unknown[]>> = {
+      turns: [turn(0, 'running')],
+      threadItems: [asked],
+      questions: [
+        {
+          id: 'assistant:q2',
+          threadId: 'assistant',
+          itemId: 'lone-question',
+          request: {},
+          answer: null,
+          answeredAt: null,
+        },
+      ],
+    };
+    const connection: Connection = {
+      state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
+      request(method, params) {
+        if (method !== 'dispatch') return Promise.resolve([]);
+        const { command, commandId } = params as { command: Command; commandId: string };
+        sent.push(command);
+        return Promise.resolve({ commandId, seqs: [sent.length], duplicate: false });
+      },
+      subscribe(topic, _params, onData) {
+        onData(topics[topic] ?? []);
+        return () => undefined;
+      },
+      retry: () => undefined,
+      close: () => undefined,
+    };
+    const hold: QuestionHold<Held> = {
+      check: (replies) => {
+        for (const reply of replies.values()) {
+          const held = holdMessage(reply.text, defaultSecretPatterns, []);
+          if (held) return held;
+        }
+        return null;
+      },
+      render: (held, controls) => (
+        <HeldLine
+          held={held}
+          onPut={undefined}
+          onSend={controls.sendAnyway}
+          onDismiss={controls.dismiss}
+        />
+      ),
+    };
+    render(
+      <RuntimeProvider runtime={{ ...createTestRuntime(), connection }}>
+        <ThreadConversation thread={thread} instance={undefined} extras={{ questionHold: hold }} />
+      </RuntimeProvider>,
+    );
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Other' }),
+      `use ${githubToken}{Enter}`,
+    );
+    expect(screen.getByTestId('held-message').textContent).toContain('Send anyway');
+    expect(sent).toEqual([]);
   });
 });

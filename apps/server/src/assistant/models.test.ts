@@ -8,6 +8,7 @@ import {
   type ProviderModel,
   type ServerCommand,
   type SetupApplication,
+  type Thread,
   type Workflow,
   type WorkflowStep,
 } from '@wow/contracts';
@@ -53,6 +54,11 @@ function refusal(send: () => unknown): string | undefined {
 
 const workflow = (id: string) =>
   (snapshot(server.database.db, { topic: 'workflows' }) as Workflow[]).find((row) => row.id === id);
+
+const firstThread = (runId: string) =>
+  (snapshot(server.database.db, { topic: 'threads' }) as Thread[]).find(
+    (thread) => thread.runId === runId,
+  );
 
 async function call(name: string, args: Record<string, unknown> = {}) {
   const result = await server.assistant.tools.call(name, args);
@@ -287,6 +293,27 @@ describe('the workflows the assistant writes (spec 15, 16)', () => {
     );
   });
 
+  it('refuses a step on an instance read_models reports as not connected, with the same reason (spec 16)', async () => {
+    const read = ModelsRead.parse(
+      (await call('read_models', { providerInstanceId: 'codex-home' })).content,
+    );
+    const reason = read.instances[0]?.reason;
+    expect(reason).toContain('Not signed in');
+    const result = await call('create_workflow', {
+      name: 'Review loop',
+      steps: [
+        step('plan-work', { providerInstanceId: 'codex-home', model: 'codex-max', effort: 'low' }),
+      ],
+    });
+    expect(result).toEqual({
+      isError: true,
+      content: {
+        outcome: 'refused',
+        reason: `Codex at home is not connected, so wow cannot check Step 1 (plan-work): ${reason}`,
+      },
+    });
+  });
+
   it('has an instruction text that names the tools, says to give the reason and when to ask', () => {
     expect(defaultAssistantInstructions).toContain('read_models');
     expect(defaultAssistantInstructions).toContain('read_model_guidance');
@@ -374,6 +401,9 @@ describe('a workflow stored before the rule (spec 19, 20)', () => {
     expect(snapshot(server.database.db, { topic: 'workflowRuns' })).toMatchObject([
       { id: 'r1', workflowId: 'old' },
     ]);
+    // Its first step's thread starts as before: with no model, which the runner fails, when
+    // neither the instance nor the project has a default.
+    expect(firstThread('r1')).toMatchObject({ stepId: 'check-work', model: '' });
 
     const result = await server.assistant.tools.call('diagnose_setup', {});
     const { problems } = Diagnosis.parse(JSON.parse(result.text));
@@ -386,6 +416,45 @@ describe('a workflow stored before the rule (spec 19, 20)', () => {
         place: { label: 'Workflows → Older review', path: '/workflows/old' },
       },
     ]);
+  });
+
+  it("starts a run's step stored without a model on its instance's default (spec 19)", () => {
+    dispatch({
+      type: 'workflow.restore',
+      workflow: {
+        ...old,
+        id: 'old-default',
+        steps: [step('check-work', { providerInstanceId: 'codex-work' })],
+      },
+    });
+    dispatch({
+      type: 'workflowRun.start',
+      runId: 'r2',
+      workflowId: 'old-default',
+      projectId: 'tea',
+    });
+    expect(firstThread('r2')).toMatchObject({
+      stepId: 'check-work',
+      providerInstanceId: 'codex-work',
+      model: 'codex-max',
+      effort: 'medium',
+    });
+  });
+
+  it('is put back without a model by an undo, though its instance has a default (spec 19)', async () => {
+    dispatch({
+      type: 'workflow.restore',
+      workflow: { ...old, steps: [step('check-work', { providerInstanceId: 'codex-work' })] },
+    });
+    const { isError, content } = await call('update_workflow', {
+      workflowId: 'old',
+      steps: [step('check-work', { model: 'codex-mini', effort: 'low' })],
+    });
+    expect(isError).toBe(false);
+    expect(workflow('old')?.steps[0]?.model).toBe('codex-mini');
+    const change = content['change'] as Pick<AssistantChange, 'id'>;
+    dispatch({ type: 'assistant.undo', changeId: change.id });
+    expect(workflow('old')?.steps[0]).not.toHaveProperty('model');
   });
 
   it('applies a setup file with such a step, marked', () => {

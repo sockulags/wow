@@ -307,13 +307,15 @@ function refuseConditions(
 
 // A step on a provider that needs a model gets the instance's default model when it names none,
 // and is refused when there is no default (questions and models spec 17). A workflow restored
-// as it was stored, a setup file and an undo keep such a step; it is marked instead (spec 19,
-// 20). A step whose instance is not here yet is judged by the kind it waits for.
+// as it was stored and an undo keep such a step as it was; a setup file keeps it when there is
+// no default, marked (spec 19, 20). A step whose instance is not here yet is judged by the kind
+// it waits for.
 function withRequiredModels(
   steps: readonly WorkflowStep[],
   read: ReadModel,
   context: DecideContext,
 ): WorkflowStep[] {
+  if (context.putBackSteps) return [...steps];
   return steps.map((step) => {
     const instance = read.providerInstance(step.providerInstanceId);
     const kind = instance?.kind ?? awaitedProviderKind(step.providerInstanceId);

@@ -121,7 +121,7 @@ export function* decideInSteps(
       const refusal = undoRefusal(change, read, context);
       if (refusal !== undefined) throw new CommandRejected('conflict', refusal);
       // An undo puts back what was stored, a step without a model included.
-      const putBack: DecideContext = { ...asUser, keepStepsWithoutModel: true };
+      const putBack: DecideContext = { ...asUser, putBackSteps: true };
       for (const inverse of change.inverse) {
         try {
           yield decide(inverse, read, putBack);

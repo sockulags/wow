@@ -88,7 +88,7 @@ export function* decideSetup(
       for (const part of application.parts.toReversed()) {
         for (const inverse of part.inverse) {
           try {
-            yield decide(inverse, read, asUser);
+            yield decide(inverse, read, { ...asUser, putBackSteps: true });
           } catch (error) {
             if (!(error instanceof CommandRejected)) throw error;
             throw new CommandRejected(

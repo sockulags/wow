@@ -2525,9 +2525,11 @@ between them only from a guidance text it ships; nothing about models comes from
   step without a model is stored as before. Old data keeps working (spec 19): `workflow.restore`
   stores the row as it was, an update that leaves the steps alone does not look at them, a run
   starts as it did (the step's thread falls back to the instance's and the project's default
-  model, and the runner fails a step whose model is still empty), and `DecideContext.keepStepsWithoutModel`
-  lets a setup file's apply and preview and every undo (`setup.undo`, `assistant.undo`) store
-  such a step as it is, since they put back or bring in what was stored elsewhere.
+  model, and the runner fails a step whose model is still empty). `DecideContext.keepStepsWithoutModel`
+  lets a setup file's apply and preview store such a step without a default as it is, marked (a
+  step whose instance has a default takes it), and `DecideContext.putBackSteps` makes every undo
+  (`setup.undo`, `assistant.undo`) store the steps exactly as they were stored, no default
+  written in, since it puts back what was there.
 - **Marks** (`modelMark`, spec 19, 20). A setup file's preview and its `setupApplications` row
   mark a step left without a model and without a default to take ("step check-work has no
   model, which Codex needs; choose one in the workflow, or the step fails when it starts"), as
@@ -2549,8 +2551,9 @@ between them only from a guidance text it ships; nothing about models comes from
   (the largest, a balanced one, the smallest), never versions.
 - **What the assistant writes** (`checkStepModels`, spec 15, 16). `create_workflow` and an
   `update_workflow` with steps check every step before the command is dispatched: the instance
-  exists, its models can be read now, the step names one of them, and an effort that model takes
-  (when it takes any). Each refusal says what is offered ("Codex at work does not offer the
+  exists, it is connected (its last test passed; otherwise the refusal gives the reason
+  `read_models` gives), its models can be read now, the step names one of them, and an effort
+  that model takes (when it takes any). Each refusal says what is offered ("Codex at work does not offer the
   model codex-ultra (Step 1 (plan-work)). It offers: codex-max, codex-mini."). The user's own
   commands are not checked against the list, since the builder offers only the list. A change
   row says each step with its instance, model and effort ("2 steps: plan-work (Codex at work,
@@ -2715,9 +2718,12 @@ are no checkboxes, only the sentence that this gate always waits for you. The pa
 each part on the stored workflow (`workflow.gateCondition.<workflowId>.<stepId>.<part>`, found
 by search). At a gate that did not pass, the gate bar says "Did not pass by itself: <parts>" or
 "Waiting for checks" and lists every part with what it found (`gateStanding`); while a run
-waits for checks its run view says "Waiting for checks" instead of "Waiting for you" (other
-lists keep the run state's own words). A step whose gate passed by itself shows "Passed by
-itself: <parts>" with each part's sentence in its row (`passedByItself`).
+waits for checks its run view says "Waiting for checks" instead of "Waiting for you"; while a
+running run's current step thread is `needs_you` (a question or an approval) the run view and the
+Workflows list of runs say "Waiting for an answer" (`runStateLabel(run, threads)`; the run stays
+`running`, questions-and-models spec 7). Other lists keep the run state's own words. A step
+whose gate passed by itself shows "Passed by itself: <parts>" with each part's sentence in its
+row (`passedByItself`).
 
 **Rules on a step** (`rules.ts`, `step-rules.tsx`; workflow branches spec 14, 16, 17). An open
 step ends with "After this step": its rules in the order they are tried, each a row of three

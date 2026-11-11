@@ -27,6 +27,15 @@ type InstanceRow = typeof t.providerInstances.$inferSelect;
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : 'it did not say why';
 
+// Why an instance whose last test did not pass is not connected; null when it passed. Both the
+// reader and the step check use it, so they agree on which instances can be written.
+const notReadyReason = (instance: InstanceRow): string | null =>
+  instance.status === 'ready'
+    ? null
+    : instance.status === 'error'
+      ? `Its last test failed${instance.statusMessage ? ` (${instance.statusMessage})` : ''}. Test it in Settings → Providers.`
+      : 'It has not passed a test yet. Test it in Settings → Providers.';
+
 // An instance is connected when its last test passed and its provider lists its models. One that
 // is signed out or fails to list them is "not connected", with the reason (open risk of U2).
 async function modelsOf(instance: InstanceRow, deps: ReaderDeps): Promise<InstanceModels> {
@@ -44,13 +53,8 @@ async function modelsOf(instance: InstanceRow, deps: ReaderDeps): Promise<Instan
     reason,
     models: [],
   });
-  if (instance.status !== 'ready') {
-    return notConnected(
-      instance.status === 'error'
-        ? `Its last test failed${instance.statusMessage ? ` (${instance.statusMessage})` : ''}. Test it in Settings → Providers.`
-        : 'It has not passed a test yet. Test it in Settings → Providers.',
-    );
-  }
+  const notReady = notReadyReason(instance);
+  if (notReady !== null) return notConnected(notReady);
   let models: ProviderModel[];
   try {
     models = await deps.listModels(instance.id);
@@ -148,6 +152,10 @@ async function checkStep(
     return refuse(
       `${label} names provider instance ${step.providerInstanceId}, which does not exist. read_models lists the instances.`,
     );
+  }
+  const notReady = notReadyReason(instance);
+  if (notReady !== null) {
+    return refuse(`${instance.name} is not connected, so wow cannot check ${label}: ${notReady}`);
   }
   let models = offered.get(instance.id);
   if (!models) {

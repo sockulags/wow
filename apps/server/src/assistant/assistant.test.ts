@@ -162,6 +162,8 @@ beforeEach(async () => {
     defaultEffort: 'high',
     defaultPermissionMode: 'default',
   });
+  // The assistant writes steps only on an instance that passed its test (models spec 16).
+  await server.providerService.test('claude-work');
   asUser({ type: 'project.create', projectId: 'tea', name: 'Tea', cwd: path.join(root, 'tea') });
   asUser({
     type: 'workflow.create',
