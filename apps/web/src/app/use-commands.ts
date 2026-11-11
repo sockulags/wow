@@ -11,7 +11,8 @@ import { chatCommands } from '@/chat/commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
-import { providerCommands } from '@/providers/commands';
+import { connectCommands, providerCommands } from '@/providers/commands';
+import { connectStore } from '@/providers/connect-step';
 import { setupCommands } from '@/settings/setup';
 import { formatWhen } from '@/lib/format';
 import { panelCommands, viewerCommands } from '@/panel/commands';
@@ -33,7 +34,13 @@ import { updateCommands } from './updates';
 import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
 import { useLayout, useRuntime, useSetting, useUpdateState } from './runtime';
 
-export function useCommands(): {
+// While the first-start gate is up only the step is on screen, so the palette offers only what
+// acts on it and on the window.
+const gateCommand = (id: string) =>
+  id.startsWith('connect.') ||
+  ['setup.start', 'palette.open', 'appearance.toggleTheme'].includes(id);
+
+export function useCommands(gated = false): {
   readonly commands: readonly AppCommand[];
   readonly context: CommandContext;
 } {
@@ -84,7 +91,8 @@ export function useCommands(): {
   const ruleBuilder = useStore(rulesStore, (state) => state.builder);
   const ruleAt = useStore(rulesStore, (state) => state.at);
   const staticCommands = useMemo(() => buildCommands(), []);
-  const commands = useMemo(() => {
+  const connectShown = useStore(connectStore, (state) => state.shown > 0);
+  const all = useMemo(() => {
     const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
     const cards = (calendarItems ?? []).filter((item) => item.source === 'local');
@@ -172,6 +180,7 @@ export function useCommands(): {
         page,
         pageReads: pageReads ?? [],
       }),
+      ...connectCommands(connectShown),
       ...providerCommands(instances ?? []),
       ...projectCommands(projects ?? []),
       ...updateCommands(updateState),
@@ -217,7 +226,12 @@ export function useCommands(): {
     sendBackRunId,
     ruleBuilder,
     ruleAt,
+    connectShown,
   ]);
+  const commands = useMemo(
+    () => (gated ? all.filter((command) => gateCommand(command.id)) : all),
+    [all, gated],
+  );
   const context = useMemo(
     () => ({ navigate, settings, layout, draft, connection, updates }),
     [navigate, settings, layout, draft, connection, updates],

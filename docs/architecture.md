@@ -325,10 +325,10 @@ thread it maps to, since the app-server has no request that unloads one.
   commands do the same from anywhere. `provider.detect` looks for `claude` and `codex` on the
   server's PATH (PATHEXT on Windows) and reports the config directory each would use
   (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `~/.claude` / `~/.codex`); what the onboarding needs
-  per kind is `providerSetup` in contracts. With no instance at all, and while
-  `providers.offerSetup` is on, the web app opens a first-run wizard: it creates and tests one
-  instance per detected CLI, then offers `projects.discover`'s folders as projects; "Not now"
-  turns the setting off. The instance editor runs `provider.detect` when it opens to fill an empty
+  per kind is `providerSetup` in contracts. The first-run wizard (palette "Detect installed
+  providers") creates and tests one instance per detected CLI, then offers `projects.discover`'s
+  folders as projects; "Not now" turns `providers.offerSetup` off. It no longer opens by itself:
+  first start is the gate described under "Assistant" ("First start"). The instance editor runs `provider.detect` when it opens to fill an empty
   binary path and config folder, lists `provider.listModels` for a saved instance, and tests after
   every save; instances still `unknown` are tested when the app starts. The default instance for
   new threads is the one the newest thread uses (`lastUsedInstanceId` in
@@ -1039,8 +1039,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
 - assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,
-  `assistant.effort`, `assistant.instructions`, `assistant.startSoonMinutes`,
-  `assistant.diagnosisLimit`, `assistant.secretPatterns` (see "Assistant")
+  `assistant.effort`, `assistant.instructions`, `assistant.greeting`,
+  `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.secretPatterns` (see
+  "Assistant")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -1844,6 +1845,42 @@ the chat view is copied. The `$` skill picker is off there.
   you"), Undo for every applied change (the newest before typing). A refusal from the palette
   is a toast with the reason. The sidebar counts waiting proposals as "need you".
 
+**First start** (app assistant spec 24 to 27; `apps/web/src/app/first-start.tsx`,
+`apps/web/src/providers/connect-step.tsx`). The spec decided to reuse the provider onboarding and
+to gate the app only while no provider is connected, so the gate is a client view over state the
+server already has: the `providerInstances` topic and the global setting `providers.offerSetup`
+(`personal: machine`, so a setup file never carries it). `useFirstStart` puts the gate up while
+the setting is on and no instance has `status: ready`. An instance still `unknown` is tested at
+start, so the gate waits for that answer instead of flashing over an install that is fine; once
+up it stays up through a Test it started. The Shell then draws only `ConnectAgentStep` (no
+sidebar, no route), and the palette offers only `connect.claude`, `connect.codex`, `setup.start`,
+the palette itself and the theme. The step shows Claude Code and Codex side by side with the
+binary `provider.detect` found, Test (which dispatches `providerInstance.create` from the detected
+binary and folder when that kind has no instance, then `provider.test`) and the test's message,
+and "Start from a setup file", which reads, previews and applies a file through the same
+`readSetupFile`, `SetupPreviewDialog` and `setup.apply` as Settings → Advanced. When an instance
+passes, the client writes `providers.offerSetup` false, so a provider removed later never brings
+the gate back (spec 27), sets `firstStartStore.greet` and goes to `/assistant`.
+
+**The greeting** (spec 24, 26). Once the Assistant view has its thread and no problem, it sends
+`thread.greetAssistant` once. The command is refused from the assistant (classes.ts) and when no
+assistant thread exists, and does nothing while a turn runs. Its turn shows `assistant.greeting`
+as the user's line; the prompt gets wow's note before it (`firstStartNote` in
+`assistant/thread.ts`, the same "[From wow, not typed by the user]" form as the answers note):
+the providers that are ready, the projects, workflows and trackers (address and whether the token
+is set, from stored global values only, so a default is not counted), what a first run still
+needs (a project, a workflow), and, when a setup file is applied and not undone
+(`ReadModel.lastSetupApplication`), "To fill in": each secret of its `toFillIn` still not set,
+work hours while `calendar.workHours` is not stored, and project folders, which a file never
+holds. The note goes through `hideSecrets`. What to do with it is in `assistant.instructions`: one
+thing per answer, a secret through `show_secret_field`. Nothing on the server walks the list;
+the agent does, and the facts are re-read on every greeting.
+
+**When it cannot start.** With no thread or a `problem` from `assistant.open`, the Assistant view
+shows the problem and the same `ConnectAgentStep` in place of the conversation (spec 27); the
+rest of the app is not gated. Its `onConnected` is not used: `assistant.open` is asked again when
+an instance's status changes, and the conversation comes back.
+
 ## Setup file
 
 Behavior lives in `intents/2026-11-app-assistant/spec.md` (21 to 23). A setup file is what one
@@ -1867,7 +1904,7 @@ setting is never read, and a stored reference only puts its key under `toFillIn`
 is not asked. A setting whose registry entry has `personal` stays out: `account` for the Jira and
 Confluence email, `machine` for folders and ids that fit one computer (`skills.directories`,
 `workspaces.root`, `assistant.providerInstanceId`, `advanced.port`, `desktop.autostart`,
-`appearance.paletteRecent`), `person` for what only that person can say (`calendar.zone`,
+`appearance.paletteRecent`, `providers.offerSetup`), `person` for what only that person can say (`calendar.zone`,
 `calendar.firstDayOfWeek`, `calendar.workHours`). Projects, cards, backlog items, threads and runs
 are not read at all, so no project folder is in it. A value or workflow that the secret net
 (`assistant.secretPatterns`) matches is left out and named in `leftOut`; so is a workflow whose
@@ -2639,7 +2676,15 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   Claude instance is tested at start so the assistant can run, and its adapter is
   `AssistantMockAgent` (`e2e/assistant-agent.ts`), which hands ordinary threads to the chat
   script and answers a turn with wow's toolset by calling `server.assistant.tools` in process,
-  reported as `mcp__wow__<tool>`, with the scenario picked by the user's words. The Changes tab
+  reported as `mcp__wow__<tool>`, with the scenario picked by the user's words. The first-start
+  tests (`e2e/first-start.spec.ts`) use an eighth copy (`e2eFirstStartHome`,
+  `e2eFirstStartPort`) seeded with no provider instance, project, workflow or tracker, whose mock
+  Codex fails its test with `e2eFirstStartCodexError` and whose mock Claude is the same
+  `AssistantMockAgent`; on wow's first-start note it answers with the note's lists and then asks
+  for each "To fill in" line in turn, one per user message. `e2e/app-assistant.spec.ts` (no
+  browser) checks that every behavior the spec's ground truth names has a case tagged
+  `@app-assistant-<n>`, that every sketch the spec names exists, and that the user guide and
+  `docs/windows-smoke.md` have the assistant's parts. The Changes tab
   tests use a sixth copy (`e2eChangesHome`, `e2eChangesPort`), because opening a changed file
   opens the context panel, a global setting. The script creates an invented tea timer
   repository in its home with `git` (which the e2e machines therefore need on the PATH) and

@@ -13,6 +13,7 @@ import {
 import { ProjectDialogs } from '@/projects/project-dialogs';
 import { ProviderDialogs } from '@/providers/provider-dialogs';
 import { ConnectionBanner } from './connection-banner';
+import { FirstStart, useFirstStart } from './first-start';
 import { AppToaster } from './notifications';
 import { CommandPalette } from './palette';
 import { useLayout, useRuntime, useSetting } from './runtime';
@@ -49,11 +50,24 @@ export function Shell() {
   const panelShown = useContextPanelShown();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const title = sections.find((section) => pathname.startsWith(section.path))?.title ?? 'wow';
-  const { commands, context } = useCommands();
+  const gated = useFirstStart();
+  const { commands, context } = useCommands(gated);
   const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null);
   useGlobalKeybindings(commands, context);
   useApplyTheme();
   useApplyAppearance();
+
+  if (gated) {
+    return (
+      <div className="relative flex h-full flex-col overflow-hidden bg-background text-foreground">
+        <ConnectionBanner />
+        <FirstStart />
+        <CommandPalette commands={commands} context={context} />
+        <ProviderDialogs />
+        <AppToaster />
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">

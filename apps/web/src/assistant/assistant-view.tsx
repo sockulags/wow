@@ -2,15 +2,18 @@ import { assistantThreadId, rpcMethods, type ThreadItem } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { KeyRoundIcon, SparklesIcon, XIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useStore } from 'zustand';
+import { firstStartStore } from '@/app/first-start';
 import { useRuntime, useSetting } from '@/app/runtime';
 import type { ComposerHandle } from '@/chat/composer';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
 import { ThreadConversation } from '@/chat/thread-view';
 import { providerLabel } from '@/chat/view-model';
 import { Banner } from '@/components/banner';
-import { EmptyState, TopicPlaceholder } from '@/components/states';
+import { TopicPlaceholder } from '@/components/states';
 import { useTopicState } from '@/app/topic-state';
 import { Button } from '@/components/ui/button';
+import { ConnectAgentStep } from '@/providers/connect-step';
 import { storeSecretSetting } from '@/settings/secret-field';
 import { ProjectWorkCard, SecretFieldCard } from './cards';
 import {
@@ -179,18 +182,33 @@ export function AssistantView() {
   const composer = useRef<ComposerHandle>(null);
   const [held, setHeld] = useState<Held>();
   const [saved, setSaved] = useState<string>();
+  const greet = useStore(firstStartStore, (state) => state.greet);
+
+  // The first-start step just finished (spec 26): wow sends the greeting once, when the thread
+  // is open on a provider that can run it.
+  useEffect(() => {
+    if (!greet || !thread || !asked || problem) return;
+    firstStartStore.setState({ greet: false });
+    send({ type: 'thread.greetAssistant' }).catch((reason: unknown) =>
+      setSaved(errorMessage(reason)),
+    );
+  }, [greet, thread, asked, problem, send]);
 
   if (status !== 'ready' && !thread) return <TopicPlaceholder status={status} />;
   if (!connection) return <TopicPlaceholder status="offline" />;
-  if (!thread) {
-    if (!asked) return <TopicPlaceholder status="loading" />;
+  if (!thread && !asked) return <TopicPlaceholder status="loading" />;
+  // No provider can run it (spec 27): the sentence and the same step as at first start. The
+  // conversation comes back once one passes its test.
+  if (!thread || problem) {
     return (
-      <EmptyState
-        icon={SparklesIcon}
-        title="The assistant cannot start yet"
-        description={problem ?? 'Opening the assistant…'}
-        action={<ProviderLinks />}
-      />
+      <div className="flex h-full min-h-0 flex-col overflow-auto">
+        <Banner tone="warning" testId="assistant-problem" actions={<ProviderLinks />}>
+          {problem ?? 'Opening the assistant…'}
+        </Banner>
+        <div className="flex justify-center px-6 py-8">
+          <ConnectAgentStep />
+        </div>
+      </div>
     );
   }
 
@@ -261,11 +279,6 @@ export function AssistantView() {
           </Link>
         </Button>
       </header>
-      {problem && (
-        <Banner tone="warning" testId="assistant-problem" actions={<ProviderLinks />}>
-          {problem}
-        </Banner>
-      )}
       <ThreadConversation
         thread={thread}
         instance={instance}
@@ -277,7 +290,6 @@ export function AssistantView() {
             : {}),
           composerRef: composer,
           placeholder: 'Tell the assistant what to set up or change in wow',
-          blockedReason: problem ?? undefined,
           beforeSend: (text) => {
             setSaved(undefined);
             const found = holdMessage(text, patterns, asks);

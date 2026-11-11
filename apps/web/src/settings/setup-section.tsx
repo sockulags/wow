@@ -49,7 +49,7 @@ function Lines({ title, lines }: { title: string; lines: SetupPreview['added'] }
   );
 }
 
-function SetupPreviewDialog() {
+export function SetupPreviewDialog() {
   const { connection } = useRuntime();
   const draft = useStore(setupStore, (state) => state.draft);
   const read = draft?.read;
