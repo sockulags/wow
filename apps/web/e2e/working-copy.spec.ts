@@ -91,11 +91,11 @@ test.describe('working copies', () => {
     await viewer.getByRole('button', { name: 'Back to conversation' }).click();
 
     // The run ends with work that is neither committed nor pushed, so the copy is kept and says
-    // what it holds.
+    // what it holds, the build log git ignores included.
     await gate(page).getByRole('button', { name: 'Approve' }).click();
     await expect(page.getByTestId('run-state')).toHaveText('Done');
     await expect(copyLine(page).getByTestId('working-copy-status')).toHaveText(
-      'Working copy kept: 7 files not committed, 1 commit not pushed (on no branch)',
+      'Working copy kept: 7 files not committed, 1 ignored file, 1 commit not pushed (on no branch)',
     );
     await expect(copyLine(page)).toContainText('Newest commit not pushed: Say that it rings twice');
     expect(existsSync(folder)).toBe(true);
