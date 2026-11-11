@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a5ca4693-e37f-46ab-8a53-c3b30bb88215",
+  "id": "180ed1cb-17c3-40c5-9a38-fd08387f01e8",
   "prevId": "a06196ba-3182-49a5-b321-44ff90422b36",
   "tables": {
     "approvals": {
@@ -493,6 +493,14 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "past_series": {
+          "name": "past_series",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
         }
       },
       "indexes": {
@@ -1677,13 +1685,6 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
-        },
-        "text": {
-          "name": "text",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         }
       },
       "indexes": {},
@@ -2336,13 +2337,6 @@
         "path": {
           "name": "path",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "wow_skills": {
-          "name": "wow_skills",
-          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

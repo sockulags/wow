@@ -6,6 +6,9 @@ import {
   isBuiltInSkillName,
   settingGroupTitles,
   type AssistantProposalLine,
+  awaitedProviderKind,
+  lacksRequiredModel,
+  modelMark,
   providerKindLabels,
   type OwnSkill,
   type ProviderKind,
@@ -153,6 +156,21 @@ function planWorkflow(
   ];
   for (const skill of missingSkills) {
     marks.push({ workflow: entry.name, reason: `skill not installed: ${skill}` });
+  }
+  // A step without a model its provider needs is applied as it is and marked, unless the
+  // instance's default model fills it (questions and models spec 17, 20).
+  for (const step of steps) {
+    const instance = read.providerInstance(step.providerInstanceId);
+    const kind = instance?.kind ?? awaitedProviderKind(step.providerInstanceId);
+    if (!kind || !lacksRequiredModel(step, kind) || instance?.defaultModel) continue;
+    marks.push({
+      workflow: entry.name,
+      reason: modelMark(step.skillName, {
+        name: instance?.name ?? providerKindLabels[kind],
+        kind,
+        defaultModel: null,
+      }),
+    });
   }
   for (const kind of missingKinds) {
     marks.push({

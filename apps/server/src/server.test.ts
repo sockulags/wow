@@ -415,7 +415,7 @@ describe('rpc', () => {
     ).toMatchObject({ result: { ok: true, version: 'mock' } });
     expect(
       await client.request('provider.listModels', { providerInstanceId: 'claude-work' }),
-    ).toMatchObject({ result: [{ id: 'mock-model' }] });
+    ).toMatchObject({ result: [{ id: 'mock-model' }, { id: 'mock-model-large' }] });
 
     await dispatch('c2', {
       type: 'thread.create',

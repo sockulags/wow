@@ -31,7 +31,7 @@ import {
   isRepeating,
   liveRunOf,
   nextOccurrence,
-  seriesOf,
+  scheduleOf,
   takenDays,
   type RepeatingCard,
 } from './series.js';
@@ -156,6 +156,7 @@ function seriesTriggerEvents(
   context: DecideContext,
   alsoTaken: ReadonlySet<string> = new Set(),
   runId?: string,
+  handled = false,
 ): DomainEvent[] {
   const existing = read.trigger(triggerIdFor(card.id));
   const lastRunId = runId ?? existing?.runId ?? null;
@@ -189,9 +190,20 @@ function seriesTriggerEvents(
   }
   const events: DomainEvent[] = [];
   if (next && !isDeepStrictEqual(next, existing)) events.push(triggerSet(next));
-  // A card that has run shows how its newest run went; one that has not waits for its first.
+  // A card that has run shows how its newest run went; one that has not waits for its first,
+  // and once every remaining occurrence was skipped it is finished as a last occurrence leaves it.
+  // An occurrence this decision handled (missed, failed, started) has set the state already.
+  if (handled) return events;
   if (card.runId === null && runId === undefined && upcoming) {
     events.push(...cardState(card, 'scheduled', null, context));
+  } else if (
+    card.runId === null &&
+    runId === undefined &&
+    card.state === 'scheduled' &&
+    card.workflowId !== null &&
+    card.projectId !== null
+  ) {
+    events.push(...cardState(card, 'done', null, context));
   }
   return events;
 }
@@ -330,7 +342,7 @@ function fireSeries(
 ): DomainEvent[] {
   const taken = takenDays(card, read);
   const due = startingBetween(
-    seriesOf(card),
+    scheduleOf(card),
     Date.parse(trigger.runAt) - 1,
     Date.parse(context.now),
     (occurrence) => !taken.has(occurrence.date),
@@ -370,7 +382,7 @@ function fireSeries(
         ...notification(read, context, {
           id: `${card.id}:${latest.date}:skipped`,
           at: context.now,
-          kind: 'failed',
+          kind: 'skipped',
           title: 'Occurrence skipped',
           body: `${card.title} · ${latest.date}: ${reason}`,
           path: `/calendar?item=${encodeURIComponent(card.id)}`,
@@ -384,7 +396,10 @@ function fireSeries(
       started = fired.runId;
     }
   }
-  return [...events, ...seriesTriggerEvents(card, read, context, reached, started)];
+  return [
+    ...events,
+    ...seriesTriggerEvents(card, read, context, reached, started, latest !== undefined),
+  ];
 }
 
 function startSeriesRun(

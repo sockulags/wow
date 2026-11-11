@@ -206,7 +206,8 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const days = visibleDays(view, anchor, prefs.firstDayOfWeek, showWeekends);
   const cards = useMemo(() => items.filter((item) => item.source === 'local'), [items]);
   // Repeating cards are drawn from the server's occurrences in the shown range (spec 15).
-  const shownRange = useCalendarRange(viewRange(days, zone), [items, triggers, runs]);
+  const rangeRead = useCalendarRange(viewRange(days, zone), [items, triggers, runs]);
+  const shownRange = rangeRead.range;
   const blocks = useMemo(
     () => calendarBlocks(items, shownRange, runs ?? []),
     [items, shownRange, runs],
@@ -221,8 +222,8 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
     return ids;
   }, [cards, triggers, occurrences]);
   const cardIdOf = (itemId: string) => occurrences.get(itemId)?.cardId ?? itemId;
-  // A reached occurrence opens the run it started; any other opens the card, and names the day
-  // it was opened from so Delete can offer "This occurrence" (spec 12, 15).
+  // A reached occurrence opens the run it started; any other opens the card, and one still to
+  // come names the day it was opened from so Delete can offer "This occurrence" (spec 12, 15).
   const open = (itemId: string, deleting = false) => {
     const occurrence = occurrences.get(itemId);
     if (!deleting && occurrence?.runId) {
@@ -233,7 +234,7 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
       cardDialog: {
         type: 'edit',
         cardId: cardIdOf(itemId),
-        ...(occurrence ? { date: occurrence.date } : {}),
+        ...(occurrence && !occurrence.fixed ? { date: occurrence.date } : {}),
         ...(deleting ? { deleting } : {}),
       },
     });
@@ -410,6 +411,26 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           </div>
         </ShellToolbar>
         <OutlookBanner status={status} zone={zone} onRetry={refresh} />
+        {rangeRead.error !== undefined && (
+          <Banner
+            tone="error"
+            testId="occurrences-failed"
+            actions={
+              <Button size="xs" variant="outline" onClick={rangeRead.retry}>
+                <RefreshCwIcon />
+                Try again
+              </Button>
+            }
+          >
+            <span className="font-medium">Repeating cards could not be read.</span>{' '}
+            <span className="text-muted-foreground">
+              {rangeRead.error.replace(/\.$/, '')}.{' '}
+              {rangeRead.range === undefined
+                ? 'Their occurrences are not shown.'
+                : 'The occurrences shown may be out of date.'}
+            </span>
+          </Banner>
+        )}
         {hidden.length > 0 && (
           <Banner tone="info" testId="occurrences-more">
             <span className="font-medium">Some occurrences are not shown.</span>{' '}

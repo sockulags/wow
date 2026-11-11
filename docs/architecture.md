@@ -157,10 +157,11 @@ questions        id, threadId, itemId, request(json), answer?, answeredAt?   (an
 calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end, zone, allDay,
                  location?, joinUrl?, body?, organizer?, projectId?, backlogItemId?, workflowId?,
                  runId?, state, updatedAt, repeat(json: RepeatRule)?, skippedDates(json: string[]),
-                 nextAt?   -- state: CardState for cards, 'scheduled'|'cancelled'
-                 for Outlook; body: a card's notes or an Outlook item's snippet; repeat, the
-                 days skipped by hand and the trigger's next time for a repeating card
-                 (migration 0022_repeating_cards)
+                 nextAt?, pastSeries(json: PastSeries[])   -- state: CardState for cards,
+                 'scheduled'|'cancelled' for Outlook; body: a card's notes or an Outlook item's
+                 snippet; repeat, the days skipped by hand and the trigger's next time for a
+                 repeating card (migration 0022_repeating_cards); pastSeries the series it
+                 followed before a change, for the days before it (migration 0023_past_series)
 card_occurrences cardId, date, start, end, outcome ('fired'|'failed'|'skipped'|'missed'), runId?,
                  reason?, offerRunNow, at   -- what happened at each occurrence of a repeating
                  card the scheduler reached; kept when the card is deleted, as its runs are
@@ -187,7 +188,7 @@ triggers         id, kind ('card'|'event'), workflowId, runId?, offerRunNow;
                  'cancelled'); event: projectId, event ('merged'|'checksFailed'|
                  'commentAdded'), enabled, createdAt (the other kind's columns are null)
 trigger_events   triggerId, eventId, runId?, at (the events an event trigger has seen; no topic)
-notifications    id, at, kind ('started'|'waiting'|'failed'), title, body, path, runId?,
+notifications    id, at, kind ('started'|'waiting'|'failed'|'skipped'), title, body, path, runId?,
                  calendarItemId?
 skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
                  'project-agents'|'custom'|'wow'|'yours'), manualOnly, invocations(json: {claude,
@@ -1129,8 +1130,12 @@ alike. The card stays one row.
   Node 22 and the server has no date library): `instantOf` turns a local reading into an
   instant, taking the first of a reading that happens twice and, for a reading in the hour the
   clocks skip, the instant they jumped (02:30 becomes 03:00). Monthly falls on the start's day;
-  a month without it has none. `occurrences(series)` is a generator in start order and never
-  ends for `never` before year 9999, so every caller stops it by time or count.
+  a month without it has none. `occurrences(series, from?)` is a generator in start order and never
+  ends for `never` before year 9999, so every caller stops it by time or count. Given `from`
+  (an instant or a day) it jumps to that day by day number before it asks Intl for anything,
+  so a read far from the card's first day costs what a read near it does; an end after a count
+  counts the days it passes without working out their times, and a day past the series' last
+  one answers nothing at once.
 - **What is stored**: the rule, the days skipped by hand (`skippedDates`), and per reached
   occurrence a `card_occurrences` row (`CardOccurrence`): `fired` with its run, `failed` (the
   run could not start), `skipped` (the card's earlier run was still going) or `missed`, with a
@@ -1146,9 +1151,11 @@ alike. The card stays one row.
   `missed` by `skip` (spec 8); an older record that still offered "Run now" is re-recorded
   without it, so only the newest missed occurrence offers it. A latest occurrence whose card still has a live run (the newest
   run the card follows, or any run its records name) starts nothing: it is recorded `skipped`
-  with the reason and a `failed` notification "Occurrence skipped" (spec 7). Then the trigger
+  with the reason and a `skipped` notification "Occurrence skipped" (spec 7; older rows of it
+  keep the kind `failed` they were stored with). Then the trigger
   waits for the next occurrence; after the last one it is `fired` (or `cancelled` when nothing
-  ever ran). The run has `WorkflowRun.occurrence {date, start}`, which names it by its day, and
+  ever ran, and the card, still `scheduled`, becomes `done`: every remaining occurrence was
+  skipped). The run has `WorkflowRun.occurrence {date, start}`, which names it by its day, and
   its "Workflow run started" notification ends with the day. The card follows its newest run as
   a single card does. `card.runNow` on a repeating card answers the occurrence that offers
   "Run now" and leaves the trigger waiting. A card that ran and is made single again (or
@@ -1160,13 +1167,26 @@ alike. The card stays one row.
   single again) and `skippedDates` (the whole list; Undo of a skip and of a delete send it).
   Any change of time, zone, rule, project or workflow re-arms the trigger, so every occurrence
   not yet started follows it; records keep where the reached ones were and what they ran, and
-  a range read shows a reached occurrence from its record even when the rule has moved on. A
+  a range read shows a reached occurrence from its record even when the rule has moved on.
+  Days without a record keep their place too (spec 10, 11): a change of start, end, zone or
+  rule stores the series as it was in `CalendarItem.pastSeries` (`PastSeries`: the series and
+  `until`, the first day it no longer sets), for the days before the first occurrence that has
+  not started, or for a moved occurrence the days before its date. Entries are oldest first;
+  each sets the days from the entry before's `until` to its own, and the card's series the days
+  from the last `until` on. Days are in each entry's own zone, so after a change of zone a part
+  also takes over only from the instant the `until` day began in the zone before: no day and no
+  instant is set twice. A later change from an earlier day cuts the entries back to it. A card
+  that stops repeating keeps only the entries for days that have started, and one that repeats
+  again drops entries whose `until` is after its first day.
+  `scheduleOf(card)` in `core/series.ts` is that schedule, and the trigger, the range read,
+  skip and move all read it, so after a move the days before the moved one, past or still to
+  come, keep their time. Cards stored before have none (`[]`). A
   single card that already ran and gets a rule records its run as the first occurrence.
   `card.skipOccurrence {cardId, date}` adds the day to `skippedDates` and is refused for a day
   the rule does not fall on and for one already started. `card.moveOccurrence {cardId, date,
 start, end}` is a drag in the calendar (spec 11): the occurrence must stay on its day, and the
-  series keeps its first day and takes the moved occurrence's local time and length, as an
-  edit does. `card.delete` of a series with a live run needs `stopRun` as for a single card. The
+  series keeps its first day and takes the moved occurrence's local time and length from that
+  day on. `card.delete` of a series with a live run needs `stopRun` as for a single card. The
   inverse commands (`assistant/changes.ts`) carry `repeat` and `skippedDates`, so one Undo
   restores a series with its rule, skipped days and trigger.
 - **Reading a range.** `calendar.occurrences {from, to}` (`readCalendarRange`) answers
@@ -1326,7 +1346,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,
   `assistant.effort`, `assistant.instructions`, `assistant.greeting`,
   `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.valueLength`,
-  `assistant.secretPatterns`, `assistant.askRefusedWords` (see "Assistant" and "Question card")
+  `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance` (see
+  "Assistant", "Question card" and "Models for steps")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -2057,6 +2078,9 @@ options, multiSelect}`) puts the question card under the call (see "Question car
   09:00 (Europe/Stockholm)". A failed trigger's reason exists only as a notification, so with
   `scheduler.notifications` off it is not found.
 
+- Models (`assistant/models.ts`, `read_models`, `read_model_guidance`) answer what each
+  instance offers and wow's guidance on choosing; see "Models for steps".
+
 Every result passes `hideSecretsDeep` with the patterns of `assistant.secretPatterns` before it
 leaves `call`, so text that looks like a secret arrives as `[hidden]` (spec 18). The net
 (`hideSecrets` in contracts) also always takes a user name and password out of any
@@ -2480,6 +2504,76 @@ Tests: `packages/provider-claude/src/index.test.ts` and `packages/provider-codex
 `apps/server/src/assistant/questions.test.ts`, `apps/web/src/chat/question-card.test.tsx`,
 `apps/web/src/assistant/questions.test.tsx`, `apps/web/e2e/questions.spec.ts`.
 
+## Models for steps
+
+Behavior lives in `intents/2026-11-questions-and-models/spec.md` (13 to 20). wow learns which
+models an instance offers only from the installed provider (`listModels`), and how to choose
+between them only from a guidance text it ships; nothing about models comes from the internet.
+`packages/contracts/src/models.ts` holds the shapes and the sentences both sides show.
+
+- **Which providers need a model.** It is a fact of the adapter: `ProviderAdapter.requiresModel`
+  is false for Claude Code (it picks a model itself) and true for Codex (every `turn/start`
+  carries the thread's model). A decision and the web app cannot ask an adapter, so
+  `providerChatOptions[kind].requiresModel` holds the same fact, and each adapter package has a
+  test that the two agree (`providerRequiresModel(kind)` reads it).
+- **The rule on the server** (`withRequiredModels` in `core/workflows.ts`, spec 17).
+  `workflow.create` and a `workflow.update` that changes the steps give a step on such a provider
+  that names no model the instance's `defaultModel`; without one the command is refused with
+  `missingModelSentence` ("Step check-work runs on Codex (Codex bare), which needs a model on
+  every step, and Codex bare has no default model: choose a model for the step."). A step whose
+  instance is not here yet (a setup file's kind as its id) is judged by that kind. A Claude Code
+  step without a model is stored as before. Old data keeps working (spec 19): `workflow.restore`
+  stores the row as it was, an update that leaves the steps alone does not look at them, a run
+  starts as it did (the step's thread falls back to the instance's and the project's default
+  model, and the runner fails a step whose model is still empty), and `DecideContext.keepStepsWithoutModel`
+  lets a setup file's apply and preview and every undo (`setup.undo`, `assistant.undo`) store
+  such a step as it is, since they put back or bring in what was stored elsewhere.
+- **Marks** (`modelMark`, spec 19, 20). A setup file's preview and its `setupApplications` row
+  mark a step left without a model and without a default to take ("step check-work has no
+  model, which Codex needs; choose one in the workflow, or the step fails when it starts"), as
+  for a missing skill. `diagnose_setup` names every stored step without a model its provider
+  needs as a problem of kind `model`, with the workflow as its place; with a default the reason
+  says it runs on that default until one is chosen.
+- **`read_models`** (`assistant/models.ts`, `assistantModelsTool`, `ReadModelsRequest
+{providerInstanceId?}` → `ModelsRead {instances: InstanceModels[], note}`). Per instance: kind,
+  `connected`, `reason`, `requiresModel`, the default model and effort, and `models` (`OfferedModel
+{id, label, description, efforts, isDefault}`). An instance is connected when its last test
+  passed (`status: ready`) and its provider listed its models; otherwise it is listed with no
+  models and the reason, and its provider is not asked. A model's `efforts` are
+  `offeredEfforts(kind, model)`: its own levels plus the effort that leaves the choice to the
+  provider (`default` on Claude Code). `ReaderDeps.listModels` is the provider service's.
+- **`read_model_guidance`** (`assistantGuidanceTool` → `ModelGuidance {text, edited, note}`)
+  returns `assistant.modelGuidance` as it is resolved at that call, so an edited text is what the
+  next call reads. The default (`defaultModelGuidance`) covers planning and specification,
+  building, reviewing and mechanical steps for Claude Code and Codex, and names kinds of model
+  (the largest, a balanced one, the smallest), never versions.
+- **What the assistant writes** (`checkStepModels`, spec 15, 16). `create_workflow` and an
+  `update_workflow` with steps check every step before the command is dispatched: the instance
+  exists, its models can be read now, the step names one of them, and an effort that model takes
+  (when it takes any). Each refusal says what is offered ("Codex at work does not offer the
+  model codex-ultra (Step 1 (plan-work)). It offers: codex-max, codex-mini."). The user's own
+  commands are not checked against the list, since the builder offers only the list. A change
+  row says each step with its instance, model and effort ("2 steps: plan-work (Codex at work,
+  codex-max, high), deliver-work (Claude at work, small-claude, default)") and is not cut at
+  `assistant.valueLength`; a proposal already has one line per step field. The instruction text
+  names both tools, says to recommend from them with the reason in a sentence, and to ask with
+  `ask_questions` when two choices differ in a way the person would care about.
+
+- **The builder** (spec 18, 19). `ThreadSettings` takes the instance's `defaults` and marks that
+  model and effort "(default)" in its lists. `stepDefaults` fills an empty model with the
+  instance's default, and only for a provider that does not need one with the first listed
+  model, so a Codex step without a default stays empty. `validateDraft` then gives that step
+  `missingModelSentence`, the server's own words, as a problem marked `always`, shown beside the
+  step before the first Save as well, and Save sends nothing. Given the stored workflow, it also
+  warns on a step that was saved without a model its provider needs ("Step 2 was saved without a
+  model, which Codex needs; Save stores mock-model-large.").
+
+Tests: `apps/server/src/assistant/models.test.ts` (a case per acceptance line of the unit),
+`apps/web/src/workflows/step-models.test.tsx`, `apps/web/e2e/models.spec.ts` (the assistant's
+server copy seeds two Codex instances and a workflow restored without models),
+`packages/provider-claude/src/index.test.ts` and `packages/provider-codex/src/adapter.test.ts`
+("requires a model").
+
 ## Chat view
 
 `apps/web/src/chat`. `/chat` shows the thread list (grouped Needs you, Working, Idle, Done; failed
@@ -2547,7 +2641,8 @@ one line each and open to edit. Gates are drawn at the positions between steps (
 both), so the engine's `gateBefore` and `gateAfter` stay as they are. A step picks a skill
 from the `skills` topic (stored as its name, or `plugin:name` for a Claude plugin's skill), a
 provider instance, and model, effort and permission mode with the chat's pickers; empty ones are
-filled with the instance defaults, else the first listed model. Expected artifact globs are typed
+filled with the instance defaults, else the first listed model (not for a provider that needs a
+model; see "Models for steps"). Expected artifact globs are typed
 one per line. Validation needs a name, a step, and per step a skill, an instance, a model, an
 effort and a permission mode; a skill missing from the scan is only a warning, because the server
 invokes unknown skills by name. The skill pickers (`step-skills.ts`, `skillChoices`) list every
@@ -2818,7 +2913,9 @@ Repeating cards (recurring cards spec 11 to 17, `occurrences.ts`). The view read
 `calendar.occurrences` for the days it shows (`viewRange`: local midnight of the first day to
 local midnight after the last, in the calendar's zone) through `useCalendarRange`, and reads
 again whenever the `calendarItems`, `triggers` or `workflowRuns` rows change; an answer for
-another range is dropped. Single cards are still drawn from their topic rows, so nothing about
+another range is dropped. A read that is refused, or whose answer does not parse, is kept as an
+error for that range: an error banner "Repeating cards could not be read" with Try again, which
+reads once more. Single cards are still drawn from their topic rows, so nothing about
 them changed; each occurrence of a repeating card becomes a block of its own
 (`occurrenceBlocks`), a copy of the card with the occurrence's start and end and the id
 `<cardId>@<date>`, so layout, roving focus and drag work on it unchanged. `TimeGrid` takes the
@@ -2827,10 +2924,16 @@ An occurrence block carries a repeat icon (`data-repeating`) and "repeats" in it
 Its state comes from the server's record: a fired occurrence shows its run's state, otherwise
 Failed, Missed or Skipped (`occurrenceStateLabels`); an occurrence without a record shows
 Scheduled only when it is the trigger's next one or after the card's `nextAt` (both the server's
-times), and nothing for a day that went by before the card existed. A reached occurrence opens
-its run and cannot be moved or resized; any other opens the card form with `cardDialog.date` set.
+times), and nothing for a day that went by before the card existed. An occurrence is `fixed`
+(`ShownOccurrence.fixed`) when it has a record, or lies before the card's `nextAt` and is not the
+next one: it has started, so it cannot be moved or resized and Delete offers only the whole
+series. A reached occurrence opens its run; any other opens the card form, with
+`cardDialog.date` set when it is not fixed.
 A drag or Alt+Up/Down sends `card.moveOccurrence` and stays within the occurrence's day (a move
-to another day, by pointer or Alt+Left/Right, is not offered); the series takes the new time.
+to another day, by pointer or Alt+Left/Right, is not offered); the day is the one in the card's
+zone, so with another calendar zone a drag or key stops at the card zone's midnight even inside
+one calendar column. A drag that ends where it started sends nothing. The series takes the new
+time.
 A record that offers "Run now" puts the button on that block. When the answer's `more` names a
 card, a banner (`occurrences-more`) says its first `calendar.maxOccurrences` are shown.
 
@@ -2916,7 +3019,8 @@ Palette commands: today, next, previous, day view, week view, zoom in, zoom out 
 (on the calendar only, with their keys), hide or show weekends,
 New card, Refresh Outlook, one "Edit card" entry per card, and for a repeating card "Skip next
 occurrence: <title>" (the day of its `nextAt` in the card's zone, with Undo) and "Delete series:
-<title>" (opens the form at the delete question).
+<title>", for any other card "Delete card: <title>"; both open the form at the delete question,
+as the Delete key does.
 
 ## Context panel
 

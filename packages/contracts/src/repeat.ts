@@ -56,6 +56,18 @@ export type RepeatRule = z.infer<typeof RepeatRule>;
 // how each past occurrence went. `fired` started `runId`; `failed` could not start a run;
 // `skipped` started nothing because the card's earlier run was still going; `missed` passed
 // while the app was closed or paused.
+// A series a repeating card followed before an edit or a moved occurrence changed it (recurring
+// cards spec 10, 11). The days before `until`, and from the `until` of the entry before it on,
+// keep this series' times; the card's own series sets the days from the last `until` on.
+export const PastSeries = z.object({
+  start: Timestamp,
+  end: Timestamp,
+  zone: z.string().min(1),
+  repeat: RepeatRule,
+  until: LocalDay,
+});
+export type PastSeries = z.infer<typeof PastSeries>;
+
 export const OccurrenceOutcome = z.enum(['fired', 'failed', 'skipped', 'missed']);
 export type OccurrenceOutcome = z.infer<typeof OccurrenceOutcome>;
 

@@ -7,6 +7,7 @@ import {
   inListOrder,
   skillGroupOf,
   type CalendarOccurrence,
+  type ProviderModel,
   type SettingDefinition,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
@@ -31,6 +32,8 @@ export interface ReaderDeps {
   readonly trackers: TrackerService;
   readonly clock: () => Date;
   readonly registry: Readonly<Record<string, SettingDefinition>>;
+  // What the installed provider of an instance offers (`listModels`).
+  readonly listModels: (providerInstanceId: string) => Promise<ProviderModel[]>;
 }
 
 export interface Reader<S extends z.ZodType = z.ZodType> {

@@ -4,6 +4,7 @@ import {
   type CalendarOccurrence,
   type CalendarRange,
   type CardOccurrence,
+  type PastSeries,
   type WorkflowRun,
 } from '@wow/contracts';
 import {
@@ -11,6 +12,7 @@ import {
   localDay,
   occurrencesIn,
   type Occurrence,
+  type SchedulePart,
   type Series,
 } from '../scheduler/occurrences.js';
 import { asc, eq } from 'drizzle-orm';
@@ -35,6 +37,34 @@ export const seriesOf = (card: RepeatingCard): Series => ({
   repeat: card.repeat,
 });
 
+// The card's series over time: each series it followed before a change keeps the days before
+// that change, so past occurrences stay where they were (recurring cards spec 10, 11).
+export function scheduleOf(card: RepeatingCard): SchedulePart[] {
+  const parts: SchedulePart[] = [];
+  let from: string | undefined;
+  for (const past of card.pastSeries ?? []) {
+    const { until, ...series } = past;
+    parts.push({ series, from, until });
+    from = until;
+  }
+  parts.push({ series: seriesOf(card), from });
+  return parts;
+}
+
+// The card's past series once its own series changes from `day` on: the days before `day` keep
+// the series that set them, and every day from `day` on follows the changed one.
+export function pastSeriesBefore(card: RepeatingCard, day: string): PastSeries[] {
+  const kept: PastSeries[] = [];
+  let from: string | undefined;
+  for (const past of card.pastSeries ?? []) {
+    if (from !== undefined && from >= day) break;
+    kept.push(past.until > day ? { ...past, until: day } : past);
+    from = past.until;
+  }
+  if ((from ?? localDay(card.start, card.zone)) < day) kept.push({ ...seriesOf(card), until: day });
+  return kept;
+}
+
 // The days that will not fire again: skipped by hand, or already reached.
 export function takenDays(card: CalendarItem, read: ReadModel): Set<string> {
   return new Set([
@@ -53,7 +83,7 @@ export function nextOccurrence(
 ): Occurrence | undefined {
   const taken = takenDays(card, read);
   return firstAfter(
-    seriesOf(card),
+    scheduleOf(card),
     now,
     (occurrence) => !taken.has(occurrence.date) && !alsoTaken.has(occurrence.date),
   );
@@ -120,7 +150,7 @@ export function calendarRange(
     const skipped = new Set(card.skippedDates ?? []);
     const records = new Map(occurrencesOf(card.id).map((record) => [record.date, record]));
     const computed = occurrencesIn(
-      seriesOf(card),
+      scheduleOf(card),
       from,
       to,
       limit,

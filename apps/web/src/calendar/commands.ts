@@ -279,12 +279,20 @@ export function calendarCommands({
         },
       });
     }
+  }
+
+  // Delete opens the card's form at the question, as the Delete key does: "Delete which?" for a
+  // series, "Delete this card?" for a single card.
+  for (const card of cards) {
+    const series = Boolean(card.repeat);
     commands.push({
-      id: `card.deleteSeries.${card.id}`,
-      title: `Delete series: ${cardTitle(card)}`,
-      value: `Delete series ${cardTitle(card)} ${card.id}`,
+      id: series ? `card.deleteSeries.${card.id}` : `card.delete.${card.id}`,
+      title: `${series ? 'Delete series' : 'Delete card'}: ${cardTitle(card)}`,
+      value: `${series ? 'Delete series' : 'Delete card'} ${cardTitle(card)} ${card.id}`,
       group: 'Cards',
-      keywords: ['repeat', 'repeating', 'occurrence', 'remove', 'series'],
+      keywords: series
+        ? ['repeat', 'repeating', 'occurrence', 'remove', 'series']
+        : ['card', 'calendar', 'remove'],
       searchOnly: true,
       run: (context) => {
         const day = isoDate(localDate(new Date(card.start), zoneSetting(context)));

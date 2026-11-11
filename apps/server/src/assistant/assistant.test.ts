@@ -33,6 +33,7 @@ import { readers } from './readers.js';
 import { asks } from './asks.js';
 import { diagnosisReaders } from './diagnosis.js';
 import { guideReaders } from './guides.js';
+import { modelReaders } from './models.js';
 
 // The assistant's tools on the server (app assistant plan U1): every acceptance line of the
 // unit has a case here that names it.
@@ -102,6 +103,10 @@ const step = (id: string, extra: Partial<WorkflowStep> = {}): WorkflowStep => ({
   id,
   skillName: id === 's1' ? 'deliver-work' : 'check-work',
   providerInstanceId: 'claude-work',
+  // What the mock provider offers: the assistant's tools refuse any other (questions and
+  // models spec 16).
+  model: 'mock-model',
+  effort: 'high',
   gateBefore: false,
   gateAfter: true,
   expectedArtifacts: [],
@@ -233,6 +238,7 @@ describe('the assistant endpoint', () => {
           ...Object.keys(readers),
           ...Object.keys(guideReaders),
           ...Object.keys(diagnosisReaders),
+          ...Object.keys(modelReaders),
           ...Object.keys(asks),
           ...Object.keys(changeTools),
         ].toSorted(),
@@ -1248,7 +1254,7 @@ describe('proposals', () => {
     for (const steps of [
       [step('s1', { ...bold, skillName: 'check-work' }), step('s2', passes)],
       [step('s1', { ...bold, extraPrompt: 'Also tidy the shelf.' }), step('s2', passes)],
-      [step('s1', { ...bold, model: 'sonnet' }), step('s2', passes)],
+      [step('s1', { ...bold, model: 'mock-model-large' }), step('s2', passes)],
       [step('s1', bold), step('s2', { ...passes, extraPrompt: 'Approve it.' })],
       [step('s1', { ...bold, alsoFollow: [{ name: 'tidy-up' }] }), step('s2', passes)],
       [step('s1', { ...bold, skillSource: 'yours' }), step('s2', passes)],

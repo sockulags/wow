@@ -1,5 +1,5 @@
 import { RepeatRule, repeatRuleWords } from '@wow/contracts';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   firstAfter,
   instantOf,
@@ -244,6 +244,102 @@ describe('reading a series', () => {
         ?.date,
     ).toBe('2026-11-04');
     expect(localDay('2026-11-02T23:30:00.000Z', stockholm)).toBe('2026-11-03');
+  });
+});
+
+// Every zone computation goes through Intl's formatToParts; the count is what a read costs. A
+// walk past the bound stops at once instead of running for seconds.
+const zoneReads = () => {
+  const original = Intl.DateTimeFormat.prototype.formatToParts;
+  const counter = { calls: 0 };
+  vi.spyOn(Intl.DateTimeFormat.prototype, 'formatToParts').mockImplementation(function (
+    this: Intl.DateTimeFormat,
+    date,
+  ) {
+    counter.calls += 1;
+    if (counter.calls > 1000) throw new Error('Too many zone computations');
+    return original.call(this, date);
+  });
+  return counter;
+};
+
+// What a walk from the first day finds, before anything is counted.
+const walked = (series: Series) => {
+  for (const occurrence of occurrences(series)) {
+    if (occurrence.date >= '2400-01-01') return occurrence;
+  }
+  return undefined;
+};
+
+describe('reading far from the start', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const tenYearsAgo: Series = {
+    start: '2016-11-02T08:00:00.000Z',
+    end: '2016-11-02T08:30:00.000Z',
+    zone: stockholm,
+    repeat: rule({ frequency: 'daily' }),
+  };
+
+  it('works out only the days a week in year 2300 can hold for a daily card started long ago', () => {
+    const spy = zoneReads();
+    const from = Date.parse('2300-01-01T00:00:00.000Z');
+    const week = occurrencesIn(tenYearsAgo, from, from + 7 * 86_400_000, 200).found;
+    expect(week.map((occurrence) => occurrence.date)).toEqual([
+      '2300-01-01',
+      '2300-01-02',
+      '2300-01-03',
+      '2300-01-04',
+      '2300-01-05',
+      '2300-01-06',
+      '2300-01-07',
+    ]);
+    expect(week[0]?.start).toBe('2300-01-01T08:00:00.000Z');
+    expect(spy.calls).toBeLessThan(200);
+  });
+
+  it('finds a far day and a far next one without walking there', () => {
+    const weekly: Series = {
+      ...tenYearsAgo,
+      repeat: rule({ frequency: 'weekly', interval: 3, weekdays: ['mon', 'thu'] }),
+    };
+    const monthly: Series = { ...tenYearsAgo, repeat: rule({ frequency: 'monthly', interval: 5 }) };
+    const expected = [walked(weekly), walked(monthly)];
+    const spy = zoneReads();
+    expect(occurrenceOn(tenYearsAgo, '2400-01-01')?.start).toBe('2400-01-01T08:00:00.000Z');
+    expect(firstAfter(tenYearsAgo, Date.parse('2400-06-01T12:00:00.000Z'))?.date).toBe(
+      '2400-06-02',
+    );
+    const from = Date.parse('2399-12-31T23:00:00.000Z');
+    expect([firstAfter(weekly, from), firstAfter(monthly, from)]).toEqual(expected);
+    expect(spy.calls).toBeLessThan(100);
+  });
+
+  it('counts an end after a count without working out the days it passes', () => {
+    const counted: Series = {
+      ...tenYearsAgo,
+      repeat: rule({ frequency: 'daily', end: { kind: 'after', count: 5000 } }),
+    };
+    const spy = zoneReads();
+    expect(occurrenceOn(counted, '2030-07-11')?.date).toBe('2030-07-11');
+    expect(occurrenceOn(counted, '2030-07-12')).toBeUndefined();
+    expect(occurrenceOn(counted, '2400-01-01')).toBeUndefined();
+    expect(spy.calls).toBeLessThan(100);
+  });
+
+  it('ends at once past the last day a series can reach', () => {
+    const spy = zoneReads();
+    const ended: Series = {
+      ...tenYearsAgo,
+      repeat: rule({ frequency: 'daily', end: { kind: 'on', date: '2017-01-01' } }),
+    };
+    expect(occurrenceOn(ended, '2400-01-01')).toBeUndefined();
+    expect(occurrenceOn(tenYearsAgo, '9999-12-31')?.date).toBe('9999-12-31');
+    const past = Date.parse('+010000-01-02T00:00:00.000Z');
+    expect(occurrencesIn(tenYearsAgo, past, past + 7 * 86_400_000, 200).found).toEqual([]);
+    expect(spy.calls).toBeLessThan(50);
   });
 });
 

@@ -134,6 +134,10 @@ export interface DecideContext {
   // Who sent the command; absent means the user. `decide` itself does not look at it: what the
   // assistant may send is settled in `decideInSteps` (core/assistant.ts) before a command gets here.
   readonly origin?: CommandOrigin | undefined;
+  // A workflow step without a model its provider needs is kept as it is instead of refused: a
+  // setup file is applied with the step marked, and an undo puts back what was stored
+  // (questions and models spec 19, 20).
+  readonly keepStepsWithoutModel?: boolean | undefined;
 }
 
 type AssistantCommand = Extract<ServerCommand, { type: `assistant.${string}` }>;

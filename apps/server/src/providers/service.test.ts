@@ -24,6 +24,7 @@ import { ProviderService } from './service.js';
 // tells it to, the way a provider streams after accepting a command.
 class ControlledAdapter implements ProviderAdapter {
   readonly kind = 'claude' as const;
+  readonly requiresModel = false;
   readonly sent: ProviderCommand[] = [];
   readonly #listeners = new Set<(event: ProviderEvent) => void>();
   failNext: string | undefined;

@@ -396,8 +396,9 @@ function CardBlock({
 }) {
   const state = blockState(item, occurrence);
   const kind = cardKind(item);
-  // A reached occurrence stays where it was: it opens its run and does not move.
-  const fixed = occurrence?.record != null;
+  // An occurrence that started stays where it was: it does not move, and a reached one opens
+  // its run.
+  const fixed = occurrence?.fixed === true;
   const layout = blockLines(heightPx, {
     extra: kind === 'unrunnable' ? 1 : 0,
     button: onRunNow !== undefined,
@@ -686,7 +687,7 @@ export function TimeGrid({
     onSelect?.(cardIdOf(itemId));
     return panelShown;
   };
-  const fixedItem = (itemId: string): boolean => occurrences?.get(itemId)?.record != null;
+  const fixedItem = (itemId: string): boolean => occurrences?.get(itemId)?.fixed === true;
   const columnsRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [gesture, setGesture] = useState<Gesture>();
@@ -919,8 +920,18 @@ export function TimeGrid({
     } else if (gesture.kind === 'move') {
       if (fixedItem(gesture.card.id)) return;
       const next = snapMinute(minute - gesture.grab, snap);
-      // An occurrence moves within its day; another day would be a change of the rule.
-      const toDay = occurrences?.has(gesture.card.id) ? gesture.dayIndex : dayIndex;
+      // An occurrence moves within its day; another day would be a change of the rule. Its day
+      // is in the card's zone, which can end inside the calendar's day column.
+      const occurrence = occurrences?.get(gesture.card.id);
+      const toDay = occurrence ? gesture.dayIndex : dayIndex;
+      if (
+        occurrence &&
+        isoDate(localDate(atMinute(dayAt(toDay), next, zone), gesture.card.zone)) !==
+          occurrence.date
+      ) {
+        if (!gesture.moved) setGesture({ ...gesture, moved: true });
+        return;
+      }
       if (next !== gesture.minute || toDay !== gesture.dayIndex) {
         setGesture({ ...gesture, minute: next, dayIndex: toDay, moved: true });
       }
@@ -958,6 +969,7 @@ export function TimeGrid({
       if (!select(gesture.card.id)) onEdit(gesture.card.id);
     } else {
       const moved = preview(gesture.card);
+      if (moved.start === gesture.card.start && moved.end === gesture.card.end) return;
       commit(gesture.card, { start: moved.start, end: moved.end });
     }
   };

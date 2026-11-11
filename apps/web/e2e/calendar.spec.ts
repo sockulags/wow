@@ -638,13 +638,17 @@ test.describe('repeating cards', () => {
     // The dialog's overlay fades out after it; a drag before then lands on the overlay.
     await expect(page.locator('[data-slot="dialog-overlay"]')).toHaveCount(0);
 
-    // A drag of Wednesday's occurrence moves the series to the new time.
+    // A drag of Wednesday's occurrence moves the series from Wednesday on to the new time;
+    // Monday and Tuesday stay where they were.
     await reveal(page, 5 * 60);
     const wednesday = page.getByTestId(`day-${localDay(monday + 2)}`);
     await drag(page, await pointAt(wednesday, 6 * 60 + 5), await pointAt(wednesday, 7 * 60 + 5));
     await expect(shown).toHaveCount(5);
-    for (const occurrence of await shown.all()) {
-      await expect(occurrence).toHaveAccessibleName('Brew log, 07:00–07:15, repeats, scheduled');
+    const times = ['06:00', '06:00', '07:00', '07:00', '07:00'];
+    for (const [index, occurrence] of (await shown.all()).entries()) {
+      const from = times[index] ?? '';
+      const to = from === '06:00' ? '06:15' : '07:15';
+      await expect(occurrence).toHaveAccessibleName(`Brew log, ${from}–${to}, repeats, scheduled`);
     }
 
     await page.goto(`/calendar?view=week&date=${localDay(monday + 7)}`);

@@ -11,7 +11,7 @@ import {
 } from './provider.js';
 import { QuestionOption, QuestionReply } from './questions.js';
 import { SentSkill } from './skills.js';
-import { CardOccurrence, LocalDay, RepeatRule } from './repeat.js';
+import { CardOccurrence, LocalDay, PastSeries, RepeatRule } from './repeat.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
 import {
   FileHash,
@@ -262,6 +262,9 @@ export const CalendarItem = z.object({
   repeat: RepeatRule.nullable().optional(),
   // The days skipped by hand ("This occurrence"), in the card's zone.
   skippedDates: z.array(LocalDay).optional(),
+  // The series a repeating card followed before it was changed, oldest first, so past days stay
+  // where they were. Absent for cards stored before it existed.
+  pastSeries: z.array(PastSeries).optional(),
   // When the card's trigger fires next; null when nothing is scheduled.
   nextAt: Timestamp.nullable().optional(),
   // What happened at each occurrence the scheduler reached, oldest first. Topic rows carry it;
@@ -499,7 +502,9 @@ export const isEventTrigger = (trigger: Trigger): trigger is EventTrigger =>
 // What the server tells the user about without being asked: a run started by a trigger, a run
 // waiting at a gate, a failed run or trigger. The desktop app shows them as system notifications,
 // the web app as toasts. Only stored while `scheduler.notifications` is on.
-export const NotificationKind = z.enum(['started', 'waiting', 'failed']);
+// `skipped` is an occurrence of a repeating card that started nothing because the card's earlier
+// run was still going; it is not a failure.
+export const NotificationKind = z.enum(['started', 'waiting', 'failed', 'skipped']);
 export type NotificationKind = z.infer<typeof NotificationKind>;
 
 export const AppNotification = z.object({

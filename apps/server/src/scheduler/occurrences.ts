@@ -113,6 +113,10 @@ export function parseDay(text: string): Day {
   return { year: year ?? 1970, month: month ?? 1, day: day ?? 1 };
 }
 
+// The day after a day.
+export const nextDay = (date: string): string =>
+  dayText(fromDayNumber(dayNumber(parseDay(date)) + 1));
+
 // The day in `zone` an instant falls on.
 export const localDay = (instant: string | number, zone: string): string =>
   dayText(wallClock(typeof instant === 'number' ? instant : Date.parse(instant), zone));
@@ -135,12 +139,16 @@ const daysInMonth = (year: number, month: number): number =>
 const lastYear = 9999;
 const lastDayNumber = Date.UTC(lastYear, 11, 31) / oneDay;
 
-// The days the rule falls on, in order, from the start's day, before the end is applied.
-function* ruleDays(first: Day, rule: RepeatRule): Generator<Day> {
+// The days the rule falls on, in order, from the start's day, before the end is applied, as day
+// numbers. Days before `skipTo` may be left out: the walk jumps there with integer arithmetic,
+// so a read far from the start costs no more than one near it.
+function* ruleDays(first: Day, rule: RepeatRule, skipTo: number): Generator<number> {
   const step = rule.interval;
+  const start = dayNumber(first);
+  const ahead = Math.max(0, skipTo - start);
   switch (rule.frequency) {
     case 'daily': {
-      for (let n = dayNumber(first); n <= lastDayNumber; n += step) yield fromDayNumber(n);
+      for (let n = start + Math.ceil(ahead / step) * step; n <= lastDayNumber; n += step) yield n;
       return;
     }
     case 'weekly': {
@@ -150,23 +158,27 @@ function* ruleDays(first: Day, rule: RepeatRule): Generator<Day> {
       const offsets = repeatWeekdays
         .map((weekday, index) => (chosen.has(weekday) ? index : -1))
         .filter((index) => index >= 0);
-      const start = dayNumber(first);
       // The start is the first occurrence even on a weekday the rule does not name (spec 2).
-      yield first;
-      for (let monday = start - weekdayIndex(first); ; monday += 7 * step) {
+      if (ahead === 0) yield start;
+      const firstMonday = start - weekdayIndex(first);
+      const weeks = Math.floor(Math.max(0, skipTo - firstMonday) / (7 * step));
+      for (let monday = firstMonday + weeks * 7 * step; ; monday += 7 * step) {
         for (const offset of offsets) {
           if (monday + offset > lastDayNumber) return;
-          if (monday + offset > start) yield fromDayNumber(monday + offset);
+          if (monday + offset > start) yield monday + offset;
         }
       }
     }
     case 'monthly': {
       // A month without the start's day has no occurrence (spec 3).
-      for (let index = first.year * 12 + first.month - 1; ; index += step) {
+      const firstIndex = first.year * 12 + first.month - 1;
+      const target = fromDayNumber(Math.max(start, skipTo));
+      const months = Math.floor((target.year * 12 + target.month - 1 - firstIndex) / step);
+      for (let index = firstIndex + months * step; ; index += step) {
         const year = Math.floor(index / 12);
         if (year > lastYear) return;
         const month = (index % 12) + 1;
-        if (first.day <= daysInMonth(year, month)) yield { year, month, day: first.day };
+        if (first.day <= daysInMonth(year, month)) yield dayNumber({ year, month, day: first.day });
       }
     }
   }
@@ -174,20 +186,48 @@ function* ruleDays(first: Day, rule: RepeatRule): Generator<Day> {
 
 // Every occurrence of the series in order, the first being the card's own start and end. The
 // sequence ends where the rule's end says; without one it does not end, so callers stop it.
-export function* occurrences(series: Series): Generator<Occurrence> {
+// With `from` (an instant, or a day in the card's zone), occurrences that end well before it are
+// left out without being worked out; a few that end before it may still come, so callers keep
+// their own check. `notBefore` (a day) leaves out the days before it the same way.
+export function* occurrences(
+  series: Series,
+  from?: number | string,
+  notBefore?: string,
+): Generator<Occurrence> {
   const startMs = Date.parse(series.start);
+  const endMs = Date.parse(series.end);
   const startWall = wallClock(startMs, series.zone);
-  const length = naive(wallClock(Date.parse(series.end), series.zone)) - naive(startWall);
-  const elapsed = Date.parse(series.end) - startMs;
+  const length = naive(wallClock(endMs, series.zone)) - naive(startWall);
+  const elapsed = endMs - startMs;
   const { end } = series.repeat;
-  const last = end.kind === 'on' ? dayNumber(parseDay(end.date)) : Number.POSITIVE_INFINITY;
+  const first = dayNumber(startWall);
+  const last = end.kind === 'on' ? dayNumber(parseDay(end.date)) : lastDayNumber;
+  // An occurrence that overlaps `from` starts at most its length (and a day of offset change)
+  // before it, in days of the card's zone.
+  const skipTo = Math.max(
+    typeof from === 'string'
+      ? dayNumber(parseDay(from))
+      : typeof from === 'number' && Number.isFinite(from)
+        ? dayNumber(wallClock(from, series.zone)) -
+          Math.ceil(Math.max(length, elapsed) / oneDay) -
+          1
+        : first,
+    notBefore === undefined ? first : dayNumber(parseDay(notBefore)),
+  );
+  if (skipTo > last) return;
+  // An end after a count has to count the days before `skipTo`; it is at most the count's bound
+  // of steps, and those days are counted without being worked out.
+  const counted = end.kind === 'after';
   let count = 0;
-  for (const day of ruleDays(startWall, series.repeat)) {
-    if (end.kind === 'after' && count >= end.count) return;
-    if (dayNumber(day) > last) return;
+  for (const n of ruleDays(startWall, series.repeat, counted ? first : skipTo)) {
+    if (counted && count >= end.count) return;
+    if (n > last) return;
     count += 1;
-    const at = count === 1 ? startMs : instantOf({ ...startWall, ...day }, series.zone);
-    const endAt = count === 1 ? Date.parse(series.end) : wallPlus(at, length, series.zone);
+    if (n < skipTo) continue;
+    const day = fromDayNumber(n);
+    const isFirst = n === first;
+    const at = isFirst ? startMs : instantOf({ ...startWall, ...day }, series.zone);
+    const endAt = isFirst ? endMs : wallPlus(at, length, series.zone);
     yield {
       date: dayText(day),
       start: new Date(at).toISOString(),
@@ -213,16 +253,51 @@ function wallPlus(at: number, length: number, zone: string): number {
   );
 }
 
+// A repeating card's series over time (recurring cards spec 10, 11): each earlier series sets
+// its days from `from` up to `until`, where a later one took over, and the last part has no
+// `until`. Days are in each part's own zone, so after a change of zone a part also takes over
+// only at the instant its predecessor's `until` day began: no day or instant is set twice.
+export interface SchedulePart {
+  readonly series: Series;
+  readonly from?: string | undefined;
+  readonly until?: string | undefined;
+}
+export type Schedule = Series | readonly SchedulePart[];
+
+// The occurrences of a schedule in order, with `from` as `occurrences` takes it.
+function* scheduled(schedule: Schedule, from?: number | string): Generator<Occurrence> {
+  if ('repeat' in schedule) {
+    yield* occurrences(schedule, from);
+    return;
+  }
+  let takesOver: number | undefined;
+  for (const part of schedule) {
+    const after = takesOver;
+    takesOver =
+      part.until === undefined
+        ? undefined
+        : instantOf({ ...parseDay(part.until), hour: 0, minute: 0, second: 0 }, part.series.zone);
+    if (part.until !== undefined && part.from !== undefined && part.until <= part.from) continue;
+    if (typeof from === 'string' && part.until !== undefined && from >= part.until) continue;
+    for (const occurrence of occurrences(part.series, from, part.from)) {
+      if (part.until !== undefined && occurrence.date >= part.until) break;
+      if (part.from !== undefined && occurrence.date < part.from) continue;
+      if (after !== undefined && Date.parse(occurrence.start) < after) continue;
+      yield occurrence;
+    }
+  }
+}
+
 // The occurrences that overlap [from, to), at most `limit` of them, and whether more did.
 export function occurrencesIn(
-  series: Series,
+  series: Schedule,
   from: number,
   to: number,
   limit: number,
   keep: (occurrence: Occurrence) => boolean = () => true,
 ): { found: Occurrence[]; more: boolean } {
   const found: Occurrence[] = [];
-  for (const occurrence of occurrences(series)) {
+  for (const occurrence of scheduled(series, from)) {
     if (Date.parse(occurrence.start) >= to) break;
     if (Date.parse(occurrence.end) <= from || !keep(occurrence)) continue;
     if (found.length === limit) return { found, more: true };
@@ -234,11 +309,11 @@ export function occurrencesIn(
 // The first occurrence that starts after `after` and that `keep` lets through, or undefined
 // when the series has ended. Starts are in order, so this walks only as far as it must.
 export function firstAfter(
-  series: Series,
+  series: Schedule,
   after: number,
   keep: (occurrence: Occurrence) => boolean = () => true,
 ): Occurrence | undefined {
-  for (const occurrence of occurrences(series)) {
+  for (const occurrence of scheduled(series, after)) {
     if (Date.parse(occurrence.start) > after && keep(occurrence)) return occurrence;
   }
   return undefined;
@@ -246,13 +321,13 @@ export function firstAfter(
 
 // The occurrences that start in (after, until], in order.
 export function startingBetween(
-  series: Series,
+  series: Schedule,
   after: number,
   until: number,
   keep: (occurrence: Occurrence) => boolean = () => true,
 ): Occurrence[] {
   const found: Occurrence[] = [];
-  for (const occurrence of occurrences(series)) {
+  for (const occurrence of scheduled(series, after)) {
     const start = Date.parse(occurrence.start);
     if (start > until) break;
     if (start > after && keep(occurrence)) found.push(occurrence);
@@ -261,9 +336,9 @@ export function startingBetween(
 }
 
 // The occurrence on a day, if the rule falls on it.
-export function occurrenceOn(series: Series, date: string): Occurrence | undefined {
+export function occurrenceOn(series: Schedule, date: string): Occurrence | undefined {
   const wanted = dayNumber(parseDay(date));
-  for (const occurrence of occurrences(series)) {
+  for (const occurrence of scheduled(series, date)) {
     const day = dayNumber(parseDay(occurrence.date));
     if (day === wanted) return occurrence;
     if (day > wanted) return undefined;

@@ -4,6 +4,7 @@ import type {
   ProviderEvent,
   ServerCommand,
 } from '@wow/contracts';
+import { e2eProviderInstanceId } from './env';
 
 // The mock agent of the assistant's turns (e2e/assistant.spec.ts). An ordinary thread goes to
 // the chat tests' script; a turn that carries wow's toolset calls wow's tools in process, the
@@ -57,6 +58,18 @@ function diagnosisReply(results: readonly string[]): string {
   ].join('\n');
 }
 
+// A step of the review workflow the mock agent writes.
+const reviewStep = (id: string, model: string, effort: string) => ({
+  id,
+  skillName: id,
+  providerInstanceId: e2eProviderInstanceId,
+  model,
+  effort,
+  gateBefore: false,
+  gateAfter: true,
+  expectedArtifacts: [],
+});
+
 function scenario(text: string, trackerUrl: string): Scenario {
   if (/work hours/i.test(text)) {
     return {
@@ -96,6 +109,28 @@ function scenario(text: string, trackerUrl: string): Scenario {
       ],
       answer:
         "I set the GitLab address. The steps from wow's guide are above the field: create a personal access token with read_api on your GitLab and put it in the field; I never see it.",
+    };
+  }
+  // A workflow made from wow's models and guidance (questions and models spec 15): read both,
+  // then write each step with a model and an effort the instance lists.
+  if (/review workflow/i.test(text)) {
+    return {
+      steps: [
+        { tool: 'read_models', args: {} },
+        { tool: 'read_model_guidance', args: {} },
+        {
+          tool: 'create_workflow',
+          args: {
+            name: 'Tea review',
+            steps: [
+              reviewStep('plan-work', 'mock-model-large', 'high'),
+              reviewStep('check-work', 'mock-model', 'low'),
+            ],
+          },
+        },
+      ],
+      answer:
+        'I made Tea review. plan-work runs on Mock model, large with high effort, because the guidance says planning needs the most capable model; check-work runs on Mock model with low effort, since it only reads.',
     };
   }
   if (/look over/i.test(text)) {
@@ -239,6 +274,7 @@ let made = 0;
 
 export class AssistantMockAgent implements ProviderAdapter {
   readonly kind = 'claude' as const;
+  readonly requiresModel = false;
   readonly #ordinary: ProviderAdapter;
   readonly #tools: () => AssistantToolsLike;
   readonly #act: AssistantAct;
