@@ -143,4 +143,48 @@ describe('TimeGrid', () => {
     expect(screen.getByRole('button', { name: '2 more items' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^B, / })).toBeNull();
   });
+
+  it('holds a dragged occurrence to its day in the card zone, not only the calendar column', () => {
+    // 00:30 in New York on 3 November is 06:30 in Stockholm, the same calendar day; an hour
+    // earlier is still 3 November in Stockholm but 2 November in the card's zone.
+    const occurrenceItem = item(
+      'Night check@2026-11-03',
+      '2026-11-03T05:30:00.000Z',
+      '2026-11-03T06:00:00.000Z',
+      { zone: 'America/New_York', title: 'Night check' },
+    );
+    const props = setup({
+      items: [occurrenceItem],
+      occurrences: new Map([
+        [
+          occurrenceItem.id,
+          {
+            cardId: 'Night check',
+            date: '2026-11-03',
+            next: false,
+            record: null,
+            state: null,
+            runId: null,
+          },
+        ],
+      ]),
+    });
+    const grid = screen.getByRole('group', { name: 'Calendar grid' });
+    grid.getBoundingClientRect = () => DOMRect.fromRect({ x: 0, y: 0, width: 100, height: 1152 });
+    grid.setPointerCapture = () => undefined;
+    // The grid is 48px an hour: 06:30 is at 312px.
+    const drag = (fromY: number, toY: number) => {
+      fireEvent.pointerDown(block(/^Night check, /), { button: 0, clientX: 50, clientY: fromY });
+      fireEvent.pointerMove(grid, { clientX: 50, clientY: toY });
+      fireEvent.pointerUp(grid, { clientX: 50, clientY: toY });
+    };
+    drag(312, 264);
+    expect(props.onChange).not.toHaveBeenCalled();
+    expect(props.onEdit).not.toHaveBeenCalled();
+    drag(312, 336);
+    expect(props.onChange).toHaveBeenLastCalledWith('Night check@2026-11-03', {
+      start: '2026-11-03T06:00:00.000Z',
+      end: '2026-11-03T06:30:00.000Z',
+    });
+  });
 });

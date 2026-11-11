@@ -2720,7 +2720,10 @@ Scheduled only when it is the trigger's next one or after the card's `nextAt` (b
 times), and nothing for a day that went by before the card existed. A reached occurrence opens
 its run and cannot be moved or resized; any other opens the card form with `cardDialog.date` set.
 A drag or Alt+Up/Down sends `card.moveOccurrence` and stays within the occurrence's day (a move
-to another day, by pointer or Alt+Left/Right, is not offered); the series takes the new time.
+to another day, by pointer or Alt+Left/Right, is not offered); the day is the one in the card's
+zone, so with another calendar zone a drag or key stops at the card zone's midnight even inside
+one calendar column. A drag that ends where it started sends nothing. The series takes the new
+time.
 A record that offers "Run now" puts the button on that block. When the answer's `more` names a
 card, a banner (`occurrences-more`) says its first `calendar.maxOccurrences` are shown.
 
