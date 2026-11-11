@@ -260,6 +260,38 @@ describe("the net over the agent's own reports (spec 18)", () => {
     for (const text of stored) expect(text).not.toContain(lookalike);
   });
 
+  it('hides a lookalike split across two text pieces, and a task that looks like a secret', async () => {
+    const half = lookalike.length / 2;
+    script = (threadId) => [
+      { type: 'textDelta', threadId, itemId: 'text', delta: `It is ${lookalike.slice(0, half)}` },
+      { type: 'textDelta', threadId, itemId: 'text', delta: `${lookalike.slice(half)} now.` },
+      {
+        type: 'taskListUpdated',
+        threadId,
+        tasks: [{ id: 't1', content: `Store ${lookalike}`, status: 'pending' }],
+      },
+      { type: 'turnCompleted', threadId },
+    ];
+    await say('What is in my settings?');
+
+    const items = rows<ThreadItem>('threadItems', assistantThreadId);
+    expect(items.find((entry) => entry.kind === 'assistant_text')?.payload).toEqual({
+      text: `It is ${hiddenText} now.`,
+    });
+    expect(items.find((entry) => entry.kind === 'task_list')?.payload).toEqual({
+      tasks: [{ id: 't1', content: `Store ${hiddenText}`, status: 'pending' }],
+    });
+    const stored = server.database.db
+      .select()
+      .from(events)
+      .all()
+      .map((row) => JSON.stringify(row));
+    for (const text of stored) {
+      expect(text).not.toContain(lookalike);
+      expect(text).not.toContain(lookalike.slice(half));
+    }
+  });
+
   it('leaves an ordinary thread as the agent reported it', async () => {
     dispatch({
       type: 'thread.create',

@@ -12,7 +12,7 @@ import {
 import type { SecretStore } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
-import { redactAssistantEvents } from '../assistant/redact.js';
+import { AssistantRedactor } from '../assistant/redact.js';
 import { prepareAssistantFolder } from '../assistant/thread.js';
 import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
@@ -47,6 +47,7 @@ export class ProviderService {
   readonly #deps: ProviderServiceDeps;
   readonly #adapters = new Map<string, ProviderAdapter>();
   readonly #pending = new Map<string, ProviderEvent[]>();
+  readonly #redactor = new AssistantRedactor();
   readonly #unsubscribe: () => void;
   #flushScheduled = false;
   #stopped = false;
@@ -319,9 +320,7 @@ export class ProviderService {
       this.#deps.engine.dispatch(`provider:${randomUUID()}`, {
         type: 'provider.events',
         threadId,
-        events: redactAssistantEvents(
-          threadId,
-          events,
+        events: this.#redactor.redact(threadId, events, () =>
           secretPatterns(this.#deps.settings.get('assistant.secretPatterns')),
         ),
       });

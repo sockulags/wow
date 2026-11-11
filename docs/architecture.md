@@ -1780,13 +1780,19 @@ rejected with the reason and the proposal stays open. `assistant.proposal.declin
 (`accept`, `decline`, `undo`) are in the table as refused, so they only work with the user's
 origin.
 
-**What the agent reports is netted too** (`assistant/redact.ts`, `redactAssistantEvents`). The
-provider service passes every provider event of the assistant thread through `hideSecrets`
-before it dispatches `provider.events`: a tool call's name, input and output, text and
-reasoning deltas, a failure's words, and an approval or question. So a stored tool result
-shows `[hidden]` where the value was (spec 18), whatever tool or text it came from. Streamed
-text is checked piece by piece and a value split across two pieces passes; that is accepted,
-because the net is not the mechanism. Ordinary threads are stored as reported.
+**What the agent reports is netted too** (`assistant/redact.ts`, `AssistantRedactor`, one per
+provider service). The provider service passes every provider event of the assistant thread
+through `hideSecrets` before it dispatches `provider.events`: a tool call's name, input and
+output, text and reasoning deltas, task list contents, a failure's words, and an approval or
+question. So a stored tool result shows `[hidden]` where the value was (spec 18), whatever tool
+or text it came from. Streamed text and tool output are checked on the whole text of their item,
+across batches: the redactor keeps each item's text, passes on the hidden text up to its last
+whitespace (a token has none, so the held end may still become one) and the rest when the item
+ends (tool output at its `toolCallCompleted`; text and reasoning when a tool call, approval or
+question starts or the turn ends). A value split across two pieces is therefore hidden in the
+event history too. A custom pattern that matches across whitespace can grow back over text
+already passed on; the rest of that item is then stored as `[hidden]`. Ordinary threads are
+stored as reported and the patterns are not compiled for them.
 
 **The user's answers in the next turn** (spec 10). `thread.sendMessage` to the assistant
 thread asks `ReadModel.assistantAnswers(since)` for the proposals answered and the changes
