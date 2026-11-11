@@ -39,7 +39,7 @@ test.describe('workflows', () => {
     const steps = builder.getByRole('list', { name: 'Steps' }).getByTestId('workflow-step');
     await expect(steps).toHaveCount(4);
     const first = steps.nth(0);
-    await expect(first.getByLabel('Step 1 skill')).toHaveText('capture-intent');
+    await expect(first.getByLabel('Step 1 skill', { exact: true })).toHaveText('capture-intent');
     await expect(first.getByText('Turn a rough idea into an intent and a spec.')).toBeVisible();
     // Gates are the stops between steps.
     const gateAt = (name: string) => builder.getByRole('button', { name });
@@ -47,7 +47,7 @@ test.describe('workflows', () => {
     await expect(first.getByLabel('Step 1 expected artifacts')).toHaveValue(
       'intents/*/intent.md\nintents/*/spec.md',
     );
-    await expect(steps.nth(1).getByLabel('Step 2 skill')).toHaveText('plan-work');
+    await expect(steps.nth(1).getByLabel('Step 2 skill', { exact: true })).toHaveText('plan-work');
     await expect(gateAt('Gate between step 2 and step 3')).toHaveAttribute('aria-pressed', 'true');
     await expect(gateAt('Gate between step 3 and step 4')).toHaveAttribute('aria-pressed', 'false');
     for (const index of [0, 1, 2, 3]) {
@@ -61,9 +61,9 @@ test.describe('workflows', () => {
 
     // Reordering with the keyboard-reachable buttons, then back.
     await steps.nth(3).getByRole('button', { name: 'Move step 4 up' }).click();
-    await expect(steps.nth(2).getByLabel('Step 3 skill')).toHaveText('check-work');
+    await expect(steps.nth(2).getByLabel('Step 3 skill', { exact: true })).toHaveText('check-work');
     await steps.nth(2).getByRole('button', { name: 'Move step 3 down' }).click();
-    await expect(steps.nth(3).getByLabel('Step 4 skill')).toHaveText('check-work');
+    await expect(steps.nth(3).getByLabel('Step 4 skill', { exact: true })).toHaveText('check-work');
 
     // The steps can become a template of their own (audit E-05).
     await builder.getByRole('button', { name: 'Save as template…' }).click();
