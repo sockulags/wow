@@ -40,6 +40,9 @@ let adapters: MockProviderAdapter[];
 let timers: { callback: () => void; delayMs: number }[];
 // What the invented agent does when a turn starts: answer 'fail' to fail the turn.
 let agent: (prompt: string, cwd: string) => 'fail' | undefined;
+// While set, every request to the host waits for it, until `release`.
+let held: Promise<void> | undefined;
+let release: () => void;
 const ceiling = process.env['GIT_CEILING_DIRECTORIES'];
 let ids = 0;
 
@@ -218,6 +221,8 @@ beforeEach(async () => {
   adapters = [];
   timers = [];
   agent = opensPullRequest;
+  held = undefined;
+  release = () => undefined;
   pullNumber = 20;
   host = new MockGitHub({ owner: 'acme', repo: 'tea', webUrl: 'https://ghe.example.invalid' });
   host.token = TOKEN;
@@ -236,7 +241,10 @@ beforeEach(async () => {
       setTimeout: (callback, delayMs) => timers.push({ callback, delayMs }),
       clearTimeout: () => undefined,
     },
-    fetch: host.fetch(api),
+    fetch: async (input, init) => {
+      await held;
+      return host.fetch(api)(input, init);
+    },
     hooks: {
       providers: {
         claude: (row) => {
@@ -283,6 +291,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  release();
   await server.stop();
   if (ceiling === undefined) delete process.env['GIT_CEILING_DIRECTORIES'];
   else process.env['GIT_CEILING_DIRECTORIES'] = ceiling;
@@ -438,6 +447,30 @@ describe('a unit someone else claims (spec 42)', () => {
     expect(statuses()).toEqual({ U1: 'claimed', U2: 'waiting', U3: 'claimed' });
     expect(runs().map((row) => row.id)).toEqual(['pr1.U1']);
     expect(host.pulls.filter((entry) => entry.body.endsWith('/U3'))).toHaveLength(1);
+  });
+
+  it('starts nothing on a plan change that arrives before the host is read after a unit run', async () => {
+    agent = (prompt) => {
+      if (prompt.includes('Unit: U1 ')) {
+        host.pulls = [...host.pulls, pull('U3')];
+        held = new Promise((resolve) => (release = resolve));
+      }
+      return opensPullRequest(prompt);
+    };
+    await follow();
+    start();
+    await runBecomes('pr1.U1', (row) => row.state === 'done');
+    // plan.md changes while the read the run's end asked for is still on its way. The stored
+    // statuses still show U3 ready; only the host knows it was claimed.
+    await writePlan({ 'plan.md': planMd().replace('Show the time left', 'Show the minutes left') });
+    expect(plan()?.units.find((unit) => unit.key === 'U3')?.title).toBe('Show the minutes left');
+    expect(run('pr1.U3')).toBeUndefined();
+
+    held = undefined;
+    release();
+    const waiting = await planRunBecomes((row) => row.state === 'waiting');
+    expect(waiting.units.map((unit) => [unit.unitKey, unit.outcome])).toEqual([['U1', 'done']]);
+    expect(runs().map((row) => row.id)).toEqual(['pr1.U1']);
   });
 });
 

@@ -872,7 +872,10 @@ planId, intentId, unitKey, title}`) and has the id `<planRunId>.<unitKey>`.
   the plan of a live plan run. After a unit's run ends it first has the poller read the plan
   once (`HostPoller.readPlan`) and sends the command when that read is stored or has failed,
   so the next unit is picked from what the host shows now and a unit someone else claimed
-  while the run was going is skipped (spec 42). That read is a consequence of the plan run the
+  while the run was going is skipped (spec 42). Until that read is done, a `plans.synced` for
+  the plan (a plan file edited, say) does not advance the plan run: its statuses are from
+  before the read. Only the end of a unit's run asks; later changes to the ended run (its
+  working copy settled) do not. That read is a consequence of the plan run the
   user started, so it happens whatever the polling settings say; a host whose request limit
   is used up is still left alone. `plans.synced` is how a host poll reaches a plan run: the
   poller's `hosts.sync` changes unit statuses, the orchestrator stores them as `plans.synced`,

@@ -24,13 +24,22 @@ export interface PlanRunsDeps {
 export class PlanRuns implements BackgroundService {
   readonly #deps: PlanRunsDeps;
   readonly #unsubscribe: () => void;
+  // Plan runs whose unit's run ended and whose plan is being read from its host. A plan change
+  // stored meanwhile does not advance them: its statuses are from before the read, and could
+  // show ready a unit someone else has claimed since.
+  readonly #reading = new Set<string>();
+  // Unit runs whose end was seen. A run that has ended still changes (its working copy is
+  // settled), and only its end asks the host.
+  readonly #endedRuns = new Set<string>();
   #stopped = false;
 
   constructor(deps: PlanRunsDeps) {
     this.#deps = deps;
     this.#unsubscribe = deps.engine.onCommit((commit) => {
       const { ended, synced } = this.#touched(commit);
-      for (const planRunId of synced) if (!ended.has(planRunId)) this.#advance(planRunId);
+      for (const planRunId of synced) {
+        if (!ended.has(planRunId) && !this.#reading.has(planRunId)) this.#advance(planRunId);
+      }
       for (const [planRunId, planId] of ended) this.#unitRunEnded(planRunId, planId);
     });
   }
@@ -63,7 +72,10 @@ export class PlanRuns implements BackgroundService {
     for (const { event } of commit.events) {
       if (event.kind === 'workflowRun.changed') {
         const { run } = event.payload;
-        if (run.unit && !isLiveRunState(run.state)) ended.set(run.unit.planRunId, run.unit.planId);
+        if (run.unit && !isLiveRunState(run.state) && !this.#endedRuns.has(run.id)) {
+          this.#endedRuns.add(run.id);
+          ended.set(run.unit.planRunId, run.unit.planId);
+        }
       } else if (event.kind === 'plans.synced') {
         for (const intent of event.payload.upserted) plans.add(intent.id);
         for (const id of event.payload.removed) plans.add(id);
@@ -81,9 +93,11 @@ export class PlanRuns implements BackgroundService {
       this.#advance(planRunId);
       return;
     }
+    this.#reading.add(planRunId);
     void readPlan(planId)
       .catch((error: unknown) => logger.error('plan not read after a unit run', error))
       .then(() => {
+        this.#reading.delete(planRunId);
         if (!this.#stopped) this.#advance(planRunId);
       });
   }
