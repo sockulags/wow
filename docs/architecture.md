@@ -1513,7 +1513,9 @@ names a GitHub repository for `owner/repo` paths: github.com (also `ssh.github.c
 `https://<host>/api/v3`; deeper paths (GitLab subgroups), local paths and known other hosts
 (GitLab, Bitbucket, Azure DevOps, Codeberg) give none. The primary remote is `origin`, else the
 first GitHub one, else the first. `projects.git` answers `ProjectGit` for every project
-(`{projectId, status, remotes, primary, branch, message}`); it is read on demand, not projected,
+(`{projectId, status, remotes, primary, branch, message, codeHost}`; `codeHost` is `gitlab` when
+the primary remote is on the stored GitLab site, the rule the host poller picks its adapter by,
+else `github`); it is read on demand, not projected,
 because it is live I/O on the user's files. `guessJiraKeys` counts distinct `KEY-123` references
 in the branch names and the last `trackers.jira.keyScanCommits` commit messages (`git log
 --format=%s%n%b`), skipping look-alikes such as `UTF-8` and `SHA-256`.
@@ -1750,8 +1752,9 @@ merged", and so do the gate's checks part (`ChecksReading.host`), an event run's
 notification and handover (`runEventHost`, `triggerEventLabel`), and the Pull request tab's name
 and empty text, which read "Merge request" on a run whose host read is GitLab
 (`pullRequestTabLabel`). The Triggers tab's rows, its palette commands and New trigger's event
-choices say "Merge request merged" for a project whose newest host read is GitLab
-(`projectCodeHost` in `apps/web/src/workflows/triggers.ts`), and the default handover names
+choices say "Merge request merged" for a project whose newest host read is GitLab, or, before
+any read, whose `ProjectGit.codeHost` is (`projectCodeHost(reads, projectId, unread)` in
+`packages/contracts/src/hosts.ts`, used from `apps/web/src/workflows/triggers.ts`), and the default handover names
 the event's request with `pullRequestName` ("Merge request !12" or "Pull request #14"). GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
 GitLab the server tests and the e2e server share.
 

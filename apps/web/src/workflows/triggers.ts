@@ -7,6 +7,7 @@ import {
   type HostKind,
   type HostRead,
   type Project,
+  type ProjectGit,
   type Trigger,
   type TriggerEvent,
   type Workflow,
@@ -183,6 +184,7 @@ export function triggerGroups(
   projects: readonly Project[],
   workflows: readonly Workflow[],
   reads: readonly HostRead[] = [],
+  git: ReadonlyMap<string, ProjectGit> = new Map(),
 ): TriggerGroup[] {
   const projectNames = new Map(projects.map((project) => [project.id, project.name]));
   const workflowNames = new Map(workflows.map((workflow) => [workflow.id, workflow.name]));
@@ -194,7 +196,10 @@ export function triggerGroups(
     groups.set(trigger.projectId, rows);
     rows.push({
       trigger,
-      event: triggerEventLabel(trigger.event, projectCodeHost(reads, trigger.projectId)),
+      event: triggerEventLabel(
+        trigger.event,
+        projectCodeHost(reads, trigger.projectId, git.get(trigger.projectId)?.codeHost),
+      ),
       workflow: workflowNames.get(trigger.workflowId),
     });
   }

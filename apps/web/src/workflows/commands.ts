@@ -5,6 +5,7 @@ import {
   type HostRead,
   type Ticket,
   type Project,
+  type ProjectGit,
   type RunDiffFile,
   type Skill,
   type Trigger,
@@ -83,6 +84,8 @@ export interface WorkflowCommandData {
   readonly projects?: readonly Project[] | undefined;
   // The host reads, which say whether a project's code host is GitLab.
   readonly hostReads?: readonly HostRead[] | undefined;
+  // Each project's git data, which names its code host before the first host read.
+  readonly projectsGit?: ReadonlyMap<string, ProjectGit> | undefined;
   readonly onTriggers?: boolean | undefined;
   // The `workflows.alwaysStopSkills` setting: gates after these skills get no condition.
   readonly alwaysStopSkills?: readonly string[] | undefined;
@@ -340,6 +343,7 @@ function triggerCommands({
   projects = [],
   workflows,
   hostReads = [],
+  projectsGit,
   onTriggers = false,
 }: WorkflowCommandData): AppCommand[] {
   const commands: AppCommand[] = [
@@ -361,7 +365,7 @@ function triggerCommands({
       },
     },
   ];
-  for (const group of triggerGroups(triggers, projects, workflows, hostReads)) {
+  for (const group of triggerGroups(triggers, projects, workflows, hostReads, projectsGit)) {
     for (const row of group.rows) {
       const { trigger } = row;
       const name = `${group.project} · ${triggerTitle(row)}`;

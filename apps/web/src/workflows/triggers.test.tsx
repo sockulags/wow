@@ -1,4 +1,12 @@
-import type { Command, HostRead, Project, Trigger, TriggerEvent, Workflow } from '@wow/contracts';
+import type {
+  Command,
+  HostRead,
+  Project,
+  ProjectGit,
+  Trigger,
+  TriggerEvent,
+  Workflow,
+} from '@wow/contracts';
 import {
   createMemorySettingsSource,
   createSettingsStore,
@@ -111,7 +119,13 @@ function fake(
     refuse,
     settings = {},
     reads = [],
-  }: { refuse?: string; settings?: Record<string, unknown>; reads?: HostRead[] } = {},
+    git = [],
+  }: {
+    refuse?: string;
+    settings?: Record<string, unknown>;
+    reads?: HostRead[];
+    git?: ProjectGit[];
+  } = {},
 ) {
   const box = outbox<Command>();
   const sent = box.sent;
@@ -124,6 +138,7 @@ function fake(
         box.record(command);
         return Promise.resolve({ commandId, seqs: [sent.length], duplicate: false });
       }
+      if (method === 'projects.git') return Promise.resolve({ projects: git });
       return Promise.resolve([]);
     },
     subscribe(topic, _params, onData) {
@@ -149,6 +164,17 @@ function fake(
   };
   return { runtime, sent, until: box.until };
 }
+
+// A project whose remote is on the stored GitLab site, as the server's git data says.
+const gitlabGit = (projectId: string): ProjectGit => ({
+  projectId,
+  status: 'ok',
+  remotes: [],
+  primary: 'origin',
+  branch: 'main',
+  message: null,
+  codeHost: 'gitlab',
+});
 
 const panel = async () => within(await screen.findByRole('tabpanel', { name: 'Triggers' }));
 
@@ -179,6 +205,16 @@ describe('trigger rows', () => {
   it('says "Merge request merged" for a project whose code host is GitLab', () => {
     const groups = triggerGroups([merged], projects, workflows, [gitlabRead('tea')]);
     expect(groups[0]?.rows[0]?.event).toBe('Merge request merged');
+  });
+
+  it('says "Merge request merged" for a GitLab project wow has not read from yet', () => {
+    const git = new Map([['tea', gitlabGit('tea')]]);
+    expect(triggerGroups([merged], projects, workflows, [], git)[0]?.rows[0]?.event).toBe(
+      'Merge request merged',
+    );
+    expect(triggerGroups([merged], projects, workflows)[0]?.rows[0]?.event).toBe(
+      'Pull request merged',
+    );
   });
 
   it('says why nothing starts while event triggers are off or the scheduler is paused (spec 52)', () => {
@@ -281,6 +317,17 @@ describe('Triggers tab', () => {
     expect(dialog.getByText(/on a merge request of a followed plan/)).toBeTruthy();
     expect(dialog.getByText(/in the merge request’s working copy/)).toBeTruthy();
     expect(dialog.queryByText(/pull request/)).toBeNull();
+  });
+
+  it('words New trigger for GitLab before the first read, from the project\'s git data', async () => {
+    const user = userEvent.setup();
+    const { runtime } = fake([], { git: [gitlabGit('kettle')] });
+    await renderApp(route, runtime);
+    triggersStore.setState({ draft: { projectId: 'kettle', event: '', workflowId: '' } });
+    const dialog = within(await screen.findByRole('dialog', { name: 'New trigger' }));
+    expect(await dialog.findByText(/on a merge request of a followed plan/)).toBeTruthy();
+    await user.click(dialog.getByRole('combobox', { name: 'Event' }));
+    expect(await screen.findByRole('option', { name: 'Merge request merged' })).toBeTruthy();
   });
 
   it('keeps the dialog open with what the server said when it refuses', async () => {

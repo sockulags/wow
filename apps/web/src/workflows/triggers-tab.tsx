@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
+import { useProjectsGit } from '@/projects/project-git';
 import {
   cancelNewTrigger,
   chosenDraft,
@@ -40,11 +41,13 @@ function NewTriggerDialog() {
   const projects = useTopic('projects') ?? [];
   const workflows = useTopic('workflows') ?? [];
   const reads = useTopic('hostReads') ?? [];
+  const git = useProjectsGit(useTopic('projects'));
   const draft = useStore(triggersStore, (state) => state.draft);
   const error = useStore(triggersStore, (state) => state.draftError);
   const busy = useStore(triggersStore, (state) => state.busy);
   const chosen = draft ? chosenDraft(draft, projects, workflows) : undefined;
-  const host = projectCodeHost(reads, chosen?.projectId ?? '');
+  const projectId = chosen?.projectId ?? '';
+  const host = projectCodeHost(reads, projectId, git?.get(projectId)?.codeHost);
   const noun = changeRequestNoun(host);
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -192,10 +195,11 @@ export function TriggersTab() {
   const projects = useTopic('projects') ?? [];
   const workflows = useTopic('workflows') ?? [];
   const reads = useTopic('hostReads') ?? [];
+  const git = useProjectsGit(useTopic('projects'));
   const eventsEnabled = useSetting('triggers.eventsEnabled');
   const schedulerPaused = useSetting('scheduler.paused');
   const error = useStore(triggersStore, (state) => state.error);
-  const groups = triggerGroups(triggers ?? [], projects, workflows, reads);
+  const groups = triggerGroups(triggers ?? [], projects, workflows, reads, git);
   const held = triggersHeld(eventsEnabled, schedulerPaused);
   const newTrigger = (
     <Button type="button" size="sm" onClick={openNewTrigger}>
