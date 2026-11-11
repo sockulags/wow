@@ -33,10 +33,12 @@ export const AssistantTargetKind = z.enum([
   'workflow',
   'plan',
   'trigger',
+  // An own skill, by its name (wow skills spec 8, 22).
+  'skill',
 ]);
 export type AssistantTargetKind = z.infer<typeof AssistantTargetKind>;
 
-// The thing a change was made to. A setting's id is `<key>:<scope>`.
+// The thing a change was made to. A setting's id is `<key>:<scope>`; an own skill's is its name.
 export const AssistantTarget = z.object({ kind: AssistantTargetKind, id: Id });
 export type AssistantTarget = z.infer<typeof AssistantTarget>;
 

@@ -538,7 +538,20 @@ previous}` or `skill.deleted {skill}` in the skills projection at once; `SkillsS
   own-skill commit sends no `skills.sync` (the one that commit queued does), so it cannot undo
   the save. Undo is the opposite
   command with what the client holds: delete for a create, update with the old text, create for
-  a delete. The assistant's class table refuses the three commands for now.
+  a delete. From the assistant all three are proposals (see "Assistant"); a setup file carries
+  own skills (see "Setup file").
+
+**Settings → Skills** (`apps/web/src/settings/skills.ts`, `skills-section.tsx`; wow skills spec
+3, 5). Above the folder settings: "Your skills" (the `skills` topic's group `yours`) with New
+skill, and Edit and Delete on each row, and "Built in" (group `wow`), read-only, each with its
+text under "Show the text". The editor is a dialog (`skillsStore.editor`) with Name (fixed
+while editing; a new name is a new skill), "When to use it" and Text. Save checks the draft
+with `ownSkillNameProblem` against the other wow skills first and shows the reason without
+sending anything; a refusal of the server is shown in the same place and the dialog stays
+open. After a save or a delete a toast offers Undo, which sends the opposite command with the
+skill as the client held it. Palette: "New skill" (`skills.new`, opens the page and the
+editor), "Edit skill: <name>" and "Delete skill: <name>" for every own skill (search only). No
+keybinding: these are rare.
 
 `skillGroupOf(skill)` in `packages/contracts` gives a skill's `SkillGroup` (`yours`, `wow`,
 `project`, `user`, `plugins`, `other`) and `inListOrder` sorts by that group and then by name;
@@ -1935,9 +1948,14 @@ round (the adapter refuses the turn).
 three kinds and nothing else.
 
 - Read tools are the readers in `assistant/readers.ts`: `read_settings`, `read_projects`,
-  `read_providers`, `read_workflows`, `read_templates`, `read_skills`, `read_calendar`,
-  `read_backlog`, `read_runs`, `read_triggers`, `read_notifications`, `read_connections` and
-  `test_connection` (the same sign-in test as `trackers.test`). Each reader builds its answer
+  `read_providers`, `read_workflows`, `read_templates`, `read_skills`, `read_skill`,
+  `read_calendar`, `read_backlog`, `read_runs`, `read_triggers`, `read_notifications`,
+  `read_connections` and `test_connection` (the same sign-in test as `trackers.test`).
+  `read_skills` lists every skill in list order with its description and `group` (wow skills
+  spec 21), and `skillSource` for a wow skill, which is what a step's `skillSource` and an
+  `alsoFollow` entry's `source` take. `read_skill {name, group?}` answers the text of an own or
+  a built-in skill (a built-in one as its template, unfilled) and whether it can be changed; a
+  folder skill's text is not read. Each reader builds its answer
   field by field. None returns a thread's items, a step's final message, a file's content, a
   card's notes or more of a meeting than its time and title. A secret setting and a secret
   environment variable say `set` or `not set`, decided from the names in the secret store; no
@@ -2044,6 +2062,15 @@ decides what a command of the assistant does. The table names every type of `Ser
   occurrence) is in the past or within `assistant.startSoonMinutes` of now, because the scheduler would start its run almost at
   once, which is "start a run now" by another name. A card further ahead is scheduling and stays
   ordinary.
+  Every own skill the assistant writes, changes or removes (`skill.create`, `skill.update`,
+  `skill.delete`; tools `create_skill`, `update_skill`, `delete_skill`) is a proposal too (wow
+  skills spec 22): a skill steers every agent that follows it. Its card shows "When to use it"
+  and the text (the whole text kept as `toFull`/`fromFull` and shown on request, as a long value
+  always is), or for a change only what differs, or for a removal the text that goes; its basis
+  is the own skill as it is, so an accept after the skill was changed by hand is refused as
+  stale. `skill.update` and `skill.delete` of a built-in skill or a folder skill are refused
+  with a sentence that says so. Setting a step's `alsoFollow`, `skillSource` or `leaveOut`
+  (spec 23) is part of `update_workflow` and follows the workflow rules above.
 - `refused`: never applied, with a sentence for the assistant. The answers at a gate
   (`workflowRun.continue`, `sendBack`, `stop`; the sentence carries the run's path),
   `planRun.stop`, a card delete that would stop a run, every thread, approval and question
@@ -2130,7 +2157,10 @@ the same for a marked thread message and a marked file. One case speaks MCP to t
 with the SDK's own client. `assistant/view.test.ts` covers what the view relies on: the two
 asks, a value saved in a secret field (searched for in every event, receipt, thread item, log
 line and prompt), the net over the agent's own reports, and the note in the next prompt, with
-the server's clock moved between turns.
+the server's clock moved between turns. `assistant/skills.test.ts` covers wow skills spec 21 to
+23: the list in its groups, a wow skill's text, a new, changed and removed own skill as a
+proposal with its text and written only at Yes, the refusals for built-in and folder skills,
+a stale accept, and "Also follow" under the workflow rules.
 
 **The view** (`apps/web/src/assistant`, section "Assistant" above Settings, `/assistant`,
 `keybindings.goAssistant`, Mod+6). It calls `assistant.open` when it opens and again when an
@@ -2252,7 +2282,8 @@ text back.
 
 **The file** (`SetupFile` in `packages/contracts/src/setup.ts`) is YAML, read and written with
 the `yaml` package, with a version key: `version` (`setupFileVersion`, 1), `wow` (the version
-that wrote it), `settings` (key → value), `toFillIn` (secret setting keys) and `workflows`. A
+that wrote it), `settings` (key → value), `toFillIn` (secret setting keys), `workflows` and
+`skills` (own skills as `{name, description, text}`, wow skills spec 8). A
 workflow is the stored one without dates, and each step names its provider by kind (`provider:
 claude`) instead of an instance id, which is this install's own. No path, project or line ending
 form is in it, so a file made on Windows reads the same on Linux; a byte order mark and CRLF are
@@ -2267,8 +2298,10 @@ Confluence email, the GitHub owner and `triggers.ignoredCommentAuthors`, `machin
 `workspaces.root`, `assistant.providerInstanceId`, `advanced.port`, `desktop.autostart`,
 `appearance.paletteRecent`, `providers.offerSetup`), `person` for what only that person can say (`calendar.zone`,
 `calendar.firstDayOfWeek`, `calendar.workHours`). Projects, cards, backlog items, threads and runs
-are not read at all, so no project folder is in it. A value or workflow that the secret net
-(`assistant.secretPatterns`) matches is left out and named in `leftOut`; so is a workflow whose
+are not read at all, so no project folder is in it. Own skills are written by name with their
+text; built-in skills come with the app and folder skills stay in their folders. A value,
+workflow or own skill that the secret net (`assistant.secretPatterns`) matches is left out and
+named in `leftOut`; so is a workflow whose
 step names an instance that no longer exists. A step applied from a file where no instance of its
 kind was here holds the kind as its instance id (`awaitedProviderKind`) and is written back with
 that kind; a run of its workflow is refused with "Step <skill> has no <kind> instance here yet:
@@ -2288,7 +2321,12 @@ registry schema, a secret setting with any value, a `personal` setting, a `toFil
 not secret, and any string the secret net matches. Then the commands are built: `setting.set`
 at global scope for each value that differs from what is stored (or the default), and for each
 workflow `workflow.update` of the one with its id, else of the only one with its name, or
-`workflow.create` with the file's id. A step keeps the instance it already uses when that is of
+`workflow.create` with the file's id. Each own skill in the file is `skill.update` of the own
+skill with its name when the description or text differ (a `replaced` line; "(the text
+differs)" when only the text does), else `skill.create` (an `added` line), either way with
+the whole text as the line's `full`; a name the rule refuses or one in the file twice refuses
+the file with its line. Skills are planned before workflows, so a step that runs or follows a
+skill the same file brings is not marked. A step keeps the instance it already uses when that is of
 the file's kind, else takes the first instance of that kind, so a file read where it was written
 changes nothing. Each command is decided once on the projections without storing anything, so a
 command the app would refuse (rules that point nowhere, a workflow with a live run) refuses the
@@ -2310,7 +2348,9 @@ name, text}` and `setup.undo {applicationId}`). `decideInSteps` decides them in 
 transaction, like the assistant's answer commands. Apply reads the text again with
 `planSetup` (the preview is never trusted), decides each command as the user's, and records
 each one's change with `changeOf` from `assistant/changes.ts`: the values it left (`expect`) and
-the commands that take it back (`inverse`). The event `setup.applied` stores them as `parts` of
+the commands that take it back (`inverse`). An own skill's record has the target `{kind:
+'skill', id: <name>}` and holds its name, description and text; its inverse is the delete, the
+update with the old text, or the create. The event `setup.applied` stores them as `parts` of
 the `SetupApplicationRecord`; the `setupApplications` topic row (`SetupApplication`) leaves them
 out. Undo checks every part with `undoRefusal` first and is refused, changing nothing, with what
 changed when any thing the file set changed again; otherwise it decides every inverse, newest
@@ -2338,7 +2378,9 @@ Tests: `apps/server/src/setup/setup.test.ts` (two whole servers: save on one wit
 secret, folder, email, card, backlog item and thread, which the file must not contain; preview
 and apply on the other, Undo, refused Undo, CRLF and byte order mark, each refusal with its
 line, a newer version, a missing skill, the round trip, the assistant's refusal, and the RPC
-methods); `apps/web/src/settings/setup.test.tsx`; `apps/web/e2e/setup-file.spec.ts`.
+methods); `apps/server/src/setup/setup-skills.test.ts` (own skills saved, previewed as added
+or replaced with their text, applied as files under wow's home and removed by Undo, the name
+rule with its line); `apps/web/src/settings/setup.test.tsx`; `apps/web/e2e/setup-file.spec.ts`.
 
 ## Question card
 
@@ -2473,7 +2515,23 @@ provider instance, and model, effort and permission mode with the chat's pickers
 filled with the instance defaults, else the first listed model. Expected artifact globs are typed
 one per line. Validation needs a name, a step, and per step a skill, an instance, a model, an
 effort and a permission mode; a skill missing from the scan is only a warning, because the server
-invokes unknown skills by name. "Start from" (Blank or a template) is offered for a new workflow;
+invokes unknown skills by name. The skill pickers (`step-skills.ts`, `skillChoices`) list every
+skill once in list order with its group as the muted detail; a wow skill's value carries its
+source (`yours/<name>`, `wow/<name>`) so an own skill and a folder skill of the same name are
+two choices, and picking one sets `skillName` and `skillSource` (wow skills spec 9). "Also
+follow" (spec 11) under the skill holds the step's `alsoFollow` as chips in their order, each
+with its group and a button to stop following it, and a picker that adds any other skill from
+every group. "Attached automatically" (spec 12, `attachedSkills`) lists the built-in skills
+`automaticSkills` gives the step, as long as `workflows.attachBuiltInSkills` is on (its global
+value: the builder has no project), the built-in skill is in the list (not switched off) and the
+step does not already name it. Each says why ("Because a rule of this step reads the
+verdict."); `wow-pull-request` shows for a workflow marked "for units", since a unit is only
+known when a run starts. "Leave out" adds the name to `leaveOut` and the row then says it is
+left out, with "Attach again". The rules store's `builder` also carries `changeStep`,
+`forUnits` and `attachBuiltIn`, so the palette acts on the step being edited: "Also follow
+<skill> in step N" (search only), "Stop following <skill> in step N", and "Leave <name> out of
+step N" or "Attach <name> to step N again". `applyStepChanges` takes a field set to undefined
+away, so a step that follows nothing more is saved without `alsoFollow`. "Start from" (Blank or a template) is offered for a new workflow;
 an existing one shows "Based on <template>" and replaces its steps only through "Replace steps
 with template…", which still needs Save. "Save as template…" writes the draft's skills, gates and artifact globs into
 `workflows.templates` (`saveAsTemplate`: replaced by name, else a new kind from the name), with

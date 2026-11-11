@@ -4,6 +4,7 @@ import {
   findSecret,
   setupFileName,
   setupFileVersion,
+  type OwnSkill,
   type SettingDefinition,
   type SetupFile,
   type SetupSaved,
@@ -18,7 +19,8 @@ import type { DecideContext, ReadModel } from '../core/orchestrator.js';
 import { setupText } from './file.js';
 
 // "Save setup to a file" (app assistant spec 21): global settings that differ from their
-// default, which include the tracker, host and template settings, and the workflows. Never a
+// default, which include the tracker, host and template settings, the workflows and the own
+// skills. Never a
 // secret's value (a secret that is set is only named under `toFillIn`), never a project (so no
 // project folder), and none of the values a setting marks `personal` (account names, values
 // that fit only this computer, what only this person can say). Nothing of the calendar,
@@ -111,12 +113,27 @@ export function writeSetup(
     workflows.push(entry);
   }
 
+  // Own skills travel with the file (wow skills spec 8); built-in ones come with the app and
+  // folder skills stay where they are.
+  const skills: OwnSkill[] = [];
+  for (const skill of read.skills().toSorted((a, b) => a.name.localeCompare(b.name))) {
+    if (skill.source !== 'yours') continue;
+    const entry = { name: skill.name, description: skill.description, text: skill.text ?? '' };
+    if (entry.text.trim() === '') continue;
+    if (looksSecret(entry)) {
+      leftOut.push({ what: `Skill "${skill.name}"`, reason: 'it looks like it holds a secret' });
+      continue;
+    }
+    skills.push(entry);
+  }
+
   const file: SetupFile = {
     version: setupFileVersion,
     wow: context.version,
     ...(Object.keys(settings).length > 0 ? { settings } : {}),
     ...(toFillIn.length > 0 ? { toFillIn } : {}),
     ...(workflows.length > 0 ? { workflows } : {}),
+    ...(skills.length > 0 ? { skills } : {}),
   };
   return { text: setupText(file), fileName: setupFileName(context.now), toFillIn, leftOut };
 }

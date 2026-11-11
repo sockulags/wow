@@ -4,6 +4,8 @@ import {
   SettingGroup,
   TrackerConnection,
   isCardTrigger,
+  inListOrder,
+  skillGroupOf,
   type CalendarOccurrence,
   type SettingDefinition,
 } from '@wow/contracts';
@@ -12,6 +14,7 @@ import { asc, desc } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
+import { CommandRejected } from '../core/orchestrator.js';
 import { readCalendarRange } from '../core/series.js';
 import { runPath } from '../core/workflows.js';
 import type { SettingsService } from '../settings/service.js';
@@ -199,21 +202,57 @@ export const readers = {
     read: (_args, deps) => deps.settings.get('workflows.templates'),
   }),
   read_skills: reader({
-    description: 'The skills installed on this machine that a workflow step can run.',
+    description:
+      'Every skill a workflow step or a message can use, in list order: your own skills ("yours") first, then the skills wow ships ("wow"), then skills from folders. A wow skill (group yours or wow) is sent as its text; read it with read_skill. Your own skills can be written, changed and removed with create_skill, update_skill and delete_skill; the others cannot be changed.',
     input: none,
     read: (_args, deps) =>
-      deps.db
+      inListOrder(deps.db.select().from(t.skills).all()).map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        group: skillGroupOf(skill),
+        source: skill.source,
+        manualOnly: skill.manualOnly,
+        // A step names a wow skill with this source, so it is not taken for a folder skill of
+        // the same name.
+        ...(skill.source === 'wow' || skill.source === 'yours'
+          ? { skillSource: skill.source }
+          : {}),
+      })),
+  }),
+  read_skill: reader({
+    description:
+      "The text of a wow skill: one of your own (group yours) or one wow ships (group wow). A built-in skill's {{...}} parts are filled in from the settings and the run when it is sent. Skills from folders are the provider's to read; their text is not given here.",
+    input: z
+      .object({ name: z.string().min(1), group: z.enum(['yours', 'wow']).optional() })
+      .strict(),
+    read: ({ name, group }, deps) => {
+      const found = deps.db
         .select()
         .from(t.skills)
-        .orderBy(asc(t.skills.name))
         .all()
-        .map((skill) => ({
-          id: skill.id,
-          name: skill.name,
-          description: skill.description,
-          source: skill.source,
-          manualOnly: skill.manualOnly,
-        })),
+        .filter(
+          (skill) =>
+            skill.name === name &&
+            (skill.source === 'yours' || skill.source === 'wow') &&
+            (group === undefined || skill.source === group),
+        );
+      // Yours before wow's, as in every list.
+      const skill = inListOrder(found)[0];
+      if (!skill) {
+        throw new CommandRejected(
+          'not_found',
+          `There is no wow skill named ${name}. read_skills lists every skill; only those in the groups yours and wow have a text here.`,
+        );
+      }
+      return {
+        name: skill.name,
+        description: skill.description,
+        group: skillGroupOf(skill),
+        text: skill.text ?? '',
+        changeable: skill.source === 'yours',
+      };
+    },
   }),
   read_calendar: reader({
     description:

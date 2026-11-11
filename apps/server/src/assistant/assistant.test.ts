@@ -391,6 +391,7 @@ describe('read tools', () => {
         id: 'skill-1',
         name: 'deliver-work',
         description: 'Delivers one unit.',
+        group: 'other',
         source: 'custom',
         manualOnly: false,
       },

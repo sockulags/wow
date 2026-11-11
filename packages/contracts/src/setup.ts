@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AssistantPlace, AssistantProposalLine } from './assistant.js';
 import { ProviderKind } from './provider.js';
+import { OwnSkill } from './skills.js';
 import { WorkflowStep } from './workflow.js';
 
 // A setup file (app assistant spec 21 to 23): the settings, workflows and templates one person
@@ -51,6 +52,8 @@ export const SetupFile = z
     settings: z.record(z.string(), z.unknown()).optional(),
     toFillIn: z.array(z.string().min(1)).optional(),
     workflows: z.array(SetupWorkflow).optional(),
+    // Own skills (wow skills spec 8): name, description and text, as Settings → Skills keeps them.
+    skills: z.array(OwnSkill.strict()).optional(),
   })
   .strict();
 export type SetupFile = z.infer<typeof SetupFile>;

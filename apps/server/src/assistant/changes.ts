@@ -87,6 +87,11 @@ export function targetOf(command: Command): AssistantTarget | undefined {
     case 'trigger.setEnabled':
     case 'trigger.delete':
       return { kind: 'trigger', id: command.triggerId };
+    case 'skill.create':
+    case 'skill.update':
+      return { kind: 'skill', id: command.skill.name };
+    case 'skill.delete':
+      return { kind: 'skill', id: command.name };
     default:
       return undefined;
   }
@@ -115,10 +120,20 @@ export function snapshot(target: AssistantTarget, read: ReadModel): Row | null {
       }
       case 'trigger':
         return read.trigger(target.id);
+      case 'skill':
+        return ownSkillRow(read, target.id);
     }
   })();
   return row ? { ...row } : null;
 }
+
+// An own skill as a change or a proposal holds it: what the user wrote, not where wow keeps it.
+function ownSkillRow(read: ReadModel, name: string): Row | undefined {
+  const skill = read.skills().find((entry) => entry.source === 'yours' && entry.name === name);
+  return skill && { name: skill.name, description: skill.description, text: skill.text ?? '' };
+}
+
+const skillsPlace: AssistantPlace = { label: 'Settings → Skills', path: '/settings/skills' };
 
 const VALUE_LENGTH_KEY = 'assistant.valueLength';
 
@@ -224,6 +239,7 @@ const identity: Readonly<Record<AssistantTarget['kind'], readonly string[]>> = {
   workflow: ['name', 'steps'],
   plan: ['followed'],
   trigger: ['event', 'workflowId', 'projectId'],
+  skill: ['description', 'text'],
 };
 
 function nameOf(
@@ -258,6 +274,8 @@ function nameOf(
       const projectId = String(row['projectId'] ?? '');
       return `Trigger "${event.success ? eventLabel(event.data, projectId, read) : target.id}"`;
     }
+    case 'skill':
+      return `Skill "${target.id}"`;
   }
 }
 
@@ -315,6 +333,8 @@ function placeOf(
     }
     case 'trigger':
       return { label: 'Workflows → Triggers', path: triggersPath };
+    case 'skill':
+      return skillsPlace;
   }
 }
 
@@ -489,6 +509,17 @@ function inverseOf(command: Command, before: Row | null, changed: readonly strin
           ...(before?.['enabled'] === false
             ? [{ type: 'trigger.setEnabled', triggerId: command.triggerId, enabled: false }]
             : []),
+        ];
+      case 'skill.create':
+        return [{ type: 'skill.delete', name: command.skill.name }];
+      // The whole skill as it was: an update names every field of it.
+      case 'skill.update':
+      case 'skill.delete':
+        return [
+          {
+            type: command.type === 'skill.update' ? 'skill.update' : 'skill.create',
+            skill: pick(before ?? {}, ['name', 'description', 'text']),
+          },
         ];
       default:
         throw new Error(`${command.type} has no inverse`);
@@ -779,6 +810,12 @@ export function basisOf(command: Command, read: ReadModel): Row {
           project: project(trigger?.projectId),
         };
       }
+      // The yes is for the skill as it is: one written since by hand or in Settings asks again.
+      case 'skill.create':
+      case 'skill.update':
+        return { skill: ownSkillRow(read, command.skill.name) ?? null };
+      case 'skill.delete':
+        return { skill: ownSkillRow(read, command.name) ?? null };
       default:
         return {};
     }
@@ -1019,6 +1056,51 @@ export function proposalOf(
             ...repeatLines(moved, command),
           ],
           place: cardPlace(command.cardId, moved !== undefined),
+        };
+      }
+      // The whole text is kept with the line (spec 22): the card shows the start and the rest on
+      // request.
+      case 'skill.create': {
+        const { name, description, text } = command.skill;
+        return {
+          title: `Write the skill "${name}"`,
+          lines: [
+            { what: 'When to use it', from: null, to: showWhole('description', description, read) },
+            { what: 'Text', from: null, to: text.trim() },
+          ],
+          place: skillsPlace,
+        };
+      }
+      case 'skill.update': {
+        const was = ownSkillRow(read, command.skill.name);
+        const lines: AssistantProposalLine[] = [];
+        const description = command.skill.description.trim();
+        if (description !== was?.['description']) {
+          lines.push({
+            what: 'When to use it',
+            from: showWhole('description', was?.['description'], read),
+            to: showWhole('description', description, read),
+          });
+        }
+        if (command.skill.text.trim() !== was?.['text']) {
+          lines.push({
+            what: 'Text',
+            from: String(was?.['text'] ?? ''),
+            to: command.skill.text.trim(),
+          });
+        }
+        return {
+          title: `Change your skill "${command.skill.name}"`,
+          lines,
+          place: skillsPlace,
+        };
+      }
+      case 'skill.delete': {
+        const was = ownSkillRow(read, command.name);
+        return {
+          title: `Remove your skill "${command.name}"`,
+          lines: [{ what: 'Text', from: String(was?.['text'] ?? ''), to: null }],
+          place: skillsPlace,
         };
       }
       default:

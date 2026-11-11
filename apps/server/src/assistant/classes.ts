@@ -221,6 +221,24 @@ function stepsAskForMore(before: readonly WorkflowStep[], after: readonly Workfl
   });
 }
 
+// Changing or removing a skill is a proposal for one of the user's own skills, and refused for
+// a built-in skill or a skill from a folder (wow skills spec 22). A name that is nothing is the
+// app's to refuse, with its own reason.
+function ownSkillClass(name: string, read: ReadModel): Classified {
+  const named = read.skills().filter((skill) => skill.name === name);
+  if (named.length === 0 || named.some((skill) => skill.source === 'yours')) return proposal;
+  if (named.some((skill) => skill.source === 'wow')) {
+    return {
+      class: 'refused',
+      reason: `${name} ships with wow and cannot be changed or removed. Write an own skill with another name instead.`,
+    };
+  }
+  return {
+    class: 'refused',
+    reason: `${name} is a skill from a folder (${named[0]?.dir ?? 'on disk'}); wow does not change skills in other folders. Write an own skill instead.`,
+  };
+}
+
 export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } = {
   'project.create': 'ordinary',
   // The folder decides where agents work and, through its git remote, which host a project's own
@@ -360,17 +378,11 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'outlook.sync': serverOnly,
   'outlook.fail': serverOnly,
   'skills.sync': serverOnly,
-  // The assistant's own skills are proposals in a later delivery (wow skills spec 22); until
-  // then they are changed by the user only.
-  'skill.create': refused(
-    'Your skills are written, changed and removed by the user in Settings → Skills.',
-  ),
-  'skill.update': refused(
-    'Your skills are written, changed and removed by the user in Settings → Skills.',
-  ),
-  'skill.delete': refused(
-    'Your skills are written, changed and removed by the user in Settings → Skills.',
-  ),
+  // A skill steers every agent that follows it, so the assistant's own skills wait for a yes
+  // (wow skills spec 22). Built-in skills and skills in other folders are not its to change.
+  'skill.create': 'proposal',
+  'skill.update': (command, read) => ownSkillClass(command.skill.name, read),
+  'skill.delete': (command, read) => ownSkillClass(command.name, read),
   'plans.sync': serverOnly,
   'hosts.sync': serverOnly,
   'tickets.sync': serverOnly,
