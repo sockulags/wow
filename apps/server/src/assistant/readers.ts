@@ -43,7 +43,7 @@ const setOrNot = (ref: unknown, names: ReadonlySet<string>): 'set' | 'not set' =
   return parsed.success && names.has(parsed.data.secretRef) ? 'set' : 'not set';
 };
 
-const skillInstalled = (skillName: string, installed: readonly string[]): boolean =>
+export const skillInstalled = (skillName: string, installed: readonly string[]): boolean =>
   installed.some(
     (name) =>
       name === skillName || name.endsWith(`:${skillName}`) || skillName.endsWith(`:${name}`),

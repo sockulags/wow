@@ -788,6 +788,44 @@ one. Finished workflow runs keep their history. A project with a workflow run in
 removed: stop the run or let it finish first. The palette has "Rename project …" and "Remove
 project …" for every project.
 
+## Assistant
+
+The Assistant section is one conversation whose agent can only operate wow itself. This part of
+the guide covers how it helps you make a host token and how it finds what is not working.
+
+### Making a host token
+
+When a GitLab, GitHub, Jira or Confluence token is needed, the assistant puts the token's field in
+the conversation with the steps from a guide that ships with wow, never from what the agent
+remembers. The guide links to the token page on your own host, built from the address stored in
+Settings → Trackers (or the project's own), says which rights reading needs, what to copy, and
+which host versions it was written for:
+
+| Host and sign-in                                   | Written for                                 | Rights                                                             |
+| -------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------ |
+| github.com                                         | github.com, November 2026                   | classic token, `repo` (`public_repo` for public repositories only) |
+| GitHub Enterprise Server                           | 3.10 to 3.17                                | classic token, `repo`                                              |
+| GitLab                                             | 16.9 and later, self-managed and gitlab.com | `read_api`                                                         |
+| Jira Server or Data Center (personal access token) | 8.14 and later                              | your own account: Browse projects, Create issues for Publish       |
+| Jira Cloud (API token)                             | November 2026                               | your own account, plus your email in Jira email                    |
+| Confluence Server or Data Center                   | 7.9 and later                               | your own account: view the linked pages' spaces                    |
+| Confluence Cloud (API token)                       | November 2026                               | your own account, plus your email in Confluence email              |
+
+Without a stored address the guide only says to fill in the address first. Token pages move
+between host versions; if the page is not where the guide says, your host is probably another
+version than the one named. What you type in the field goes straight to the secret store.
+
+### Why does this not work
+
+Ask the assistant why something does not work and it reads what is failing: provider instances
+that are not signed in, connection tests of the hosts you set up (it signs in as Test connection
+does, and writes nothing), failed host reads, workflow steps whose skill is not installed, event
+triggers that could not start a run, failed runs with their error (until a later run of the same
+workflow in the same project ends done), and cards that did not start and why. Each comes with
+the setting or view to fix it in. When nothing fails it says so and what it looked at. It lists at
+most `assistant.diagnosisLimit` (5) failed runs, failed triggers and cards of each kind, newest
+first. A trigger's reason is kept only while desktop notifications are on.
+
 ## Settings
 
 Settings are grouped: Providers, Projects, Chat, Calendar, Outlook, Scheduler, Workflows, Skills,

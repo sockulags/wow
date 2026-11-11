@@ -1032,8 +1032,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
 - assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,
-  `assistant.effort`, `assistant.instructions`, `assistant.startSoonMinutes`, `assistant.secretPatterns` (see
-  "Assistant")
+  `assistant.effort`, `assistant.instructions`, `assistant.startSoonMinutes`,
+  `assistant.diagnosisLimit`, `assistant.secretPatterns` (see "Assistant")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -1656,6 +1656,31 @@ three kinds and nothing else.
   "message", "file", "content" or "chat" in it, so the U1 test that no tool reads a thread or a
   file still holds by name.
 
+- Guides (`assistant/guides.ts`, `read_token_guide {service, projectId?}`,
+  `assistantTokenGuideTool`) answer a `TokenGuide` from data that ships with wow (spec 15): one
+  entry per host kind and sign-in (github.com, GitHub Enterprise Server, GitLab, Jira and
+  Confluence with a personal access token or as Cloud), each naming the host versions it was
+  written for, the steps, the rights reading needs and what to copy. Links are built from the
+  address stored for the scope asked (`trackers.<x>.baseUrl` resolved for the project, so a
+  project's own address wins; the git remote's host is not used): a GitHub API URL
+  `https://<host>/api/v3` becomes `https://<host>`, `https://api.github.com` becomes github.com,
+  and Atlassian Cloud API tokens link to the Atlassian account page. Without an address the guide
+  has one step, fill in the address first, and `addressNeeded` names the setting and its place.
+  `show_secret_field` adds the same guide to its answer for a `trackers.<x>.token` key, and the
+  card reads it from the stored tool result. The model is told to use the guide, not memory.
+- Diagnosis (`assistant/diagnosis.ts`, `diagnose_setup`, `assistantDiagnosisTool`) answers a
+  `Diagnosis`: `problems` (kind, what, reason, place), a summary, and what was `checked` (spec
+  19, 20). It reads provider instances whose status is not `ready`; runs `trackers.test` for
+  each host whose token or address is stored, globally and for each project that stores its own
+  (sign-in requests only, nothing is written); failed host, ticket and page reads with the
+  setting they name; workflow steps whose skill is not installed; event triggers with a
+  "Trigger failed" notification and no run started after it; failed runs (until a later run of
+  the same workflow and project ends `done`) and failed plan runs with their stored error; and
+  cards with a workflow that are `missed`, or `failed` without a run, with the notification's
+  reason. Runs, triggers and cards are cut to `assistant.diagnosisLimit` each, newest first.
+  A failed trigger's reason exists only as a notification, so with `scheduler.notifications`
+  off it is not found.
+
 Every result passes `hideSecretsDeep` with the patterns of `assistant.secretPatterns` before it
 leaves `call`, so text that looks like a secret arrives as `[hidden]` (spec 18). The log line
 for a call names the tool and how it ended, never what went in or came out; a name that is not
@@ -1757,6 +1782,9 @@ tells the agent so. The user item keeps only what the user typed, and the next t
 only what was answered since, so each answer reaches the agent once. An answer given in the
 same millisecond a turn started, after it started, is missed; a person cannot click that fast.
 
+`assistant/guides.test.ts` has a case per host kind and sign-in, the missing address and the
+versions; `assistant/diagnosis.test.ts` one per failing thing and one where nothing fails.
+
 Tests: `apps/server/src/assistant/assistant.test.ts` starts a whole server and has a case per
 line of the unit's contract. It stores a marked value in the secret store, calls every read
 tool, and searches every result, stored event, command receipt and log line for it; it does
@@ -1791,7 +1819,9 @@ the chat view is copied. The `$` skill picker is off there.
 - Secret field card (`SecretFieldCard`), drawn after a `show_secret_field` call: the setting's
   label, where the value goes, the settings page's own `SecretField` (password field and Save,
   through `storeSecretSetting`: `secrets.set` and then `setting.set` with the reference) and,
-  for a tracker token, `TestConnection`. It says "Set" from the `settings` topic once a
+  for a tracker token, `TestConnection`. Above the field it shows the token guide's steps
+  (`TokenGuideSteps`) from the tool's stored answer (`askOf` reads `guide`), with links out to
+  the host and, while the address is missing, a link to where it is filled in. It says "Set" from the `settings` topic once a
   reference is stored at that scope.
 - Project work card (`ProjectWorkCard`), after `offer_project_work`: "Open in Chat" puts the
   text in the draft store (`DraftState.text`) and opens `/chat/new`, whose composer takes it.

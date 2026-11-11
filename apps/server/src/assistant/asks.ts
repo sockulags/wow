@@ -9,6 +9,7 @@ import {
 import { eq } from 'drizzle-orm';
 import * as t from '../db/schema.js';
 import { RpcFault } from '../rpc/router.js';
+import { guideFor, serviceOfToken } from './guides.js';
 import type { Reader } from './readers.js';
 
 // Tools that put something in front of the user and change nothing (app assistant spec 3, 14).
@@ -40,12 +41,17 @@ export const asks = {
       const ref = deps.settings.resolve(key, { projectId }).value;
       const parsed = SecretRef.safeParse(ref);
       const set = parsed.success && (await deps.secrets.names()).includes(parsed.data.secretRef);
+      // A host token's card shows the guide's steps above the field (spec 15), from this answer.
+      const service = serviceOfToken(key);
       return {
         outcome: 'shown',
         setting: { key, label: definition.label },
         target,
         secret: set ? 'set' : 'not set',
-        note: 'The user sees the field in the conversation. Say where to create the value and which rights it needs, then wait for them. When they say it is saved, read the setting or run test_connection.',
+        ...(service ? { guide: guideFor(service, projectId, deps) } : {}),
+        note: service
+          ? "The user sees the field in the conversation with the guide's steps above it. Say where to create the token, which rights it needs and what to copy, from the guide and not from memory, then wait for them. When they say it is saved, read the setting or run test_connection."
+          : 'The user sees the field in the conversation. Say where to create the value and which rights it needs, then wait for them. When they say it is saved, read the setting or run test_connection.',
       };
     },
   } satisfies Reader<typeof SecretFieldRequest>,

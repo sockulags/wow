@@ -18,6 +18,8 @@ import { checkProjectFolder } from '../rpc/handlers.js';
 import { RpcFault } from '../rpc/router.js';
 import { asks } from './asks.js';
 import { alwaysRefused } from './classes.js';
+import { diagnosisReaders } from './diagnosis.js';
+import { guideReaders } from './guides.js';
 import { readers, type Reader, type ReaderDeps } from './readers.js';
 
 // The assistant's tools (app assistant spec 4 to 13). A read tool is a reader. A change tool
@@ -192,6 +194,14 @@ const reasonOf = (error: unknown): string =>
 const problems = (error: z.ZodError): string =>
   error.issues.map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`).join('; ');
 
+// Tools that only read, whatever file they live in.
+const looks: Readonly<Record<string, Reader>> = {
+  ...readers,
+  ...guideReaders,
+  ...diagnosisReaders,
+  ...asks,
+};
+
 const failed = (outcome: string, reason: string) => ({
   content: { outcome, reason },
   isError: true,
@@ -203,7 +213,7 @@ export class AssistantTools {
 
   constructor(deps: AssistantToolsDeps) {
     this.#deps = deps;
-    for (const [name, tool] of Object.entries<Reader>({ ...readers, ...asks })) {
+    for (const [name, tool] of Object.entries(looks)) {
       this.#inputs.set(name, tool.input);
     }
     for (const [name, tool] of Object.entries<ChangeTool>(changeTools)) {
@@ -216,11 +226,7 @@ export class AssistantTools {
   }
 
   list(): ToolDescription[] {
-    const described: Record<string, { description: string }> = {
-      ...readers,
-      ...asks,
-      ...changeTools,
-    };
+    const described: Record<string, { description: string }> = { ...looks, ...changeTools };
     return [...this.#inputs].map(([name, input]) => ({
       name,
       description: described[name]?.description ?? name,
@@ -249,7 +255,6 @@ export class AssistantTools {
     const parsed = input.safeParse(args ?? {});
     if (!parsed.success) return failed('invalid input', problems(parsed.error));
     try {
-      const looks: Record<string, Reader> = { ...readers, ...asks };
       const look = Object.hasOwn(looks, name) ? looks[name] : undefined;
       if (look) return { content: await look.read(parsed.data, this.#deps), isError: false };
       const tool: ChangeTool = changeTools[name as ChangeToolName];

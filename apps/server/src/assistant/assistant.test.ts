@@ -31,6 +31,8 @@ import { commandClasses } from './classes.js';
 import { changeTools } from './tools.js';
 import { readers } from './readers.js';
 import { asks } from './asks.js';
+import { diagnosisReaders } from './diagnosis.js';
+import { guideReaders } from './guides.js';
 
 // The assistant's tools on the server (app assistant plan U1): every acceptance line of the
 // unit has a case here that names it.
@@ -227,7 +229,13 @@ describe('the assistant endpoint', () => {
     try {
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name).toSorted()).toEqual(
-        [...Object.keys(readers), ...Object.keys(asks), ...Object.keys(changeTools)].toSorted(),
+        [
+          ...Object.keys(readers),
+          ...Object.keys(guideReaders),
+          ...Object.keys(diagnosisReaders),
+          ...Object.keys(asks),
+          ...Object.keys(changeTools),
+        ].toSorted(),
       );
       expect(tools.every((tool) => tool.inputSchema.type === 'object')).toBe(true);
       const result = await client.callTool({ name: 'read_projects', arguments: {} });
@@ -460,6 +468,12 @@ describe('read tools', () => {
         if (name === 'read_settings') texts.push((await call(name, { projectId: 'tea' })).text);
       }
     }
+    // The guides and the diagnosis (U4) too; the diagnosis runs the sign-in tests itself.
+    for (const service of ['jira', 'github', 'gitlab', 'confluence']) {
+      texts.push((await call('read_token_guide', { service })).text);
+      texts.push((await call('read_token_guide', { service, projectId: 'tea' })).text);
+    }
+    texts.push((await call('diagnose_setup')).text);
     expect(hostRequests.some((request) => request.authorization?.includes(storedSecret))).toBe(
       true,
     );
@@ -560,8 +574,13 @@ describe('read tools', () => {
 
     const names = server.assistant.tools.list().map((tool) => tool.name);
     expect(names.filter((name) => /thread|message|file|content|chat/i.test(name))).toEqual([]);
-    for (const name of Object.keys(readers)) {
-      const { text } = await call(name, name === 'test_connection' ? { service: 'github' } : {});
+    for (const name of [
+      ...Object.keys(readers),
+      ...Object.keys(guideReaders),
+      ...Object.keys(diagnosisReaders),
+    ]) {
+      const needsService = name === 'test_connection' || name === 'read_token_guide';
+      const { text } = await call(name, needsService ? { service: 'github' } : {});
       expect(text).not.toContain(threadMarker);
       expect(text).not.toContain(fileMarker);
     }

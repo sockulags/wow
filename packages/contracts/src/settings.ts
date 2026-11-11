@@ -1221,6 +1221,15 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'minutes',
   }),
+  'assistant.diagnosisLimit': defineSetting({
+    schema: z.number().int().min(1).max(100),
+    group: 'assistant',
+    label: 'Failures a diagnosis lists',
+    description:
+      'When the assistant is asked why something does not work, it lists at most this many failed runs, failed triggers and cards that did not start, newest first, of each.',
+    default: 5,
+    scope: 'global',
+  }),
   'assistant.secretPatterns': defineSetting({
     schema: z.array(SecretPattern),
     group: 'assistant',

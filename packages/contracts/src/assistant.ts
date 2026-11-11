@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ProviderInstance } from './projections.js';
+import { TrackerConnection } from './trackers.js';
 
 // The app assistant (intent 2026-11-app-assistant): what it changed, what it proposed, and the
 // net that hides secret-looking text. The assistant's commands are the ones the views send; these
@@ -241,6 +242,7 @@ What you can do
 - When wow refuses something, tell the person the reason wow gave.
 - A message can start with a note from wow saying what the person answered to your proposals and which changes they undid since your last turn. Take it into account; the person did not type it.
 - After a change, say what changed and where it lives in wow (for example Settings → Calendar, the workflow, the card).
+- When the person asks why something does not work, run diagnose_setup and say each thing that fails, its reason and the place to fix it, as wow gave them. When it finds nothing, say so.
 
 What is not yours
 - You operate wow only. When someone asks for other work (write this code, explain this error in my project, review this file), say that the chat view is for that and offer to open a new thread there with their text (offer_project_work). Do not attempt the work.
@@ -249,7 +251,7 @@ What is not yours
 
 Secrets
 - Never ask for a token, password, key or any other secret, and never ask the person to paste one into this conversation. If they offer one, tell them not to send it here.
-- When a secret is needed, say where the person creates it and which rights it needs, and put its field in front of them with show_secret_field. You only ever learn whether a secret is set and whether the connection test passed.
+- When a secret is needed, put its field in front of them with show_secret_field. Say where the person creates it, which rights it needs and what to copy from the guide wow ships (read_token_guide; show_secret_field includes it for a host token), never from memory, and say which host versions the guide was written for. If it says the address is needed first, ask for the address. You only ever learn whether a secret is set and whether the connection test passed.
 - Never repeat anything that looks like a secret.
 
 Write plainly and briefly.`;
@@ -333,3 +335,68 @@ export function findSecret(text: string, patterns: readonly RegExp[]): SecretMat
     settingKey: known?.settingKey ?? null,
   };
 }
+
+// Where to make a host token and with which rights (spec 15). The guides ship with wow as data
+// per host kind and sign-in; the links are built from the address stored in wow, and each guide
+// names the host versions it was written for, since token pages move between versions.
+export const assistantTokenGuideTool = 'read_token_guide';
+export const TokenGuideRequest = z
+  .object({ service: TrackerConnection, projectId: Id.optional() })
+  .strict();
+export type TokenGuideRequest = z.infer<typeof TokenGuideRequest>;
+
+export const TokenGuideStep = z.object({
+  text: z.string().min(1),
+  // A page on the host, built from the stored address; null for a step without one.
+  link: z.string().min(1).nullable(),
+});
+export type TokenGuideStep = z.infer<typeof TokenGuideStep>;
+
+export const TokenGuide = z.object({
+  service: TrackerConnection,
+  // The kind of host and sign-in the guide is for, such as "GitHub Enterprise Server".
+  host: z.string().min(1),
+  writtenFor: z.string().min(1),
+  // The secret setting the token goes in.
+  tokenSetting: z.string().min(1),
+  // The address the links were built from; null while none is stored.
+  address: z.string().min(1).nullable(),
+  // Set while the address is missing: the setting to fill in first and where it is.
+  addressNeeded: z
+    .object({ key: z.string().min(1), label: z.string().min(1), place: AssistantPlace })
+    .nullable(),
+  steps: z.array(TokenGuideStep),
+  rights: z.array(z.string().min(1)),
+  copy: z.string().min(1),
+});
+export type TokenGuide = z.infer<typeof TokenGuide>;
+
+// What is failing in the setup, each with the setting or view to fix it in (spec 19, 20).
+export const assistantDiagnosisTool = 'diagnose_setup';
+export const DiagnosisKind = z.enum([
+  'provider',
+  'connection',
+  'hostRead',
+  'skill',
+  'trigger',
+  'run',
+  'card',
+]);
+export type DiagnosisKind = z.infer<typeof DiagnosisKind>;
+
+export const DiagnosisProblem = z.object({
+  kind: DiagnosisKind,
+  what: z.string().min(1),
+  reason: z.string().min(1),
+  place: AssistantPlace,
+});
+export type DiagnosisProblem = z.infer<typeof DiagnosisProblem>;
+
+export const Diagnosis = z.object({
+  outcome: z.literal('diagnosed'),
+  summary: z.string().min(1),
+  problems: z.array(DiagnosisProblem),
+  // What was looked at, so "nothing is failing" says what it covers.
+  checked: z.array(z.string().min(1)),
+});
+export type Diagnosis = z.infer<typeof Diagnosis>;
