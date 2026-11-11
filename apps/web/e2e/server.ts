@@ -14,6 +14,7 @@ import {
   MockJira,
   MockProviderAdapter,
   createNpmRunner,
+  mockCodexModels,
   snapshot,
   startOutlookService,
   startServer,
@@ -893,7 +894,14 @@ const server = await startServer({
               `http://127.0.0.1:${trackerPort}`,
             )
           : chatClaude(),
-      codex: (instance) => new MockProviderAdapter('codex', chatScript, codexTest(instance)),
+      // The chat copy's Codex lists models the way Codex reports them (agent workbench U1).
+      codex: (instance) =>
+        new MockProviderAdapter(
+          'codex',
+          chatScript,
+          codexTest(instance),
+          home === e2eHome ? () => mockCodexModels : undefined,
+        ),
     },
     outlook: (mode, context) => {
       if (mode !== 'mock') throw new Error('The e2e server runs with WOW_OUTLOOK=mock');

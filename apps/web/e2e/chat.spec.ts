@@ -33,6 +33,34 @@ async function startThread(page: Page, message: string) {
 
 const conversation = (page: Page) => page.getByRole('list', { name: 'Conversation' });
 const threadList = (page: Page) => page.getByRole('navigation', { name: 'Threads' });
+const messageBox = (page: Page) => page.getByRole('combobox', { name: 'Message' });
+
+// A thread on the Claude instance: a new thread starts on the instance of the newest thread,
+// which an earlier case may have put on Codex.
+async function startClaudeThread(page: Page, message: string) {
+  await page.goto('/chat/new');
+  await choose(page.getByLabel('Provider instance'), 'Mock Claude');
+  await choose(page.getByLabel('Project'), 'Demo');
+  await expect(page.getByTestId('model-bar')).toBeVisible();
+  await messageBox(page).fill(message);
+  await messageBox(page).press('Enter');
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+}
+
+// Puts the open thread back on the mock's first model, the default effort and Ask, through the
+// composer bar.
+async function resetBar(page: Page) {
+  const bar = page.getByTestId('model-bar');
+  for (const [part, option] of [
+    ['Model', /^Mock model$/],
+    ['Effort', /^Default/],
+    ['Permission mode', /^Ask for permissions/],
+  ] as const) {
+    await bar.getByRole('button', { name: part }).click();
+    await page.getByRole('listbox', { name: part }).getByRole('option', { name: option }).click();
+  }
+  await expect(bar).toHaveText('Mock model·Default·Ask');
+}
 
 test.describe('chat', () => {
   test('streams a reply with reasoning, tool rows, tasks and usage', async ({ page }) => {
@@ -442,6 +470,116 @@ test.describe('chat', () => {
     await expect(page.getByRole('combobox', { name: 'Message' })).toBeFocused();
   });
 
+  test('picks model, effort and mode from the composer bar @agent-workbench-1 @agent-workbench-2 @agent-workbench-3 @agent-workbench-4 @agent-workbench-5 @agent-workbench-7', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Pick from the bar');
+    const bar = page.getByTestId('model-bar');
+    await expect(bar).toHaveText('Mock model·Default·Ask');
+    // The header keeps the project and the provider; the selects left it.
+    await expect(page.locator('header').getByRole('combobox')).toHaveCount(0);
+
+    const box = messageBox(page);
+    await box.focus();
+    await page.keyboard.press('Control+Shift+M');
+    const models = page.getByRole('listbox', { name: 'Model' });
+    await models.getByRole('option', { name: /Mock model, large/ }).click();
+    await expect(bar.getByRole('button', { name: 'Model' })).toHaveText('Mock model, large');
+    await expect(box).toBeFocused();
+    await page.keyboard.press('Control+Shift+E');
+    await page
+      .getByRole('listbox', { name: 'Effort' })
+      .getByRole('option', { name: /^High/ })
+      .click();
+    await expect(bar.getByRole('button', { name: 'Effort' })).toHaveText('High');
+
+    // Shift+Tab steps through Ask, Accept edits and Plan only; Bypass only from the list.
+    const mode = bar.getByRole('button', { name: 'Permission mode' });
+    await box.press('Shift+Tab');
+    await expect(mode).toHaveText('Accept edits');
+    await expect(mode).toHaveClass(/text-state-done/);
+    await box.press('Shift+Tab');
+    await expect(mode).toHaveText('Plan only');
+    await expect(mode).toHaveClass(/text-info/);
+    await box.press('Shift+Tab');
+    await expect(mode).toHaveText('Ask');
+    await expect(box).toBeFocused();
+    await mode.click();
+    await page
+      .getByRole('listbox', { name: 'Permission mode' })
+      .getByRole('option', { name: 'Bypass permissions' })
+      .click();
+    await expect(mode).toHaveText('Bypass permissions');
+    await expect(mode).toHaveClass(/text-destructive/);
+    // The second key leaves the composer.
+    await box.focus();
+    await box.press('Escape');
+    await expect(box).not.toBeFocused();
+
+    // thread.configure stored the picks: they hold after a reload.
+    await page.reload();
+    await expect(page.getByTestId('model-bar')).toHaveText(
+      'Mock model, large·High·Bypass permissions',
+    );
+    // A new thread starts from the last one, so the later cases get the defaults back.
+    await resetBar(page);
+
+    // A new thread has the same bar; on Codex the list says what the provider offers.
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await expect(page.getByTestId('model-bar')).toHaveText('Mock model for Codex·Medium·Read only');
+    await page.getByTestId('model-bar').getByRole('button', { name: 'Model' }).click();
+    const offered = page.getByRole('listbox', { name: 'Model' }).getByRole('option');
+    await expect(offered).toHaveText([
+      "Mock model for Codex(provider's default)Invented: the everyday mock model",
+      'Mock model for Codex, miniInvented: small and quick',
+    ]);
+    await expect(offered.first().getByRole('img', { name: 'Takes images' })).toBeVisible();
+    await expect(offered.last().getByRole('img', { name: 'Takes images' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await page.getByTestId('model-bar').getByRole('button', { name: 'Effort' }).click();
+    await expect(page.getByRole('listbox', { name: 'Effort' }).getByRole('option')).toHaveText([
+      'Low',
+      "Medium(model's default)",
+      'High',
+    ]);
+  });
+
+  test('sets the model from the palette @agent-workbench-6', async ({ page }) => {
+    await startClaudeThread(page, 'Pick from the palette');
+    const bar = page.getByTestId('model-bar');
+    await expect(bar).toHaveText('Mock model·Default·Ask');
+    await page.keyboard.press('Control+k');
+    const palette = page.getByRole('dialog');
+    await palette.getByRole('combobox').fill('Model: Mock model');
+    // The current model is marked.
+    await expect(
+      palette.getByRole('option', { name: /^Model: Mock model\s*Current/ }),
+    ).toBeVisible();
+    await palette.getByRole('combobox').fill('Model: Mock model, large');
+    await palette.getByRole('option', { name: /Model: Mock model, large/ }).click();
+    await expect(bar.getByRole('button', { name: 'Model' })).toHaveText('Mock model, large');
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('Permission mode: Plan only');
+    await palette.getByRole('option', { name: /Permission mode: Plan only/ }).click();
+    await expect(bar.getByRole('button', { name: 'Permission mode' })).toHaveText('Plan only');
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('Effort: High');
+    await palette.getByRole('option', { name: /Effort: High/ }).click();
+    await expect(bar.getByRole('button', { name: 'Effort' })).toHaveText('High');
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('Choose model');
+    await palette.getByRole('option', { name: /Choose model/ }).click();
+    await expect(page.getByRole('listbox', { name: 'Model' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.reload();
+    await expect(page.getByTestId('model-bar')).toHaveText('Mock model, large·High·Plan only');
+    await resetBar(page);
+  });
+
   test('finds threads and actions in the palette', async ({ page }) => {
     await startThread(page, 'Palette target');
     await page.goto('/chat');
@@ -470,6 +608,28 @@ test.describe('sketch', () => {
     await expect(answer.locator('.wow-code .shiki')).toBeVisible();
     await answer.getByRole('heading').scrollIntoViewIfNeeded();
     await page.screenshot({ path: sketchPath('2026-11-review-loop', 'chat-markdown') });
+  });
+
+  test('model-bar', async ({ page }) => {
+    await startClaudeThread(page, 'Hello there');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Hello there',
+    );
+    const box = messageBox(page);
+    await box.focus();
+    await box.press('Shift+Tab');
+    await expect(
+      page.getByTestId('model-bar').getByRole('button', { name: 'Permission mode' }),
+    ).toHaveText('Accept edits');
+    await box.fill('Now run the tests');
+    await page.keyboard.press('Control+Shift+M');
+    await expect(page.getByRole('listbox', { name: 'Model' })).toBeVisible();
+    // The list fades in; the picture waits for that to end.
+    // (A string, since the e2e files are typed without the DOM.)
+    await page.evaluate(
+      'Promise.all(document.getAnimations().map((animation) => animation.finished))',
+    );
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'model-bar') });
   });
 
   test('skill-chip', async ({ page }) => {
