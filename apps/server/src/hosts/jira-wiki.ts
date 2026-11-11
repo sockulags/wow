@@ -20,50 +20,97 @@ const codeSpan = (text: string): string => {
 
 const webLink = /^(https?:\/\/|mailto:)/i;
 
-function inlineText(text: string): string {
-  return (
-    text
-      // Colours and anchors carry no words.
-      .replace(/\{color(?::[^}]*)?\}/g, '')
-      .replace(/\{anchor:[^}]*\}/g, '')
-      // Pictures and attachments are not loaded from the host; their name is shown.
-      .replace(/!([^\s!|]+)(?:\|[^!\s]*)?!/g, (_, name: string) => `[picture: ${name}]`)
-      .replace(/\[([^\]|]*)\|([^\]]+)\]/g, (_, label: string, target: string) => {
-        const address = target.trim();
-        if (!webLink.test(address)) return label.trim() || address;
-        return `[${label.trim() || address}](${address.replace(/[()\s]/g, encodeURIComponent)})`;
-      })
-      .replace(/\[(~[^\]\s]+)\]/g, (_, user: string) => `@${user.slice(1)}`)
-      .replace(/\[([^\]\s|]+)\]/g, (whole, target: string) =>
-        webLink.test(target) ? `<${target}>` : whole,
-      )
-      .replace(/(^|[^\w*])\*(\S(?:[^*]*?\S)?)\*(?=$|[^\w*])/g, '$1**$2**')
-      .replace(/(^|[^\w])_(\S(?:[^_]*?\S)?)_(?=$|[^\w])/g, '$1*$2*')
-      .replace(/(^|\s)-(\S(?:[^-]*?\S)?)-(?=$|\s|[.,;:!?)])/g, '$1~~$2~~')
-      .replace(/(^|[^\w])\+(\S(?:[^+]*?\S)?)\+(?=$|[^\w])/g, '$1$2')
-      .replace(/\?\?(\S(?:.*?\S)?)\?\?/g, '*$1*')
-      .replace(/\\\\/g, '  \n')
-  );
+// Counts the characters the bracket and monospace scans look at, so a test can bound the work.
+export interface ScanMeter {
+  steps: number;
 }
 
-// One line's text with its `{{monospace}}` parts kept as written.
-function inline(text: string): string {
-  return text
-    .split(/(\{\{[\s\S]*?\}\})/)
-    .map((part) =>
-      part.startsWith('{{') && part.endsWith('}}') && part.length > 4
-        ? codeSpan(part.slice(2, -2))
-        : inlineText(part),
-    )
-    .join('');
+const find = (text: string, needle: string, from: number, meter: ScanMeter): number => {
+  const at = text.indexOf(needle, from);
+  meter.steps += (at < 0 ? text.length : at + needle.length) - from;
+  return at;
+};
+
+// What one `[...]` holds: a labelled link, a user mention or a bare link. Anything else stays.
+function bracket(inner: string): string {
+  const bar = inner.indexOf('|');
+  if (bar >= 0) {
+    const label = inner.slice(0, bar).trim();
+    const address = inner.slice(bar + 1).trim();
+    if (inner.length === bar + 1) return `[${inner}]`;
+    if (!webLink.test(address)) return label || address;
+    return `[${label || address}](${address.replace(/[()\s]/g, encodeURIComponent)})`;
+  }
+  if (/^~\S+$/.test(inner)) return `@${inner.slice(1)}`;
+  if (!/\s/.test(inner) && webLink.test(inner)) return `<${inner}>`;
+  return `[${inner}]`;
 }
 
-const cells = (row: string, separator: '||' | '|'): string[] =>
+// One pass from left to right: a `[` is read up to the next `]`, and only the last `[` before that
+// `]` opens a bracket, so a run of `[` that never closes is looked at once, not once per `[`.
+function brackets(text: string, meter: ScanMeter): string {
+  let out = '';
+  let pos = 0;
+  for (;;) {
+    const open = find(text, '[', pos, meter);
+    if (open < 0) break;
+    const close = find(text, ']', open + 1, meter);
+    if (close < 0) break;
+    const inner = text.slice(open + 1, close);
+    meter.steps += inner.length;
+    const nested = inner.lastIndexOf('[');
+    if (nested >= 0) {
+      out += text.slice(pos, open + 1 + nested);
+      pos = open + 1 + nested;
+      continue;
+    }
+    out += text.slice(pos, open) + bracket(inner);
+    pos = close + 1;
+  }
+  return out + text.slice(pos);
+}
+
+function inlineText(text: string, meter: ScanMeter): string {
+  // Colours and anchors carry no words.
+  const plain = text
+    .replace(/\{color(?::[^{}]*)?\}/g, '')
+    .replace(/\{anchor:[^{}]*\}/g, '')
+    // Pictures and attachments are not loaded from the host; their name is shown.
+    .replace(/!([^\s!|]+)(?:\|[^!\s]*)?!/g, (_, name: string) => `[picture: ${name}]`);
+  return brackets(plain, meter)
+    .replace(/(^|[^\w*])\*(\S(?:[^*]*?\S)?)\*(?=$|[^\w*])/g, '$1**$2**')
+    .replace(/(^|[^\w])_(\S(?:[^_]*?\S)?)_(?=$|[^\w])/g, '$1*$2*')
+    .replace(/(^|\s)-(\S(?:[^-]*?\S)?)-(?=$|\s|[.,;:!?)])/g, '$1~~$2~~')
+    .replace(/(^|[^\w])\+(\S(?:[^+]*?\S)?)\+(?=$|[^\w])/g, '$1$2')
+    .replace(/\?\?(\S(?:(?:[^?\n]|\?(?!\?))*?\S)?)\?\?/g, '*$1*')
+    .replace(/\\\\/g, '  \n');
+}
+
+// One line's text with its `{{monospace}}` parts kept as written. A `{{` with no `}}` after it
+// ends the search, so the rest is text.
+function inline(text: string, meter: ScanMeter): string {
+  let out = '';
+  let pos = 0;
+  for (;;) {
+    const open = find(text, '{{', pos, meter);
+    if (open < 0) break;
+    const close = find(text, '}}', open + 2, meter);
+    if (close < 0) break;
+    const code = text.slice(open + 2, close);
+    out +=
+      inlineText(text.slice(pos, open), meter) +
+      (code.length > 0 ? codeSpan(code) : inlineText('{{}}', meter));
+    pos = close + 2;
+  }
+  return out + inlineText(text.slice(pos), meter);
+}
+
+const cells = (row: string, separator: '||' | '|', meter: ScanMeter): string[] =>
   row
     .trim()
     .slice(separator.length, row.trim().endsWith(separator) ? -separator.length : undefined)
     .split(separator)
-    .map((cell) => inline(cell.trim()).replace(/\|/g, '\\|'));
+    .map((cell) => inline(cell.trim(), meter).replace(/\|/g, '\\|'));
 
 // `{code:java}` or `{code:title=a.ts|language=ts}`.
 const codeLanguage = (options: string): string => {
@@ -76,7 +123,7 @@ const codeLanguage = (options: string): string => {
 
 const blockMacro = /^\s*\{(code|noformat)(?::([^}]*))?\}(.*)$/;
 
-export function jiraToMarkdown(wiki: string): string {
+export function jiraToMarkdown(wiki: string, meter: ScanMeter = { steps: 0 }): string {
   const lines = wiki.replace(/\r\n?/g, '\n').split('\n');
   const out: string[] = [];
   let quoting = false;
@@ -130,11 +177,11 @@ export function jiraToMarkdown(wiki: string): string {
       out.push(prefix.trimEnd());
     }
     if (trimmed.startsWith('||')) {
-      const header = cells(trimmed, '||');
+      const header = cells(trimmed, '||', meter);
       converted = `| ${header.join(' | ')} |\n${prefix}| ${header.map(() => '---').join(' | ')} |`;
       inTable = true;
     } else if (trimmed.startsWith('|') && trimmed.length > 1) {
-      const row = cells(trimmed, '|');
+      const row = cells(trimmed, '|', meter);
       converted = inTable
         ? `| ${row.join(' | ')} |`
         : // GFM needs a header row; a Jira table may have none.
@@ -145,9 +192,9 @@ export function jiraToMarkdown(wiki: string): string {
       const heading = /^h([1-6])\.\s+(.*)$/.exec(trimmed);
       const list = /^([*#]+|-)\s+(.*)$/.exec(trimmed);
       if (heading) {
-        converted = `${'#'.repeat(Number(heading[1]))} ${inline(heading[2] ?? '')}`;
+        converted = `${'#'.repeat(Number(heading[1]))} ${inline(heading[2] ?? '', meter)}`;
       } else if (/^bq\.\s+/.test(trimmed)) {
-        converted = `> ${inline(trimmed.replace(/^bq\.\s+/, ''))}`;
+        converted = `> ${inline(trimmed.replace(/^bq\.\s+/, ''), meter)}`;
       } else if (/^-{4,}$/.test(trimmed)) {
         converted = '---';
       } else if (list) {
@@ -157,9 +204,9 @@ export function jiraToMarkdown(wiki: string): string {
           mark === '#' ? '   ' : '  ',
         );
         const own = markers.endsWith('#') ? '1.' : '-';
-        converted = `${indent.join('')}${own} ${inline(list[2] ?? '')}`;
+        converted = `${indent.join('')}${own} ${inline(list[2] ?? '', meter)}`;
       } else {
-        converted = inline(line);
+        converted = inline(line, meter);
       }
     }
     out.push(prefix + converted);
