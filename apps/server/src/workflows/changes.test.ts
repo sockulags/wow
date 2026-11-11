@@ -397,6 +397,50 @@ describe('what a step changed', () => {
     expect(changedBy('build', { ...run, path: [] })).toEqual(['a', 'b', 'notes']);
   });
 
+  it('credits a step that ended before a loop only with what it changed itself', () => {
+    // build 1 wrote `a` and `b`, review 1 wrote `notes` and sent the work back, build 2
+    // changed `b`. Build now keeps only the hashes of its second attempt.
+    const build = {
+      stepId: 'build',
+      state: 'done' as const,
+      artifactsFound: [],
+      attempt: 2,
+      fileHashes: [
+        { path: 'a', hash: 'a1' },
+        { path: 'b', hash: 'b2' },
+        { path: 'notes', hash: 'n1' },
+      ],
+      fileHashesBefore: [
+        { path: 'a', hash: 'a1' },
+        { path: 'b', hash: 'b1' },
+        { path: 'notes', hash: 'n1' },
+      ],
+    };
+    const review = {
+      stepId: 'review',
+      state: 'done' as const,
+      artifactsFound: [],
+      fileHashes: [
+        { path: 'a', hash: 'a1' },
+        { path: 'b', hash: 'b1' },
+        { path: 'notes', hash: 'n1' },
+      ],
+      // What build's first attempt had left when the review began.
+      fileHashesBefore: [
+        { path: 'a', hash: 'a1' },
+        { path: 'b', hash: 'b1' },
+      ],
+    };
+    const run = {
+      baseFiles: [],
+      steps: [build, review],
+      path: [visit('build', 1), visit('review', 1), visit('build', 2)],
+    };
+    expect(stepsThatChanged(run, 'a')).toEqual([]);
+    expect(stepsThatChanged(run, 'b')).toEqual(['build']);
+    expect(stepsThatChanged(run, 'notes')).toEqual(['review']);
+  });
+
   it('writes a new file as added lines', () => {
     expect(addedPatch('')).toBe('');
     expect(addedPatch('only\n')).toBe('@@ -0,0 +1 @@\n+only\n');

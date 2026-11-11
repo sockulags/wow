@@ -342,6 +342,8 @@ function completeStep(
     state: step.gateAfter ? 'waiting' : 'done',
     ...(input.fileHashes ? { fileHashes: [...input.fileHashes] } : {}),
   };
+  const began = input.fileHashes ? hashesBefore(before) : undefined;
+  if (began) finished.fileHashesBefore = [...began];
   // A step that runs again is judged again from nothing.
   delete finished.gate;
   delete finished.error;
@@ -391,6 +393,16 @@ function completeStep(
     context,
     false,
   );
+}
+
+// What the changed files were when the running visit began: as the visit that ended done
+// before it left them, or as the run began. A step keeps only its latest hashes, which are
+// still that visit's now, while this one ends. Undefined without a path to tell the order.
+function hashesBefore(run: WorkflowRun): readonly FileHash[] | undefined {
+  if (!run.path) return undefined;
+  const previous = run.path.slice(0, -1).findLast((visit) => visit.ended === 'done');
+  if (!previous) return run.baseFiles ?? undefined;
+  return run.steps.find((entry) => entry.stepId === previous.stepId)?.fileHashes;
 }
 
 // The run waits for the user after the step, as at any gate after a step.

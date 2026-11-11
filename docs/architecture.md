@@ -2238,8 +2238,11 @@ Refresh changes, Changed file: <path> for each listed file, and Open changed fil
 the chosen one.
 
 After a loop (workflow branches spec 19) a step keeps the hashes of its latest attempt only, so
-the server compares steps in the order they last ended (`run.path`), not in list order: the
-step that ended last is marked with exactly what its latest attempt changed. `stepUnderReview`
+the server compares steps in the order they last ended (`run.path`), not in list order, and
+each attempt also keeps `fileHashesBefore`: the hashes the step that ended before it left (the
+base's for the first), stored by the engine as the attempt ends. A step is compared with those,
+so every step, not only the one that ended last, is marked with what its latest attempt changed;
+a step stored without them is compared with the step that ended before it. `stepUnderReview`
 follows the same order when no gate asks (the step whose visit ended last, not the last step of
 the list), and "This step only" names the attempt ("deliver-work, attempt 2, 1"). A run without
 a path goes by the list as before.

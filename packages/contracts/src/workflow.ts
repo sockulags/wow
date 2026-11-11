@@ -231,6 +231,10 @@ export const StepRun = z.object({
   // The changed files when the step ended, so the Changes tab can tell what this step changed
   // (review loop spec 11). Absent for a run without a base.
   fileHashes: z.array(FileHash).optional(),
+  // The changed files as the step that ended before this attempt left them (the base's for the
+  // first), so after a loop the step is still compared with what it began from. Absent on runs
+  // without a path and on steps stored before it was kept.
+  fileHashesBefore: z.array(FileHash).optional(),
   // How many times the step has run: absent for the first time, 2 after one send back (review
   // loop spec 16).
   attempt: z.number().int().min(2).optional(),

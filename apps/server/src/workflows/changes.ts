@@ -106,9 +106,8 @@ function inOrderEnded(run: RunHashes): WorkflowRun['steps'] {
 // The steps that changed the file, in the order they last ended: a step changed it when the
 // file's hash at the step's end is not the hash it had when the step that ended before it ended
 // (or when the run began, for the first of them). A path missing from a list was the same as in
-// the base commit then. After a loop the step that ended last is marked with exactly what its
-// latest attempt changed; a step that ended before it is compared with what is still known from
-// then.
+// the base commit then. A step that kept what it began from (`fileHashesBefore`) is compared
+// with that instead, so after a loop every step is marked with what its latest attempt changed.
 export function stepsThatChanged(run: RunHashes, relative: string): string[] {
   const hashAt = (files: readonly FileHash[]) =>
     files.find((entry) => entry.path === relative)?.hash;
@@ -117,6 +116,8 @@ export function stepsThatChanged(run: RunHashes, relative: string): string[] {
   for (const step of inOrderEnded(run)) {
     if (!step.fileHashes) continue;
     const after = hashAt(step.fileHashes);
+    // What the step began from, when it was kept: the chain loses it after a loop.
+    if (step.fileHashesBefore) before = hashAt(step.fileHashesBefore);
     if (after !== before) steps.push(step.stepId);
     before = after;
   }

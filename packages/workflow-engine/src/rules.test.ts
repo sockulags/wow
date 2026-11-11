@@ -391,6 +391,27 @@ describe('going back (spec 7, 8)', () => {
     ).toEqual({ type: 'interrupt', threadId: 'r1.build' });
   });
 
+  it('keeps with each attempt the changed files as the step before it left them', () => {
+    const hashed = (stepId: string, hash: string, message = `${stepId} finished`): Completed => ({
+      ...completed(stepId, message),
+      fileHashes: [{ path: 'a', hash }],
+    });
+    const base = advance(
+      loop(),
+      startRun(loop(), newRun, context()).run,
+      { type: 'baseRecorded', baseSha: 'b0', files: [{ path: 'a', hash: 'a0' }] },
+      context(),
+    ).run;
+    let run = advance(loop(), base, hashed('build', 'a1'), context()).run;
+    expect(run.steps[0]?.fileHashesBefore).toEqual([{ path: 'a', hash: 'a0' }]);
+    run = advance(loop(), run, hashed('review', 'a1', 'CHANGES_REQUESTED'), context()).run;
+    expect(run.steps[1]?.fileHashesBefore).toEqual([{ path: 'a', hash: 'a1' }]);
+    run = advance(loop(), run, hashed('build', 'a2'), context()).run;
+    // Build's second attempt began from what the review left.
+    expect(run.steps[0]?.fileHashesBefore).toEqual([{ path: 'a', hash: 'a1' }]);
+    expect(run.steps[1]?.fileHashesBefore).toEqual([{ path: 'a', hash: 'a1' }]);
+  });
+
   it('then runs review again as attempt 2 in its own thread, with the handover from build', () => {
     const { run, effects } = play(loop(), [
       completed('build'),
