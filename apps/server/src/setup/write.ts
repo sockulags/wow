@@ -1,5 +1,6 @@
 import {
   SecretRef,
+  awaitedProviderKind,
   findSecret,
   setupFileName,
   setupFileVersion,
@@ -34,7 +35,9 @@ const stringsIn = (value: unknown): string[] => {
 
 function stepOf(step: Workflow['steps'][number], read: ReadModel): SetupStep | undefined {
   const { id, skillName, providerInstanceId, ...rest } = step;
-  const kind = read.providerInstance(providerInstanceId)?.kind;
+  // A step still waiting for an instance of its kind goes out as that kind, as it came in.
+  const instance = read.providerInstance(providerInstanceId);
+  const kind = instance ? instance.kind : awaitedProviderKind(providerInstanceId);
   return kind ? { id, skillName, provider: kind, ...rest } : undefined;
 }
 

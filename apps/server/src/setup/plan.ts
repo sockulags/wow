@@ -5,6 +5,7 @@ import {
   hideSecretsDeep,
   settingGroupTitles,
   type AssistantProposalLine,
+  providerKindLabels,
   type ProviderKind,
   type SetupFillIn,
   type SetupLine,
@@ -26,6 +27,8 @@ import {
   type DecideContext,
   type ReadModel,
 } from '../core/orchestrator.js';
+import { readableSize } from '../files/read.js';
+import { resolveStored } from '../settings/service.js';
 import { issueProblems, parseSetup, type ParsedSetup } from './file.js';
 
 // What a setup file would do on this install (app assistant spec 22, 23): the commands that
@@ -40,11 +43,6 @@ export type SetupPlan =
       readonly commands: readonly Command[];
     }
   | { readonly outcome: 'refused'; readonly problems: readonly SetupProblem[] };
-
-export const providerLabels: Readonly<Record<ProviderKind, string>> = {
-  claude: 'Claude Code',
-  codex: 'Codex',
-};
 
 const personalReasons = {
   account: 'is an account name, which each person fills in for themselves',
@@ -133,7 +131,7 @@ function planWorkflow(
   for (const kind of missingKinds) {
     marks.push({
       workflow: entry.name,
-      reason: `no ${providerLabels[kind]} instance here yet; choose one for its steps in the workflow`,
+      reason: `no ${providerKindLabels[kind]} instance here yet; choose one for its steps in the workflow`,
     });
   }
   const what = `Workflow "${entry.name}"`;
@@ -268,7 +266,26 @@ function warningsOf(
   return found;
 }
 
+const MAX_BYTES_KEY = 'advanced.setupFileMaxBytes';
+
+// A file past `advanced.setupFileMaxBytes` is refused before the YAML is read.
+function sizeProblem(text: string, read: ReadModel, context: DecideContext): SetupProblem | null {
+  const definition = context.registry[MAX_BYTES_KEY];
+  if (!definition) return null;
+  const { value } = resolveStored(MAX_BYTES_KEY, definition, {}, (scope) =>
+    read.setting(MAX_BYTES_KEY, scope),
+  );
+  const size = Buffer.byteLength(text, 'utf8');
+  if (typeof value !== 'number' || size <= value) return null;
+  return {
+    line: null,
+    reason: `The file is ${readableSize(size)}; a setup file may be at most ${readableSize(value)} (Settings → ${settingGroupTitles[definition.group]} → ${definition.label}).`,
+  };
+}
+
 export function planSetup(text: string, read: ReadModel, context: DecideContext): SetupPlan {
+  const tooLarge = sizeProblem(text, read, context);
+  if (tooLarge) return { outcome: 'refused', problems: [tooLarge] };
   const reading = parseSetup(text);
   if (reading.outcome === 'refused') return reading;
   const { parsed } = reading;

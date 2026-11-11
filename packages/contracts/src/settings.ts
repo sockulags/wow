@@ -1497,6 +1497,16 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'ms',
   }),
+  'advanced.setupFileMaxBytes': defineSetting({
+    schema: z.number().int().min(1000).max(50_000_000),
+    group: 'advanced',
+    label: 'Largest setup file',
+    description:
+      'A setup file larger than this is refused before it is read, for its preview and when it is applied.',
+    default: 1_000_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
   'advanced.showSettingKeys': defineSetting({
     schema: z.boolean(),
     group: 'advanced',

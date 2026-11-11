@@ -870,7 +870,9 @@ out too.
 preview with what would be added and what would replace a value you have, and applies it as one
 step you can undo. A file with an unknown key, a wrong type or a secret value is refused with the
 line and the reason; a workflow naming a skill that is not installed is applied and marked "skill
-not installed". After a file is applied here, your next message to the assistant tells it what the file
+not installed". The row of an applied file under Settings → Advanced keeps those marks and lists
+the secrets still to fill in, each with a link to its field, until they are set. A file larger
+than `advanced.setupFileMaxBytes` (1 MB unless you change it) is refused before it is read. After a file is applied here, your next message to the assistant tells it what the file
 left to fill in, and it goes through that list one thing per answer as after a first start.
 
 ### When it cannot start

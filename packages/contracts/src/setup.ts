@@ -19,6 +19,16 @@ export const SetupStep = WorkflowStep.omit({ providerInstanceId: true })
   .strict();
 export type SetupStep = z.infer<typeof SetupStep>;
 
+export const providerKindLabels: Readonly<Record<ProviderKind, string>> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+};
+
+// A step applied from a file where no instance of its kind was here holds the kind itself as its
+// instance id until one is chosen. The kind it waits for, or null for an ordinary id.
+export const awaitedProviderKind = (providerInstanceId: string): ProviderKind | null =>
+  ProviderKind.safeParse(providerInstanceId).data ?? null;
+
 export const SetupWorkflow = z
   .object({
     id: Id,

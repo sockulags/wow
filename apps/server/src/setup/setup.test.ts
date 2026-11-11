@@ -668,6 +668,50 @@ describe('refusing a file (spec 23)', () => {
   });
 });
 
+describe('a step whose provider kind has no instance here', () => {
+  const codexBody =
+    'workflows:\n  - id: second\n    name: Second opinion\n    steps:\n      - id: a\n        skillName: check-work\n        provider: codex\n        gateBefore: false\n        gateAfter: true\n        expectedArtifacts: []\n';
+
+  it('is saved again with its kind, and a run says which kind it waits for', () => {
+    apply(other, file(codexBody));
+    expect(applications(other)[0]?.marked).toEqual([
+      {
+        workflow: 'Second opinion',
+        reason: 'no Codex instance here yet; choose one for its steps in the workflow',
+      },
+    ]);
+    const saved = save(other);
+    expect(saved.leftOut).toEqual([]);
+    const entry = (
+      parse(saved.text) as { workflows: { id: string; steps: unknown[] }[] }
+    ).workflows.find((workflow) => workflow.id === 'second');
+    expect(entry?.steps[0]).toMatchObject({ id: 'a', skillName: 'check-work', provider: 'codex' });
+    on(other, { type: 'project.create', projectId: 'tea', name: 'Tea', cwd: root });
+    expect(() =>
+      on(other, { type: 'workflowRun.start', runId: 'r1', workflowId: 'second', projectId: 'tea' }),
+    ).toThrow(
+      'Step check-work has no Codex instance here yet: choose one for it in the workflow Second opinion.',
+    );
+  });
+});
+
+describe('the size of a setup file', () => {
+  it('refuses a preview and an apply of a text longer than advanced.setupFileMaxBytes', () => {
+    on(other, {
+      type: 'setting.set',
+      key: 'advanced.setupFileMaxBytes',
+      scope: 'global',
+      value: 1024,
+    });
+    const long = file(`settings:\n  hosts.pollSeconds: 600\n# ${'x'.repeat(1100)}\n`);
+    const reason =
+      'The file is 1.2 KB; a setup file may be at most 1 KB (Settings → Advanced → Largest setup file).';
+    expect(problems(other, long)).toEqual([{ line: null, reason }]);
+    expect(() => apply(other, long)).toThrow(reason);
+    expect(ready(other, file('settings:\n  hosts.pollSeconds: 600\n')).added).toHaveLength(1);
+  });
+});
+
 // The methods the app calls, over the server's own connection.
 function request(server: RunningServer, method: string, params: unknown): Promise<RpcResponse> {
   const socket = new WebSocket(server.url);

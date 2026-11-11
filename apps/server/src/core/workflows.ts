@@ -1,7 +1,9 @@
 import {
   alwaysStops,
+  awaitedProviderKind,
   hostReadId,
   isLiveRunState,
+  providerKindLabels,
   ruleProblems,
   type AppNotification,
   type CardState,
@@ -453,6 +455,13 @@ export function startRunEvents(
   if (!project) throw new CommandRejected('not_found', `No project ${start.projectId}`);
   for (const step of workflow.steps) {
     if (!read.providerInstance(step.providerInstanceId)) {
+      const awaited = awaitedProviderKind(step.providerInstanceId);
+      if (awaited) {
+        throw new CommandRejected(
+          'rejected',
+          `Step ${step.skillName} has no ${providerKindLabels[awaited]} instance here yet: choose one for it in the workflow ${workflow.name}.`,
+        );
+      }
       throw new CommandRejected(
         'rejected',
         `Step ${step.skillName} uses provider instance ${step.providerInstanceId}, which does not exist`,

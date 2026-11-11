@@ -59,7 +59,11 @@ const application = (extra: Partial<SetupApplication> = {}): SetupApplication =>
   ...extra,
 });
 
-function runtimeWith(answer: SetupRead, applications: SetupApplication[] = []) {
+function runtimeWith(
+  answer: SetupRead,
+  applications: SetupApplication[] = [],
+  settingRows: unknown[] = [],
+) {
   const sent: Command[] = [];
   const asked: { method: string; params: unknown }[] = [];
   const connection: Connection = {
@@ -83,7 +87,9 @@ function runtimeWith(answer: SetupRead, applications: SetupApplication[] = []) {
       return Promise.resolve([]);
     },
     subscribe(topic, _params, onData) {
-      onData(topic === 'setupApplications' ? applications : []);
+      onData(
+        topic === 'setupApplications' ? applications : topic === 'settings' ? settingRows : [],
+      );
       return () => undefined;
     },
     retry: () => undefined,
@@ -217,6 +223,52 @@ describe('Undo of an applied setup file', () => {
     expect(older?.textContent).toContain('Undone');
     await user.click(within(newest as HTMLElement).getByRole('button', { name: 'Undo' }));
     expect(sent).toEqual([{ type: 'setup.undo', applicationId: 'setup-1' }]);
+  });
+});
+
+describe('An applied setup file in Settings → Advanced', () => {
+  it('keeps its marks and the secrets still to fill in under its row', async () => {
+    const { runtime } = runtimeWith(
+      ready,
+      [
+        application({
+          toFillIn: [
+            ...preview.toFillIn,
+            {
+              key: 'trackers.gitlab.token',
+              label: 'GitLab token',
+              place: { label: 'Settings → Trackers', path: '/settings/trackers' },
+            },
+          ],
+        }),
+        application({ id: 'old', name: 'old.yaml', state: 'undone', undoneAt: at }),
+      ],
+      [
+        // Filled in since: no longer listed.
+        {
+          key: 'trackers.gitlab.token',
+          scope: 'global',
+          value: { secretRef: 'setting:trackers.gitlab.token' },
+        },
+      ],
+    );
+    await renderApp('/settings/advanced', runtime);
+    const [older, newest] = screen.getAllByTestId('setup-application');
+    expect(
+      within(newest as HTMLElement)
+        .getAllByTestId('setup-application-mark')
+        .map((mark) => mark.textContent),
+    ).toEqual(['Workflow "Brew report": skill not installed: brew-report']);
+    const fill = within(newest as HTMLElement).getAllByTestId('setup-application-fill-in');
+    expect(fill.map((entry) => entry.textContent)).toEqual(['GitHub token · Settings → Trackers']);
+    expect(
+      within(fill[0] as HTMLElement)
+        .getByRole('link')
+        .getAttribute('href'),
+    ).toBe('/settings/trackers');
+    // An undone file asks for nothing.
+    expect(within(older as HTMLElement).queryByTestId('setup-application-mark')).toBeNull();
+    expect(within(older as HTMLElement).queryByTestId('setup-application-fill-in')).toBeNull();
   });
 });
 

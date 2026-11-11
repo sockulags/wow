@@ -1,4 +1,4 @@
-import type { SetupApplication, SetupPreview } from '@wow/contracts';
+import { SecretRef, type SetupApplication, type SetupPreview } from '@wow/contracts';
 import { CircleAlertIcon, FileDownIcon, FileUpIcon, TriangleAlertIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
@@ -181,12 +181,28 @@ export function SetupPreviewDialog() {
   );
 }
 
+// The secrets an applied file left to fill in that still have no value here, so the row keeps
+// asking for them until they are set (spec 24).
+function useStillToFillIn(application: SetupApplication): SetupApplication['toFillIn'] {
+  const settings = useTopic('settings');
+  if (application.state === 'undone') return [];
+  return application.toFillIn.filter(
+    (fill) =>
+      !settings?.some(
+        (row) =>
+          row.key === fill.key && row.scope === 'global' && SecretRef.safeParse(row.value).success,
+      ),
+  );
+}
+
 function ApplicationRow({ application }: { application: SetupApplication }) {
   const { connection } = useRuntime();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const undone = application.state === 'undone';
   const counts = `${application.added.length} added, ${application.replaced.length} replaced`;
+  const toFillIn = useStillToFillIn(application);
+  const marked = undone ? [] : application.marked;
   return (
     <li
       data-testid="setup-application"
@@ -224,6 +240,33 @@ function ApplicationRow({ application }: { application: SetupApplication }) {
           </Button>
         )}
       </div>
+      {marked.length > 0 && <p className="text-muted-foreground">Marked</p>}
+      {marked.length > 0 && (
+        <ul aria-label={`Marked by ${application.name}`} className="flex flex-col gap-0.5">
+          {marked.map((mark) => (
+            <li key={`${mark.workflow}:${mark.reason}`} data-testid="setup-application-mark">
+              <span className="font-medium">Workflow "{mark.workflow}"</span>: {mark.reason}
+            </li>
+          ))}
+        </ul>
+      )}
+      {toFillIn.length > 0 && <p className="text-muted-foreground">Still to fill in</p>}
+      {toFillIn.length > 0 && (
+        <ul
+          aria-label={`Still to fill in for ${application.name}`}
+          className="flex flex-col gap-0.5"
+        >
+          {toFillIn.map((fill) => (
+            <li key={fill.key} data-testid="setup-application-fill-in">
+              <span className="font-medium">{fill.label}</span>
+              <span className="text-muted-foreground">
+                {' · '}
+                <PlaceLink place={fill.place} />
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
       {error && (
         <p role="alert" className="text-destructive">
           {error}

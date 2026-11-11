@@ -38,7 +38,7 @@ const refused = (reason: FileRefusal, message: string): FileReadResult => ({
   message,
 });
 
-function readableSize(bytes: number): string {
+export function readableSize(bytes: number): string {
   if (bytes < 1000) return `${bytes} bytes`;
   if (bytes < 1_000_000) return `${Math.round(bytes / 100) / 10} KB`;
   return `${Math.round(bytes / 100_000) / 10} MB`;

@@ -1070,7 +1070,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
 - updates: `updates.enabled`, `updates.checkIntervalMinutes`
 - advanced: `advanced.port`, `advanced.logLevel`, `advanced.secretsTimeoutMs`,
-  `advanced.showSettingKeys` (`WOW_HOME` is an
+  `advanced.setupFileMaxBytes` (see "Setup file"), `advanced.showSettingKeys` (`WOW_HOME` is an
   environment variable, see "Server")
 
 The same test fails when `apps/server/src` or `apps/web/src` declares a tunable-looking constant
@@ -1970,11 +1970,15 @@ Confluence email, the GitHub owner and `triggers.ignoredCommentAuthors`, `machin
 `calendar.firstDayOfWeek`, `calendar.workHours`). Projects, cards, backlog items, threads and runs
 are not read at all, so no project folder is in it. A value or workflow that the secret net
 (`assistant.secretPatterns`) matches is left out and named in `leftOut`; so is a workflow whose
-step names an instance that no longer exists.
+step names an instance that no longer exists. A step applied from a file where no instance of its
+kind was here holds the kind as its instance id (`awaitedProviderKind`) and is written back with
+that kind; a run of its workflow is refused with "Step <skill> has no <kind> instance here yet:
+choose one for it in the workflow <name>."
 
 **Read and preview** (`setup/file.ts`, `setup/plan.ts`, `planSetup`, RPC `setup.preview {text}` →
 `SetupRead`). `parseSetup` keeps a line counter, so every problem has the line of its key. The
-order: YAML errors; a `__proto__` key anywhere ("Unknown setting **proto**" under `settings`),
+order: a text longer than `advanced.setupFileMaxBytes` (UTF-8 bytes; default 1 MB), refused
+without a line before the YAML is read, for the preview and again at Apply; YAML errors; a `__proto__` key anywhere ("Unknown setting **proto**" under `settings`),
 which would not become a key of the value read; aliases of aliases past the YAML library's
 count, refused with the first alias's line instead of failing; an empty file or one that is not
 a mapping; the version (a missing version
@@ -2021,7 +2025,9 @@ how many secrets are listed to fill in and what was left out), "Start from a set
 input; its text goes to `setup.preview`), the preview dialog with "Read before you apply" (the
 warnings) first, the lists Added, Replaced (a line with `full` opens "Show all of it"), Marked
 and To fill in afterwards and Apply, or the problems with their lines, and a row per
-applied file with Undo or "Undone". The palette has "Save setup to a file", "Start from a setup
+applied file with Undo or "Undone". Under an applied file's row stay its marks and "Still to fill
+in": its `toFillIn` entries that have no stored reference at global scope yet, each with its
+place. The palette has "Save setup to a file", "Start from a setup
 file" (through `setupStore.pickWanted`: while a "Connect an agent" step is on screen, at first
 start or in the Assistant view, that step owns the picker and the palette stays where it is,
 counted in `setupStore.stepPickers`; otherwise it opens Settings → Advanced and its picker) and
