@@ -55,6 +55,11 @@ function refusal(send: () => unknown): string | undefined {
 const workflow = (id: string) =>
   (snapshot(server.database.db, { topic: 'workflows' }) as Workflow[]).find((row) => row.id === id);
 
+const firstThread = (runId: string) =>
+  (snapshot(server.database.db, { topic: 'threads' }) as Thread[]).find(
+    (thread) => thread.runId === runId,
+  );
+
 async function call(name: string, args: Record<string, unknown> = {}) {
   const result = await server.assistant.tools.call(name, args);
   return { isError: result.isError, content: JSON.parse(result.text) as Record<string, unknown> };
@@ -386,11 +391,6 @@ describe('a workflow stored before the rule (spec 19, 20)', () => {
     createdAt: '2026-10-01T08:00:00.000Z',
     updatedAt: '2026-10-01T08:00:00.000Z',
   };
-
-  const firstThread = (runId: string) =>
-    (snapshot(server.database.db, { topic: 'threads' }) as Thread[]).find(
-      (thread) => thread.runId === runId,
-    );
 
   it('loads and runs as before, and the diagnosis names the step', async () => {
     dispatch({ type: 'workflow.restore', workflow: old });

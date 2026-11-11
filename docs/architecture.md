@@ -2375,8 +2375,8 @@ between them only from a guidance text it ships; nothing about models comes from
 - **What the assistant writes** (`checkStepModels`, spec 15, 16). `create_workflow` and an
   `update_workflow` with steps check every step before the command is dispatched: the instance
   exists, it is connected (its last test passed; otherwise the refusal gives the reason
-  `read_models` gives), its models can be read now, the step names one of them, and an effort that model takes
-  (when it takes any). Each refusal says what is offered ("Codex at work does not offer the
+  `read_models` gives), its models can be read now, the step names one of them, and an effort
+  that model takes (when it takes any). Each refusal says what is offered ("Codex at work does not offer the
   model codex-ultra (Step 1 (plan-work)). It offers: codex-max, codex-mini."). The user's own
   commands are not checked against the list, since the builder offers only the list. A change
   row says each step with its instance, model and effort ("2 steps: plan-work (Codex at work,
@@ -2528,8 +2528,9 @@ by search). At a gate that did not pass, the gate bar says "Did not pass by itse
 waits for checks its run view says "Waiting for checks" instead of "Waiting for you"; while a
 running run's current step thread is `needs_you` (a question or an approval) the run view and the
 Workflows list of runs say "Waiting for an answer" (`runStateLabel(run, threads)`; the run stays
-`running`, questions-and-models spec 7). Other lists keep the run state's own words. A step whose gate passed by itself shows "Passed by
-itself: <parts>" with each part's sentence in its row (`passedByItself`).
+`running`, questions-and-models spec 7). Other lists keep the run state's own words. A step
+whose gate passed by itself shows "Passed by itself: <parts>" with each part's sentence in its
+row (`passedByItself`).
 
 **Rules on a step** (`rules.ts`, `step-rules.tsx`; workflow branches spec 14, 16, 17). An open
 step ends with "After this step": its rules in the order they are tried, each a row of three
