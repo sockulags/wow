@@ -990,7 +990,7 @@ There are no webhooks: an event is something a read from the host shows.
 - **The run.** It is an ordinary run with `WorkflowRun.event` (`RunEvent`: trigger, event,
   pull request id, number, link, branch, head commit and head ref, whether it is from a fork,
   and for a comment its link
-  and author). The handover template's `event`, `pullRequestNumber`, `pullRequestUrl`,
+  and author). The handover template's `event`, `pullRequestNumber`, `pullRequestName`, `pullRequestUrl`,
   `pullRequestBranch`, `commentUrl` and `commentAuthor` placeholders carry it into every step's
   prompt (`eventValues` in the workflow engine). The comment's text is never copied: it is someone
   else's text and must not become an instruction in a prompt wow writes, so the agent reads it
@@ -1483,8 +1483,10 @@ limit; anything else and a timeout are `failed`. Unit status reasons say "Merge 
 merged", and so do the gate's checks part (`ChecksReading.host`), an event run's line,
 notification and handover (`runEventHost`, `triggerEventLabel`), and the Pull request tab's name
 and empty text, which read "Merge request" on a run whose host read is GitLab
-(`pullRequestTabLabel`). The trigger forms keep "Pull request merged": they have no host to go
-by. GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
+(`pullRequestTabLabel`). The Triggers tab's rows, its palette commands and New trigger's event
+choices say "Merge request merged" for a project whose newest host read is GitLab
+(`projectCodeHost` in `apps/web/src/workflows/triggers.ts`), and the default handover names
+the event's request with `pullRequestName` ("Merge request !12" or "Pull request #14"). GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
 GitLab the server tests and the e2e server share.
 
 **Poller** (`apps/server/src/hosts/poller.ts`, started with the scheduler and stopped right

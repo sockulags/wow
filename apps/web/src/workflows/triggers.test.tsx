@@ -1,4 +1,4 @@
-import type { Command, Project, Trigger, TriggerEvent, Workflow } from '@wow/contracts';
+import type { Command, HostRead, Project, Trigger, TriggerEvent, Workflow } from '@wow/contracts';
 import {
   createMemorySettingsSource,
   createSettingsStore,
@@ -92,9 +92,26 @@ const merged = eventTrigger('a', 'merged', 'tidy', { runId: 'run-7' });
 const failed = eventTrigger('bb', 'checksFailed', 'fix', { enabled: false });
 const orphan = eventTrigger('ccc', 'commentAdded', 'gone', { projectId: 'kettle' });
 
+// The last read of a project's code host, which says which host it is.
+const gitlabRead = (projectId: string): HostRead => ({
+  id: 'plan:kettle-plan',
+  projectId,
+  scope: 'plan',
+  host: 'gitlab',
+  hostName: 'gitlab.example.invalid',
+  branch: null,
+  changeRequestIds: [],
+  fetchedAt: '2026-11-02T08:30:00.000Z',
+  error: null,
+});
+
 function fake(
   rows: Trigger[],
-  { refuse, settings = {} }: { refuse?: string; settings?: Record<string, unknown> } = {},
+  {
+    refuse,
+    settings = {},
+    reads = [],
+  }: { refuse?: string; settings?: Record<string, unknown>; reads?: HostRead[] } = {},
 ) {
   const box = outbox<Command>();
   const sent = box.sent;
@@ -114,6 +131,7 @@ function fake(
         triggers: rows,
         workflows,
         projects,
+        hostReads: reads,
       };
       onData(topics[topic] ?? []);
       return () => undefined;
@@ -156,6 +174,11 @@ describe('trigger rows', () => {
         ],
       ],
     ]);
+  });
+
+  it('says "Merge request merged" for a project whose code host is GitLab', () => {
+    const groups = triggerGroups([merged], projects, workflows, [gitlabRead('tea')]);
+    expect(groups[0]?.rows[0]?.event).toBe('Merge request merged');
   });
 
   it('says why nothing starts while event triggers are off or the scheduler is paused (spec 52)', () => {
@@ -244,6 +267,17 @@ describe('Triggers tab', () => {
       workflowId: 'fix',
     });
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('offers "Merge request merged" in New trigger once a GitLab project is chosen', async () => {
+    const user = userEvent.setup();
+    const { runtime } = fake([], { reads: [gitlabRead('kettle')] });
+    await renderApp(route, runtime);
+    triggersStore.setState({ draft: { projectId: 'kettle', event: '', workflowId: '' } });
+    const dialog = within(await screen.findByRole('dialog', { name: 'New trigger' }));
+    await user.click(dialog.getByRole('combobox', { name: 'Event' }));
+    expect(await screen.findByRole('option', { name: 'Merge request merged' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Pull request merged' })).toBeNull();
   });
 
   it('keeps the dialog open with what the server said when it refuses', async () => {

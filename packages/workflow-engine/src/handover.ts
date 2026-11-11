@@ -1,4 +1,4 @@
-import { runEventHost, triggerEventLabel, type RunEvent } from '@wow/contracts';
+import { changeRequestName, runEventHost, triggerEventLabel, type RunEvent } from '@wow/contracts';
 
 // Renders the `workflows.handoverTemplate` setting. `{{name}}` is replaced by the value and
 // `{{#name}}…{{/name}}` is kept only when the value is not empty, so an unused part of the
@@ -16,6 +16,8 @@ export interface HandoverValues {
   // otherwise. A review comment is named by its link and author, never by its text.
   readonly event: string;
   readonly pullRequestNumber: string;
+  // "Pull request #14" or "Merge request !12", in the host's words.
+  readonly pullRequestName: string;
   readonly pullRequestUrl: string;
   readonly pullRequestBranch: string;
   readonly commentUrl: string;
@@ -25,6 +27,7 @@ export interface HandoverValues {
 const noEvent = {
   event: '',
   pullRequestNumber: '',
+  pullRequestName: '',
   pullRequestUrl: '',
   pullRequestBranch: '',
   commentUrl: '',
@@ -39,9 +42,11 @@ export function eventValues(
   event: RunEvent | null | undefined,
 ): Pick<HandoverValues, keyof typeof noEvent> {
   if (!event) return noEvent;
+  const host = runEventHost(event);
   return {
-    event: triggerEventLabel(event.event, runEventHost(event)).toLowerCase(),
+    event: triggerEventLabel(event.event, host).toLowerCase(),
     pullRequestNumber: String(event.number),
+    pullRequestName: changeRequestName({ host, number: event.number }),
     pullRequestUrl: event.url,
     pullRequestBranch: event.branch,
     commentUrl: event.commentUrl ?? '',

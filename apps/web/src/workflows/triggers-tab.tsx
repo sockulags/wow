@@ -1,4 +1,4 @@
-import { triggerEventLabels, TriggerEvent } from '@wow/contracts';
+import { TriggerEvent } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { PlusIcon, Trash2Icon, ZapIcon } from 'lucide-react';
 import type { FormEvent } from 'react';
@@ -23,7 +23,9 @@ import {
   chosenDraft,
   confirmNewTrigger,
   editNewTrigger,
+  eventChoices,
   openNewTrigger,
+  projectCodeHost,
   removeTrigger,
   setTriggerEnabled,
   triggerGroups,
@@ -33,16 +35,12 @@ import {
   type TriggerRow,
 } from './triggers';
 
-const eventChoices = TriggerEvent.options.map((event) => ({
-  value: event,
-  label: triggerEventLabels[event],
-}));
-
 // "New trigger": project, event and workflow (review loop spec, Interface).
 function NewTriggerDialog() {
   const dispatch = useDispatch();
   const projects = useTopic('projects') ?? [];
   const workflows = useTopic('workflows') ?? [];
+  const reads = useTopic('hostReads') ?? [];
   const draft = useStore(triggersStore, (state) => state.draft);
   const error = useStore(triggersStore, (state) => state.draftError);
   const busy = useStore(triggersStore, (state) => state.busy);
@@ -81,7 +79,7 @@ function NewTriggerDialog() {
                 label="Event"
                 value={chosen.event}
                 placeholder="Choose an event"
-                choices={eventChoices}
+                choices={eventChoices(projectCodeHost(reads, chosen.projectId))}
                 onValueChange={(event) =>
                   editNewTrigger({ event: TriggerEvent.safeParse(event).data ?? '' })
                 }
@@ -192,10 +190,11 @@ export function TriggersTab() {
   const triggers = useTopic('triggers');
   const projects = useTopic('projects') ?? [];
   const workflows = useTopic('workflows') ?? [];
+  const reads = useTopic('hostReads') ?? [];
   const eventsEnabled = useSetting('triggers.eventsEnabled');
   const schedulerPaused = useSetting('scheduler.paused');
   const error = useStore(triggersStore, (state) => state.error);
-  const groups = triggerGroups(triggers ?? [], projects, workflows);
+  const groups = triggerGroups(triggers ?? [], projects, workflows, reads);
   const held = triggersHeld(eventsEnabled, schedulerPaused);
   const newTrigger = (
     <Button type="button" size="sm" onClick={openNewTrigger}>

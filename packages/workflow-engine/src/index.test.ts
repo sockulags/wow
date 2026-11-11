@@ -694,6 +694,27 @@ describe('step prompts and handover', () => {
       ].join('\n'),
     );
     expect(renderHandover(defaultHandoverTemplate, { ...values, ...eventValues(null) })).toBe('');
+    // GitLab's words for a GitLab event.
+    expect(
+      renderHandover(defaultHandoverTemplate, {
+        ...values,
+        ...eventValues({
+          ...event,
+          number: 12,
+          url: 'https://gitlab.example.invalid/acme/tea/-/merge_requests/12',
+          headRef: 'refs/merge-requests/12/head',
+          event: 'merged',
+          commentUrl: null,
+          commentAuthor: null,
+        }),
+      }),
+    ).toBe(
+      [
+        'This run was started by an event: merge request merged.',
+        'Merge request !12: https://gitlab.example.invalid/acme/tea/-/merge_requests/12',
+        'Branch: agent/U2-bell',
+      ].join('\n'),
+    );
   });
 
   it('joins invocation, extra prompt and handover', () => {

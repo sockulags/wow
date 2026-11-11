@@ -158,6 +158,7 @@ export function useCommands(gated = false): {
         formatWhen: when,
         triggers,
         projects,
+        hostReads,
         onTriggers: pathname === triggersPath,
       }),
       ...planCommands({

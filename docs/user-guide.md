@@ -635,7 +635,7 @@ followed plan, or one of a live run). Workflows → **Triggers** ("Go to event t
 palette) lists them per project, each with an on and off switch and Delete. **New trigger** ("New event
 trigger" in the palette) asks for the project, the event and the workflow:
 
-- **Pull request merged**,
+- **Pull request merged** (**Merge request merged** for a project on GitLab),
 - **Checks failed**,
 - **Review comment added**.
 
