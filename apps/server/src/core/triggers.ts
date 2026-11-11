@@ -189,9 +189,18 @@ function seriesTriggerEvents(
   }
   const events: DomainEvent[] = [];
   if (next && !isDeepStrictEqual(next, existing)) events.push(triggerSet(next));
-  // A card that has run shows how its newest run went; one that has not waits for its first.
+  // A card that has run shows how its newest run went; one that has not waits for its first,
+  // and once every remaining occurrence was skipped it is finished as a last occurrence leaves it.
   if (card.runId === null && runId === undefined && upcoming) {
     events.push(...cardState(card, 'scheduled', null, context));
+  } else if (
+    card.runId === null &&
+    runId === undefined &&
+    card.state === 'scheduled' &&
+    card.workflowId !== null &&
+    card.projectId !== null
+  ) {
+    events.push(...cardState(card, 'done', null, context));
   }
   return events;
 }
@@ -370,7 +379,7 @@ function fireSeries(
         ...notification(read, context, {
           id: `${card.id}:${latest.date}:skipped`,
           at: context.now,
-          kind: 'failed',
+          kind: 'skipped',
           title: 'Occurrence skipped',
           body: `${card.title} · ${latest.date}: ${reason}`,
           path: `/calendar?item=${encodeURIComponent(card.id)}`,

@@ -346,7 +346,7 @@ describe('a busy card (spec 7)', () => {
       runId: null,
       reason: expect.stringMatching(/2026-11-04.*waiting for you/) as unknown,
     });
-    expect(notices()).toContainEqual(['failed', 'Occurrence skipped']);
+    expect(notices()).toContainEqual(['skipped', 'Occurrence skipped']);
     expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at('2026-11-06') });
 
     dispatch({ type: 'workflowRun.stop', runId: first.id });
@@ -512,6 +512,17 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
     expect(() =>
       dispatch({ type: 'card.skipOccurrence', cardId: 'c1', date: '2026-11-05' }),
     ).toThrow(/already started/);
+  });
+
+  it('finishes the card when every remaining occurrence is skipped, and waits again on Undo', () => {
+    createCard({ repeat: { ...weekdays, end: { kind: 'after', count: 2 } } });
+    dispatch({ type: 'card.skipOccurrence', cardId: 'c1', date: '2026-11-04' });
+    expect(card()?.state).toBe('scheduled');
+    dispatch({ type: 'card.skipOccurrence', cardId: 'c1', date: '2026-11-05' });
+    expect(trigger()?.state).toBe('cancelled');
+    expect(card()).toMatchObject({ state: 'done', nextAt: null, runId: null });
+    dispatch({ type: 'card.update', cardId: 'c1', skippedDates: ['2026-11-04'] });
+    expect(card()).toMatchObject({ state: 'scheduled', nextAt: at('2026-11-05') });
   });
 
   it('moves the series when one occurrence is moved within its day, as an edit does', () => {

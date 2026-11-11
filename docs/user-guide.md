@@ -349,6 +349,7 @@ one card; wow works out its occurrences.
 
 A repeating trigger starts one run per occurrence, named with its day. If the run of an earlier
 occurrence is still going, the occurrence starts nothing and a notification says it was skipped.
+A card whose remaining occurrences were all skipped by hand never fires again and shows Done.
 After wow was closed or paused over several occurrences, only the latest follows
 `scheduler.missedPolicy`; the older ones are recorded as missed.
 

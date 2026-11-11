@@ -187,7 +187,7 @@ triggers         id, kind ('card'|'event'), workflowId, runId?, offerRunNow;
                  'cancelled'); event: projectId, event ('merged'|'checksFailed'|
                  'commentAdded'), enabled, createdAt (the other kind's columns are null)
 trigger_events   triggerId, eventId, runId?, at (the events an event trigger has seen; no topic)
-notifications    id, at, kind ('started'|'waiting'|'failed'), title, body, path, runId?,
+notifications    id, at, kind ('started'|'waiting'|'failed'|'skipped'), title, body, path, runId?,
                  calendarItemId?
 skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
                  'project-agents'|'custom'), manualOnly, invocations(json: {claude, codex})
@@ -1006,9 +1006,11 @@ alike. The card stays one row.
   `missed` by `skip` (spec 8); an older record that still offered "Run now" is re-recorded
   without it, so only the newest missed occurrence offers it. A latest occurrence whose card still has a live run (the newest
   run the card follows, or any run its records name) starts nothing: it is recorded `skipped`
-  with the reason and a `failed` notification "Occurrence skipped" (spec 7). Then the trigger
+  with the reason and a `skipped` notification "Occurrence skipped" (spec 7; older rows of it
+  keep the kind `failed` they were stored with). Then the trigger
   waits for the next occurrence; after the last one it is `fired` (or `cancelled` when nothing
-  ever ran). The run has `WorkflowRun.occurrence {date, start}`, which names it by its day, and
+  ever ran, and the card, still `scheduled`, becomes `done`: every remaining occurrence was
+  skipped). The run has `WorkflowRun.occurrence {date, start}`, which names it by its day, and
   its "Workflow run started" notification ends with the day. The card follows its newest run as
   a single card does. `card.runNow` on a repeating card answers the occurrence that offers
   "Run now" and leaves the trigger waiting. A card that ran and is made single again (or

@@ -1,6 +1,6 @@
 import type { AppNotification } from '@wow/contracts';
 import { useNavigate } from '@tanstack/react-router';
-import { AlertTriangleIcon, BellIcon, PlayIcon } from 'lucide-react';
+import { AlertTriangleIcon, BellIcon, PlayIcon, SkipForwardIcon } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { useTopic } from '@/chat/data';
@@ -18,11 +18,17 @@ export function freshNotifications(
   return rows.filter((row) => !seen.has(row.id)).toReversed();
 }
 
-const icons = { started: PlayIcon, waiting: BellIcon, failed: AlertTriangleIcon } as const;
+const icons = {
+  started: PlayIcon,
+  waiting: BellIcon,
+  failed: AlertTriangleIcon,
+  skipped: SkipForwardIcon,
+} as const;
 const iconClass = {
   started: 'text-state-working',
   waiting: 'text-state-needs-you',
   failed: 'text-state-failed',
+  skipped: 'text-muted-foreground',
 } as const;
 
 // The web app's side of the server's notification channel: a toast per new notification (spec 9),

@@ -491,7 +491,9 @@ export const isEventTrigger = (trigger: Trigger): trigger is EventTrigger =>
 // What the server tells the user about without being asked: a run started by a trigger, a run
 // waiting at a gate, a failed run or trigger. The desktop app shows them as system notifications,
 // the web app as toasts. Only stored while `scheduler.notifications` is on.
-export const NotificationKind = z.enum(['started', 'waiting', 'failed']);
+// `skipped` is an occurrence of a repeating card that started nothing because the card's earlier
+// run was still going; it is not a failure.
+export const NotificationKind = z.enum(['started', 'waiting', 'failed', 'skipped']);
 export type NotificationKind = z.infer<typeof NotificationKind>;
 
 export const AppNotification = z.object({
