@@ -2348,9 +2348,11 @@ between them only from a guidance text it ships; nothing about models comes from
   step without a model is stored as before. Old data keeps working (spec 19): `workflow.restore`
   stores the row as it was, an update that leaves the steps alone does not look at them, a run
   starts as it did (the step's thread falls back to the instance's and the project's default
-  model, and the runner fails a step whose model is still empty), and `DecideContext.keepStepsWithoutModel`
-  lets a setup file's apply and preview and every undo (`setup.undo`, `assistant.undo`) store
-  such a step as it is, since they put back or bring in what was stored elsewhere.
+  model, and the runner fails a step whose model is still empty). `DecideContext.keepStepsWithoutModel`
+  lets a setup file's apply and preview store such a step without a default as it is, marked (a
+  step whose instance has a default takes it), and `DecideContext.putBackSteps` makes every undo
+  (`setup.undo`, `assistant.undo`) store the steps exactly as they were stored, no default
+  written in, since it puts back what was there.
 - **Marks** (`modelMark`, spec 19, 20). A setup file's preview and its `setupApplications` row
   mark a step left without a model and without a default to take ("step check-work has no
   model, which Codex needs; choose one in the workflow, or the step fails when it starts"), as

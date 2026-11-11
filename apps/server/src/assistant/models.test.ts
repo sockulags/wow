@@ -409,6 +409,22 @@ describe('a workflow stored before the rule (spec 19, 20)', () => {
     ]);
   });
 
+  it('is put back without a model by an undo, though its instance has a default (spec 19)', async () => {
+    dispatch({
+      type: 'workflow.restore',
+      workflow: { ...old, steps: [step('check-work', { providerInstanceId: 'codex-work' })] },
+    });
+    const { isError, content } = await call('update_workflow', {
+      workflowId: 'old',
+      steps: [step('check-work', { model: 'codex-mini', effort: 'low' })],
+    });
+    expect(isError).toBe(false);
+    expect(workflow('old')?.steps[0]?.model).toBe('codex-mini');
+    const change = content['change'] as Pick<AssistantChange, 'id'>;
+    dispatch({ type: 'assistant.undo', changeId: change.id });
+    expect(workflow('old')?.steps[0]).not.toHaveProperty('model');
+  });
+
   it('applies a setup file with such a step, marked', () => {
     // The first Codex instance here has no default model.
     dispatch({ type: 'providerInstance.delete', providerInstanceId: 'codex-work' });
