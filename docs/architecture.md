@@ -551,7 +551,9 @@ sending anything; a refusal of the server is shown in the same place and the dia
 open. After a save or a delete a toast offers Undo, which sends the opposite command with the
 skill as the client held it. Palette: "New skill" (`skills.new`, opens the page and the
 editor), "Edit skill: <name>" and "Delete skill: <name>" for every own skill (search only). No
-keybinding: these are rare.
+keybinding: these are rare. `apps/web/e2e/wow-skills.spec.ts` (Changes copy) writes a skill and
+adds it to a step, and sees `wow-verdict` attached by itself to the Bug template's check-work;
+with `WOW_E2E_SKETCHES` set it writes `intents/2026-11-wow-skills/sketches/your-skills.png`.
 
 `skillGroupOf(skill)` in `packages/contracts` gives a skill's `SkillGroup` (`yours`, `wow`,
 `project`, `user`, `plugins`, `other`) and `inListOrder` sorts by that group and then by name;
