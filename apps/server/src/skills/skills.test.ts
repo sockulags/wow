@@ -573,14 +573,15 @@ describe('an own skill written by hand (spec 6)', () => {
   });
 });
 
+// An own skill named brew in a folder of its own, as written by hand.
+const twin = (folder: string, text: string) =>
+  writeSkill(path.join(wowHome, 'skills'), folder, text).then(() =>
+    writeFile(
+      path.join(wowHome, 'skills', folder, 'SKILL.md'),
+      `---\nname: brew\ndescription: ${folder}\n---\n\n${text}\n`,
+    ),
+  );
 describe('two hand-made folders with the same skill name', () => {
-  const twin = (folder: string, text: string) =>
-    writeSkill(path.join(wowHome, 'skills'), folder, text).then(() =>
-      writeFile(
-        path.join(wowHome, 'skills', folder, 'SKILL.md'),
-        `---\nname: brew\ndescription: ${folder}\n---\n\n${text}\n`,
-      ),
-    );
   const refusal =
     'Two of your skills are named brew, in the folders brew-a and brew-b. Rename one in its SKILL.md so wow knows which to use.';
 
