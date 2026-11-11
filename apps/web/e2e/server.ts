@@ -27,6 +27,7 @@ import path from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
 import {
   e2eAssistantBrokenWorkflowId,
+  e2eAssistantGateWorkflowId,
   e2eAssistantHome,
   e2eFirstStartCodexError,
   e2eFirstStartHome,
@@ -774,6 +775,8 @@ if (home === e2eChangesHome) {
   }
 }
 await seedPlanFiles(home);
+// Commands the assistant mock agent sends as the assistant's, numbered for their ids.
+let assistantActs = 0;
 const server = await startServer({
   home,
   port,
@@ -794,6 +797,8 @@ const server = await startServer({
           ? new AssistantMockAgent(
               new MockProviderAdapter('claude', chatScript),
               () => server.assistant.tools,
+              (command) =>
+                server.engine.dispatch(`assistant-mock-${++assistantActs}`, command, 'assistant'),
               `http://127.0.0.1:${trackerPort}`,
             )
           : new MockProviderAdapter('claude', chatScript),
@@ -1009,6 +1014,25 @@ if (home === e2ePanelHome) {
 }
 
 if (home === e2eAssistantHome) {
+  // Its run waits before its only step, so a test has a gate to ask the assistant about.
+  server.engine.dispatch('seed-assistant-gate-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eAssistantGateWorkflowId,
+    name: 'Kettle check',
+    steps: [
+      {
+        id: 'check',
+        skillName: 'check-work',
+        providerInstanceId: e2eProviderInstanceId,
+        model: 'mock-model',
+        effort: 'default',
+        permissionMode: 'default',
+        gateBefore: true,
+        gateAfter: false,
+        expectedArtifacts: [],
+      },
+    ],
+  });
   server.engine.dispatch('seed-assistant-broken-workflow', {
     type: 'workflow.create',
     workflowId: e2eAssistantBrokenWorkflowId,

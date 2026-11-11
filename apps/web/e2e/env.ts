@@ -162,6 +162,8 @@ export const e2eAssistantTrackerPort = 4573;
 // A workflow only the assistant's server has, whose step names a skill that is not installed,
 // so the diagnosis has something to say (app assistant U4).
 export const e2eAssistantBrokenWorkflowId = 'assistant-e2e-broken';
+// A workflow whose run waits before its only step: the gate the assistant may not answer.
+export const e2eAssistantGateWorkflowId = 'assistant-e2e-gate';
 // The token the mock GitLab accepts, typed into the assistant's secret field.
 export const e2eGitLabToken = 'gitlab-host-e2e-token';
 

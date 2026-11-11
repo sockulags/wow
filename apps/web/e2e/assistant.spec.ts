@@ -1,7 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { e2eAssistantHome as home, e2eGitLabToken } from './env';
+import {
+  e2eAssistantGateWorkflowId,
+  e2eAssistantHome as home,
+  e2eAssistantTrackerPort,
+  e2eGitLabToken,
+} from './env';
 import { sketchPath, sketching, sketchUse } from './sketch';
 
 // App assistant U3 ground truth against the assistant's copy of the e2e server, whose mock agent
@@ -246,14 +251,28 @@ test.describe('assistant', () => {
   });
 
   test('the assistant does not answer a gate @app-assistant-11', async ({ page }) => {
+    const runId = `assistant-gate-${test.info().retry}`;
+    const query = new URLSearchParams({ workflowId: e2eAssistantGateWorkflowId, runId });
+    const started = await fetch(`http://127.0.0.1:${e2eAssistantTrackerPort}/run?${query}`, {
+      method: 'POST',
+    });
+    expect(started.ok).toBe(true);
     await page.goto('/assistant');
-    await say(page, 'Approve the run that waits at its gate');
-    // wow has no tool for it: the one the agent guessed at is refused, and it says who answers.
+    await say(page, `Approve the run ${runId}`);
+    // The real command, sent as the assistant's, is refused with who answers and where.
     const tool = conversation(page).getByTestId('item-tool_call').last();
     await tool.locator('summary').click();
-    await expect(tool).toContainText('There is no tool approve_gate.');
+    await expect(tool).toContainText('workflowRun.continue');
+    await expect(tool).toContainText(
+      `Only the user approves, sends back or stops a run. The run is at /workflows/runs/${runId}.`,
+    );
     await expect(conversation(page).locator(':scope > li').last()).toContainText(
       'Only you approve a run at its gate',
     );
+    // The run still waits at its gate for the user.
+    await page.goto(`/workflows/runs/${runId}`);
+    const gate = page.getByRole('region', { name: 'Gate' });
+    await expect(gate).toHaveCount(1);
+    await expect(gate.getByRole('button', { name: 'Approve' })).toBeVisible();
   });
 });

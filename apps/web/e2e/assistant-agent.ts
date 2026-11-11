@@ -1,4 +1,9 @@
-import type { ProviderAdapter, ProviderCommand, ProviderEvent } from '@wow/contracts';
+import type {
+  ProviderAdapter,
+  ProviderCommand,
+  ProviderEvent,
+  ServerCommand,
+} from '@wow/contracts';
 
 // The mock agent of the assistant's turns (e2e/assistant.spec.ts). An ordinary thread goes to
 // the chat tests' script; a turn that carries wow's toolset calls wow's tools in process, the
@@ -9,10 +14,15 @@ export interface AssistantToolsLike {
   call(name: string, args: unknown): Promise<{ readonly text: string; readonly isError: boolean }>;
 }
 
-interface Step {
-  readonly tool: string;
-  readonly args: Record<string, unknown>;
-}
+// What the agent does in a turn: a call of one of wow's tools, or a command wow would carry out
+// for the assistant (with its origin), which is how the assistant's own commands reach the
+// engine; a mock agent may try one that no tool offers, to show that wow refuses it.
+type Step =
+  | { readonly tool: string; readonly args: Record<string, unknown> }
+  | { readonly command: ServerCommand };
+
+// Carries out a command as the assistant's; throws wow's refusal.
+export type AssistantAct = (command: ServerCommand) => void;
 
 // The user's own words: the last part of the prompt, after a note from wow if there is one.
 const userText = (prompt: string) => prompt.split('\n\n').at(-1) ?? prompt;
@@ -102,10 +112,12 @@ function scenario(text: string, trackerUrl: string): Scenario {
         'That is work in your project, which the chat view is for. Open it there with the button.',
     };
   }
-  if (/approve/i.test(text)) {
-    // A real agent may try a tool it guesses at; wow has none for a gate (spec 11).
+  const approve = /approve the run (\S+)/i.exec(text);
+  if (approve?.[1]) {
+    // wow offers no tool for a gate (spec 11); even the real command, sent as the assistant's,
+    // is refused, and the run keeps waiting.
     return {
-      steps: [{ tool: 'approve_gate', args: { runId: 'the-waiting-run' } }],
+      steps: [{ command: { type: 'workflowRun.continue', runId: approve[1] } }],
       answer:
         'Only you approve a run at its gate, send it back or stop it; wow gives me no tool for that and refuses it from me. Open the run from Workflows → Runs and answer the gate there.',
     };
@@ -167,15 +179,22 @@ export class AssistantMockAgent implements ProviderAdapter {
   readonly kind = 'claude' as const;
   readonly #ordinary: ProviderAdapter;
   readonly #tools: () => AssistantToolsLike;
+  readonly #act: AssistantAct;
   readonly #trackerUrl: string;
   readonly #listeners = new Set<(event: ProviderEvent) => void>();
   // What the setup file left to fill in and was not asked for yet; undefined when no walk-through
   // is going on.
   #walk: FillIn[] | undefined;
 
-  constructor(ordinary: ProviderAdapter, tools: () => AssistantToolsLike, trackerUrl: string) {
+  constructor(
+    ordinary: ProviderAdapter,
+    tools: () => AssistantToolsLike,
+    act: AssistantAct,
+    trackerUrl: string,
+  ) {
     this.#ordinary = ordinary;
     this.#tools = tools;
+    this.#act = act;
     this.#trackerUrl = trackerUrl;
     ordinary.onEvent((event) => this.#emit(event));
   }
@@ -243,10 +262,11 @@ export class AssistantMockAgent implements ProviderAdapter {
         type: 'toolCallStarted',
         threadId,
         itemId,
-        name: `mcp__wow__${step.tool}`,
-        input: step.args,
+        name: 'tool' in step ? `mcp__wow__${step.tool}` : `wow command ${step.command.type}`,
+        input: 'tool' in step ? step.args : step.command,
       });
-      const result = await this.#tools().call(step.tool, step.args);
+      const result =
+        'tool' in step ? await this.#tools().call(step.tool, step.args) : this.#command(step);
       results.push(result.text);
       this.#emit({ type: 'toolCallOutput', threadId, itemId, output: result.text });
       this.#emit({
@@ -268,6 +288,16 @@ export class AssistantMockAgent implements ProviderAdapter {
       delta: reply,
     });
     this.#emit({ type: 'turnCompleted', threadId });
+  }
+
+  #command(step: { readonly command: ServerCommand }): { text: string; isError: boolean } {
+    try {
+      this.#act(step.command);
+      return { text: JSON.stringify({ outcome: 'changed' }), isError: false };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      return { text: JSON.stringify({ outcome: 'refused', reason }), isError: true };
+    }
   }
 
   #emit(event: ProviderEvent): void {
