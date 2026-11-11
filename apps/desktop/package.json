@@ -1,6 +1,6 @@
 {
   "name": "@wow/desktop",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
   "description": "wow desktop app: calendar, agent chat, workflows and backlog in one window.",
   "author": "wow",
