@@ -2,7 +2,7 @@ import type { ResolvedSetting, Workflow, WorkflowRun } from '@wow/contracts';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { appId, decodeServerInfoArg, encodeServerInfoArg } from '../app.js';
-import { rendererFile } from './app-protocol.js';
+import { opensOutside, rendererFile } from './app-protocol.js';
 import { readDesktopSettings } from './desktop-settings.js';
 import { runNotices, runStates } from './notifications.js';
 import { applicationMenu } from './app-menu.js';
@@ -179,6 +179,18 @@ describe('rendererFile', () => {
     );
     expect(rendererFile(dir, 'wow://app/..%5c..%5csecret.txt')).toBeUndefined();
     expect(rendererFile(dir, 'not a url')).toBeUndefined();
+  });
+});
+
+describe('opensOutside', () => {
+  it('hands http, https and mailto links to the system and nothing else', () => {
+    expect(opensOutside('https://docs.example.test/plan')).toBe(true);
+    expect(opensOutside('http://docs.example.test/plan')).toBe(true);
+    expect(opensOutside('mailto:team@example.test')).toBe(true);
+    expect(opensOutside('MAILTO:team@example.test')).toBe(true);
+    expect(opensOutside('file:///c:/secret.txt')).toBe(false);
+    expect(opensOutside('javascript:alert(1)')).toBe(false);
+    expect(opensOutside('wow://app/')).toBe(false);
   });
 });
 

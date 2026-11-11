@@ -2737,7 +2737,7 @@ Shared pieces in `apps/web/src/components` (views compose them; none restyles `c
   holds back a fence without its closing line, or a table at the very end of the text, and shows
   it as plain text until it is complete, also inside a list item or a quote. It reads a fence
   where markdown does: at most three spaces in from its quote or list item, and ended by the end
-  of that quote or item.
+  of that quote or item. Lines may end in CRLF.
 - `mermaid-diagram.tsx` (`MermaidDiagram`) draws a `mermaid` fence in place with a "Source"
   switch. `mermaid.ts` loads the library on first use, runs it at its `strict` security level in
   the app's theme, and returns the SVG or a one-line reason; while drawing and on failure the
@@ -2753,11 +2753,12 @@ Shared pieces in `apps/web/src/components` (views compose them; none restyles `c
   directives cannot set CSS, theme variables or fonts (`htmlLabels: false` and the `secure`
   list); a diagram that names something to load is refused before drawing, with a reason (a
   flowchart image shape, read from the parsed diagram, and in any diagram type a source with
-  `url(` to somewhere outside the drawing, `image-set(` or `@import`, with backslashes removed,
-  which also refuses a label that spells `url(`); and `scrubSvg` removes pictures, scripts, event
+  `url(` to somewhere outside the drawing, `image-set(` or `@import`, after CSS escapes are read
+  as CSS reads them (`u\72l(` is `url(`), which also refuses a label that spells `url(`); and `scrubSvg` removes pictures, scripts, event
   attributes and any CSS or reference that points outside the drawing, and gives links the rule
   of `safeHref` (a new window for http, https and mailto, no link otherwise). The desktop window
-  opens only http and https links outside the app, so a mailto link does nothing there yet.
+  hands the same three to the system (`opensOutside` in `apps/desktop/src/main/app-protocol.ts`),
+  so a mailto link opens the mail program.
   The palette command "Toggle diagram source" switches every diagram at once
   (`diagramView`); it is view state and is not persisted.
 - `lib/feedback.ts`: `notify.success|error|info|warning` and `offerUndo({message, undo})`.

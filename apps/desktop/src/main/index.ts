@@ -29,7 +29,7 @@ import {
   updateChannels,
 } from '../app.js';
 import { applicationMenu } from './app-menu.js';
-import { rendererFile } from './app-protocol.js';
+import { opensOutside, rendererFile } from './app-protocol.js';
 import { DesktopController, type DesktopShell } from './controller.js';
 import { electronUpdater } from './electron-updater.js';
 import { serverStartTimeoutMs, serverStopTimeoutMs } from './limits.js';
@@ -108,7 +108,7 @@ function createWindow(endpoint: ServerEndpoint): BrowserWindow {
   });
   // Links to the outside world open in the browser; the window only ever shows the app.
   created.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https:') || url.startsWith('http:')) void shell.openExternal(url);
+    if (opensOutside(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
   created.webContents.on('will-navigate', (event, url) => {

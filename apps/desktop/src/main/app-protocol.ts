@@ -20,3 +20,7 @@ export function rendererFile(rendererDir: string, requestUrl: string): string | 
   const file = path.resolve(root, `.${path.posix.normalize(pathname)}`);
   return file.startsWith(root + path.sep) ? file : undefined;
 }
+
+// The addresses a link in the app may hand to the system: the same rule as the web app's
+// `safeHref` (http, https and mailto), so a mail link opens the mail program.
+export const opensOutside = (url: string): boolean => /^(https?|mailto):/i.test(url);

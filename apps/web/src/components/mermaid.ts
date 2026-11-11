@@ -67,8 +67,16 @@ const fetching = new Set([
 const linkAttributes = ['href', 'xlink:href', 'src'];
 // CSS that loads something. A `url(#id)` points inside the drawing (markers, gradients).
 const loadingCss = /@import|image-set\(|url\((?!\s*['"]?\s*#)/i;
-// CSS escapes can spell `url` without the letters, and the library's own styles have none.
-const unescaped = (css: string) => css.replaceAll('\\', '');
+// CSS escapes can spell `url` without the letters (`u\\72l(`), so they are read the way CSS reads
+// them before checking; the library's own styles have none.
+const cssEscape = /\\(?:([0-9a-f]{1,6})(?:\r\n|[ \t\n\r\f])?|([\s\S]))?/gi;
+const unescaped = (css: string) =>
+  css.replace(cssEscape, (_, hex: string | undefined, char: string | undefined) => {
+    if (hex === undefined) return char ?? '';
+    const point = Number.parseInt(hex, 16);
+    const valid = point > 0 && point <= 0x10ffff && (point < 0xd800 || point > 0xdfff);
+    return String.fromCodePoint(valid ? point : 0xfffd);
+  });
 
 function scrubStyle(css: string): string {
   return unescaped(css)
