@@ -208,6 +208,8 @@ setup_applications id (the command's id), at, name, added(json), replaced(json),
                  toFillIn(json), parts(json: AssistantChangeRecord[]), state
                  ('applied'|'undone'), undoneAt?   -- setup files applied here, with what Undo
                  puts back (migration 0019_setup_applications)
+assistant_greeting id (always 1), owedAt   -- one row while the greeting after the first-start
+                 step waits for the assistant to run it (migration 0020_assistant_greeting)
 settings         key, value(json), scope ('global'|'project:<id>'|'provider:<id>')
 events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
@@ -1909,11 +1911,16 @@ binary and folder when that kind has no instance, then `provider.test`) and the 
 and "Start from a setup file", which reads, previews and applies a file through the same
 `readSetupFile`, `SetupPreviewDialog` and `setup.apply` as Settings → Advanced. When an instance
 passes, the client writes `providers.offerSetup` false, so a provider removed later never brings
-the gate back (spec 27), sets `firstStartStore.greet` and goes to `/assistant`.
+the gate back (spec 27), and goes to `/assistant`.
 
-**The greeting** (spec 24, 26). Once the Assistant view has its thread and no problem, it sends
-`thread.greetAssistant` once. The command is refused from the assistant (classes.ts) and when no
-assistant thread exists, and does nothing while a turn runs. Its turn shows `assistant.greeting`
+**The greeting** (spec 24, 26). The server owns it, so a reload or a restart between the
+passing test and the greeting does not lose it. When the gate goes up the client sends
+`thread.greetAssistant`. The server greets at once when the assistant thread exists, no turn
+runs and a connected instance can run it; otherwise it stores `assistant.greetingOwed` (table
+`assistant_greeting`, `ReadModel.greetingOwed`), and the next `thread.openAssistant` that can run
+the thread starts the greeting turn in the same commit. Each greeting stores
+`assistant.greetingSent`, which ends the debt, so it is sent once. The command is refused from
+the assistant (classes.ts). Its turn shows `assistant.greeting`
 as the user's line; the prompt gets wow's note before it (`firstStartNote` in
 `assistant/thread.ts`, the same "[From wow, not typed by the user]" form as the answers note):
 the providers that are ready, the projects, workflows and trackers (address and whether the token
@@ -1923,7 +1930,10 @@ needs (a project, a workflow), and, when a setup file is applied and not undone
 work hours while `calendar.workHours` is not stored, and project folders, which a file never
 holds. The note goes through `hideSecrets`. What to do with it is in `assistant.instructions`: one
 thing per answer, a secret through `show_secret_field`. Nothing on the server walks the list;
-the agent does, and the facts are re-read on every greeting.
+the agent does, and the facts are re-read on every greeting. A setup file applied later (from
+Settings) is told at the assistant's next `thread.sendMessage` instead (`setupAppliedNote`):
+when the newest applied file is newer than the start of the assistant's last turn, the note
+names it with the same "To fill in" lines, after the answers note and before the user's text.
 
 **When it cannot start.** With no thread or a `problem` from `assistant.open`, the Assistant view
 shows the problem and the same `ConnectAgentStep` in place of the conversation (spec 27); the

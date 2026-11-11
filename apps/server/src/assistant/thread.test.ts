@@ -680,9 +680,6 @@ describe('the greeting after the first-start step (spec 24, 26)', () => {
   const greeting = settingsRegistry['assistant.greeting'].default;
 
   it('says what is set up and what a first run still needs, after the user line', async () => {
-    expect(refusal(() => dispatch({ type: 'thread.greetAssistant' }))).toBe(
-      'Open the assistant before it can greet you',
-    );
     await instance('claude-work', 'claude', 'Claude at work');
     await open();
     expect(
@@ -711,6 +708,34 @@ describe('the greeting after the first-start step (spec 24, 26)', () => {
     expect(rows<ThreadItem>('threadItems', assistantThreadId).map((item) => item.payload)).toEqual([
       { text: greeting },
       { text: 'Done.' },
+    ]);
+  });
+
+  it('keeps the greeting owed from the first-start step until the assistant opens, across a restart', async () => {
+    // The step goes up before any instance exists, so nothing can greet yet.
+    dispatch({ type: 'thread.greetAssistant' });
+    dispatch({ type: 'thread.greetAssistant' });
+    await server.stop();
+    server = await launch();
+    await instance('claude-work', 'claude', 'Claude at work');
+    expect(startTurns('claude-work')).toEqual([]);
+
+    const ended = turnEnds(assistantThreadId);
+    await open();
+    await ended;
+    const greetings = startTurns('claude-work');
+    expect(greetings).toHaveLength(1);
+    expect(greetings[0]?.prompt).toMatch(
+      /^\[From wow, not typed by the user\] The first-start step/,
+    );
+    expect(greetings[0]?.prompt.endsWith(`\n\n${greeting}`)).toBe(true);
+
+    // Sent once: opening again greets no more.
+    await open();
+    await say(assistantThreadId, 'Hello');
+    expect(startTurns('claude-work').map((command) => command.prompt)).toEqual([
+      greetings[0]?.prompt,
+      'Hello',
     ]);
   });
 
@@ -778,5 +803,39 @@ describe('the greeting after the first-start step (spec 24, 26)', () => {
     dispatch({ type: 'setup.undo', applicationId: 'colleague' });
     await greet();
     expect(startTurns('claude-work')[1]?.prompt).not.toContain('To fill in');
+  });
+  it('tells the assistant at its next turn what a setup file applied from Settings left to fill in', async () => {
+    await instance('claude-work', 'claude', 'Claude at work');
+    await open();
+    await say(assistantThreadId, 'Hello');
+    const text = [
+      'version: 1',
+      'settings:',
+      '  trackers.gitlab.baseUrl: https://gitlab.example.invalid',
+      'toFillIn:',
+      '  - trackers.gitlab.token',
+      '',
+    ].join('\n');
+    dispatch({ type: 'setup.apply', applicationId: 'later', name: 'later.yaml', text });
+    await say(assistantThreadId, 'I loaded a file');
+    await say(assistantThreadId, 'And now?');
+
+    const [, told, after] = startTurns('claude-work').map((command) => command.prompt);
+    expect(told?.split('\n')).toEqual([
+      '[From wow, not typed by the user] The user applied the setup file later.yaml in Settings.',
+      'To fill in after the setup file later.yaml:',
+      '- GitLab token (trackers.gitlab.token, Settings → Trackers): a secret; show its field.',
+      '- Work hours (calendar.workHours, Settings → Calendar): only this person can say.',
+      '- Project folders (Settings → Projects): a setup file holds none, they differ per machine.',
+      '',
+      'I loaded a file',
+    ]);
+    // Told once; the conversation shows only what the user typed.
+    expect(after).toBe('And now?');
+    expect(
+      rows<ThreadItem>('threadItems', assistantThreadId)
+        .filter((item) => item.kind === 'user')
+        .map((item) => item.payload),
+    ).toEqual([{ text: 'Hello' }, { text: 'I loaded a file' }, { text: 'And now?' }]);
   });
 });

@@ -363,6 +363,12 @@ export const setupApplications = sqliteTable('setup_applications', {
   undoneAt: text(),
 });
 
+// One row while the greeting after the first-start step is owed (app assistant spec 26).
+export const assistantGreeting = sqliteTable('assistant_greeting', {
+  id: integer().primaryKey(),
+  owedAt: text().notNull(),
+});
+
 export const skills = sqliteTable('skills', {
   id: text().primaryKey(),
   name: text().notNull(),

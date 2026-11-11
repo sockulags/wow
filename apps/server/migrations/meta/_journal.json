@@ -141,6 +141,13 @@
       "when": 1794359390991,
       "tag": "0019_setup_applications",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1794384863065,
+      "tag": "0020_assistant_greeting",
+      "breakpoints": true
     }
   ]
 }

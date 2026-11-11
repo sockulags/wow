@@ -14,6 +14,7 @@ import {
   assistantAnswersNote,
   assistantThreadEvents,
   firstStartNote,
+  setupAppliedNote,
   storedGreeting,
 } from '../assistant/thread.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
@@ -58,6 +59,20 @@ const providerIdOf = (threadId: string, rowId: string) => rowId.slice(threadId.l
 
 // A turn with the user's line as its first item. The prompt can carry a note from wow before the
 // line; the conversation shows only the line.
+// The greeting turn: wow's note of what is set up, then the user's line.
+function greetingEvents(read: ReadModel, context: DecideContext, thread: Thread): DomainEvent[] {
+  const text = storedGreeting(read, context);
+  const note = firstStartNote(read, context, thread.providerInstanceId);
+  return [
+    turnStarted(read, thread, context.now, {
+      text,
+      prompt: `${note}\n\n${text}`,
+      assistant: true,
+    }),
+    { kind: 'assistant.greetingSent', aggregate: assistantThreadId, payload: { at: context.now } },
+  ];
+}
+
 function turnStarted(
   read: ReadModel,
   thread: Thread,
@@ -239,23 +254,29 @@ export function decideThread(
     case 'thread.openAssistant': {
       // A running turn goes on as it started; the thread is brought in line before the next one.
       if (read.runningTurn(assistantThreadId)) return [];
-      return assistantThreadEvents(read, context, {
+      const opened = assistantThreadEvents(read, context, {
         model: command.fallbackModel,
         effort: command.fallbackEffort,
-      }).events;
+      });
+      return read.greetingOwed()
+        ? [...opened.events, ...greetingEvents(read, context, opened.thread)]
+        : opened.events;
     }
     case 'thread.greetAssistant': {
-      if (!read.thread(assistantThreadId)) {
-        throw new CommandRejected('rejected', 'Open the assistant before it can greet you');
+      // The greeting is owed until the assistant can run it, so a reload or a restart between
+      // the first-start step and the greeting does not lose it (spec 26).
+      const owe: DomainEvent[] = read.greetingOwed()
+        ? []
+        : [{ kind: 'assistant.greetingOwed', aggregate: assistantThreadId, payload: { at: now } }];
+      if (!read.thread(assistantThreadId) || read.runningTurn(assistantThreadId)) return owe;
+      let opened: ReturnType<typeof assistantThreadEvents>;
+      try {
+        opened = assistantThreadEvents(read, context);
+      } catch (error) {
+        if (error instanceof CommandRejected) return owe;
+        throw error;
       }
-      if (read.runningTurn(assistantThreadId)) return [];
-      const { events, thread } = assistantThreadEvents(read, context);
-      const text = storedGreeting(read, context);
-      const note = firstStartNote(read, context, thread.providerInstanceId);
-      return [
-        ...events,
-        turnStarted(read, thread, now, { text, prompt: `${note}\n\n${text}`, assistant: true }),
-      ];
+      return [...opened.events, ...greetingEvents(read, context, opened.thread)];
     }
     case 'thread.sendMessage': {
       const stored = requireThread(read, command.threadId);
@@ -267,7 +288,12 @@ export function decideThread(
       const assistant =
         stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
       const thread = assistant?.thread ?? stored;
-      const note = assistant ? assistantAnswersNote(read, context) : null;
+      const notes = assistant
+        ? [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
+            (entry): entry is string => entry !== null,
+          )
+        : [];
+      const note = notes.length === 0 ? null : notes.join('\n\n');
       return [
         ...(assistant?.events ?? []),
         turnStarted(read, thread, now, {

@@ -110,6 +110,8 @@ export interface ReadModel {
   setupApplication(id: string): SetupApplicationRecord | undefined;
   // The newest setup file applied here and not undone.
   lastSetupApplication(): SetupApplicationRecord | undefined;
+  // True while the greeting after the first-start step waits for the assistant to run it.
+  greetingOwed(): boolean;
   // What the user answered to the assistant after `since` (every answer without it), in the
   // order answered: proposals they said Yes or No to, and changes they undid.
   assistantAnswers(since: string | undefined): {

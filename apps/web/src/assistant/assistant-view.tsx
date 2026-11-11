@@ -2,8 +2,6 @@ import { assistantThreadId, heldSecretSentence, rpcMethods, type ThreadItem } fr
 import { Link } from '@tanstack/react-router';
 import { KeyRoundIcon, SparklesIcon, XIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useStore } from 'zustand';
-import { firstStartStore } from '@/app/first-start';
 import { useRuntime, useSetting } from '@/app/runtime';
 import type { ComposerHandle } from '@/chat/composer';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
@@ -180,17 +178,6 @@ export function AssistantView() {
   const composer = useRef<ComposerHandle>(null);
   const [held, setHeld] = useState<Held>();
   const [saved, setSaved] = useState<string>();
-  const greet = useStore(firstStartStore, (state) => state.greet);
-
-  // The first-start step just finished (spec 26): wow sends the greeting once, when the thread
-  // is open on a provider that can run it.
-  useEffect(() => {
-    if (!greet || !thread || !asked || problem) return;
-    firstStartStore.setState({ greet: false });
-    send({ type: 'thread.greetAssistant' }).catch((reason: unknown) =>
-      setSaved(errorMessage(reason)),
-    );
-  }, [greet, thread, asked, problem, send]);
 
   if (status !== 'ready' && !thread) return <TopicPlaceholder status={status} />;
   if (!connection) return <TopicPlaceholder status="offline" />;

@@ -14,6 +14,7 @@ import {
   assistantChanges,
   assistantProposals,
   setupApplications,
+  assistantGreeting,
   backlogItems,
   calendarItems,
   changeRequests,
@@ -431,6 +432,15 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(assistantChanges.id, event.payload.changeId))
         .run();
       return ['assistantChanges'];
+    case 'assistant.greetingOwed':
+      tx.insert(assistantGreeting)
+        .values({ id: 1, owedAt: event.payload.at })
+        .onConflictDoNothing()
+        .run();
+      return [];
+    case 'assistant.greetingSent':
+      tx.delete(assistantGreeting).run();
+      return [];
     case 'setup.applied':
       tx.insert(setupApplications).values(event.payload).run();
       return ['setupApplications'];
@@ -647,6 +657,7 @@ export function readModel(tx: DbOrTx): ReadModel {
         .where(eq(setupApplications.state, 'applied'))
         .orderBy(desc(setupApplications.at), desc(sql`rowid`))
         .get(),
+    greetingOwed: () => tx.select().from(assistantGreeting).get() !== undefined,
     assistantProposal: (id) =>
       tx.select().from(assistantProposals).where(eq(assistantProposals.id, id)).get(),
     assistantAnswers: (since) => ({

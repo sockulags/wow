@@ -145,9 +145,12 @@ export const Command = z.discriminatedUnion('type', [
     fallbackModel: z.string().min(1).optional(),
     fallbackEffort: z.string().min(1).optional(),
   }),
-  // The assistant's first turn after the first-start step (app assistant spec 24, 26). The
-  // conversation shows `assistant.greeting` as the user's line; the agent also gets wow's note
-  // of what is set up, what a first run still needs and what a setup file left to fill in.
+  // The assistant's first turn after the first-start step (app assistant spec 24, 26), sent
+  // when the step goes up. The server keeps it owed and greets as soon as the assistant can
+  // run: at once when its thread is open on a connected instance, else at the next
+  // `thread.openAssistant`. The conversation shows `assistant.greeting` as the user's line; the
+  // agent also gets wow's note of what is set up, what a first run still needs and what a setup
+  // file left to fill in.
   z.object({ type: z.literal('thread.greetAssistant') }),
   // Starts a turn with the thread's current model, effort and permission mode (spec 14, 17).
   z.object({ type: z.literal('thread.sendMessage'), threadId: Id, text: z.string().min(1) }),
@@ -887,6 +890,17 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
   // An ordinary change the assistant made, stored in the same commit as the change itself.
   z.object({ kind: z.literal('assistant.changed'), aggregate: Id, payload: AssistantChangeRecord }),
+  // The greeting after the first-start step waits until the assistant can run it.
+  z.object({
+    kind: z.literal('assistant.greetingOwed'),
+    aggregate: Id,
+    payload: z.object({ at: Timestamp }),
+  }),
+  z.object({
+    kind: z.literal('assistant.greetingSent'),
+    aggregate: Id,
+    payload: z.object({ at: Timestamp }),
+  }),
   z.object({ kind: z.literal('setup.applied'), aggregate: Id, payload: SetupApplicationRecord }),
   z.object({
     kind: z.literal('setup.undone'),

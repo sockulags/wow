@@ -52,7 +52,8 @@ left for you to fill in.
 
 Once a test passes, the step goes away for good (the `providers.offerSetup` setting turns off, so
 removing a provider later never hides the app again) and the Assistant opens. wow sends it a first
-message for you (`assistant.greeting`), and the assistant answers with what is set up and what a
+message for you (`assistant.greeting`), also when the window was reloaded in between (then when you
+next open Assistant), and the assistant answers with what is set up and what a
 first run still needs: usually a project and a workflow. After a setup file it then goes through
 what the file left to fill in, one thing per answer: each token through its field, then your work
 hours, then your project folders, which a file never holds.
@@ -869,7 +870,8 @@ out too.
 preview with what would be added and what would replace a value you have, and applies it as one
 step you can undo. A file with an unknown key, a wrong type or a secret value is refused with the
 line and the reason; a workflow naming a skill that is not installed is applied and marked "skill
-not installed".
+not installed". After a file is applied here, your next message to the assistant tells it what the file
+left to fill in, and it goes through that list one thing per answer as after a first start.
 
 ### When it cannot start
 
