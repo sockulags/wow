@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AssistantChange, AssistantProposal } from './assistant.js';
+import { OwnSkill, SentSkill, SkillRef } from './skills.js';
 import {
   AppNotification,
   Approval,
@@ -155,7 +156,14 @@ export const Command = z.discriminatedUnion('type', [
   // file left to fill in.
   z.object({ type: z.literal('thread.greetAssistant') }),
   // Starts a turn with the thread's current model, effort and permission mode (spec 14, 17).
-  z.object({ type: z.literal('thread.sendMessage'), threadId: Id, text: z.string().min(1) }),
+  // `skills` are the skills picked for the message, in order (wow skills spec 10, 18): a wow
+  // skill goes in as its text, a folder skill as its invocation, both before the text.
+  z.object({
+    type: z.literal('thread.sendMessage'),
+    threadId: Id,
+    text: z.string().min(1),
+    skills: z.array(SkillRef).optional(),
+  }),
   // The user's answer to the questions the assistant asked with its tool (questions spec 9):
   // `itemId` is that tool call, with one reply per question. It is sent as the user's next
   // message, marked as the answer. Only the assistant's thread has such questions.
@@ -264,6 +272,12 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('workflow.delete'), workflowId: Id }),
   // Undo of a delete: puts the row the client still holds back as it was.
   z.object({ type: z.literal('workflow.restore'), workflow: Workflow }),
+  // Own skills (wow skills spec 5, 6): a file under wow's home each. Undo sends the opposite
+  // command with what the client still holds: delete for a create, update with the old text,
+  // create for a delete.
+  z.object({ type: z.literal('skill.create'), skill: OwnSkill }),
+  z.object({ type: z.literal('skill.update'), skill: OwnSkill }),
+  z.object({ type: z.literal('skill.delete'), name: z.string().min(1) }),
   z.object({
     type: z.literal('workflowRun.start'),
     runId: Id,
@@ -459,6 +473,15 @@ export const InternalCommand = z.discriminatedUnion('type', [
   }),
   // Replaces the skills projection with a fresh scan; the server's skills watcher sends it.
   z.object({ type: z.literal('skills.sync'), skills: z.array(Skill) }),
+  // A workflow step's turn: the prompt the engine made, sent as it is, with the text the thread
+  // shows and the skills it was made with (wow skills spec 14).
+  z.object({
+    type: z.literal('thread.sendPrepared'),
+    threadId: Id,
+    text: z.string().min(1),
+    prompt: z.string().min(1),
+    skills: z.array(SentSkill),
+  }),
   // Replaces the plans projection with a fresh read of every project's intents folder; the
   // server's plans service sends it.
   z.object({ type: z.literal('plans.sync'), intents: z.array(PlanIntent) }),
@@ -699,6 +722,17 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('providerInstance.updateProgressed'),
     aggregate: Id,
     payload: z.object({ providerInstanceId: Id, progress: ProviderUpdateProgress }),
+  }),
+  // An own skill written or removed by command. The skills service writes or removes its file.
+  z.object({
+    kind: z.literal('skill.saved'),
+    aggregate: z.literal('skills'),
+    payload: z.object({ skill: Skill, previous: Skill.nullable() }),
+  }),
+  z.object({
+    kind: z.literal('skill.deleted'),
+    aggregate: z.literal('skills'),
+    payload: z.object({ skill: Skill }),
   }),
   z.object({
     kind: z.literal('skills.synced'),

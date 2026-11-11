@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ThreadState } from './provider.js';
+import { BuiltInSkillName, SentSkill, SkillRef, WowSkillSource } from './skills.js';
 
 // One part of a gate's condition (review loop spec 54): the step's final message ends with the
 // approved verdict line, the run's pull request has every check successful, or a file was found
@@ -96,6 +97,14 @@ export function ruleConditionText(when: RuleCondition): string {
 export const WorkflowStep = z.object({
   id: z.string().min(1),
   skillName: z.string().min(1),
+  // Set when the step runs a wow skill: `yours` keeps an own skill apart from a folder skill of
+  // the same name. Absent: a folder skill, or a built-in one by its reserved name.
+  skillSource: WowSkillSource.optional(),
+  // Skills the step also follows, after the one it runs and before the extra prompt, in this
+  // order (wow skills spec 11). Absent: none.
+  alsoFollow: z.array(SkillRef).optional(),
+  // Built-in skills wow would attach by itself that this step leaves out (spec 12).
+  leaveOut: z.array(BuiltInSkillName).optional(),
   providerInstanceId: z.string().min(1),
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
@@ -344,6 +353,10 @@ export const RunEffect = z.discriminatedUnion('type', [
     stepId: z.string().min(1),
     threadId: z.string().min(1),
     prompt: z.string(),
+    // The prompt as the thread shows it, without the wow skills' texts, and the skills it was
+    // made with (wow skills spec 14). Absent for runs from before wow skills.
+    shown: z.string().optional(),
+    skills: z.array(SentSkill).optional(),
   }),
   // A step sent back at a gate runs again in its own thread. The orchestrator starts that turn in
   // the same commit as the run change, so nothing is left to perform; the effect records what
@@ -355,6 +368,8 @@ export const RunEffect = z.discriminatedUnion('type', [
     threadId: z.string().min(1),
     attempt: z.number().int().min(2),
     prompt: z.string(),
+    shown: z.string().optional(),
+    skills: z.array(SentSkill).optional(),
   }),
   z.object({ type: z.literal('interrupt'), threadId: z.string().min(1) }),
   z.object({

@@ -14,6 +14,8 @@ export * from './rpc.js';
 export * from './server-info.js';
 export * from './settings.js';
 export * from './setup.js';
+export * from './skills.js';
+export * from './template.js';
 export * from './trackers.js';
 export * from './updates.js';
 export * from './workflow.js';

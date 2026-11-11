@@ -30,6 +30,12 @@ export function parseSkillFile(content: string): SkillFrontmatter {
   };
 }
 
+// The instructions after the frontmatter: what a wow skill sends as its text.
+export function skillBody(content: string): string {
+  const match = FRONTMATTER.exec(content);
+  return (match ? content.slice(match[0].length) : content.replace(/^\uFEFF/, '')).trim();
+}
+
 // `agents/openai.yaml` next to a SKILL.md: `policy.allow_implicit_invocation: false` keeps Codex
 // from choosing the skill on its own. Returns undefined when the file does not say.
 export function parseCodexPolicy(content: string): boolean | undefined {

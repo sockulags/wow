@@ -566,7 +566,8 @@ describe('plan runs', () => {
   it('has the unit text and the failure choice as project settings', () => {
     const template = settingsRegistry['workflows.unitPromptTemplate'];
     expect(template.scope).toBe('project');
-    expect(template.default).toContain('Intent-Unit: {{intentId}}/{{unitKey}}');
+    // The Intent-Unit line comes in whole, or not at all for a step that gets wow-pull-request.
+    expect(template.default).toContain('put this line in its body: {{intentUnitLine}}');
     const onFailure = settingsRegistry['workflows.planRunOnFailure'];
     expect(onFailure.default).toBe('stop');
     expect(onFailure.schema.safeParse('skip').success).toBe(true);

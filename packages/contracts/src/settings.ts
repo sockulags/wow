@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BuiltInSkillName } from './skills.js';
 import {
   SecretPattern,
   defaultAskRefusedWords,
@@ -380,7 +381,8 @@ export const defaultUnitPromptTemplate = [
   'Intent: {{intentId}}',
   'Unit: {{unitKey}} {{unitTitle}}',
   '',
-  'When you open a pull request for it, put this line in its body: Intent-Unit: {{intentId}}/{{unitKey}}',
+  // Left out for a run whose steps get wow-pull-request, which says the same (wow skills spec 13).
+  '{{#intentUnitLine}}When you open a pull request for it, put this line in its body: {{intentUnitLine}}{{/intentUnitLine}}',
 ].join('\n');
 
 export const PlanRunOnFailure = z.enum(['stop', 'skip']);
@@ -760,13 +762,14 @@ export const settingsRegistry = {
     scope: 'project',
   }),
   'workflows.unitPromptTemplate': defineSetting({
-    schema: z
-      .string()
-      .meta({ widget: 'template', placeholders: ['intentId', 'unitKey', 'unitTitle'] }),
+    schema: z.string().meta({
+      widget: 'template',
+      placeholders: ['intentId', 'unitKey', 'unitTitle', 'intentUnitLine'],
+    }),
     group: 'workflows',
     label: 'Unit text',
     description:
-      "What every step is told about its unit when a plan run starts the workflow for one. It goes after the step's skill and before the handover. {{intentId}} is the intent's folder name, {{unitKey}} the unit's key and {{unitTitle}} its title; a {{#name}}…{{/name}} section is left out when that value is empty.",
+      "What every step is told about its unit when a plan run starts the workflow for one. It goes after the step's skill and before the handover. {{intentId}} is the intent's folder name, {{unitKey}} the unit's key and {{unitTitle}} its title and {{intentUnitLine}} the Intent-Unit line, which is empty when the step gets the built-in skill wow-pull-request that asks for it; a {{#name}}…{{/name}} section is left out when that value is empty.",
     default: defaultUnitPromptTemplate,
     scope: 'project',
   }),
@@ -834,6 +837,15 @@ export const settingsRegistry = {
     default: [...alwaysStopSkillDefaults],
     scope: 'project',
   }),
+  'workflows.attachBuiltInSkills': defineSetting({
+    schema: z.boolean(),
+    group: 'workflows',
+    label: 'Attach built-in skills',
+    description:
+      "Give a step wow's built-in skills where the workflow depends on them: wow-verdict when its gate or a rule reads the verdict, wow-artifacts when it expects artifacts, wow-pull-request when the run delivers a unit of a plan. A step can leave one out. Off: steps get only the skills they name.",
+    default: true,
+    scope: 'project',
+  }),
   'workflows.gateChecksTimeoutMinutes': defineSetting({
     schema: z.number().int().min(1).max(1440),
     group: 'workflows',
@@ -853,6 +865,21 @@ export const settingsRegistry = {
       'Folders whose */SKILL.md files are offered as skills. "~" is your home folder and "<project>" is repeated for every project folder.',
     default: [...defaultSkillDirectories],
     scope: 'global',
+  }),
+  'skills.builtInOff': defineSetting({
+    schema: z.array(BuiltInSkillName),
+    group: 'skills',
+    label: 'Built-in skills switched off',
+    description:
+      'Skills that ship with wow and are switched off: they are in no skill list and wow attaches them nowhere. A step that names one fails before it starts.',
+    default: [],
+    scope: 'global',
+    options: {
+      'wow-verdict': { label: 'wow-verdict' },
+      'wow-artifacts': { label: 'wow-artifacts' },
+      'wow-pull-request': { label: 'wow-pull-request' },
+      'wow-handover': { label: 'wow-handover' },
+    },
   }),
   'skills.includeClaudePlugins': defineSetting({
     schema: z.boolean(),

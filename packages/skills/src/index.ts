@@ -2,6 +2,7 @@ export {
   codexPolicyFile,
   parseCodexPolicy,
   parseSkillFile,
+  skillBody,
   skillFileName,
   type SkillFrontmatter,
 } from './parse.js';
@@ -16,3 +17,13 @@ export {
   type SkillRoot,
 } from './scan.js';
 export { chokidarWatch, watchSkillRoots, type SkillWatcher, type WatchFactory } from './watch.js';
+export {
+  builtInSkillsDir,
+  fillBuiltInSkill,
+  ownSkillDir,
+  ownSkillFile,
+  ownSkillsDir,
+  removeOwnSkill,
+  wowSkillRoots,
+  writeOwnSkill,
+} from './wow.js';
