@@ -309,6 +309,8 @@ export class CodexAdapter implements ProviderAdapter {
         return this.#startTurn(command);
       case 'interrupt':
         return this.#interrupt(command.threadId);
+      case 'closeThread':
+        return this.#forget(command.threadId);
       case 'answerApproval':
         return this.#answerApproval(command.approvalId, command.decision);
       case 'answerQuestion':
@@ -539,6 +541,20 @@ export class CodexAdapter implements ProviderAdapter {
     this.#threads.set(wowId, thread);
     this.#byCodexId.set(codexId, thread);
     return thread;
+  }
+
+  // The app-server has no request that unloads a thread, so the adapter forgets it: the next
+  // turn of the wow thread starts or resumes a codex thread from what that command says.
+  #forget(threadId: string): unknown {
+    const thread = this.#threads.get(threadId);
+    if (!thread) return { closed: false };
+    this.#threads.delete(threadId);
+    this.#byCodexId.delete(thread.codexId);
+    for (const [id, approval] of this.#approvals)
+      if (approval.codexThreadId === thread.codexId) this.#approvals.delete(id);
+    for (const [id, input] of this.#inputs)
+      if (input.codexThreadId === thread.codexId) this.#inputs.delete(id);
+    return { closed: true };
   }
 
   async #interrupt(threadId: string): Promise<unknown> {

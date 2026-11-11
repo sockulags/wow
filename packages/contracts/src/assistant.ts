@@ -162,20 +162,35 @@ export const assistantToolsetName = 'wow';
 
 // Which provider instance runs the assistant, or the sentence that says why none can (spec 1,
 // 27). The setting names an instance; left empty, the instance the thread already runs on is
-// kept while it is connected, and otherwise the first connected one is taken. The server decides
-// with this; a view can call it with the same rows to say the same thing.
+// kept while it is connected, and otherwise the first connected one is taken. A Codex instance
+// is taken only with `allowCodex` (setting `assistant.allowCodex`), because Codex keeps its
+// read-only shell tool and so could read any file on the computer. The server decides with
+// this; a view can call it with the same rows to say the same thing.
 export type AssistantProvider =
   | { readonly instance: ProviderInstance; readonly problem: null }
   | { readonly instance: null; readonly problem: string };
 
+export interface AssistantProviderChoice {
+  // `assistant.providerInstanceId`; empty for "the first connected one".
+  readonly configuredId: string;
+  // The instance the thread runs on now, if it exists.
+  readonly currentId?: string | undefined;
+  // `assistant.allowCodex`.
+  readonly allowCodex: boolean;
+}
+
 const connectFirst = 'Connect Claude Code or Codex in Settings → Providers.';
+
+export const assistantCodexOff =
+  'The assistant does not run on Codex, because there it can run read-only shell commands and so read files on this computer, including ones that hold secrets, and wow cannot switch that off. Connect Claude Code in Settings → Providers, or turn on "Let the assistant run on Codex" in Settings → Assistant if you accept that.';
 
 export function chooseAssistantProvider(
   instances: readonly ProviderInstance[],
-  configuredId: string,
-  currentId?: string,
+  choice: AssistantProviderChoice,
 ): AssistantProvider {
-  const wanted = configuredId.trim();
+  const { currentId, allowCodex } = choice;
+  const allowed = (instance: ProviderInstance) => allowCodex || instance.kind !== 'codex';
+  const wanted = choice.configuredId.trim();
   if (wanted !== '') {
     const instance = instances.find((entry) => entry.id === wanted);
     if (!instance) {
@@ -184,13 +199,19 @@ export function chooseAssistantProvider(
         problem: `The provider instance chosen for the assistant was removed. Choose another in Settings → Assistant, or leave it empty. ${connectFirst}`,
       };
     }
+    if (!allowed(instance)) return { instance: null, problem: assistantCodexOff };
     return instance.status === 'ready' ? { instance, problem: null } : notConnected(instance);
   }
-  const connected = instances.filter((entry) => entry.status === 'ready');
+  const connected = instances.filter((entry) => entry.status === 'ready' && allowed(entry));
   const instance = connected.find((entry) => entry.id === currentId) ?? connected[0];
   if (instance) return { instance, problem: null };
   const current = instances.find((entry) => entry.id === currentId);
-  if (current) return notConnected(current);
+  if (current && allowed(current)) return notConnected(current);
+  // Only Codex could run it: the thread ran there, or a Codex instance is connected.
+  const codexOnly =
+    current !== undefined ||
+    instances.some((entry) => entry.status === 'ready' && entry.kind === 'codex');
+  if (codexOnly) return { instance: null, problem: assistantCodexOff };
   return {
     instance: null,
     problem:

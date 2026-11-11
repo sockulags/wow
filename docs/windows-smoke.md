@@ -75,6 +75,12 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       one, and answering it continues the turn.
 - [ ] The turn ends with usage.
 - [ ] Type `$`: picking a skill inserts `$name`.
+- [ ] The assistant on Codex. With only the Codex instance connected and "Let the assistant run
+      on Codex" off (Settings → Assistant, the default), the assistant says it does not run on
+      Codex and why, and no codex turn starts. Turn the setting on and send the assistant a
+      message that asks it to run `Get-ChildItem env:` and to list the MCP servers it has: the
+      command shows no variable of the instance (no API key), and the only server is `wow`, none
+      from your own `config.toml`. Write down what codex printed.
 
 ## 5. Secrets
 

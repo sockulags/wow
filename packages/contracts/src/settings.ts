@@ -1173,8 +1173,17 @@ export const settingsRegistry = {
     group: 'assistant',
     label: 'Provider',
     description:
-      'The provider instance that runs the assistant, by its id. Empty: the first connected instance.',
+      'The provider instance that runs the assistant, by its id. Empty: the first connected instance that may run it.',
     default: '',
+    scope: 'global',
+  }),
+  'assistant.allowCodex': defineSetting({
+    schema: z.boolean(),
+    group: 'assistant',
+    label: 'Let the assistant run on Codex',
+    description:
+      'Off: the assistant runs only on Claude Code, and never on a Codex instance even when one is chosen above. On Codex the assistant can run read-only shell commands, so it can read files on this computer, including files that hold secrets. wow cannot switch that off in Codex. Only the assistant itself is kept off Codex; chat threads and workflow steps are not affected.',
+    default: false,
     scope: 'global',
   }),
   'assistant.model': defineSetting({
@@ -1198,7 +1207,7 @@ export const settingsRegistry = {
     group: 'assistant',
     label: 'Instructions',
     description:
-      "What the assistant's agent is told it is for, in place of the provider's own instructions for coding: it operates wow only, never asks for a secret, and sends other work to the chat view. What it can do is decided by the tools it is given, not by this text.",
+      "What the assistant's agent is told it is for, in place of the provider's own instructions for coding: it operates wow only, never asks for a secret, and sends other work to the chat view. What it can do is decided by the tools it is given, not by this text. A changed text applies from the next message on Claude Code, and on Codex from the next start of the assistant's session (after wow or the provider instance restarts).",
     default: defaultAssistantInstructions,
     scope: 'global',
   }),

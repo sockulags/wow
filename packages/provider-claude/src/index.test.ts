@@ -105,6 +105,8 @@ const toolResult = (id: string, toolUseResult: unknown): FakeStep => ({
   } as unknown as SDKMessage,
 });
 
+const initStep = () => loadFixture('turn.json')[0] as FakeStep;
+
 interface Harness {
   readonly adapter: ClaudeAdapter;
   readonly events: ProviderEvent[];
@@ -374,6 +376,46 @@ describe('@wow/provider-claude', () => {
     expect(h.queries).toHaveLength(1);
     expect(h.queries[0]?.calls).toEqual([]);
     await expect(h.adapter.send(startTurn())).rejects.toThrow(/app's tools only/);
+  });
+
+  it('reopens an assistant session with the new instruction text, going on with its conversation', async () => {
+    const h = harness([[initStep(), result(0)], [result(0)]]);
+    let done = h.next('turnCompleted');
+    await h.adapter.send(assistantTurn());
+    await done;
+    done = h.next('turnCompleted');
+    await h.adapter.send({ ...assistantTurn(), instructions: 'You operate wow only. Be brief.' });
+    await done;
+    expect(h.queries).toHaveLength(2);
+    expect(h.queries[0]?.closed).toBe(true);
+    expect(h.queries[1]?.options).toMatchObject({
+      systemPrompt: 'You operate wow only. Be brief.',
+      resume: 'sess-1',
+      tools: [],
+      settingSources: [],
+    });
+    // The same text again keeps the session.
+    done = h.next('turnCompleted');
+    await h.adapter.send({ ...assistantTurn(), instructions: 'You operate wow only. Be brief.' });
+    await done;
+    expect(h.queries).toHaveLength(2);
+  });
+
+  it("closes a thread's session on closeThread, and the next turn opens a fresh one", async () => {
+    const h = harness([[initStep(), result(0)]]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(assistantTurn());
+    await done;
+    await h.adapter.send({ type: 'closeThread', threadId: 't1' });
+    expect(h.queries[0]?.closed).toBe(true);
+    // Closing what is not there is not an error.
+    await h.adapter.send({ type: 'closeThread', threadId: 't1' });
+    const again = h.next('turnCompleted');
+    await h.adapter.send(assistantTurn());
+    await again;
+    expect(h.queries).toHaveLength(2);
+    expect(h.queries[1]?.options.resume).toBeUndefined();
+    expect(h.events.filter((event) => event.type === 'turnFailed')).toEqual([]);
   });
 
   it('sends an ordinary turn exactly the options it always had', async () => {

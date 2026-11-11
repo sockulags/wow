@@ -70,9 +70,12 @@ const moreOnItsOwn: Readonly<Record<string, (next: unknown, current: unknown) =>
   },
 };
 
-// The net that hides secret-looking text is the assistant's own guard, so the assistant does
-// not change it without a yes.
-const guardSettings: ReadonlySet<string> = new Set(['assistant.secretPatterns']);
+// The assistant's own guards, which it does not change without a yes either way: the net that
+// hides secret-looking text, and whether it may run on Codex, where it could read files.
+const guardSettings: ReadonlySet<string> = new Set([
+  'assistant.secretPatterns',
+  'assistant.allowCodex',
+]);
 
 // Where a tracker's token is sent. Spec 7 calls tracker host settings ordinary, but with the
 // token set a new address would send that token to a host the user never chose, so then the

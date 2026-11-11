@@ -20,8 +20,10 @@ export const toolsOnlySandbox: NonNullable<TurnStartParams['sandboxPolicy']> = {
 
 // What thread/start and thread/resume get on top of the usual settings. `config` overrides
 // config.toml for this thread: `mcp_servers` as a whole, so the servers the user set up for
-// their own work are not there, and web search off. The token travels in a header of the MCP
-// server entry and only over stdio to the app-server.
+// their own work are not there, web search off, and a shell environment that inherits nothing,
+// so a command the agent runs sees no variable of wow's or the instance's (an API key among
+// them). The token travels in a header of the MCP server entry and only over stdio to the
+// app-server.
 export function toolsOnlySettings(
   toolset: Toolset,
   instructions: string | undefined,
@@ -35,6 +37,7 @@ export function toolsOnlySettings(
         },
       },
       web_search: 'disabled',
+      shell_environment_policy: { inherit: 'none' },
     },
     ...(instructions === undefined ? {} : { developerInstructions: instructions }),
   };

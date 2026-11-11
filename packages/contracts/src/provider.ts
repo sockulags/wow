@@ -45,6 +45,9 @@ export const ProviderCommand = z.discriminatedUnion('type', [
     instructions: z.string().min(1).optional(),
   }),
   z.object({ type: z.literal('interrupt'), threadId: z.string().min(1) }),
+  // Ends the thread's live session in this adapter, if it has one, without a turn event. The
+  // provider's stored conversation stays; a later startTurn opens a new session.
+  z.object({ type: z.literal('closeThread'), threadId: z.string().min(1) }),
   z.object({
     type: z.literal('answerApproval'),
     approvalId: z.string().min(1),

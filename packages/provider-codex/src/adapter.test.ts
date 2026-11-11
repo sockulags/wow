@@ -620,6 +620,8 @@ describe('CodexAdapter', () => {
         },
       },
       web_search: 'disabled',
+      // A command the agent runs sees none of the variables of wow or the instance.
+      shell_environment_policy: { inherit: 'none' },
     },
     developerInstructions: 'You operate wow only.',
   };
@@ -688,6 +690,30 @@ describe('CodexAdapter', () => {
     await expect(adapter.send({ ...startTurn, threadId: 'assistant' })).rejects.toThrow(
       /app's tools only/,
     );
+  });
+
+  it('forgets a closed thread, so its next turn starts from what the command says', async () => {
+    const { adapter, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(assistantTurn);
+    current().emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'codex-thread',
+        turn: { id: 'turn-1', status: 'completed', error: null },
+      },
+    });
+    await expect(adapter.send({ type: 'closeThread', threadId: 'assistant' })).resolves.toEqual({
+      closed: true,
+    });
+    await expect(adapter.send({ type: 'closeThread', threadId: 'assistant' })).resolves.toEqual({
+      closed: false,
+    });
+    const starts = () =>
+      current().written.filter((message) => message['method'] === 'thread/start');
+    expect(starts()).toHaveLength(1);
+    await adapter.send(assistantTurn);
+    expect(starts()).toHaveLength(2);
+    expect(written(current(), 'thread/resume')).toBeUndefined();
   });
 
   it('fails the assistant with a clear sentence on a codex that cannot take the MCP server', async () => {

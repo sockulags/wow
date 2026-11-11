@@ -264,8 +264,12 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .run();
       return threadTopics;
     case 'thread.providerChanged': {
-      const { threadId, ...changes } = event.payload;
-      tx.update(threads).set(changes).where(eq(threads.id, threadId)).run();
+      const { threadId, providerInstanceId, providerSessionId, model, effort } = event.payload;
+      const { permissionMode, updatedAt } = event.payload;
+      tx.update(threads)
+        .set({ providerInstanceId, providerSessionId, model, effort, permissionMode, updatedAt })
+        .where(eq(threads.id, threadId))
+        .run();
       return threadTopics;
     }
     case 'thread.sessionStarted':

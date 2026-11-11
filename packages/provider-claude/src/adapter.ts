@@ -92,6 +92,8 @@ interface Session {
   permissionMode: string;
   // Started with a toolset: only the app's tools, for the life of the session.
   readonly toolsOnly: boolean;
+  // The instruction text the session was opened with; a turn with another text reopens it.
+  readonly instructions: string | undefined;
   providerSessionId: string | undefined;
   turnActive: boolean;
   interrupted: boolean;
@@ -198,6 +200,9 @@ export class ClaudeAdapter implements ProviderAdapter {
       case 'answerQuestion':
         this.#settle(this.#questions, command.questionId, command.answer, 'question');
         return { ok: true };
+      case 'closeThread':
+        this.#close(command.threadId);
+        return { ok: true };
       case 'setModel': {
         const session = this.#sessions.get(command.threadId);
         if (session?.query && session.model !== command.model) {
@@ -236,6 +241,16 @@ export class ClaudeAdapter implements ProviderAdapter {
 
   #emit(event: ProviderEvent): void {
     for (const listener of this.#listeners) listener(event);
+  }
+
+  // Ends the thread's live session without a turn event; the next turn opens a new one.
+  #close(threadId: string): void {
+    const session = this.#sessions.get(threadId);
+    if (!session) return;
+    this.#sessions.delete(threadId);
+    this.#cancelPending(threadId);
+    session.input.end();
+    session.query?.close();
   }
 
   #options(env: Record<string, string>, stderr: string[]): Options {
@@ -302,7 +317,13 @@ export class ClaudeAdapter implements ProviderAdapter {
         `Thread ${command.threadId} was started ${session.toolsOnly ? 'with' : 'without'} the app's tools only and cannot change that`,
       );
     }
-    if (session?.query) {
+    // The instruction text is fixed when Claude Code starts, so a changed text needs a new
+    // process. It goes on with the same conversation.
+    if (session?.toolsOnly && session.instructions !== command.instructions) {
+      const resumeId = command.resumeId ?? session.providerSessionId;
+      this.#close(command.threadId);
+      session = await this.#open({ ...command, ...(resumeId ? { resumeId } : {}) });
+    } else if (session?.query) {
       const query = session.query;
       if (session.model !== command.model) await query.setModel(command.model);
       if (session.permissionMode !== command.permissionMode)
@@ -333,6 +354,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       effort: command.effort,
       permissionMode: command.permissionMode,
       toolsOnly: command.toolset !== undefined,
+      instructions: command.toolset ? command.instructions : undefined,
       providerSessionId: command.resumeId,
       turnActive: false,
       interrupted: false,
@@ -376,9 +398,11 @@ export class ClaudeAdapter implements ProviderAdapter {
     } catch (error) {
       failure = describeError(error);
     } finally {
-      if (this.#sessions.get(session.threadId) === session) this.#sessions.delete(session.threadId);
+      // A session that was closed has given its thread up; a newer one may hold it by now.
+      const current = this.#sessions.get(session.threadId) === session;
+      if (current) this.#sessions.delete(session.threadId);
       session.input.end();
-      this.#cancelPending(session.threadId);
+      if (current) this.#cancelPending(session.threadId);
       if (session.turnActive) {
         session.turnActive = false;
         if (session.interrupted) {

@@ -1,6 +1,7 @@
 import {
   RpcResponse,
   ServerMessage,
+  assistantCodexOff,
   assistantThreadId,
   defaultAssistantInstructions,
   type ProviderCommand,
@@ -98,14 +99,19 @@ const rows = <T>(topic: SubscriptionTopic, threadId?: string) =>
   snapshot(server.database.db, { topic, ...(threadId ? { threadId } : {}) }) as T[];
 const assistantThread = () => rows<Thread>('assistantThread')[0];
 
-async function instance(id: string, kind: 'claude' | 'codex', name: string): Promise<void> {
+async function instance(
+  id: string,
+  kind: 'claude' | 'codex',
+  name: string,
+  configDir = '',
+): Promise<void> {
   dispatch({
     type: 'providerInstance.create',
     providerInstanceId: id,
     kind,
     name,
     binaryPath: kind,
-    configDir: '',
+    configDir,
     env: {},
     launchArgs: [],
     defaultModel: kind === 'claude' ? 'opus' : 'gpt-6.1-sol',
@@ -114,6 +120,9 @@ async function instance(id: string, kind: 'claude' | 'codex', name: string): Pro
   });
   await server.providerService.test(id);
 }
+
+const allowCodex = (value: boolean) =>
+  dispatch({ type: 'setting.set', key: 'assistant.allowCodex', scope: 'global', value });
 
 interface Opened {
   readonly thread: Thread | null;
@@ -185,6 +194,8 @@ afterEach(async () => {
 
 describe('asking for the assistant thread (spec 1)', () => {
   it('makes it once on the first connected instance and finds it again after a restart', async () => {
+    // With Codex allowed, as delivered first: a Codex instance can be the first connected one.
+    allowCodex(true);
     testResults.set('claude-home', signedOut);
     await instance('claude-home', 'claude', 'Claude at home');
     await instance('codex-work', 'codex', 'Codex at work');
@@ -233,6 +244,7 @@ describe('asking for the assistant thread (spec 1)', () => {
   it('uses assistant.providerInstanceId, assistant.model and assistant.effort when they are set, and follows a change', async () => {
     await instance('claude-work', 'claude', 'Claude at work');
     await instance('codex-work', 'codex', 'Codex at work');
+    allowCodex(true);
     const set = (key: string, value: string) =>
       dispatch({ type: 'setting.set', key, scope: 'global', value });
     set('assistant.providerInstanceId', 'codex-work');
@@ -488,10 +500,10 @@ describe('without a provider that can run it (spec 27)', () => {
     noTurn();
 
     // With another instance connected it goes on there.
-    await instance('codex-work', 'codex', 'Codex at work');
+    await instance('claude-home', 'claude', 'Claude at home', path.join(root, 'claude-home'));
     expect(await open()).toMatchObject({
       problem: null,
-      thread: { providerInstanceId: 'codex-work', providerSessionId: null },
+      thread: { providerInstanceId: 'claude-home', providerSessionId: null },
     });
   });
 
@@ -529,5 +541,130 @@ describe("the chat view's thread list", () => {
     await say(assistantThreadId, 'Hello');
     expect(rows<Thread>('threads').map((thread) => thread.id)).toEqual(['chat-1']);
     expect(rows<Thread>('assistantThread').map((thread) => thread.id)).toEqual([assistantThreadId]);
+  });
+});
+
+describe('on Codex (setting assistant.allowCodex)', () => {
+  it('is off by default: with only Codex connected the assistant says why and nothing reaches codex', async () => {
+    await instance('codex-work', 'codex', 'Codex at work');
+    expect(server.settings.get('assistant.allowCodex')).toBe(false);
+    expect(await open()).toEqual({ thread: null, problem: assistantCodexOff });
+    expect(rows<Thread>('assistantThread')).toEqual([]);
+    // Naming the Codex instance does not get around it.
+    dispatch({
+      type: 'setting.set',
+      key: 'assistant.providerInstanceId',
+      scope: 'global',
+      value: 'codex-work',
+    });
+    expect(await open()).toEqual({ thread: null, problem: assistantCodexOff });
+    expect(assistantCodexOff).toMatch(
+      /read files on this computer, including ones that hold secrets/,
+    );
+    expect(startTurns('codex-work')).toEqual([]);
+  });
+
+  it('rejects a message with the same sentence once the setting is turned off, and sends codex nothing', async () => {
+    await instance('codex-work', 'codex', 'Codex at work');
+    allowCodex(true);
+    await open();
+    await say(assistantThreadId, 'Hello');
+    expect(startTurns('codex-work')).toHaveLength(1);
+
+    allowCodex(false);
+    const opened = await open();
+    expect(opened.problem).toBe(assistantCodexOff);
+    // The conversation it had is still shown.
+    expect(opened.thread).toMatchObject({
+      id: assistantThreadId,
+      providerInstanceId: 'codex-work',
+    });
+    const sent = adapters.get('codex-work')?.sent.length;
+    expect(
+      refusal(() =>
+        dispatch({ type: 'thread.sendMessage', threadId: assistantThreadId, text: 'Hello?' }),
+      ),
+    ).toBe(assistantCodexOff);
+    expect(adapters.get('codex-work')?.sent.length).toBe(sent);
+    expect(rows<Turn>('turns', assistantThreadId)).toHaveLength(1);
+  });
+
+  it('takes Claude Code even when a Codex instance was connected first', async () => {
+    await instance('codex-work', 'codex', 'Codex at work');
+    await instance('claude-work', 'claude', 'Claude at work');
+    expect(await open()).toMatchObject({
+      problem: null,
+      thread: { providerInstanceId: 'claude-work', permissionMode: 'dontAsk' },
+    });
+    await say(assistantThreadId, 'Hello');
+    expect(startTurns('claude-work')).toHaveLength(1);
+    expect(startTurns('codex-work')).toEqual([]);
+  });
+
+  it('moves a thread that ran on Codex to Claude Code when the setting is off', async () => {
+    await instance('codex-work', 'codex', 'Codex at work');
+    allowCodex(true);
+    await open();
+    await say(assistantThreadId, 'Hello');
+    await instance('claude-work', 'claude', 'Claude at work');
+    allowCodex(false);
+    await say(assistantThreadId, 'Hello again');
+    expect(startTurns('codex-work')).toHaveLength(1);
+    expect(startTurns('claude-work')).toHaveLength(1);
+    expect(startTurns('claude-work')[0]?.resumeId).toBeUndefined();
+  });
+
+  it("is changed by the assistant's own tools only as a proposal, either way", async () => {
+    const outcome = async (value: boolean) =>
+      (
+        JSON.parse(
+          (
+            await server.assistant.tools.call('set_setting', {
+              key: 'assistant.allowCodex',
+              scope: 'global',
+              value,
+            })
+          ).text,
+        ) as { outcome: string }
+      ).outcome;
+    expect(await outcome(true)).toBe('proposed');
+    expect(server.settings.get('assistant.allowCodex')).toBe(false);
+    allowCodex(true);
+    expect(await outcome(false)).toBe('proposed');
+    expect(server.settings.get('assistant.allowCodex')).toBe(true);
+  });
+});
+
+const use = (value: string) =>
+  dispatch({ type: 'setting.set', key: 'assistant.providerInstanceId', scope: 'global', value });
+const sentTo = (id: string) =>
+  (adapters.get(id)?.sent ?? []).filter((command) => command.type !== 'test');
+
+describe('moving between instances', () => {
+  it("closes the old instance's session, so coming back starts fresh", async () => {
+    await instance('claude-a', 'claude', 'Claude A', path.join(root, 'claude-a'));
+    await instance('claude-b', 'claude', 'Claude B', path.join(root, 'claude-b'));
+    use('claude-a');
+    await open();
+    await say(assistantThreadId, 'One');
+    use('claude-b');
+    await say(assistantThreadId, 'Two');
+    use('claude-a');
+    await say(assistantThreadId, 'Three');
+
+    const close = { type: 'closeThread', threadId: assistantThreadId };
+    expect(sentTo('claude-a').map((command) => command.type)).toEqual([
+      'startTurn',
+      'closeThread',
+      'startTurn',
+    ]);
+    expect(sentTo('claude-a')[1]).toEqual(close);
+    expect(sentTo('claude-b').map((command) => command.type)).toEqual(['startTurn', 'closeThread']);
+    // Each instance keeps its conversation in its own folder, so none is resumed.
+    expect(startTurns('claude-a').map((command) => command.resumeId)).toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(startTurns('claude-b')[0]?.resumeId).toBeUndefined();
   });
 });

@@ -199,6 +199,22 @@ export class ProviderService {
           }
           break;
         }
+        // The instance it left would otherwise keep its live session and go on with it, with
+        // the old options, if the thread came back.
+        case 'thread.providerChanged': {
+          const { threadId, previousProviderInstanceId } = event.payload;
+          if (
+            previousProviderInstanceId !== undefined &&
+            previousProviderInstanceId !== event.payload.providerInstanceId &&
+            this.#adapters.has(previousProviderInstanceId)
+          ) {
+            this.#send(previousProviderInstanceId, threadId, false, {
+              type: 'closeThread',
+              threadId,
+            });
+          }
+          break;
+        }
         case 'approval.answered':
           this.#send(event.payload.providerInstanceId, event.payload.threadId, false, {
             type: 'answerApproval',

@@ -54,10 +54,14 @@ type Resolved =
       readonly effort: string | undefined;
     };
 
-const stored = (key: string, read: ReadModel, context: DecideContext): string => {
+const storedValue = (key: string, read: ReadModel, context: DecideContext): unknown => {
   const definition = context.registry[key];
-  if (!definition) return '';
-  const { value } = resolveStored(key, definition, {}, (scope) => read.setting(key, scope));
+  if (!definition) return undefined;
+  return resolveStored(key, definition, {}, (scope) => read.setting(key, scope)).value;
+};
+
+const stored = (key: string, read: ReadModel, context: DecideContext): string => {
+  const value = storedValue(key, read, context);
   return typeof value === 'string' ? value.trim() : '';
 };
 
@@ -65,11 +69,12 @@ const stored = (key: string, read: ReadModel, context: DecideContext): string =>
 // own defaults, then what the thread already uses on that instance.
 export function resolveAssistant(read: ReadModel, context: DecideContext): Resolved {
   const current = read.thread(assistantThreadId);
-  const choice = chooseAssistantProvider(
-    read.providerInstances(),
-    stored('assistant.providerInstanceId', read, context),
-    current?.providerInstanceId,
-  );
+  const choice = chooseAssistantProvider(read.providerInstances(), {
+    configuredId: stored('assistant.providerInstanceId', read, context),
+    currentId: current?.providerInstanceId,
+    // Anything but a stored true keeps the assistant off Codex.
+    allowCodex: storedValue('assistant.allowCodex', read, context) === true,
+  });
   if (choice.problem !== null) return { problem: choice.problem };
   const { instance } = choice;
   const kept = current?.providerInstanceId === instance.id ? current : undefined;
@@ -152,7 +157,11 @@ export function assistantThreadEvents(
         {
           kind: 'thread.providerChanged',
           aggregate: current.id,
-          payload: { threadId: current.id, ...moved },
+          payload: {
+            threadId: current.id,
+            previousProviderInstanceId: current.providerInstanceId,
+            ...moved,
+          },
         },
       ],
       thread: { ...current, ...moved },

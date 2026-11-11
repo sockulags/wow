@@ -707,6 +707,9 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     aggregate: Id,
     payload: z.object({
       threadId: Id,
+      // The instance it left, whose live session for the thread is closed. Absent in events
+      // stored before it was recorded.
+      previousProviderInstanceId: Id.optional(),
       providerInstanceId: Id,
       providerSessionId: z.string().min(1).nullable(),
       model: z.string().min(1),

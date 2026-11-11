@@ -224,12 +224,17 @@ Both adapters implement one interface from `packages/contracts`:
 ```text
 ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode, resumeId?,
                             toolset? {name, url, token}, instructions?}
-                 interrupt {threadId} | answerApproval {approvalId, decision} |
+                 interrupt {threadId} | closeThread {threadId} |
+                 answerApproval {approvalId, decision} |
                  answerQuestion {questionId, answer} | setModel | setPermissionMode | listModels | test
 ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | toolCallStarted |
                  toolCallOutput | toolCallCompleted | approvalRequested | questionAsked |
                  taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
 ```
+
+`closeThread` ends the adapter's live session for a thread without a turn event (the provider's
+stored conversation stays): Claude closes that thread's `query()`, Codex forgets which codex
+thread it maps to, since the app-server has no request that unloads one.
 
 - **Claude** (`packages/provider-claude`): `@anthropic-ai/claude-agent-sdk` `query()` in streaming
   input mode (an `AsyncIterable<SDKUserMessage>` prompt) so `interrupt()`, `setModel()` and
@@ -1026,8 +1031,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - diff: `diff.maxFileBytes`, `diff.maxFiles` (the "Changes" page, see "Run base and changes")
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
-- assistant: `assistant.providerInstanceId`, `assistant.model`, `assistant.effort`,
-  `assistant.instructions`, `assistant.startSoonMinutes`, `assistant.secretPatterns` (see
+- assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,
+  `assistant.effort`, `assistant.instructions`, `assistant.startSoonMinutes`, `assistant.secretPatterns` (see
   "Assistant")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
@@ -1560,6 +1565,12 @@ it was first opened.
 - Who runs it is decided by `chooseAssistantProvider` in `packages/contracts`: the instance
   `assistant.providerInstanceId` names; left empty, the instance the thread already runs on
   while it is connected, otherwise the first connected one in the order they were made.
+  A Codex instance counts only while `assistant.allowCodex` is on (default off): on Codex the
+  agent keeps a read-only shell tool and so can read any file the user can, secrets included,
+  and wow cannot take that away (see below). While it is off, a Codex instance named in
+  `assistant.providerInstanceId` is refused, the first connected Claude Code instance is taken
+  even if a Codex one was connected earlier, and when only Codex could run it the answer is the
+  sentence `assistantCodexOff`, which says why and names both ways out.
   "Connected" means the instance's last test passed (`status: ready`). The model is
   `assistant.model`, then the instance's default model, then what the thread already uses on
   that instance; the effort likewise with `assistant.effort`. The permission mode is
@@ -1571,12 +1582,19 @@ it was first opened.
   check runs again with every message: a message sent after the settings changed already goes
   to the instance named now. Moving to another instance is the event `thread.providerChanged`;
   the provider's session id is kept only when the new instance is of the same kind on the same
-  config folder. The assistant thread does not keep an instance from being deleted.
+  config folder. The event names the instance it left (`previousProviderInstanceId`), and the
+  provider service sends that instance's adapter `closeThread`, so the adapter drops its live
+  session for the thread; coming back later starts a new session from what the thread row
+  says, instead of going on with the old one and its old options. The assistant thread does not keep an instance from being deleted.
 - The turn. `turn.started` carries `start.kind: 'assistant'` and nothing else about the
   tools. After commit the provider service (`#assistantTurn`) builds the `startTurn` command
   with `toolset {name: 'wow', url, token}` (the endpoint above), `instructions` from the
   setting `assistant.instructions`, and `cwd` set to `<wow home>/assistant` whatever the row
-  says. The token is read from memory at that moment; it is in no event, row or log line. The
+  says. A changed instruction text reaches Claude Code with the next message: the adapter
+  closes the live session and opens a new one that resumes the same conversation with the new
+  text. On Codex it applies from the next start of the assistant's codex thread (after wow or
+  the instance restarts, or the thread moves), because the app-server takes the text only when
+  a thread starts or resumes. The token is read from memory at that moment; it is in no event, row or log line. The
   folder's name is not a setting, so it cannot be pointed at a project. It is made before the
   turn and must be empty: if it holds anything the turn fails with a sentence that names what
   was found, since a provider would read an instruction file left there.
@@ -1596,13 +1614,16 @@ round (the adapter refuses the turn).
   that allows only `mcp__wow__` tools and never asks the user. The instance's environment
   (config folder, API key) is kept, since the agent signs in with it.
 - Codex (`packages/provider-codex/src/toolset.ts`): `thread/start` and `thread/resume` get
-  `config: {mcp_servers: {wow: {url, http_headers: {Authorization}}}, web_search: 'disabled'}`
+  `config: {mcp_servers: {wow: {url, http_headers: {Authorization}}}, web_search: 'disabled',
+shell_environment_policy: {inherit: 'none'}}` (a command sees no environment variable of wow
+  or the instance, so no API key)
   and `developerInstructions`, with `approvalPolicy: 'never'` and `sandbox: 'read-only'`;
   every `turn/start` sends `sandboxPolicy: {type: 'readOnly', networkAccess: false}`. Codex has
   no switch that takes its shell tool away, so the sandbox is what holds: a command cannot
   write or reach a host, and every approval request of such a thread is declined without
-  asking the user. A read-only sandbox can still read files on the machine; that is the limit
-  of what Codex offers and the reason the instruction text is not the mechanism. `config` and
+  asking the user. A read-only sandbox can still read files on the machine, and the user's own
+  `config.toml` still loads; that is the limit of what Codex offers, and the reason the
+  assistant runs on Codex only when the user turns `assistant.allowCodex` on. `config` and
   `developerInstructions` are in the generated protocol types of the tested codex. For any
   other version the adapter asks that codex for its schema once (`installedCodexLacks`) and
   fails the turn with one sentence naming the missing fields and the version to update to. An
@@ -1645,7 +1666,8 @@ decides what a command of the assistant does. The table names every type of `Ser
   rules, lose a gate, or that turns "for units" or "own working copy" on or off, and a setting
   that then lets the app do more: `scheduler.paused` off, `scheduler.missedPolicy` to `run`,
   `hosts.polling`, `triggers.eventsEnabled` or `viewer.htmlScripts` on. A change to
-  `assistant.secretPatterns` is a proposal too, since that is the assistant's own net. Three
+  `assistant.secretPatterns` is a proposal too, since that is the assistant's own net, and so
+  is any change to `assistant.allowCodex`, either way. Three
   more are proposals though spec 9 does not list them, because they do the same kind of thing:
   another skill, extra prompt, provider or model on a step that has a permission mode or a
   gate that passes by itself (the yes once given for that step was for that work); taking a
