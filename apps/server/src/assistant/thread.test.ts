@@ -714,6 +714,23 @@ describe('the greeting after the first-start step (spec 24, 26)', () => {
     ]);
   });
 
+  it('names a tracker by its address without the user name and password written into it', async () => {
+    await instance('claude-work', 'claude', 'Claude at work');
+    dispatch({
+      type: 'setting.set',
+      key: 'trackers.gitlab.baseUrl',
+      scope: 'global',
+      value: 'https://reader:hunter2pass@gitlab.example.invalid',
+    });
+    await open();
+    await greet();
+    const prompt = startTurns('claude-work')[0]?.prompt ?? '';
+    expect(prompt).toContain(
+      '- Trackers: GitLab URL https://gitlab.example.invalid, token not set',
+    );
+    expect(prompt).not.toMatch(/reader|hunter2pass/);
+  });
+
   it('lists what a setup file left to fill in, and leaves out what was filled since', async () => {
     await instance('claude-work', 'claude', 'Claude at work');
     dispatch({

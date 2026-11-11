@@ -270,6 +270,16 @@ describe('saving a setup (spec 21)', () => {
       expect(file.settings).not.toHaveProperty(key);
     }
     expect(leftOut).toEqual([{ what: 'Approved verdict line', reason: 'it looks like a secret' }]);
+    // An address with a user name and password written into it stays out too.
+    on(source, {
+      type: 'setting.set',
+      key: 'trackers.gitlab.baseUrl',
+      scope: 'global',
+      value: 'https://reader:hunter2pass@gitlab.example.invalid',
+    });
+    const again = save(source);
+    expect(again.text).not.toMatch(/hunter2pass|gitlab\.example/);
+    expect(again.leftOut).toContainEqual({ what: 'GitLab URL', reason: 'it looks like a secret' });
     // The secret store was never asked: the marked value is in no event or receipt either.
     const history = JSON.stringify([
       source.database.db.select().from(events).all(),
@@ -457,6 +467,12 @@ describe('refusing a file (spec 23)', () => {
       `settings:\n  workflows.verdictApprovedLine: ${lookalike}\n`,
       5,
       'This looks like a secret (a GitLab token); a setup file never holds one. Put the value in its field in Settings instead',
+    ],
+    [
+      'an address with a user name and password in it',
+      'settings:\n  trackers.gitlab.baseUrl: https://reader:hunter2pass@gitlab.example.invalid\n',
+      5,
+      'This address has a user name or password written into it; a setup file never holds one. Write the address without it and put the token in its field in Settings',
     ],
     [
       'an account name',

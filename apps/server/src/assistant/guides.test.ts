@@ -160,6 +160,74 @@ describe('token guides (spec 15)', () => {
     });
   });
 
+  it('builds every link and the address without the user name, password, query or fragment written into the stored address', async () => {
+    const stored = {
+      github: 'https://reader:hunter2pass@ghe.example.invalid/api/v3?x=1#top',
+      gitlab: 'https://reader:hunter2pass@gitlab.example.invalid/?private_token=1#frag',
+      jira: 'https://reader:hunter2pass@jira.example.invalid/jira?a=b',
+      confluence: 'https://reader:hunter2pass@confluence.example.invalid/wiki#x',
+    } as const;
+    set('trackers.jira.authMode', 'pat');
+    set('trackers.confluence.authMode', 'pat');
+    for (const [service, address] of Object.entries(stored)) {
+      set(`trackers.${service}.baseUrl`, address);
+      for (const tool of ['read_token_guide', 'show_secret_field'] as const) {
+        const args =
+          tool === 'read_token_guide' ? { service } : { key: `trackers.${service}.token` };
+        const result = await server.assistant.tools.call(tool, args);
+        expect(result.isError).toBe(false);
+        expect(result.text).not.toMatch(/reader|hunter2pass|private_token|#frag|#top|\?x=1|a=b/);
+      }
+    }
+    expect((await guide('gitlab')).address).toBe('https://gitlab.example.invalid');
+    expect(links(await guide('gitlab'))[1]).toBe(
+      'https://gitlab.example.invalid/-/profile/personal_access_tokens',
+    );
+    expect((await guide('github')).address).toBe('https://ghe.example.invalid');
+    expect((await guide('jira')).address).toBe('https://jira.example.invalid/jira');
+    expect((await guide('confluence')).address).toBe('https://confluence.example.invalid/wiki');
+  });
+
+  it('reads settings and diagnoses without the user name and password in a stored address', async () => {
+    set('trackers.gitlab.baseUrl', 'https://reader:hunter2pass@gitlab.example.invalid');
+    set(
+      'trackers.gitlab.baseUrl',
+      'https://reader:hunter2pass@code.tea.example.invalid',
+      'project:tea',
+    );
+    for (const [tool, args] of [
+      ['read_settings', { group: 'trackers' }],
+      ['read_settings', { group: 'trackers', projectId: 'tea' }],
+      ['diagnose_setup', {}],
+    ] as const) {
+      const result = await server.assistant.tools.call(tool, args);
+      expect(result.isError).toBe(false);
+      expect(result.text).not.toMatch(/reader|hunter2pass/);
+    }
+    const settings = await server.assistant.tools.call('read_settings', { group: 'trackers' });
+    expect(settings.text).toContain('"value":"https://gitlab.example.invalid"');
+  });
+
+  it('says which setting to correct when the stored address is not a web address', async () => {
+    for (const service of ['github', 'gitlab', 'jira', 'confluence'] as const) {
+      set(`trackers.${service}.baseUrl`, 'https://gitlab example invalid');
+      const found = await guide(service);
+      expect(found).toMatchObject({
+        address: null,
+        addressNeeded: { key: `trackers.${service}.baseUrl` },
+      });
+      expect(links(found)).toEqual([]);
+      expect(found.steps[0]?.text).toMatch(
+        /^Correct .* in Settings → Trackers first: what is stored there is not a web address/,
+      );
+      const field = await server.assistant.tools.call('show_secret_field', {
+        key: `trackers.${service}.token`,
+      });
+      expect(field.isError).toBe(false);
+      expect(field.text).not.toContain('Invalid URL');
+    }
+  });
+
   it('names the host versions every guide was written for', () => {
     for (const data of Object.values(guides)) {
       expect(data.writtenFor).toMatch(/\d/);

@@ -12,6 +12,7 @@ import {
   type SetupWorkflow,
   type Workflow,
   type WorkflowStep,
+  withoutAddressAccount,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { patternsOf, settingPlace, show } from '../assistant/changes.js';
@@ -190,6 +191,12 @@ function checkSecrets(parsed: ParsedSetup, patterns: readonly RegExp[]): SetupPr
       problems.push({
         line,
         reason: `This looks like a secret (${found.kind}); a setup file never holds one. Put the value in its field in Settings instead`,
+      });
+    } else if (withoutAddressAccount(text) !== text) {
+      problems.push({
+        line,
+        reason:
+          'This address has a user name or password written into it; a setup file never holds one. Write the address without it and put the token in its field in Settings',
       });
     }
   }

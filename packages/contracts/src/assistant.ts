@@ -134,8 +134,18 @@ export function secretPatterns(sources: readonly string[]): RegExp[] {
   });
 }
 
+// A user name and password written into a web address (https://reader:pass@host). They are taken
+// out of every address the net sees whatever the patterns say: a password there has no prefix a
+// pattern could know.
+const addressAccount = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#"'<>`]*@/gi;
+
+export const withoutAddressAccount = (text: string): string => text.replace(addressAccount, '$1');
+
 export function hideSecrets(text: string, patterns: readonly RegExp[]): string {
-  return patterns.reduce((hidden, pattern) => hidden.replace(pattern, hiddenText), text);
+  return patterns.reduce(
+    (hidden, pattern) => hidden.replace(pattern, hiddenText),
+    withoutAddressAccount(text),
+  );
 }
 
 export const looksLikeSecret = (text: string, patterns: readonly RegExp[]): boolean =>

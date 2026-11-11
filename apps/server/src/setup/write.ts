@@ -9,6 +9,7 @@ import {
   type SetupStep,
   type SetupWorkflow,
   type Workflow,
+  withoutAddressAccount,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { patternsOf } from '../assistant/changes.js';
@@ -59,7 +60,9 @@ export function writeSetup(
 ): SetupSaved {
   const patterns = patternsOf(read, context);
   const looksSecret = (value: unknown) =>
-    stringsIn(value).some((text) => findSecret(text, patterns) !== null);
+    stringsIn(value).some(
+      (text) => findSecret(text, patterns) !== null || withoutAddressAccount(text) !== text,
+    );
   const leftOut: { what: string; reason: string }[] = [];
   const settings: Record<string, unknown> = {};
   const toFillIn: string[] = [];

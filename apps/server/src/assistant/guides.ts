@@ -184,13 +184,33 @@ export const guides: Readonly<Record<GuideKind, GuideData>> = {
 
 const trimmed = (value: string) => value.trim().replace(/\/+$/, '');
 
+// The stored address as the site links are built on: scheme, host and path. A user name and
+// password written into it never reach a link (the agent and the conversation see every link),
+// and a query or fragment would end up in the middle of one. Null for text that is not a web
+// address.
+function siteOf(stored: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(stored);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  url.username = '';
+  url.password = '';
+  url.search = '';
+  url.hash = '';
+  return url;
+}
+
+const webOf = (url: URL) => `${url.origin}${trimmed(url.pathname)}`;
+
 // The web pages of a GitHub host from its API address: https://api.github.com is github.com,
 // and GitHub Enterprise Server serves its API under https://<host>/api/v3.
-function githubWeb(apiUrl: string): { kind: GuideKind; web: string } {
-  const url = new URL(apiUrl);
-  if (url.hostname === 'api.github.com') return { kind: 'github.com', web: 'https://github.com' };
-  const prefix = trimmed(url.pathname).replace(/\/api\/v3$/i, '');
-  return { kind: 'github-enterprise', web: `${url.origin}${prefix}` };
+function githubWeb(api: URL): { kind: GuideKind; web: string } {
+  if (api.hostname === 'api.github.com') return { kind: 'github.com', web: 'https://github.com' };
+  const prefix = trimmed(api.pathname).replace(/\/api\/v3$/i, '');
+  return { kind: 'github-enterprise', web: `${api.origin}${prefix}` };
 }
 
 export interface GuideSettings {
@@ -200,10 +220,10 @@ export interface GuideSettings {
   readonly authMode: string;
 }
 
-const kindOf = (service: TrackerConnection, authMode: string, baseUrl: string): GuideKind => {
+const kindOf = (service: TrackerConnection, authMode: string, site: URL | null): GuideKind => {
   switch (service) {
     case 'github':
-      return baseUrl === '' ? 'github.com' : githubWeb(baseUrl).kind;
+      return site === null ? 'github.com' : githubWeb(site).kind;
     case 'gitlab':
       return 'gitlab';
     case 'jira':
@@ -219,14 +239,16 @@ const label = (key: string) =>
     : key;
 
 // The guide for a host kind and sign-in at the stored address. Without an address the only
-// step is to fill it in, since every link is built from it and wow cannot sign in without it.
+// step is to fill it in, since every link is built from it and wow cannot sign in without it;
+// an address that is not a web address has to be corrected first, for the same reason.
 export function tokenGuide(
   service: TrackerConnection,
   settings: GuideSettings,
   place: AssistantPlace,
 ): TokenGuide {
   const baseUrl = trimmed(settings.baseUrl);
-  const kind = kindOf(service, settings.authMode, baseUrl);
+  const site = baseUrl === '' ? null : siteOf(baseUrl);
+  const kind = kindOf(service, settings.authMode, site);
   const data = guides[kind];
   const addressKey = `trackers.${service}.baseUrl`;
   const common = {
@@ -237,20 +259,21 @@ export function tokenGuide(
     rights: [...data.rights],
     copy: data.copy,
   };
-  if (baseUrl === '') {
+  if (site === null) {
     const description = settingsRegistry[addressKey as keyof typeof settingsRegistry].description;
+    // The stored text is not repeated: it is not an address, so nothing says what is in it.
+    const first =
+      baseUrl === ''
+        ? `Fill in ${label(addressKey)} in ${place.label} first; the token page is on that host and wow signs in there.`
+        : `Correct ${label(addressKey)} in ${place.label} first: what is stored there is not a web address (one starting with https://), so wow cannot build the link to the token page or sign in there.`;
     return {
       ...common,
       address: null,
       addressNeeded: { key: addressKey, label: label(addressKey), place },
-      steps: [
-        step(
-          `Fill in ${label(addressKey)} in ${place.label} first; the token page is on that host and wow signs in there. ${description}`,
-        ),
-      ],
+      steps: [step(`${first} ${description}`)],
     };
   }
-  const web = service === 'github' ? githubWeb(baseUrl).web : baseUrl;
+  const web = service === 'github' ? githubWeb(site).web : webOf(site);
   return { ...common, address: web, addressNeeded: null, steps: [...data.steps(web)] };
 }
 

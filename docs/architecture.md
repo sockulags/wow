@@ -1672,8 +1672,11 @@ three kinds and nothing else.
   address stored for the scope asked (`trackers.<x>.baseUrl` resolved for the project, so a
   project's own address wins; the git remote's host is not used): a GitHub API URL
   `https://<host>/api/v3` becomes `https://<host>`, `https://api.github.com` becomes github.com,
-  and Atlassian Cloud API tokens link to the Atlassian account page. Without an address the guide
-  has one step, fill in the address first, and `addressNeeded` names the setting and its place.
+  and Atlassian Cloud API tokens link to the Atlassian account page. Links and `address` are
+  built from the parsed address with its user name, password, query and fragment dropped, so an
+  address like `https://reader:pass@host` never puts the password in a link. Without an address
+  the guide has one step, fill in the address first, and `addressNeeded` names the setting and
+  its place; an address `new URL` cannot read gives one step that says to correct that setting.
   `show_secret_field` adds the same guide to its answer for a `trackers.<x>.token` key, and the
   card reads it from the stored tool result. The model is told to use the guide, not memory.
 - Diagnosis (`assistant/diagnosis.ts`, `diagnose_setup`, `assistantDiagnosisTool`) answers a
@@ -1690,7 +1693,12 @@ three kinds and nothing else.
   off it is not found.
 
 Every result passes `hideSecretsDeep` with the patterns of `assistant.secretPatterns` before it
-leaves `call`, so text that looks like a secret arrives as `[hidden]` (spec 18). The log line
+leaves `call`, so text that looks like a secret arrives as `[hidden]` (spec 18). The net
+(`hideSecrets` in contracts) also always takes a user name and password out of any
+`scheme://user:pass@host` address (`withoutAddressAccount`), whatever the patterns, so a stored
+address with an account in it reaches the agent without it: in `read_settings`, diagnosis, the
+first-start note and change rows alike. A setup file refuses such an address and "Save setup"
+leaves it out, as for a value that looks like a secret. The log line
 for a call names the tool and how it ended, never what went in or came out; a name that is not
 a tool's is logged as `unknown`.
 

@@ -911,4 +911,19 @@ describe('app assistant', () => {
     expect(hideSecrets('tea-1111 tea-2222', patterns)).toBe(`${hiddenText} ${hiddenText}`);
     expect(hideSecrets('tea-3333', patterns)).toBe(hiddenText);
   });
+
+  it('takes a user name and password out of every address, with or without patterns', () => {
+    expect(
+      hideSecrets('Site https://reader:hunter2pass@gitlab.example.invalid/group is set', []),
+    ).toBe('Site https://gitlab.example.invalid/group is set');
+    expect(
+      hideSecretsDeep(
+        { url: 'http://ada@jira.example.invalid', ok: 'mail ada@example.invalid' },
+        [],
+      ),
+    ).toEqual({ url: 'http://jira.example.invalid', ok: 'mail ada@example.invalid' });
+    expect(
+      JSON.parse(hideSecrets('["https://a.example.invalid","ada@example.invalid"]', [])),
+    ).toEqual(['https://a.example.invalid', 'ada@example.invalid']);
+  });
 });
