@@ -10,6 +10,7 @@ import {
   ThreadState,
 } from './provider.js';
 import { QuestionOption, QuestionReply } from './questions.js';
+import { SentSkill } from './skills.js';
 import { CardOccurrence, LocalDay, PastSeries, RepeatRule } from './repeat.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
 import {
@@ -141,6 +142,9 @@ export const TextItemPayload = z.object({
   // A user message that answers the assistant's questions (questions spec 9): the tool call
   // that asked them and what was answered, one reply per question.
   answers: z.object({ askItemId: Id, replies: z.array(QuestionReply) }).optional(),
+  // A user message or a step's prompt sent with skills (wow skills spec 14): their names, and
+  // for a wow skill the text that was sent, which `text` leaves out. Absent for older messages.
+  skills: z.array(SentSkill).optional(),
 });
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 
@@ -427,6 +431,10 @@ export const WorkflowRun = z.object({
   // Every step visit in the order it happened, with why the run went where it went next
   // (workflow branches spec 18). Absent or null for a run from before paths were kept.
   path: z.array(PathVisit).nullable().optional(),
+  // Set for a run started since wow skills: its steps get the built-in skills where the workflow
+  // depends on them, instead of wow's own sentences (wow skills spec 13). Absent or null for a
+  // run stored before, which keeps the prompts it had.
+  wowSkills: z.boolean().nullable().optional(),
 });
 export type WorkflowRun = z.infer<typeof WorkflowRun>;
 
@@ -518,6 +526,9 @@ export const SkillSource = z.enum([
   'project-claude',
   'project-agents',
   'custom',
+  // Shipped with wow (wow skills spec 1) and written by the user in wow (spec 5).
+  'wow',
+  'yours',
 ]);
 export type SkillSource = z.infer<typeof SkillSource>;
 
@@ -529,6 +540,9 @@ export const Skill = z.object({
   source: SkillSource,
   manualOnly: z.boolean(),
   invocations: z.object({ claude: z.string(), codex: z.string() }),
+  // A wow skill's text: a built-in skill's template, filled in when it is sent, or an own
+  // skill's text as written. Absent for skills from other folders.
+  text: z.string().optional(),
 });
 export type Skill = z.infer<typeof Skill>;
 

@@ -1,6 +1,7 @@
 import {
   providerChatOptions,
   type ProviderInstance,
+  type SkillRef,
   type Thread,
   type ThreadItem,
 } from '@wow/contracts';
@@ -50,7 +51,7 @@ import {
   groupQuestions,
   groupToolCalls,
   lastErrorId,
-  lastUserMessage,
+  lastUserSent,
   pendingApproval,
   pendingQuestion,
   providerLabel,
@@ -296,6 +297,7 @@ export function ThreadConversation({
   const showMeter = useSetting('chat.contextMeter');
   const resumePrompt = useSetting('chat.resumePrompt');
   const groupTools = useSetting('chat.groupToolCalls');
+  const skillTrigger = useSetting('chat.skillTrigger');
   const { when } = useDateFormat();
   const { container, onScroll } = useStickToBottom(items);
   const ownComposer = useRef<ComposerHandle>(null);
@@ -309,13 +311,19 @@ export function ThreadConversation({
   const last = lastTurn(turns);
   const canResume = !running && (last?.state === 'failed' || last?.state === 'interrupted');
   const compactPrompt = instance ? providerChatOptions[instance.kind].compactPrompt : null;
-  const message = (text: string) => send({ type: 'thread.sendMessage', threadId, text });
+  const message = (text: string, skills?: readonly SkillRef[]) =>
+    send({
+      type: 'thread.sendMessage',
+      threadId,
+      text,
+      ...(skills ? { skills: [...skills] } : {}),
+    });
   const stop = () => void send({ type: 'thread.interrupt', threadId });
   const approval = pendingApproval(approvals);
   const question = pendingQuestion(questions, items ?? [], running);
   const gateRun = gateRunForThread(thread, runs);
   const context = latestContext(items ?? []);
-  const retryText = lastUserMessage(items ?? []);
+  const retry = lastUserSent(items ?? []);
   const errorId = canResume ? lastErrorId(items ?? []) : undefined;
   const permissionLabel = instance
     ? (permissionOptions(instance.kind, thread.permissionMode).find(
@@ -336,7 +344,12 @@ export function ThreadConversation({
       recovery:
         itemId === errorId
           ? {
-              ...(retryText ? { onRetry: () => void message(retryText) } : {}),
+              ...(retry
+                ? {
+                    onRetry: () =>
+                      void message(retry.text, retry.skills.length > 0 ? retry.skills : undefined),
+                  }
+                : {}),
               onResume: () => void message(resumePrompt),
               resumePrompt,
             }
@@ -355,11 +368,15 @@ export function ThreadConversation({
   // while an approval waits, the buttons above answer it and the composer only queues the next
   // message (audit C-04).
   const answerQuestion = question
-    ? (text: string) =>
-        send({
-          type: 'question.answer',
-          answers: [{ questionId: question.id, reply: { picked: [], text } }],
-        })
+    ? (text: string, skills?: readonly SkillRef[]) =>
+        skills
+          ? Promise.reject(
+              new Error('An answer takes no skills. Remove the chip, or answer on the card.'),
+            )
+          : send({
+              type: 'question.answer',
+              answers: [{ questionId: question.id, reply: { picked: [], text } }],
+            })
     : undefined;
   const placeholder = question
     ? 'Type your answer, or answer on the card above'
@@ -367,7 +384,7 @@ export function ThreadConversation({
       ? 'Answer the request above'
       : running
         ? 'Write the next message; it is sent when the turn ends'
-        : (extras?.placeholder ?? 'Message the agent. Type $ to pick a skill.');
+        : (extras?.placeholder ?? `Message the agent. Type ${skillTrigger} to pick a skill.`);
 
   const column = compact ? 'w-full px-3' : 'mx-auto w-full max-w-3xl px-4';
   return (

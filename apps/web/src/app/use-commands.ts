@@ -10,12 +10,15 @@ import { validateCalendarSearch } from '@/calendar/search';
 import { chatCommands } from '@/chat/commands';
 import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
+import { activeSkillComposer, skillComposerStore } from '@/chat/composer-store';
+import { skillComposerCommands } from '@/chat/skill-commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
 import { connectCommands, providerCommands } from '@/providers/commands';
 import { connectStore } from '@/providers/connect-step';
 import { setupCommands } from '@/settings/setup';
+import { skillCommands } from '@/settings/skills';
 import { formatWhen } from '@/lib/format';
 import { panelCommands, viewerCommands } from '@/panel/commands';
 import { panelSelection } from '@/panel/model';
@@ -79,6 +82,7 @@ export function useCommands(gated = false): {
   const assistantChanges = useTopic('assistantChanges');
   const assistantProposals = useTopic('assistantProposals');
   const setupApplications = useTopic('setupApplications');
+  const skills = useTopic('skills');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
   const calendarSearch = useMemo(
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
@@ -98,6 +102,7 @@ export function useCommands(gated = false): {
   const staticCommands = useMemo(() => buildCommands(), []);
   const connectShown = useStore(connectStore, (state) => state.shown > 0);
   const questionCard = useStore(questionStore, activeQuestionCard);
+  const skillComposer = useStore(skillComposerStore, activeSkillComposer);
   const all = useMemo(() => {
     const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
@@ -158,6 +163,7 @@ export function useCommands(gated = false): {
             ? openRun.id
             : undefined,
         rules: { builder: ruleBuilder, at: ruleAt, focus: undefined },
+        skills: skills ?? [],
         formatWhen: when,
         triggers,
         projects,
@@ -177,11 +183,13 @@ export function useCommands(gated = false): {
         openItem: backlogItems?.find((item) => item.id === openBacklogItemId),
       }),
       ...questionCommands(questionCard),
+      ...skillComposerCommands(skillComposer),
       ...assistantCommands({
         changes: assistantChanges ?? [],
         proposals: assistantProposals ?? [],
       }),
       ...setupCommands(setupApplications ?? []),
+      ...skillCommands(skills ?? []),
       ...panelCommands(panelSelection(pathname, locationSearch)),
       ...viewerCommands({
         viewer,
@@ -225,6 +233,7 @@ export function useCommands(gated = false): {
     assistantChanges,
     assistantProposals,
     setupApplications,
+    skills,
     viewer,
     page,
     pageReads,
@@ -239,6 +248,7 @@ export function useCommands(gated = false): {
     ruleAt,
     connectShown,
     questionCard,
+    skillComposer,
   ]);
   const commands = useMemo(
     () => (gated ? all.filter((command) => gateCommand(command.id)) : all),

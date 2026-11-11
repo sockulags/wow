@@ -192,6 +192,10 @@ const work = (step: WorkflowStep) => ({
   extraPrompt: step.extraPrompt || null,
   providerInstanceId: step.providerInstanceId ?? null,
   model: step.model ?? null,
+  // The skills sent with it are part of what it runs (wow skills spec 11, 12).
+  skillSource: step.skillSource ?? null,
+  alsoFollow: step.alsoFollow?.length ? step.alsoFollow : null,
+  leaveOut: step.leaveOut?.length ? step.leaveOut : null,
 });
 
 const actsAlone = (step: WorkflowStep): boolean => {
@@ -215,6 +219,24 @@ function stepsAskForMore(before: readonly WorkflowStep[], after: readonly Workfl
       (was.gateAfter && !step.gateAfter)
     );
   });
+}
+
+// Changing or removing a skill is a proposal for one of the user's own skills, and refused for
+// a built-in skill or a skill from a folder (wow skills spec 22). A name that is nothing is the
+// app's to refuse, with its own reason.
+function ownSkillClass(name: string, read: ReadModel): Classified {
+  const named = read.skills().filter((skill) => skill.name === name);
+  if (named.length === 0 || named.some((skill) => skill.source === 'yours')) return proposal;
+  if (named.some((skill) => skill.source === 'wow')) {
+    return {
+      class: 'refused',
+      reason: `${name} ships with wow and cannot be changed or removed. Write an own skill with another name instead.`,
+    };
+  }
+  return {
+    class: 'refused',
+    reason: `${name} is a skill from a folder (${named[0]?.dir ?? 'on disk'}); wow does not change skills in other folders. Write an own skill instead.`,
+  };
 }
 
 export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } = {
@@ -243,6 +265,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
     'The greeting is sent by wow when the user finishes the first-start step.',
   ),
   'thread.sendMessage': chatOnly,
+  'thread.sendPrepared': serverOnly,
   'thread.answerQuestions': refused(
     'Only the user answers your questions, on their card. End your turn and wait for the answer.',
   ),
@@ -355,6 +378,11 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'outlook.sync': serverOnly,
   'outlook.fail': serverOnly,
   'skills.sync': serverOnly,
+  // A skill steers every agent that follows it, so the assistant's own skills wait for a yes
+  // (wow skills spec 22). Built-in skills and skills in other folders are not its to change.
+  'skill.create': 'proposal',
+  'skill.update': (command, read) => ownSkillClass(command.skill.name, read),
+  'skill.delete': (command, read) => ownSkillClass(command.name, read),
   'plans.sync': serverOnly,
   'hosts.sync': serverOnly,
   'tickets.sync': serverOnly,

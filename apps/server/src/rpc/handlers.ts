@@ -1,5 +1,6 @@
 import {
   WorkflowRun,
+  inListOrder,
   runFolder,
   settingsRegistry,
   type Command,
@@ -82,12 +83,38 @@ export async function checkProjectFolder(command: Command): Promise<void> {
   if (!found?.isDirectory()) throw new RpcFault('rejected', `No folder ${command.cwd}`);
 }
 
+// The commands a setup file or an accepted proposal makes the engine decide, so the checks that
+// need the disk see them too; whatever else is wrong with them the engine answers.
+function innerCommands(command: Command, deps: HandlerDeps): Command[] {
+  if (command.type === 'assistant.proposal.accept') {
+    const proposal = readModel(deps.db).assistantProposal(command.proposalId);
+    return proposal?.state === 'pending' ? [proposal.command] : [];
+  }
+  if (command.type === 'setup.apply') {
+    const plan = planSetup(command.text, readModel(deps.db), {
+      now: deps.clock().toISOString(),
+      registry: settingsRegistry,
+      home: deps.info.home,
+    });
+    return plan.outcome === 'ready' ? [...plan.commands] : [];
+  }
+  return [];
+}
+
 export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
   return {
     'server.info': () => ({ version: deps.info.version, home: deps.info.home, pid: process.pid }),
     dispatch: async ({ commandId, command }) => {
       await checkProjectFolder(command);
-      return deps.engine.dispatch(commandId, command);
+      for (const checked of [command, ...innerCommands(command, deps)]) {
+        const refused = await deps.skills.refusal(checked);
+        if (refused !== undefined) throw new RpcFault('rejected', refused);
+      }
+      const result = deps.engine.dispatch(commandId, command);
+      // The command committed but its file could not be written; a scan puts the list back.
+      const failed = deps.skills.writeFailure(commandId);
+      if (failed !== undefined) throw new RpcFault('rejected', failed);
+      return result;
     },
     subscribe: (params, connection) => {
       const opened = deps.subscriptions.subscribe(params, connection.push);
@@ -131,7 +158,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       protection: deps.secrets.protection,
       names: await deps.secrets.names(),
     }),
-    'skills.refresh': async () => ({ skills: await deps.skills.refresh() }),
+    'skills.refresh': async () => ({ skills: inListOrder(await deps.skills.refresh()) }),
     'plans.refresh': async () => ({ intents: await deps.plans.refresh() }),
     'hosts.refresh': async (params) => ({ reads: await deps.hosts.refresh(params) }),
     'projects.git': async () => ({ projects: await deps.trackers.projectsGit() }),

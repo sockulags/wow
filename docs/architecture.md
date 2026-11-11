@@ -17,7 +17,7 @@ packages/
   provider-claude/   Claude Agent SDK adapter → ProviderEvent / ProviderCommand.
   provider-codex/    codex app-server JSON-RPC adapter → the same types.
   outlook-bridge/    PowerShell COM bridge + mock adapter + fixtures.
-  skills/        SKILL.md discovery.
+  skills/        SKILL.md discovery, the built-in wow skills (builtin/) and own skill files.
   workflow-engine/   workflow definitions, runs, gates, step handover. Pure; the server wires it.
   agent-os/      reads agent-os intent, spec and plan files from their text, and unit status
                  from pull requests. Pure; no I/O.
@@ -191,7 +191,8 @@ trigger_events   triggerId, eventId, runId?, at (the events an event trigger has
 notifications    id, at, kind ('started'|'waiting'|'failed'|'skipped'), title, body, path, runId?,
                  calendarItemId?
 skills           id, name, description, dir, source ('user-claude'|'user-codex'|'project-claude'|
-                 'project-agents'|'custom'), manualOnly, invocations(json: {claude, codex})
+                 'project-agents'|'custom'|'wow'|'yours'), manualOnly, invocations(json: {claude,
+                 codex}), text? (a wow skill's text; null for folder skills)
 plan_intents     id ('<projectId>:<intentId>'), projectId, intentId, title, hasIntent, status?, rev?,
                  spec(json: PlanFile)?, plan(json: PlanFile)?, source ('files'|'issues')?,
                  units(json: PlanUnit[]), problems(json: PlanProblem[]), followed
@@ -229,9 +230,10 @@ events           seq, at, kind, aggregate, payload(json)   -- the history
 command_receipts commandId, commandType, fingerprint, seqs(json), at   -- idempotent retries
 ```
 
-`WorkflowStep = {id, skillName, providerInstanceId, model?, effort?, permissionMode?, gateBefore,
+`WorkflowStep = {id, skillName, skillSource?: 'wow'|'yours', alsoFollow?: SkillRef[], leaveOut?:
+BuiltInSkillName[], providerInstanceId, model?, effort?, permissionMode?, gateBefore,
 gateAfter, gateAfterCondition?: ('verdict'|'checks'|'artifacts')[], extraPrompt?,
-expectedArtifacts: string[]}`. `StepRun = {stepId, state, threadId?, startedAt?, endedAt?,
+expectedArtifacts: string[]}` (the skill fields: see "wow skills"). `StepRun = {stepId, state, threadId?, startedAt?, endedAt?,
 artifactsFound: string[], finalMessage?, error?, fileHashes?, attempt?, gate?}`. `gate` is
 `StepGate = {state: 'waitingForChecks'|'waitingForUser'|'passedByItself'|'passedByUser', parts:
 {part, state: 'held'|'failed'|'pending', detail}[], since, at}` and only a gate with a condition
@@ -502,6 +504,118 @@ skills settings or the project list change, and on `skills.refresh`; scans run o
 burst of changes shares one queued scan. It sends the result as a `skills.sync` command, which
 stores only the differences.
 
+### wow skills
+
+Two more sources sit beside the folders (wow skills spec 1 to 15). Both are read by the same scan,
+from `wowSkillRoots(wowHome)` in `packages/skills`, and carry their text in `Skill.text`:
+
+- `wow` (group "wow"): the built-in skills `wow-verdict`, `wow-artifacts`, `wow-pull-request` and
+  `wow-handover`, shipped as `packages/skills/builtin/<name>/SKILL.md` and found with
+  `new URL('../builtin', import.meta.url)`, so the desktop build copies the folder next to the
+  server bundle. They come with the app version and cannot be changed: `skill.update` and
+  `skill.delete` refuse them. `skills.builtInOff` lists the ones switched off; `SkillsService`
+  leaves those out of `skills.sync`, so they are in no list and attached nowhere. Their text is a
+  template filled by `fillBuiltInSkill` (`fillTemplate` in `packages/contracts`, the same
+  `{{name}}`/`{{#name}}…{{/name}}` rules as the workflow texts) with `BuiltInSkillValues`:
+  `approvedLine`, `changesRequestedLine`, `blockedLine` (the verdict line settings of the project),
+  `expectedArtifacts` (the step's globs as a list), `intentId`, `unitKey`, `unitTitle` and
+  `intentUnitLine` (`Intent-Unit: <intent>/<unit>`). A value not known for the send is empty and
+  drops its section.
+- `yours` (group "Yours"): own skills, one folder per skill under `<WOW_HOME>/skills`, in the
+  same `SKILL.md` format (`ownSkillFile`: YAML frontmatter with `name` and `description`, then the
+  text). A file put there by hand is read like any skill folder; one whose name starts with `wow-`
+  is reported and skipped. Commands `skill.create {skill: {name, description, text}}`,
+  `skill.update {skill}` and `skill.delete {name}` (`core/skills.ts`) check the name with
+  `ownSkillNameProblem` (lower case letters, digits and single hyphens, at most 64 characters,
+  not starting with `wow-`, not taken by another wow skill) and store `skill.saved {skill,
+previous}` or `skill.deleted {skill}` in the skills projection at once; `SkillsService` writes
+  or removes the file synchronously in its commit listener and rescans. The orchestrator does no
+  I/O, so the RPC `dispatch` handler asks `SkillsService.refusal` first: a `skill.create` whose
+  folder already holds a `SKILL.md` the list does not show (skipped by the scan, or a folder
+  whose name differs only in case, which is the same folder on Windows) is refused with its path.
+  The handler asks the same for the `skill.create` commands a `setup.apply` (its plan) or an
+  `assistant.proposal.accept` (the proposal's command) would decide. `decideSkill` itself refuses
+  a `skill.create` whose folder holds an own skill the list shows under another name (a
+  hand-written file, compared without case), so the setup preview and the assistant's proposal
+  are refused at once, with the same sentence.
+  A file that cannot be written or removed is answered to the command as refused with the path
+  and the reason (`writeFailure(commandId)`); the command has committed, and the rescan puts the
+  list back to what is on disk. Scans run one after another, and a scan that began before an
+  own-skill commit sends no `skills.sync` (the one that commit queued does), so it cannot undo
+  the save. Undo is the opposite
+  command with what the client holds: delete for a create, update with the old text, create for
+  a delete. From the assistant all three are proposals (see "Assistant"); a setup file carries
+  own skills (see "Setup file").
+
+**Settings → Skills** (`apps/web/src/settings/skills.ts`, `skills-section.tsx`; wow skills spec
+3, 5). Above the folder settings: "Your skills" (the `skills` topic's group `yours`) with New
+skill, and Edit and Delete on each row, and "Built in" (group `wow`), read-only, each with its
+text under "Show the text". The editor is a dialog (`skillsStore.editor`) with Name (fixed
+while editing; a new name is a new skill), "When to use it" and Text. Save checks the draft
+with `ownSkillNameProblem` against the other wow skills first and shows the reason without
+sending anything; a refusal of the server is shown in the same place and the dialog stays
+open. After a save or a delete a toast offers Undo, which sends the opposite command with the
+skill as the client held it. Palette: "New skill" (`skills.new`, opens the page and the
+editor), "Edit skill: <name>" and "Delete skill: <name>" for every own skill (search only). No
+keybinding: these are rare. `apps/web/e2e/wow-skills.spec.ts` (Changes copy) writes a skill and
+adds it to a step, and sees `wow-verdict` attached by itself to the Bug template's check-work;
+with `WOW_E2E_SKETCHES` set it writes `intents/2026-11-wow-skills/sketches/your-skills.png`.
+
+`skillGroupOf(skill)` in `packages/contracts` gives a skill's `SkillGroup` (`yours`, `wow`,
+`project`, `user`, `plugins`, `other`) and `inListOrder` sorts by that group and then by name;
+the `skills` topic is sent in that order, so Yours comes first in every list.
+
+A step or a message names a skill with `SkillRef {name, source?}`. Without `source` it is a
+folder skill, invoked as before (`plugin:name` for a Claude plugin's), or a built-in one by its
+reserved name; `source: 'yours'` keeps an own skill apart from a folder skill of the same name,
+and each is listed with its own group. `skillToSend(skills, ref, providerKind, values)` answers a
+wow skill's text (a built-in one filled) or a folder skill's invocation, or nothing for a wow
+skill that is not in the list. `promptWithSkills(parts, tail)` puts each wow skill's text as its
+own block marked with its name:
+
+```text
+<skill name="tidy">
+Tidy the imports.
+</skill>
+```
+
+and keeps invocations and the tail that follow each other on one line, as a step's invocation and
+extra prompt always were. `promptShown` is the same without the texts: what the thread shows.
+
+Chat: `thread.sendMessage {threadId, text, skills?: SkillRef[]}` sends the skills in their order
+before the text (`text` may be empty when there are skills), built-in ones filled with the project's verdict lines (no artifacts, no unit).
+A skill that is gone refuses the message with its name; the assistant thread takes no skills.
+
+Every user message item stores `TextItemPayload.skills?: SentSkill[]` (`{name, source, text?,
+invocation?, reason?}`): the text that was sent for a wow skill, the invocation for a folder
+skill, and why wow attached a built-in one. `text` is what the user typed, or for a step the
+prompt without the wow skills' texts. Older items have no `skills`.
+
+### Skills in the composer
+
+The composer (`apps/web/src/chat/composer.tsx`, wow skills spec 16 to 20) stays a plain text box
+with the picked skills held beside the text, not a rich editor: chips are a list in front of the
+text box (`ComposerSkillChip` in `chat/skill-chip.tsx`), so caret handling stays the browser's.
+The list opens only where an input event of type `insertText` typed `chat.skillTrigger` (global,
+default `/`) at the start of the text or after whitespace (`typedTrigger` in `chat/model.ts`);
+it stays open while the caret is in the word after it (`skillQuery`) and closes for good once the
+caret leaves. A paste, a path (`src/app`) or a date never opens it, and only a pick makes a chip:
+text is never parsed into chips. A pick takes the trigger and query out of the text
+(`withoutQuery`) and adds the `Skill`; `skillRefOf` names it on the wire as `SkillRef` (`source`
+for wow and own skills, `plugin:name` for a Claude plugin's skill). Backspace at caret 0 removes
+the last chip; ArrowLeft at caret 0 focuses the last chip, and on a chip the arrows move between
+chips and back to caret 0, Backspace or Delete remove it. `onSend(text, skills?)` gets the
+skills only when chips were picked, so `thread.sendMessage` carries `skills` and may have empty
+`text` (the server refuses a message with neither). A queued message keeps its chips. Retry
+sends the last user item's text and skills again (`lastUserSent`). A composer without
+`providerKind` (the Assistant view) takes no skills. The composer on screen that takes skills
+registers in `skillComposerStore` (`chat/composer-store.ts`), which feeds the palette's "Pick a
+skill for the message" (inserts the trigger at the caret) and "Remove skill <name> from the
+message" (`chat/skill-commands.ts`). A user item with `skills` draws them as `SentSkillChip`s
+above its text; each opens a popover with the text sent (or the invocation) and the reason for
+an attached built-in skill. Items without `skills` (older messages, `$name` in their text) are
+drawn as before. New-thread starters add their skill as a chip (`ComposerHandle.addSkill`).
+
 ## Workflow engine
 
 `packages/workflow-engine` is pure: given a workflow, a run and an event (step completed, gate
@@ -509,7 +623,8 @@ answered, trigger fired) it returns the next run state and the effects to perfor
 with prompt, notify, finish). The server performs them. The step prompt is:
 
 ```text
-<skill invocation for the step's provider>  <extraPrompt>
+<the step's skills: the one it runs, its alsoFollow skills, then the built-in skills attached
+ by themselves, each as text or invocation (see "wow skills")>  <extraPrompt>
 
 <unit text: workflows.unitPromptTemplate rendered with the run's unit; only in a run that a
  plan run started for a unit, see "Plan runs">
@@ -517,6 +632,31 @@ with prompt, notify, finish). The server performs them. The step prompt is:
 <handover: workflows.handoverTemplate rendered with previous step's final assistant message,
  the backlog item body if any, and the expected artifact paths>
 ```
+
+Skills of a step (wow skills spec 10 to 15). `stepPromptFor` makes the prompt and answers
+`{prompt, shown?, skills?, missing?}`; `renderStepPrompt` is its `prompt`. A run started since wow
+skills has `WorkflowRun.wowSkills: true` (column `wow_skills`). For it the engine asks
+`EngineContext.skillFor(step, ref, values)` for the skill the step runs (`skillName` with
+`skillSource`) and each `alsoFollow` entry, in that order. Then, while
+`workflows.attachBuiltInSkills` is on, it adds the built-in skills of `automaticSkills(step,
+run.unit)` that the step does not name and does not `leaveOut`, with the reason:
+`wow-verdict` when the gate after the step has the verdict part or a rule reads the verdict,
+`wow-artifacts` when the step expects artifacts, `wow-pull-request` when the run is for a unit.
+A built-in skill switched off is not found, so it is not attached. Each of wow's own sentences
+for these purposes is sent once: with `wow-artifacts` in the prompt the handover gets an empty
+`expectedArtifacts`, and with `wow-pull-request` the unit text gets an empty `intentUnitLine`.
+A skill the step names that `skillFor` does not find fails the step before it starts (no
+thread, no turn, no rule followed) with "The skill <name> no longer exists, so the step cannot
+start. …". The `startStep` and `sendBack` effects carry `shown` and `skills`; the runner and the
+orchestrator then send `thread.sendPrepared {threadId, text: shown, prompt, skills}` (internal)
+instead of `thread.sendMessage`, so the thread shows the prompt without the skills' texts and
+names the skills. A run stored before (no `wowSkills`), or an engine context without
+`skillFor`, keeps the old prompt: `invocationFor(step)`, the expected artifacts in the handover
+and the Intent-Unit line in the unit text. A step held while the user's own turn runs keeps its
+prompt (`heldPrompt`) with `heldShown` and `heldSkills`, and goes as `thread.sendPrepared` like
+any step's turn. A `workflows.unitPromptTemplate` stored before wow skills that spells out
+`Intent-Unit: {{intentId}}/{{unitKey}}` itself keeps the line; `wow-pull-request` then gets an
+empty `intentUnitLine`, so the line is still sent once.
 
 `workflows.handoverTemplate` is a setting (project scope). `{{name}}` is replaced and
 `{{#name}}…{{/name}}` is dropped when the value is empty; the values are `previousStep`,
@@ -717,12 +857,13 @@ the server. The orchestrator calls `startRun`/`advance` and stores one `workflow
 step started for the first time (model, effort and permission mode from the step, then the provider instance
 defaults) and `thread.stateChanged` for gates. Step changes and deletes are refused while a run of
 the workflow is live, because a run follows its steps by position. Thread ids are
-`<runId>.<stepId>`. The step's invocation comes from the skills projection, matched by name
+`<runId>.<stepId>`. A folder skill's invocation comes from the skills projection, matched by name
 (`plugin:name` picks a Claude plugin's skill); `invocationsFor` in `packages/skills` formats both
-the scanned skills and unknown ones.
+the scanned skills and unknown ones, so an unknown folder skill is still invoked by name.
 
 `WorkflowRunner` performs the effects after commit through the thread commands: `startStep`
-dispatches `thread.sendMessage` with the rendered prompt, so the provider service starts the turn
+dispatches `thread.sendMessage` with the rendered prompt (`thread.sendPrepared` for a prompt made
+with skills, see "Skills of a step"), so the provider service starts the turn
 like any other, and `interrupt` dispatches `thread.interrupt`. A step ends when the persisted
 `turn.ended` of its thread does: completed becomes `workflowRun.stepCompleted` with the turn's
 last assistant text as the final message, the artifacts found and the step's file hashes (see
@@ -933,9 +1074,12 @@ planId, intentId, unitKey, title}`) and has the id `<planRunId>.<unitKey>`.
   followed, the read is forgotten and the units show what the files say, in the same commit
   (`closePlanEvents`).
 - **Prompt.** `renderStepPrompt` adds the unit text to every step of a unit's run:
-  `workflows.unitPromptTemplate` (project scope) rendered with `intentId`, `unitKey` and
-  `unitTitle`. The default also asks for the `Intent-Unit: <intent-id>/<unit-key>` line in the
-  pull request body, which is how wow finds the pull request afterwards. A send back message
+  `workflows.unitPromptTemplate` (project scope) rendered with `intentId`, `unitKey`,
+  `unitTitle` and `intentUnitLine`. The `Intent-Unit: <intent-id>/<unit-key>` line in the pull
+  request body is how wow finds the pull request afterwards; a step that gets the built-in skill
+  `wow-pull-request` is asked for it there, so `intentUnitLine` is empty and the default leaves
+  its sentence out. A run from before wow skills, or one with automatic attaching off, gets the
+  sentence as before. A send back message
   does not repeat it; the thread already has it.
 
 ## Scheduler and triggers
@@ -1162,7 +1306,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
   `providers.offerSetup`
-- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.starterCount`
+- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.starterCount`,
+  `chat.skillTrigger`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.maxOccurrences` (see "Repeating cards"),
@@ -1177,8 +1322,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `workflows.gateChecksTimeoutMinutes` (project-scoped, see "Gates that pass by themselves"),
   `workflows.verdictChangesRequestedLine`, `workflows.verdictBlockedLine`,
   `workflows.goBackTemplate`, `workflows.maxStepVisits` (project-scoped, see "Rules" under
-  "Workflow engine")
-- skills: `skills.directories`, `skills.includeClaudePlugins`
+  "Workflow engine"), `workflows.attachBuiltInSkills` (project-scoped, see "Skills of a step")
+- skills: `skills.directories`, `skills.includeClaudePlugins`, `skills.builtInOff` (see "wow
+  skills")
 - plans: `plans.intentsDirectory` (project-scoped), `plans.writeSettleMs` (see "Plans")
 - trackers: `trackers.jira.baseUrl`, `trackers.jira.authMode` (`cloud-basic` or `pat`),
   `trackers.jira.email`, `trackers.jira.token` (secret), `trackers.jira.projectKey`,
@@ -1856,9 +2002,14 @@ round (the adapter refuses the turn).
 three kinds and nothing else.
 
 - Read tools are the readers in `assistant/readers.ts`: `read_settings`, `read_projects`,
-  `read_providers`, `read_workflows`, `read_templates`, `read_skills`, `read_calendar`,
-  `read_backlog`, `read_runs`, `read_triggers`, `read_notifications`, `read_connections` and
-  `test_connection` (the same sign-in test as `trackers.test`). Each reader builds its answer
+  `read_providers`, `read_workflows`, `read_templates`, `read_skills`, `read_skill`,
+  `read_calendar`, `read_backlog`, `read_runs`, `read_triggers`, `read_notifications`,
+  `read_connections` and `test_connection` (the same sign-in test as `trackers.test`).
+  `read_skills` lists every skill in list order with its description and `group` (wow skills
+  spec 21), and `skillSource` for a wow skill, which is what a step's `skillSource` and an
+  `alsoFollow` entry's `source` take. `read_skill {name, group?}` answers the text of an own or
+  a built-in skill (a built-in one as its template, unfilled) and whether it can be changed; a
+  folder skill's text is not read. Each reader builds its answer
   field by field. None returns a thread's items, a step's final message, a file's content, a
   card's notes or more of a meeting than its time and title. A secret setting and a secret
   environment variable say `set` or `not set`, decided from the names in the secret store; no
@@ -1968,6 +2119,15 @@ decides what a command of the assistant does. The table names every type of `Ser
   occurrence) is in the past or within `assistant.startSoonMinutes` of now, because the scheduler would start its run almost at
   once, which is "start a run now" by another name. A card further ahead is scheduling and stays
   ordinary.
+  Every own skill the assistant writes, changes or removes (`skill.create`, `skill.update`,
+  `skill.delete`; tools `create_skill`, `update_skill`, `delete_skill`) is a proposal too (wow
+  skills spec 22): a skill steers every agent that follows it. Its card shows "When to use it"
+  and the text (the whole text kept as `toFull`/`fromFull` and shown on request, as a long value
+  always is), or for a change only what differs, or for a removal the text that goes; its basis
+  is the own skill as it is, so an accept after the skill was changed by hand is refused as
+  stale. `skill.update` and `skill.delete` of a built-in skill or a folder skill are refused
+  with a sentence that says so. Setting a step's `alsoFollow`, `skillSource` or `leaveOut`
+  (spec 23) is part of `update_workflow` and follows the workflow rules above.
 - `refused`: never applied, with a sentence for the assistant. The answers at a gate
   (`workflowRun.continue`, `sendBack`, `stop`; the sentence carries the run's path),
   `planRun.stop`, a card delete that would stop a run, every thread, approval and question
@@ -2054,7 +2214,10 @@ the same for a marked thread message and a marked file. One case speaks MCP to t
 with the SDK's own client. `assistant/view.test.ts` covers what the view relies on: the two
 asks, a value saved in a secret field (searched for in every event, receipt, thread item, log
 line and prompt), the net over the agent's own reports, and the note in the next prompt, with
-the server's clock moved between turns.
+the server's clock moved between turns. `assistant/skills.test.ts` covers wow skills spec 21 to
+23: the list in its groups, a wow skill's text, a new, changed and removed own skill as a
+proposal with its text and written only at Yes, the refusals for built-in and folder skills,
+a stale accept, and "Also follow" under the workflow rules.
 
 **The view** (`apps/web/src/assistant`, section "Assistant" above Settings, `/assistant`,
 `keybindings.goAssistant`, Mod+6). It calls `assistant.open` when it opens and again when an
@@ -2064,7 +2227,7 @@ Assistant (the composer is blocked with the same sentence); with no thread yet i
 the sentence. The conversation is the chat view's `ThreadConversation` with
 `ConversationExtras` (`chat/thread-view.tsx`): rows after an item, rows at the end, the
 composer's ref, placeholder, blocked reason, a check before send and a notice line. Nothing of
-the chat view is copied. The `$` skill picker is off there. With `chat.groupToolCalls` on (the
+the chat view is copied. The skill list and chips are off there (no `providerKind`). With `chat.groupToolCalls` on (the
 default), `groupToolCalls` (`chat/view-model.ts`) draws consecutive tool calls of one turn as one
 row (`ToolCallGroup`): the latest call, the count and how many failed; any other item, a new turn,
 or a call that has rows after it (change rows, proposals, cards) ends the run. Its open state is
@@ -2176,7 +2339,8 @@ text back.
 
 **The file** (`SetupFile` in `packages/contracts/src/setup.ts`) is YAML, read and written with
 the `yaml` package, with a version key: `version` (`setupFileVersion`, 1), `wow` (the version
-that wrote it), `settings` (key → value), `toFillIn` (secret setting keys) and `workflows`. A
+that wrote it), `settings` (key → value), `toFillIn` (secret setting keys), `workflows` and
+`skills` (own skills as `{name, description, text}`, wow skills spec 8). A
 workflow is the stored one without dates, and each step names its provider by kind (`provider:
 claude`) instead of an instance id, which is this install's own. No path, project or line ending
 form is in it, so a file made on Windows reads the same on Linux; a byte order mark and CRLF are
@@ -2191,8 +2355,10 @@ Confluence email, the GitHub owner and `triggers.ignoredCommentAuthors`, `machin
 `workspaces.root`, `assistant.providerInstanceId`, `advanced.port`, `desktop.autostart`,
 `appearance.paletteRecent`, `providers.offerSetup`), `person` for what only that person can say (`calendar.zone`,
 `calendar.firstDayOfWeek`, `calendar.workHours`). Projects, cards, backlog items, threads and runs
-are not read at all, so no project folder is in it. A value or workflow that the secret net
-(`assistant.secretPatterns`) matches is left out and named in `leftOut`; so is a workflow whose
+are not read at all, so no project folder is in it. Own skills are written by name with their
+text; built-in skills come with the app and folder skills stay in their folders. A value,
+workflow or own skill that the secret net (`assistant.secretPatterns`) matches is left out and
+named in `leftOut`; so is a workflow whose
 step names an instance that no longer exists. A step applied from a file where no instance of its
 kind was here holds the kind as its instance id (`awaitedProviderKind`) and is written back with
 that kind; a run of its workflow is refused with "Step <skill> has no <kind> instance here yet:
@@ -2212,7 +2378,14 @@ registry schema, a secret setting with any value, a `personal` setting, a `toFil
 not secret, and any string the secret net matches. Then the commands are built: `setting.set`
 at global scope for each value that differs from what is stored (or the default), and for each
 workflow `workflow.update` of the one with its id, else of the only one with its name, or
-`workflow.create` with the file's id. A step keeps the instance it already uses when that is of
+`workflow.create` with the file's id. Each own skill in the file is `skill.update` of the own
+skill with its name when the description or text differ (a `replaced` line; "(the text
+differs)" when only the text does), else `skill.create` (an `added` line), either way with
+the whole text as the line's `full`; a name the rule refuses or one in the file twice refuses
+the file with its line. Skills are planned before workflows, so a step that runs or follows a
+skill the same file brings is not marked. A step's skill counts with its source, as a run finds
+it: `yours` only among own skills (or the file's), `wow` (or a built-in name without a source)
+only among wow skills, anything else only among folder skills. A step keeps the instance it already uses when that is of
 the file's kind, else takes the first instance of that kind, so a file read where it was written
 changes nothing. Each command is decided once on the projections without storing anything, so a
 command the app would refuse (rules that point nowhere, a workflow with a live run) refuses the
@@ -2234,7 +2407,9 @@ name, text}` and `setup.undo {applicationId}`). `decideInSteps` decides them in 
 transaction, like the assistant's answer commands. Apply reads the text again with
 `planSetup` (the preview is never trusted), decides each command as the user's, and records
 each one's change with `changeOf` from `assistant/changes.ts`: the values it left (`expect`) and
-the commands that take it back (`inverse`). The event `setup.applied` stores them as `parts` of
+the commands that take it back (`inverse`). An own skill's record has the target `{kind:
+'skill', id: <name>}` and holds its name, description and text; its inverse is the delete, the
+update with the old text, or the create. The event `setup.applied` stores them as `parts` of
 the `SetupApplicationRecord`; the `setupApplications` topic row (`SetupApplication`) leaves them
 out. Undo checks every part with `undoRefusal` first and is refused, changing nothing, with what
 changed when any thing the file set changed again; otherwise it decides every inverse, newest
@@ -2262,7 +2437,9 @@ Tests: `apps/server/src/setup/setup.test.ts` (two whole servers: save on one wit
 secret, folder, email, card, backlog item and thread, which the file must not contain; preview
 and apply on the other, Undo, refused Undo, CRLF and byte order mark, each refusal with its
 line, a newer version, a missing skill, the round trip, the assistant's refusal, and the RPC
-methods); `apps/web/src/settings/setup.test.tsx`; `apps/web/e2e/setup-file.spec.ts`.
+methods); `apps/server/src/setup/setup-skills.test.ts` (own skills saved, previewed as added
+or replaced with their text, applied as files under wow's home and removed by Undo, the name
+rule with its line); `apps/web/src/settings/setup.test.tsx`; `apps/web/e2e/setup-file.spec.ts`.
 
 ## Question card
 
@@ -2424,9 +2601,9 @@ permission mode, and its project or folder; then the instance defaults. Folders 
 project (`recentFolders` over `threads`) and "Another folder…" (`Runtime.pickFolder`, a typed path
 in the browser build) replace a separate working-directory field. Starters under the composer come
 from `skills`, open `backlogItems` and the last active thread (`chat.starterCount`). The composer
-focuses on `/chat/new` and on opening a thread; its `$` picker is a cmdk `Command` with
+focuses on `/chat/new` and on opening a thread; its skill list is a cmdk `Command` with
 `shouldFilter={false}` whose selection the text box moves (focus stays in the text box), grouped by
-`skillGroup` (Project, User, Plugins). A message written while a turn runs is held in the composer
+`skillGroupOf` (see "Skills in the composer"). A message written while a turn runs is held in the composer
 and sent when `turns` says the turn ended; while a question waits, the composer sends
 `question.answer` with its text as the answer's typed text. Questions are drawn by the question
 card (see "Question card"). The working clock reads the running turn's `startedAt` and redraws each second;
@@ -2471,7 +2648,23 @@ filled with the instance defaults, else the first listed model (not for a provid
 model; see "Models for steps"). Expected artifact globs are typed
 one per line. Validation needs a name, a step, and per step a skill, an instance, a model, an
 effort and a permission mode; a skill missing from the scan is only a warning, because the server
-invokes unknown skills by name. "Start from" (Blank or a template) is offered for a new workflow;
+invokes unknown skills by name. The skill pickers (`step-skills.ts`, `skillChoices`) list every
+skill once in list order with its group as the muted detail; a wow skill's value carries its
+source (`yours/<name>`, `wow/<name>`) so an own skill and a folder skill of the same name are
+two choices, and picking one sets `skillName` and `skillSource` (wow skills spec 9). "Also
+follow" (spec 11) under the skill holds the step's `alsoFollow` as chips in their order, each
+with its group and a button to stop following it, and a picker that adds any other skill from
+every group. "Attached automatically" (spec 12, `attachedSkills`) lists the built-in skills
+`automaticSkills` gives the step, as long as `workflows.attachBuiltInSkills` is on (its global
+value: the builder has no project), the built-in skill is in the list (not switched off) and the
+step does not already name it. Each says why ("Because a rule of this step reads the
+verdict."); `wow-pull-request` shows for a workflow marked "for units", since a unit is only
+known when a run starts. "Leave out" adds the name to `leaveOut` and the row then says it is
+left out, with "Attach again". The rules store's `builder` also carries `changeStep`,
+`forUnits` and `attachBuiltIn`, so the palette acts on the step being edited: "Also follow
+<skill> in step N" (search only), "Stop following <skill> in step N", and "Leave <name> out of
+step N" or "Attach <name> to step N again". `applyStepChanges` takes a field set to undefined
+away, so a step that follows nothing more is saved without `alsoFollow`. "Start from" (Blank or a template) is offered for a new workflow;
 an existing one shows "Based on <template>" and replaces its steps only through "Replace steps
 with template…", which still needs Save. "Save as template…" writes the draft's skills, gates and artifact globs into
 `workflows.templates` (`saveAsTemplate`: replaced by name, else a new kind from the name), with

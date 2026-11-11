@@ -3,12 +3,14 @@ import {
   SecretRef,
   findSecret,
   hideSecretsDeep,
+  isBuiltInSkillName,
   settingGroupTitles,
   type AssistantProposalLine,
   awaitedProviderKind,
   lacksRequiredModel,
   modelMark,
   providerKindLabels,
+  type OwnSkill,
   type ProviderKind,
   type SetupFillIn,
   type SetupLine,
@@ -16,6 +18,7 @@ import {
   type SetupPreview,
   type SetupProblem,
   type SetupWorkflow,
+  type SkillRef,
   type Workflow,
   type WorkflowStep,
   withoutAddressAccount,
@@ -105,10 +108,28 @@ function matchOf(
   return named.length === 1 ? named[0] : undefined;
 }
 
+// A step's skill is found the way a run finds it (wow skills spec 15): a wow skill only among
+// wow skills, a built-in name without a source as the built-in one, anything else in folders.
+function refInstalled(ref: SkillRef, read: ReadModel, fileSkills: readonly string[]): boolean {
+  const source = ref.source ?? (isBuiltInSkillName(ref.name) ? 'wow' : undefined);
+  const listed = read.skills();
+  if (source === 'yours' && fileSkills.includes(ref.name)) return true;
+  if (source !== undefined) {
+    return listed.some((skill) => skill.source === source && skill.name === ref.name);
+  }
+  const folders = listed.filter((skill) => skill.source !== 'wow' && skill.source !== 'yours');
+  return skillInstalled(
+    ref.name,
+    folders.map((skill) => skill.name),
+  );
+}
+
 function planWorkflow(
   entry: SetupWorkflow,
   match: Workflow | undefined,
   read: ReadModel,
+  // Own skills the same file brings, which are there once it is applied.
+  fileSkills: readonly string[],
 ): WorkflowPlan | undefined {
   const instances = read.providerInstances();
   const marks: SetupMark[] = [];
@@ -122,10 +143,15 @@ function planWorkflow(
     if (!kept && !first) missingKinds.add(provider);
     return { ...step, providerInstanceId: kept ?? first ?? provider };
   });
-  const installed = read.skills().map((skill) => skill.name);
   const missingSkills = [
     ...new Set(
-      steps.map((step) => step.skillName).filter((name) => !skillInstalled(name, installed)),
+      steps
+        .flatMap((step): SkillRef[] => [
+          { name: step.skillName, ...(step.skillSource ? { source: step.skillSource } : {}) },
+          ...(step.alsoFollow ?? []),
+        ])
+        .filter((ref) => !refInstalled(ref, read, fileSkills))
+        .map((ref) => ref.name),
     ),
   ];
   for (const skill of missingSkills) {
@@ -211,6 +237,40 @@ function planWorkflow(
     ),
     replaces: true,
     marks,
+  };
+}
+
+// An own skill from the file: a new one, or the text of the one with its name put in place.
+// The name rule is the app's own, applied when the command is decided below.
+function planSkill(
+  skill: OwnSkill,
+  read: ReadModel,
+): { command: Command; line: SetupLine; replaces: boolean } | undefined {
+  const what = `Skill "${skill.name}"`;
+  const description = skill.description.trim();
+  const text = skill.text.trim();
+  const own = read.skills().find((entry) => entry.source === 'yours' && entry.name === skill.name);
+  const command: Command = {
+    type: own ? 'skill.update' : 'skill.create',
+    skill: { name: skill.name, description, text },
+  };
+  // The text is what steers agents, so the preview always keeps all of it.
+  const full = (line: AssistantProposalLine): SetupLine => ({ ...line, full: text });
+  if (!own) {
+    return {
+      command,
+      line: full({ what, from: null, to: show('description', description, read) }),
+      replaces: false,
+    };
+  }
+  if (own.description === description && (own.text ?? '') === text) return undefined;
+  const from = show('description', own.description, read);
+  const to = show('description', description, read);
+  return {
+    command,
+    // A skill whose description stays says that its text is what changes.
+    line: full({ what, from, to: from === to ? `${to} (the text differs)` : to }),
+    replaces: true,
   };
 }
 
@@ -373,6 +433,21 @@ export function planSetup(text: string, read: ReadModel, context: DecideContext)
     toFillIn.push({ key, label: definition.label, place: settingPlace(key, 'global', context) });
   });
 
+  // Own skills before the workflows, so a step that follows one finds it (wow skills spec 8).
+  const skillNames = new Set<string>();
+  (file.skills ?? []).forEach((skill, index) => {
+    const line = parsed.lineOf(['skills', index]);
+    if (skillNames.has(skill.name)) {
+      problems.push({ line, reason: `Skill ${skill.name} is in the file twice` });
+      return;
+    }
+    skillNames.add(skill.name);
+    const plan = planSkill(skill, read);
+    if (!plan) return;
+    (plan.replaces ? replaced : added).push(plan.line);
+    planned.push({ command: plan.command, line });
+  });
+
   const local = read.workflows();
   const taken = new Set<string>();
   const ids = new Set<string>();
@@ -385,7 +460,7 @@ export function planSetup(text: string, read: ReadModel, context: DecideContext)
     ids.add(entry.id);
     const match = matchOf(entry, local, taken);
     if (match) taken.add(match.id);
-    const plan = planWorkflow(entry, match, read);
+    const plan = planWorkflow(entry, match, read, [...skillNames]);
     if (!plan) return;
     (plan.replaces ? replaced : added).push(plan.line);
     marked.push(...plan.marks);

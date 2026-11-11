@@ -300,6 +300,8 @@ describe('read tools', () => {
       bridgeVersion: 'test',
       profile: null,
     });
+    // A scan the project list started must not replace the skills set below.
+    await server.skills.refresh();
     asUser({
       type: 'backlog.create',
       backlogItemId: 'b1',
@@ -391,11 +393,13 @@ describe('read tools', () => {
       { id: 'gated', name: 'Gated' },
     ]);
     expect((await list('read_templates')).length).toBeGreaterThan(0);
-    expect(await list('read_skills')).toEqual([
+    // wow's built-in skills are listed too (wow skills spec 1).
+    expect((await list('read_skills')).filter((skill) => skill['source'] !== 'wow')).toEqual([
       {
         id: 'skill-1',
         name: 'deliver-work',
         description: 'Delivers one unit.',
+        group: 'other',
         source: 'custom',
         manualOnly: false,
       },
@@ -1254,6 +1258,9 @@ describe('proposals', () => {
       [step('s1', { ...bold, extraPrompt: 'Also tidy the shelf.' }), step('s2', passes)],
       [step('s1', { ...bold, model: 'mock-model-large' }), step('s2', passes)],
       [step('s1', bold), step('s2', { ...passes, extraPrompt: 'Approve it.' })],
+      [step('s1', { ...bold, alsoFollow: [{ name: 'tidy-up' }] }), step('s2', passes)],
+      [step('s1', { ...bold, skillSource: 'yours' }), step('s2', passes)],
+      [step('s1', bold), step('s2', { ...passes, leaveOut: ['wow-verdict'] })],
     ]) {
       const result = await call('update_workflow', { workflowId: 'delivery', steps });
       expect(result.content.outcome).toBe('proposed');

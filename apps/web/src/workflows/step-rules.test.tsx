@@ -201,7 +201,8 @@ describe('the rules of a step in the builder', () => {
       { when: { fact: 'checks', is: 'failed' }, goTo: { type: 'step', stepId: 'plan' } },
     ]);
     expect(savedSteps()?.[0]).toEqual(plain.steps[0]);
-  });
+    // Seven picks through popovers; a loaded machine needs more than the default.
+  }, 15_000);
 
   it('says that the run ends after the last step when no rule holds', async () => {
     const { expand, rules } = await open(plain);

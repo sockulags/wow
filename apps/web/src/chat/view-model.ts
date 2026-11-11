@@ -1,5 +1,7 @@
 import {
   QuestionItemPayload,
+  SkillGroup,
+  skillGroupOf,
   TextItemPayload,
   ToolCallItemPayload,
   type Approval,
@@ -7,7 +9,9 @@ import {
   type ProviderInstance,
   type ProviderKind,
   type Question,
+  type SentSkill,
   type Skill,
+  type SkillRef,
   type Thread,
   type ThreadItem,
   type Turn,
@@ -86,16 +90,15 @@ export function formatElapsed(milliseconds: number): string {
 export const effortLabel = (effort: string): string =>
   effort === 'default' ? 'Default' : effort.charAt(0).toUpperCase() + effort.slice(1);
 
-export type SkillGroup = 'Project' | 'User' | 'Plugins' | 'Other';
-export const skillGroups: readonly SkillGroup[] = ['Project', 'User', 'Plugins', 'Other'];
+// Where a skill comes from, for the list's group headings and the chip's mark: Yours, wow,
+// Project, User, Plugins, Other, in that order (wow skills spec 1, 7).
+export const skillGroups: readonly SkillGroup[] = SkillGroup.options;
+export const skillGroup = (skill: Pick<Skill, 'source' | 'invocations'>): SkillGroup =>
+  skillGroupOf(skill);
 
-// Where a skill comes from, for the picker's group headings.
-export function skillGroup(skill: Pick<Skill, 'source' | 'invocations'>): SkillGroup {
-  if (skill.invocations.claude.includes(':')) return 'Plugins';
-  if (skill.source === 'project-claude' || skill.source === 'project-agents') return 'Project';
-  if (skill.source === 'user-claude' || skill.source === 'user-codex') return 'User';
-  return 'Other';
-}
+// The group of a skill a message was sent with: a folder skill's group follows its invocation.
+export const sentSkillGroup = (skill: SentSkill): SkillGroup =>
+  skillGroupOf({ source: skill.source, invocations: { claude: skill.invocation ?? '' } });
 
 export const skillSourceLabels: Readonly<Record<Skill['source'], string>> = {
   'user-claude': 'Claude user skills',
@@ -103,6 +106,8 @@ export const skillSourceLabels: Readonly<Record<Skill['source'], string>> = {
   'project-claude': 'Project .claude',
   'project-agents': 'Project .agents',
   custom: 'Custom folder',
+  wow: 'Built into wow',
+  yours: 'Your skills',
 };
 
 // The muted source label of one picker row: the plugin's name, or where it was found.
@@ -117,7 +122,7 @@ export function starterSkills(skills: readonly Skill[], count: number): Skill[] 
   const unique: Skill[] = [];
   for (const skill of skills.toSorted(
     (a, b) =>
-      Number(skillGroup(b) === 'Project') - Number(skillGroup(a) === 'Project') ||
+      Number(skillGroup(b) === 'project') - Number(skillGroup(a) === 'project') ||
       a.name.localeCompare(b.name),
   )) {
     if (skill.manualOnly || seen.has(skill.name)) continue;
@@ -154,8 +159,27 @@ function lastText(items: readonly ThreadItem[], kind: ThreadItem['kind']): strin
   return undefined;
 }
 
-// The user's last message, for "Retry".
-export const lastUserMessage = (items: readonly ThreadItem[]) => lastText(items, 'user');
+// The user's last message with its skills, as a message names them, so "Retry" sends both again
+// (a message may be only a chip).
+export function lastUserSent(
+  items: readonly ThreadItem[],
+): { readonly text: string; readonly skills: SkillRef[] } | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item?.kind !== 'user') continue;
+    const parsed = TextItemPayload.safeParse(item.payload);
+    if (!parsed.success) continue;
+    const skills = (parsed.data.skills ?? []).map((skill): SkillRef =>
+      skill.source === 'wow' || skill.source === 'yours'
+        ? { name: skill.name, source: skill.source }
+        : { name: skill.name },
+    );
+    if (parsed.data.text.trim() !== '' || skills.length > 0) {
+      return { text: parsed.data.text, skills };
+    }
+  }
+  return undefined;
+}
 
 // A thread's last assistant message, for the gate's "what to review".
 export const lastAssistantText = (items: readonly ThreadItem[]) =>

@@ -12,6 +12,7 @@ import { UpdateStatusPanel } from '@/app/update-banner';
 import { KeybindingsTable } from './keybindings-table';
 import { SettingsForm } from './setting-row';
 import { SetupSection } from './setup-section';
+import { SkillsSection } from './skills-section';
 import { TrackersSection } from './trackers-section';
 
 export { SettingRow, SettingsForm } from './setting-row';
@@ -171,6 +172,7 @@ export function SettingsPage() {
       {current === 'providers' && <ProvidersSection />}
       {current === 'updates' && <UpdateStatusPanel />}
       {current === 'advanced' && <SetupSection />}
+      {current === 'skills' && <SkillsSection />}
       {/* Remount per group so drafts never leak between pages. */}
       {current === 'trackers' ? (
         <TrackersSection key={group} entries={entries} />

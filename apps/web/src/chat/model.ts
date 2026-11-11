@@ -5,6 +5,7 @@ import {
   type ProviderKind,
   type ProviderModel,
   type Skill,
+  type SkillRef,
   type Thread,
   type ThreadItem,
   type ThreadState,
@@ -135,18 +136,65 @@ export function permissionOptions(
     : [{ id: current, label: current }, ...options];
 }
 
-// Skill picker (spec 18): a `$` at the start of a word opens it; what follows filters it.
+// The skill list (wow skills spec 16, 19). It opens only where the user typed the trigger
+// character (`chat.skillTrigger`) at the start of the message or after a space, and stays open
+// while the caret is in the word that follows. The character anywhere else, or pasted, opens
+// nothing, so `src/app` or a date stays text.
 export interface SkillQuery {
   readonly start: number;
   readonly query: string;
 }
 
-export function skillQuery(text: string, caret: number): SkillQuery | undefined {
-  const before = text.slice(0, caret);
-  const match = /(^|\s)\$([^\s$]*)$/.exec(before);
-  if (!match) return undefined;
-  const query = match[2] ?? '';
-  return { start: caret - query.length - 1, query };
+const isSpace = (character: string | undefined): boolean =>
+  character !== undefined && /\s/u.test(character);
+
+// Where a typed character opens the list: its position, when it is the trigger and stands at the
+// start of the text or after a space. `inserted` is what the input event typed.
+export function typedTrigger(
+  text: string,
+  caret: number,
+  inserted: string | null,
+  trigger: string,
+): number | undefined {
+  if (inserted !== trigger) return undefined;
+  const start = caret - trigger.length;
+  if (start < 0 || text.slice(start, caret) !== trigger) return undefined;
+  return start === 0 || isSpace(text[start - 1]) ? start : undefined;
+}
+
+// The query of a list opened at `start`, or undefined once the caret left its word.
+export function skillQuery(
+  text: string,
+  caret: number,
+  start: number | undefined,
+  trigger: string,
+): SkillQuery | undefined {
+  if (start === undefined || caret < start + trigger.length) return undefined;
+  if (text.slice(start, start + trigger.length) !== trigger) return undefined;
+  if (start > 0 && !isSpace(text[start - 1])) return undefined;
+  const query = text.slice(start + trigger.length, caret);
+  if (/\s/u.test(query) || query.includes(trigger)) return undefined;
+  return { start, query };
+}
+
+// A pick takes the trigger and the query out of the text; the skill becomes a chip.
+export function withoutQuery(
+  text: string,
+  query: SkillQuery,
+  caret: number,
+): { readonly text: string; readonly caret: number } {
+  return { text: text.slice(0, query.start) + text.slice(caret), caret: query.start };
+}
+
+// How a message names a picked skill (wow skills spec 9, 10): a wow skill by its source, so an
+// own skill and a folder skill of the same name stay apart; a folder skill by the name a step
+// would store (plugin:name for a Claude plugin's).
+export function skillRefOf(skill: Skill): SkillRef {
+  if (skill.source === 'wow' || skill.source === 'yours') {
+    return { name: skill.name, source: skill.source };
+  }
+  const plugin = /^\/([^:\s]+:[^\s]+)$/u.exec(skill.invocations.claude)?.[1];
+  return { name: plugin ?? skill.name };
 }
 
 export function filterSkills(skills: readonly Skill[], query: string): Skill[] {
@@ -163,17 +211,4 @@ export function filterSkills(skills: readonly Skill[], query: string): Skill[] {
     .filter((entry) => entry.rank < 3)
     .toSorted((a, b) => a.rank - b.rank || a.skill.name.localeCompare(b.skill.name))
     .map((entry) => entry.skill);
-}
-
-export function insertSkill(
-  text: string,
-  query: SkillQuery,
-  caret: number,
-  invocation: string,
-): { readonly text: string; readonly caret: number } {
-  const inserted = `${invocation} `;
-  return {
-    text: text.slice(0, query.start) + inserted + text.slice(caret),
-    caret: query.start + inserted.length,
-  };
 }

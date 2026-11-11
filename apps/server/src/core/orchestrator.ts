@@ -41,6 +41,7 @@ import { decideHosts, decidePlansSync, isHostCommand } from './hosts.js';
 import { decidePlanRun, isPlanRunCommand } from './plan-runs.js';
 import { decideProject, isProjectCommand } from './projects.js';
 import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
+import { decideSkill, isSkillCommand } from './skills.js';
 import { decideThread, isThreadCommand } from './threads.js';
 import { decideTrigger, isTriggerCommand } from './triggers.js';
 import { decideWorkflow, isWorkflowCommand } from './workflows.js';
@@ -176,6 +177,7 @@ export function decide(
   if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
   if (isBacklogCommand(command)) return decideBacklog(command, read, context);
   if (isHostCommand(command)) return decideHosts(command, read, context);
+  if (isSkillCommand(command)) return decideSkill(command, read, context);
   if (command.type === 'tickets.sync') return decideTickets(command, read);
   if (command.type === 'pages.sync') return decidePages(command, read);
   if (isPlanRunCommand(command)) return decidePlanRun(command, read, context);

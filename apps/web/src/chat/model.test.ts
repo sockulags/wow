@@ -6,11 +6,13 @@ import {
   effortOptions,
   filterSkills,
   groupThreads,
-  insertSkill,
   latestContext,
   permissionOptions,
   runLabel,
   skillQuery,
+  skillRefOf,
+  typedTrigger,
+  withoutQuery,
 } from './model';
 
 const thread = (id: string, changes: Partial<Thread> = {}): Thread => ({
@@ -122,12 +124,33 @@ describe('thread settings', () => {
   });
 });
 
-describe('skill picker', () => {
-  it('opens on a $ at the start of a word and reads what follows', () => {
-    expect(skillQuery('$del', 4)).toEqual({ start: 0, query: 'del' });
-    expect(skillQuery('run $ ', 5)).toEqual({ start: 4, query: '' });
-    expect(skillQuery('costs 5$', 8)).toBeUndefined();
-    expect(skillQuery('$del rest', 9)).toBeUndefined();
+describe('skill list (wow skills spec 16, 19)', () => {
+  it('opens where the trigger was typed at the start or after a space, and reads what follows', () => {
+    expect(typedTrigger('/', 1, '/', '/')).toBe(0);
+    expect(typedTrigger('run /', 5, '/', '/')).toBe(4);
+    expect(skillQuery('/del', 4, 0, '/')).toEqual({ start: 0, query: 'del' });
+    expect(skillQuery('run / ', 5, 4, '/')).toEqual({ start: 4, query: '' });
+    // Leaving the word closes it.
+    expect(skillQuery('/del rest', 9, 0, '/')).toBeUndefined();
+    expect(skillQuery('/del', 4, undefined, '/')).toBeUndefined();
+  });
+
+  it('opens nothing for src/app or 2026/11/12 in a sentence, nor for $ while the trigger is /', () => {
+    expect(typedTrigger('see src/', 8, '/', '/')).toBeUndefined();
+    expect(typedTrigger('due 2026/', 9, '/', '/')).toBeUndefined();
+    expect(typedTrigger('costs $', 7, '$', '/')).toBeUndefined();
+    expect(skillQuery('see src/app', 11, 7, '/')).toBeUndefined();
+  });
+
+  it('follows chat.skillTrigger set to $: $ opens it and / does not', () => {
+    expect(typedTrigger('$', 1, '$', '$')).toBe(0);
+    expect(typedTrigger('/', 1, '/', '$')).toBeUndefined();
+    expect(skillQuery('please $che', 11, 7, '$')).toEqual({ start: 7, query: 'che' });
+  });
+
+  it('opens nothing for pasted text with a slash', () => {
+    // A paste is no typed character.
+    expect(typedTrigger('/deliver-work now', 17, null, '/')).toBeUndefined();
   });
 
   it('ranks name matches above description matches', () => {
@@ -143,15 +166,27 @@ describe('skill picker', () => {
     expect(filterSkills(skills, '')).toHaveLength(3);
   });
 
-  it('replaces the query with the invocation and moves the caret after it', () => {
-    const text = 'please $deli now';
-    const query = skillQuery(text, 12);
+  it('takes the trigger and the query out of the text on a pick', () => {
+    const text = 'please /deli now';
+    const query = skillQuery(text, 12, 7, '/');
     expect(query).toEqual({ start: 7, query: 'deli' });
     if (!query) return;
-    expect(insertSkill(text, query, 12, '/deliver-work')).toEqual({
-      text: 'please /deliver-work  now',
-      caret: 21,
+    expect(withoutQuery(text, query, 12)).toEqual({ text: 'please  now', caret: 7 });
+  });
+
+  it('names a wow skill by its source and a plugin skill as plugin:name', () => {
+    expect(skillRefOf({ ...skill('tidy', ''), source: 'yours' })).toEqual({
+      name: 'tidy',
+      source: 'yours',
     });
+    expect(skillRefOf({ ...skill('wow-verdict', ''), source: 'wow' })).toEqual({
+      name: 'wow-verdict',
+      source: 'wow',
+    });
+    expect(
+      skillRefOf({ ...skill('c', ''), invocations: { claude: '/agent-os:c', codex: '$c' } }),
+    ).toEqual({ name: 'agent-os:c' });
+    expect(skillRefOf(skill('deliver-work', ''))).toEqual({ name: 'deliver-work' });
   });
 });
 

@@ -95,7 +95,7 @@ export const changeTools = {
   update_workflow: {
     type: 'workflow.update',
     description:
-      'Changes a workflow. Give steps as the whole new list; every step names providerInstanceId, model and effort from what read_models lists. Changing a permission mode, a gate, a gate condition, rules, "for units" or "own working copy" makes it a proposal; so does changing the skill, extra prompt, provider or model of a step that has a permission mode or a gate that passes by itself.',
+      'Changes a workflow. Give steps as the whole new list; every step names providerInstanceId, model and effort from what read_models lists. Changing a permission mode, a gate, a gate condition, rules, "for units" or "own working copy" makes it a proposal; so does changing the skill, extra prompt, provider, model or skills of a step that has a permission mode or a gate that passes by itself. A step names its skill with skillName and, for a wow skill, skillSource ("yours" or "wow"); alsoFollow lists more skills ({name, source?}, source as read_skills gives it) whose texts or invocations go after its own; leaveOut names built-in skills wow would attach by itself (wow-verdict, wow-artifacts, wow-pull-request) that this step goes without.',
   },
   delete_workflow: {
     type: 'workflow.delete',
@@ -145,6 +145,18 @@ export const changeTools = {
     description: 'Turns an event trigger on or off. Turning one on becomes a proposal.',
   },
   delete_trigger: { type: 'trigger.delete', description: 'Deletes an event trigger.' },
+  create_skill: {
+    type: 'skill.create',
+    description: `Writes one of your own skills: skill is {name, description, text}. The name has lower case letters, digits and single hyphens, does not start with wow- and is not taken by another wow skill; description says when to use it; text is what the agent is told. ${waits}`,
+  },
+  update_skill: {
+    type: 'skill.update',
+    description: `Changes one of your own skills: skill is {name, description, text}, the whole new skill under its name. Built-in skills and skills from folders cannot be changed. ${waits}`,
+  },
+  delete_skill: {
+    type: 'skill.delete',
+    description: `Removes one of your own skills by name. Built-in skills and skills from folders cannot be removed. ${waits}`,
+  },
 } as const satisfies Record<string, ChangeTool>;
 
 export type ChangeToolName = keyof typeof changeTools;

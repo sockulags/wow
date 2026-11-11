@@ -335,8 +335,14 @@ describe('starting a plan run (spec 40)', () => {
       expect(turn.prompt).toContain(`Intent: ${intentId}`);
       expect(turn.prompt).toContain('Unit: U1 Count down');
       expect(turn.prompt).toContain(`Intent-Unit: ${intentId}/U1`);
+      // wow-pull-request asks for the line, so the unit text does not ask again (wow skills
+      // spec 13).
+      expect(turn.prompt).not.toContain('put this line in its body');
     }
-    expect(turns[0]?.prompt.startsWith('/deliver-work\n\nThis run delivers one unit')).toBe(true);
+    expect(turns[0]?.prompt.startsWith('/deliver-work\n\n<skill name="wow-pull-request">\n')).toBe(
+      true,
+    );
+    expect(turns[0]?.prompt).toContain('</skill>\n\nThis run delivers one unit');
     expect(git(project, 'status', '--porcelain')).toBe(before);
   });
 
@@ -349,7 +355,21 @@ describe('starting a plan run (spec 40)', () => {
     await follow();
     start();
     await runBecomes('pr1.U1', (row) => row.state === 'done');
-    expect(startTurns()[0]?.prompt).toBe(`/deliver-work\n\n${intentId} / U1 / Count down`);
+    expect(startTurns()[0]?.prompt).toBe(
+      [
+        '/deliver-work',
+        '',
+        '<skill name="wow-pull-request">',
+        'When you open a pull request or a merge request, put an Intent-Unit line in its body for each unit it delivers, one line per unit, so wow can find it.',
+        '',
+        'For this run that line is:',
+        '',
+        `Intent-Unit: ${intentId}/U1`,
+        '</skill>',
+        '',
+        `${intentId} / U1 / Count down`,
+      ].join('\n'),
+    );
   });
 });
 
