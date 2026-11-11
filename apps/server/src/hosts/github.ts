@@ -58,6 +58,15 @@ function found(item: unknown): FoundChangeRequest | undefined {
   const head = field(item, 'head');
   const branch = field(head, 'ref');
   const sha = field(head, 'sha');
+  // A deleted fork's head repository is null. Anything but the same name as the base repository
+  // counts as a fork, so an answer that leaves it out never lets a fork through.
+  const headRepo = field(field(head, 'repo'), 'full_name');
+  const baseRepo = field(field(field(item, 'base'), 'repo'), 'full_name');
+  const fromFork = !(
+    typeof headRepo === 'string' &&
+    typeof baseRepo === 'string' &&
+    headRepo.toLowerCase() === baseRepo.toLowerCase()
+  );
   return {
     number,
     title: text(field(item, 'title')),
@@ -67,7 +76,9 @@ function found(item: unknown): FoundChangeRequest | undefined {
     mergedAt,
     units: intentUnitLines(text(field(item, 'body'))),
     links: webLinksIn(text(field(item, 'body'))),
-    ...(typeof branch === 'string' && typeof sha === 'string' ? { head: { branch, sha } } : {}),
+    ...(typeof branch === 'string' && typeof sha === 'string'
+      ? { head: { branch, sha, fromFork } }
+      : {}),
   };
 }
 
@@ -323,6 +334,7 @@ export function createGitHubHost(
         mergedAt: current.mergedAt,
         headBranch: current.head.branch,
         headSha: current.head.sha,
+        fromFork: current.head.fromFork,
         // The single pull request answer has the body too, but the lines were read when it was
         // found, from the same body.
         units: [...request.units],

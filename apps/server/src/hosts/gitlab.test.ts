@@ -1,9 +1,11 @@
 import type {
+  AppNotification,
   ChangeRequest,
   HostRead,
   PlanIntent,
   ProviderInstance,
   ServerCommand,
+  WorkflowRun,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import { execFileSync } from 'node:child_process';
@@ -510,6 +512,153 @@ describe('GitLab refusing or not answering (spec 31, 32)', () => {
     now = new Date('2026-11-03T09:36:00.000Z');
     await server.hosts.poll();
     expect(read()?.error).toBeNull();
+  });
+});
+
+// For the event trigger cases below.
+const commit = (message: string) =>
+  git(
+    '-c',
+    'user.name=Invented',
+    '-c',
+    'user.email=invented@example.invalid',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    message,
+  );
+const sha = (ref: string) => git('rev-parse', ref).toString().trim();
+const eventRuns = () =>
+  (snapshot(server.database.db, { topic: 'workflowRuns' }) as WorkflowRun[]).filter(
+    (run) => run.event,
+  );
+const notices = () => snapshot(server.database.db, { topic: 'notifications' }) as AppNotification[];
+const pollAgain = async () => {
+  now = new Date(now.getTime() + 60 * 60 * 1000);
+  await server.hosts.poll();
+  await server.hosts.idle();
+  await server.workspaces.settled();
+};
+
+const failingAt = (head: string): MockMergeRequest => ({
+  ...open,
+  sha: head,
+  pipeline: { id: 602, status: 'failed', jobs: [{ name: 'test', status: 'failed' }] },
+});
+
+describe('an event trigger on a GitLab merge request', () => {
+  let start: string;
+  let bellSha: string;
+  beforeEach(async () => {
+    // The remote cannot be reached here, so its branches are what was last fetched.
+    commit('Invented start');
+    start = sha('HEAD');
+    commit('Invented bell');
+    bellSha = sha('HEAD');
+    git('update-ref', 'refs/remotes/origin/main', start);
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    git('update-ref', 'refs/remotes/origin/agent/U2-bell', bellSha);
+    set('workspaces.fetchBeforeCreate', false);
+    server.database.db.insert(providerInstances).values(instance).run();
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'gated',
+      name: 'Gated',
+      steps: [
+        {
+          id: 'only',
+          skillName: 'deliver-work',
+          providerInstanceId: instance.id,
+          gateBefore: true,
+          gateAfter: false,
+          expectedArtifacts: [],
+        },
+      ],
+    });
+  });
+
+  const passing = (): MockMergeRequest => ({
+    ...open,
+    sha: bellSha,
+    pipeline: { id: 601, status: 'success', jobs: [{ name: 'test', status: 'success' }] },
+  });
+  const fork = 9009;
+
+  it('starts nothing for a merge request from a fork and says why', async () => {
+    gitlab.mergeRequests = [merged, { ...passing(), sourceProjectId: fork }];
+    await follow();
+    expect(requests().find((row) => row.id === 'tea:14')?.fromFork).toBe(true);
+    dispatch({
+      type: 'trigger.create',
+      triggerId: 'on-checks',
+      projectId: 'tea',
+      event: 'checksFailed',
+      workflowId: 'gated',
+    });
+    gitlab.mergeRequests = [merged, { ...failingAt(bellSha), sourceProjectId: fork }];
+    await pollAgain();
+    expect(eventRuns()).toEqual([]);
+    expect(notices().map((notice) => [notice.title, notice.body])).toEqual([
+      [
+        'Trigger started nothing',
+        'Checks failed · !14: it comes from a fork, so nothing started. A run would work on the fork\'s files, and they would steer an agent on this computer. "Start runs for pull requests from forks" (triggers.forkPullRequests) allows it.',
+      ],
+    ]);
+  });
+
+  it("starts a fork's merge request at its head commit once the project allows forks", async () => {
+    set('triggers.forkPullRequests', true, 'project:tea');
+    gitlab.mergeRequests = [merged, { ...passing(), sourceProjectId: fork }];
+    await follow();
+    dispatch({
+      type: 'trigger.create',
+      triggerId: 'on-checks',
+      projectId: 'tea',
+      event: 'checksFailed',
+      workflowId: 'gated',
+    });
+    gitlab.mergeRequests = [merged, { ...failingAt(bellSha), sourceProjectId: fork }];
+    await pollAgain();
+    const [run] = eventRuns();
+    expect(run?.event).toMatchObject({
+      headSha: bellSha,
+      headRef: 'refs/merge-requests/14/head',
+      fromFork: true,
+    });
+    expect(run?.workingCopy).toMatchObject({ state: 'ready', startSha: bellSha });
+  });
+
+  it('starts a merged merge request whose branch is gone at the tip of the default branch', async () => {
+    gitlab.mergeRequests = [merged, passing()];
+    await follow();
+    expect(requests().find((row) => row.id === 'tea:14')?.fromFork).toBe(false);
+    dispatch({
+      type: 'trigger.create',
+      triggerId: 'on-merged',
+      projectId: 'tea',
+      event: 'merged',
+      workflowId: 'gated',
+    });
+    gitlab.mergeRequests = [
+      merged,
+      {
+        ...passing(),
+        state: 'merged',
+        mergedAt: '2026-11-03T09:30:00Z',
+        branch: 'agent/U2-gone',
+      },
+    ];
+    await pollAgain();
+    const [run] = eventRuns();
+    expect(run?.event).toMatchObject({ event: 'merged', headSha: bellSha, fromFork: false });
+    expect(run?.workingCopy).toMatchObject({
+      state: 'ready',
+      startSha: start,
+      note: 'Branch agent/U2-gone was not found. origin was not fetched (the setting is off), so the working copy starts at the tip of main as it was last fetched.',
+    });
   });
 });
 

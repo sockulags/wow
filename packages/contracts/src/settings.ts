@@ -1079,6 +1079,15 @@ export const settingsRegistry = {
     default: true,
     scope: 'global',
   }),
+  'triggers.forkPullRequests': defineSetting({
+    schema: z.boolean(),
+    group: 'triggers',
+    label: 'Start runs for pull requests from forks',
+    description:
+      "Let an event on a pull request or merge request from a fork start a run. The run's working copy is then at the fork's head commit, so the fork's files (agent instructions, skills, hook settings, scripts) steer an agent on this computer. Off: such an event starts nothing, and a notification says so.",
+    default: false,
+    scope: 'project',
+  }),
   'triggers.ignoredCommentAuthors': defineSetting({
     personal: 'account',
     schema: z.array(z.string().trim().min(1)),

@@ -296,6 +296,7 @@ describe('a run started by an event (spec 48)', () => {
       branch: bellBranch,
       headSha: bell.sha,
       headRef: 'refs/pull/14/head',
+      fromFork: false,
       commentUrl: null,
       commentAuthor: null,
     });
@@ -363,11 +364,11 @@ describe('a run started by an event (spec 48)', () => {
     );
   });
 
-  it("starts at the pull request's head commit on no branch when its branch is gone", async () => {
+  it("starts an open pull request's run at its head commit on no branch when its branch is gone", async () => {
     await follow();
-    createTrigger('merged');
-    // Merged and deleted, as hosts do by default; the pull request's own ref keeps its head.
-    host.pulls = [{ ...mergedBell, branch: 'agent/U2-deleted' }];
+    createTrigger('checksFailed');
+    // The pull request's own ref keeps its head after the branch is deleted.
+    host.pulls = [{ ...failing(bell.sha), branch: 'agent/U2-deleted' }];
     await poll();
     const run = await eventRunEnds();
     expect(run.workingCopy?.note).toBe(
@@ -377,7 +378,42 @@ describe('a run started by an event (spec 48)', () => {
     expect(turns.map((turn) => [turn.branch, turn.sha])).toEqual([['HEAD', bell.sha]]);
   });
 
-  it("checks out a fork's head commit, not the branch here that has the same name", async () => {
+  it("starts a merged pull request's run at the tip of the default branch, which holds the merged code, when its branch is gone", async () => {
+    await follow();
+    createTrigger('merged');
+    // Merged and deleted, as hosts do by default.
+    host.pulls = [{ ...mergedBell, branch: 'agent/U2-deleted' }];
+    await poll();
+    const run = await eventRunEnds();
+    const tip = git(project, 'rev-parse', 'origin/main');
+    expect(run.workingCopy?.note).toBe(
+      'Branch agent/U2-deleted was not found, so the working copy starts at the tip of the default branch, on no branch.',
+    );
+    expect(run.workingCopy?.startSha).toBe(tip);
+    expect(turns.map((turn) => [turn.branch, turn.sha])).toEqual([['HEAD', tip]]);
+  });
+
+  it("starts a merged pull request's run at the default branch, not at its head commit, when the branch here is elsewhere", async () => {
+    const seed = path.join(root, 'seed');
+    git(seed, 'checkout', '-q', '-b', 'moved-bell', 'main');
+    await writeFile(path.join(seed, 'moved.md'), 'Moved\n');
+    git(seed, 'add', '-A');
+    git(seed, 'commit', '-q', '-m', 'Invented moved bell');
+    const movedSha = git(seed, 'rev-parse', 'HEAD');
+    git(remote, 'fetch', '-q', seed, '+moved-bell:refs/pull/14/head');
+    await follow();
+    createTrigger('merged');
+    host.pulls = [{ ...mergedBell, sha: movedSha }];
+    await poll();
+    const run = await eventRunEnds();
+    const tip = git(project, 'rev-parse', 'origin/main');
+    expect(run.workingCopy?.note).toBe(
+      `Branch ${bellBranch} here is not at the pull request's head commit, so the working copy starts at the tip of the default branch, on no branch.`,
+    );
+    expect(turns.map((turn) => [turn.branch, turn.sha])).toEqual([['HEAD', tip]]);
+  });
+
+  it("checks out a fork's head commit, not the branch here that has the same name, once forks may start runs", async () => {
     // A fork's pull request whose branch is called like this repository's own branch.
     const seed = path.join(root, 'seed');
     git(seed, 'checkout', '-q', '-b', 'fork-bell', 'main');
@@ -386,11 +422,19 @@ describe('a run started by an event (spec 48)', () => {
     git(seed, 'commit', '-q', '-m', 'Invented fork bell');
     const forkSha = git(seed, 'rev-parse', 'HEAD');
     git(remote, 'fetch', '-q', seed, `+fork-bell:refs/pull/14/head`);
+    dispatch({
+      type: 'setting.set',
+      key: 'triggers.forkPullRequests',
+      scope: 'project:tea',
+      value: true,
+    });
+    host.pulls = [{ ...bell, fork: 'mira/tea' }];
     await follow();
-    createTrigger('merged');
-    host.pulls = [{ ...mergedBell, sha: forkSha }];
+    createTrigger('checksFailed');
+    host.pulls = [{ ...failing(forkSha), fork: 'mira/tea' }];
     await poll();
     const run = await eventRunEnds();
+    expect(run.event?.fromFork).toBe(true);
     expect(git(project, 'rev-parse', `origin/${bellBranch}`)).toBe(bell.sha);
     expect(run.workingCopy?.startSha).toBe(forkSha);
     expect(run.workingCopy?.note).toBe(
@@ -411,6 +455,65 @@ describe('a run started by an event (spec 48)', () => {
     );
     expect(turns.map((turn) => turn.branch)).toEqual(['HEAD']);
     expect(turns[0]?.sha).toBe(git(project, 'rev-parse', 'origin/main'));
+  });
+});
+
+describe('a pull request from a fork', () => {
+  it('starts nothing and says why while triggers.forkPullRequests is off, also for a deleted fork, and nothing for it later', async () => {
+    host.pulls = [
+      { ...bell, fork: 'mira/tea' },
+      { ...bell, number: 15, fork: null },
+    ];
+    await follow();
+    createTrigger('checksFailed');
+    createTrigger('merged');
+    host.pulls = [
+      { ...failing('c3c3c3c'), fork: 'mira/tea' },
+      { ...mergedBell, number: 15, fork: null },
+    ];
+    await poll();
+    expect(runs()).toEqual([]);
+    expect(turns).toEqual([]);
+    expect(
+      db()
+        .select()
+        .from(triggerEvents)
+        .all()
+        .map((row) => [row.eventId, row.runId])
+        .toSorted(),
+    ).toEqual([
+      ['tea:14:checksFailed:c3c3c3c', null],
+      ['tea:15:merged', null],
+    ]);
+    const why =
+      'it comes from a fork, so nothing started. A run would work on the fork\'s files, and they would steer an agent on this computer. "Start runs for pull requests from forks" (triggers.forkPullRequests) allows it.';
+    expect(
+      notices()
+        .map((notice) => [notice.kind, notice.title, notice.body, notice.path])
+        .toSorted(),
+    ).toEqual([
+      ['failed', 'Trigger started nothing', `Checks failed · #14: ${why}`, '/workflows/triggers'],
+      [
+        'failed',
+        'Trigger started nothing',
+        `Pull request merged · #15: ${why}`,
+        '/workflows/triggers',
+      ],
+    ]);
+
+    set('triggers.forkPullRequests', true);
+    await poll();
+    expect(runs()).toEqual([]);
+  });
+
+  it('starts as before for a pull request whose head is in this repository', async () => {
+    await follow();
+    createTrigger('checksFailed');
+    host.pulls = [failing(bell.sha)];
+    await poll();
+    const run = await eventRunEnds();
+    expect(run.event?.fromFork).toBe(false);
+    expect(turns.map((turn) => turn.branch)).toEqual([bellBranch]);
   });
 });
 

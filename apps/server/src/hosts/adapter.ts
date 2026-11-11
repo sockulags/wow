@@ -25,8 +25,10 @@ export interface FoundChangeRequest {
   readonly units: readonly UnitRef[];
   // The web addresses its body links to.
   readonly links?: readonly string[];
-  // Present when the answer that found it already said where its head is.
-  readonly head?: { readonly branch: string; readonly sha: string } | undefined;
+  // Present when the answer that found it already said where its head is, and with it whether
+  // the head is in another repository (a fork).
+  readonly head?:
+    { readonly branch: string; readonly sha: string; readonly fromFork: boolean } | undefined;
 }
 
 // A change request as the host has it now; the poller adds the project.

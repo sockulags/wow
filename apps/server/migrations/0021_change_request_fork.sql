@@ -1,0 +1,1 @@
+ALTER TABLE `change_requests` ADD `from_fork` integer DEFAULT false NOT NULL;

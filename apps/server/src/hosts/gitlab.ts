@@ -56,6 +56,11 @@ function found(item: unknown): FoundChangeRequest | undefined {
   const reported = field(item, 'state');
   const branch = field(item, 'source_branch');
   const sha = field(item, 'sha');
+  // A merge request from a fork has its source in another project. One that does not say where
+  // its source is counts as a fork, so an answer that leaves it out never lets a fork through.
+  const source = field(item, 'source_project_id');
+  const target = field(item, 'target_project_id');
+  const fromFork = !(typeof source === 'number' && source === target);
   return {
     number: iid,
     title: text(field(item, 'title')),
@@ -67,7 +72,7 @@ function found(item: unknown): FoundChangeRequest | undefined {
     units: intentUnitLines(text(field(item, 'description'))),
     links: webLinksIn(text(field(item, 'description'))),
     ...(typeof branch === 'string' && typeof sha === 'string' && sha !== ''
-      ? { head: { branch, sha } }
+      ? { head: { branch, sha, fromFork } }
       : {}),
   };
 }
@@ -335,6 +340,7 @@ export function createGitLabHost(
         mergedAt: current.mergedAt,
         headBranch: current.head.branch,
         headSha: current.head.sha,
+        fromFork: current.head.fromFork,
         units: [...request.units],
         links: [...(current.links ?? request.links ?? [])],
         checkState: checkStateOf(all),

@@ -37,6 +37,8 @@ export interface MockMergeRequest {
     readonly mergeSha?: string;
   };
   readonly notes?: readonly MockGitLabNote[];
+  // The fork's project id its source branch is in. Absent: this project.
+  readonly sourceProjectId?: number;
 }
 
 export interface MockGitLabRequest {
@@ -53,6 +55,8 @@ export interface MockGitLabAnswer {
 }
 
 export class MockGitLab {
+  // The id of the project the merge requests are made in.
+  static readonly projectId = 7001;
   // The project path with every group, such as `group/sub/app`.
   readonly projectPath: string;
   // Where the invented merge requests "live" for their links.
@@ -90,6 +94,8 @@ export class MockGitLab {
       merged_at: request.mergedAt ?? null,
       source_branch: request.branch,
       sha: request.sha,
+      source_project_id: request.sourceProjectId ?? MockGitLab.projectId,
+      target_project_id: MockGitLab.projectId,
       web_url: this.#url(request),
     };
   }

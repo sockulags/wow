@@ -829,9 +829,13 @@ unpushedCommits, newestSubject, branch}`. Unpushed commits are counted from ever
   `git worktree add --track -b`) is at the head commit, so the agent adds to the pull request.
   Otherwise, or when git refuses because another folder is on the branch, the copy is on the
   head commit and on no branch. When the head commit is not here even after the fetch, the
-  copy starts at the default branch as usual. `note` says which. A branch name git would read
-  as an option, or a head that is not a commit name, is not used. A run from before heads were
-  kept has no `headSha` and starts at the default branch.
+  copy starts at the default branch as usual. A merged pull request's code is on the default
+  branch, so a run of a "pull request merged" event is never left at the pre-merge head commit
+  off its branch: when its branch is gone or is not at the head commit here, the copy starts at
+  the default branch's tip (after the usual fetch); only events on an open pull request (checks
+  failed, review comment) start detached at the head commit. `note` says which. A branch name
+  git would read as an option, or a head that is not a commit name, is not used. A run from
+  before heads were kept has no `headSha` and starts at the default branch.
 - **Shared.** When the pull request already has a working copy, the event's run gets the same
   `path` with state `ready` and a note naming the run that made it; nothing is made. The
   folder is therefore judged per folder, not per run: it is settled once no run that names it
@@ -973,11 +977,19 @@ There are no webhooks: an event is something a read from the host shows.
   answers the review with a comment would start the next run, without end. wow cannot tell
   which account an agent writes as, so a person's comment made during that run is passed over
   too.
+- **A fork starts nothing.** A run on a fork's pull request would check out the fork's head
+  commit, and the fork's files (agent instruction files, skills, hook settings, scripts a
+  workflow runs) would steer an agent on this computer. So an event on a change request with
+  `fromFork` is recorded as seen without a run and a `failed` notification "Trigger started
+  nothing" says why and names the setting, unless `triggers.forkPullRequests` (off by default,
+  global or per project) allows it. Turning the setting on later starts nothing for events
+  already seen. `RunEvent.fromFork` keeps what the read said.
 - **Off means never.** While `triggers.eventsEnabled` is off, the scheduler is paused or the
   trigger itself is off, nothing starts. The stored pull request moves on all the same, so
   the event is not seen again and nothing starts for it later (spec 52).
 - **The run.** It is an ordinary run with `WorkflowRun.event` (`RunEvent`: trigger, event,
-  pull request id, number, link, branch, head commit and head ref, and for a comment its link
+  pull request id, number, link, branch, head commit and head ref, whether it is from a fork,
+  and for a comment its link
   and author). The handover template's `event`, `pullRequestNumber`, `pullRequestUrl`,
   `pullRequestBranch`, `commentUrl` and `commentAuthor` placeholders carry it into every step's
   prompt (`eventValues` in the workflow engine). The comment's text is never copied: it is someone
@@ -1067,7 +1079,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   are project-scoped, see "Backlog and trackers")
 - hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount`,
   `hosts.longestWaitMinutes`, `hosts.pageMaxBytes` (see "Hosts")
-- triggers: `triggers.eventsEnabled`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
+- triggers: `triggers.eventsEnabled`, `triggers.forkPullRequests`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
 - diff: `diff.maxFileBytes`, `diff.maxFiles`, `diff.maxHashBytes` (the "Changes" page, see "Run base and changes")
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
@@ -1393,7 +1405,11 @@ approved or commented on. GitHub and GitHub Enterprise Server are the first host
 (merge requests, spec 34) and the others join behind the same interface.
 
 **Types** (`packages/contracts/src/hosts.ts`). `ChangeRequest` is a pull request as last read:
-number, title, link, `state`, `draft`, `mergedAt`, head branch and commit, the `Intent-Unit`
+number, title, link, `state`, `draft`, `mergedAt`, head branch and commit, `fromFork` (the head
+is in another repository: GitHub's `head.repo.full_name` is not the base repository's, or
+`head.repo` is null for a deleted fork; GitLab's `source_project_id` is not `target_project_id`;
+an answer that leaves them out counts as a fork; rows read before migration 0021 hold false
+until read again), the `Intent-Unit`
 lines of its body as `units`, `checkState` with every check (`HostCheck`: name, state, link),
 the review comments (`ReviewComment`: author, text, file, link) and `newestCommentId`. Event
 triggers and plan runs compare the next read with this row, which is why it keeps the state,
@@ -1804,7 +1820,7 @@ decides what a command of the assistant does. The table names every type of `Ser
   that then lets the app do more: `scheduler.paused` off, `scheduler.missedPolicy` to `run`,
   `hosts.polling`, `triggers.eventsEnabled` or `viewer.htmlScripts` on. A change to
   `assistant.secretPatterns` is a proposal too, since that is the assistant's own net, and so
-  is any change to `assistant.allowCodex`, either way. Three
+  is any change to `assistant.allowCodex` or `triggers.forkPullRequests`, either way. Three
   more are proposals though spec 9 does not list them, because they do the same kind of thing:
   another skill, extra prompt, provider or model on a step that has a permission mode or a
   gate that passes by itself (the yes once given for that step was for that work); taking a

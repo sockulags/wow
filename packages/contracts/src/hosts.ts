@@ -65,6 +65,9 @@ export const ChangeRequest = z.object({
   mergedAt: Timestamp.nullable(),
   headBranch: z.string(),
   headSha: z.string(),
+  // The head is in another repository than the one wow follows (a fork), or the host did not
+  // say it is in this one. Absent on rows read before wow asked.
+  fromFork: z.boolean().optional(),
   units: z.array(UnitRef),
   checkState: CheckState,
   checks: z.array(HostCheck),

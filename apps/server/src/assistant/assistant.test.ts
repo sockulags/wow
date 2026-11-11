@@ -1146,6 +1146,30 @@ describe('proposals', () => {
     expect(hostRequests.some((request) => request.url.includes('collector.example'))).toBe(false);
   });
 
+  it("ask before a fork's pull requests may start runs or may no longer, at any scope", async () => {
+    asUser({ type: 'setting.set', key: 'triggers.forkPullRequests', scope: 'global', value: true });
+    const untouched = before();
+    for (const args of [
+      { key: 'triggers.forkPullRequests', scope: 'global', value: false },
+      { key: 'triggers.forkPullRequests', scope: 'project:tea', value: true },
+      { key: 'triggers.forkPullRequests', scope: 'project:tea', value: false },
+    ]) {
+      const result = await call('set_setting', args);
+      expect([args.scope, args.value, result.content.outcome]).toEqual([
+        args.scope,
+        args.value,
+        'proposed',
+      ]);
+    }
+    const reset = await call('reset_setting', {
+      key: 'triggers.forkPullRequests',
+      scope: 'global',
+    });
+    expect(reset.content.outcome).toBe('proposed');
+    expect(before()).toBe(untouched);
+    expect(changes()).toEqual([]);
+  });
+
   it('ask before a project moves to another folder, and before a card with a workflow that starts now or within assistant.startSoonMinutes', async () => {
     const elsewhere = path.join(root, 'elsewhere');
     await mkdir(elsewhere, { recursive: true });

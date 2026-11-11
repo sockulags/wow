@@ -33,6 +33,9 @@ export interface MockPullRequest {
   readonly comments?: readonly MockReviewComment[];
   // Answered as the pull request's link instead of the one the mock makes up.
   readonly url?: string;
+  // The fork's `owner/repo` its head is in; null for a fork that was deleted. Absent: this
+  // repository.
+  readonly fork?: string | null;
 }
 
 export interface MockRequest {
@@ -87,7 +90,12 @@ export class MockGitHub {
       draft: pull.draft ?? false,
       merged_at: pull.mergedAt ?? null,
       html_url: pull.url ?? this.#pullUrl(pull.number),
-      head: { ref: pull.branch, sha: pull.sha },
+      head: {
+        ref: pull.branch,
+        sha: pull.sha,
+        repo: pull.fork === null ? null : { full_name: pull.fork ?? `${this.owner}/${this.repo}` },
+      },
+      base: { repo: { full_name: `${this.owner}/${this.repo}` } },
     };
   }
 

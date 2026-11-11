@@ -456,6 +456,10 @@ export function eventTriggerEvents(
         });
         continue;
       }
+      if (forkStartsNothing(trigger, happened, read, context)) {
+        events.push(...forkSkipped(trigger, happened, read, context));
+        continue;
+      }
       const fired = fireEvent(trigger, happened, scopes, read, context);
       events.push(...fired.events);
       lastRunId = fired.runId ?? lastRunId;
@@ -466,6 +470,27 @@ export function eventTriggerEvents(
 }
 
 const IGNORED_AUTHORS_KEY = 'triggers.ignoredCommentAuthors';
+const FORKS_KEY = 'triggers.forkPullRequests';
+
+// A fork's files would steer an agent on this computer, so its events start nothing unless the
+// user allowed it for the project.
+function forkStartsNothing(
+  trigger: EventTrigger,
+  happened: SeenEvent,
+  read: ReadModel,
+  context: DecideContext,
+): boolean {
+  if (happened.request.fromFork !== true) return false;
+  const definition = context.registry[FORKS_KEY];
+  if (!definition) return true;
+  const { value } = resolveStored(
+    FORKS_KEY,
+    definition,
+    { projectId: trigger.projectId },
+    (scope) => read.setting(FORKS_KEY, scope),
+  );
+  return value !== true;
+}
 
 // A run that answers a review with a comment of its own must not start the next run, and so on
 // without end. wow cannot tell which account an agent writes as, so two things stop the loop: a
@@ -499,6 +524,33 @@ function commentStartsNothing(
   );
 }
 
+function forkSkipped(
+  trigger: EventTrigger,
+  happened: SeenEvent,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const { request } = happened;
+  const label = context.registry[FORKS_KEY]?.label ?? FORKS_KEY;
+  return [
+    {
+      kind: 'trigger.eventSeen',
+      aggregate: trigger.id,
+      payload: { triggerId: trigger.id, eventId: happened.id, runId: null, at: context.now },
+    },
+    ...notification(read, context, {
+      id: `${trigger.id}:${happened.id}:fork`,
+      at: context.now,
+      kind: 'failed',
+      title: 'Trigger started nothing',
+      body: `${triggerEventLabel(trigger.event, request.host)} · ${changeRequestRef(request)}: it comes from a fork, so nothing started. A run would work on the fork's files, and they would steer an agent on this computer. "${label}" (${FORKS_KEY}) allows it.`,
+      path: triggersPath,
+      runId: null,
+      calendarItemId: null,
+    }),
+  ];
+}
+
 function fireEvent(
   trigger: EventTrigger,
   happened: SeenEvent,
@@ -526,6 +578,7 @@ function fireEvent(
       request.host === 'gitlab'
         ? `refs/merge-requests/${request.number}/head`
         : `refs/pull/${request.number}/head`,
+    ...(request.fromFork === undefined ? {} : { fromFork: request.fromFork }),
     // The comment's text stays out: only where it is and who wrote it (spec 51).
     commentUrl: comment?.url ?? null,
     commentAuthor: comment?.author ?? null,

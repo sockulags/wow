@@ -355,6 +355,8 @@ export const RunEvent = z.object({
   // copy starts there, never at a branch name that a fork may share. Absent on runs from before.
   headSha: z.string().min(1).optional(),
   headRef: z.string().min(1).optional(),
+  // The pull request comes from a fork. Absent on runs from before wow asked.
+  fromFork: z.boolean().optional(),
   commentUrl: z.string().min(1).nullable(),
   commentAuthor: z.string().nullable(),
 });

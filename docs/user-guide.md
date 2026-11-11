@@ -643,7 +643,13 @@ When polling first sees the event, one run of the workflow starts with the pull 
 number, branch and the event in its handover, in the pull request's working copy when one exists
 and otherwise in a new working copy at the pull request's head commit, on its branch when this
 repository's branch is at that commit (a fork's pull request whose branch is named like one here
-gets its own commit, on no branch). The same event seen again starts nothing, and
+gets its own commit, on no branch). A merged pull request's run starts at the tip of the default
+branch, which holds the merged code, unless its branch here is still at the head commit; it is
+never left on the code from before the merge. A pull request or merge request from a fork starts
+nothing: a run would work on the fork's files, and they would steer an agent on this computer. A
+failed notification "Trigger started nothing" says so. Turn on
+`triggers.forkPullRequests` ("Start runs for pull requests from forks", globally or for one
+project) only for forks you trust. The same event seen again starts nothing, and
 what was already true when you created the trigger or followed the plan starts nothing either;
 only later changes do. For a review comment the run gets the comment's link and author, never its
 text: the agent reads it with its own tools. Comments by accounts in
@@ -848,7 +854,8 @@ A change that lets wow do more on its own shows as a proposal card with exactly 
 **Yes** and **No** (with an optional reason that goes back to the assistant), and nothing changes
 until you press Yes: a step's permission mode, a gate condition, a step's rules, an event
 trigger, "for units" or "own working copy" on a workflow, resuming the scheduler, the missed
-policy `run`, `hosts.polling` or `triggers.eventsEnabled` on, `viewer.htmlScripts` on, and
+policy `run`, `hosts.polling` or `triggers.eventsEnabled` on, `viewer.htmlScripts` on, any
+change to `triggers.forkPullRequests`, and
 starting a run ("Start <workflow> in <project>"). A card with a workflow that starts sooner than
 `assistant.startSoonMinutes` (15) from now is a proposal too. A long value is cut short on its
 line; "show all of it" under the line opens the whole of it. The palette has Yes and No for every
@@ -968,7 +975,8 @@ Useful ones to know:
 - `outlook.pollSeconds`, `outlook.requestTimeoutMs`
 - `scheduler.missedPolicy`, `scheduler.notifications`, `scheduler.paused`
 - `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`
-- `plans.intentsDirectory`, `hosts.polling`, `hosts.pollSeconds`, `triggers.eventsEnabled`
+- `plans.intentsDirectory`, `hosts.polling`, `hosts.pollSeconds`, `triggers.eventsEnabled`,
+  `triggers.forkPullRequests`
 - `viewer.maxFileBytes`, `viewer.htmlScripts`, `diff.maxFileBytes`, `diff.maxHashBytes`, `workspaces.root`
 - `appearance.theme` (dark by default), `appearance.density`
 - `desktop.closeToTray`, `desktop.autostart`, `desktop.startMinimized`

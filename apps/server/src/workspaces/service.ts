@@ -184,7 +184,11 @@ export class Workspaces {
             branch,
             head:
               run.event?.headSha && run.event.headRef
-                ? { sha: run.event.headSha, ref: run.event.headRef }
+                ? {
+                    sha: run.event.headSha,
+                    ref: run.event.headRef,
+                    merged: run.event.event === 'merged',
+                  }
                 : undefined,
             fetch:
               this.#deps.settings.resolve('workspaces.fetchBeforeCreate', {

@@ -33,8 +33,12 @@ export interface CreateRequest {
   readonly fetch: boolean;
   // For a run an event started on a pull request: its head commit, the ref of this repository's
   // remote that commit is fetched from, and its branch. Without a head the copy is on no branch
-  // at the default branch's tip.
-  readonly head?: { readonly sha: string; readonly ref: string } | undefined;
+  // at the default branch's tip. `merged`: the pull request's code is on the default branch now,
+  // so the copy is never left at the head commit off its branch; it starts at the default
+  // branch's tip instead.
+  readonly head?:
+    | { readonly sha: string; readonly ref: string; readonly merged?: boolean | undefined }
+    | undefined;
   readonly branch?: string | null | undefined;
   readonly git: GitRunOptions;
 }
@@ -171,11 +175,13 @@ const commitName = /^[0-9a-f]{7,64}$/i;
 // The working copy at the pull request's head commit, fetched by the pull request's own ref of
 // this repository's remote. A branch name alone can name other code: a fork's branch may be
 // called like one here. So the copy is on the branch only when this repository's branch is at
-// the head commit; else it is on that commit and on no branch. Answers why not when the head
-// commit is not here even after the fetch; the caller then starts at the default branch.
+// the head commit; else it is on that commit and on no branch, unless the pull request is merged:
+// its code is on the default branch then. Answers why not when the head commit is not here even
+// after the fetch, or a merged pull request's branch is not at it; the caller then starts at the
+// default branch.
 async function createAtHead(
   { projectFolder: folder, target, fetch, branch, git }: CreateRequest,
-  head: { readonly sha: string; readonly ref: string },
+  head: NonNullable<CreateRequest['head']>,
   defaultBranch: string | null,
 ): Promise<Created | string> {
   const { primary: remote } = await readFolderGit(folder, git);
@@ -205,6 +211,7 @@ async function createAtHead(
   };
   // The name comes from the host. One that git would read as an option is not used.
   if (!branch || branch.startsWith('-')) {
+    if (head.merged) return "The pull request's branch is not known";
     return detached("The working copy is on the pull request's head commit and on no branch.");
   }
   const localTip = await readCommit(folder, `refs/heads/${branch}`, git);
@@ -212,11 +219,13 @@ async function createAtHead(
     remote === null ? null : await readCommit(folder, `refs/remotes/${remote}/${branch}`, git);
   const tip = localTip ?? remoteTip;
   if (tip === null) {
+    if (head.merged) return `Branch ${branch} was not found`;
     return detached(
       `Branch ${branch} was not found, so the working copy is on the pull request's head commit and on no branch.`,
     );
   }
   if (tip !== sha) {
+    if (head.merged) return `Branch ${branch} here is not at the pull request's head commit`;
     return detached(
       `Branch ${branch} here is not at the pull request's head commit (the pull request may come from a fork, or the branch moved since), so the working copy is on that commit and on no branch.`,
     );

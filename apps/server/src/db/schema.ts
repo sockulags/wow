@@ -448,6 +448,7 @@ export const changeRequests = sqliteTable('change_requests', {
   mergedAt: text(),
   headBranch: text().notNull(),
   headSha: text().notNull(),
+  fromFork: bool().notNull().default(false),
   units: json<UnitRef[]>().notNull(),
   checkState: text().$type<CheckState>().notNull(),
   checks: json<HostCheck[]>().notNull(),
