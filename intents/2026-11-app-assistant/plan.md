@@ -2,7 +2,7 @@
 intent: 2026-11-app-assistant
 rev: 1
 built_on: spec@1
-status: accepted
+status: done
 source: files
 ---
 
