@@ -53,6 +53,22 @@ function card(questions: readonly CardQuestion[], extra: { waitReason?: string }
 }
 
 describe('the card (spec 1, 2)', () => {
+  it('shows a choice a provider gave twice once, and sends its label once', async () => {
+    const user = userEvent.setup();
+    const { sent } = card([
+      {
+        ...kettle,
+        options: [{ label: 'Glass kettle' }, { label: 'Glass kettle', description: 'Again' }],
+      },
+    ]);
+    expect(screen.getAllByRole('radio').map((choice) => choice.textContent)).toEqual([
+      '1Glass kettle',
+    ]);
+    await user.click(screen.getByRole('radio', { name: /Glass kettle/ }));
+    await user.click(screen.getByRole('button', { name: 'Send answer' }));
+    expect(sent()).toEqual([{ kettle: { picked: ['Glass kettle'], text: '' } }]);
+  });
+
   it('shows the header as a chip, the recommended choice first and marked, and Other last with a text field', () => {
     card([kettle]);
     const region = screen.getByRole('region', { name: 'Question' });

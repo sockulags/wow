@@ -76,15 +76,24 @@ const answerLine = (reply: QuestionReply | string): string =>
     ? reply
     : [...reply.picked.map(shownLabel), reply.text.trim()].filter((part) => part !== '').join(', ');
 
+// A provider may give one label twice; picks are kept by label, so the card shows it once.
+const withDistinctLabels = (question: CardQuestion): CardQuestion => ({
+  ...question,
+  options: question.options.filter(
+    (option, index, all) => all.findIndex((other) => other.label === option.label) === index,
+  ),
+});
+
 export function QuestionCard<H>({
   id,
-  questions,
+  questions: given,
   closedReason,
   waitReason,
   onSend,
   check,
   renderHold,
 }: QuestionCardProps<H>) {
+  const questions = given.map(withDistinctLabels);
   const open = questions.filter((question) => question.status.kind === 'open');
   const rows: Row[] = open.flatMap((question, index) => [
     ...ordered(question).map((_, choice): Row => ({ question: index, choice })),
