@@ -51,8 +51,8 @@ const threadTopics: SubscriptionTopic[] = ['threads', 'assistantThread'];
 // subscription topics changed.
 // A skill as stored: a folder skill has no text, which the row keeps as null.
 export function skillOf(row: typeof skills.$inferSelect): Skill {
-  const { text, ...rest } = row;
-  return text === null ? rest : { ...rest, text };
+  const { text, file, ...rest } = row;
+  return { ...rest, ...(text === null ? {} : { text }), ...(file === null ? {} : { file }) };
 }
 
 export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
@@ -117,7 +117,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       return ['settings'];
     case 'skill.saved': {
       const { skill } = event.payload;
-      const row = { ...skill, text: skill.text ?? null };
+      const row = { ...skill, text: skill.text ?? null, file: skill.file ?? null };
       tx.insert(skills).values(row).onConflictDoUpdate({ target: skills.id, set: row }).run();
       return ['skills'];
     }
@@ -126,7 +126,8 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       return ['skills'];
     case 'skills.synced':
       for (const skill of event.payload.upserted) {
-        tx.insert(skills).values(skill).onConflictDoUpdate({ target: skills.id, set: skill }).run();
+        const row = { ...skill, file: skill.file ?? null };
+        tx.insert(skills).values(row).onConflictDoUpdate({ target: skills.id, set: row }).run();
       }
       if (event.payload.removed.length > 0) {
         tx.delete(skills).where(inArray(skills.id, event.payload.removed)).run();

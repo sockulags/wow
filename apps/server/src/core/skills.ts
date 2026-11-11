@@ -13,7 +13,17 @@ import {
   type Thread,
   promptWithSkills,
 } from '@wow/contracts';
-import { fillBuiltInSkill, invocationsFor, ownSkillDir, skillFileName } from '@wow/skills';
+import {
+  changedOwnSkillFile,
+  fillBuiltInSkill,
+  invocationsFor,
+  ownSkillDir,
+  ownSkillFile,
+  ownSkillsDir,
+  parseSkillFile,
+  skillBody,
+  skillFileName,
+} from '@wow/skills';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveStored } from '../settings/service.js';
@@ -25,13 +35,14 @@ import { CommandRejected, type DecideContext, type ReadModel } from './orchestra
 
 type SkillCommand = Extract<
   ServerCommand,
-  { type: 'skill.create' | 'skill.update' | 'skill.delete' }
+  { type: 'skill.create' | 'skill.update' | 'skill.delete' | 'skill.restore' }
 >;
 
 export const isSkillCommand = (command: ServerCommand): command is SkillCommand =>
   command.type === 'skill.create' ||
   command.type === 'skill.update' ||
-  command.type === 'skill.delete';
+  command.type === 'skill.delete' ||
+  command.type === 'skill.restore';
 
 const isWow = (skill: Skill) => skill.source === 'wow' || skill.source === 'yours';
 
@@ -62,7 +73,63 @@ const row = (dir: string, input: OwnSkill): Skill => ({
   manualOnly: false,
   invocations: invocationsFor(input.name),
   text: input.text.trim(),
+  file: ownSkillFile(input),
 });
+
+const sameDir = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+
+// The folder a restore names: one folder right under wow's skills folder, nothing more.
+const plainFolder = (folder: string): boolean =>
+  folder === path.basename(folder) && folder !== '.' && folder !== '..' && !/[\\/]/.test(folder);
+
+// An own skill's file put back as it was (the Undo of an update or a delete). It was listed
+// before, so the name rule and the need for a text do not apply; only a name the scan would not
+// list either is refused.
+function restored(
+  command: Extract<SkillCommand, { type: 'skill.restore' }>,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  if (!context.home) {
+    throw new CommandRejected(
+      'rejected',
+      "wow's home folder is not known, so no skill can be saved",
+    );
+  }
+  if (!plainFolder(command.folder)) {
+    throw new CommandRejected('rejected', `${command.folder} is not a folder name`);
+  }
+  const dir = path.resolve(ownSkillsDir(context.home), command.folder);
+  let frontmatter: ReturnType<typeof parseSkillFile>;
+  try {
+    frontmatter = parseSkillFile(command.file);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new CommandRejected('rejected', `The skill file cannot be read: ${reason}`);
+  }
+  const name = frontmatter.name ?? command.folder;
+  if (name.startsWith('wow-')) {
+    throw new CommandRejected(
+      'rejected',
+      'Names starting with wow- are kept for the skills wow ships',
+    );
+  }
+  const previous =
+    read.skills().find((entry) => entry.source === 'yours' && sameDir(entry.dir, dir)) ?? null;
+  const skill: Skill = {
+    id: previous?.id ?? dir,
+    name,
+    description: frontmatter.description,
+    dir: previous?.dir ?? dir,
+    source: 'yours',
+    manualOnly: frontmatter.disableModelInvocation,
+    invocations: invocationsFor(name),
+    text: skillBody(command.file),
+    file: command.file,
+  };
+  if (previous && isDeepStrictEqual(skill, previous)) return [];
+  return [{ kind: 'skill.saved', aggregate: 'skills', payload: { skill, previous } }];
+}
 
 export function decideSkill(
   command: SkillCommand,
@@ -89,7 +156,7 @@ export function decideSkill(
       // a folder differing only in case is the same one; either would be overwritten.
       const there = read
         .skills()
-        .find((entry) => entry.source === 'yours' && entry.dir.toLowerCase() === dir.toLowerCase());
+        .find((entry) => entry.source === 'yours' && sameDir(entry.dir, dir));
       if (there) throw new CommandRejected('rejected', alreadyThere(there.dir));
       const saved = row(dir, skill);
       return [
@@ -98,7 +165,14 @@ export function decideSkill(
     }
     case 'skill.update': {
       const previous = requireOwn(read, command.skill.name);
-      const saved = row(previous.dir, command.skill);
+      // Frontmatter keys wow does not own stay as they were in the file (spec 6).
+      const saved: Skill = {
+        ...row(previous.dir, command.skill),
+        manualOnly: previous.manualOnly,
+        ...(previous.file === undefined
+          ? {}
+          : { file: changedOwnSkillFile(previous.file, command.skill) }),
+      };
       if (isDeepStrictEqual(saved, previous)) return [];
       return [{ kind: 'skill.saved', aggregate: 'skills', payload: { skill: saved, previous } }];
     }
@@ -106,6 +180,8 @@ export function decideSkill(
       const skill = requireOwn(read, command.name);
       return [{ kind: 'skill.deleted', aggregate: 'skills', payload: { skill } }];
     }
+    case 'skill.restore':
+      return restored(command, read, context);
   }
 }
 

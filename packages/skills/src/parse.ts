@@ -32,8 +32,15 @@ export function parseSkillFile(content: string): SkillFrontmatter {
 
 // The instructions after the frontmatter: what a wow skill sends as its text.
 export function skillBody(content: string): string {
+  return splitSkillFile(content).rest.trim();
+}
+
+// A SKILL.md as its frontmatter's YAML (undefined without one) and what follows it.
+export function splitSkillFile(content: string): { yaml: string | undefined; rest: string } {
   const match = FRONTMATTER.exec(content);
-  return (match ? content.slice(match[0].length) : content.replace(/^\uFEFF/, '')).trim();
+  return match
+    ? { yaml: match[1] ?? '', rest: content.slice(match[0].length) }
+    : { yaml: undefined, rest: content.replace(/^\uFEFF/, '') };
 }
 
 // `agents/openai.yaml` next to a SKILL.md: `policy.allow_implicit_invocation: false` keeps Codex

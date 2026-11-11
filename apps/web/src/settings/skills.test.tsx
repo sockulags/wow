@@ -27,6 +27,7 @@ const kettle: Skill = {
   manualOnly: false,
   invocations: { claude: '/kettle-check', codex: '$kettle-check' },
   text: 'Boil first.',
+  file: '---\nname: kettle-check\ndescription: Before any tea step.\nallowed-tools: Read\n---\n\nBoil first.\n',
 };
 
 const verdict: Skill = {
@@ -157,7 +158,7 @@ describe('Your skills in Settings → Skills (spec 5)', () => {
     expect(await dialog.findByText('There is already a wow skill named pour-over')).toBeTruthy();
   });
 
-  it('edits a skill under its name, and Undo puts the old text back', async () => {
+  it('edits a skill under its name, and Undo puts the old file back', async () => {
     const { box, user, yours, sent } = await open();
     await user.click(yours.getByRole('button', { name: 'Edit kettle-check' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'Edit kettle-check' }));
@@ -175,12 +176,13 @@ describe('Your skills in Settings → Skills (spec 5)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
     await sent(2);
     expect(commandsSent(box)[1]).toEqual({
-      type: 'skill.update',
-      skill: { name: 'kettle-check', description: 'Before any tea step.', text: 'Boil first.' },
+      type: 'skill.restore',
+      folder: 'kettle-check',
+      file: kettle.file,
     });
   });
 
-  it('deletes a skill at once, and Undo writes it again', async () => {
+  it('deletes a skill at once, and Undo puts its file back', async () => {
     const { box, user, yours, sent } = await open();
     await user.click(yours.getByRole('button', { name: 'Delete kettle-check' }));
     await sent(1);
@@ -188,8 +190,9 @@ describe('Your skills in Settings → Skills (spec 5)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
     await sent(2);
     expect(commandsSent(box)[1]).toEqual({
-      type: 'skill.create',
-      skill: { name: 'kettle-check', description: 'Before any tea step.', text: 'Boil first.' },
+      type: 'skill.restore',
+      folder: 'kettle-check',
+      file: kettle.file,
     });
   });
 });

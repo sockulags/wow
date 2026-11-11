@@ -207,6 +207,30 @@ describe('own skills in a setup file (wow skills spec 8)', () => {
     expect(ownSkills(other)[0]?.text).toBe('Old text.');
   });
 
+  it('replaces a hand-written skill keeping its other frontmatter, and Undo puts the file back exactly', async () => {
+    const dir = ownSkillDir(home('other'), 'kettle-check');
+    const handWritten = [
+      '---',
+      'name: kettle-check',
+      'allowed-tools: Read',
+      'disable-model-invocation: true',
+      '---',
+      '',
+    ].join('\n');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'SKILL.md'), handWritten);
+    await other.skills.refresh();
+    const { text } = save(source);
+    await write(other, { type: 'setup.apply', applicationId: 'a3', name: 'team.yaml', text });
+    const applied = await readFile(path.join(dir, 'SKILL.md'), 'utf8');
+    expect(applied).toContain('allowed-tools: Read\ndisable-model-invocation: true\n');
+    expect(applied).toContain(kettleText);
+    expect(ownSkills(other)[0]).toMatchObject({ text: kettleText, manualOnly: true });
+    await write(other, { type: 'setup.undo', applicationId: 'a3' });
+    expect(await readFile(path.join(dir, 'SKILL.md'), 'utf8')).toBe(handWritten);
+    expect(ownSkills(other)[0]).toMatchObject({ text: '', file: handWritten });
+  });
+
   it('marks no workflow whose step follows a skill the same file brings', () => {
     on(source, {
       type: 'workflow.create',

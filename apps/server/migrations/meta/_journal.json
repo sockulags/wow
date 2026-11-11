@@ -176,6 +176,13 @@
       "when": 1794420428255,
       "tag": "0024_wow_skills",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1794425812171,
+      "tag": "0025_skill_files",
+      "breakpoints": true
     }
   ]
 }

@@ -8,11 +8,12 @@ import {
   type SkillRoot,
   type SkillWatcher,
   type WatchFactory,
+  ownSkillFile,
   ownSkillsDir,
   removeOwnSkill,
   skillFileName,
   wowSkillRoots,
-  writeOwnSkill,
+  writeOwnSkillFile,
 } from '@wow/skills';
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
@@ -21,6 +22,7 @@ import path from 'node:path';
 import type { Commit, Engine } from '../core/engine.js';
 import { alreadyThere } from '../core/skills.js';
 import type { Db } from '../db/database.js';
+import { readModel } from '../core/projector.js';
 import { projects } from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import type { SettingsService } from '../settings/service.js';
@@ -99,6 +101,7 @@ export class SkillsService {
   // the scan skipped, or on Windows one whose name differs only in case), so it is not
   // overwritten. The orchestrator does no I/O, so this runs before the command is decided.
   async refusal(command: Command): Promise<string | undefined> {
+    if (command.type === 'skill.restore') return this.#restoreRefusal(command.folder);
     if (command.type !== 'skill.create') return undefined;
     const dir = ownSkillsDir(this.#deps.wowHome);
     const names = await readdir(dir).catch(() => [] as string[]);
@@ -107,6 +110,17 @@ export class SkillsService {
       (name) => name.toLowerCase() === wanted && existsSync(path.join(dir, name, skillFileName)),
     );
     return found === undefined ? undefined : alreadyThere(path.join(dir, found));
+  }
+
+  // A restore puts a file back where the list has that skill, or where nothing is; never over
+  // a SKILL.md the list does not show.
+  #restoreRefusal(folder: string): string | undefined {
+    const dir = path.resolve(ownSkillsDir(this.#deps.wowHome), folder);
+    if (!existsSync(path.join(dir, skillFileName))) return undefined;
+    const listed = readModel(this.#deps.db)
+      .skills()
+      .some((skill) => skill.source === 'yours' && skill.dir.toLowerCase() === dir.toLowerCase());
+    return listed ? undefined : alreadyThere(dir);
   }
 
   // Why the file of the own skill a command saved or deleted could not be written or removed.
@@ -125,7 +139,10 @@ export class SkillsService {
       try {
         if (event.kind === 'skill.saved') {
           const { skill, previous } = event.payload;
-          writeOwnSkill(skill.dir, { ...skill, text: skill.text ?? '' });
+          writeOwnSkillFile(
+            skill.dir,
+            skill.file ?? ownSkillFile({ ...skill, text: skill.text ?? '' }),
+          );
           if (previous && previous.dir !== skill.dir) removeOwnSkill(previous.dir);
         } else {
           removeOwnSkill(dir);

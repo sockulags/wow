@@ -4,6 +4,7 @@ export {
   parseSkillFile,
   skillBody,
   skillFileName,
+  splitSkillFile,
   type SkillFrontmatter,
 } from './parse.js';
 export { invocationsFor, type SkillInvocations } from './invocations.js';
@@ -19,6 +20,7 @@ export {
 export { chokidarWatch, watchSkillRoots, type SkillWatcher, type WatchFactory } from './watch.js';
 export {
   builtInSkillsDir,
+  changedOwnSkillFile,
   fillBuiltInSkill,
   ownSkillDir,
   ownSkillFile,
@@ -26,4 +28,5 @@ export {
   removeOwnSkill,
   wowSkillRoots,
   writeOwnSkill,
+  writeOwnSkillFile,
 } from './wow.js';
