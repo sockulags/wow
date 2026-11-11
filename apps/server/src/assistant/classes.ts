@@ -307,6 +307,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'workflowRun.checkGate': serverOnly,
   'workflowRun.baseRecorded': serverOnly,
   'workflowRun.stepFailed': serverOnly,
+  'workflowRun.sendHeldTurn': serverOnly,
   'workflowRun.artifactsFound': serverOnly,
   'workflowRun.workingCopyReady': serverOnly,
   'workflowRun.workingCopyFailed': serverOnly,

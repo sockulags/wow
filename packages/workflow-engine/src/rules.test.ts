@@ -372,6 +372,25 @@ describe('going back (spec 7, 8)', () => {
     ]);
   });
 
+  it("stops a step whose turn waits for the user's own turn in its thread without interrupting that turn", () => {
+    const { run } = play(loop(), [completed('build'), sendsBack]);
+    // The server holds the turn while the user's message in build's thread is answered.
+    const held: WorkflowRun = {
+      ...run,
+      steps: run.steps.map((entry) =>
+        entry.stepId === 'build' ? { ...entry, heldPrompt: 'Do it again' } : entry,
+      ),
+    };
+    const stopped = advance(loop(), held, { type: 'stop' }, context());
+    expect(stopped.run.state).toBe('stopped');
+    expect(stopped.run.steps[0]?.heldPrompt).toBeUndefined();
+    expect(effectOf(stopped.effects, 'interrupt')).toBeUndefined();
+    // Without a hold the step's own turn is interrupted as before.
+    expect(
+      effectOf(advance(loop(), run, { type: 'stop' }, context()).effects, 'interrupt'),
+    ).toEqual({ type: 'interrupt', threadId: 'r1.build' });
+  });
+
   it('then runs review again as attempt 2 in its own thread, with the handover from build', () => {
     const { run, effects } = play(loop(), [
       completed('build'),

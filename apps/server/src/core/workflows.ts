@@ -223,6 +223,8 @@ export function decideWorkflow(
         read,
         context,
       );
+    case 'workflowRun.sendHeldTurn':
+      return heldTurnEvents(command.type, command.runId, command.stepId, read, context);
     case 'workflowRun.artifactsFound':
       return runInput(
         command.type,
@@ -554,12 +556,26 @@ function transitionEvents(
   if (before && effects.length === 0 && isDeepStrictEqual(before, run)) return [];
   // A step that runs again gets its turn in its own thread in this commit. When the user asked
   // for that (Approve, Send back) and the thread cannot take it, the command is refused. When a
-  // rule or the list got there by itself, nobody is there to refuse to: that step fails with
-  // the reason, so the run does not stay "running" without a turn.
+  // rule or the list got there by itself, nobody is there to refuse to: while the thread answers
+  // a message the user typed there, the step's turn is held until that one ends; a thread that
+  // is gone fails the step with the reason, so the run does not stay "running" without a turn.
   const rerun = effects.find((effect) => effect.type === 'sendBack');
   const refusal = rerun ? sendBackRefusal(rerun, read) : undefined;
   if (rerun && refusal !== undefined) {
     if (USER_CAUSES.has(cause)) throw new CommandRejected('rejected', refusal);
+    if (read.thread(rerun.threadId) && read.runningTurn(rerun.threadId)) {
+      const steps = run.steps.map((entry) =>
+        entry.stepId === rerun.stepId ? { ...entry, heldPrompt: rerun.prompt } : entry,
+      );
+      return transitionEvents(
+        cause,
+        workflow,
+        before,
+        { run: { ...run, steps }, effects: effects.filter((effect) => effect !== rerun) },
+        read,
+        context,
+      );
+    }
     const engineContext = runContext(read, context, run.projectId, null);
     const failed = engineCall(() =>
       advance(
@@ -650,6 +666,46 @@ function sendBackTurn(
     read,
     context,
   );
+}
+
+// The held turn of a step goes to its thread once the turn the user started there has ended.
+// Anything else (the run moved on or was stopped, or the thread answers again) leaves it.
+function heldTurnEvents(
+  cause: string,
+  runId: string,
+  stepId: string,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const run = read.run(runId);
+  const index = run?.steps.findIndex((entry) => entry.stepId === stepId) ?? -1;
+  const held = run?.steps[index];
+  if (
+    !run ||
+    run.state !== 'running' ||
+    held?.state !== 'running' ||
+    held.heldPrompt === undefined ||
+    !held.threadId ||
+    read.runningTurn(held.threadId)
+  ) {
+    return [];
+  }
+  const { heldPrompt: prompt, ...sent } = held;
+  const effect = {
+    type: 'sendBack' as const,
+    runId,
+    stepId,
+    threadId: held.threadId,
+    attempt: held.attempt ?? 1,
+    prompt,
+  };
+  return [
+    ...sendBackTurn(effect, read, context),
+    runChanged(cause, {
+      ...run,
+      steps: run.steps.map((entry, at) => (at === index ? sent : entry)),
+    }),
+  ];
 }
 
 // Every run state has a card state of the same name; `waiting` is what the card shows as "needs

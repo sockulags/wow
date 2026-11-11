@@ -581,7 +581,9 @@ A rule is followed after the step's gate has passed. Going to an earlier step ru
 its own thread, as the next attempt, with a message that says which step sent the work back, why,
 and what that step wrote (`workflows.goBackTemplate`). The steps after it run again too, each in
 its own thread. Going to a later step leaves the steps in between "Skipped" for that pass. Steps
-whose skill is in `workflows.alwaysStopSkills` still always wait for you.
+whose skill is in `workflows.alwaysStopSkills` still always wait for you. When a rule sends the
+run back to a step while you are talking with that step's thread, the step's new attempt waits
+for the answer to your message and then starts in the same thread.
 
 **The limit.** A step starts at most three times in a run (`workflows.maxStepVisits`, per
 project). When a rule or the order of the steps would start it once more, the run waits for you

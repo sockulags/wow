@@ -240,6 +240,10 @@ export const StepRun = z.object({
   gate: StepGate.optional(),
   // Only a step with rules has them.
   facts: StepFacts.optional(),
+  // The message the step runs again with, while a rule or the list sent the run back to it and
+  // its thread is still answering a message the user typed there. It is sent when that turn
+  // ends; until then the step is running without a turn of its own.
+  heldPrompt: z.string().optional(),
 });
 export type StepRun = z.infer<typeof StepRun>;
 

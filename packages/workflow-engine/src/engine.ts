@@ -789,9 +789,13 @@ function stopRun(run: WorkflowRun, context: EngineContext): Transition {
   // The threads are kept (behavior 13); a running turn is interrupted and its step marked failed.
   const steps = run.steps.map((step): StepRun => {
     if (step.state === 'running') {
-      if (step.threadId) effects.push({ type: 'interrupt', threadId: step.threadId });
+      // A held step has no turn yet: the one running in its thread is the user's own.
+      if (step.threadId && step.heldPrompt === undefined) {
+        effects.push({ type: 'interrupt', threadId: step.threadId });
+      }
       effects.push(...threadState(step.threadId, 'failed'));
-      return { ...step, state: 'failed', endedAt: context.now, error: 'Stopped' };
+      const { heldPrompt: _never, ...stopped } = step;
+      return { ...stopped, state: 'failed', endedAt: context.now, error: 'Stopped' };
     }
     if (step.state === 'waiting') {
       if (gate?.position === 'after') {

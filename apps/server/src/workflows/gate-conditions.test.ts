@@ -46,6 +46,8 @@ let prompts: string[];
 // Runs as a turn starts, before it is answered.
 let onTurn: () => void;
 let timers: { callback: () => void; delayMs: number }[];
+// Threads whose turn is the message that is never answered.
+const hanging = new Set<string>();
 const ceiling = process.env['GIT_CEILING_DIRECTORIES'];
 
 const git = (dir: string, ...args: string[]) =>
@@ -206,6 +208,7 @@ beforeEach(async () => {
   prompts = [];
   onTurn = () => undefined;
   timers = [];
+  hanging.clear();
   host = new MockGitHub({ owner: 'acme', repo: 'tea', webUrl: 'https://ghe.example.invalid' });
   host.token = TOKEN;
   host.pulls = [checks(passed('test'))];
@@ -230,13 +233,20 @@ beforeEach(async () => {
       providers: {
         claude: (row) =>
           new MockProviderAdapter(row.kind, (command) => {
+            // Only the message that hangs is ever interrupted here; it ends as interrupted.
+            if (command.type === 'interrupt' && hanging.delete(command.threadId)) {
+              return [{ type: 'turnInterrupted', threadId: command.threadId }];
+            }
             if (command.type !== 'startTurn') return [];
             const { threadId, prompt } = command;
             prompts.push(prompt);
             onTurn();
             const skill = Object.keys(answers).find((name) => prompt.startsWith(`/${name}`));
             // A message the test sends beside the run and that is never answered.
-            if (prompt === 'hang') return [];
+            if (prompt === 'hang') {
+              hanging.add(threadId);
+              return [];
+            }
             const failure = /^fails: (.*)$/.exec(answers[skill ?? ''] ?? '');
             if (failure) return [{ type: 'turnFailed', threadId, error: failure[1] ?? '' }];
             return [
@@ -862,7 +872,7 @@ describe('rules on a step (workflow branches)', () => {
     expect(states()).toEqual(['failed', 'not_started']);
   });
 
-  it('refuses Approve while the thread of the step to go back to is answering, and fails that step when nobody asked', async () => {
+  it('refuses Approve while the thread of the step to go back to is answering, and holds the rerun until that turn ends when nobody asked', async () => {
     answers = { build: 'Built.', 'check-work': 'CHANGES_REQUESTED' };
     host.pulls = [checks(going('test'))];
     createRules([
@@ -882,13 +892,32 @@ describe('rules on a step (workflow branches)', () => {
     );
     expect(run().state).toBe('waiting');
 
-    // The checks pass, so the gate passes by itself and the rule sends the run back to build.
+    // The checks pass, so the gate passes by itself and the rule sends the run back to build,
+    // whose thread is still answering the user: build's turn waits for that one.
     host.pulls = [checks(passed('test'))];
-    await poll();
-    expect(run().state).toBe('failed');
-    expect(run().steps[0]).toMatchObject({ state: 'failed' });
-    expect(run().steps[0]?.error).toContain("The step's thread is still answering a message");
-    expect(notices().filter((notice) => notice.kind === 'failed')).toHaveLength(1);
+    now = new Date(now.getTime() + server.settings.get('hosts.pollSeconds') * 1000);
+    await server.hosts.poll();
+    await server.hosts.idle();
+    await server.workflows.settled();
+    expect(run().state).toBe('running');
+    expect(run().steps[0]).toMatchObject({ state: 'running', attempt: 2 });
+    expect(run().steps[0]?.heldPrompt).toContain('sent the work back');
+    expect(prompts.at(-1)).toBe('hang');
+    expect(notices().filter((notice) => notice.kind === 'failed')).toHaveLength(0);
+
+    // The user's turn ends; build's turn starts in its thread, and the run goes on.
+    answers['check-work'] = 'APPROVED';
+    dispatch({ type: 'thread.interrupt', threadId: 'r1.build' });
+    await server.workflows.settled();
+    await settle();
+    expect(prompts.filter((prompt) => prompt.includes('sent the work back'))).toHaveLength(1);
+    expect(run().steps[0]?.heldPrompt).toBeUndefined();
+    expect(run().steps[0]).toMatchObject({ state: 'done', attempt: 2, finalMessage: 'Done' });
+    expect(visits().slice(0, 3)).toEqual([
+      'build#1: next step',
+      'check-work#1: verdict changes requested → build',
+      'build#2: next step',
+    ]);
   });
 
   it('refuses a workflow whose rule names a missing step, with the reason', () => {

@@ -484,6 +484,8 @@ export const InternalCommand = z.discriminatedUnion('type', [
     // The user interrupted the step's turn. Such a step follows no rule.
     stopped: z.boolean().optional(),
   }),
+  // A turn ended in the thread of a step whose own turn was held for it: send the held one.
+  z.object({ type: z.literal('workflowRun.sendHeldTurn'), runId: Id, stepId: Id }),
   z.object({
     type: z.literal('workflowRun.artifactsFound'),
     runId: Id,

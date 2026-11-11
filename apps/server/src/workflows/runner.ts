@@ -258,6 +258,15 @@ export class WorkflowRunner {
     // A send-back turn is the step's outcome again: it starts in the commit that sets the step
     // running, and no other turn can run in the thread beside it.
     if (!run || stepRun?.state !== 'running' || stepRun.threadId !== threadId) return;
+    // The user's own turn ended in a thread whose step waited for it: the step's turn goes now.
+    if (stepRun.heldPrompt !== undefined) {
+      this.#dispatch(`workflow:${turn.id}:held`, {
+        type: 'workflowRun.sendHeldTurn',
+        runId,
+        stepId,
+      });
+      return;
+    }
     const commandId = `workflow:${turn.id}:ended`;
     if (turn.state !== 'completed') {
       this.#dispatch(commandId, {

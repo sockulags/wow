@@ -639,8 +639,12 @@ Where a rule or the list goes (`moveTo`):
   the user approved the gate after the previous step passes it, as before.
 - When the thread of the step to run again is gone or still answering a message the user typed
   there, an Approve or Send back is refused with the reason. When a rule or the list got there
-  with nobody asking, that step fails with the reason and so does the run, instead of staying
-  "running" without a turn.
+  with nobody asking and the thread is answering the user, the step is `running` with its turn
+  held in `StepRun.heldPrompt`; when the user's turn in that thread ends the runner sends
+  `workflowRun.sendHeldTurn`, which starts the held turn and drops the field (a thread that is
+  answering again keeps it held). Stop ends such a step without interrupting the user's turn.
+  When the thread is gone, that step fails with the reason and so does the run, instead of
+  staying "running" without a turn.
 
 The path (spec 18). `WorkflowRun.path` is a list of `PathVisit {stepId, attempt, startedAt,
 endedAt, ended, next, reason, limit?}`: one entry per start of a step, in the order it happened.
@@ -675,7 +679,8 @@ reason names the step and the rule ("Step check-work, rule 2: …"). `workflow.c
 
 Commands: `workflow.create|update|delete`, `workflowRun.start|continue|sendBack|stop` and
 `planRun.start|stop` (see "Plan runs") from clients, and
-`skills.sync` and `workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded|checkGate` and
+`skills.sync` and
+`workflowRun.stepCompleted|stepFailed|artifactsFound|baseRecorded|checkGate|sendHeldTurn` and
 `workflowRun.workingCopyReady|workingCopyFailed|workingCopySettled` as `InternalCommand`s from
 the server. The orchestrator calls `startRun`/`advance` and stores one `workflowRun.changed` event
 (the run plus the effects to perform), an idle `thread.created` with `runId` and `stepId` for each
