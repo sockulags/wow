@@ -1,6 +1,7 @@
 import type { RunDiffFile } from '@wow/contracts';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -19,6 +20,7 @@ const options: ChangesOptions = {
   git: { timeoutMs: 20_000 },
   maxFileBytes: 20_000,
   maxFiles: 100,
+  maxHashBytes: 1_000_000,
 };
 
 let root: string;
@@ -239,6 +241,28 @@ describe('the changes of a run', () => {
     },
   );
 
+  it.skipIf(process.platform === 'win32')(
+    'does not follow a tracked folder that was replaced by a link, for size or hash',
+    async () => {
+      const { repo, base } = await repository('folder-link', { 'src/a.txt': 'a\n' });
+      const outside = path.join(root, 'outside-folder');
+      await mkdir(outside);
+      await writeFile(path.join(outside, 'a.txt'), 'outside the folder, longer\n');
+      await rm(path.join(repo, 'src'), { recursive: true });
+      await symlink(outside, path.join(repo, 'src'), 'dir');
+      const hashes = await snapshotChanges(repo, base, options);
+      expect(hashes?.find((entry) => entry.path === 'src/a.txt')).toEqual({
+        path: 'src/a.txt',
+        hash: null,
+      });
+      const diff = await diffOf(repo, base);
+      expect(diff.files.find((file) => file.path === 'src/a.txt')).toMatchObject({
+        status: 'deleted',
+        size: 2,
+      });
+    },
+  );
+
   it('changes nothing in the folder or the repository', async () => {
     const { repo, base } = await repository('untouched', { 'a.txt': 'a\n' });
     await write(repo, 'a.txt', 'b\n');
@@ -317,6 +341,24 @@ describe('what a step changed', () => {
       ['renamed-by-two.txt', ['s2']],
       ['second.txt', ['s2']],
     ]);
+  });
+
+  it('does not read a file larger than diff.maxHashBytes, and still sees it change', async () => {
+    const { repo, base } = await repository('big-hash', { 'a.txt': 'a\n' });
+    const content = 'x'.repeat(100);
+    await write(repo, 'big.bin', content);
+    const small = { ...options, maxHashBytes: 50 };
+    const first = (await snapshotChanges(repo, base, small))?.[0]?.hash;
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    expect(first).not.toBe(createHash('sha256').update(content).digest('hex'));
+    const later = new Date('2026-11-02T09:00:00.000Z');
+    await utimes(path.join(repo, 'big.bin'), later, later);
+    const second = (await snapshotChanges(repo, base, small))?.[0]?.hash;
+    expect(second).not.toBe(first);
+    // Under the limit the content itself is hashed.
+    expect((await snapshotChanges(repo, base, options))?.[0]?.hash).toBe(
+      createHash('sha256').update(content).digest('hex'),
+    );
   });
 
   it('reads a path that is missing from a list as unchanged from the base', () => {

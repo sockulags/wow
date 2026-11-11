@@ -518,7 +518,9 @@ itself shows `waiting` (its thread shows "needs you"). Before a step with `gateB
 shows `waiting` without a thread, and the previous step's thread shows "needs you". The run is
 `waiting` in both cases and `pendingGate(run)` tells them apart. One Continue (shown as Approve)
 passes the gate between two steps even when both flags are set. Stop ends the run as `stopped`,
-interrupts a running turn and keeps every thread.
+interrupts a running turn and keeps every thread. A step's prompt is sent only after the runner
+has made the working copy and read the base, and only when the run and the step are still
+`running` then, so a run stopped meanwhile starts no turn.
 
 Send back (review loop spec 16 to 18) is the other answer at a gate. `workflowRun.sendBack {runId,
 note}` runs the reviewed step again (`reviewedStepIndex`: the step that just ended for a gate
@@ -727,8 +729,10 @@ What changed is always the folder as it is now against the base commit, so commi
 uncommitted work both show. wow makes no commit per step, so "what did this step change" comes
 from content hashes: `baseFiles` and each ended step's `StepRun.fileHashes` are lists of
 `FileHash {path, hash}` for the files that differed from the base at that moment (SHA-256 of the
-file in the folder, null when it is gone; a link is hashed as its target path and never
-followed). A step changed a file when the file's hash at the step's end differs from the one in
+file in the folder, null when it is gone or a folder on its path is a link, as when a tracked
+folder was replaced by one; a link is hashed as its target path and never followed; a file over
+`diff.maxHashBytes` is not read and is hashed as its size and modification time). The size a
+file shows is read the same way, so a link never gives the size of what it points at. A step changed a file when the file's hash at the step's end differs from the one in
 the list before it (`stepsThatChanged`); a path missing from a list was the same as in the base.
 `baseFiles` holds what was already edited when the run began, so the first step is not credited
 with it. Changes made after the last step ended belong to no step.
@@ -1062,7 +1066,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `hosts.longestWaitMinutes`, `hosts.pageMaxBytes` (see "Hosts")
 - triggers: `triggers.eventsEnabled`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
-- diff: `diff.maxFileBytes`, `diff.maxFiles` (the "Changes" page, see "Run base and changes")
+- diff: `diff.maxFileBytes`, `diff.maxFiles`, `diff.maxHashBytes` (the "Changes" page, see "Run base and changes")
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
 - assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,

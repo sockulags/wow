@@ -900,6 +900,18 @@ describe('run base and changes', () => {
     );
   });
 
+  it('starts no turn for a run stopped while its base was being read', async () => {
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'edits', projectId: 'git' });
+    // Stop arrives before the runner has read the folder's commit.
+    dispatch({ type: 'workflowRun.stop', runId: 'r1' });
+    await server.workflows.settled();
+    expect(run().state).toBe('stopped');
+    expect(startTurns()).toEqual([]);
+    expect(
+      server.database.db.select().from(turns).where(eq(turns.threadId, 'r1.one')).all(),
+    ).toEqual([]);
+  });
+
   it('runs without a base in a folder that is not a repository (spec 13)', async () => {
     dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'edits', projectId: 'p1' });
     const waiting = await runBecomes((current) => current.state === 'waiting');

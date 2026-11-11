@@ -163,6 +163,8 @@ export class WorkflowRunner {
         // No prompt is sent while the run's own working copy is not there (review loop spec 38).
         if ((await this.#deps.prepare?.(effect.runId)) !== undefined) return;
         await this.#recordBase(effect.runId);
+        // The user may have stopped the run while its folder was made or read.
+        if (!this.#stepStillStarts(effect)) return;
         this.#startStep(effect);
         return;
       case 'interrupt':
@@ -206,6 +208,14 @@ export class WorkflowRunner {
       baseSha: base.baseSha,
       files: base.files,
     });
+  }
+
+  #stepStillStarts({ runId, stepId, threadId }: Extract<RunEffect, { type: 'startStep' }>) {
+    const run = this.#run(runId);
+    const stepRun = run?.steps.find((entry) => entry.stepId === stepId);
+    return (
+      run?.state === 'running' && stepRun?.state === 'running' && stepRun.threadId === threadId
+    );
   }
 
   #startStep(effect: Extract<RunEffect, { type: 'startStep' }>): void {

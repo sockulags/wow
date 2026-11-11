@@ -1185,6 +1185,16 @@ export const settingsRegistry = {
     default: 2_000,
     scope: 'global',
   }),
+  'diff.maxHashBytes': defineSetting({
+    schema: z.number().int().min(1000).max(10_000_000_000),
+    group: 'diff',
+    label: 'Largest file read to tell which step changed it',
+    description:
+      'A changed file larger than this is not read when a step ends; its size and the time it was last written stand for its content, so a change that keeps both is not seen.',
+    default: 100_000_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
   'workspaces.root': defineSetting({
     personal: 'machine',
     schema: z.string().trim().min(1),

@@ -965,7 +965,7 @@ Useful ones to know:
 - `scheduler.missedPolicy`, `scheduler.notifications`, `scheduler.paused`
 - `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`
 - `plans.intentsDirectory`, `hosts.polling`, `hosts.pollSeconds`, `triggers.eventsEnabled`
-- `viewer.maxFileBytes`, `viewer.htmlScripts`, `diff.maxFileBytes`, `workspaces.root`
+- `viewer.maxFileBytes`, `viewer.htmlScripts`, `diff.maxFileBytes`, `diff.maxHashBytes`, `workspaces.root`
 - `appearance.theme` (dark by default), `appearance.density`
 - `desktop.closeToTray`, `desktop.autostart`, `desktop.startMinimized`
 - `updates.enabled`, `updates.checkIntervalMinutes`
