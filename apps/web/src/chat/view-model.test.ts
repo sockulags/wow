@@ -1,9 +1,11 @@
-import type { ProviderInstance, Skill, Thread } from '@wow/contracts';
+import type { ProviderInstance, Skill, Thread, ThreadItem } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import { threadDefaults } from './new-thread';
 import {
   effortLabel,
+  failedToolCalls,
   formatElapsed,
+  groupToolCalls,
   lastUsedThread,
   listTitle,
   providerLabel,
@@ -11,6 +13,7 @@ import {
   skillGroup,
   skillSourceLabel,
   starterSkills,
+  type ConversationEntry,
 } from './view-model';
 
 const thread = (id: string, overrides: Partial<Thread> = {}): Thread => ({
@@ -141,5 +144,86 @@ describe('new thread defaults (owner decision F-5)', () => {
       thread('e', { cwd: '/tmp/e', projectId: 'p' }),
     ];
     expect(recentFolders(threads, [{ cwd: '/work/demo' }])).toEqual(['/tmp/a', '/tmp/b']);
+  });
+});
+
+const item = (
+  id: string,
+  kind: ThreadItem['kind'],
+  turnId = 'turn-1',
+  status: 'running' | 'ok' | 'error' = 'ok',
+): ThreadItem => ({
+  id,
+  threadId: 'thread',
+  turnId,
+  index: 0,
+  kind,
+  payload:
+    kind === 'tool_call' ? { name: `Read ${id}`, input: {}, output: '', status } : { text: id },
+  streaming: false,
+});
+const shape = (entries: ConversationEntry[]) =>
+  entries.map((entry) =>
+    entry.kind === 'item' ? entry.item.id : `${entry.id}[${entry.items.map((i) => i.id)}]`,
+  );
+
+describe('tool calls in a run are one row', () => {
+  it('groups consecutive calls of a turn and leaves a single call as it is', () => {
+    const items = [
+      item('u', 'user'),
+      item('a', 'tool_call'),
+      item('b', 'tool_call'),
+      item('c', 'tool_call'),
+      item('t', 'assistant_text'),
+      item('d', 'tool_call'),
+      item('x', 'usage'),
+    ];
+    expect(shape(groupToolCalls(items))).toEqual(['u', 'a[a,b,c]', 't', 'd', 'x']);
+  });
+
+  it('breaks a run at any other item, at a new turn and after a call with a row of its own', () => {
+    const items = [
+      item('a', 'tool_call'),
+      item('r', 'reasoning'),
+      item('b', 'tool_call'),
+      item('c', 'tool_call', 'turn-2'),
+      item('d', 'tool_call', 'turn-2'),
+      item('e', 'tool_call', 'turn-2'),
+      item('f', 'tool_call', 'turn-2'),
+      item('p', 'approval', 'turn-2'),
+      item('g', 'tool_call', 'turn-2'),
+    ];
+    expect(shape(groupToolCalls(items, (entry) => entry.id === 'd'))).toEqual([
+      'a',
+      'r',
+      'b',
+      'c[c,d]',
+      'e[e,f]',
+      'p',
+      'g',
+    ]);
+  });
+
+  it('keeps the id of its first call while a running turn adds calls', () => {
+    const first = groupToolCalls([item('a', 'tool_call'), item('b', 'tool_call')]);
+    const later = groupToolCalls([
+      item('a', 'tool_call'),
+      item('b', 'tool_call'),
+      item('c', 'tool_call', 'turn-1', 'running'),
+    ]);
+    expect(first[0]).toMatchObject({ kind: 'tools', id: 'a' });
+    expect(later).toHaveLength(1);
+    expect(later[0]).toMatchObject({ kind: 'tools', id: 'a' });
+    expect(later[0]?.kind === 'tools' && later[0].items.at(-1)?.id).toBe('c');
+  });
+
+  it('counts the failed calls of a run', () => {
+    expect(
+      failedToolCalls([
+        item('a', 'tool_call'),
+        item('b', 'tool_call', 'turn-1', 'error'),
+        item('c', 'tool_call', 'turn-1', 'running'),
+      ]),
+    ).toBe(1);
   });
 });

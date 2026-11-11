@@ -1027,7 +1027,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
   `providers.offerSetup`
-- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.starterCount`
+- chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.starterCount`
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.snapMinutes`, `calendar.cardMinutes`,
@@ -1885,7 +1885,11 @@ Assistant (the composer is blocked with the same sentence); with no thread yet i
 the sentence. The conversation is the chat view's `ThreadConversation` with
 `ConversationExtras` (`chat/thread-view.tsx`): rows after an item, rows at the end, the
 composer's ref, placeholder, blocked reason, a check before send and a notice line. Nothing of
-the chat view is copied. The `$` skill picker is off there.
+the chat view is copied. The `$` skill picker is off there. With `chat.groupToolCalls` on (the
+default), `groupToolCalls` (`chat/view-model.ts`) draws consecutive tool calls of one turn as one
+row (`ToolCallGroup`): the latest call, the count and how many failed; any other item, a new turn,
+or a call that has rows after it (change rows, proposals, cards) ends the run. Its open state is
+the window's own.
 
 - Rows (`assistant/model.ts`, `placeRows`). A change row or proposal card goes right after the
   tool call whose answer names its id (`change.id`, `proposal.id` in the call's output); one

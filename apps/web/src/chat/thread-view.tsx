@@ -25,7 +25,7 @@ import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
 import { Composer, type ComposerHandle } from './composer';
 import { useDispatch, useTopic } from './data';
-import { ConversationItem, WorkingIndicator, type ItemContext } from './items';
+import { ConversationItem, ToolCallGroup, WorkingIndicator, type ItemContext } from './items';
 import {
   canMarkDone,
   contextPercent,
@@ -40,11 +40,13 @@ import {
 } from './model';
 import { ThreadSettings } from './thread-settings';
 import {
+  groupToolCalls,
   lastErrorId,
   lastUserMessage,
   pendingApproval,
   pendingQuestion,
   providerLabel,
+  type ConversationEntry,
 } from './view-model';
 
 export const threadStateLabels: Readonly<Record<Thread['state'], string>> = {
@@ -283,6 +285,7 @@ export function ThreadConversation({
   const projects = useTopic('projects') ?? [];
   const showMeter = useSetting('chat.contextMeter');
   const resumePrompt = useSetting('chat.resumePrompt');
+  const groupTools = useSetting('chat.groupToolCalls');
   const { when } = useDateFormat();
   const { container, onScroll } = useStickToBottom(items);
   const ownComposer = useRef<ComposerHandle>(null);
@@ -330,6 +333,11 @@ export function ThreadConversation({
     };
   };
 
+  const afters = new Map((items ?? []).map((item) => [item.id, extras?.after?.(item)]));
+  const entries: ConversationEntry[] = groupTools
+    ? groupToolCalls(items ?? [], (item) => Boolean(afters.get(item.id)))
+    : (items ?? []).map((item) => ({ kind: 'item', item }));
+
   // While a question waits, the composer answers it; while an approval waits, the buttons above
   // answer it and the composer only queues the next message (audit C-04).
   const answerQuestion = question
@@ -354,16 +362,24 @@ export function ThreadConversation({
       >
         <div className={column}>
           <ol aria-label="Conversation" className="flex flex-col gap-3">
-            {(items ?? []).map((item) => {
-              const after = extras?.after?.(item);
+            {entries.map((entry) => {
+              const tail = entry.kind === 'item' ? entry.item : entry.items.at(-1);
+              const after = tail && afters.get(tail.id);
               return (
-                <Fragment key={item.id}>
-                  <ConversationItem
-                    item={item}
-                    approvals={approvals}
-                    questions={questions}
-                    context={itemContext(item.turnId, item.id)}
-                  />
+                <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
+                  {entry.kind === 'item' ? (
+                    <ConversationItem
+                      item={entry.item}
+                      approvals={approvals}
+                      questions={questions}
+                      context={itemContext(entry.item.turnId, entry.item.id)}
+                    />
+                  ) : (
+                    <ToolCallGroup
+                      items={entry.items}
+                      contextOf={(item) => itemContext(item.turnId, item.id)}
+                    />
+                  )}
                   {after && <li>{after}</li>}
                 </Fragment>
               );

@@ -172,6 +172,9 @@ test.describe('assistant', () => {
     // The value is in no message, tool result or stored row: not on the page and nowhere in the
     // server's home but its secret store.
     await expect(conversation(page)).not.toContainText(e2eGitLabToken);
+    for (const group of await conversation(page).getByTestId('item-tool_group').all()) {
+      await group.locator(':scope > details > summary').click();
+    }
     for (const tool of await conversation(page).getByTestId('item-tool_call').all()) {
       await tool.locator('summary').click();
       await expect(tool).not.toContainText(e2eGitLabToken);
@@ -281,5 +284,22 @@ test.describe('assistant', () => {
     const gate = page.getByRole('region', { name: 'Gate' });
     await expect(gate).toHaveCount(1);
     await expect(gate.getByRole('button', { name: 'Approve' })).toBeVisible();
+  });
+
+  test('the tool calls of a turn are one row, the latest on it', async ({ page }) => {
+    await page.goto('/assistant');
+    await say(page, 'Look over my setup');
+    const group = conversation(page).getByTestId('item-tool_group').last();
+    const row = group.locator(':scope > details > summary');
+    await expect(row).toContainText('mcp__wow__read_skills');
+    await expect(group.getByTestId('tool-group-count')).toHaveText('3 tool calls');
+    await expect(group.getByTestId('item-tool_call')).toHaveCount(0);
+    await row.focus();
+    await page.keyboard.press('Enter');
+    await expect(group.getByTestId('item-tool_call')).toHaveText([
+      /read_projects/,
+      /read_workflows/,
+      /read_skills/,
+    ]);
   });
 });

@@ -442,6 +442,23 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     if (inTeaRepo(command.cwd)) buildTeaTimer(command.cwd);
     return [session, ...finish(threadId, 'The tea timer rings twice now.')];
   }
+  // A turn that reads three things, one of which fails: the conversation draws them as one row.
+  if (/look around/i.test(prompt)) {
+    const calls = [
+      { id: 'read-1', name: 'Read', input: { file_path: 'package.json' }, status: 'ok' },
+      { id: 'grep-1', name: 'Grep', input: { pattern: 'kettle' }, status: 'error' },
+      { id: 'read-2', name: 'Read', input: { file_path: 'README.md' }, status: 'ok' },
+    ] as const;
+    return [
+      session,
+      ...calls.flatMap(({ id, name, input, status }): ProviderEvent[] => [
+        { type: 'toolCallStarted', threadId, itemId: id, name, input },
+        { type: 'toolCallOutput', threadId, itemId: id, output: `${name} ${id} answered\n` },
+        { type: 'toolCallCompleted', threadId, itemId: id, status },
+      ]),
+      ...finish(threadId, 'The repo holds a kettle.'),
+    ];
+  }
   if (/approve/i.test(prompt)) {
     return [
       session,

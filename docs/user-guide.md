@@ -334,7 +334,11 @@ open backlog items to start from, and the thread you worked in last. `chat.start
 many; 0 hides them.
 
 The reply streams as it is written. Reasoning is folded; click it to read. Every tool call is a
-row you can open to see its input and output. A turn ends with its usage: input, output and cached
+row you can open to see its input and output. Tool calls one after another in a turn share one
+row: it shows the latest call, how many there are ("10 tool calls") and how many failed, and opens
+(click, or Enter or Space) to list every call. Anything else in the turn, such as text, an
+approval or the Assistant's change rows and cards, starts a new row. `chat.groupToolCalls` off
+shows every call on its own row. A turn ends with its usage: input, output and cached
 tokens, and the cost when the provider reports one. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.
 

@@ -98,6 +98,16 @@ function scenario(text: string, trackerUrl: string): Scenario {
         "I set the GitLab address. The steps from wow's guide are above the field: create a personal access token with read_api on your GitLab and put it in the field; I never see it.",
     };
   }
+  if (/look over/i.test(text)) {
+    return {
+      steps: [
+        { tool: 'read_projects', args: {} },
+        { tool: 'read_workflows', args: {} },
+        { tool: 'read_skills', args: {} },
+      ],
+      answer: 'I read your projects, workflows and skills.',
+    };
+  }
   if (/not work/i.test(text)) {
     return {
       steps: [{ tool: 'diagnose_setup', args: {} }],

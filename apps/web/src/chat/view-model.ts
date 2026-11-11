@@ -1,5 +1,6 @@
 import {
   TextItemPayload,
+  ToolCallItemPayload,
   type Approval,
   type Project,
   type ProviderInstance,
@@ -150,3 +151,50 @@ export const lastAssistantText = (items: readonly ThreadItem[]) =>
 // The last error item, the one Retry and Resume belong to.
 export const lastErrorId = (items: readonly ThreadItem[]): string | undefined =>
   items.findLast((item) => item.kind === 'error')?.id;
+
+// One entry of the conversation list: an item as it is, or a run of tool calls drawn as one row.
+export type ConversationEntry =
+  | { readonly kind: 'item'; readonly item: ThreadItem }
+  | { readonly kind: 'tools'; readonly id: string; readonly items: readonly ThreadItem[] };
+
+// Consecutive tool calls of one turn become one entry, so a turn that reads ten things does not
+// fill the screen before its answer. Any other item breaks the run, and so does a row the view
+// draws after a call (`endsRun`: the Assistant's change rows and cards). The entry's id is its
+// first call's, so the row keeps its open state while the run grows.
+export function groupToolCalls(
+  items: readonly ThreadItem[],
+  endsRun: (item: ThreadItem) => boolean = () => false,
+): ConversationEntry[] {
+  const entries: ConversationEntry[] = [];
+  let run: ThreadItem[] = [];
+  const close = () => {
+    const [first] = run;
+    if (first !== undefined) {
+      entries.push(
+        run.length === 1
+          ? { kind: 'item', item: first }
+          : { kind: 'tools', id: first.id, items: run },
+      );
+    }
+    run = [];
+  };
+  for (const item of items) {
+    if (item.kind !== 'tool_call') {
+      close();
+      entries.push({ kind: 'item', item });
+      continue;
+    }
+    if (run[0] !== undefined && run[0].turnId !== item.turnId) close();
+    run.push(item);
+    if (endsRun(item)) close();
+  }
+  close();
+  return entries;
+}
+
+// How many calls of a run failed or were refused, so the collapsed row still says so.
+export const failedToolCalls = (items: readonly ThreadItem[]): number =>
+  items.filter((item) => {
+    const parsed = ToolCallItemPayload.safeParse(item.payload);
+    return parsed.success && parsed.data.status === 'error';
+  }).length;

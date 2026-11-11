@@ -447,6 +447,15 @@ export const settingsRegistry = {
     default: 'Continue where you left off.',
     scope: 'provider',
   }),
+  'chat.groupToolCalls': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Group tool calls',
+    description:
+      'Draw consecutive tool calls of a turn as one row that shows the latest call and how many there are; open it to list them all. Off shows every tool call as its own row.',
+    default: true,
+    scope: 'global',
+  }),
   'chat.starterCount': defineSetting({
     schema: z.number().int().min(0).max(12),
     group: 'chat',

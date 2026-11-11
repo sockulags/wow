@@ -35,7 +35,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { errorMessage, useDispatch } from './data';
 import { formatCost, formatTokens } from './model';
-import { formatElapsed } from './view-model';
+import { failedToolCalls, formatElapsed } from './view-model';
 
 // What a row needs to know about the thread and the turn around it.
 export interface ItemContext {
@@ -134,16 +134,44 @@ const toolStatus = {
   error: { label: 'error', className: 'text-state-failed' },
 } as const;
 
+function toolCallStatus(payload: ToolCallItemPayload, context: ItemContext) {
+  return payload.status === 'running' && context.awaitingApproval
+    ? { label: 'waiting for approval', className: 'text-state-needs-you' }
+    : payload.status === 'running' && context.turnEnded
+      ? { label: 'not finished', className: 'text-muted-foreground' }
+      : toolStatus[payload.status];
+}
+
+// The line a tool call is drawn as: its name, the first text of its input and its status.
+function ToolCallLine({
+  payload,
+  context,
+  extra,
+}: {
+  payload: ToolCallItemPayload;
+  context: ItemContext;
+  extra?: ReactNode;
+}) {
+  const status = toolCallStatus(payload, context);
+  const summary = inputSummary(payload.input);
+  return (
+    <>
+      <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="font-mono font-medium">{payload.name}</span>
+      {summary !== '' && (
+        <span className="min-w-0 truncate font-mono text-muted-foreground">{summary}</span>
+      )}
+      <span className="ml-auto flex shrink-0 items-center gap-2">
+        {extra}
+        <span className={status.className}>{status.label}</span>
+      </span>
+    </>
+  );
+}
+
 function ToolCall({ payload, context }: { payload: ToolCallItemPayload; context: ItemContext }) {
   // Input and output render only while open, so long outputs cost nothing when collapsed.
   const [open, setOpen] = useState(false);
-  const status =
-    payload.status === 'running' && context.awaitingApproval
-      ? { label: 'waiting for approval', className: 'text-state-needs-you' }
-      : payload.status === 'running' && context.turnEnded
-        ? { label: 'not finished', className: 'text-muted-foreground' }
-        : toolStatus[payload.status];
-  const summary = inputSummary(payload.input);
   return (
     <details
       className="group rounded-md border border-border text-xs"
@@ -151,12 +179,7 @@ function ToolCall({ payload, context }: { payload: ToolCallItemPayload; context:
     >
       <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 select-none">
         <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />
-        <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="font-mono font-medium">{payload.name}</span>
-        {summary !== '' && (
-          <span className="min-w-0 truncate font-mono text-muted-foreground">{summary}</span>
-        )}
-        <span className={cn('ml-auto shrink-0', status.className)}>{status.label}</span>
+        <ToolCallLine payload={payload} context={context} />
       </summary>
       {open && (
         <div className="flex flex-col gap-2 border-t border-border p-2">
@@ -610,6 +633,74 @@ export function ConversationItem(props: {
     <Row item={props.item}>
       <ItemBody {...props} />
     </Row>
+  );
+}
+
+// A run of tool calls as one row (`chat.groupToolCalls`): the latest call as a single row draws
+// it, how many there are, and how many failed, so a failure shows without opening the row. Open,
+// it lists every call, each opening to its input and output. The open state is this window's.
+export function ToolCallGroup({
+  items,
+  contextOf,
+}: {
+  items: readonly ThreadItem[];
+  contextOf: (item: ThreadItem) => ItemContext;
+}) {
+  const [open, setOpen] = useState(false);
+  const first = items[0];
+  const latest = items.at(-1);
+  if (first === undefined || latest === undefined) return null;
+  const parsed = ToolCallItemPayload.safeParse(latest.payload);
+  const failed = failedToolCalls(items);
+  const extra = (
+    <>
+      <span data-testid="tool-group-count" className="text-muted-foreground">
+        {items.length} tool calls
+      </span>
+      {failed > 0 && (
+        <span data-testid="tool-group-failed" className="text-state-failed">
+          {failed} failed
+        </span>
+      )}
+    </>
+  );
+  return (
+    <li
+      data-testid="item-tool_group"
+      data-item-id={first.id}
+      data-failed={failed > 0 || undefined}
+      className="[contain-intrinsic-size:auto_2.5rem] [content-visibility:auto]"
+    >
+      <details
+        className={cn(
+          'group/tools rounded-md border text-xs',
+          failed > 0 ? 'border-state-failed/50' : 'border-border',
+        )}
+        onToggle={(event) => setOpen(event.currentTarget.open)}
+      >
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 select-none">
+          <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-open/tools:rotate-90" />
+          {parsed.success ? (
+            <ToolCallLine payload={parsed.data} context={contextOf(latest)} extra={extra} />
+          ) : (
+            <span className="ml-auto">{extra}</span>
+          )}
+        </summary>
+        {open && (
+          <ol aria-label="Tool calls" className="flex flex-col gap-1 border-t border-border p-2">
+            {items.map((item) => (
+              <ConversationItem
+                key={item.id}
+                item={item}
+                approvals={[]}
+                questions={[]}
+                context={contextOf(item)}
+              />
+            ))}
+          </ol>
+        )}
+      </details>
+    </li>
   );
 }
 

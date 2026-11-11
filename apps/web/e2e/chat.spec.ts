@@ -182,6 +182,38 @@ test.describe('chat', () => {
     await expect(page.getByRole('button', { name: 'Mark thread done' })).toBeEnabled();
   });
 
+  test('draws the tool calls of a turn as one row that opens to all of them', async ({ page }) => {
+    await startThread(page, 'Look around the repo');
+    await expect(conversation(page).getByText('The repo holds a kettle.')).toBeVisible();
+    const group = conversation(page).getByTestId('item-tool_group');
+    await expect(group).toHaveCount(1);
+    const row = group.locator(':scope > details > summary');
+    // The latest call as a single row draws it, the count, and the failure without opening.
+    await expect(row).toContainText('Read');
+    await expect(row).toContainText('README.md');
+    await expect(row).toContainText('done');
+    await expect(group.getByTestId('tool-group-count')).toHaveText('3 tool calls');
+    await expect(group.getByTestId('tool-group-failed')).toHaveText('1 failed');
+    await expect(conversation(page).getByTestId('item-tool_call')).toHaveCount(0);
+
+    // The row is reached from the keyboard and opens with Enter, listing every call in order.
+    await row.focus();
+    await page.keyboard.press('Enter');
+    const calls = group.getByTestId('item-tool_call');
+    await expect(calls).toHaveCount(3);
+    await expect(calls.nth(0)).toContainText('package.json');
+    await expect(calls.nth(1)).toContainText('Grep');
+    await expect(calls.nth(1)).toContainText('error');
+    await expect(calls.nth(2)).toContainText('README.md');
+    await calls.nth(1).locator('summary').click();
+    await expect(calls.nth(1).getByRole('region', { name: 'Tool output' })).toContainText(
+      'Grep grep-1 answered',
+    );
+    await row.focus();
+    await page.keyboard.press('Space');
+    await expect(calls).toHaveCount(0);
+  });
+
   test('approves a command and the turn goes on', async ({ page }) => {
     await startThread(page, 'Please approve running the tests');
     const approval = conversation(page).getByRole('region', { name: 'Approval request' });
