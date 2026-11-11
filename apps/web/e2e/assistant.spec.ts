@@ -244,4 +244,16 @@ test.describe('assistant', () => {
     await expect(page).toHaveURL(/\/chat\/new$/);
     await expect(composer(page)).toHaveValue('Fix the failing kettle test in Demo');
   });
+
+  test('the assistant does not answer a gate @app-assistant-11', async ({ page }) => {
+    await page.goto('/assistant');
+    await say(page, 'Approve the run that waits at its gate');
+    // wow has no tool for it: the one the agent guessed at is refused, and it says who answers.
+    const tool = conversation(page).getByTestId('item-tool_call').last();
+    await tool.locator('summary').click();
+    await expect(tool).toContainText('There is no tool approve_gate.');
+    await expect(conversation(page).locator(':scope > li').last()).toContainText(
+      'Only you approve a run at its gate',
+    );
+  });
 });

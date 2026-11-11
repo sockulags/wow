@@ -6,8 +6,8 @@ of ideas. Everything runs on your machine. Nothing is sent to Outlook, Jira or G
 press a button that says so.
 
 This guide covers the first run, providers, the calendar, chat, workflows (with review at a gate,
-working copies, event triggers and gates that pass by themselves), plans, the backlog, settings
-and troubleshooting. Technical details are in `docs/architecture.md`.
+working copies, event triggers and gates that pass by themselves), plans, the backlog, the
+assistant, settings and troubleshooting. Technical details are in `docs/architecture.md`.
 
 ## First run
 
@@ -37,18 +37,27 @@ pnpm --filter @wow/desktop start
 
 ### The first window
 
-On first start the app starts its local server, then opens on the calendar. With no provider set
-up yet, a short setup guide opens:
+On first start the app starts its local server. While no provider has passed its test, the whole
+window is one step, **Connect an agent**: Claude Code and Codex side by side, each with the binary
+found on your `PATH` (or a line saying it is not installed), a **Test** button and, when the test
+fails, the reason in words (for example that you are not signed in). **Test** creates the
+provider instance if there is none of that kind yet and runs the same test as Settings →
+Providers. Nothing else of the app shows until one test passes; the palette offers "Connect
+Claude Code", "Connect Codex" and "Start from a setup file" meanwhile.
 
-1. **Set up providers** lists the `claude` and `codex` CLIs it found on your `PATH`, with the
-   config folder each one uses, already checked. **Set up** creates an instance for each and tests
-   it, showing the logged-in account or the error.
-2. **Add your projects** lists the folders those CLIs have already worked in, checked. **Import**
-   turns each into a project; **Skip** moves on.
-3. **You are set up** offers **Start a thread**.
+Below the two agents is **Start from a setup file**: a colleague's file (see "A setup to share"
+under "Assistant") is previewed and applied as one step before you connect, and its secrets are
+left for you to fill in.
 
-**Not now** closes the guide and it does not open again (the `providers.offerSetup` setting; turn
-it back on, or use "Detect installed providers" in the palette, to see it again).
+Once a test passes, the step goes away for good (the `providers.offerSetup` setting turns off, so
+removing a provider later never hides the app again) and the Assistant opens. wow sends it a first
+message for you (`assistant.greeting`), and the assistant answers with what is set up and what a
+first run still needs: usually a project and a workflow. After a setup file it then goes through
+what the file left to fill in, one thing per answer: each token through its field, then your work
+hours, then your project folders, which a file never holds.
+
+The older three-step guide (providers, projects, done) is still in the palette as "Detect
+installed providers".
 
 A project is a name and a folder; threads, cards and workflow runs work in that folder. Add your
 projects in Settings → Projects (see "Projects" below). A thread can also use any folder you type
@@ -56,7 +65,7 @@ instead of a project; cards with a trigger and workflow runs need a project.
 
 ### Finding your way
 
-The left sidebar has Calendar, Chat, Workflows, Plans, Backlog and Settings. Chat and Workflows
+The left sidebar has Calendar, Chat, Workflows, Plans, Backlog, Assistant and Settings. Chat and Workflows
 show a yellow count when threads or runs wait for you; hovering an item or focusing it shows its
 key.
 Below 1280 pixels wide the sidebar narrows to icons. When the window cannot reach the wow server, a
@@ -790,8 +799,80 @@ project …" for every project.
 
 ## Assistant
 
-The Assistant section is one conversation whose agent can only operate wow itself. This part of
-the guide covers how it helps you make a host token and how it finds what is not working.
+The Assistant section (sidebar, above Settings; `keybindings.goAssistant`, Ctrl+6) is one
+conversation whose agent can only operate wow itself. Say what you want ("my projects are on our
+GitLab", "move my work hours to end at four") and it asks what it needs, does it through the same
+commands the views use, and says what it did and where that lives. The conversation is kept
+between restarts; there is only one.
+
+### What it runs on and what it can reach
+
+It runs on a provider you connected: `assistant.providerInstanceId`, or the first connected
+instance when that is empty, with `assistant.model` and `assistant.effort` (empty means the
+instance's default). On Codex it runs only with `assistant.allowCodex` on, because Codex keeps a
+read-only shell that could read files on your computer; with it off and only Codex connected, the
+assistant says so. Its agent gets wow's own tools and nothing else: no files, no shell, no
+network, in an empty folder of wow's (`~/.wow/assistant`). What it is told to do is the
+`assistant.instructions` text.
+
+It can read settings (secret ones only as "set" or "not set"), projects, providers, workflows,
+templates and skills, calendar cards and meeting times and titles, the backlog, runs, triggers,
+notifications and connection tests. It cannot read a chat thread or a file in a project. Ask it
+for project work ("fix this test") and it offers to open a new thread in Chat with your text.
+
+### Changes, proposals and Undo
+
+An everyday change is made at once and shows as a row, for example "Work hours: 08:00–17:00 →
+08:00–16:00 · Settings → Calendar", with **Undo**. Undo is refused, and says why, when the thing
+was changed again since. Several changes in one answer get a row each.
+
+A change that lets wow do more on its own shows as a proposal card with exactly what would change,
+**Yes** and **No** (with an optional reason that goes back to the assistant), and nothing changes
+until you press Yes: a step's permission mode, a gate condition, a step's rules, an event
+trigger, "for units" or "own working copy" on a workflow, resuming the scheduler, the missed
+policy `run`, `hosts.polling` or `triggers.eventsEnabled` on, `viewer.htmlScripts` on, and
+starting a run ("Start <workflow> in <project>"). A card with a workflow that starts sooner than
+`assistant.startSoonMinutes` (15) from now is a proposal too. The palette has Yes and No for every
+waiting proposal and Undo for every change.
+
+It never answers a gate: approving, sending back or stopping a run is yours, and wow refuses those
+commands from the assistant.
+
+### Secrets
+
+The assistant never asks you to type a token in the conversation. It puts the setting's field in
+the conversation instead, with the token guide's steps above it (see below); **Save** writes the
+value straight to the secret store and **Test connection** checks it. The assistant learns only
+"set" or "not set" and the test's result.
+
+A message you are about to send that looks like a secret (a known token prefix, a private key, a
+long random string after "token", "password" or "key") is held: a line above the composer says
+what it looks like, with **Put it in <field>** and **Send anyway**. A held message is not stored.
+The patterns are `assistant.secretPatterns`; anything that matches them in what the assistant is
+shown is replaced by "[hidden]".
+
+### A setup to share
+
+Settings → Advanced (and the palette) has **Save setup to a file**: a YAML file with the global
+settings that differ from their default, tracker and host settings, and workflows and templates.
+It holds no secret value (each secret that was set is listed under `toFillIn`), no project folder,
+no account name and nothing from the calendar, backlog, threads or runs. Settings that belong to
+this machine or this person (work hours, the calendar's zone, desktop settings, first start) stay
+out too.
+
+**Start from a setup file** (Settings → Advanced, the palette, or the first-start step) shows a
+preview with what would be added and what would replace a value you have, and applies it as one
+step you can undo. A file with an unknown key, a wrong type or a secret value is refused with the
+line and the reason; a workflow naming a skill that is not installed is applied and marked "skill
+not installed".
+
+### When it cannot start
+
+When no provider can run the assistant (none connected, the one it ran on was removed or signed
+out, or only Codex with `assistant.allowCodex` off), Assistant says why and shows the same step
+**Connect an agent** as at first start, with links to Settings → Providers and Settings →
+Assistant. The rest of the app stays usable. Once an agent passes its test the conversation is
+back.
 
 ### Making a host token
 
@@ -829,7 +910,7 @@ first. A trigger's reason is kept only while desktop notifications are on.
 ## Settings
 
 Settings are grouped: Providers, Projects, Chat, Calendar, Outlook, Scheduler, Workflows, Skills,
-Plans, Trackers, Hosts, Event triggers, Viewer, Changes, Working copies, Appearance, Keybindings,
+Plans, Trackers, Hosts, Event triggers, Viewer, Changes, Working copies, Assistant, Appearance, Keybindings,
 Desktop, Updates and Advanced. The search box above the groups finds a
 setting by its name or description across all of them. Every setting shows its description and
 its current value; numbers show their unit, and times in milliseconds are shown in seconds.

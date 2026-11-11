@@ -28,6 +28,8 @@ import { crc32, deflateSync } from 'node:zlib';
 import {
   e2eAssistantBrokenWorkflowId,
   e2eAssistantHome,
+  e2eFirstStartCodexError,
+  e2eFirstStartHome,
   e2eBinDir,
   e2eBinary,
   e2eChangesHome,
@@ -93,6 +95,8 @@ const trackerPort = Number(process.env['WOW_E2E_TRACKER_PORT'] ?? e2eTrackerPort
 // the test waiting for it.
 const keepHome = process.env['WOW_E2E_KEEP_HOME'] === '1';
 const clockOffsetMs = Number(process.env['WOW_E2E_CLOCK_OFFSET_SECONDS'] ?? '0') * 1000;
+// The first-start copy is seeded with nothing a user would have set up (e2e/env.ts).
+const firstStart = home === e2eFirstStartHome;
 
 // Starts the wow server for the chat tests with a scripted mock provider. The prompt picks the
 // scenario: "approve" asks for an approval, "question" asks a question, "wait" streams a little
@@ -531,6 +535,8 @@ const codexInstalled = () => path.join(home, 'codex-installed');
 const fakeNpm = path.join(home, 'fake-npm.cjs');
 function codexTest(instance: ProviderInstance): () => ProviderTestResult {
   return () => {
+    if (firstStart)
+      return { ok: false, account: null, version: null, message: e2eFirstStartCodexError };
     if (/differs/i.test(instance.name))
       return {
         ok: true,
@@ -784,7 +790,7 @@ const server = await startServer({
   hooks: {
     providers: {
       claude: () =>
-        home === e2eAssistantHome
+        home === e2eAssistantHome || firstStart
           ? new AssistantMockAgent(
               new MockProviderAdapter('claude', chatScript),
               () => server.assistant.tools,
@@ -825,17 +831,19 @@ const control = createServer((request, response) => {
 control.keepAliveTimeout = 0;
 await new Promise<void>((resolve) => control.listen(outlookControlPort, '127.0.0.1', resolve));
 
-server.engine.dispatch('seed-instance', {
-  type: 'providerInstance.create',
-  providerInstanceId: e2eProviderInstanceId,
-  kind: 'claude',
-  name: 'Mock Claude',
-  binaryPath: 'claude',
-  configDir: '/home/me/.claude',
-  env: {},
-  launchArgs: [],
-  defaultPermissionMode: 'default',
-});
+if (!firstStart) {
+  server.engine.dispatch('seed-instance', {
+    type: 'providerInstance.create',
+    providerInstanceId: e2eProviderInstanceId,
+    kind: 'claude',
+    name: 'Mock Claude',
+    binaryPath: 'claude',
+    configDir: '/home/me/.claude',
+    env: {},
+    launchArgs: [],
+    defaultPermissionMode: 'default',
+  });
+}
 // The assistant runs only on an instance whose test passed.
 if (home === e2eAssistantHome) await server.providerService.test(e2eProviderInstanceId);
 // Only the chat server gets a Codex instance; the settings tests count and add instances themselves.
@@ -887,19 +895,20 @@ if (home === e2eProjectsHome) {
     });
   }
 }
-server.engine.dispatch('seed-project', {
-  type: 'project.create',
-  projectId: e2eProjectId,
-  name: 'Demo',
-  cwd: home,
-});
-
-server.engine.dispatch('seed-plans-directory', {
-  type: 'setting.set',
-  key: 'plans.intentsDirectory',
-  scope: `project:${e2eProjectId}`,
-  value: e2ePlansDirectory,
-});
+if (!firstStart) {
+  server.engine.dispatch('seed-project', {
+    type: 'project.create',
+    projectId: e2eProjectId,
+    name: 'Demo',
+    cwd: home,
+  });
+  server.engine.dispatch('seed-plans-directory', {
+    type: 'setting.set',
+    key: 'plans.intentsDirectory',
+    scope: `project:${e2eProjectId}`,
+    value: e2ePlansDirectory,
+  });
+}
 
 // Settings for the mock trackers below: Jira fully set up, GitHub without its token, which the
 // backlog tests enter on the settings page.
@@ -919,28 +928,30 @@ const seedSettings: Record<string, unknown> = {
     'confluence-e2e-token',
   ),
 };
-for (const [key, value] of Object.entries(seedSettings)) {
+for (const [key, value] of Object.entries(firstStart ? {} : seedSettings)) {
   server.engine.dispatch(`seed-${key}`, { type: 'setting.set', key, scope: 'global', value });
 }
-// A one-step workflow for "Plan on calendar"; the mock provider finishes its turn.
-server.engine.dispatch('seed-workflow', {
-  type: 'workflow.create',
-  workflowId: e2eWorkflowId,
-  name: 'Backlog e2e',
-  steps: [
-    {
-      id: 'deliver',
-      skillName: 'deliver-work',
-      providerInstanceId: e2eProviderInstanceId,
-      model: 'mock-model',
-      effort: 'default',
-      permissionMode: 'default',
-      gateBefore: false,
-      gateAfter: false,
-      expectedArtifacts: [],
-    },
-  ],
-});
+if (!firstStart) {
+  // A one-step workflow for "Plan on calendar"; the mock provider finishes its turn.
+  server.engine.dispatch('seed-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eWorkflowId,
+    name: 'Backlog e2e',
+    steps: [
+      {
+        id: 'deliver',
+        skillName: 'deliver-work',
+        providerInstanceId: e2eProviderInstanceId,
+        model: 'mock-model',
+        effort: 'default',
+        permissionMode: 'default',
+        gateBefore: false,
+        gateAfter: false,
+        expectedArtifacts: [],
+      },
+    ],
+  });
+}
 
 // The panel server: a one-step workflow that waits for the user after its step, and a card
 // tomorrow at 10:00 (this machine's zone) that runs it, started through POST /fire?cardId=….

@@ -29,9 +29,15 @@ version and the CI run it came from.
 - [ ] wow starts when the installer finishes; the window opens on the calendar.
 - [ ] `%USERPROFILE%\.wow` holds `wow.sqlite`, `server.json` and `desktop.log`. `desktop.log` has
       "server listening" and no error about `better-sqlite3`.
-- [ ] The "Set up providers" dialog lists `claude` and `codex` with their config folders.
-- [ ] Create both instances. Each test shows the logged-in account and version, or a readable
-      error.
+- [ ] Only the step "Connect an agent" shows, with no sidebar: Claude Code and Codex side by
+      side, each with the binary found on the `PATH`, a Test button, and "Start from a setup
+      file" below.
+- [ ] Test the agent you are not signed in to (or rename its binary for a moment): the card
+      says why in words and the step stays.
+- [ ] Test the other one: the step goes away, the Assistant opens and its first answer lists what
+      is set up and that a first run still needs a project and a workflow.
+- [ ] Settings → Providers lists the instance with its account and version. Add the second CLI
+      there, or with "Detect installed providers" in the palette.
 
 ## 2. Outlook
 
@@ -158,6 +164,33 @@ Further checks against the same hosts:
       merged") and merge a followed pull request on the host: one run starts within
       `hosts.pollSeconds`, and polling again starts no second one.
 
-## 10. Uninstall
+## 10. Assistant
+
+The manual check from the app assistant spec's "Ground truth"
+(`intents/2026-11-app-assistant/spec.md`). It needs a GitLab you can make a personal access token
+on (gitlab.com or your own), a real Claude Code sign-in, and nothing secret in the conversation.
+
+- [ ] **Set a GitLab host through the assistant, fill the token in the field, and see the test
+      pass.** In Assistant (Ctrl+6) write "Our projects are on GitLab at <address>". A change row
+      "GitLab URL: … · Settings → Trackers" appears with Undo, then the GitLab token's field with
+      the guide's steps. Follow the link in the guide: write down whether it opens the token page
+      of your GitLab version, and which version that is. Create a token with `read_api`, paste it
+      in the field, Save: the card says "Set". Test connection: it passes and names your account.
+- [ ] **The token is nowhere else.** Search the conversation (Ctrl+F) for the first characters of
+      the token: no match. Search `%USERPROFILE%\.wow` with
+      `Select-String -Path "$env:USERPROFILE\.wow\*.log","$env:USERPROFILE\.wow\wow.sqlite" -Pattern "<token>" -SimpleMatch`:
+      no match.
+- [ ] Paste the token into the composer and press Enter: the message is held, with "Put it in
+      GitLab token" and "Send anyway". Press the cross; nothing was sent.
+- [ ] Ask the assistant to read `C:\Windows\win.ini` and to run `dir`: it says it cannot, and no
+      tool row reads a file or runs a command.
+- [ ] Ask it to start a run of a workflow: a card "Start <workflow> in <project>" waits for Yes.
+      Press No.
+- [ ] Settings → Advanced → Save setup to a file. Open the file: no token, no project folder, no
+      email; `trackers.gitlab.token` is listed under `toFillIn`.
+- [ ] Remove the assistant's provider instance in Settings → Providers (or sign it out and test
+      it): Assistant says so and shows "Connect an agent"; the calendar and chat still work.
+
+## 11. Uninstall
 
 - [ ] Uninstall from Settings → Apps. `%USERPROFILE%\.wow` stays (your data).

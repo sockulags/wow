@@ -18,11 +18,14 @@ the server owns processes, files and Git; the UI is dumb and renders persisted s
 
 The app (`intents/2026-11-wow-app`) and the review loop (`intents/2026-11-review-loop`: review
 at a gate, plans, working copies, host reading, event triggers and gates that pass by themselves)
-are built; workflow branches (`intents/2026-11-workflow-branches`) are delivered too. Each
-intent's behavior is in its `spec.md` and its delivery units in its `plan.md`; the technical
-decisions are in `docs/architecture.md`. `pnpm e2e --grep @review-loop` runs the end-to-end cases
-the review loop's ground truth names. The manual Windows check with real hosts
-(`docs/windows-smoke.md`, section 9) is still to be run.
+are built; workflow branches (`intents/2026-11-workflow-branches`) are delivered too, and so is
+the app assistant (`intents/2026-11-app-assistant`: one conversation that operates wow, with
+change rows and Undo, proposals that wait for a yes, secret fields, a setup file to share, and
+the first-start step "Connect an agent"). Each intent's behavior is in its `spec.md` and its
+delivery units in its `plan.md`; the technical decisions are in `docs/architecture.md`.
+`pnpm e2e --grep @review-loop` and `pnpm e2e --grep @app-assistant` run the end-to-end cases each
+ground truth names. The manual Windows checks with real hosts and a real provider
+(`docs/windows-smoke.md`, sections 9 and 10) are still to be run.
 
 ## Develop
 

@@ -164,3 +164,13 @@ export const e2eAssistantTrackerPort = 4573;
 export const e2eAssistantBrokenWorkflowId = 'assistant-e2e-broken';
 // The token the mock GitLab accepts, typed into the assistant's secret field.
 export const e2eGitLabToken = 'gitlab-host-e2e-token';
+
+// An eighth server for the first-start tests (e2e/first-start.spec.ts): no provider instance,
+// no project, no workflow and no tracker, the way wow starts on a new machine. Its mock Codex
+// fails its test with a sign-in error; its mock Claude is the assistant's mock agent.
+export const e2eFirstStartHome = path.join(tmpdir(), 'wow-e2e-first-start-home');
+export const e2eFirstStartPort = 4581;
+export const e2eFirstStartOutlookControlPort = 4582;
+export const e2eFirstStartTrackerPort = 4583;
+export const e2eFirstStartCodexError =
+  'Codex is not signed in. Run "codex login" in a terminal, then test again.';
