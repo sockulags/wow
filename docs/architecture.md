@@ -67,7 +67,10 @@ projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see 
   after every reconnect. It reads the port and token from `server.json` (`ServerInfo`). It
   subscribes with `subscribe {topic, threadId?}`, keeps the returned `subscriptionId` per socket to
   route pushes and to `unsubscribe {subscriptionId}`, and shares one server subscription between
-  listeners of the same topic and thread (a late listener gets the last rows at once).
+  listeners of the same topic and thread (a late listener gets the last rows at once). The server
+  sends a subscribe answer after its own microtasks, so a commit's push can arrive first; while an
+  answer is awaited the client keeps the newest push of each id it does not know yet and delivers
+  it right after that answer's rows.
 - **Commands → events → projections.** A request becomes a command. The orchestrator (pure
   function, no I/O) turns the command plus current projection into events. One SQLite transaction
   appends the events, updates projections and records the command receipt (idempotent retries).

@@ -98,6 +98,11 @@ export function createConnection(options: ConnectionOptions): Connection {
   const subscriptions = new Map<string, Subscription>();
   // Server subscription id -> key in `subscriptions`, for the current socket only.
   const byServerId = new Map<string, string>();
+  // The server sends its subscribe answer after its own microtasks, so a commit's push can reach
+  // this socket first. While an answer is awaited, the newest push of an id not yet known is kept
+  // and delivered after that answer's rows.
+  const early = new Map<string, unknown>();
+  let awaitingAnswers = 0;
   let socket: SocketHandle | undefined;
   let open = false;
   let closedByUser = false;
@@ -129,6 +134,8 @@ export function createConnection(options: ConnectionOptions): Connection {
       const key = byServerId.get(message.subscription);
       const subscription = key === undefined ? undefined : subscriptions.get(key);
       if (subscription) deliver(subscription, message.data);
+      else if (key === undefined && awaitingAnswers > 0)
+        early.set(message.subscription, message.data);
       return;
     }
     const pending = inFlight.get(message.id);
@@ -149,8 +156,19 @@ export function createConnection(options: ConnectionOptions): Connection {
       subscription.threadId === undefined
         ? { topic: subscription.topic }
         : { topic: subscription.topic, threadId: subscription.threadId };
+    awaitingAnswers += 1;
+    const answered = () => {
+      awaitingAnswers -= 1;
+      if (awaitingAnswers === 0) early.clear();
+    };
     transmit(makeRequest('subscribe', params), {
       resolve: (result) => {
+        const pushed =
+          isSubscribeResult(result) && early.has(result.subscriptionId)
+            ? { data: early.get(result.subscriptionId) }
+            : undefined;
+        if (isSubscribeResult(result)) early.delete(result.subscriptionId);
+        answered();
         if (!isSubscribeResult(result)) return;
         // Stopped while the answer was on its way, or replaced by a newer subscription.
         if (subscriptions.get(key) !== subscription) {
@@ -160,8 +178,9 @@ export function createConnection(options: ConnectionOptions): Connection {
         subscription.serverId = result.subscriptionId;
         byServerId.set(result.subscriptionId, key);
         deliver(subscription, result.data);
+        if (pushed) deliver(subscription, pushed.data);
       },
-      reject: () => undefined,
+      reject: answered,
     });
   };
 
@@ -184,6 +203,7 @@ export function createConnection(options: ConnectionOptions): Connection {
         for (const subscription of subscriptions.values()) subscription.serverId = undefined;
         for (const pending of inFlight.values()) pending.reject(new Error('Connection lost'));
         inFlight.clear();
+        early.clear();
         if (closedByUser) {
           state.setState({ status: 'closed' });
           return;

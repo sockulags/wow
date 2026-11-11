@@ -30,9 +30,7 @@ import { ChangeRow, ProposalCard } from './rows';
 // the assistant's tools ask for inline where they happened.
 
 // What `assistant.open` answered: the sentence that says why no provider can run it, or null.
-// It waits for the topics' first rows: a row the server sends before it has answered the
-// subscription is not delivered, so the thread this ask makes would not show.
-function useOpenProblem(subscribed: boolean): {
+function useOpenProblem(): {
   readonly problem: string | null;
   readonly asked: boolean;
 } {
@@ -49,7 +47,7 @@ function useOpenProblem(subscribed: boolean): {
     ?.map((instance) => `${instance.id}:${instance.kind}:${instance.status}`)
     .join(',');
   useEffect(() => {
-    if (!connection || !subscribed || instancesKey === undefined) return undefined;
+    if (!connection || instancesKey === undefined) return undefined;
     let current = true;
     connection.request('assistant.open', {}).then(
       (result) => {
@@ -63,7 +61,7 @@ function useOpenProblem(subscribed: boolean): {
     return () => {
       current = false;
     };
-  }, [connection, subscribed, instancesKey, configured, allowCodex]);
+  }, [connection, instancesKey, configured, allowCodex]);
   return state;
 }
 
@@ -174,7 +172,7 @@ export function AssistantView() {
   const changes = useTopic('assistantChanges') ?? [];
   const proposals = useTopic('assistantProposals') ?? [];
   const patterns = useSetting('assistant.secretPatterns');
-  const { problem, asked } = useOpenProblem(threads !== undefined);
+  const { problem, asked } = useOpenProblem();
   const composer = useRef<ComposerHandle>(null);
   const [held, setHeld] = useState<Held>();
   const [saved, setSaved] = useState<string>();
