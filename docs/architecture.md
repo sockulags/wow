@@ -1548,7 +1548,8 @@ read from the project's `plans.intentsDirectory` with links left out (`readInten
 `trackers.confluence.baseUrl`'s scheme, host, port and path, and names a page:
 `/pages/viewpage.action?pageId=<id>` and `/spaces/<space>/pages/<id>/…` by id (`ref`
 `id:<id>`), `/display/<space>/<title>` by title (`title:<space>/<title>`, `+` read as a
-space). Links to another site are dropped before anything is asked, so the Confluence token never
+space). `webLinksIn` keeps brackets an address opens and closes itself (`Plan+(draft)`) and ends
+an address at one it did not open (a markdown link's own `)` or `]`). Links to another site are dropped before anything is asked, so the Confluence token never
 goes anywhere but the stored site. A run with no links gets a row with no pages and no error,
 and costs no request. Each linked page is asked for once a round,
 `GET <base>/rest/api/content/<id>?expand=body.view,version,space` or

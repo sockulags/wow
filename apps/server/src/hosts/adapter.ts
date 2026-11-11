@@ -118,12 +118,31 @@ export const hostLink = (value: unknown): string | null => {
   return protocol === 'https:' || protocol === 'http:' ? value : null;
 };
 
+// An address ends at a bracket it did not open: `(https://…/Plan+(draft))` keeps `(draft)` but
+// not the markdown link's own closing bracket.
+function balanced(candidate: string): string {
+  let round = 0;
+  let square = 0;
+  for (let index = 0; index < candidate.length; index += 1) {
+    const char = candidate[index];
+    if (char === '(') round += 1;
+    else if (char === '[') square += 1;
+    else if (char === ')' && (round -= 1) < 0) return candidate.slice(0, index);
+    else if (char === ']' && (square -= 1) < 0) return candidate.slice(0, index);
+  }
+  return candidate;
+}
+
 // Every web address written in a text (markdown, wiki markup or plain), in order and once each.
 // Only http and https addresses; the end of a sentence or of a markdown link is not part of one.
 export function webLinksIn(text: string): string[] {
   const found = new Set<string>();
-  for (const match of text.matchAll(/https?:\/\/[^\s<>"'`()[\]{}|\\^]+/gi)) {
-    const link = hostLink(match[0].replace(/[.,;:!?*_~]+$/, ''));
+  const pattern = /https?:\/\/[^\s<>"'`{}|\\^]+/gi;
+  for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
+    const address = balanced(match[0]);
+    // What follows a cut address (`](https://…)`) may hold the next one.
+    pattern.lastIndex = match.index + Math.max(address.length, 1);
+    const link = hostLink(address.replace(/[.,;:!?*_~]+$/, ''));
     if (link !== null) found.add(link);
   }
   return [...found];

@@ -263,6 +263,22 @@ describe('links to pages on the Confluence site', () => {
       'id:789',
     ]);
   });
+
+  it('keeps brackets that belong to a title in the address', () => {
+    const text = [
+      `Plain ${wiki}/display/ENG/Plan+(draft), and`,
+      `[the plan](${wiki}/display/ENG/Kettle+(v2)).`,
+      `[${wiki}/display/ENG/Notes+[old]](${wiki}/pages/viewpage.action?pageId=456)`,
+      `(${wiki}/pages/viewpage.action?pageId=789)`,
+    ].join('\n');
+    expect(confluenceLinksIn(text, wiki).map((link) => link.ref)).toEqual([
+      'title:ENG/Plan (draft)',
+      'title:ENG/Kettle (v2)',
+      'title:ENG/Notes [old]',
+      'id:456',
+      'id:789',
+    ]);
+  });
 });
 
 describe('the pages a run links to (spec 35)', () => {
