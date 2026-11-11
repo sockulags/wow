@@ -157,10 +157,11 @@ questions        id, threadId, itemId, request(json), answer?, answeredAt?   (an
 calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end, zone, allDay,
                  location?, joinUrl?, body?, organizer?, projectId?, backlogItemId?, workflowId?,
                  runId?, state, updatedAt, repeat(json: RepeatRule)?, skippedDates(json: string[]),
-                 nextAt?   -- state: CardState for cards, 'scheduled'|'cancelled'
-                 for Outlook; body: a card's notes or an Outlook item's snippet; repeat, the
-                 days skipped by hand and the trigger's next time for a repeating card
-                 (migration 0022_repeating_cards)
+                 nextAt?, pastSeries(json: PastSeries[])   -- state: CardState for cards,
+                 'scheduled'|'cancelled' for Outlook; body: a card's notes or an Outlook item's
+                 snippet; repeat, the days skipped by hand and the trigger's next time for a
+                 repeating card (migration 0022_repeating_cards); pastSeries the series it
+                 followed before a change, for the days before it (migration 0023_past_series)
 card_occurrences cardId, date, start, end, outcome ('fired'|'failed'|'skipped'|'missed'), runId?,
                  reason?, offerRunNow, at   -- what happened at each occurrence of a repeating
                  card the scheduler reached; kept when the card is deleted, as its runs are
@@ -1022,13 +1023,22 @@ alike. The card stays one row.
   single again) and `skippedDates` (the whole list; Undo of a skip and of a delete send it).
   Any change of time, zone, rule, project or workflow re-arms the trigger, so every occurrence
   not yet started follows it; records keep where the reached ones were and what they ran, and
-  a range read shows a reached occurrence from its record even when the rule has moved on. A
+  a range read shows a reached occurrence from its record even when the rule has moved on.
+  Days without a record keep their place too (spec 10, 11): a change of start, end, zone or
+  rule stores the series as it was in `CalendarItem.pastSeries` (`PastSeries`: the series and
+  `until`, the first day it no longer sets), for the days before the first occurrence that has
+  not started, or for a moved occurrence the days before its date. Entries are oldest first;
+  each sets the days from the entry before's `until` to its own, and the card's series the days
+  from the last `until` on. A later change from an earlier day cuts the entries back to it.
+  `scheduleOf(card)` in `core/series.ts` is that schedule, and the trigger, the range read,
+  skip and move all read it, so after a move the days before the moved one, past or still to
+  come, keep their time. Cards stored before have none (`[]`). A
   single card that already ran and gets a rule records its run as the first occurrence.
   `card.skipOccurrence {cardId, date}` adds the day to `skippedDates` and is refused for a day
   the rule does not fall on and for one already started. `card.moveOccurrence {cardId, date,
 start, end}` is a drag in the calendar (spec 11): the occurrence must stay on its day, and the
-  series keeps its first day and takes the moved occurrence's local time and length, as an
-  edit does. `card.delete` of a series with a live run needs `stopRun` as for a single card. The
+  series keeps its first day and takes the moved occurrence's local time and length from that
+  day on. `card.delete` of a series with a live run needs `stopRun` as for a single card. The
   inverse commands (`assistant/changes.ts`) carry `repeat` and `skippedDates`, so one Undo
   restores a series with its rule, skipped days and trigger.
 - **Reading a range.** `calendar.occurrences {from, to}` (`readCalendarRange`) answers
@@ -2717,8 +2727,11 @@ An occurrence block carries a repeat icon (`data-repeating`) and "repeats" in it
 Its state comes from the server's record: a fired occurrence shows its run's state, otherwise
 Failed, Missed or Skipped (`occurrenceStateLabels`); an occurrence without a record shows
 Scheduled only when it is the trigger's next one or after the card's `nextAt` (both the server's
-times), and nothing for a day that went by before the card existed. A reached occurrence opens
-its run and cannot be moved or resized; any other opens the card form with `cardDialog.date` set.
+times), and nothing for a day that went by before the card existed. An occurrence is `fixed`
+(`ShownOccurrence.fixed`) when it has a record, or lies before the card's `nextAt` and is not the
+next one: it has started, so it cannot be moved or resized and Delete offers only the whole
+series. A reached occurrence opens its run; any other opens the card form, with
+`cardDialog.date` set when it is not fixed.
 A drag or Alt+Up/Down sends `card.moveOccurrence` and stays within the occurrence's day (a move
 to another day, by pointer or Alt+Left/Right, is not offered); the day is the one in the card's
 zone, so with another calendar zone a drag or key stops at the card zone's midnight even inside

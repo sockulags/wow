@@ -396,8 +396,9 @@ function CardBlock({
 }) {
   const state = blockState(item, occurrence);
   const kind = cardKind(item);
-  // A reached occurrence stays where it was: it opens its run and does not move.
-  const fixed = occurrence?.record != null;
+  // An occurrence that started stays where it was: it does not move, and a reached one opens
+  // its run.
+  const fixed = occurrence?.fixed === true;
   const layout = blockLines(heightPx, {
     extra: kind === 'unrunnable' ? 1 : 0,
     button: onRunNow !== undefined,
@@ -686,7 +687,7 @@ export function TimeGrid({
     onSelect?.(cardIdOf(itemId));
     return panelShown;
   };
-  const fixedItem = (itemId: string): boolean => occurrences?.get(itemId)?.record != null;
+  const fixedItem = (itemId: string): boolean => occurrences?.get(itemId)?.fixed === true;
   const columnsRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [gesture, setGesture] = useState<Gesture>();

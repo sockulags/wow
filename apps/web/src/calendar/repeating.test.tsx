@@ -301,6 +301,47 @@ describe('occurrences in the week', () => {
     ]);
   });
 
+  it('keeps an occurrence that went by without a record in place, and moves a later one', async () => {
+    // Monday went by before the card had its workflow, so nothing recorded it; Tuesday is next.
+    const { grid, box } = await showWeek({
+      ...range(),
+      occurrences: [occurrence(16), ...range().occurrences.slice(1)],
+    });
+    const blocks = () => within(grid).getAllByRole('button', { name: /^Standup notes, / });
+    const monday = blocks()[0];
+    if (!monday) throw new Error('no Monday occurrence');
+    expect(monday.className).not.toContain('cursor-grab');
+    expect(monday.querySelector('[data-resize]')).toBeNull();
+    fireEvent.keyDown(monday, { key: 'ArrowDown', altKey: true });
+    expect(commandsSent(box)).toEqual([]);
+
+    const wednesday = blocks()[2];
+    if (!wednesday) throw new Error('no Wednesday occurrence');
+    fireEvent.keyDown(wednesday, { key: 'ArrowDown', altKey: true });
+    await act(() => box.until(() => commandsSent(box).length === 1));
+    expect(commandsSent(box)).toEqual([
+      {
+        type: 'card.moveOccurrence',
+        cardId: card.id,
+        date: '2026-11-18',
+        start: at(18, 7, 45),
+        end: at(18, 8, 0),
+      },
+    ]);
+    expect(blocks().map((shown) => shown.getAttribute('aria-label'))).toEqual([
+      'Standup notes, 08:30–08:45, repeats',
+      'Standup notes, 08:30–08:45, repeats, scheduled',
+      'Standup notes, 08:45–09:00, repeats, scheduled',
+      'Standup notes, 08:30–08:45, repeats, scheduled',
+      'Standup notes, 08:30–08:45, repeats, scheduled',
+    ]);
+
+    // Delete on it offers only the whole series: that day has gone by.
+    fireEvent.keyDown(blocks()[0] as HTMLElement, { key: 'Delete', code: 'Delete' });
+    const choice = await screen.findByRole('alertdialog', { name: 'Delete which?' });
+    expect(within(choice).queryByRole('button', { name: 'This occurrence' })).toBeNull();
+  });
+
   it('says when the range cannot be read, and reads it again on Try again', async () => {
     let answer = restarting;
     const { grid, box } = await showWeek(() => answer());

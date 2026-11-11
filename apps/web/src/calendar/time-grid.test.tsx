@@ -163,6 +163,7 @@ describe('TimeGrid', () => {
             date: '2026-11-03',
             next: false,
             record: null,
+            fixed: false,
             state: null,
             runId: null,
           },

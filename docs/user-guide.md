@@ -337,10 +337,12 @@ one card; wow works out its occurrences.
   line above the grid says so. When the occurrences cannot be read from the server, a banner says
   so and **Try again** reads them once more.
 - **Move**: drag an occurrence to another time, or its lower edge, or use Alt+Up and Alt+Down.
-  That changes the time or length of the series, not of one day. An occurrence stays on its day
-  (to change the days, edit the rule), and one that has passed does not move.
+  That changes the time or length of the series from that day on, not of one day; the days
+  before it keep their time. An occurrence stays on its day (to change the days, edit the rule),
+  and one that has passed does not move.
 - **Edit**: changing the title, time, workflow, project or rule changes every occurrence that has
-  not started. Occurrences that ran keep their runs.
+  not started. Occurrences that have passed stay where they were, and those that ran keep their
+  runs.
 - **Delete**: **Delete…** in the form, or the **Delete** key (`keybindings.calendarDeleteCard`)
   on a card in the grid, asks **This occurrence** or **The whole series**. This occurrence skips
   that day only; the whole series deletes the card, and asks first whether to stop a run that is

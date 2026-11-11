@@ -10,7 +10,7 @@ import {
   ThreadState,
 } from './provider.js';
 import { QuestionOption, QuestionReply } from './questions.js';
-import { CardOccurrence, LocalDay, RepeatRule } from './repeat.js';
+import { CardOccurrence, LocalDay, PastSeries, RepeatRule } from './repeat.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
 import {
   FileHash,
@@ -258,6 +258,9 @@ export const CalendarItem = z.object({
   repeat: RepeatRule.nullable().optional(),
   // The days skipped by hand ("This occurrence"), in the card's zone.
   skippedDates: z.array(LocalDay).optional(),
+  // The series a repeating card followed before it was changed, oldest first, so past days stay
+  // where they were. Absent for cards stored before it existed.
+  pastSeries: z.array(PastSeries).optional(),
   // When the card's trigger fires next; null when nothing is scheduled.
   nextAt: Timestamp.nullable().optional(),
   // What happened at each occurrence the scheduler reached, oldest first. Topic rows carry it;

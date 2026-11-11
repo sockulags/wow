@@ -610,6 +610,7 @@ export const CardChanges = CalendarItem.pick({
   workflowId: true,
   repeat: true,
   skippedDates: true,
+  pastSeries: true,
 }).partial();
 export type CardChanges = z.infer<typeof CardChanges>;
 

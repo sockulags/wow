@@ -525,7 +525,7 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
     expect(card()).toMatchObject({ state: 'scheduled', nextAt: at('2026-11-05') });
   });
 
-  it('moves the series when one occurrence is moved within its day, as an edit does', () => {
+  it('moves the series from the moved occurrence on, and keeps the days before it', () => {
     createCard();
     dispatch({
       type: 'card.moveOccurrence',
@@ -535,7 +535,17 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
       end: at('2026-11-10', 150),
     });
     expect(card()).toMatchObject({ start: at('2026-11-04', 90), end: at('2026-11-04', 150) });
-    expect(trigger()?.runAt).toBe(at('2026-11-04', 90));
+    // The days before Tuesday the 10th have not started either, and still fire at 08:30.
+    expect(trigger()?.runAt).toBe(at('2026-11-04'));
+    const found = range(at('2026-11-04', -60), at('2026-11-12')).occurrences;
+    expect(found.map((occurrence) => [occurrence.date, occurrence.start, occurrence.end])).toEqual([
+      ['2026-11-04', at('2026-11-04'), at('2026-11-04', 30)],
+      ['2026-11-05', at('2026-11-05'), at('2026-11-05', 30)],
+      ['2026-11-06', at('2026-11-06'), at('2026-11-06', 30)],
+      ['2026-11-09', at('2026-11-09'), at('2026-11-09', 30)],
+      ['2026-11-10', at('2026-11-10', 90), at('2026-11-10', 150)],
+      ['2026-11-11', at('2026-11-11', 90), at('2026-11-11', 150)],
+    ]);
     expect(() =>
       dispatch({
         type: 'card.moveOccurrence',
@@ -545,6 +555,68 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
         end: at('2026-11-11', 30),
       }),
     ).toThrow(/within its day/);
+
+    // An earlier day moved later takes over from there, the 10th included.
+    dispatch({
+      type: 'card.moveOccurrence',
+      cardId: 'c1',
+      date: '2026-11-06',
+      start: at('2026-11-06', 30),
+      end: at('2026-11-06', 60),
+    });
+    expect(
+      range(at('2026-11-04', -60), at('2026-11-12')).occurrences.map(
+        (occurrence) => occurrence.start,
+      ),
+    ).toEqual([
+      at('2026-11-04'),
+      at('2026-11-05'),
+      at('2026-11-06', 30),
+      at('2026-11-09', 30),
+      at('2026-11-10', 30),
+      at('2026-11-11', 30),
+    ]);
+  });
+
+  it('keeps days gone by where they were after an edit, for a card that never ran', async () => {
+    // A plain card: no workflow, so no occurrence is ever recorded.
+    createCard({ projectId: undefined, workflowId: undefined });
+    await restart(at('2026-11-06', 60));
+    dispatch({
+      type: 'card.update',
+      cardId: 'c1',
+      start: at('2026-11-04', 60),
+      end: at('2026-11-04', 90),
+    });
+    // Wednesday to Friday have started; Monday the 9th is the first to take the new time.
+    const found = range(at('2026-11-04', -60), at('2026-11-11')).occurrences;
+    expect(found.map((occurrence) => [occurrence.date, occurrence.start])).toEqual([
+      ['2026-11-04', at('2026-11-04')],
+      ['2026-11-05', at('2026-11-05')],
+      ['2026-11-06', at('2026-11-06')],
+      ['2026-11-09', at('2026-11-09', 60)],
+      ['2026-11-10', at('2026-11-10', 60)],
+    ]);
+    expect(found.every((occurrence) => occurrence.record === null)).toBe(true);
+
+    // A changed rule keeps them as well, and the card that gets a workflow now runs from Monday.
+    dispatch({
+      type: 'card.update',
+      cardId: 'c1',
+      repeat: { ...weekdays, weekdays: ['mon', 'wed'] },
+      projectId: 'p1',
+      workflowId: 'quick',
+    });
+    expect(
+      range(at('2026-11-04', -60), at('2026-11-12')).occurrences.map(
+        (occurrence) => occurrence.date,
+      ),
+    ).toEqual(['2026-11-04', '2026-11-05', '2026-11-06', '2026-11-09', '2026-11-11']);
+    expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at('2026-11-09', 60) });
+    // A day kept from before the change is not one that can still be skipped.
+    expect(() =>
+      dispatch({ type: 'card.skipOccurrence', cardId: 'c1', date: '2026-11-05' }),
+    ).toThrow(/already started/);
   });
 
   it('needs stopRun to delete a series whose run is live', async () => {

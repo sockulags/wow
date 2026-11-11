@@ -9,13 +9,15 @@ import {
 import { isDeepStrictEqual } from 'node:util';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 import {
+  firstAfter,
   instantOf,
   localDay,
+  nextDay,
   occurrenceOn,
   wallClock,
   type Occurrence,
 } from '../scheduler/occurrences.js';
-import { isRepeating, seriesOf } from './series.js';
+import { isRepeating, pastSeriesBefore, scheduleOf, type RepeatingCard } from './series.js';
 import { cardDeleteEvents, cardTriggerEvents, triggerIdFor } from './triggers.js';
 
 // Decisions for local cards and the Outlook cache. Cards are the user's own calendar items and
@@ -109,7 +111,7 @@ function upcomingOccurrence(
   if (!isRepeating(card)) {
     throw new CommandRejected('rejected', `"${card.title}" does not repeat`);
   }
-  const occurrence = occurrenceOn(seriesOf(card), date);
+  const occurrence = occurrenceOn(scheduleOf(card), date);
   if (!occurrence) {
     throw new CommandRejected('rejected', `"${card.title}" has no occurrence on ${date}`);
   }
@@ -159,6 +161,7 @@ const withoutUpdatedAt = ({
   skippedDates: _skippedDates,
   nextAt: _nextAt,
   occurrences: _occurrences,
+  pastSeries: _pastSeries,
   ...rest
 }: CalendarItem) => rest;
 
@@ -186,13 +189,34 @@ export function diffOutlookCalendar(
   };
 }
 
+const seriesFields = ['start', 'end', 'zone', 'repeat'] as const;
+
+// The day a change of a repeating card's series takes over from (recurring cards spec 10): the
+// day of the first occurrence that has not started. Once none is left, the day after today.
+function firstOpenDay(card: RepeatingCard, context: DecideContext): string {
+  const now = Date.parse(context.now);
+  return firstAfter(scheduleOf(card), now)?.date ?? nextDay(localDay(now, card.zone));
+}
+
+// `from` is the day a moved occurrence changes the series from; any other change of the series
+// changes it from the first occurrence that has not started.
 function updateEvents(
   card: CalendarItem,
-  changes: CardChanges,
+  proposed: CardChanges,
   read: ReadModel,
   context: DecideContext,
+  from?: string,
 ): DomainEvent[] {
-  if (Object.keys(changes).length === 0) return [];
+  if (Object.keys(proposed).length === 0) return [];
+  const changes: CardChanges = { ...proposed };
+  if (
+    isRepeating(card) &&
+    isRepeating(Object.assign({ ...card }, changes)) &&
+    seriesFields.some((field) => field in changes)
+  ) {
+    const past = pastSeriesBefore(card, from ?? firstOpenDay(card, context));
+    if (!isDeepStrictEqual(past, card.pastSeries ?? [])) changes.pastSeries = past;
+  }
   const after: CalendarItem = Object.assign({ ...card }, changes);
   if (changes.zone !== undefined) checkZone(changes.zone);
   checkRepeat(after);
@@ -359,7 +383,7 @@ export function decideCalendar(
       const changes: CardChanges = {};
       if (start !== card.start) changes.start = start;
       if (end !== card.end) changes.end = end;
-      return updateEvents(card, changes, read, context);
+      return updateEvents(card, changes, read, context, command.date);
     }
     case 'card.delete': {
       const card = requireCard(read, command.cardId);

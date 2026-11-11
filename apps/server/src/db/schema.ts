@@ -25,6 +25,7 @@ import type {
   PlanProblem,
   PlanRunState,
   PlanRunUnit,
+  PastSeries,
   PlanSource,
   PlanUnit,
   ProviderInstanceStatus,
@@ -198,6 +199,7 @@ export const calendarItems = sqliteTable(
     repeat: json<RepeatRule>(),
     skippedDates: json<string[]>().notNull().default([]),
     nextAt: text(),
+    pastSeries: json<PastSeries[]>().notNull().default([]),
   },
   (table) => [index('calendar_items_start_idx').on(table.start)],
 );

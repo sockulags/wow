@@ -38,8 +38,8 @@ const eventLabel = (event: TriggerEvent, projectId: string, read: ReadModel): st
   triggerEventLabel(event, projectCodeHost(read.hostReads(projectId), projectId));
 
 // A row's own bookkeeping, which says nothing about what the user or the assistant changed.
-// A card's next fire time follows its trigger.
-const bookkeeping: ReadonlySet<string> = new Set(['updatedAt', 'nextAt']);
+// A card's next fire time follows its trigger, and its past series follow its changes.
+const bookkeeping: ReadonlySet<string> = new Set(['updatedAt', 'nextAt', 'pastSeries']);
 
 // The patterns of `assistant.secretPatterns` as stored, or the registry's when none is stored.
 export function patternsOf(read: ReadModel, context: DecideContext): RegExp[] {

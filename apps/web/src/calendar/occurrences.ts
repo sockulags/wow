@@ -24,6 +24,9 @@ export interface ShownOccurrence {
   readonly date: string;
   readonly next: boolean;
   readonly record: CalendarOccurrence['record'];
+  // It stays where it was: it was reached (a record), or it lies before the trigger's next time
+  // and is not that one (both the server's), so it has started. It does not move, resize or skip.
+  readonly fixed: boolean;
   // What the block says, or null when there is nothing to say (a plain card, or a day that went
   // by with nothing to run).
   readonly state: OccurrenceState | null;
@@ -105,6 +108,12 @@ export function occurrenceBlocks(
       date: occurrence.date,
       next: occurrence.next,
       record: occurrence.record,
+      fixed:
+        occurrence.record !== null ||
+        (!occurrence.next &&
+          card.nextAt !== null &&
+          card.nextAt !== undefined &&
+          Date.parse(occurrence.start) < Date.parse(card.nextAt)),
       state,
       runId,
     });

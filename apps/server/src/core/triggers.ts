@@ -31,7 +31,7 @@ import {
   isRepeating,
   liveRunOf,
   nextOccurrence,
-  seriesOf,
+  scheduleOf,
   takenDays,
   type RepeatingCard,
 } from './series.js';
@@ -339,7 +339,7 @@ function fireSeries(
 ): DomainEvent[] {
   const taken = takenDays(card, read);
   const due = startingBetween(
-    seriesOf(card),
+    scheduleOf(card),
     Date.parse(trigger.runAt) - 1,
     Date.parse(context.now),
     (occurrence) => !taken.has(occurrence.date),

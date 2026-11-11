@@ -1,0 +1,1 @@
+ALTER TABLE `calendar_items` ADD `past_series` text DEFAULT '[]' NOT NULL;
