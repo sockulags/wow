@@ -1705,17 +1705,23 @@ round (the adapter refuses the turn).
 - Codex (`packages/provider-codex/src/toolset.ts`): `thread/start` and `thread/resume` get
   a `config` of `mcp_servers: {wow: {url, http_headers: {Authorization}}}`,
   `web_search: 'disabled'`,
-  `features: {shell_tool: false, view_image: false, multi_agent: false, goals: false, apps: false}`,
+  `features` with `false` for `shell_tool`, `unified_exec`, `view_image`, `multi_agent`, `goals`,
+  `apps`, `image_generation`, `computer_use`, `browser_use`, `browser_use_external`,
+  `in_app_browser`, `plugins`, `remote_plugin`, `skill_search`, `tool_suggest`, `sleep_tool`,
+  `code_mode_host` and `hooks`,
   `tools: {experimental_request_user_input: {enabled: false}}` and
   `shell_environment_policy: {inherit: 'none'}`, and `developerInstructions`, with
   `approvalPolicy: 'never'` and `sandbox: 'read-only'`; every `turn/start` sends
   `sandboxPolicy: {type: 'readOnly', networkAccess: false}`. The `features` and `tools` keys
   switch off Codex's command tools (reported: `exec_command` and `write_stdin`), image viewing,
-  subagents, goals, apps and the question-to-the-user tool. Checked against codex 0.166.0
-  without a sign-in: `codex features list` knows all five features and shows them off with
-  these overrides, the app-server accepts this `config` on `thread/start` and refuses a wrong
-  type for `features.*` and `tools.experimental_request_user_input.enabled` (so it knows the
-  keys), and with `mcp_servers` in `config` a server from the user's own `config.toml` is not
+  subagents, goals, apps, image generation, computer use, the browser tools, plugins, skill
+  search, tool suggestions, the sleep tool, code mode and the question-to-the-user tool, and
+  the user's own Codex hooks, which run the user's commands. Checked against codex 0.166.0
+  without a sign-in: `codex features list` knows every one of these features, on by default,
+  and shows each off with these overrides except `unified_exec`, which it still lists as on
+  (sent all the same; `shell_tool` off is what removes the command tools); the app-server
+  accepts this `config` on `thread/start` and refuses a non-boolean for each of them (it does
+  so for an unknown feature name too, so that alone does not show the key is known), and with `mcp_servers` in `config` a server from the user's own `config.toml` is not
   started (only `wow` is). Not known: the tool list a signed-in Codex then offers (no turn
   could run), `apply_patch` (no documented switch) and the three MCP resource tools (reportedly
   cannot be switched off). The rest of the user's `config.toml` (model provider, profiles,

@@ -193,7 +193,9 @@ on (gitlab.com or your own), a real Claude Code sign-in, and nothing secret in t
       the assistant "List every tool you have, with its exact name". Write down the list it gives
       and the codex version (`codex --version`); expected: the `wow/` tools, and none of
       `exec_command`, `write_stdin`, `shell`, `view_image`, a subagent, goal or app tool,
-      `request_user_input` or web search. Note whether `apply_patch` and the MCP resource tools
+      `request_user_input`, web search, an image generation, computer use or browser tool, a
+      plugin or skill search tool, a tool suggestion, `sleep`, or a code mode tool. Also check
+      that a hook in your own Codex config does not run for the assistant's turns. Note whether `apply_patch` and the MCP resource tools
       (`list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`) are there and
       whether any MCP server from your own `%USERPROFILE%\.codex\config.toml` shows up. Then ask
       it to read `C:\Windows\win.ini`: write down what it did (refused, a tool row, an error).

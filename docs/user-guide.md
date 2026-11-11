@@ -833,7 +833,8 @@ between restarts; there is only one.
 It runs on a provider you connected: `assistant.providerInstanceId`, or the first connected
 instance when that is empty, with `assistant.model` and `assistant.effort` (empty means the
 instance's default). On Codex it runs only with `assistant.allowCodex` on: wow switches off Codex's command, image,
-subagent, goal, app and question tools for the assistant, but Codex's file edit tool and its MCP
+image generation, computer and browser use, subagent, goal, app, plugin, skill search, tool
+suggestion, sleep, code mode and question tools and your own Codex hooks for the assistant, but Codex's file edit tool and its MCP
 resource tools have no switch and nobody has yet checked the resulting tool list on a real Codex
 (the sandbox stays read-only, without network, as a second guard); with it off and only Codex
 connected, the assistant says so. Its agent gets wow's own tools and nothing else: no files, no shell, no

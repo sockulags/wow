@@ -1249,7 +1249,7 @@ export const settingsRegistry = {
     group: 'assistant',
     label: 'Let the assistant run on Codex',
     description:
-      'Off: the assistant runs only on Claude Code, and never on a Codex instance even when one is chosen above. On Codex wow switches off its command, image, subagent, goal, app, web search and question tools for the assistant and keeps it in a read-only sandbox without network. Codex has no switch for its file edit tool or its MCP resource tools, and nobody has yet checked the tool list a real Codex then offers, so the assistant might still read files on this computer, including files that hold secrets. Only the assistant itself is kept off Codex; chat threads and workflow steps are not affected.',
+      'Off: the assistant runs only on Claude Code, and never on a Codex instance even when one is chosen above. On Codex wow switches off its command, image, image generation, computer and browser use, subagent, goal, app, plugin, skill search, tool suggestion, sleep, code mode, web search and question tools and your Codex hooks for the assistant and keeps it in a read-only sandbox without network. Codex has no switch for its file edit tool or its MCP resource tools, and nobody has yet checked the tool list a real Codex then offers, so the assistant might still read files on this computer, including files that hold secrets. Only the assistant itself is kept off Codex; chat threads and workflow steps are not affected.',
     default: false,
     scope: 'global',
   }),

@@ -22,8 +22,10 @@ export const toolsOnlySandbox: NonNullable<TurnStartParams['sandboxPolicy']> = {
 // What thread/start and thread/resume get on top of the usual settings. `config` overrides
 // config.toml for this thread: `mcp_servers` as a whole, so the servers the user set up for
 // their own work are not there, web search off, codex's switchable tools off (commands, image
-// viewing, subagents, goals, apps, questions to the user; codex 0.166.0 checks each key's type on
-// thread/start), and a shell environment that inherits nothing, so a command the agent runs, if
+// viewing, subagents, goals, apps, image generation, computer and browser use, plugins, skill
+// search, tool suggestions, sleep, code mode, questions to the user; each is a feature
+// `codex features list` of 0.166.0 shows on by default), the user's own hooks off, since they
+// run the user's commands, and a shell environment that inherits nothing, so a command the agent runs, if
 // one is still offered, sees no variable of wow's or the instance's (an API key among them). The
 // token travels in a header of the MCP server entry and only over stdio to the app-server.
 export function toolsOnlySettings(
@@ -41,10 +43,23 @@ export function toolsOnlySettings(
       web_search: 'disabled',
       features: {
         shell_tool: false,
+        unified_exec: false,
         view_image: false,
         multi_agent: false,
         goals: false,
         apps: false,
+        image_generation: false,
+        computer_use: false,
+        browser_use: false,
+        browser_use_external: false,
+        in_app_browser: false,
+        plugins: false,
+        remote_plugin: false,
+        skill_search: false,
+        tool_suggest: false,
+        sleep_tool: false,
+        code_mode_host: false,
+        hooks: false,
       },
       tools: { experimental_request_user_input: { enabled: false } },
       shell_environment_policy: { inherit: 'none' },
