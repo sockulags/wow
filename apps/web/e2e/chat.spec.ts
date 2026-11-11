@@ -442,6 +442,126 @@ test.describe('chat', () => {
     await expect(page.getByRole('combobox', { name: 'Message' })).toBeFocused();
   });
 
+  // Agent workbench U2 (spec 64, 65): the server stores the notification; the window showing
+  // the thread keeps quiet, another window shows it and its Open goes to the thread.
+  test('notifies when a chat thread needs you', async ({ page, context }) => {
+    await page.goto('/chat');
+    await expect(threadList(page)).toBeVisible();
+    const other = await context.newPage();
+    const info: unknown = JSON.parse(await readFile(path.join(e2eHome, 'server.json'), 'utf8'));
+    await other.addInitScript((serverInfo) => {
+      (globalThis as { wowServerInfo?: unknown }).wowServerInfo = serverInfo;
+    }, info);
+    await startThread(other, 'Please approve the kettle check');
+    await expect(
+      conversation(other).getByRole('region', { name: 'Approval request' }),
+    ).toContainText('pnpm test');
+
+    const toast = page
+      .getByRole('listitem')
+      .filter({ hasText: 'Needs you: Please approve the kettle check' });
+    await expect(toast).toBeVisible();
+    await expect(toast).toContainText('pnpm test');
+    await expect(
+      other.getByRole('listitem').filter({ hasText: 'Needs you: Please approve' }),
+    ).toHaveCount(0);
+    await toast.getByRole('button', { name: 'Open' }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Please approve the kettle check' }),
+    ).toBeVisible();
+    await expect(
+      conversation(page).getByRole('region', { name: 'Approval request' }),
+    ).toContainText('pnpm test');
+    await other.close();
+  });
+
+  // Agent workbench U2 (spec 66 to 70).
+  test('filters, renames, archives and marks unread', async ({ page }) => {
+    await startThread(page, 'Count the kettle whistles');
+    const composer = page.getByRole('combobox', { name: 'Message' });
+    await expect(conversation(page).getByText('You said: Count the kettle whistles')).toBeVisible();
+    await composer.fill('The teapot hums in a minor key');
+    await composer.press('Enter');
+    await expect(conversation(page).getByText('You said: The teapot hums')).toBeVisible();
+
+    // A word only in a message finds the thread; Ctrl+Shift+F focuses the filter.
+    await page.keyboard.press('Control+Shift+F');
+    const filter = page.getByRole('searchbox', { name: 'Filter threads' });
+    await expect(filter).toBeFocused();
+    await filter.fill('teapot minor');
+    const rows = threadList(page).getByRole('link', { name: /Count the kettle whistles/ });
+    await expect(rows).toHaveCount(1);
+    await expect(threadList(page).locator('[data-thread-row]')).toHaveCount(1);
+    await filter.fill('Demo kettle whistles');
+    await expect(rows).toHaveCount(1);
+    await filter.fill('');
+
+    // `/` from the list goes back to the filter; arrows move and Enter opens.
+    await page.goto('/chat');
+    await threadList(page).locator('[data-thread-row]').first().focus();
+    await page.keyboard.press('/');
+    await expect(filter).toBeFocused();
+    await filter.fill('kettle whistles');
+    await page.keyboard.press('ArrowDown');
+    await expect(rows).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Count the kettle whistles' })).toBeVisible();
+    await filter.fill('');
+
+    // F2 renames, even from the composer; the title changes in the list, header and palette.
+    await composer.focus();
+    await page.keyboard.press('F2');
+    const title = page.getByRole('textbox', { name: 'Thread title' });
+    await expect(title).toBeFocused();
+    await title.fill('Kettle whistle census');
+    await title.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Kettle whistle census' })).toBeVisible();
+    const renamed = threadList(page).getByRole('link', { name: /Kettle whistle census/ });
+    await expect(renamed).toBeVisible();
+    await page.keyboard.press('Control+k');
+    const palette = page.getByRole('dialog');
+    await palette.getByRole('combobox').fill('whistle census');
+    await expect(palette.getByRole('option', { name: /Kettle whistle census/ })).toBeVisible();
+    await palette.getByRole('combobox').fill('archive thread');
+    await page.keyboard.press('Enter');
+
+    // Archived: gone from the list, found by the filter and the palette, and back again.
+    await expect(renamed).toHaveCount(0);
+    await expect(page.getByTestId('thread-archived')).toHaveText('Archived');
+    await filter.fill('census');
+    await expect(renamed).toContainText('Archived');
+    await filter.fill('');
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('whistle census');
+    await expect(palette.getByRole('option', { name: /Kettle whistle census/ })).toContainText(
+      'Archived',
+    );
+    await palette.getByRole('combobox').fill('unarchive thread');
+    await page.keyboard.press('Enter');
+    await expect(renamed).toBeVisible();
+
+    // A turn that ends while the window is away leaves the thread bold until it is opened.
+    await composer.fill('Wait for the kettle');
+    await composer.press('Enter');
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await page.keyboard.press('Control+.');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    await page.goto('/chat');
+    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    await expect(renamed.getByTestId('thread-row-title')).toHaveCSS('font-weight', '600');
+    await page.keyboard.press('Alt+Shift+ArrowDown');
+    await expect(page.getByRole('heading', { name: 'Kettle whistle census' })).toBeVisible();
+    await expect(renamed.getByTestId('thread-unread')).toHaveCount(0);
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('mark unread');
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+  });
+
   test('finds threads and actions in the palette', async ({ page }) => {
     await startThread(page, 'Palette target');
     await page.goto('/chat');
@@ -470,6 +590,25 @@ test.describe('sketch', () => {
     await expect(answer.locator('.wow-code .shiki')).toBeVisible();
     await answer.getByRole('heading').scrollIntoViewIfNeeded();
     await page.screenshot({ path: sketchPath('2026-11-review-loop', 'chat-markdown') });
+  });
+
+  test('thread-list', async ({ page }) => {
+    await startThread(page, 'Descale the kettle');
+    await expect(conversation(page).getByText('You said: Descale the kettle')).toBeVisible();
+    await startThread(page, 'Sketch the tea timer screen');
+    await expect(conversation(page).getByText('You said: Sketch the tea timer')).toBeVisible();
+    await page.keyboard.press('Control+k');
+    await page.getByRole('dialog').getByRole('combobox').fill('mark unread');
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(
+      threadList(page)
+        .getByRole('link', { name: /Sketch the tea timer screen/ })
+        .getByTestId('thread-unread'),
+    ).toBeVisible();
+    await expect(threadList(page).getByRole('link', { name: /Descale the kettle/ })).toBeVisible();
+    await page.keyboard.press('Control+Shift+F');
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'thread-list') });
   });
 
   test('skill-chip', async ({ page }) => {
