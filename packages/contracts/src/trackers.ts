@@ -50,6 +50,10 @@ export const ProjectGit = z.object({
   branch: z.string().nullable(),
   // What git said when it failed, such as "detected dubious ownership".
   message: z.string().nullable(),
+  // Where the project's change requests are: GitLab when the primary remote is on the GitLab site
+  // stored for the project (the rule the host poller picks its adapter by), else GitHub. The
+  // wording follows it until the poller has read from the host.
+  codeHost: z.enum(['github', 'gitlab']),
 });
 export type ProjectGit = z.infer<typeof ProjectGit>;
 

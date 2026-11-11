@@ -18,6 +18,7 @@ import {
   type ProviderInstance,
   type Question,
   type RpcErrorCode,
+  type SentSkill,
   type ServerCommand,
   type SettingDefinition,
   type SetupApplicationRecord,
@@ -71,6 +72,10 @@ export interface ReadModel {
   // The thread's turn with the highest index, running or not.
   lastTurn(threadId: string): Turn | undefined;
   turnCount(threadId: string): number;
+  // The last message the thread was sent with text or skills, as it went to the provider.
+  lastSent(
+    threadId: string,
+  ): { text: string; prompt: string; skills: SentSkill[] | undefined } | undefined;
   // Index the next item of the thread gets.
   nextItemIndex(threadId: string): number;
   itemExists(id: string): boolean;

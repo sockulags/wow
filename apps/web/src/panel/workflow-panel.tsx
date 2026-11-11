@@ -4,13 +4,14 @@ import { useTopic } from '@/chat/data';
 import { EmptyState } from '@/components/states';
 import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { runStateDotClass, runStateLabels, sortRuns } from '@/workflows/model';
+import { runStateDotClass, runStateLabel, sortRuns } from '@/workflows/model';
 import { PanelSection, PanelTitle } from './details';
 import { RunStepThread } from './step-thread';
 
 // The run view's panel: the thread of the step the run is on (or waits after), live.
 export function RunPanel({ runId }: { readonly runId: string }) {
   const runs = useTopic('workflowRuns');
+  const threads = useTopic('threads') ?? [];
   const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
   const { when } = useDateFormat();
@@ -27,7 +28,7 @@ export function RunPanel({ runId }: { readonly runId: string }) {
         <PanelTitle
           title={workflow?.name ?? 'Workflow run'}
           dot={runStateDotClass[run.state]}
-          meta={`${runStateLabels[run.state]} · ${project?.name ?? run.projectId} · ${when(run.startedAt)}`}
+          meta={`${runStateLabel(run, threads)} · ${project?.name ?? run.projectId} · ${when(run.startedAt)}`}
         />
       </div>
       <RunStepThread run={run} workflow={workflow} />
@@ -39,6 +40,7 @@ export function RunPanel({ runId }: { readonly runId: string }) {
 export function WorkflowPanel({ workflowId }: { readonly workflowId: string }) {
   const workflows = useTopic('workflows');
   const runs = useTopic('workflowRuns') ?? [];
+  const threads = useTopic('threads') ?? [];
   const projects = useTopic('projects') ?? [];
   const { when } = useDateFormat();
   if (workflows === undefined) return null;
@@ -96,7 +98,7 @@ export function WorkflowPanel({ workflowId }: { readonly workflowId: string }) {
                   />
                   <span className="min-w-0 flex-1 truncate">{projectName(run.projectId)}</span>
                   <span className="shrink-0 text-muted-foreground tabular-nums">
-                    {runStateLabels[run.state]} · {when(run.startedAt)}
+                    {runStateLabel(run, threads)} · {when(run.startedAt)}
                   </span>
                 </Link>
               </li>

@@ -197,7 +197,13 @@ export class TrackerService {
   }
 
   async #folderGit(projectId: string, cwd: string): Promise<ProjectGit> {
-    return { projectId, ...(await this.#git.folder(cwd, this.#gitOptions())) };
+    const git: ProjectGit = {
+      projectId,
+      ...(await this.#git.folder(cwd, this.#gitOptions())),
+      codeHost: 'github',
+    };
+    // The rule gitlabHost gives the poller: GitLab when the remote is on the stored site.
+    return this.#gitlabProject(projectId, git) ? { ...git, codeHost: 'gitlab' } : git;
   }
 
   // Every project's git status and remotes, for Settings → Projects (audit E-12).

@@ -4,6 +4,7 @@ import {
   type CardChanges,
   type DomainEvent,
   type OutlookCalendarRow,
+  type PastSeries,
   type ServerCommand,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
@@ -198,8 +199,33 @@ function firstOpenDay(card: RepeatingCard, context: DecideContext): string {
   return firstAfter(scheduleOf(card), now)?.date ?? nextDay(localDay(now, card.zone));
 }
 
-// `from` is the day a moved occurrence changes the series from; any other change of the series
-// changes it from the first occurrence that has not started.
+// The past series `card` keeps once it becomes `proposed`. `from` is the day a moved occurrence
+// changes the series from; any other change of the series changes it from the first occurrence
+// that has not started.
+export function pastSeriesAfter(
+  card: CalendarItem,
+  proposed: CalendarItem,
+  seriesChanged: boolean,
+  context: DecideContext,
+  from?: string,
+): PastSeries[] {
+  const past = card.pastSeries ?? [];
+  if (isRepeating(card) && !isRepeating(proposed)) {
+    // A card that stops repeating keeps only the days that have started, so a move of an
+    // occurrence that has not happened cannot govern a series it gets again.
+    return pastSeriesBefore(card, firstOpenDay(card, context));
+  }
+  if (isRepeating(card) && seriesChanged) {
+    return pastSeriesBefore(card, from ?? firstOpenDay(card, context));
+  }
+  if (!isRepeating(card) && isRepeating(proposed)) {
+    // A card that starts repeating again takes over from its own first day.
+    const first = localDay(proposed.start, proposed.zone);
+    return past.filter((series) => series.until <= first);
+  }
+  return [...past];
+}
+
 function updateEvents(
   card: CalendarItem,
   proposed: CardChanges,
@@ -211,18 +237,13 @@ function updateEvents(
   const changes: CardChanges = { ...proposed };
   if (changes.zone !== undefined) checkZone(changes.zone);
   const proposedCard: CalendarItem = Object.assign({ ...card }, changes);
-  let past = card.pastSeries ?? [];
-  if (isRepeating(card) && !isRepeating(proposedCard)) {
-    // A card that stops repeating keeps only the days that have started, so a move of an
-    // occurrence that has not happened cannot govern a series it gets again.
-    past = pastSeriesBefore(card, firstOpenDay(card, context));
-  } else if (isRepeating(card) && seriesFields.some((field) => field in changes)) {
-    past = pastSeriesBefore(card, from ?? firstOpenDay(card, context));
-  } else if (!isRepeating(card) && isRepeating(proposedCard)) {
-    // A card that starts repeating again takes over from its own first day.
-    const first = localDay(proposedCard.start, proposedCard.zone);
-    past = past.filter((series) => series.until <= first);
-  }
+  const past = pastSeriesAfter(
+    card,
+    proposedCard,
+    seriesFields.some((field) => field in changes),
+    context,
+    from,
+  );
   if (!isDeepStrictEqual(past, card.pastSeries ?? [])) changes.pastSeries = past;
   const after: CalendarItem = Object.assign({ ...card }, changes);
   checkRepeat(after);

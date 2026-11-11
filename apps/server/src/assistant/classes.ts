@@ -6,9 +6,9 @@ import {
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import type { DecideContext, ReadModel } from '../core/orchestrator.js';
-import { liveRunOf } from '../core/series.js';
+import { pastSeriesAfter } from '../core/calendar.js';
+import { liveRunOf, nextOccurrence } from '../core/series.js';
 import { runPath } from '../core/workflows.js';
-import { firstAfter } from '../scheduler/occurrences.js';
 import { resolveStored } from '../settings/service.js';
 
 // The one table that says what the server does with a command the assistant sends (app
@@ -121,27 +121,21 @@ function startsSoon(
   return Date.parse(start) <= soon ? proposal : ordinary;
 }
 
-// When a card would first start a run: its start, or for a repeating card the next occurrence
-// that is not skipped or reached (recurring cards spec 20). Undefined when a series has no
-// occurrence left, which starts nothing.
+// When a card would first start a run: its start, or for a repeating card the occurrence its
+// trigger waits for, worked out as the scheduler does over the series it followed before a
+// change (recurring cards spec 10, 20). Undefined when a series has no occurrence left, which
+// starts nothing.
 function firstStart(
-  card: Pick<CalendarItem, 'id' | 'start' | 'end' | 'zone'> & {
-    readonly repeat: CalendarItem['repeat'];
-    readonly skippedDates?: readonly string[] | undefined;
-  },
+  card: Pick<CalendarItem, 'id' | 'start' | 'end' | 'zone'> &
+    Partial<Pick<CalendarItem, 'skippedDates' | 'pastSeries'>> & {
+      readonly repeat: CalendarItem['repeat'];
+    },
   read: ReadModel,
   context: DecideContext,
 ): string | undefined {
-  if (!card.repeat) return card.start;
-  const taken = new Set([
-    ...(card.skippedDates ?? []),
-    ...read.cardOccurrences(card.id).map((occurrence) => occurrence.date),
-  ]);
-  return firstAfter(
-    { start: card.start, end: card.end, zone: card.zone, repeat: card.repeat },
-    Date.parse(context.now),
-    (occurrence) => !taken.has(occurrence.date),
-  )?.start;
+  const { repeat } = card;
+  if (!repeat) return card.start;
+  return nextOccurrence({ ...card, repeat }, read, Date.parse(context.now))?.start;
 }
 
 const definitionOf = (key: string, context: DecideContext): SettingDefinition | undefined =>
@@ -269,6 +263,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'thread.answerQuestions': refused(
     'Only the user answers your questions, on their card. End your turn and wait for the answer.',
   ),
+  'thread.retry': chatOnly,
   'thread.interrupt': chatOnly,
   'thread.configure': chatOnly,
   'thread.setPinned': chatOnly,
@@ -288,6 +283,18 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
     const start = command.start ?? card?.start;
     const end = command.end ?? card?.end;
     const zone = command.zone ?? card?.zone;
+    const repeat = command.repeat === undefined ? (card?.repeat ?? null) : command.repeat;
+    const seriesChanged =
+      card !== undefined &&
+      (start !== card.start ||
+        end !== card.end ||
+        zone !== card.zone ||
+        !isDeepStrictEqual(repeat, card.repeat ?? null));
+    // The card as the update leaves it, with the series it keeps for the days before the change.
+    const pastSeries =
+      card && start !== undefined && end !== undefined && zone !== undefined
+        ? pastSeriesAfter(card, { ...card, start, end, zone, repeat }, seriesChanged, context)
+        : [];
     return startsSoon(
       afterUpdate(command.workflowId, card?.workflowId),
       afterUpdate(command.projectId, card?.projectId),
@@ -299,8 +306,9 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
               start,
               end,
               zone,
-              repeat: command.repeat === undefined ? (card?.repeat ?? null) : command.repeat,
+              repeat,
               skippedDates: command.skippedDates ?? card?.skippedDates ?? [],
+              pastSeries,
             },
             read,
             context,

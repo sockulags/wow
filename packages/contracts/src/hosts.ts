@@ -123,16 +123,17 @@ export const HostRead = z.object({
 });
 export type HostRead = z.infer<typeof HostRead>;
 
-// The code host a project's pull requests are on, as its newest host read names it; GitHub
-// until one was read.
+// The code host a project's pull requests are on, as its newest host read names it; until one
+// was read, the host its git data names (`ProjectGit.codeHost`), else GitHub.
 export function projectCodeHost(
   reads: readonly Pick<HostRead, 'projectId' | 'host' | 'fetchedAt'>[],
   projectId: string,
+  unread: HostKind = 'github',
 ): HostKind {
   const newest = reads
     .filter((read) => read.projectId === projectId && read.fetchedAt !== null)
     .toSorted((a, b) => (b.fetchedAt ?? '').localeCompare(a.fetchedAt ?? ''))[0];
-  return newest?.host ?? 'github';
+  return newest?.host ?? unread;
 }
 
 // What the host calls a change request: GitLab's are merge requests.

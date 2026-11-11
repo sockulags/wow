@@ -59,7 +59,7 @@ import {
   newStep,
   parseGlobs,
   runStateDotClass,
-  runStateLabels,
+  runStateLabel,
   sameJson,
   saveAsTemplate,
   setGate,
@@ -609,6 +609,7 @@ function StepEditor({
 function RunsOfWorkflow({ workflow }: { workflow: Workflow }) {
   const projects = useTopic('projects') ?? [];
   const runs = (useTopic('workflowRuns') ?? []).filter((run) => run.workflowId === workflow.id);
+  const threads = useTopic('threads') ?? [];
   const { when } = useDateFormat();
   if (runs.length === 0) return null;
   return (
@@ -626,7 +627,7 @@ function RunsOfWorkflow({ workflow }: { workflow: Workflow }) {
                 aria-hidden
                 className={cn('size-1.5 rounded-full', runStateDotClass[run.state])}
               />
-              <span>{runStateLabels[run.state]}</span>
+              <span>{runStateLabel(run, threads)}</span>
               <span className="text-muted-foreground">
                 {projects.find((candidate) => candidate.id === run.projectId)?.name ??
                   run.projectId}{' '}

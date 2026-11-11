@@ -176,6 +176,10 @@ export const Command = z.discriminatedUnion('type', [
     itemId: Id,
     replies: z.array(QuestionReply).min(1),
   }),
+  // Retry in a workflow step's thread: the last message the thread was sent goes again as it
+  // was sent (its prompt, text and skills), as a step sends its turn. A chat's Retry sends the
+  // message again with `thread.sendMessage` instead.
+  z.object({ type: z.literal('thread.retry'), threadId: Id }),
   // Stops the running turn; what it produced so far stays (spec 23).
   z.object({ type: z.literal('thread.interrupt'), threadId: Id }),
   z.object({

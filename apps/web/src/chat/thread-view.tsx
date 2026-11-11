@@ -347,8 +347,12 @@ export function ThreadConversation({
           ? {
               ...(retry
                 ? {
+                    // A step's message goes again as the step sent it, its skills' texts
+                    // filled in for the run, not as skills picked in a chat.
                     onRetry: () =>
-                      void message(retry.text, retry.skills.length > 0 ? retry.skills : undefined),
+                      void (thread.stepId !== null
+                        ? send({ type: 'thread.retry', threadId })
+                        : message(retry.text, retry.skills.length > 0 ? retry.skills : undefined)),
                   }
                 : {}),
               onResume: () => void message(resumePrompt),

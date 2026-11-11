@@ -688,7 +688,13 @@ names the skills. A run stored before (no `wowSkills`), or an engine context wit
 `skillFor`, keeps the old prompt: `invocationFor(step)`, the expected artifacts in the handover
 and the Intent-Unit line in the unit text. A step held while the user's own turn runs keeps its
 prompt (`heldPrompt`) with `heldShown` and `heldSkills`, and goes as `thread.sendPrepared` like
-any step's turn. A `workflows.unitPromptTemplate` stored before wow skills that spells out
+any step's turn. Retry in a step's thread (a thread with a `stepId`) sends `thread.retry
+{threadId}`: the orchestrator reads the thread's last `turn.started` whose user item has text or
+skills from the event store (the prompt is not projected) and starts a turn with the same text,
+prompt and skills, so a step's skills are not resolved again as chat skills; it is refused for
+any other thread, whose Retry sends `thread.sendMessage`. A sent chip of a Claude plugin skill
+(stored as `plugin:name`) shows `name` with the plugins mark, as the composer's chip does. A
+`workflows.unitPromptTemplate` stored before wow skills that spells out
 `Intent-Unit: {{intentId}}/{{unitKey}}` itself keeps the line; `wow-pull-request` then gets an
 empty `intentUnitLine`, so the line is still sent once.
 
@@ -1237,7 +1243,10 @@ start, end}` is a drag in the calendar (spec 11): the occurrence must stay on it
   `skip_card_occurrence` sends `card.skipOccurrence`; `card.moveOccurrence` is refused for the
   assistant (it changes the time with `update_card`). A card's change row and proposal say the
   rule in words with its time (`Repeats` line). Whether a card waits for a yes looks at the
-  next occurrence that is not taken: a proposal when it starts within
+  next occurrence that is not taken, worked out by the scheduler's `nextOccurrence` over the
+  card as the change leaves it, its past series included (`pastSeriesAfter` in
+  `core/calendar.ts`), so a series moved from a later day is judged by when it fires next: a
+  proposal when it starts within
   `assistant.startSoonMinutes` (or is past), ordinary otherwise, and ordinary for a series with
   nothing left to run. `read_calendar` lists for a repeating card its rule, the rule in words,
   `nextAt`, the skipped days and its occurrences in the range with what happened at them, and
@@ -1545,7 +1554,9 @@ names a GitHub repository for `owner/repo` paths: github.com (also `ssh.github.c
 `https://<host>/api/v3`; deeper paths (GitLab subgroups), local paths and known other hosts
 (GitLab, Bitbucket, Azure DevOps, Codeberg) give none. The primary remote is `origin`, else the
 first GitHub one, else the first. `projects.git` answers `ProjectGit` for every project
-(`{projectId, status, remotes, primary, branch, message}`); it is read on demand, not projected,
+(`{projectId, status, remotes, primary, branch, message, codeHost}`; `codeHost` is `gitlab` when
+the primary remote is on the stored GitLab site, the rule the host poller picks its adapter by,
+else `github`); it is read on demand, not projected,
 because it is live I/O on the user's files. `guessJiraKeys` counts distinct `KEY-123` references
 in the branch names and the last `trackers.jira.keyScanCommits` commit messages (`git log
 --format=%s%n%b`), skipping look-alikes such as `UTF-8` and `SHA-256`.
@@ -1782,8 +1793,9 @@ merged", and so do the gate's checks part (`ChecksReading.host`), an event run's
 notification and handover (`runEventHost`, `triggerEventLabel`), and the Pull request tab's name
 and empty text, which read "Merge request" on a run whose host read is GitLab
 (`pullRequestTabLabel`). The Triggers tab's rows, its palette commands and New trigger's event
-choices say "Merge request merged" for a project whose newest host read is GitLab
-(`projectCodeHost` in `apps/web/src/workflows/triggers.ts`), and the default handover names
+choices say "Merge request merged" for a project whose newest host read is GitLab, or, before
+any read, whose `ProjectGit.codeHost` is (`projectCodeHost(reads, projectId, unread)` in
+`packages/contracts/src/hosts.ts`, used from `apps/web/src/workflows/triggers.ts`), and the default handover names
 the event's request with `pullRequestName` ("Merge request !12" or "Pull request #14"). GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
 GitLab the server tests and the e2e server share.
 
@@ -2757,9 +2769,10 @@ each part on the stored workflow (`workflow.gateCondition.<workflowId>.<stepId>.
 by search). At a gate that did not pass, the gate bar says "Did not pass by itself: <parts>" or
 "Waiting for checks" and lists every part with what it found (`gateStanding`); while a run
 waits for checks its run view says "Waiting for checks" instead of "Waiting for you"; while a
-running run's current step thread is `needs_you` (a question or an approval) the run view and the
-Workflows list of runs say "Waiting for an answer" (`runStateLabel(run, threads)`; the run stays
-`running`, questions-and-models spec 7). Other lists keep the run state's own words. A step
+running run's current step thread is `needs_you` (a question or an approval) the run view, the
+Workflows list of runs, the builder's "Runs of this workflow" and the run and workflow panels say
+"Waiting for an answer" (`runStateLabel(run, threads)`; the run stays `running`,
+questions-and-models spec 7). Other lists keep the run state's own words. A step
 whose gate passed by itself shows "Passed by itself: <parts>" with each part's sentence in its
 row (`passedByItself`).
 
