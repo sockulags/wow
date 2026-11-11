@@ -1232,15 +1232,19 @@ describe('proposals', () => {
       value: true,
     });
     const proposalId = proposed.content.proposal?.id ?? '';
-    asUser({
-      type: 'assistant.proposal.decline',
-      proposalId,
-      reason: ` Not on this machine ${lookalike} `,
-    });
-    expect(proposals()[0]).toMatchObject({
-      state: 'declined',
-      reason: `Not on this machine ${hiddenText}`,
-    });
+    // A reason that looks like a secret is refused, as a held message is not sent.
+    expect(
+      refusal(() =>
+        asUser({
+          type: 'assistant.proposal.decline',
+          proposalId,
+          reason: ` Not on this machine ${lookalike} `,
+        }),
+      ),
+    ).toMatch(/^Not sent: this looks like /);
+    expect(proposals()[0]).toMatchObject({ state: 'pending' });
+    asUser({ type: 'assistant.proposal.decline', proposalId, reason: ' Not on this machine ' });
+    expect(proposals()[0]).toMatchObject({ state: 'declined', reason: 'Not on this machine' });
     expect(setting('viewer.htmlScripts')).toBeUndefined();
     expect(refusal(() => asUser({ type: 'assistant.proposal.accept', proposalId }))).toContain(
       'was already declined',
