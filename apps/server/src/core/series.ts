@@ -74,6 +74,17 @@ export function liveRunOf(card: CalendarItem, read: ReadModel): WorkflowRun | un
   return undefined;
 }
 
+// A card stored with a zone the platform does not know (before zones were checked for every
+// card) is read on its UTC day, so that one row cannot fail the whole range.
+function dayOf(card: CalendarItem): string {
+  try {
+    return localDay(card.start, card.zone);
+  } catch (error) {
+    if (error instanceof RangeError) return localDay(card.start, 'UTC');
+    throw error;
+  }
+}
+
 // The occurrences of the local cards in [from, to) (recurring cards spec 15, 17). A repeating
 // card gives every occurrence in the range except the days skipped by hand, at most `limit`;
 // an occurrence already reached is shown where it was then, with what happened, even when the
@@ -96,7 +107,7 @@ export function calendarRange(
       if (overlaps(card)) {
         found.push({
           cardId: card.id,
-          date: localDay(card.start, card.zone),
+          date: dayOf(card),
           start: card.start,
           end: card.end,
           repeating: false,

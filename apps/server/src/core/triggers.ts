@@ -106,10 +106,20 @@ export function cardTriggerEvents(card: CalendarItem, read: ReadModel, context: 
   if (isRepeating(card)) return seriesTriggerEvents(card, read, context);
   const existing = read.trigger(triggerIdFor(card.id));
   if (card.runId !== null) {
-    // A card that stopped repeating may still hold a trigger for a later occurrence.
-    return existing?.state === 'scheduled'
-      ? [triggerSet({ ...existing, state: 'cancelled', offerRunNow: false })]
-      : [];
+    // A card that stopped repeating may still hold a trigger for a later occurrence. It goes
+    // back to the fired trigger of the run it carries, as it was before the card repeated.
+    if (existing?.state !== 'scheduled') return [];
+    const ran =
+      existing.runId === null
+        ? undefined
+        : read.cardOccurrences(card.id).find((occurrence) => occurrence.runId === existing.runId);
+    return [
+      triggerSet(
+        existing.runId === null
+          ? { ...existing, state: 'cancelled', offerRunNow: false }
+          : { ...existing, state: 'fired', runAt: ran?.start ?? card.start, offerRunNow: false },
+      ),
+    ];
   }
   const events: DomainEvent[] = [];
   let next: Trigger | undefined;
@@ -326,9 +336,24 @@ function fireSeries(
     (occurrence) => !taken.has(occurrence.date),
   );
   const latest = due.at(-1);
-  const events: DomainEvent[] = due
-    .slice(0, -1)
-    .map((occurrence) => occurrenceRecorded(card, occurrence, 'missed', context));
+  // Only the newest missed occurrence offers "Run now" (spec 8): an older offer is withdrawn
+  // once a later occurrence is reached.
+  const withdrawn: DomainEvent[] = latest
+    ? read
+        .cardOccurrences(card.id)
+        .filter((record) => record.offerRunNow)
+        .map((record) => ({
+          kind: 'card.occurrenceRecorded',
+          aggregate: card.id,
+          payload: { cardId: card.id, occurrence: { ...record, offerRunNow: false } },
+        }))
+    : [];
+  const events: DomainEvent[] = [
+    ...withdrawn,
+    ...due
+      .slice(0, -1)
+      .map((occurrence) => occurrenceRecorded(card, occurrence, 'missed', context)),
+  ];
   const reached = new Set(due.map((occurrence) => occurrence.date));
   let started: string | undefined;
   if (latest && mode !== 'run') {

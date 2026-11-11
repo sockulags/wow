@@ -226,6 +226,37 @@ describe('occurrences of a repeating card (spec 1, 2)', () => {
     expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at('2026-11-04') });
   });
 
+  it('takes a rule at the longest interval and refuses one past it', () => {
+    const longest: RepeatRule = { ...weekdays, frequency: 'daily', weekdays: [], interval: 1000 };
+    createCard({ repeat: longest });
+    expect(range('2026-11-01T00:00:00.000Z', '2032-01-01T00:00:00.000Z').occurrences).toHaveLength(
+      2,
+    );
+    expect(() => createCard({ cardId: 'c2', repeat: { ...longest, interval: 1001 } })).toThrow(
+      /1000/,
+    );
+    expect(card('c2')).toBeUndefined();
+  });
+
+  it('refuses a zone the platform does not know, with or without a rule', () => {
+    expect(() => createCard({ repeat: undefined, zone: 'Mars/Phobos' })).toThrow(/not a time zone/);
+    createCard({ repeat: undefined });
+    expect(() => dispatch({ type: 'card.update', cardId: 'c1', zone: 'Mars/Phobos' })).toThrow(
+      /not a time zone/,
+    );
+  });
+
+  it('reads a range when a stored card has a zone the platform does not know', () => {
+    createCard();
+    createCard({ cardId: 'c2', repeat: undefined });
+    db().update(calendarItems).set({ zone: 'Mars/Phobos' }).where(eq(calendarItems.id, 'c2')).run();
+    const found = range('2026-11-04T00:00:00.000Z', '2026-11-05T00:00:00.000Z').occurrences;
+    expect(found.map((occurrence) => [occurrence.cardId, occurrence.date])).toEqual([
+      ['c1', '2026-11-04'],
+      ['c2', '2026-11-04'],
+    ]);
+  });
+
   it('refuses a rule that ends before the first occurrence', () => {
     expect(() =>
       createCard({ repeat: { ...weekdays, end: { kind: 'on', date: '2026-11-03' } } }),
@@ -364,6 +395,21 @@ describe('three missed occurrences (spec 8)', () => {
     expect(run.occurrence?.date).toBe('2026-11-06');
     expect(records().at(-1)).toMatchObject({ outcome: 'fired', runId: 'now', offerRunNow: false });
     expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at('2026-11-09') });
+  });
+
+  it('mark: a later outage withdraws the earlier offer', async () => {
+    policy('mark');
+    createCard();
+    await restart(at('2026-11-04', 60));
+    await restart(at('2026-11-06', 60));
+    expect(records().map((record) => [record.date, record.outcome, record.offerRunNow])).toEqual([
+      ['2026-11-04', 'missed', false],
+      ['2026-11-05', 'missed', false],
+      ['2026-11-06', 'missed', true],
+    ]);
+    dispatch({ type: 'card.runNow', cardId: 'c1', runId: 'now' });
+    await runBecomes((current) => current.id === 'now' && current.state === 'done');
+    expect(records().some((record) => record.offerRunNow)).toBe(false);
   });
 
   it('skip: none starts', async () => {
@@ -512,7 +558,7 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
     expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at('2026-11-05') });
 
     dispatch({ type: 'card.update', cardId: 'c1', repeat: null });
-    expect(trigger()?.state).toBe('cancelled');
+    expect(trigger()).toMatchObject({ state: 'fired', runId: run.id, runAt: at('2026-11-04') });
     expect(card()?.nextAt).toBeNull();
     tickAt(at('2026-11-05'));
     expect(runs()).toHaveLength(1);

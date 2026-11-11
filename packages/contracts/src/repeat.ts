@@ -22,13 +22,18 @@ export type RepeatWeekday = z.infer<typeof RepeatWeekday>;
 // Monday first, as ISO numbers them (1 to 7).
 export const repeatWeekdays: readonly RepeatWeekday[] = RepeatWeekday.options;
 
+// Bounds that keep every occurrence a date the platform can name: a rule past them is a typing
+// slip, not a schedule, and without them the server could walk a series for ever.
+export const repeatMaxInterval = 1000;
+export const repeatMaxCount = 10_000;
+
 export const RepeatEnd = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('never') }),
   // The last day an occurrence may fall on, inclusive.
   z.object({ kind: z.literal('on'), date: LocalDay }),
   // How many occurrences there are, the first one (the card's own start) included. A skipped
   // occurrence still counts.
-  z.object({ kind: z.literal('after'), count: z.number().int().min(1) }),
+  z.object({ kind: z.literal('after'), count: z.number().int().min(1).max(repeatMaxCount) }),
 ]);
 export type RepeatEnd = z.infer<typeof RepeatEnd>;
 
@@ -36,7 +41,7 @@ export const RepeatRule = z
   .object({
     frequency: RepeatFrequency,
     // Every `interval` days, weeks or months.
-    interval: z.number().int().min(1).default(1),
+    interval: z.number().int().min(1).max(repeatMaxInterval).default(1),
     // Weekly only: the days of the week it falls on. Empty means the start's own weekday.
     weekdays: z.array(RepeatWeekday).default([]),
     end: RepeatEnd.default({ kind: 'never' }),

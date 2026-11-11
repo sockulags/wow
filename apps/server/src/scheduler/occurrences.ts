@@ -130,12 +130,18 @@ const weekdayIndex = (day: Day): number => (new Date(dayNumber(day) * oneDay).ge
 const daysInMonth = (year: number, month: number): number =>
   new Date(Date.UTC(year, month, 0)).getUTCDate();
 
+// A series stops at the last day an occurrence can be named by (YYYY-MM-DD), so a rule with a
+// long interval ends instead of walking into dates the platform cannot represent.
+const lastYear = 9999;
+const lastDayNumber = Date.UTC(lastYear, 11, 31) / oneDay;
+
 // The days the rule falls on, in order, from the start's day, before the end is applied.
 function* ruleDays(first: Day, rule: RepeatRule): Generator<Day> {
   const step = rule.interval;
   switch (rule.frequency) {
     case 'daily': {
-      for (let n = dayNumber(first); ; n += step) yield fromDayNumber(n);
+      for (let n = dayNumber(first); n <= lastDayNumber; n += step) yield fromDayNumber(n);
+      return;
     }
     case 'weekly': {
       const chosen = new Set<RepeatWeekday>(
@@ -149,6 +155,7 @@ function* ruleDays(first: Day, rule: RepeatRule): Generator<Day> {
       yield first;
       for (let monday = start - weekdayIndex(first); ; monday += 7 * step) {
         for (const offset of offsets) {
+          if (monday + offset > lastDayNumber) return;
           if (monday + offset > start) yield fromDayNumber(monday + offset);
         }
       }
@@ -157,6 +164,7 @@ function* ruleDays(first: Day, rule: RepeatRule): Generator<Day> {
       // A month without the start's day has no occurrence (spec 3).
       for (let index = first.year * 12 + first.month - 1; ; index += step) {
         const year = Math.floor(index / 12);
+        if (year > lastYear) return;
         const month = (index % 12) + 1;
         if (first.day <= daysInMonth(year, month)) yield { year, month, day: first.day };
       }

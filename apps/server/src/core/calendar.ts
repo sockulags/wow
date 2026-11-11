@@ -1,9 +1,10 @@
-import type {
-  CalendarItem,
-  CardChanges,
-  DomainEvent,
-  OutlookCalendarRow,
-  ServerCommand,
+import {
+  RepeatRule,
+  type CalendarItem,
+  type CardChanges,
+  type DomainEvent,
+  type OutlookCalendarRow,
+  type ServerCommand,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
@@ -82,6 +83,11 @@ function checkZone(zone: string): void {
 function checkRepeat(card: CalendarItem): void {
   const rule = card.repeat;
   if (!rule) return;
+  // The wire parses the rule; this holds for a command that reached the engine another way.
+  const parsed = RepeatRule.safeParse(rule);
+  if (!parsed.success) {
+    throw new CommandRejected('rejected', parsed.error.issues[0]?.message ?? 'Not a repeat rule');
+  }
   checkZone(card.zone);
   if (rule.end.kind === 'on' && rule.end.date < localDay(card.start, card.zone)) {
     throw new CommandRejected(
@@ -188,6 +194,7 @@ function updateEvents(
 ): DomainEvent[] {
   if (Object.keys(changes).length === 0) return [];
   const after: CalendarItem = Object.assign({ ...card }, changes);
+  if (changes.zone !== undefined) checkZone(changes.zone);
   checkRepeat(after);
   const events: DomainEvent[] = [
     {
@@ -290,6 +297,7 @@ export function decideCalendar(
         repeat: command.repeat ?? null,
         skippedDates: sortedDays(command.skippedDates ?? []),
       };
+      checkZone(card.zone);
       checkRepeat(card);
       return [
         { kind: 'card.created', aggregate: card.id, payload: card },

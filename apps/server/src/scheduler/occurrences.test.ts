@@ -247,6 +247,34 @@ describe('reading a series', () => {
   });
 });
 
+describe('rules at the bounds', () => {
+  const start = {
+    start: '2026-11-02T08:00:00.000Z',
+    end: '2026-11-02T08:30:00.000Z',
+    zone: stockholm,
+  };
+
+  it('refuses an interval or a count past the bound', () => {
+    expect(RepeatRule.safeParse({ frequency: 'monthly', interval: 1000 }).success).toBe(true);
+    expect(RepeatRule.safeParse({ frequency: 'monthly', interval: 1001 }).success).toBe(false);
+    expect(RepeatRule.safeParse({ frequency: 'monthly', interval: 1e9 }).success).toBe(false);
+    expect(
+      RepeatRule.safeParse({ frequency: 'daily', end: { kind: 'after', count: 10_001 } }).success,
+    ).toBe(false);
+  });
+
+  it('ends a series at the longest interval at the last day a date can name', () => {
+    for (const frequency of ['daily', 'weekly', 'monthly'] as const) {
+      const all = [...occurrences({ ...start, repeat: rule({ frequency, interval: 1000 }) })];
+      expect((all.at(-1)?.date ?? '').slice(0, 4) <= '9999').toBe(true);
+      expect(all.length).toBeGreaterThan(1);
+      expect(all.every((occurrence) => !Number.isNaN(Date.parse(occurrence.start)))).toBe(true);
+    }
+    const monthly: Series = { ...start, repeat: rule({ frequency: 'monthly', interval: 1000 }) };
+    expect(firstAfter(monthly, Date.parse('9999-12-31T00:00:00.000Z'))).toBeUndefined();
+  });
+});
+
 describe('the rule in words', () => {
   it('says the days, the time in the zone and the end', () => {
     const card = { start: '2026-11-04T07:30:00.000Z', zone: stockholm };

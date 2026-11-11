@@ -962,9 +962,13 @@ command, `false` leaves it going; the threads stay either way.
 
 **Repeating cards** (recurring cards spec 1 to 21). A card can carry a repeat rule
 (`RepeatRule` in `packages/contracts/src/repeat.ts`): `frequency` (`daily`, `weekly`,
-`monthly`), `interval` (one or more), `weekdays` (weekly only; empty means the start's weekday)
-and `end` (`never`, `on` a day inclusive, or `after` a count that includes the first
-occurrence). It is wow's own structure, not an RRULE, so it can be said in words
+`monthly`), `interval` (1 to 1000), `weekdays` (weekly only; empty means the start's weekday)
+and `end` (`never`, `on` a day inclusive, or `after` a count of at most 10 000 that includes the
+first occurrence). The bounds keep every occurrence a date `Date` can hold, and a series also
+stops after 31 December 9999, so no rule can walk for ever; the card decisions check the rule
+again for commands that did not come over the wire. Every card's zone must be one `Intl`
+knows; a stored card whose zone it does not know is read on its UTC day rather than failing
+the range read. It is wow's own structure, not an RRULE, so it can be said in words
 (`repeatRuleWords`: "Every weekday at 08:30, until 19 December 2026") by the server and the app
 alike. The card stays one row.
 
@@ -976,7 +980,7 @@ alike. The card stays one row.
   instant, taking the first of a reading that happens twice and, for a reading in the hour the
   clocks skip, the instant they jumped (02:30 becomes 03:00). Monthly falls on the start's day;
   a month without it has none. `occurrences(series)` is a generator in start order and never
-  ends for `never`, so every caller stops it by time or count.
+  ends for `never` before year 9999, so every caller stops it by time or count.
 - **What is stored**: the rule, the days skipped by hand (`skippedDates`), and per reached
   occurrence a `card_occurrences` row (`CardOccurrence`): `fired` with its run, `failed` (the
   run could not start), `skipped` (the card's earlier run was still going) or `missed`, with a
@@ -989,14 +993,16 @@ alike. The card stays one row.
   `trigger.fire` (and `trigger.applyMissed`) takes every occurrence from the trigger's time to
   now that is not taken: the older ones are recorded `missed`, and only the latest is handled —
   started by a tick or the `run` policy, recorded `missed` with "Run now" by `mark`, or
-  `missed` by `skip` (spec 8). A latest occurrence whose card still has a live run (the newest
+  `missed` by `skip` (spec 8); an older record that still offered "Run now" is re-recorded
+  without it, so only the newest missed occurrence offers it. A latest occurrence whose card still has a live run (the newest
   run the card follows, or any run its records name) starts nothing: it is recorded `skipped`
   with the reason and a `failed` notification "Occurrence skipped" (spec 7). Then the trigger
   waits for the next occurrence; after the last one it is `fired` (or `cancelled` when nothing
   ever ran). The run has `WorkflowRun.occurrence {date, start}`, which names it by its day, and
   its "Workflow run started" notification ends with the day. The card follows its newest run as
   a single card does. `card.runNow` on a repeating card answers the occurrence that offers
-  "Run now" and leaves the trigger waiting.
+  "Run now" and leaves the trigger waiting. A card that ran and is made single again (or
+  undone back to single) puts its trigger back to `fired` with that run.
 - **The next time** is `CalendarItem.nextAt`, set by the projector from every `trigger.set` of a
   card trigger (the trigger's `runAt` while `scheduled`, else null), so the card and the trigger
   list say the same. The migration fills it for cards stored before.
