@@ -838,7 +838,8 @@ until you press Yes: a step's permission mode, a gate condition, a step's rules,
 trigger, "for units" or "own working copy" on a workflow, resuming the scheduler, the missed
 policy `run`, `hosts.polling` or `triggers.eventsEnabled` on, `viewer.htmlScripts` on, and
 starting a run ("Start <workflow> in <project>"). A card with a workflow that starts sooner than
-`assistant.startSoonMinutes` (15) from now is a proposal too. The palette has Yes and No for every
+`assistant.startSoonMinutes` (15) from now is a proposal too. A long value is cut short on its
+line; "show all of it" under the line opens the whole of it. The palette has Yes and No for every
 waiting proposal and Undo for every change.
 
 It never answers a gate: approving, sending back or stopping a run is yours, and wow refuses those
@@ -854,6 +855,9 @@ value straight to the secret store and **Test connection** checks it. The assist
 A message you are about to send that looks like a secret (a known token prefix, a private key, a
 long random string after "token", "password" or "key") is held: a line above the composer says
 what it looks like, with **Put it in <field>** and **Send anyway**. A held message is not stored.
+When the field already holds a value, the line says that putting it there replaces it. Send
+anyway sends what the box holds at that moment, queued like any message while the assistant is
+still answering.
 The patterns are `assistant.secretPatterns`; anything that matches them in what the assistant is
 shown is replaced by "[hidden]".
 

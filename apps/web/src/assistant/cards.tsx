@@ -28,7 +28,7 @@ const serviceOf = (key: string): TrackerConnection | undefined => {
 };
 
 // The stored reference of a secret setting at exactly the scope the field writes.
-function useStoredRef(key: string, projectId: string | undefined): unknown {
+export function useStoredRef(key: string, projectId: string | undefined): unknown {
   const rows = useTopic('settings');
   const scope = projectId === undefined ? 'global' : `project:${projectId}`;
   return rows?.find((row) => row.key === key && row.scope === scope)?.value ?? null;

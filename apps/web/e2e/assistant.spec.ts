@@ -205,20 +205,27 @@ test.describe('assistant', () => {
     await expect(users).toHaveCount(sent);
     for (const text of await homeFiles()) expect(text).not.toContain(lookalike);
 
-    // Put it in its field: the value goes to the store and out of the message.
+    // Put it in its field: the value goes to the store and out of the message. The field holds
+    // the token saved before, and the line says it would be replaced.
+    await expect(held.getByTestId('held-replaces')).toHaveText(
+      'GitLab token already holds a value; putting this one there replaces it.',
+    );
     await held.getByRole('button', { name: 'Put it in GitLab token' }).click();
     await expect(page.getByTestId('held-saved')).toHaveText(
-      'Saved in GitLab token. It was taken out of your message.',
+      'Saved in GitLab token in place of the value it held. It was taken out of your message.',
     );
     await expect(composer(page)).toHaveValue('Here is the token:');
     await expect(users).toHaveCount(sent);
     for (const text of await homeFiles()) expect(text).not.toContain(lookalike);
 
-    // Send anyway sends it as written.
+    // Send anyway sends what the box holds, edits made after the hold included.
     await composer(page).fill(`Send this: ${lookalike}`);
     await composer(page).press('Enter');
+    await expect(held).toBeVisible();
+    await composer(page).fill(`Send this now: ${lookalike}`);
     await held.getByRole('button', { name: 'Send anyway' }).click();
     await expect(users).toHaveCount(sent + 1);
+    await expect(users.last()).toContainText('Send this now:');
     await expect(composer(page)).toHaveValue('');
   });
 

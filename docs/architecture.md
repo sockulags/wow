@@ -1869,7 +1869,10 @@ the chat view is copied. The `$` skill picker is off there.
   provider's naming itself.
 - Change row (`ChangeRow`): "what: from → to · place" with Undo (`assistant.undo`); greyed with
   "Undone" when the topic says so; a refused Undo shows the server's reason under it.
-- Proposal card (`ProposalCard`): the title, one line per change, the place, Yes
+- Proposal card (`ProposalCard`): the title, one line per change (a value past 160 characters
+  is cut there, and the line carries the whole of it in `fromFull`/`toFull`, shown under "Was:
+  show all of it" / "Becomes: show all of it"; the secret net runs on the whole value before it
+  is cut), the place, Yes
   (`assistant.proposal.accept`) and No, which opens an optional reason field and sends
   `assistant.proposal.decline`. A reason that looks like a secret is not sent and the card
   says why. A refused Yes (stale, or the app refuses it now) shows the reason and still offers
@@ -1892,7 +1895,11 @@ the chat view is copied. The `$` skill picker is off there.
   names (a GitHub, GitLab or Atlassian prefix), taking the project of a field the assistant
   asked for, or else the field the assistant asked for last; without one only "Send anyway"
   is offered. "Put it in" stores the matched text through `storeSecretSetting` and leaves the
-  rest of the message in the composer. A held message is sent nowhere until "Send anyway".
+  rest of the message, as the box holds it now, in the composer; when the field already holds a
+  reference at that scope the line says it will be replaced, and the note after says it was. A
+  held message is sent nowhere until "Send anyway", which calls the composer's
+  `sendUnchecked()`: the box's current text goes through the composer's own send path (queued
+  while a turn runs, as the answer to a waiting question), skipping only the check.
 - Palette (`assistant/commands.ts`): Yes and No for every waiting proposal (Yes under "Needs
   you"), Undo for every applied change (the newest before typing). A refusal from the palette
   is a toast with the reason. The sidebar counts waiting proposals as "need you".

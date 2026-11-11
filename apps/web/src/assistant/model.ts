@@ -165,6 +165,7 @@ export function holdMessage(
   return { text, match, field: request && label ? { ...request, label } : null };
 }
 
-// The message with the secret taken out, for the composer after the value went to its field.
-export const withoutSecret = (held: Held): string =>
-  held.text.split(held.match.value).join('').trim();
+// The message with the secret taken out, for the composer after the value went to its field:
+// the box as it is now, which can have changed since the message was held.
+export const withoutSecret = (held: Held, text: string = held.text): string =>
+  text.split(held.match.value).join('').trim();

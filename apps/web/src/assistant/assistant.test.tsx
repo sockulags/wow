@@ -14,12 +14,15 @@ import {
 } from '@tanstack/react-router';
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ReactNode } from 'react';
+import { createRef, type ReactNode } from 'react';
+import type { Connection, ConnectionState } from '@wow/client-runtime';
 import { describe, expect, it, vi } from 'vitest';
+import { createStore } from 'zustand';
 import { RuntimeProvider } from '@/app/runtime';
-import { Composer } from '@/chat/composer';
+import { Composer, type ComposerHandle } from '@/chat/composer';
 import { ConversationItem, type ItemContext } from '@/chat/items';
 import { createTestRuntime, renderApp } from '@/test/render';
+import { HeldLine } from './assistant-view';
 import { SecretFieldCard } from './cards';
 import { assistantCommands } from './commands';
 import { askOf, askedFields, holdMessage, placeRows, withoutSecret } from './model';
@@ -229,6 +232,33 @@ describe('a proposal card (spec 9, 10)', () => {
     );
     await userEvent.click(within(card).getByRole('button', { name: 'Yes' }));
     expect(yes).toHaveBeenCalledOnce();
+  });
+
+  it('shows the whole of a value its line had to shorten, on request', async () => {
+    const long = `${'Answer in rhyme and mind the kettle. '.repeat(6)}The end.`;
+    render(
+      <ProposalCard
+        proposal={proposal({
+          lines: [
+            {
+              what: 'Instruction text',
+              from: 'the default',
+              to: `${long.slice(0, 159)}…`,
+              toFull: long,
+            },
+          ],
+        })}
+        secretPatterns={defaultSecretPatterns}
+        onYes={() => Promise.resolve()}
+        onNo={() => Promise.resolve()}
+      />,
+    );
+    const [full] = screen.getAllByTestId('assistant-proposal-full');
+    expect(screen.getAllByTestId('assistant-proposal-full')).toHaveLength(1);
+    expect(full?.closest('details')?.open).toBe(false);
+    await userEvent.click(screen.getByText('Becomes: show all of it'));
+    expect(full?.closest('details')?.open).toBe(true);
+    expect(full?.textContent).toBe(long);
   });
 
   it('No takes an optional reason', async () => {
@@ -502,6 +532,98 @@ describe('a message that looks like a secret (spec 17)', () => {
     await userEvent.clear(box);
     await userEvent.type(box, 'Hello{Enter}');
     expect(onSend).toHaveBeenCalledWith('Hello');
+  });
+});
+
+describe('Send anyway on a held message (spec 17)', () => {
+  it("goes through the composer's own send path with the text as it is now", async () => {
+    const onSend = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
+    const handle = createRef<ComposerHandle>();
+    const runtime = createTestRuntime();
+    const view = (running: boolean) => (
+      <RuntimeProvider runtime={runtime}>
+        <Composer
+          ref={handle}
+          providerKind={undefined}
+          running={running}
+          placeholder="Message"
+          onSend={onSend}
+          beforeSend={(value) => !value.includes('ghp_')}
+        />
+      </RuntimeProvider>
+    );
+    const { rerender } = render(view(true));
+    const box = screen.getByRole('combobox', { name: 'Message' });
+    await userEvent.type(box, `${githubToken}{Enter}`);
+    await userEvent.type(box, ' for the bot');
+    act(() => handle.current?.sendUnchecked());
+    // A turn is running: the message waits in the queue like any other, and as edited.
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByTestId('queued-message').textContent).toContain(
+      `${githubToken} for the bot`,
+    );
+    rerender(view(false));
+    expect(onSend).toHaveBeenCalledWith(`${githubToken} for the bot`);
+  });
+});
+
+const runtimeWithSettings = (rows: unknown[]) => {
+  const connection: Connection = {
+    state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
+    request: () => Promise.resolve(null),
+    subscribe(topic, _params, onData) {
+      onData(topic === 'settings' ? rows : []);
+      return () => undefined;
+    },
+    retry: () => undefined,
+    close: () => undefined,
+  };
+  return { ...createTestRuntime(), connection };
+};
+const held = () => {
+  const found = holdMessage(githubToken, defaultSecretPatterns, []);
+  if (!found) throw new Error('not held');
+  return found;
+};
+
+const line = (
+  rows: unknown[],
+  onPut = vi.fn<(replaces: boolean) => Promise<void>>(() => Promise.resolve()),
+) => {
+  render(
+    <RuntimeProvider runtime={runtimeWithSettings(rows)}>
+      <HeldLine held={held()} onPut={onPut} onSend={() => undefined} onDismiss={() => undefined} />
+    </RuntimeProvider>,
+  );
+  return onPut;
+};
+
+describe('Put it in <field> on a held message (spec 17)', () => {
+  it('says that it replaces the value the field already holds', async () => {
+    const onPut = line([
+      {
+        key: 'trackers.github.token',
+        scope: 'global',
+        value: { secretRef: 'setting:trackers.github.token' },
+      },
+    ]);
+    expect(screen.getByTestId('held-replaces').textContent).toBe(
+      'GitHub token already holds a value; putting this one there replaces it.',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Put it in GitHub token' }));
+    expect(onPut).toHaveBeenCalledWith(true);
+  });
+
+  it('says nothing of replacing for an empty field, or one set only for a project', () => {
+    line([
+      {
+        key: 'trackers.github.token',
+        scope: 'project:tea',
+        value: { secretRef: 'setting:project:tea:trackers.github.token' },
+      },
+    ]);
+    expect(screen.getByRole('button', { name: 'Put it in GitHub token' })).toBeTruthy();
+    expect(screen.queryByTestId('held-replaces')).toBeNull();
   });
 });
 

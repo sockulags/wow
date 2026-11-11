@@ -65,6 +65,10 @@ export const AssistantProposalLine = z.object({
   what: z.string().min(1),
   from: z.string().nullable(),
   to: z.string().nullable(),
+  // The whole value when `from` or `to` had to be shortened, so the card can show all of it.
+  // Absent in proposals stored before they were kept.
+  fromFull: z.string().min(1).optional(),
+  toFull: z.string().min(1).optional(),
 });
 export type AssistantProposalLine = z.infer<typeof AssistantProposalLine>;
 

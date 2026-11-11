@@ -1099,6 +1099,24 @@ describe('proposals', () => {
     expect(hostRequests.some((request) => request.url.includes('collector.example'))).toBe(false);
   });
 
+  it('carry the whole of a value their line has to shorten, so nothing is accepted unseen', async () => {
+    const patterns = Array.from({ length: 12 }, (_, n) => `never-matches-${n}-kettle-lid`);
+    const result = await call('set_setting', {
+      key: 'assistant.secretPatterns',
+      scope: 'global',
+      value: patterns,
+    });
+    expect(result.content.outcome).toBe('proposed');
+    const [line] = proposals().at(-1)?.lines ?? [];
+    const whole = patterns.join(', ');
+    expect(whole.length).toBeGreaterThan(160);
+    expect(line?.to).toBe(`${whole.slice(0, 159)}…`);
+    expect(line?.toFull).toBe(whole);
+    // A short value needs no second copy.
+    await call('set_setting', { key: 'viewer.htmlScripts', scope: 'global', value: true });
+    expect(Object.keys(proposals().at(-1)?.lines[0] ?? {})).toEqual(['what', 'from', 'to']);
+  });
+
   it('ask before a tracker address changes at any scope while a project holds its own token: the token is never sent to the new host first', async () => {
     // The shared token is gone; only the project has one, and the address it resolves is global.
     asUser({ type: 'setting.reset', key: 'trackers.github.token', scope: 'global' });

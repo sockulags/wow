@@ -24,6 +24,11 @@ export interface ComposerHandle {
   focus(): void;
   // Puts text in the box (a starter) and the caret after it.
   setText(text: string): void;
+  // Sends what the box holds now the way Send does (queued while a turn runs, as the answer to a
+  // waiting question) without asking `beforeSend`: the Assistant view's "Send anyway".
+  sendUnchecked(): void;
+  // What the box holds now.
+  text(): string;
 }
 
 export interface ComposerProps {
@@ -152,21 +157,6 @@ export function Composer({
   const activeIndex = Math.min(active, Math.max(0, matches.length - 1));
   const activeSkill = matches[activeIndex];
 
-  useImperativeHandle(
-    ref,
-    () => ({
-      focus: () => textarea.current?.focus(),
-      setText: (value: string) => {
-        pendingCaret.current = value.length;
-        setText(value);
-        setCaret(value.length);
-        setError(undefined);
-        textarea.current?.focus();
-      },
-    }),
-    [],
-  );
-
   useLayoutEffect(() => {
     const at = pendingCaret.current;
     if (at === undefined || !textarea.current) return;
@@ -223,14 +213,14 @@ export function Composer({
     textarea.current?.focus();
   };
 
-  const send = () => {
+  const send = (checked = true) => {
     const message = text.trim();
     if (message === '' || disabled || sending) return;
     if (blockedReason) {
       setError(blockedReason);
       return;
     }
-    if (beforeSend && !beforeSend(message)) return;
+    if (checked && beforeSend && !beforeSend(message)) return;
     if (running) {
       setQueued(queued === undefined ? message : `${queued}\n\n${message}`);
       update('', 0);
@@ -238,6 +228,20 @@ export function Composer({
     }
     deliver(message, () => update('', 0));
   };
+
+  // Built on every render, so sendUnchecked sends the text and state of this render.
+  useImperativeHandle(ref, () => ({
+    focus: () => textarea.current?.focus(),
+    setText: (value: string) => {
+      pendingCaret.current = value.length;
+      setText(value);
+      setCaret(value.length);
+      setError(undefined);
+      textarea.current?.focus();
+    },
+    sendUnchecked: () => send(false),
+    text: () => text,
+  }));
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (pickerOpen) {
@@ -275,7 +279,7 @@ export function Composer({
       aria-disabled={sendBlocked || undefined}
       disabled={disabled || sending || text.trim() === ''}
       className={cn(blockedReason !== undefined && 'opacity-50')}
-      onClick={send}
+      onClick={() => send()}
     >
       <ArrowUpIcon />
     </Button>

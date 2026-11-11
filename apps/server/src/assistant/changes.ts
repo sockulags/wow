@@ -109,12 +109,33 @@ export function snapshot(target: AssistantTarget, read: ReadModel): Row | null {
 
 const clip = (text: string): string => (text.length > 160 ? `${text.slice(0, 159)}…` : text);
 
+// A proposal line with its values shortened to what the card shows and the whole of each kept
+// beside it, so nothing is accepted unseen. The secret net has run on the whole values first,
+// so a value cut short cannot leave half a secret behind.
+function shortened(line: AssistantProposalLine): AssistantProposalLine {
+  const { what, from, to } = line;
+  const next: AssistantProposalLine = {
+    what,
+    from: from === null ? null : clip(from),
+    to: to === null ? null : clip(to),
+  };
+  return {
+    ...next,
+    ...(from !== null && next.from !== from ? { fromFull: from } : {}),
+    ...(to !== null && next.to !== to ? { toFull: to } : {}),
+  };
+}
+
 const stepNames = (steps: readonly WorkflowStep[]): string =>
   steps.map((step) => step.skillName).join(', ');
 
 // One value in words. Ids of things the user named are shown by their names. A setup preview
 // says its values the same way.
-export function show(key: string, value: unknown, read: ReadModel): string {
+export const show = (key: string, value: unknown, read: ReadModel): string =>
+  clip(showWhole(key, value, read));
+
+// The same words as `show`, not shortened: for a proposal, which keeps the whole value.
+function showWhole(key: string, value: unknown, read: ReadModel): string {
   if (value === null || value === undefined || value === '') return 'none';
   if (typeof value === 'boolean') return value ? 'on' : 'off';
   if (typeof value === 'number') return String(value);
@@ -122,14 +143,14 @@ export function show(key: string, value: unknown, read: ReadModel): string {
     if (key === 'projectId') return read.project(value)?.name ?? value;
     if (key === 'workflowId') return read.workflow(value)?.name ?? value;
     if (key === 'backlogItemId') return read.backlogItem(value)?.title ?? value;
-    return clip(value);
+    return value;
   }
   if (Array.isArray(value)) {
     if (value.length === 0) return 'none';
     if (key === 'steps') {
       return `${value.length} ${value.length === 1 ? 'step' : 'steps'}: ${stepNames(value as WorkflowStep[])}`;
     }
-    if (value.every((item) => typeof item === 'string')) return clip(value.join(', '));
+    if (value.every((item) => typeof item === 'string')) return value.join(', ');
   }
   if (typeof value === 'object' && 'start' in value && 'end' in value) {
     const { start, end, days } = value as { start: unknown; end: unknown; days?: unknown };
@@ -137,7 +158,7 @@ export function show(key: string, value: unknown, read: ReadModel): string {
       return Array.isArray(days) ? `${start}–${end} (${days.join(', ')})` : `${start}–${end}`;
     }
   }
-  return clip(JSON.stringify(value));
+  return JSON.stringify(value);
 }
 
 function fields(row: Row, keys: readonly string[], read: ReadModel): string {
@@ -540,7 +561,7 @@ function showStepField(
   if (key === 'providerInstanceId' && typeof value === 'string') {
     return read.providerInstance(value)?.name ?? value;
   }
-  return show(key, value, read);
+  return showWhole(key, value, read);
 }
 
 const order = (steps: readonly WorkflowStep[], ids: ReadonlySet<string>) =>
@@ -719,8 +740,8 @@ export function proposalOf(
           lines: [
             {
               what: label,
-              from: show('value', stored ? stored.value : definition?.default, read),
-              to: show('value', next, read),
+              from: showWhole('value', stored ? stored.value : definition?.default, read),
+              to: showWhole('value', next, read),
             },
           ],
           place: settingPlace(command.key, command.scope, context),
@@ -758,8 +779,8 @@ export function proposalOf(
         ) {
           lines.push({
             what: 'Most starts of one step',
-            from: show('maxStepVisits', workflow?.maxStepVisits, read),
-            to: show('maxStepVisits', command.maxStepVisits, read),
+            from: showWhole('maxStepVisits', workflow?.maxStepVisits, read),
+            to: showWhole('maxStepVisits', command.maxStepVisits, read),
           });
         }
         if (
@@ -768,8 +789,8 @@ export function proposalOf(
         ) {
           lines.push({
             what: 'Template kind',
-            from: show('templateKind', workflow?.templateKind, read),
-            to: show('templateKind', command.templateKind, read),
+            from: showWhole('templateKind', workflow?.templateKind, read),
+            to: showWhole('templateKind', command.templateKind, read),
           });
         }
         return {
@@ -882,7 +903,8 @@ export function proposalOf(
         throw new Error(`${command.type} cannot be proposed`);
     }
   })();
-  const shown = hideSecretsDeep(card, patternsOf(read, context)) as typeof card;
+  const hidden = hideSecretsDeep(card, patternsOf(read, context)) as typeof card;
+  const shown = { ...hidden, lines: hidden.lines.map(shortened) };
   return {
     id,
     at: context.now,

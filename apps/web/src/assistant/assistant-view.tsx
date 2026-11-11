@@ -1,4 +1,10 @@
-import { assistantThreadId, heldSecretSentence, rpcMethods, type ThreadItem } from '@wow/contracts';
+import {
+  SecretRef,
+  assistantThreadId,
+  heldSecretSentence,
+  rpcMethods,
+  type ThreadItem,
+} from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { KeyRoundIcon, SparklesIcon, XIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -13,7 +19,7 @@ import { useTopicState } from '@/app/topic-state';
 import { Button } from '@/components/ui/button';
 import { ConnectAgentStep } from '@/providers/connect-step';
 import { storeSecretSetting } from '@/settings/secret-field';
-import { ProjectWorkCard, SecretFieldCard } from './cards';
+import { ProjectWorkCard, SecretFieldCard, useStoredRef } from './cards';
 import {
   askOf,
   askedFields,
@@ -98,19 +104,23 @@ function Rows({ placed, patterns }: { placed: Placed; patterns: readonly string[
 
 // The line above the composer while a message is held (spec 17): what looks like a secret,
 // "Put it in <field>" and "Send anyway". The message is not sent or stored until one is chosen.
-function HeldLine({
+export function HeldLine({
   held,
   onPut,
   onSend,
   onDismiss,
 }: {
   held: Held;
-  onPut: (() => Promise<void>) | undefined;
+  onPut: ((replaces: boolean) => Promise<void>) | undefined;
   onSend(): void;
   onDismiss(): void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  // A field that holds a value already has it replaced; the line says so before the press.
+  const replaces = SecretRef.safeParse(
+    useStoredRef(held.field?.key ?? '', held.field?.projectId),
+  ).success;
   return (
     <div
       role="status"
@@ -127,7 +137,7 @@ function HeldLine({
             onClick={() => {
               setBusy(true);
               setError(undefined);
-              onPut().then(
+              onPut(replaces).then(
                 () => setBusy(false),
                 (reason: unknown) => {
                   setBusy(false);
@@ -152,6 +162,11 @@ function HeldLine({
           <XIcon />
         </Button>
       </div>
+      {onPut && held.field && replaces && (
+        <p data-testid="held-replaces" className="text-muted-foreground">
+          {held.field.label} already holds a value; putting this one there replaces it.
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-destructive">
           {error}
@@ -164,7 +179,6 @@ function HeldLine({
 export function AssistantView() {
   const runtime = useRuntime();
   const { connection } = runtime;
-  const send = useDispatch();
   const { rows: threads, status } = useTopicState('assistantThread');
   const thread = threads?.[0];
   const instances = useTopic('providerInstances') ?? [];
@@ -212,15 +226,14 @@ export function AssistantView() {
     );
   };
 
-  const sendAnyway = (text: string) => {
+  // The composer sends what its box holds now, the way its own Send does: queued while a turn
+  // runs, as the answer to a waiting question.
+  const sendAnyway = () => {
     setHeld(undefined);
-    send({ type: 'thread.sendMessage', threadId: assistantThreadId, text }).then(
-      () => composer.current?.setText(''),
-      (reason: unknown) => setSaved(errorMessage(reason)),
-    );
+    composer.current?.sendUnchecked();
   };
 
-  const putInField = (current: Held) => async () => {
+  const putInField = (current: Held) => async (replaces: boolean) => {
     if (!current.field) return;
     await storeSecretSetting(
       { connection, settings: runtime.settings },
@@ -229,15 +242,17 @@ export function AssistantView() {
       current.match.value,
     );
     setHeld(undefined);
-    setSaved(`Saved in ${current.field.label}. It was taken out of your message.`);
-    composer.current?.setText(withoutSecret(current));
+    setSaved(
+      `Saved in ${current.field.label}${replaces ? ' in place of the value it held' : ''}. It was taken out of your message.`,
+    );
+    composer.current?.setText(withoutSecret(current, composer.current.text()));
   };
 
   const notice = held ? (
     <HeldLine
       held={held}
       onPut={held.field ? putInField(held) : undefined}
-      onSend={() => sendAnyway(held.text)}
+      onSend={sendAnyway}
       onDismiss={() => setHeld(undefined)}
     />
   ) : saved ? (
