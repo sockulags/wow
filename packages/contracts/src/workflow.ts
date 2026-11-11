@@ -298,8 +298,11 @@ export type WorkingCopyState = z.infer<typeof WorkingCopyState>;
 
 // What a kept working copy holds that is nowhere else.
 export const UnpushedWork = z.object({
-  // Changed and new files that are not committed (ignored files do not count).
+  // Changed and new files that are not committed, ignored ones not counted.
   uncommittedFiles: z.number().int().nonnegative(),
+  // Files and folders the repository ignores (a local settings file, build output), each
+  // ignored folder counted once. Absent on copies settled before they were counted.
+  ignoredFiles: z.number().int().nonnegative().optional(),
   // Commits no branch on the remote reaches, and the subject of the newest one.
   unpushedCommits: z.number().int().nonnegative(),
   newestSubject: z.string().nullable(),

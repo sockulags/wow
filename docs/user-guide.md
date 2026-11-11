@@ -537,7 +537,7 @@ from the local tip and the run says so. Fetching, creating or removing a copy ma
 
 When the run ends and everything in the copy is committed and reachable from a branch on the
 remote, the copy is removed. Otherwise it is kept, and the run header lists what is unpushed
-(uncommitted files, commits not on the remote). **Remove working copy** (also in the palette)
+(uncommitted files, files the repository ignores, commits not on the remote). **Remove working copy** (also in the palette)
 removes it after you confirm. If a copy cannot be created (the project is not a Git repository,
 the disk is full, the path is too long), the run fails before its first step with the reason, and
 nothing runs in the project folder instead. A short `workspaces.root` helps with Windows path

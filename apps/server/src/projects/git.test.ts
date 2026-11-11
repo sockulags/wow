@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  gitEnvironment,
   guessJiraKeys,
   parseGitConfigRemotes,
   parseRemoteList,
@@ -23,6 +24,17 @@ const github = (owner: string, repo: string) => ({
   host: 'github.com',
   apiBaseUrl: 'https://api.github.com',
   enterprise: false,
+});
+
+describe('gitEnvironment', () => {
+  it('lets git ask for nothing: no terminal prompt and no Git Credential Manager window', () => {
+    const env = gitEnvironment({ PATH: '/usr/bin', GCM_INTERACTIVE: 'auto' });
+    expect(env).toMatchObject({
+      PATH: '/usr/bin',
+      GIT_TERMINAL_PROMPT: '0',
+      GCM_INTERACTIVE: 'never',
+    });
+  });
 });
 
 describe('parseRemoteUrl', () => {

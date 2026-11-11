@@ -792,10 +792,12 @@ the working copy first and still the project folder).
 - **After the run.** When a run with a `ready` copy has ended and no turn of its threads is
   still running (a stopped run's turn is interrupted after the run ended, so `turn.ended` is
   heard too), `settleWorkingCopy` counts what would be lost: files `git status` lists
-  (changed, staged or new and not ignored) and commits that `HEAD` reaches and neither a
+  (changed, staged or new), ignored files and folders (`ignoredFiles`, each ignored folder once:
+  git keeps nothing of them, and an agent's local file may be the only copy) and commits that
+  `HEAD` reaches and neither a
   remote-tracking branch nor the start commit does (`readUnpushed`). With none, `git worktree
 remove` without `--force` removes the folder (git itself refuses if something is there after
-  all) and the copy is `removed`. Otherwise it is `kept` with `unpushed {uncommittedFiles,
+  all) and the copy is `removed`. Otherwise it is `kept` with `unpushed {uncommittedFiles, ignoredFiles,
 unpushedCommits, newestSubject, branch}`. Unpushed commits are counted from every commit `HEAD` has been on in
   the copy (its reflog), so a commit made on no branch and then left still keeps the copy. A removal that fails, for example a file locked on
   Windows, is not retried: the copy is `kept` with the reason in `error`. Both arrive as
@@ -804,7 +806,9 @@ unpushedCommits, newestSubject, branch}`. Unpushed commits are counted from ever
   kept copy: `git worktree remove --force`, then `removed`. It is refused while the run is
   live, and a failure leaves the copy `kept` with what it held and the reason.
 - **Restart.** `Workspaces.recover()` runs before the runner's: a copy still `pending` fails
-  its run ("The server stopped while the working copy was being made"), and a `ready` copy
+  its run ("The server stopped while the working copy was being made") and what git had made
+  of it is removed with `git worktree remove --force` (the folder is named after the run, so
+  nothing else is in it), and a `ready` copy
   whose run ended while the server was down is settled.
 
 - **On a pull request's head.** A run that an event trigger started (see "Scheduler and
@@ -1212,8 +1216,9 @@ project and its `project:<id>` settings and unlinks what pointed at it rather th
 
 **Git** (`apps/server/src/projects/git.ts`, owner decision F-4, audit E-12). The server reads a
 project folder with `git -C <folder>`: `rev-parse --git-dir` (fails: `noRepository`), `remote -v`
-and `symbolic-ref --short HEAD`, with `GIT_TERMINAL_PROMPT=0` and `GIT_OPTIONAL_LOCKS=0`, so nothing
-waits for credentials or takes a lock, and `trackers.gitTimeoutMs` as the limit. Without git on the
+and `symbolic-ref --short HEAD`, with `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` and `GIT_OPTIONAL_LOCKS=0`
+(`gitEnvironment`), so nothing waits for credentials (no terminal prompt, no Git Credential
+Manager window on Windows) or takes a lock, and `trackers.gitTimeoutMs` as the limit. Without git on the
 PATH it reads `<folder>/.git/config` and `HEAD` itself (`gitUnavailable` when that fails too). A
 folder that is gone is `folderMissing`. `parseRemoteUrl` reads https, ssh://, git:// and scp-like
 `user@host:path` remotes and local paths, drops user names and passwords from https URLs, and

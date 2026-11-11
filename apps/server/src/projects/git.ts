@@ -222,6 +222,21 @@ const neverRun = ['-c', `core.hooksPath=${devNull}`, '-c', 'core.fsmonitor=false
 // Paths come back as they are, not quoted and escaped.
 const plainPaths = ['-c', 'core.quotePath=false'];
 
+// Git runs with nobody to answer it: no password prompt in a terminal, and no sign-in window
+// from Git Credential Manager (Windows), which would otherwise wait for a click.
+export function gitEnvironment(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...base,
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'never',
+    // No optional lock is taken in the user's repository.
+    GIT_OPTIONAL_LOCKS: '0',
+    // A file name is a name, never a pattern.
+    GIT_LITERAL_PATHSPECS: '1',
+    LC_ALL: 'C',
+  };
+}
+
 function runGit(
   folder: string,
   args: readonly string[],
@@ -237,15 +252,7 @@ function runGit(
         windowsHide: true,
         maxBuffer: 4 * 1024 * 1024,
         encoding: 'utf8',
-        env: {
-          ...process.env,
-          // Never wait for a password prompt or take an optional lock in the user's repository.
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_OPTIONAL_LOCKS: '0',
-          // A file name is a name, never a pattern.
-          GIT_LITERAL_PATHSPECS: '1',
-          LC_ALL: 'C',
-        },
+        env: gitEnvironment(process.env),
       },
       (error, stdout, stderr) => {
         if (!error) return resolve({ ok: true, stdout });
@@ -705,13 +712,15 @@ export async function pruneWorktrees(folder: string, options: GitRunOptions): Pr
 
 export interface Unpushed {
   readonly uncommittedFiles: number;
+  readonly ignoredFiles: number;
   readonly unpushedCommits: number;
   readonly newestSubject: string | null;
   readonly branch: string | null;
 }
 
 // What the folder holds that would be gone with it: files that are changed or new and not
-// committed (ignored files do not count), and commits that neither a branch on a remote nor the
+// committed, ignored files and folders (git keeps nothing of them, and a file the agent wrote
+// there may be the only copy), and commits that neither a branch on a remote nor the
 // commit the folder started at reaches. Undefined when git cannot say.
 export async function readUnpushed(
   folder: string,
@@ -728,15 +737,24 @@ export async function readUnpushed(
     ...new Set(visited.ok ? visited.stdout.split('\n').filter((sha) => sha !== '') : []),
   ];
   const [status, count, newest, branch] = await Promise.all([
-    runGit(folder, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], options),
+    runGit(
+      folder,
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'],
+      options,
+    ),
     runGit(folder, ['rev-list', '--count', ...tips, ...reached], options),
     runGit(folder, ['log', '-n1', '--format=%s', ...tips, ...reached], options),
     readCurrentBranch(folder, options),
   ]);
   if (!status.ok || !count.ok) return undefined;
   let uncommittedFiles = 0;
+  let ignoredFiles = 0;
   const entries = records(status.stdout);
   for (let at = 0; at < entries.length; at += 1) {
+    if (entries[at]?.startsWith('!!')) {
+      ignoredFiles += 1;
+      continue;
+    }
     uncommittedFiles += 1;
     // A rename or copy is followed by the path it came from.
     if (/^[RC]|^.[RC]/.test(entries[at] ?? '')) at += 1;
@@ -746,6 +764,7 @@ export async function readUnpushed(
   const subject = newest.ok ? newest.stdout.trim() : '';
   return {
     uncommittedFiles,
+    ignoredFiles,
     unpushedCommits,
     newestSubject: unpushedCommits > 0 && subject !== '' ? subject : null,
     branch,

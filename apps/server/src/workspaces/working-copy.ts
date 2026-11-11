@@ -268,7 +268,7 @@ export async function settleWorkingCopy({
       error: 'Git could not say what the working copy holds, so it was kept.',
     };
   }
-  if (unpushed.uncommittedFiles > 0 || unpushed.unpushedCommits > 0) {
+  if (unpushed.uncommittedFiles > 0 || unpushed.ignoredFiles > 0 || unpushed.unpushedCommits > 0) {
     return { state: 'kept', unpushed, error: null };
   }
   const removed = await removeWorktree(projectFolder, target, false, git);

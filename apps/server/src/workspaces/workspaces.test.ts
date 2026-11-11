@@ -10,7 +10,7 @@ import {
 import { plainProtector } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -430,10 +430,30 @@ describe('when the run ends (review loop spec 37)', () => {
     const kept = await runBecomes(copyIs('kept'));
     expect(kept.workingCopy?.unpushed).toEqual({
       uncommittedFiles: 1,
+      ignoredFiles: 0,
       unpushedCommits: 0,
       newestSubject: null,
       branch: null,
     });
+  });
+
+  it('keeps a working copy that only has a file the repository ignores', async () => {
+    await commit(project, '.gitignore', 'notes.local\n', 'Invented ignore list');
+    git(project, 'push', '-q', 'origin', 'main');
+    agent = (cwd) => {
+      writeFileSync(path.join(cwd, 'notes.local'), 'Invented notes\n');
+    };
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'one',
+      name: 'One step',
+      steps: [step('build')],
+      ownWorkingCopy: true,
+    });
+    start('one');
+    const kept = await runBecomes(copyIs('kept'));
+    expect(kept.workingCopy?.unpushed).toMatchObject({ uncommittedFiles: 0, ignoredFiles: 1 });
+    expect(existsSync(path.join(kept.workingCopy?.path ?? '', 'notes.local'))).toBe(true);
   });
 
   it('keeps and lists a working copy that could not be removed, with the reason, and tries nothing again', async () => {
@@ -472,6 +492,40 @@ describe('when the run ends (review loop spec 37)', () => {
     dispatch({ type: 'workflowRun.stop', runId: 'r1' });
     await runBecomes(copyIs('removed'));
     expect(existsSync(waiting.workingCopy?.path ?? '')).toBe(false);
+  });
+});
+
+describe('a working copy the server stopped while making', () => {
+  it('fails its run and takes away what git made of it', async () => {
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'gated',
+      name: 'Gated',
+      steps: [step('build', { gateBefore: true })],
+      ownWorkingCopy: true,
+    });
+    start('gated');
+    const ready = await runBecomes(copyIs('ready'));
+    const folder = ready.workingCopy?.path ?? '';
+    // As the row is when the server stops between git making the folder and the copy being
+    // stored as ready.
+    server.database.db
+      .update(workflowRuns)
+      .set({ workingCopy: { ...ready.workingCopy!, state: 'pending' } })
+      .where(eq(workflowRuns.id, 'r1'))
+      .run();
+    await server.stop();
+    server = await launch();
+    await server.workspaces.settled();
+    expect(run()).toMatchObject({
+      state: 'failed',
+      workingCopy: {
+        state: 'failed',
+        error: 'The server stopped while the working copy was being made',
+      },
+    });
+    expect(existsSync(folder)).toBe(false);
+    expect(git(project, 'worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);
   });
 });
 

@@ -261,6 +261,15 @@ describe('working copy words', () => {
         branch: 'agent/u1',
       }),
     ).toBe('3 commits not pushed (on agent/u1)');
+    expect(
+      unpushedSummary({
+        uncommittedFiles: 0,
+        ignoredFiles: 2,
+        unpushedCommits: 0,
+        newestSubject: null,
+        branch: null,
+      }),
+    ).toBe('2 ignored files (on no branch)');
   });
 
   it('names every state', () => {

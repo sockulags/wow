@@ -66,6 +66,9 @@ export function unpushedSummary(unpushed: UnpushedWork): string {
     ...(unpushed.uncommittedFiles > 0
       ? [`${count(unpushed.uncommittedFiles, 'file', 'files')} not committed`]
       : []),
+    ...((unpushed.ignoredFiles ?? 0) > 0
+      ? [`${count(unpushed.ignoredFiles ?? 0, 'ignored file', 'ignored files')}`]
+      : []),
     ...(unpushed.unpushedCommits > 0
       ? [`${count(unpushed.unpushedCommits, 'commit', 'commits')} not pushed`]
       : []),
