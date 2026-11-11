@@ -456,6 +456,51 @@ describe("a secret field card for a provider's environment variable (spec 14)", 
     });
   });
 
+  it('is drawn by the Assistant view after the call that asked for it', async () => {
+    const request = { providerInstanceId: 'claude-work', variable: 'ANTHROPIC_API_KEY' };
+    const thread = {
+      id: 'assistant',
+      kind: 'assistant' as const,
+      projectId: null,
+      cwd: '/home/me/.wow/assistant',
+      branch: null,
+      providerInstanceId: 'claude-work',
+      providerSessionId: null,
+      title: 'Assistant',
+      model: 'opus',
+      effort: 'high',
+      permissionMode: 'default',
+      state: 'idle' as const,
+      pinned: false,
+      runId: null,
+      stepId: null,
+      createdAt: at,
+      updatedAt: at,
+    };
+    const connection: Connection = {
+      state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
+      request: (method) =>
+        Promise.resolve(method === 'assistant.open' ? { thread: null, problem: null } : []),
+      subscribe(topic, _params, onData) {
+        const topics: Readonly<Record<string, unknown[]>> = {
+          assistantThread: [thread],
+          providerInstances: [instance({})],
+          threadItems: [toolCall('mcp__wow__show_secret_variable', request, '{"outcome":"shown"}')],
+        };
+        onData(topics[topic] ?? []);
+        return () => undefined;
+      },
+      retry: () => undefined,
+      close: () => undefined,
+    };
+    await renderApp('/assistant', { ...createTestRuntime(), connection });
+    expect(
+      await screen.findByRole('region', {
+        name: 'Secret field: ANTHROPIC_API_KEY (Claude at work)',
+      }),
+    ).toBeTruthy();
+  });
+
   it('is where a held message goes when the assistant asked for the variable last', () => {
     const asked = [
       { key: 'trackers.confluence.token' },
