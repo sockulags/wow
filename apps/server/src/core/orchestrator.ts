@@ -104,6 +104,12 @@ export interface ReadModel {
   backlogItemHasLiveRun(id: string): boolean;
   assistantChange(id: string): AssistantChangeRecord | undefined;
   assistantProposal(id: string): AssistantProposalRecord | undefined;
+  // What the user answered to the assistant after `since` (every answer without it), in the
+  // order answered: proposals they said Yes or No to, and changes they undid.
+  assistantAnswers(since: string | undefined): {
+    readonly proposals: AssistantProposalRecord[];
+    readonly undone: AssistantChangeRecord[];
+  };
 }
 
 export interface DecideContext {

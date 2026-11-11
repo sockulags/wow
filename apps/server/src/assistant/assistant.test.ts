@@ -30,6 +30,7 @@ import { startServer, type RunningServer } from '../server.js';
 import { commandClasses } from './classes.js';
 import { changeTools } from './tools.js';
 import { readers } from './readers.js';
+import { asks } from './asks.js';
 
 // The assistant's tools on the server (app assistant plan U1): every acceptance line of the
 // unit has a case here that names it.
@@ -226,7 +227,7 @@ describe('the assistant endpoint', () => {
     try {
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name).toSorted()).toEqual(
-        [...Object.keys(readers), ...Object.keys(changeTools)].toSorted(),
+        [...Object.keys(readers), ...Object.keys(asks), ...Object.keys(changeTools)].toSorted(),
       );
       expect(tools.every((tool) => tool.inputSchema.type === 'object')).toBe(true);
       const result = await client.callTool({ name: 'read_projects', arguments: {} });

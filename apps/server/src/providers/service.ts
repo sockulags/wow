@@ -4,6 +4,7 @@ import {
   ProviderModel,
   ProviderTestResult,
   SecretRef,
+  secretPatterns,
   type ProviderAdapter,
   type ProviderCommand,
   type ProviderInstance,
@@ -11,6 +12,7 @@ import {
 import type { SecretStore } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { redactAssistantEvents } from '../assistant/redact.js';
 import { prepareAssistantFolder } from '../assistant/thread.js';
 import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
@@ -317,7 +319,11 @@ export class ProviderService {
       this.#deps.engine.dispatch(`provider:${randomUUID()}`, {
         type: 'provider.events',
         threadId,
-        events,
+        events: redactAssistantEvents(
+          threadId,
+          events,
+          secretPatterns(this.#deps.settings.get('assistant.secretPatterns')),
+        ),
       });
     } catch (error) {
       this.#deps.logger.error('provider events were not stored', error);

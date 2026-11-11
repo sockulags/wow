@@ -239,16 +239,97 @@ What you can do
 - Read the state you need with the read tools before you change anything, and ask when something only the person can know is missing.
 - Make a change with the tool for it. An everyday change is applied at once and the conversation shows it with Undo. A change that lets wow do more on its own, and starting a run, is shown to the person as a proposal and happens only when they press Yes. You cannot answer a proposal yourself; say that it is waiting for them.
 - When wow refuses something, tell the person the reason wow gave.
+- A message can start with a note from wow saying what the person answered to your proposals and which changes they undid since your last turn. Take it into account; the person did not type it.
 - After a change, say what changed and where it lives in wow (for example Settings → Calendar, the workflow, the card).
 
 What is not yours
-- You operate wow only. When someone asks for other work (write this code, explain this error in my project, review this file), say that the chat view is for that and offer to open a new thread there with their text. Do not attempt the work.
+- You operate wow only. When someone asks for other work (write this code, explain this error in my project, review this file), say that the chat view is for that and offer to open a new thread there with their text (offer_project_work). Do not attempt the work.
 - You never approve, send back or stop a run that waits at a gate, and you never merge. Only the person does that; give them the link to the run.
 - You change nothing outside wow: you create no token on a host, install no provider and edit no provider configuration file.
 
 Secrets
 - Never ask for a token, password, key or any other secret, and never ask the person to paste one into this conversation. If they offer one, tell them not to send it here.
-- When a secret is needed, say where the person creates it and which rights it needs, and point them to the field in wow where it goes. You only ever learn whether a secret is set and whether the connection test passed.
+- When a secret is needed, say where the person creates it and which rights it needs, and put its field in front of them with show_secret_field. You only ever learn whether a secret is set and whether the connection test passed.
 - Never repeat anything that looks like a secret.
 
 Write plainly and briefly.`;
+
+// Tools that put something in front of the user instead of changing the app. The conversation
+// draws a card where the agent called them.
+
+// Asks for a secret setting's field (spec 14). The value typed there goes to the secret store
+// with `secrets.set`, as on the settings page; the agent only learns "set" or "not set".
+export const assistantSecretFieldTool = 'show_secret_field';
+export const SecretFieldRequest = z
+  .object({
+    // A setting marked `secret`, such as `trackers.gitlab.token`.
+    key: z.string().min(1),
+    // The project whose own value it is; absent for the shared value.
+    projectId: Id.optional(),
+  })
+  .strict();
+export type SecretFieldRequest = z.infer<typeof SecretFieldRequest>;
+
+// Offers to take a request that is not about operating wow to the chat view (spec 3).
+export const assistantProjectWorkTool = 'offer_project_work';
+export const ProjectWorkOffer = z.object({ text: z.string().min(1) }).strict();
+export type ProjectWorkOffer = z.infer<typeof ProjectWorkOffer>;
+
+// The name of one of wow's tools, from the name a provider reports for a tool call, or null for
+// any other tool. Claude Code names an MCP tool `mcp__<server>__<tool>` and Codex
+// `<server>/<tool>`; wow's server is `assistantToolsetName`.
+export function assistantToolOf(reported: string): string | null {
+  for (const prefix of [`mcp__${assistantToolsetName}__`, `${assistantToolsetName}/`]) {
+    if (reported.startsWith(prefix) && reported.length > prefix.length) {
+      return reported.slice(prefix.length);
+    }
+  }
+  return null;
+}
+
+// What a message that looks like a secret holds, for the line that holds it (spec 17): a few
+// words for the kind, the matched text, and the secret setting it most likely belongs in.
+export interface SecretMatch {
+  readonly kind: string;
+  readonly value: string;
+  readonly settingKey: string | null;
+}
+
+const secretKinds: ReadonlyArray<{
+  readonly test: RegExp;
+  readonly kind: string;
+  readonly settingKey: string | null;
+}> = [
+  {
+    test: /^(?:gh[pousr]_|github_pat_)/i,
+    kind: 'a GitHub token',
+    settingKey: 'trackers.github.token',
+  },
+  { test: /^glpat-/i, kind: 'a GitLab token', settingKey: 'trackers.gitlab.token' },
+  { test: /^ATATT/, kind: 'an Atlassian API token', settingKey: 'trackers.jira.token' },
+  { test: /^sk-/i, kind: 'an API key', settingKey: null },
+  { test: /^AKIA/, kind: 'an AWS access key', settingKey: null },
+  { test: /^xox/i, kind: 'a Slack token', settingKey: null },
+  { test: /^-----BEGIN/, kind: 'a private key', settingKey: null },
+];
+
+// The first part of `text` that the patterns of `assistant.secretPatterns` match, or null. The
+// server hides the same matches with `hideSecrets`.
+export function findSecret(text: string, patterns: readonly RegExp[]): SecretMatch | null {
+  let first: { index: number; value: string } | null = null;
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    const found = pattern.exec(text);
+    pattern.lastIndex = 0;
+    if (found && found[0] !== '' && (first === null || found.index < first.index)) {
+      first = { index: found.index, value: found[0] };
+    }
+  }
+  if (first === null) return null;
+  const known = secretKinds.find((entry) => entry.test.test(first.value));
+  return {
+    kind: known?.kind ?? 'a token or password',
+    value: first.value,
+    settingKey: known?.settingKey ?? null,
+  };
+}

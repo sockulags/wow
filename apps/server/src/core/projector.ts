@@ -7,7 +7,7 @@ import {
   type ProviderUpdateRun,
   type SubscriptionTopic,
 } from '@wow/contracts';
-import { and, asc, count, desc, eq, inArray, isNull, max, ne, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, isNull, max, ne, sql } from 'drizzle-orm';
 import type { DbOrTx } from '../db/database.js';
 import {
   approvals,
@@ -624,6 +624,28 @@ export function readModel(tx: DbOrTx): ReadModel {
       tx.select().from(assistantChanges).where(eq(assistantChanges.id, id)).get(),
     assistantProposal: (id) =>
       tx.select().from(assistantProposals).where(eq(assistantProposals.id, id)).get(),
+    assistantAnswers: (since) => ({
+      proposals: tx
+        .select()
+        .from(assistantProposals)
+        .where(
+          since === undefined
+            ? ne(assistantProposals.state, 'pending')
+            : gt(assistantProposals.answeredAt, since),
+        )
+        .orderBy(asc(assistantProposals.answeredAt))
+        .all(),
+      undone: tx
+        .select()
+        .from(assistantChanges)
+        .where(
+          since === undefined
+            ? eq(assistantChanges.state, 'undone')
+            : gt(assistantChanges.undoneAt, since),
+        )
+        .orderBy(asc(assistantChanges.undoneAt))
+        .all(),
+    }),
     trigger: (id) => tx.select().from(triggers).where(eq(triggers.id, id)).get(),
     eventTriggers: (projectId) =>
       tx

@@ -1536,8 +1536,8 @@ without a pull request and without a `blocked:` note stays `unknown` and says wh
 ## Assistant
 
 Behavior lives in `intents/2026-11-app-assistant/spec.md`. The assistant is a chat whose agent
-can only use wow's own tools. This section covers the server side of those tools and the
-assistant thread; the view comes with its own unit.
+can only use wow's own tools. This section covers the server side of those tools, the
+assistant thread and the Assistant view.
 
 **One MCP server on the wow port.** `apps/server/src/assistant/mcp.ts` answers
 `POST http://127.0.0.1:<port>/assistant/mcp` with MCP's Streamable HTTP transport, without
@@ -1632,7 +1632,7 @@ shell_environment_policy: {inherit: 'none'}}` (a command sees no environment var
   can read it; it enforces nothing.
 
 **Tools** (`assistant/tools.ts`, `AssistantTools`: `list()` and `call(name, args)`). There are
-two kinds and nothing else.
+three kinds and nothing else.
 
 - Read tools are the readers in `assistant/readers.ts`: `read_settings`, `read_projects`,
   `read_providers`, `read_workflows`, `read_templates`, `read_skills`, `read_calendar`,
@@ -1647,6 +1647,14 @@ two kinds and nothing else.
   makes one up, as a view does) and without fields the assistant never fills in (`stopRun`).
   The tool builds the command, runs the same folder check as `dispatch` over RPC, and
   dispatches it with the origin `assistant`. It has no other way into the store.
+- Asks (`assistant/asks.ts`) put a card in front of the user and change nothing; the view draws
+  the card from the tool call's own input. `show_secret_field {key, projectId?}`
+  (`assistantSecretFieldTool`) accepts only a setting marked `secret` and a project that
+  exists, and answers the setting's label, where the value goes and `set` or `not set`.
+  `offer_project_work {text}` (`assistantProjectWorkTool`) is for a request that is not about
+  operating wow (spec 3) and answers that the button is shown. No tool name has "thread",
+  "message", "file", "content" or "chat" in it, so the U1 test that no tool reads a thread or a
+  file still holds by name.
 
 Every result passes `hideSecretsDeep` with the patterns of `assistant.secretPatterns` before it
 leaves `call`, so text that looks like a secret arrives as `[hidden]` (spec 18). The log line
@@ -1731,11 +1739,73 @@ rejected with the reason and the proposal stays open. `assistant.proposal.declin
 (`accept`, `decline`, `undo`) are in the table as refused, so they only work with the user's
 origin.
 
+**What the agent reports is netted too** (`assistant/redact.ts`, `redactAssistantEvents`). The
+provider service passes every provider event of the assistant thread through `hideSecrets`
+before it dispatches `provider.events`: a tool call's name, input and output, text and
+reasoning deltas, a failure's words, and an approval or question. So a stored tool result
+shows `[hidden]` where the value was (spec 18), whatever tool or text it came from. Streamed
+text is checked piece by piece and a value split across two pieces passes; that is accepted,
+because the net is not the mechanism. Ordinary threads are stored as reported.
+
+**The user's answers in the next turn** (spec 10). `thread.sendMessage` to the assistant
+thread asks `ReadModel.assistantAnswers(since)` for the proposals answered and the changes
+undone after the last turn began (all of them before the first turn) and puts a note before
+the user's text in `start.prompt` (`assistantAnswersNote` in `assistant/thread.ts`): Yes or No
+with the title and a No's reason, and Undid with the change's text and place. The note passes
+the secret net, starts with `[From wow, not typed by the user]`, and the instruction text
+tells the agent so. The user item keeps only what the user typed, and the next turn's note has
+only what was answered since, so each answer reaches the agent once. An answer given in the
+same millisecond a turn started, after it started, is missed; a person cannot click that fast.
+
 Tests: `apps/server/src/assistant/assistant.test.ts` starts a whole server and has a case per
 line of the unit's contract. It stores a marked value in the secret store, calls every read
 tool, and searches every result, stored event, command receipt and log line for it; it does
 the same for a marked thread message and a marked file. One case speaks MCP to the endpoint
-with the SDK's own client.
+with the SDK's own client. `assistant/view.test.ts` covers what the view relies on: the two
+asks, a value saved in a secret field (searched for in every event, receipt, thread item, log
+line and prompt), the net over the agent's own reports, and the note in the next prompt, with
+the server's clock moved between turns.
+
+**The view** (`apps/web/src/assistant`, section "Assistant" above Settings, `/assistant`,
+`keybindings.goAssistant`, Mod+6). It calls `assistant.open` when it opens and again when an
+instance's status or `assistant.providerInstanceId` or `assistant.allowCodex` changes, and
+shows the `problem` sentence in a banner with links to Settings → Providers and Settings →
+Assistant (the composer is blocked with the same sentence); with no thread yet it shows only
+the sentence. The conversation is the chat view's `ThreadConversation` with
+`ConversationExtras` (`chat/thread-view.tsx`): rows after an item, rows at the end, the
+composer's ref, placeholder, blocked reason, a check before send and a notice line. Nothing of
+the chat view is copied. The `$` skill picker is off there.
+
+- Rows (`assistant/model.ts`, `placeRows`). A change row or proposal card goes right after the
+  tool call whose answer names its id (`change.id`, `proposal.id` in the call's output); one
+  whose call cannot be found goes at the end, in the order made. `assistantToolOf` in
+  `packages/contracts` reads wow's tool name from the name a provider reports
+  (`mcp__wow__<tool>` from Claude Code, `wow/<tool>` from Codex), so the view never looks at a
+  provider's naming itself.
+- Change row (`ChangeRow`): "what: from → to · place" with Undo (`assistant.undo`); greyed with
+  "Undone" when the topic says so; a refused Undo shows the server's reason under it.
+- Proposal card (`ProposalCard`): the title, one line per change, the place, Yes
+  (`assistant.proposal.accept`) and No, which opens an optional reason field and sends
+  `assistant.proposal.decline`. A refused Yes (stale, or the app refuses it now) shows the
+  reason and still offers No.
+- Secret field card (`SecretFieldCard`), drawn after a `show_secret_field` call: the setting's
+  label, where the value goes, the settings page's own `SecretField` (password field and Save,
+  through `storeSecretSetting`: `secrets.set` and then `setting.set` with the reference) and,
+  for a tracker token, `TestConnection`. It says "Set" from the `settings` topic once a
+  reference is stored at that scope.
+- Project work card (`ProjectWorkCard`), after `offer_project_work`: "Open in Chat" puts the
+  text in the draft store (`DraftState.text`) and opens `/chat/new`, whose composer takes it.
+- Held message. Before a message is sent or queued, `holdMessage` runs `findSecret` from
+  `packages/contracts` with `assistant.secretPatterns`, the same patterns the server hides.
+  A match keeps the text in the composer and shows a line above it: what it looks like ("a
+  GitHub token"), "Put it in <field>" and "Send anyway". The field is the one the token's kind
+  names (a GitHub, GitLab or Atlassian prefix), taking the project of a field the assistant
+  asked for, or else the field the assistant asked for last; without one only "Send anyway"
+  is offered. "Put it in" stores the matched text through `storeSecretSetting` and leaves the
+  rest of the message in the composer. A held message is sent nowhere until "Send anyway".
+- Palette (`assistant/commands.ts`): Yes and No for every waiting proposal (Yes under "Needs
+  you"), Undo for every applied change (the newest before typing). A refusal from the palette
+  is a toast with the reason. The sidebar counts waiting proposals as "need you".
 
 ## Chat view
 
@@ -2448,7 +2518,13 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   a backlog item's card run the way the scheduler will (`POST /fire`). The plans tests read invented intent
   folders that `e2e/plans-seed.ts` writes to the seeded project's `plan-files` folder, which the
   project's `plans.intentsDirectory` points at so the workflow tests' `intents/*` artifacts stay
-  as they are; one test rewrites a plan file and waits for the view to follow. The Changes tab
+  as they are; one test rewrites a plan file and waits for the view to follow. The assistant
+  tests (`e2e/assistant.spec.ts`) use a seventh copy (`e2eAssistantHome`, `e2eAssistantPort`),
+  because the assistant changes global settings and has one conversation per install; its
+  Claude instance is tested at start so the assistant can run, and its adapter is
+  `AssistantMockAgent` (`e2e/assistant-agent.ts`), which hands ordinary threads to the chat
+  script and answers a turn with wow's toolset by calling `server.assistant.tools` in process,
+  reported as `mcp__wow__<tool>`, with the scenario picked by the user's words. The Changes tab
   tests use a sixth copy (`e2eChangesHome`, `e2eChangesPort`), because opening a changed file
   opens the context panel, a global setting. The script creates an invented tea timer
   repository in its home with `git` (which the e2e machines therefore need on the PATH) and

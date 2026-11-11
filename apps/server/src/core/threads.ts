@@ -9,7 +9,7 @@ import type {
   Turn,
 } from '@wow/contracts';
 import { assistantThreadId } from '@wow/contracts';
-import { assistantThreadEvents } from '../assistant/thread.js';
+import { assistantAnswersNote, assistantThreadEvents } from '../assistant/thread.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 
 // Decisions for provider instances, threads, turns, approvals and questions. Provider events
@@ -201,6 +201,7 @@ export function decideThread(
       const assistant =
         stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
       const thread = assistant?.thread ?? stored;
+      const note = assistant ? assistantAnswersNote(read, context) : null;
       const index = read.turnCount(thread.id);
       const id = turnId(thread.id, index);
       return [
@@ -230,7 +231,7 @@ export function decideThread(
             providerInstanceId: thread.providerInstanceId,
             start: {
               cwd: thread.cwd,
-              prompt: command.text,
+              prompt: note ? `${note}\n\n${command.text}` : command.text,
               model: thread.model,
               effort: thread.effort,
               permissionMode: thread.permissionMode,

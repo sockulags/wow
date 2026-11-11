@@ -16,6 +16,7 @@ import { assistantChanges, assistantProposals } from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import { checkProjectFolder } from '../rpc/handlers.js';
 import { RpcFault } from '../rpc/router.js';
+import { asks } from './asks.js';
 import { alwaysRefused } from './classes.js';
 import { readers, type Reader, type ReaderDeps } from './readers.js';
 
@@ -202,7 +203,9 @@ export class AssistantTools {
 
   constructor(deps: AssistantToolsDeps) {
     this.#deps = deps;
-    for (const [name, tool] of Object.entries<Reader>(readers)) this.#inputs.set(name, tool.input);
+    for (const [name, tool] of Object.entries<Reader>({ ...readers, ...asks })) {
+      this.#inputs.set(name, tool.input);
+    }
     for (const [name, tool] of Object.entries<ChangeTool>(changeTools)) {
       // The table has the last word either way; a tool for a command it always refuses would
       // only offer something that cannot happen.
@@ -213,7 +216,11 @@ export class AssistantTools {
   }
 
   list(): ToolDescription[] {
-    const described: Record<string, { description: string }> = { ...readers, ...changeTools };
+    const described: Record<string, { description: string }> = {
+      ...readers,
+      ...asks,
+      ...changeTools,
+    };
     return [...this.#inputs].map(([name, input]) => ({
       name,
       description: described[name]?.description ?? name,
@@ -242,10 +249,9 @@ export class AssistantTools {
     const parsed = input.safeParse(args ?? {});
     if (!parsed.success) return failed('invalid input', problems(parsed.error));
     try {
-      if (Object.hasOwn(readers, name)) {
-        const tool: Reader = readers[name as keyof typeof readers];
-        return { content: await tool.read(parsed.data, this.#deps), isError: false };
-      }
+      const looks: Record<string, Reader> = { ...readers, ...asks };
+      const look = Object.hasOwn(looks, name) ? looks[name] : undefined;
+      if (look) return { content: await look.read(parsed.data, this.#deps), isError: false };
       const tool: ChangeTool = changeTools[name as ChangeToolName];
       return await this.#change(tool, parsed.data as Record<string, unknown>);
     } catch (error) {

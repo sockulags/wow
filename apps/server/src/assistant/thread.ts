@@ -1,6 +1,8 @@
 import {
   assistantThreadId,
   chooseAssistantProvider,
+  hideSecrets,
+  secretPatterns,
   providerChatOptions,
   type DomainEvent,
   type ProviderInstance,
@@ -238,4 +240,29 @@ export async function openAssistantThread(deps: OpenAssistantDeps): Promise<Open
     return { thread: now(), problem: error.message };
   }
   return { thread: now(), problem: null };
+}
+
+// What the user did with the assistant's work since its last turn began (spec 10): the
+// proposals they answered, with the reason given with a No, and the changes they undid. It goes
+// before the user's message in the prompt; the conversation shows only the message.
+export function assistantAnswersNote(read: ReadModel, context: DecideContext): string | null {
+  const since = read.lastTurn(assistantThreadId)?.startedAt;
+  const { proposals, undone } = read.assistantAnswers(since);
+  if (proposals.length === 0 && undone.length === 0) return null;
+  const sources = storedValue('assistant.secretPatterns', read, context);
+  const patterns = secretPatterns(
+    Array.isArray(sources) ? sources.filter((entry) => typeof entry === 'string') : [],
+  );
+  const lines = [
+    ...proposals.map((proposal) =>
+      proposal.state === 'accepted'
+        ? `- Yes to "${proposal.title}": it is applied.`
+        : `- No to "${proposal.title}": nothing changed.${proposal.reason ? ` Their reason: ${proposal.reason}` : ''}`,
+    ),
+    ...undone.map((change) => `- Undid "${change.what}" (${change.place.label}).`),
+  ];
+  return hideSecrets(
+    `[From wow, not typed by the user] Since your last turn the user answered:\n${lines.join('\n')}`,
+    patterns,
+  );
 }

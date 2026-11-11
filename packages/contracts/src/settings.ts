@@ -1320,6 +1320,11 @@ export const settingsRegistry = {
   'keybindings.goWorkflows': keybinding('Go to Workflows', 'Open the workflows.', 'Mod+3'),
   'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+4'),
   'keybindings.goPlans': keybinding('Go to Plans', 'Open the plans.', 'Mod+5'),
+  'keybindings.goAssistant': keybinding(
+    'Go to Assistant',
+    'Open the assistant, the chat that runs wow for you.',
+    'Mod+6',
+  ),
   'keybindings.goSettings': keybinding('Go to Settings', 'Open the settings.', 'Mod+,'),
   'keybindings.calendarToday': keybinding('Calendar: today', 'Show today in the calendar.', 'T'),
   'keybindings.calendarNext': keybinding(
