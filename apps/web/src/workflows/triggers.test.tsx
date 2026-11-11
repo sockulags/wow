@@ -278,6 +278,9 @@ describe('Triggers tab', () => {
     await user.click(dialog.getByRole('combobox', { name: 'Event' }));
     expect(await screen.findByRole('option', { name: 'Merge request merged' })).toBeTruthy();
     expect(screen.queryByRole('option', { name: 'Pull request merged' })).toBeNull();
+    expect(dialog.getByText(/on a merge request of a followed plan/)).toBeTruthy();
+    expect(dialog.getByText(/in the merge request’s working copy/)).toBeTruthy();
+    expect(dialog.queryByText(/pull request/)).toBeNull();
   });
 
   it('keeps the dialog open with what the server said when it refuses', async () => {

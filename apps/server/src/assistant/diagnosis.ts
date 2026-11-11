@@ -4,11 +4,12 @@ import {
   assistantDiagnosisTool,
   isEventTrigger,
   isLiveRunState,
+  projectCodeHost,
   resolveZoneSetting,
   settingGroupTitles,
   settingsRegistry,
   trackerConnectionLabels,
-  triggerEventLabels,
+  triggerEventLabel,
   type AssistantPlace,
   type Diagnosis,
   type DiagnosisProblem,
@@ -244,19 +245,32 @@ function triggers(deps: ReaderDeps, limit: number, names: Names): DiagnosisProbl
         isNull(t.triggerEvents.runId),
         eq(t.notifications.kind, 'failed'),
         eq(t.triggers.kind, 'event'),
-        sql`not exists (select 1 from ${t.triggerEvents} as other join ${t.notifications} as newer on newer.id = other.trigger_id || ':' || other.event_id || ':failed' where other.trigger_id = ${t.triggerEvents.triggerId} and other.run_id is null and newer.kind = 'failed' and (newer.at > ${t.notifications.at} or (newer.at = ${t.notifications.at} and newer.id > ${t.notifications.id})))`,
-        sql`not exists (select 1 from ${t.triggerEvents} as started where started.trigger_id = ${t.triggerEvents.triggerId} and started.run_id is not null and started.at > ${t.notifications.at})`,
+        sql`not exists (select 1 from ${t.triggerEvents} as other join ${t.notifications} as newer on newer.id = other.trigger_id || ':' || other.event_id || ':failed' where other.trigger_id = ${t.triggerEvents.triggerId} and other.run_id is null and newer.kind = 'failed' and (julianday(newer.at) > julianday(${t.notifications.at}) or (julianday(newer.at) = julianday(${t.notifications.at}) and newer.id > ${t.notifications.id})))`,
+        sql`not exists (select 1 from ${t.triggerEvents} as started where started.trigger_id = ${t.triggerEvents.triggerId} and started.run_id is not null and julianday(started.at) > julianday(${t.notifications.at}))`,
       ),
     )
     .orderBy(desc(t.notifications.at))
     .limit(limit)
+    .all();
+  const reads = deps.db
+    .select({
+      projectId: t.hostReads.projectId,
+      host: t.hostReads.host,
+      fetchedAt: t.hostReads.fetchedAt,
+    })
+    .from(t.hostReads)
+    .where(
+      inArray(t.hostReads.projectId, [
+        ...new Set(failures.flatMap(({ trigger }) => trigger.projectId ?? [])),
+      ]),
+    )
     .all();
   return failures.flatMap(({ trigger, body }) =>
     isEventTrigger(trigger)
       ? [
           {
             kind: 'trigger' as const,
-            what: `Trigger "${triggerEventLabels[trigger.event]}" for ${names.workflows.get(trigger.workflowId) ?? trigger.workflowId} in ${names.projects.get(trigger.projectId) ?? trigger.projectId}`,
+            what: `Trigger "${triggerEventLabel(trigger.event, projectCodeHost(reads, trigger.projectId))}" for ${names.workflows.get(trigger.workflowId) ?? trigger.workflowId} in ${names.projects.get(trigger.projectId) ?? trigger.projectId}`,
             reason: `It could not start a run: ${body}`,
             place: triggersPlace,
           },
@@ -265,13 +279,15 @@ function triggers(deps: ReaderDeps, limit: number, names: Names): DiagnosisProbl
   );
 }
 
-// A run of the workflow in the project that started after `startedAt` and ended done.
+// A run of the workflow in the project that started after `startedAt` and ended done. Times are
+// compared as instants: a card's start keeps the offset the command gave it, so text order is
+// not time order.
 const doneAfter = (
   workflowId: typeof t.workflowRuns.workflowId | typeof t.calendarItems.workflowId,
   projectId: typeof t.workflowRuns.projectId | typeof t.calendarItems.projectId,
   startedAt: typeof t.workflowRuns.startedAt | typeof t.calendarItems.start,
 ) =>
-  sql`exists (select 1 from ${t.workflowRuns} as later where later.state = 'done' and later.workflow_id = ${workflowId} and later.project_id = ${projectId} and later.started_at > ${startedAt})`;
+  sql`exists (select 1 from ${t.workflowRuns} as later where later.state = 'done' and later.workflow_id = ${workflowId} and later.project_id = ${projectId} and julianday(later.started_at) > julianday(${startedAt}))`;
 
 // A failed run counts until a later run of the same workflow in the same project ends done; a
 // failed plan run until a later plan run of the same plan ends done. A run whose workflow or
@@ -315,7 +331,7 @@ function runs(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[]
     .where(
       and(
         eq(t.planRuns.state, 'failed'),
-        sql`not exists (select 1 from ${t.planRuns} as later where later.state = 'done' and later.plan_id = ${t.planRuns.planId} and later.started_at > ${t.planRuns.startedAt})`,
+        sql`not exists (select 1 from ${t.planRuns} as later where later.state = 'done' and later.plan_id = ${t.planRuns.planId} and julianday(later.started_at) > julianday(${t.planRuns.startedAt}))`,
       ),
     )
     .orderBy(desc(t.planRuns.startedAt))
@@ -364,7 +380,7 @@ function cards(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[
         ),
       ),
     )
-    .orderBy(desc(t.calendarItems.start))
+    .orderBy(sql`julianday(${t.calendarItems.start}) desc`)
     .limit(limit)
     .all();
   return candidates.map(({ card, failure, offered }): DiagnosisProblem => {

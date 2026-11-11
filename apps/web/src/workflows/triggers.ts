@@ -1,5 +1,6 @@
 import {
   isEventTrigger,
+  projectCodeHost,
   TriggerEvent as TriggerEvents,
   triggerEventLabel,
   type EventTrigger,
@@ -171,15 +172,6 @@ export interface TriggerGroup {
 
 export const eventTriggers = (triggers: readonly Trigger[]): EventTrigger[] =>
   triggers.filter(isEventTrigger);
-
-// The code host a project's pull requests are on, as its newest host read names it; GitHub
-// until one was read.
-export function projectCodeHost(reads: readonly HostRead[], projectId: string): HostKind {
-  const newest = reads
-    .filter((read) => read.projectId === projectId && read.fetchedAt !== null)
-    .toSorted((a, b) => (b.fetchedAt ?? '').localeCompare(a.fetchedAt ?? ''))[0];
-  return newest?.host ?? 'github';
-}
 
 // The events a trigger can listen to, in the words of the project's host.
 export const eventChoices = (host: HostKind) =>

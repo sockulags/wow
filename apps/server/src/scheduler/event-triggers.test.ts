@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CommandRejected } from '../core/orchestrator.js';
 import { eventRunId } from '../core/triggers.js';
 import {
+  hostReads,
   notifications,
   providerInstances,
   triggerEvents,
@@ -792,6 +793,24 @@ describe('event trigger rows', () => {
     createTrigger('merged');
     expect(() => createTrigger('merged', 'again')).toThrow(
       'Tea timer already has a trigger that starts Fix it for "Pull request merged"',
+    );
+    // Once wow has read the project from GitLab, the refusal says merge request.
+    db()
+      .insert(hostReads)
+      .values({
+        id: `plan:${planId}`,
+        projectId: 'tea',
+        scope: 'plan',
+        host: 'gitlab',
+        hostName: 'gitlab.example.invalid',
+        branch: null,
+        changeRequestIds: [],
+        fetchedAt: now.toISOString(),
+        error: null,
+      })
+      .run();
+    expect(() => createTrigger('merged', 'again')).toThrow(
+      'Tea timer already has a trigger that starts Fix it for "Merge request merged"',
     );
     expect(() => createTrigger('merged', 'x', 'nope')).toThrow('No workflow nope');
     expect(() =>

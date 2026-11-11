@@ -338,6 +338,76 @@ describe('the diagnosis (spec 19, 20)', () => {
     ]);
   });
 
+  it('names the newest failure of each trigger in the words of a GitLab project, within the limit', async () => {
+    for (const id of ['mend', 'tidy']) {
+      dispatch({ type: 'workflow.create', workflowId: id, name: id, steps: [step('fix')] });
+      dispatch({
+        type: 'trigger.create',
+        triggerId: `on-merged-${id}`,
+        projectId: 'tea',
+        event: 'merged',
+        workflowId: id,
+      });
+    }
+    dispatch({
+      type: 'workflowRun.start',
+      runId: 'run-watch',
+      workflowId: 'brew',
+      projectId: 'tea',
+    });
+    const request = (number: number, merged: boolean): ChangeRequest => ({
+      id: `tea:${number}`,
+      projectId: 'tea',
+      host: 'gitlab',
+      number,
+      title: 'Ring the bell',
+      url: `https://gitlab.example.invalid/acme/tea/-/merge_requests/${number}`,
+      state: merged ? 'merged' : 'open',
+      draft: false,
+      mergedAt: merged ? new Date(clock).toISOString() : null,
+      headBranch: 'agent/bell',
+      headSha: 'b2b2b2b',
+      units: [],
+      checkState: 'none',
+      checks: [],
+      comments: [],
+      newestCommentId: null,
+    });
+    const sync = (...requests: ChangeRequest[]) =>
+      dispatch({
+        type: 'hosts.sync',
+        projectId: 'tea',
+        at: new Date(clock).toISOString(),
+        host: 'gitlab',
+        hostName: 'gitlab.example.invalid',
+        reads: [
+          {
+            id: 'run:run-watch',
+            scope: 'run',
+            branch: 'agent/bell',
+            result: { ok: true, changeRequestIds: requests.map((entry) => entry.id) },
+          },
+        ],
+        changeRequests: requests,
+      });
+    sync(request(14, false), request(15, false));
+    dispatch({ type: 'workflow.delete', workflowId: 'mend' });
+    dispatch({ type: 'workflow.delete', workflowId: 'tidy' });
+    clock = Date.parse(at(1));
+    sync(request(14, true), request(15, false));
+    clock = Date.parse(at(2));
+    sync(request(14, true), request(15, true));
+
+    const triggers = ofKind((await diagnose()).diagnosis.problems, 'trigger');
+    expect(triggers.map((problem) => problem.what).toSorted()).toEqual([
+      'Trigger "Merge request merged" for mend in Tea',
+      'Trigger "Merge request merged" for tidy in Tea',
+    ]);
+    expect(triggers.every((problem) => problem.reason.includes('!15'))).toBe(true);
+    set('assistant.diagnosisLimit', 1);
+    expect(ofKind((await diagnose()).diagnosis.problems, 'trigger')).toHaveLength(1);
+  });
+
   it('names a failed run with its error and its link, until a later run of it ends done', async () => {
     set('calendar.zone', 'Europe/Stockholm');
     dispatch({ type: 'workflowRun.start', runId: 'run-1', workflowId: 'brew', projectId: 'tea' });
@@ -530,5 +600,38 @@ describe('the diagnosis (spec 19, 20)', () => {
       artifactsFound: [],
     });
     expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toEqual([]);
+  });
+
+  it('compares a card start that carries an offset as an instant, not as text', async () => {
+    clock = Date.parse(at(60));
+    const card = (cardId: string, start: string, end: string) =>
+      dispatch({
+        type: 'card.create',
+        cardId,
+        title: cardId,
+        start,
+        end,
+        zone: 'Europe/Stockholm',
+        projectId: 'tea',
+        workflowId: 'brew',
+      });
+    // 07:30Z, before the run below; 08:30Z, after it.
+    card('Before', '2026-11-10T08:30:00+01:00', '2026-11-10T08:45:00+01:00');
+    card('After', '2026-11-10T07:30:00-01:00', '2026-11-10T07:45:00-01:00');
+    expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toHaveLength(2);
+    // A run that starts at 08:00Z and ends done.
+    clock = Date.parse(now);
+    dispatch({ type: 'workflowRun.start', runId: 'run-8', workflowId: 'brew', projectId: 'tea' });
+    expect(runOf('run-8')?.startedAt).toBe(now);
+    dispatch({
+      type: 'workflowRun.stepCompleted',
+      runId: 'run-8',
+      stepId: 'pour',
+      finalMessage: 'Poured.',
+      artifactsFound: [],
+    });
+    expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toEqual([
+      expect.objectContaining({ what: expect.stringMatching(/^Card "After"/) }),
+    ]);
   });
 });

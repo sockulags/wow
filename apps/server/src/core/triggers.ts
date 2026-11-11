@@ -3,8 +3,8 @@ import {
   isCardTrigger,
   isEventTrigger,
   isLiveRunState,
+  projectCodeHost,
   triggerEventLabel,
-  triggerEventLabels,
   type AppNotification,
   type CalendarItem,
   type CardState,
@@ -291,7 +291,7 @@ export function decideTrigger(
       if (same) {
         throw new CommandRejected(
           'conflict',
-          `${project.name} already has a trigger that starts ${workflow.name} for "${triggerEventLabels[command.event]}"`,
+          `${project.name} already has a trigger that starts ${workflow.name} for "${triggerEventLabel(command.event, projectCodeHost(read.hostReads(project.id), project.id))}"`,
         );
       }
       return [

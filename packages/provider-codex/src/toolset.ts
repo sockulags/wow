@@ -24,9 +24,10 @@ export const toolsOnlySandbox: NonNullable<TurnStartParams['sandboxPolicy']> = {
 // their own work are not there, web search off, codex's switchable tools off (commands, image
 // viewing, subagents, goals, apps, image generation, computer and browser use, plugins, skill
 // search, tool suggestions, sleep, code mode, questions to the user; each is a feature
-// `codex features list` of 0.166.0 shows on by default), the user's own hooks off, since they
-// run the user's commands, and a shell environment that inherits nothing, so a command the agent runs, if
-// one is still offered, sees no variable of wow's or the instance's (an API key among them). The
+// `codex features list` of 0.166.0 shows on by default; unified_exec is sent too, though that
+// list still shows it on with the override), the user's own hooks off, since they run the
+// user's commands, and a shell environment that inherits nothing, so a command the agent runs,
+// if one is still offered, sees no variable of wow's or the instance's (an API key among them). The
 // token travels in a header of the MCP server entry and only over stdio to the app-server.
 export function toolsOnlySettings(
   toolset: Toolset,

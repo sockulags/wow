@@ -298,6 +298,22 @@ describe('per-project trackers', () => {
     expect(authorization).toBe('Bearer gh');
   });
 
+  it('names a <name>.ghe.com project by its own host, not its API host', async () => {
+    await project('p-octo', 'Octo', 'https://octo.ghe.com/acme/widgets.git');
+    set('trackers.github.token', await server.secrets.set('setting:trackers.github.token', 'gh'));
+    dispatch({
+      type: 'setting.set',
+      key: 'trackers.github.baseUrl',
+      scope: 'global',
+      value: 'https://api.octo.ghe.com',
+    });
+    expect(await server.trackers.githubHost('p-octo')).toMatchObject({ name: 'octo.ghe.com' });
+    expect(await server.trackers.preview('b1', 'github', 'p-octo')).toMatchObject({
+      target: 'acme/widgets',
+      targetHost: 'octo.ghe.com',
+    });
+  });
+
   it('lets a project override the remote and the shared token, and forgets its token on removal', async () => {
     await project('p-widgets', 'Widgets', 'git@github.com:acme/widgets.git');
     set('trackers.github.token', await server.secrets.set('setting:trackers.github.token', 'gh'));

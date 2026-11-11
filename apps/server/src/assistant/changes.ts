@@ -3,11 +3,13 @@ import {
   SecretPattern,
   gatePartLabels,
   hideSecretsDeep,
+  projectCodeHost,
   ruleConditionText,
   secretPatterns,
   settingGroupTitles,
   settingsRegistry,
-  triggerEventLabels,
+  TriggerEvent,
+  triggerEventLabel,
   type AssistantChangeRecord,
   type AssistantPlace,
   type AssistantProposalRecord,
@@ -27,6 +29,10 @@ import { resolveStored } from '../settings/service.js';
 // and the projections.
 
 type Row = Record<string, unknown>;
+
+// An event's label in the words of the project's code host.
+const eventLabel = (event: TriggerEvent, projectId: string, read: ReadModel): string =>
+  triggerEventLabel(event, projectCodeHost(read.hostReads(projectId), projectId));
 
 // A row's own bookkeeping, which says nothing about what the user or the assistant changed.
 const bookkeeping: ReadonlySet<string> = new Set(['updatedAt']);
@@ -223,8 +229,9 @@ function nameOf(
     case 'plan':
       return `Plan "${text('title')}"`;
     case 'trigger': {
-      const event = triggerEventLabels[row['event'] as keyof typeof triggerEventLabels];
-      return `Trigger "${event ?? target.id}"`;
+      const event = TriggerEvent.safeParse(row['event']);
+      const projectId = String(row['projectId'] ?? '');
+      return `Trigger "${event.success ? eventLabel(event.data, projectId, read) : target.id}"`;
     }
   }
 }
@@ -851,7 +858,7 @@ export function proposalOf(
           title: `New event trigger in ${projectName(command.projectId)}`,
           lines: [
             {
-              what: `When "${triggerEventLabels[command.event]}"`,
+              what: `When "${eventLabel(command.event, command.projectId, read)}"`,
               from: null,
               to: `start ${workflowName(command.workflowId)}`,
             },
@@ -860,7 +867,9 @@ export function proposalOf(
         };
       case 'trigger.setEnabled': {
         const trigger = read.trigger(command.triggerId);
-        const event = trigger?.event ? triggerEventLabels[trigger.event] : command.triggerId;
+        const event = trigger?.event
+          ? eventLabel(trigger.event, trigger.projectId ?? '', read)
+          : command.triggerId;
         return {
           title: `Turn on the trigger "${event}"`,
           lines: [

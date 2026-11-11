@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { CommandRejected } from '../core/orchestrator.js';
 import { snapshot } from '../core/subscriptions.js';
-import { commandReceipts, events } from '../db/schema.js';
+import { commandReceipts, events, hostReads } from '../db/schema.js';
 import { startServer, type RunningServer } from '../server.js';
 import { commandClasses } from './classes.js';
 import { changeTools } from './tools.js';
@@ -1309,6 +1309,39 @@ describe('proposals', () => {
     expect(refusal(() => asUser({ type: 'assistant.proposal.accept', proposalId }))).toContain(
       'was already declined',
     );
+  });
+
+  it('word a trigger of a GitLab project as a merge request', async () => {
+    server.database.db
+      .insert(hostReads)
+      .values({
+        id: 'plan:tea:kettle',
+        projectId: 'tea',
+        scope: 'plan',
+        host: 'gitlab',
+        hostName: 'gitlab.example.invalid',
+        branch: null,
+        changeRequestIds: [],
+        fetchedAt: '2026-11-10T08:00:00.000Z',
+        error: null,
+      })
+      .run();
+    await call('create_trigger', { projectId: 'tea', event: 'merged', workflowId: 'delivery' });
+    asUser({
+      type: 'trigger.create',
+      triggerId: 'on-merge',
+      projectId: 'tea',
+      event: 'merged',
+      workflowId: 'delivery',
+    });
+    asUser({ type: 'trigger.setEnabled', triggerId: 'on-merge', enabled: false });
+    await call('set_trigger_enabled', { triggerId: 'on-merge', enabled: true });
+    expect(proposals().map(({ title, lines }) => ({ title, what: lines[0]?.what }))).toEqual([
+      { title: 'New event trigger in Tea', what: 'When "Merge request merged"' },
+      { title: 'Turn on the trigger "Merge request merged"', what: 'Start Delivery in Tea' },
+    ]);
+    await call('delete_trigger', { triggerId: 'on-merge' });
+    expect(changes().map(({ what }) => what)).toEqual(['Trigger "Merge request merged"']);
   });
 
   it("fail at Yes with the app's reason when the app refuses the command by then, and stay open", async () => {

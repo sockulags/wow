@@ -123,6 +123,22 @@ export const HostRead = z.object({
 });
 export type HostRead = z.infer<typeof HostRead>;
 
+// The code host a project's pull requests are on, as its newest host read names it; GitHub
+// until one was read.
+export function projectCodeHost(
+  reads: readonly Pick<HostRead, 'projectId' | 'host' | 'fetchedAt'>[],
+  projectId: string,
+): HostKind {
+  const newest = reads
+    .filter((read) => read.projectId === projectId && read.fetchedAt !== null)
+    .toSorted((a, b) => (b.fetchedAt ?? '').localeCompare(a.fetchedAt ?? ''))[0];
+  return newest?.host ?? 'github';
+}
+
+// What the host calls a change request: GitLab's are merge requests.
+export const changeRequestNoun = (host: HostKind): string =>
+  host === 'gitlab' ? 'merge request' : 'pull request';
+
 export const hostReadId = (scope: HostReadScope, id: string): string => `${scope}:${id}`;
 export const changeRequestId = (projectId: string, number: number): string =>
   `${projectId}:${number}`;
