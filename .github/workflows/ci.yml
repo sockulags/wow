@@ -56,7 +56,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @wow/web exec playwright install --with-deps chromium
+      # The system packages come from the distribution's mirrors. When those cannot be reached the
+      # browser alone is installed: the runner image already has the libraries Chromium needs,
+      # and a missing one fails the first test loudly.
+      - run: |
+          pnpm --filter @wow/web exec playwright install --with-deps chromium ||
+            pnpm --filter @wow/web exec playwright install chromium
+        shell: bash
       - run: pnpm e2e
         env:
           CI: 'true'
