@@ -609,7 +609,13 @@ folder skill, invoked as before (`plugin:name` for a Claude plugin's), or a buil
 reserved name; `source: 'yours'` keeps an own skill apart from a folder skill of the same name,
 and each is listed with its own group. `skillToSend(skills, ref, providerKind, values)` answers a
 wow skill's text (a built-in one filled) or a folder skill's invocation, or nothing for a wow
-skill that is not in the list. `promptWithSkills(parts, tail)` puts each wow skill's text as its
+skill that is not in the list. Two hand-written folders can give own skills the same name, and a
+`SkillRef` names a skill by name only, so for such a name it answers `refused` with
+`ambiguousOwnSkill` (contracts `skills.ts`), the sentence that names every folder: the message is
+refused with it, a step fails before it starts with it, and `skill.update` and `skill.delete` of
+that name are refused. Every skill list shows the folder beside such a skill
+(`sharedOwnSkillFolders`; the builder's one choice names both folders, and `read_skills` gives
+`folder` and `cannotUse`). `promptWithSkills(parts, tail)` puts each wow skill's text as its
 own block marked with its name:
 
 ```text

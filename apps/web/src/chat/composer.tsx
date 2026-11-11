@@ -1,4 +1,11 @@
-import { skillGroupLabels, type ProviderKind, type Skill, type SkillRef } from '@wow/contracts';
+import {
+  ambiguousOwnSkill,
+  ownSkillFolder,
+  skillGroupLabels,
+  type ProviderKind,
+  type Skill,
+  type SkillRef,
+} from '@wow/contracts';
 import { ArrowUpIcon, ClockIcon, SquareIcon, XIcon } from 'lucide-react';
 import {
   useEffect,
@@ -68,6 +75,7 @@ export interface ComposerProps {
 function SkillPicker({
   id,
   skills,
+  all,
   active,
   kind,
   onPick,
@@ -75,6 +83,8 @@ function SkillPicker({
 }: {
   id: string;
   skills: readonly Skill[];
+  // Every skill, to tell which own skills share a name.
+  all: readonly Skill[];
   active: Skill | undefined;
   kind: ProviderKind;
   onPick(skill: Skill): void;
@@ -109,6 +119,12 @@ function SkillPicker({
                     <span className="flex w-full items-baseline gap-2 [&>svg]:size-3 [&>svg]:self-center">
                       <SkillMark group={group} />
                       <span className="font-medium">{skill.name}</span>
+                      {skill.source === 'yours' &&
+                        ambiguousOwnSkill(all, skill.name) !== undefined && (
+                          <span className="font-mono text-2xs text-muted-foreground">
+                            in {ownSkillFolder(skill)}
+                          </span>
+                        )}
                       {/* A wow skill goes as its text; only a folder skill has an invocation. */}
                       {skill.text === undefined && (
                         <span className="font-mono text-2xs text-muted-foreground">
@@ -477,6 +493,7 @@ export function Composer({
           <SkillPicker
             id={pickerId}
             skills={matches}
+            all={skills ?? []}
             active={activeSkill}
             kind={providerKind}
             onPick={pick}

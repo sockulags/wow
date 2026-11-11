@@ -553,7 +553,9 @@ of the three offers **Undo**. A name that is not allowed or already taken is ref
 reason, and nothing is saved. wow keeps each skill as a `SKILL.md` file under its home folder
 (`~/.wow/skills/<name>/SKILL.md`); a file you put there by hand is listed after **Refresh skills**.
 Editing such a file changes only its name, description and text and keeps every other line of its
-frontmatter, and **Undo** of an edit or a delete puts the file back exactly as it was.
+frontmatter, and **Undo** of an edit or a delete puts the file back exactly as it was. When two
+folders name a skill the same, both are listed with their folder beside the name, and wow sends,
+runs, edits and deletes neither until you rename one in its `SKILL.md`; it says which folders.
 Your skills come first in every skill list. The palette has **New skill**, and **Edit skill** and
 **Delete skill** for each of yours.
 

@@ -1,4 +1,5 @@
 import {
+  ambiguousOwnSkill,
   isBuiltInSkillName,
   ownSkillNameProblem,
   type BuiltInSkillValues,
@@ -50,6 +51,8 @@ const ownSkill = (read: ReadModel, name: string): Skill | undefined =>
   read.skills().find((skill) => skill.source === 'yours' && skill.name === name);
 
 function requireOwn(read: ReadModel, name: string): Skill {
+  const shared = ambiguousOwnSkill(read.skills(), name);
+  if (shared !== undefined) throw new CommandRejected('rejected', shared);
   const skill = ownSkill(read, name);
   if (skill) return skill;
   if (read.skills().some((entry) => entry.source === 'wow' && entry.name === name)) {
@@ -190,6 +193,8 @@ export function decideSkill(
 // or a built-in one switched off.
 export type SkillToSend =
   | { readonly kind: 'text'; readonly name: string; readonly source: string; readonly text: string }
+  // An own skill whose name two folders share: neither is sent, and the reason says why.
+  | { readonly kind: 'refused'; readonly name: string; readonly reason: string }
   | {
       readonly kind: 'invoke';
       readonly name: string;
@@ -206,6 +211,8 @@ export function skillToSend(
   // A built-in skill's name is kept for it, so a step naming one without a source means it.
   const source = ref.source ?? (isBuiltInSkillName(ref.name) ? 'wow' : undefined);
   if (source !== undefined) {
+    const shared = source === 'yours' ? ambiguousOwnSkill(skills, ref.name) : undefined;
+    if (shared !== undefined) return { kind: 'refused', name: ref.name, reason: shared };
     const skill = skills.find((entry) => entry.source === source && entry.name === ref.name);
     if (!skill) return undefined;
     const text = skill.text ?? '';
@@ -317,6 +324,7 @@ export function messageWithSkills(
   const found = refs.map((ref) => {
     const skill = skillToSend(skills, ref, provider, values);
     if (!skill) throw new CommandRejected('rejected', missingSkillSentence(ref.name));
+    if (skill.kind === 'refused') throw new CommandRejected('rejected', skill.reason);
     return skill;
   });
   const parts: PromptSkillPart[] = found.map((skill) =>
@@ -330,7 +338,10 @@ export function messageWithSkills(
   };
 }
 
-export const sentSkill = (skill: SkillToSend, reason?: string): SentSkill => ({
+export const sentSkill = (
+  skill: Exclude<SkillToSend, { kind: 'refused' }>,
+  reason?: string,
+): SentSkill => ({
   name: skill.name,
   source: skill.source,
   ...(skill.kind === 'text' ? { text: skill.text } : { invocation: skill.invocation }),
