@@ -1841,7 +1841,9 @@ the chat view is copied. The `$` skill picker is off there.
   `assistant.proposal.decline`. A reason that looks like a secret is not sent and the card
   says why. A refused Yes (stale, or the app refuses it now) shows the reason and still offers
   No.
-- Secret field card (`SecretFieldCard`), drawn after a `show_secret_field` call: the setting's
+- Secret field card (`SecretFieldCard`), drawn after a `show_secret_field` call the server
+  answered (`status` ok and `outcome` `shown`; a refused or running call draws nothing, and the
+  project work card likewise needs `offered`): the setting's
   label, where the value goes, the settings page's own `SecretField` (password field and Save,
   through `storeSecretSetting`: `secrets.set` and then `setting.set` with the reference) and,
   for a tracker token, `TestConnection`. Above the field it shows the token guide's steps

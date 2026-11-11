@@ -86,40 +86,47 @@ export type Ask =
       readonly kind: 'secretField';
       readonly request: SecretFieldRequest;
       // The token guide the tool answered with (spec 15), shown above the field; null for a
-      // secret that is not a host token, or an answer that is not in yet.
+      // secret that is not a host token.
       readonly guide: TokenGuide | null;
     }
   | { readonly kind: 'projectWork'; readonly offer: ProjectWorkOffer };
 
-const GuideAnswer = z.object({ guide: TokenGuide });
-
-// The guide in what the secret field tool answered, read from the stored tool result.
-function guideOf(output: string): TokenGuide | null {
-  let parsed: unknown;
+// What the tool answered, read from the stored tool result: wow's tools answer JSON.
+function answerOf(output: string): unknown {
   try {
-    parsed = JSON.parse(output);
+    return JSON.parse(output);
   } catch {
-    return null;
+    return undefined;
   }
-  const answer = GuideAnswer.safeParse(parsed);
-  return answer.success ? answer.data.guide : null;
 }
 
-// The card a tool call of the agent asks for, read from what it called the tool with.
+const Answered = <T extends string>(outcome: T) => z.object({ outcome: z.literal(outcome) });
+const FieldShown = Answered('shown').extend({ guide: z.unknown().optional() });
+const WorkOffered = Answered('offered');
+
+// The card a tool call of the agent asks for: the input says which, and only a call the server
+// answered with its outcome draws it. A call it refused, or one still running, draws nothing, so
+// a field the server would not show can never be saved from here.
 export function askOf(item: ThreadItem): Ask | null {
   if (item.kind !== 'tool_call') return null;
   const payload = ToolCallItemPayload.safeParse(item.payload);
-  if (!payload.success) return null;
+  if (!payload.success || payload.data.status !== 'ok') return null;
   const tool = assistantToolOf(payload.data.name);
   if (tool === assistantSecretFieldTool) {
     const request = SecretFieldRequest.safeParse(payload.data.input);
-    return request.success
-      ? { kind: 'secretField', request: request.data, guide: guideOf(payload.data.output) }
+    const answer = FieldShown.safeParse(answerOf(payload.data.output));
+    return request.success && answer.success
+      ? {
+          kind: 'secretField',
+          request: request.data,
+          guide: TokenGuide.safeParse(answer.data.guide).data ?? null,
+        }
       : null;
   }
   if (tool === assistantProjectWorkTool) {
     const offer = ProjectWorkOffer.safeParse(payload.data.input);
-    return offer.success ? { kind: 'projectWork', offer: offer.data } : null;
+    const answer = WorkOffered.safeParse(answerOf(payload.data.output));
+    return offer.success && answer.success ? { kind: 'projectWork', offer: offer.data } : null;
   }
   return null;
 }

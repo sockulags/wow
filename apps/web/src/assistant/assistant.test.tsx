@@ -145,12 +145,17 @@ describe('placing rows in the conversation (spec 7, 13)', () => {
     expect(rest.changes.map((row) => row.id)).toEqual(['assistant-c2', 'assistant-c3']);
   });
 
-  it('reads the cards a tool call asks for from its input', () => {
-    const field = toolCall('mcp__wow__show_secret_field', {
-      key: 'trackers.gitlab.token',
-      projectId: 'tea',
-    });
-    const work = toolCall('wow/offer_project_work', { text: 'Fix the kettle test' });
+  it('reads the cards a tool call asks for from its input, once the server answered it', () => {
+    const field = toolCall(
+      'mcp__wow__show_secret_field',
+      { key: 'trackers.gitlab.token', projectId: 'tea' },
+      JSON.stringify({ outcome: 'shown', secret: 'not set' }),
+    );
+    const work = toolCall(
+      'wow/offer_project_work',
+      { text: 'Fix the kettle test' },
+      JSON.stringify({ outcome: 'offered' }),
+    );
     expect(askOf(field)).toEqual({
       kind: 'secretField',
       request: { key: 'trackers.gitlab.token', projectId: 'tea' },
@@ -158,7 +163,15 @@ describe('placing rows in the conversation (spec 7, 13)', () => {
     });
     expect(askOf(work)).toEqual({ kind: 'projectWork', offer: { text: 'Fix the kettle test' } });
     expect(askOf(toolCall('mcp__wow__read_settings', {}))).toBeNull();
-    expect(askOf(toolCall('show_secret_field', { key: 'trackers.gitlab.token' }))).toBeNull();
+    expect(
+      askOf(
+        toolCall(
+          'show_secret_field',
+          { key: 'trackers.gitlab.token' },
+          JSON.stringify({ outcome: 'shown' }),
+        ),
+      ),
+    ).toBeNull();
     expect(askedFields([text('x'), field, work])).toEqual([
       { key: 'trackers.gitlab.token', projectId: 'tea' },
     ]);
@@ -332,6 +345,42 @@ const gitlabGuide: TokenGuide = {
   copy: 'The token GitLab shows once after Create, starting with glpat-.',
 };
 
+describe('a card only for a call the server answered', () => {
+  const refused = JSON.stringify({
+    outcome: 'refused',
+    reason: 'calendar.workHours is not a secret setting',
+  });
+
+  it('draws no secret field or project work card for a refused, failed or running call', () => {
+    for (const status of ['ok', 'error', 'running'] as const) {
+      const field = {
+        ...toolCall('mcp__wow__show_secret_field', { key: 'calendar.workHours' }, refused),
+      };
+      const work = toolCall('mcp__wow__offer_project_work', { text: 'Fix it' }, refused);
+      for (const item of [field, work]) {
+        const payload = { ...(item.payload as Record<string, unknown>), status };
+        expect(askOf({ ...item, payload })).toBeNull();
+      }
+    }
+    const shown = JSON.stringify({ outcome: 'shown', secret: 'not set' });
+    const running = toolCall(
+      'mcp__wow__show_secret_field',
+      { key: 'trackers.gitlab.token' },
+      shown,
+    );
+    expect(
+      askOf({ ...running, payload: { ...(running.payload as object), status: 'running' } }),
+    ).toBeNull();
+    expect(askOf(running)).toMatchObject({ kind: 'secretField' });
+    expect(
+      askedFields([
+        running,
+        toolCall('mcp__wow__show_secret_field', { key: 'trackers.jira.token' }, refused),
+      ]),
+    ).toEqual([{ key: 'trackers.gitlab.token' }]);
+  });
+});
+
 describe('the token guide on a secret field card (spec 15)', () => {
   it('is read from what the secret field tool answered', () => {
     const field = toolCall(
@@ -344,8 +393,15 @@ describe('the token guide on a secret field card (spec 15)', () => {
       request: { key: 'trackers.gitlab.token' },
       guide: gitlabGuide,
     });
-    const unparsed = toolCall('mcp__wow__show_secret_field', { key: 'trackers.gitlab.token' }, '{');
+    const unparsed = toolCall(
+      'mcp__wow__show_secret_field',
+      { key: 'trackers.gitlab.token' },
+      JSON.stringify({ outcome: 'shown', secret: 'not set', guide: { steps: 'none' } }),
+    );
     expect(askOf(unparsed)).toMatchObject({ guide: null });
+    expect(
+      askOf(toolCall('mcp__wow__show_secret_field', { key: 'trackers.gitlab.token' }, '{')),
+    ).toBeNull();
   });
 
   it("shows the steps with links to the user's host, the rights, what to copy and the versions, above the field", async () => {
