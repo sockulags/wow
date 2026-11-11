@@ -4,7 +4,6 @@ import {
   SecretPattern,
   gatePartLabels,
   hideSecretsDeep,
-  projectCodeHost,
   repeatRuleWords,
   ruleConditionText,
   secretPatterns,
@@ -23,7 +22,7 @@ import {
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
-import type { DecideContext, ReadModel } from '../core/orchestrator.js';
+import { codeHostOf, type DecideContext, type ReadModel } from '../core/orchestrator.js';
 import { triggersPath } from '../core/triggers.js';
 import { resolveStored } from '../settings/service.js';
 
@@ -35,8 +34,12 @@ import { resolveStored } from '../settings/service.js';
 type Row = Record<string, unknown>;
 
 // An event's label in the words of the project's code host.
-const eventLabel = (event: TriggerEvent, projectId: string, read: ReadModel): string =>
-  triggerEventLabel(event, projectCodeHost(read.hostReads(projectId), projectId));
+const eventLabel = (
+  event: TriggerEvent,
+  projectId: string,
+  read: ReadModel,
+  context: DecideContext,
+): string => triggerEventLabel(event, codeHostOf(read, context, projectId));
 
 // A row's own bookkeeping, which says nothing about what the user or the assistant changed.
 // A card's next fire time follows its trigger, and its past series follow its changes.
@@ -298,7 +301,7 @@ function nameOf(
     case 'trigger': {
       const event = TriggerEvent.safeParse(row['event']);
       const projectId = String(row['projectId'] ?? '');
-      return `Trigger "${event.success ? eventLabel(event.data, projectId, read) : target.id}"`;
+      return `Trigger "${event.success ? eventLabel(event.data, projectId, read, context) : target.id}"`;
     }
     case 'skill':
       return `Skill "${target.id}"`;
@@ -1007,7 +1010,7 @@ export function proposalOf(
           title: `New event trigger in ${projectName(command.projectId)}`,
           lines: [
             {
-              what: `When "${eventLabel(command.event, command.projectId, read)}"`,
+              what: `When "${eventLabel(command.event, command.projectId, read, context)}"`,
               from: null,
               to: `start ${workflowName(command.workflowId)}`,
             },
@@ -1017,7 +1020,7 @@ export function proposalOf(
       case 'trigger.setEnabled': {
         const trigger = read.trigger(command.triggerId);
         const event = trigger?.event
-          ? eventLabel(trigger.event, trigger.projectId ?? '', read)
+          ? eventLabel(trigger.event, trigger.projectId ?? '', read, context)
           : command.triggerId;
         return {
           title: `Turn on the trigger "${event}"`,

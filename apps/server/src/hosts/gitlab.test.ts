@@ -442,6 +442,28 @@ describe("a GitLab project's git data before any read", () => {
     set('trackers.gitlab.baseUrl', '');
     expect(await codeHost()).toBe('github');
   });
+
+  it('words a refused duplicate trigger as a merge request before any read', async () => {
+    await server.trackers.idle();
+    expect(server.trackers.codeHost('tea')).toBe('gitlab');
+    expect(rows<HostRead>('hostReads')).toEqual([]);
+    dispatch({ type: 'workflow.create', workflowId: 'wf', name: 'Follow up', steps: [] });
+    const create = (triggerId: string) =>
+      dispatch({
+        type: 'trigger.create',
+        triggerId,
+        projectId: 'tea',
+        event: 'merged',
+        workflowId: 'wf',
+      });
+    create('first');
+    expect(() => create('second')).toThrow(
+      'Tea already has a trigger that starts Follow up for "Merge request merged"',
+    );
+    set('trackers.gitlab.baseUrl', 'https://gitlab.other.test');
+    await server.trackers.idle();
+    expect(() => create('third')).toThrow('for "Pull request merged"');
+  });
 });
 
 describe('GitLab refusing or not answering (spec 31, 32)', () => {

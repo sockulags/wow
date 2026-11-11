@@ -1,4 +1,5 @@
 import {
+  projectCodeHost,
   SecretRef,
   type Approval,
   type AssistantChangeRecord,
@@ -7,6 +8,7 @@ import {
   type CalendarItem,
   type CardOccurrence,
   type ChangeRequest,
+  type HostKind,
   type HostRead,
   type TicketRead,
   type PageRead,
@@ -146,7 +148,15 @@ export interface DecideContext {
   // An undo stores the steps exactly as they were stored: a step without a model gets no
   // default written in, so it goes on following the instance's default (spec 19).
   readonly putBackSteps?: boolean | undefined;
+  // The code host a project's git data names (TrackerService caches it), so a GitLab project is
+  // worded as one before its first host read; undefined while not read.
+  readonly codeHost?: ((projectId: string) => HostKind | undefined) | undefined;
 }
+
+// The code host to word a project's change requests and events in: its newest host read, else
+// its git data, else GitHub.
+export const codeHostOf = (read: ReadModel, context: DecideContext, projectId: string): HostKind =>
+  projectCodeHost(read.hostReads(projectId), projectId, context.codeHost?.(projectId));
 
 type AssistantCommand = Extract<ServerCommand, { type: `assistant.${string}` }>;
 

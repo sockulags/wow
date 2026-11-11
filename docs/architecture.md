@@ -1805,7 +1805,13 @@ and empty text, which read "Merge request" on a run whose host read is GitLab
 (`pullRequestTabLabel`). The Triggers tab's rows, its palette commands and New trigger's event
 choices say "Merge request merged" for a project whose newest host read is GitLab, or, before
 any read, whose `ProjectGit.codeHost` is (`projectCodeHost(reads, projectId, unread)` in
-`packages/contracts/src/hosts.ts`, used from `apps/web/src/workflows/triggers.ts`), and the default handover names
+`packages/contracts/src/hosts.ts`, used from `apps/web/src/workflows/triggers.ts`; the web's
+`useProjectsGit` asks `projects.git` again when a stored `trackers.gitlab.baseUrl` changes). The
+server words the same way before any read: `TrackerService` caches each project's
+`ProjectGit.codeHost` (`codeHost(projectId)`, read at start, when a project is made or moved and
+when a GitLab site is stored), the engine hands it to `DecideContext.codeHost`, and `codeHostOf`
+(`core/orchestrator.ts`) is used by the duplicate-trigger refusal and the assistant's change rows
+and proposals; the assistant's diagnosis reads the cache directly. The default handover names
 the event's request with `pullRequestName` ("Merge request !12" or "Pull request #14"). GitLab issues are not read. `hosts/mock-gitlab.ts` (`MockGitLab`) is the invented
 GitLab the server tests and the e2e server share.
 
