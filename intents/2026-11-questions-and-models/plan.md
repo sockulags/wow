@@ -1,7 +1,7 @@
 ---
 intent: 2026-11-questions-and-models
-rev: 1
-built_on: spec@1
+rev: 2
+built_on: spec@2
 status: accepted
 source: files
 ---
@@ -31,7 +31,8 @@ keybinding settings, `apps/web/e2e`, `docs/user-guide.md`, `docs/architecture.md
 `intents/2026-11-questions-and-models/sketches/question.png`.
 Acceptance:
 
-- Given a question with three choices, then the card shows them and a free text field; a choice,
+- Given a question with a header and three choices, one recommended, then the card shows the
+  header as a chip, the recommended choice first and marked, and "Other" last with a text field; a choice,
   a typed text, or both can be sent; an empty answer cannot; with "several", more than one choice
   can be picked (spec 1, 2).
 - Given an ask with two questions, then both are answered and sent together (spec 3).

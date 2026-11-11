@@ -1,6 +1,6 @@
 ---
 intent: 2026-11-questions-and-models
-rev: 1
+rev: 2
 built_on: intent@1
 status: accepted
 ---
@@ -18,8 +18,10 @@ choosing one, and the server refuses a workflow step that lacks a model its prov
 
 ### The question card
 
-1. A question has a text, zero or more choices (each a label and an optional description), and
-   whether several may be picked. The card always has a free text field beside the choices.
+1. A question has a text, a short header of a word or two shown as a chip, zero or more choices
+   (each a label and an optional description), and whether several may be picked. The card always
+   has a free text field, shown as a last choice "Other" that takes the typed text. A choice the
+   asker recommends is listed first and marked as recommended.
 2. The answer is the picked choices, the typed text, or both. With no choices the card is the
    free text field alone. An empty answer cannot be sent.
 3. One ask may hold several questions; they are answered together, each with its own choices and
@@ -133,3 +135,7 @@ choosing one, and the server refuses a workflow step that lacks a model its prov
   from the installed provider, and the tool refuses a model the instance does not offer.
 
 ## Decision log
+
+- rev 2: the owner asked for the card to work like the question dialog of the coding agent he
+  uses: a header chip per question, a recommended choice first, and free text as a last choice
+  "Other" (behavior 1).
