@@ -472,6 +472,15 @@ export const settingsRegistry = {
     default: 4,
     scope: 'global',
   }),
+  'chat.skillTrigger': defineSetting({
+    schema: z.string().regex(/^\S$/u, 'One character that is not a space'),
+    group: 'chat',
+    label: 'Skill list character',
+    description:
+      'Typed at the start of a message or after a space, this character opens the list of skills in the composer. A picked skill becomes a chip; the character in other places (a path such as src/app, a date) opens nothing.',
+    default: '/',
+    scope: 'global',
+  }),
   'calendar.zone': defineSetting({
     personal: 'person',
     schema: TimeZoneSetting,

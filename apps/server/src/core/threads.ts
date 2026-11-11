@@ -332,6 +332,9 @@ export function decideThread(
         : [];
       const note = notes.length === 0 ? null : notes.join('\n\n');
       const picked = command.skills ?? [];
+      if (command.text.trim() === '' && picked.length === 0) {
+        throw new CommandRejected('rejected', 'A message needs text or a skill');
+      }
       // The assistant has its own instruction text and takes no skills (wow skills spec 20).
       if (assistant && picked.length > 0) {
         throw new CommandRejected('rejected', 'The assistant takes no skills');

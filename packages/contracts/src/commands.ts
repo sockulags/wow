@@ -157,11 +157,13 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('thread.greetAssistant') }),
   // Starts a turn with the thread's current model, effort and permission mode (spec 14, 17).
   // `skills` are the skills picked for the message, in order (wow skills spec 10, 18): a wow
-  // skill goes in as its text, a folder skill as its invocation, both before the text.
+  // skill goes in as its text, a folder skill as its invocation, both before the text. The text
+  // may be empty when skills are picked (a message that is only a chip); the server refuses a
+  // message with neither.
   z.object({
     type: z.literal('thread.sendMessage'),
     threadId: Id,
-    text: z.string().min(1),
+    text: z.string(),
     skills: z.array(SkillRef).optional(),
   }),
   // The user's answer to the questions the assistant asked with its tool (questions spec 9):

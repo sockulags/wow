@@ -719,6 +719,29 @@ describe('what a message or a step was sent with (spec 14, 15)', () => {
     expect(startTurns()).toEqual([]);
   });
 
+  it('sends a message that is only a picked skill, and refuses one with neither text nor skill', () => {
+    dispatch({
+      type: 'skill.create',
+      skill: { name: 'tidy', description: 'Mine', text: 'Tidy the imports.' },
+    });
+    createThread('t1', 'claude-work');
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: '',
+      skills: [{ name: 'tidy', source: 'yours' }],
+    });
+    expect(promptOf('t1')).toBe(tidyBlock);
+    expect(firstItem('t1')?.payload).toEqual({
+      text: '',
+      skills: [{ name: 'tidy', source: 'yours', text: 'Tidy the imports.' }],
+    });
+    createThread('t2', 'claude-work');
+    expect(() => dispatch({ type: 'thread.sendMessage', threadId: 't2', text: '  ' })).toThrow(
+      'A message needs text or a skill',
+    );
+  });
+
   it('refuses a chat message with a skill that is gone, naming it', () => {
     createThread('t1', 'claude-work');
     expect(() =>
