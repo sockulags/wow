@@ -41,6 +41,31 @@ export const mockModels: readonly ProviderModel[] = [
   },
 ];
 
+// Invented models in the shape Codex reports them (agent workbench spec 7, 8): descriptions,
+// the provider's default, each model's default effort and which models take images. The Codex
+// adapter leaves hidden models out, so none is here. The labels start like the Claude mock's,
+// so a case that only checks "Mock model" passes on either instance.
+export const mockCodexModels: readonly ProviderModel[] = [
+  {
+    id: 'mock-codex',
+    label: 'Mock model for Codex',
+    description: 'Invented: the everyday mock model',
+    efforts: ['low', 'medium', 'high'],
+    defaultEffort: 'medium',
+    isDefault: true,
+    imageInput: true,
+  },
+  {
+    id: 'mock-codex-mini',
+    label: 'Mock model for Codex, mini',
+    description: 'Invented: small and quick',
+    efforts: ['low', 'medium'],
+    defaultEffort: 'low',
+    isDefault: false,
+    imageInput: false,
+  },
+];
+
 export class MockProviderAdapter implements ProviderAdapter {
   readonly kind: ProviderKind;
   readonly requiresModel: boolean;

@@ -4,7 +4,11 @@ import type {
   ProviderEvent,
   ProviderInstance,
 } from '@wow/contracts';
-import { ProviderEvent as ProviderEventSchema, providerChatOptions } from '@wow/contracts';
+import {
+  ProviderEvent as ProviderEventSchema,
+  ProviderModel,
+  providerChatOptions,
+} from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import { ClaudeAdapter, extraArgs, providerKind } from './index.js';
 import type { SDKMessage } from './sdk.js';
@@ -918,6 +922,19 @@ describe('@wow/provider-claude', () => {
       { id: 'haiku', label: 'Haiku', description: 'Fastest', efforts: [] },
     ]);
     expect(h.queries[0]?.closed).toBe(true);
+  });
+
+  // Agent workbench spec 7, 8: Claude Code gives label, description and efforts, but no default
+  // effort, no default flag and no image input, so those stay absent and nothing is guessed.
+  it('shows the description and leaves the fields Claude Code does not report empty', async () => {
+    const h = harness([]);
+    const models = ProviderModel.array().parse(await h.adapter.send({ type: 'listModels' }));
+    expect(models[0]?.description).toBe('Fast and capable');
+    for (const model of models) {
+      expect(model).not.toHaveProperty('defaultEffort');
+      expect(model).not.toHaveProperty('isDefault');
+      expect(model).not.toHaveProperty('imageInput');
+    }
   });
 
   it('tests the instance with a trivial turn and reports account and version', async () => {

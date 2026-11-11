@@ -176,9 +176,17 @@ export const ProviderEvent = z.discriminatedUnion('type', [
 ]);
 export type ProviderEvent = z.infer<typeof ProviderEvent>;
 
+// How the composer bar colours a permission mode by what it allows (agent workbench spec 4):
+// Plan only blue, a mode that edits without asking green, a mode without a sandbox or without
+// asking red with a warning icon. A mode without a tone is drawn plain.
+export type PermissionModeTone = 'plan' | 'edits' | 'danger';
+
 export interface PermissionModeOption {
   readonly id: string;
   readonly label: string;
+  // What the composer bar reads ("Opus · High · Ask"); the label when there is none.
+  readonly short?: string;
+  readonly tone?: PermissionModeTone;
 }
 
 export interface ProviderChatOptions {
@@ -195,36 +203,63 @@ export interface ProviderChatOptions {
   // 17). The adapter owns the fact (`ProviderAdapter.requiresModel`); this copy is what a
   // decision and the web app read, since neither can ask an adapter.
   readonly requiresModel: boolean;
+  // The modes Shift+Tab steps through in the composer, in order (agent workbench spec 3). A
+  // dangerous mode is never here: it is chosen from the list only.
+  readonly modeCycle: readonly string[];
 }
 
 export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOptions>> = {
   claude: {
     permissionModes: [
-      { id: 'default', label: 'Ask for permissions' },
-      { id: 'acceptEdits', label: 'Accept edits' },
-      { id: 'plan', label: 'Plan only' },
+      { id: 'default', label: 'Ask for permissions', short: 'Ask' },
+      { id: 'acceptEdits', label: 'Accept edits', tone: 'edits' },
+      { id: 'plan', label: 'Plan only', tone: 'plan' },
       { id: 'auto', label: 'Auto' },
-      { id: 'dontAsk', label: 'Do not ask (deny what is not allowed)' },
-      { id: 'bypassPermissions', label: 'Bypass permissions' },
+      { id: 'dontAsk', label: 'Do not ask (deny what is not allowed)', short: 'Do not ask' },
+      { id: 'bypassPermissions', label: 'Bypass permissions', tone: 'danger' },
     ],
     defaultEffort: 'default',
     compactPrompt: '/compact',
     assistantPermissionMode: 'dontAsk',
     requiresModel: false,
+    modeCycle: ['default', 'acceptEdits', 'plan'],
   },
   codex: {
     permissionModes: [
       { id: 'read-only', label: 'Read only' },
-      { id: 'auto', label: 'Auto (workspace write, ask outside it)' },
-      { id: 'untrusted', label: 'Ask for every untrusted command' },
-      { id: 'full-access', label: 'Full access (no sandbox, never ask)' },
+      { id: 'auto', label: 'Auto (workspace write, ask outside it)', short: 'Auto', tone: 'edits' },
+      { id: 'untrusted', label: 'Ask for every untrusted command', short: 'Ask untrusted' },
+      {
+        id: 'full-access',
+        label: 'Full access (no sandbox, never ask)',
+        short: 'Full access',
+        tone: 'danger',
+      },
     ],
     defaultEffort: null,
     compactPrompt: null,
     assistantPermissionMode: 'read-only',
     requiresModel: true,
+    modeCycle: ['read-only', 'auto', 'untrusted'],
   },
 };
+
+// The mode Shift+Tab moves to from `current` (agent workbench spec 3). From a mode outside the
+// cycle (Bypass permissions, Full access, or one the cycle leaves out) it starts the cycle again.
+export function nextPermissionMode(kind: ProviderKind, current: string): string {
+  const cycle = providerChatOptions[kind].modeCycle;
+  const at = cycle.indexOf(current);
+  return cycle[(at + 1) % cycle.length] ?? current;
+}
+
+export const permissionModeOption = (
+  kind: ProviderKind,
+  id: string,
+): PermissionModeOption | undefined =>
+  providerChatOptions[kind].permissionModes.find((mode) => mode.id === id);
+
+export const isDangerousMode = (kind: ProviderKind, id: string): boolean =>
+  permissionModeOption(kind, id)?.tone === 'danger';
 
 // What onboarding needs per provider kind: the executable looked for on PATH and the variable that
 // names its config directory (spec 31, 32). The server detects; the settings page labels.
@@ -285,12 +320,21 @@ export const DiscoveredProject = z.object({
 });
 export type DiscoveredProject = z.infer<typeof DiscoveredProject>;
 
-// What `listModels` answers: one row per model the installed provider offers.
+// What `listModels` answers: one row per model the installed provider offers. The optional
+// fields are filled only where the provider reports them (agent workbench spec 7, 8, 54); a field
+// it does not report stays absent and nothing is guessed. Codex reports all three; Claude Code
+// reports none of them.
 export const ProviderModel = z.object({
   id: z.string().min(1),
   label: z.string(),
   description: z.string(),
   efforts: z.array(z.string().min(1)),
+  // The model's own default effort level.
+  defaultEffort: z.string().min(1).optional(),
+  // The provider's own default model, which it uses when none is named.
+  isDefault: z.boolean().optional(),
+  // Whether the model takes images in a message.
+  imageInput: z.boolean().optional(),
 });
 export type ProviderModel = z.infer<typeof ProviderModel>;
 
