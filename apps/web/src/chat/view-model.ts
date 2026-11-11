@@ -1,4 +1,5 @@
 import {
+  QuestionItemPayload,
   TextItemPayload,
   ToolCallItemPayload,
   type Approval,
@@ -155,7 +156,52 @@ export const lastErrorId = (items: readonly ThreadItem[]): string | undefined =>
 // One entry of the conversation list: an item as it is, or a run of tool calls drawn as one row.
 export type ConversationEntry =
   | { readonly kind: 'item'; readonly item: ThreadItem }
-  | { readonly kind: 'tools'; readonly id: string; readonly items: readonly ThreadItem[] };
+  | { readonly kind: 'tools'; readonly id: string; readonly items: readonly ThreadItem[] }
+  | { readonly kind: 'questions'; readonly id: string; readonly items: readonly ThreadItem[] };
+
+const askIdOf = (item: ThreadItem): string | undefined => {
+  if (item.kind !== 'question') return undefined;
+  const parsed = QuestionItemPayload.safeParse(item.payload);
+  return parsed.success ? parsed.data.askId : undefined;
+};
+
+// The questions of one ask are one card (questions spec 3): consecutive question items of the
+// same turn with the same ask become one entry. A question from before the card has no ask and
+// stays alone.
+export function groupQuestions(entries: readonly ConversationEntry[]): ConversationEntry[] {
+  const out: ConversationEntry[] = [];
+  for (const entry of entries) {
+    const previous = out.at(-1);
+    const askId = entry.kind === 'item' ? askIdOf(entry.item) : undefined;
+    if (entry.kind !== 'item' || askId === undefined) {
+      out.push(entry);
+      continue;
+    }
+    const last =
+      previous?.kind === 'questions'
+        ? previous.items.at(-1)
+        : previous?.kind === 'item'
+          ? previous.item
+          : undefined;
+    if (
+      previous &&
+      previous.kind !== 'tools' &&
+      last !== undefined &&
+      askIdOf(last) === askId &&
+      last.turnId === entry.item.turnId
+    ) {
+      const items = previous.kind === 'questions' ? previous.items : [previous.item];
+      out[out.length - 1] = {
+        kind: 'questions',
+        id: items[0]?.id ?? entry.item.id,
+        items: [...items, entry.item],
+      };
+      continue;
+    }
+    out.push(entry);
+  }
+  return out;
+}
 
 // Consecutive tool calls of one turn become one entry, so a turn that reads ten things does not
 // fill the screen before its answer. Any other item breaks the run, and so does a row the view

@@ -25,7 +25,13 @@ import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
 import { Composer, type ComposerHandle } from './composer';
 import { useDispatch, useTopic } from './data';
-import { ConversationItem, ToolCallGroup, WorkingIndicator, type ItemContext } from './items';
+import {
+  ChatQuestions,
+  ConversationItem,
+  ToolCallGroup,
+  WorkingIndicator,
+  type ItemContext,
+} from './items';
 import {
   canMarkDone,
   contextPercent,
@@ -40,6 +46,7 @@ import {
 } from './model';
 import { ThreadSettings } from './thread-settings';
 import {
+  groupQuestions,
   groupToolCalls,
   lastErrorId,
   lastUserMessage,
@@ -334,17 +341,24 @@ export function ThreadConversation({
   };
 
   const afters = new Map((items ?? []).map((item) => [item.id, extras?.after?.(item)]));
-  const entries: ConversationEntry[] = groupTools
-    ? groupToolCalls(items ?? [], (item) => Boolean(afters.get(item.id)))
-    : (items ?? []).map((item) => ({ kind: 'item', item }));
+  const entries: ConversationEntry[] = groupQuestions(
+    groupTools
+      ? groupToolCalls(items ?? [], (item) => Boolean(afters.get(item.id)))
+      : (items ?? []).map((item) => ({ kind: 'item', item })),
+  );
 
-  // While a question waits, the composer answers it; while an approval waits, the buttons above
-  // answer it and the composer only queues the next message (audit C-04).
+  // While a question waits, the composer answers it with typed text, as its card's "Other" does;
+  // while an approval waits, the buttons above answer it and the composer only queues the next
+  // message (audit C-04).
   const answerQuestion = question
-    ? (text: string) => send({ type: 'question.answer', questionId: question.id, answer: text })
+    ? (text: string) =>
+        send({
+          type: 'question.answer',
+          answers: [{ questionId: question.id, reply: { picked: [], text } }],
+        })
     : undefined;
   const placeholder = question
-    ? 'Type your answer, or pick an option above'
+    ? 'Type your answer, or answer on the card above'
     : approval
       ? 'Answer the request above'
       : running
@@ -374,6 +388,14 @@ export function ThreadConversation({
                       questions={questions}
                       context={itemContext(entry.item.turnId, entry.item.id)}
                     />
+                  ) : entry.kind === 'questions' ? (
+                    <li data-testid="item-question" data-item-id={entry.id}>
+                      <ChatQuestions
+                        items={entry.items}
+                        questions={questions}
+                        turnEnded={itemContext(entry.items[0]?.turnId ?? '', entry.id).turnEnded}
+                      />
+                    </li>
                   ) : (
                     <ToolCallGroup
                       items={entry.items}

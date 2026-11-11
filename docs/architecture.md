@@ -152,7 +152,8 @@ turns            id, threadId, index, state, startedAt, endedAt, usage(json)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
 approvals        id, threadId, itemId, kind, request(json), decision?, decidedAt?
-questions        id, threadId, itemId, request(json), answer?, answeredAt?
+questions        id, threadId, itemId, request(json), answer?, answeredAt?   (answer: the reply
+                 as one line; the item's payload holds the reply's picks and text)
 calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end, zone, allDay,
                  location?, joinUrl?, body?, organizer?, projectId?, backlogItemId?, workflowId?,
                  runId?, state, updatedAt, repeat(json: RepeatRule)?, skippedDates(json: string[]),
@@ -245,7 +246,8 @@ ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode
                             toolset? {name, url, token}, instructions?}
                  interrupt {threadId} | closeThread {threadId} |
                  answerApproval {approvalId, decision} |
-                 answerQuestion {questionId, answer} | setModel | setPermissionMode | listModels | test
+                 answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
+                 listModels | test
 ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | toolCallStarted |
                  toolCallOutput | toolCallCompleted | approvalRequested | questionAsked |
                  taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
@@ -271,7 +273,9 @@ thread it maps to, since the app-server has no request that unloads one.
   `thread/tokenUsage/updated` and `turn/completed`; server-initiated requests
   `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` and
   `item/permissions/requestApproval` map to `approvalRequested`, `item/tool/requestUserInput` to
-  one `questionAsked` per question; `model/list` feeds the picker and `account/read` the "Test"
+  one `questionAsked` per question (its `header`, and the request's `itemId` as `askId`; the
+  answers go back together, each question's list holding the picked labels and then the typed
+  text as an answer of its own); `model/list` feeds the picker and `account/read` the "Test"
   action. Method names and types are generated, not written from memory:
   `scripts/generate-protocol.mjs` runs `codex app-server generate-ts` for the installed codex and
   keeps the methods the adapter uses (currently codex 0.166.0). It also writes a protocol
@@ -319,8 +323,10 @@ thread it maps to, since the app-server has no request that unloads one.
   keeps one `query()` while the server runs; model, permission mode and effort changes are applied
   to it before the next prompt. `canUseTool` waits for the answer: allow once, allow for this
   session (the SDK's suggested rules with destination `session`) or deny; an interrupt denies with
-  `interrupt: true`. `AskUserQuestion` may hold several questions; each is asked separately and the
-  tool runs with `answers` once all are answered. The task list comes from `TodoWrite` (whole list)
+  `interrupt: true`. `AskUserQuestion` may hold several questions; each is asked separately (with
+  its `header` and the tool call id as `askId`) and the tool runs with `answers` once all are
+  answered. Claude Code takes one text per question: the picked labels separated by ", " and then
+  the typed text, which is how its own "Other" answers. The task list comes from `TodoWrite` (whole list)
   or `TaskCreate`/`TaskUpdate` (one task at a time). `total_cost_usd` is cumulative per query, so a
   turn's cost is the difference to the previous result. `test` runs a tool-less one-turn query in
   the temp directory and reports `claude_code_version` from the init message and the account from
@@ -1174,8 +1180,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,
   `assistant.effort`, `assistant.instructions`, `assistant.greeting`,
   `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.valueLength`,
-  `assistant.secretPatterns` (see
-  "Assistant")
+  `assistant.secretPatterns`, `assistant.askRefusedWords` (see "Assistant" and "Question card")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
 - keybindings: `keybindings.*`, one per command that has a shortcut
@@ -1851,7 +1856,13 @@ three kinds and nothing else.
   (spec 14): an instance that exists and a variable name, answering where it goes
   (Settings → Providers → <instance>) and `set` or `not set`.
   `offer_project_work {text}` (`assistantProjectWorkTool`) is for a request that is not about
-  operating wow (spec 3) and answers that the button is shown. No tool name has "thread",
+  operating wow (spec 3) and answers that the button is shown. `ask_questions {questions}`
+  (`assistantAskTool`, `AskQuestionsRequest`: one to four `AskedQuestion {question, header,
+options, multiSelect}`) puts the question card under the call (see "Question card"); it refuses
+  a question whose text, header or choices hold a word of `assistant.askRefusedWords`
+  (`askedSecretWord`, whole words, any case) with a sentence that points to the secret field, two
+  choices with one label, and a choice "Other" (the card has one). It answers `asked` and tells
+  the agent to end its turn. No tool name has "thread",
   "message", "file", "content" or "chat" in it, so the U1 test that no tool reads a thread or a
   file still holds by name.
 
@@ -2229,6 +2240,63 @@ and apply on the other, Undo, refused Undo, CRLF and byte order mark, each refus
 line, a newer version, a missing skill, the round trip, the assistant's refusal, and the RPC
 methods); `apps/web/src/settings/setup.test.tsx`; `apps/web/e2e/setup-file.spec.ts`.
 
+## Question card
+
+One card draws every question in wow (intent 2026-11-questions-and-models): an agent's in a chat
+thread or a workflow step, and the assistant's own. `packages/contracts/src/questions.ts` holds
+the shapes: `QuestionOption {label, description?, recommended?}`, `QuestionReply {picked, text}`
+(the picked labels in the asker's order and the typed text), `replyText` (one line: labels, then
+text), `replyProblem` (empty, a label that is not offered, two picks on a single choice question),
+`markRecommended` (both providers mark a recommended choice by ending its label with
+"(Recommended)"; the label stays, since the answer must name it exactly), `shownLabel` and
+`cardOrder` (recommended first).
+
+- **Provider questions.** `questionAsked` carries `header?` and `askId?` (the questions of one
+  provider request). The question row's `request` and the `question` item's payload keep both;
+  `question.answer {answers: [{questionId, reply}]}` answers the questions of one ask together
+  and is refused when a reply has a problem, a question was answered, or the turn that asked is
+  no longer the running one ("… was not answered before its turn ended, so it can no longer be
+  answered."). `question.answered` carries `answer` (the line) and `reply`; the projector writes
+  the line to the row and the reply into the item's payload (`QuestionItemPayload.reply`), which
+  the card reads. Events and items from before the card have no `reply`, `header` or `askId`:
+  the card shows the row's `answer` text and one card per question, as before. A waiting
+  question still makes the thread `needs_you`, so runs list a waiting step as before.
+- **The assistant's questions.** `ask_questions` (see "Assistant") changes nothing; the view reads
+  the call (`askedQuestionsOf` in `packages/contracts/src/asked.ts`: a call of
+  `ask_questions` whose output says `asked`). The answer is the user's next message:
+  `thread.answerQuestions {threadId, itemId, replies}` (only the assistant's thread; refused while
+  its turn runs, when a reply is missing or has a problem, and when a turn started after the
+  call's: "These questions were not answered before the next message, so they can no longer be
+  answered."). It starts a turn like `thread.sendMessage`, with `askAnswerText` as the user item's
+  text, `TextItemPayload.answers {askItemId, replies}` on the item, and `askAnswerPrompt` ("[From
+  wow] The user answered your questions (ask_questions) on the card: …") after wow's other notes
+  in the prompt. The conversation shows such a user item as a short note, since the card shows
+  the answer. The assistant's own command for it is refused (classes.ts).
+- **The card** (`apps/web/src/chat/question-card.tsx`, `QuestionCard`). Per question: the header
+  as a chip, the question, the choices with digit hints (recommended first, marked), and a last
+  row "Other" with a text field; a single choice question keeps one pick, a several question any
+  number. Each question is `open`, `answered` (picks and text, or an old line) or `closed`. Send
+  is enabled when every open question has a pick or text. Keys while the card has focus: the
+  arrows move through the choices and "Other" fields of all questions, a digit picks that choice
+  of the question the keyboard is on (the last digit goes to "Other"), Space picks, Enter sends,
+  and a printable key goes to that question's "Other". `ChatQuestions` (chat/items.tsx) feeds it
+  from question items and rows; consecutive question items with one `askId` are one entry
+  (`groupQuestions` in view-model.ts), and a question whose item's turn ended unanswered is
+  closed. `AssistantQuestions` (assistant/questions.tsx) feeds it from the tool call; `askState`
+  reads the conversation: answered by the user item that names the call, closed by any other
+  user item after it, open otherwise (waiting while the call's turn runs). Before it sends, the
+  Assistant view runs each typed text through `holdMessage`, the composer's check, and shows the
+  same `HeldLine` (Put it in <field>, Send anyway, Keep editing) inside the card.
+- **Palette and keys.** A card with an open question adds itself to `questionStore`
+  (chat/question-store.ts) and leaves when nothing on it can be answered; `questionCommands` offers
+  for the newest one "Question: go to the card" (`keybindings.questionFocus`, Alt+Q), "pick
+  <choice>" for each choice, "type your own answer" for each question, and "send the answer(s)".
+
+Tests: `packages/provider-claude/src/index.test.ts` and `packages/provider-codex/src/adapter.test.ts`
+("answers … by a choice, typed text, both"), `packages/contracts/src/questions.test.ts`,
+`apps/server/src/assistant/questions.test.ts`, `apps/web/src/chat/question-card.test.tsx`,
+`apps/web/src/assistant/questions.test.tsx`, `apps/web/e2e/questions.spec.ts`.
+
 ## Chat view
 
 `apps/web/src/chat`. `/chat` shows the thread list (grouped Needs you, Working, Idle, Done; failed
@@ -2257,7 +2325,8 @@ focuses on `/chat/new` and on opening a thread; its `$` picker is a cmdk `Comman
 `shouldFilter={false}` whose selection the text box moves (focus stays in the text box), grouped by
 `skillGroup` (Project, User, Plugins). A message written while a turn runs is held in the composer
 and sent when `turns` says the turn ended; while a question waits, the composer sends
-`question.answer`. The working clock reads the running turn's `startedAt` and redraws each second;
+`question.answer` with its text as the answer's typed text. Questions are drawn by the question
+card (see "Question card"). The working clock reads the running turn's `startedAt` and redraws each second;
 it is display only, the state still comes from `turns`. A pending approval takes the focus, and
 the palette's approval commands (`keybindings.approvalAllowOnce|approvalAllowSession|approvalDeny`,
 plain keys, so they do nothing in text fields) answer it. A thread whose step a waiting run asks
