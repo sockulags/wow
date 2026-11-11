@@ -1559,8 +1559,9 @@ API token (`cloud-basic`, `jiraAuthorization`), with redirects turned down. The 
 and the body as Confluence renders it (`body.view`, HTML), and the page's address made from the
 stored site and the answer's `webui` path. The HTML is never rendered in the app: only the
 viewer's sandboxed frame shows it. 401 and 403 are `refused` and name
-`trackers.confluence.token`, as is 404 ("shows no page <id> to the Confluence token"), which fails
-only that page; a 429 with `Retry-After` leaves the site alone until then; anything else and a
+`trackers.confluence.token`. 404, or no result for a title, is `refused` for that page only and
+names no setting ("shows no page <id> to the Confluence token … may have been deleted or moved"):
+the token works, so the link is what to check; a 429 with `Retry-After` leaves the site alone until then; anything else and a
 timeout are `failed`, and after such a failure the site is not asked again that round. A project
 without the site gets a `notSetUp` read naming `trackers.confluence.baseUrl` for every live run;
 one without the token (or the email on Cloud) names that setting only for runs that link to a

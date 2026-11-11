@@ -126,6 +126,14 @@ export function createConfluenceHost(
     return true;
   };
 
+  // The token works (a bad one gets 401), so the page is most likely gone, moved or restricted:
+  // the link is what to look at, not the token setting.
+  const missing = (page: PageRef, answered: string): MissingPage =>
+    new MissingPage(
+      'refused',
+      `${name} shows no ${described(page)} to the Confluence token${answered}. The page may have been deleted or moved: check the link, or that the page is not restricted from the token's account.`,
+    );
+
   const failure = (page: PageRef, error: unknown): HostFailure => {
     if (!(error instanceof TrackerError)) {
       return new HostFailure('failed', error instanceof Error ? error.message : String(error));
@@ -144,13 +152,7 @@ export function createConfluenceHost(
         tokenSetting,
       );
     }
-    if (error.status === 404) {
-      return new MissingPage(
-        'refused',
-        `${name} shows no ${described(page)} to the Confluence token (it answered 404). Check that the page exists and that the token in Settings → Trackers may read it.`,
-        tokenSetting,
-      );
-    }
+    if (error.status === 404) return missing(page, ' (it answered 404)');
     return new HostFailure('failed', error.message);
   };
 
@@ -219,13 +221,7 @@ export function createConfluenceHost(
         );
       }
       const first: unknown = results[0];
-      if (first === undefined) {
-        throw new MissingPage(
-          'refused',
-          `${name} shows no ${described(page)} to the Confluence token. Check that the page exists and that the token in Settings → Trackers may read it.`,
-          tokenSetting,
-        );
-      }
+      if (first === undefined) throw missing(page, '');
       return pageOf(page, first);
     },
   };

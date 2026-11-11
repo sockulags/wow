@@ -402,13 +402,15 @@ describe('when Confluence refuses or does not answer (spec 31, 32)', () => {
     expect(logged.join('\n')).not.toContain(WIKI_TOKEN);
   });
 
-  it('keeps the last page and names the token setting on 404, reading the other pages', async () => {
+  it('keeps the last page on 404 and points to the link, not the token, reading the other pages', async () => {
     confluence.pages = [notes];
     await server.hosts.poll();
     const [gone, kept] = pageRead()?.pages ?? [];
     expect(gone).toMatchObject({ fetchedAt: lastFetched, page: { title: 'Kettle design' } });
-    expect(gone?.error).toMatchObject({ kind: 'refused', setting: 'trackers.confluence.token' });
+    // The token works, so a deleted page is no reason to send the user to the token setting.
+    expect(gone?.error).toMatchObject({ kind: 'refused', setting: null });
     expect(gone?.error?.message).toContain('shows no page 123');
+    expect(gone?.error?.message).toContain('may have been deleted or moved');
     expect(kept).toMatchObject({ fetchedAt: now.toISOString(), error: null });
     expect(pageRead()?.error).toBeNull();
   });
