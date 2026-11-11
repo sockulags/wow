@@ -93,7 +93,8 @@ export const OwnSkill = z.object({
   name: z.string().min(1),
   // When to use the skill, as the lists show it.
   description: z.string(),
-  text: z.string().min(1),
+  // Stored trimmed, so a text of only spaces is no text.
+  text: z.string().trim().min(1),
 });
 export type OwnSkill = z.infer<typeof OwnSkill>;
 

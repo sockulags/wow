@@ -881,7 +881,7 @@ function stopRun(run: WorkflowRun, context: EngineContext): Transition {
         effects.push({ type: 'interrupt', threadId: step.threadId });
       }
       effects.push(...threadState(step.threadId, 'failed'));
-      const { heldPrompt: _never, ...stopped } = step;
+      const { heldPrompt: _never, heldShown: _shown, heldSkills: _skills, ...stopped } = step;
       return { ...stopped, state: 'failed', endedAt: context.now, error: 'Stopped' };
     }
     if (step.state === 'waiting') {
@@ -1160,6 +1160,15 @@ export function stepPromptFor(
   const earlierArtifacts = run.steps.slice(0, index).flatMap((entry) => entry.artifactsFound);
   const expectedArtifacts = bulletList(step.expectedArtifacts);
   const unitLine = run.unit ? intentUnitLine(run.unit.intentId, run.unit.unitKey) : '';
+  const unitText = (line: string) =>
+    run.unit
+      ? renderUnitPrompt(context.unitPromptTemplate, {
+          intentId: run.unit.intentId,
+          unitKey: run.unit.unitKey,
+          unitTitle: run.unit.title,
+          intentUnitLine: line,
+        })
+      : '';
   const texts = (attached: ReadonlySet<string>) => {
     const handover = renderHandover(context.handoverTemplate, {
       previousStep: previousStep?.skillName ?? '',
@@ -1171,15 +1180,7 @@ export function stepPromptFor(
       ...eventValues(run.event),
     });
     // Every step of a unit's run is told which unit it works on (review loop spec 40).
-    const unit = run.unit
-      ? renderUnitPrompt(context.unitPromptTemplate, {
-          intentId: run.unit.intentId,
-          unitKey: run.unit.unitKey,
-          unitTitle: run.unit.title,
-          intentUnitLine: attached.has('wow-pull-request') ? '' : unitLine,
-        })
-      : '';
-    return { handover, unit };
+    return { handover, unit: unitText(attached.has('wow-pull-request') ? '' : unitLine) };
   };
   const { skillFor } = context;
   if (!run.wowSkills || !skillFor) {
@@ -1194,7 +1195,8 @@ export function stepPromptFor(
     intentId: run.unit?.intentId ?? '',
     unitKey: run.unit?.unitKey ?? '',
     unitTitle: run.unit?.title ?? '',
-    intentUnitLine: unitLine,
+    // A unit template written before wow skills spells the line out itself; it is sent once.
+    intentUnitLine: unitLine !== '' && unitText('').includes(unitLine) ? '' : unitLine,
   };
   const named: SkillRef[] = [
     { name: step.skillName, ...(step.skillSource ? { source: step.skillSource } : {}) },

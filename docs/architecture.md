@@ -522,7 +522,15 @@ from `wowSkillRoots(wowHome)` in `packages/skills`, and carry their text in `Ski
   `ownSkillNameProblem` (lower case letters, digits and single hyphens, at most 64 characters,
   not starting with `wow-`, not taken by another wow skill) and store `skill.saved {skill,
 previous}` or `skill.deleted {skill}` in the skills projection at once; `SkillsService` writes
-  or removes the file synchronously in its commit listener and rescans. Undo is the opposite
+  or removes the file synchronously in its commit listener and rescans. The orchestrator does no
+  I/O, so the RPC `dispatch` handler asks `SkillsService.refusal` first: a `skill.create` whose
+  folder already holds a `SKILL.md` the list does not show (skipped by the scan, or a folder
+  whose name differs only in case, which is the same folder on Windows) is refused with its path.
+  A file that cannot be written or removed is answered to the command as refused with the path
+  and the reason (`writeFailure(commandId)`); the command has committed, and the rescan puts the
+  list back to what is on disk. Scans run one after another, and a scan that began before an
+  own-skill commit sends no `skills.sync` (the one that commit queued does), so it cannot undo
+  the save. Undo is the opposite
   command with what the client holds: delete for a create, update with the old text, create for
   a delete. The assistant's class table refuses the three commands for now.
 
@@ -592,8 +600,11 @@ orchestrator then send `thread.sendPrepared {threadId, text: shown, prompt, skil
 instead of `thread.sendMessage`, so the thread shows the prompt without the skills' texts and
 names the skills. A run stored before (no `wowSkills`), or an engine context without
 `skillFor`, keeps the old prompt: `invocationFor(step)`, the expected artifacts in the handover
-and the Intent-Unit line in the unit text. A step held while the user's own turn runs keeps only
-its prompt (`heldPrompt`), so that turn's item has no `skills`.
+and the Intent-Unit line in the unit text. A step held while the user's own turn runs keeps its
+prompt (`heldPrompt`) with `heldShown` and `heldSkills`, and goes as `thread.sendPrepared` like
+any step's turn. A `workflows.unitPromptTemplate` stored before wow skills that spells out
+`Intent-Unit: {{intentId}}/{{unitKey}}` itself keeps the line; `wow-pull-request` then gets an
+empty `intentUnitLine`, so the line is still sent once.
 
 `workflows.handoverTemplate` is a setting (project scope). `{{name}}` is replaced and
 `{{#name}}…{{/name}}` is dropped when the value is empty; the values are `previousStep`,
@@ -1263,7 +1274,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,
   `assistant.effort`, `assistant.instructions`, `assistant.greeting`,
   `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.valueLength`,
-  `assistant.secretPatterns` (see
+  `assistant.secretPatterns`, `assistant.askRefusedWords` (see
   "Assistant")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`

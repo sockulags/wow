@@ -6,7 +6,7 @@ const SECTION = /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g;
 const PLACEHOLDER = /\{\{(\w+)\}\}/g;
 // Each value goes in after the template's own blank lines are tidied, so what a value says
 // (a note or a message with several blank lines, a code block) arrives as it was written.
-const SLOT = /(\d+)/g;
+const SLOT = /\uE000(\d+)\uE001/g;
 
 export type TemplateValues = Readonly<Record<string, string>>;
 
@@ -22,7 +22,7 @@ export function fillTemplate(template: string, values: TemplateValues): string {
     const value = valueOf(values, name);
     if (value === '') return '';
     filled.push(value);
-    return `${filled.length - 1}`;
+    return `\uE000${filled.length - 1}\uE001`;
   });
   return slotted
     .replace(/\n{3,}/g, '\n\n')

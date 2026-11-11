@@ -15,6 +15,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { snapshot } from '../core/subscriptions.js';
+import { createHandlers, type Connection } from '../rpc/handlers.js';
+import { route } from '../rpc/router.js';
 import { providerInstances, threadItems, workflowRuns } from '../db/schema.js';
 import { MockProviderAdapter, type MockScript } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
@@ -29,6 +31,8 @@ let server: RunningServer;
 let adapters: MockProviderAdapter[];
 
 const finalMessage = new Map<string, string>();
+// Hears every log line the server writes, for a case that acts at a set point of a scan.
+let onLog: (line: string) => void = () => undefined;
 
 const answer: MockScript = (command) => {
   if (command.type !== 'startTurn') return [];
@@ -66,6 +70,41 @@ const instance = (id: string, kind: 'claude' | 'codex'): ProviderInstance => ({
 let commandCount = 0;
 const dispatch = (command: ServerCommand) =>
   server.engine.dispatch(`skills-test-${(commandCount += 1)}`, command);
+
+// The dispatch call as the app sends it, through the RPC handler.
+const rpcDispatch = (command: ServerCommand) => {
+  const handlers = createHandlers({
+    engine: server.engine,
+    subscriptions: undefined as never,
+    workspaces: undefined as never,
+    settings: server.settings,
+    secrets: undefined as never,
+    db: undefined as never,
+    skills: server.skills,
+    hosts: undefined as never,
+    plans: undefined as never,
+    workflows: undefined as never,
+    providers: undefined as never,
+    providerUpdates: undefined as never,
+    trackers: undefined as never,
+    detectProviders: () => Promise.resolve([]),
+    discoverProjects: () => Promise.resolve([]),
+    outlook: () => undefined,
+    info: { version: '0.0.0', home: wowHome },
+    clock: () => new Date(),
+  });
+  const connection: Connection = { push: () => {}, subscriptionIds: new Set() };
+  return route(
+    JSON.stringify({
+      id: `rpc-${(commandCount += 1)}`,
+      method: 'dispatch',
+      params: { commandId: `skills-rpc-${commandCount}`, command },
+    }),
+    handlers,
+    connection,
+    () => {},
+  );
+};
 
 const createThread = (threadId: string, providerInstanceId: string) =>
   dispatch({
@@ -181,7 +220,7 @@ beforeEach(async () => {
     platform: 'linux',
     port: 0,
     protector: plainProtector,
-    logSink: () => undefined,
+    logSink: (line) => onLog(line),
     userHome,
     watchSkills: () => ({ close: () => Promise.resolve() }),
     hooks: {
@@ -208,6 +247,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  onLog = () => undefined;
   await server.stop();
   await rm(root, { recursive: true, force: true });
 });
@@ -371,6 +411,63 @@ describe('own skills (spec 5, 6, 7)', () => {
     expect(groupOf('tidy', 'yours')).toEqual(before);
     await server.skills.refresh();
     expect(groupOf('tidy', 'yours')).toEqual(before);
+  });
+
+  it('refuses a create over a SKILL.md the list does not show, also one named in another case', async () => {
+    // Skipped by the scan: no frontmatter name. On Windows `Tidy` is the folder `tidy` would be.
+    await mkdir(path.join(wowHome, 'skills', 'Tidy'), { recursive: true });
+    await writeFile(path.join(wowHome, 'skills', 'Tidy', 'SKILL.md'), 'Mine, by hand.');
+    await server.skills.refresh();
+    expect(groupOf('tidy', 'yours')).toBeUndefined();
+    expect(await rpcDispatch({ type: 'skill.create', skill: tidy })).toMatchObject({
+      error: {
+        code: 'rejected',
+        message: `${path.join(wowHome, 'skills', 'Tidy', 'SKILL.md')} is already there. Rename or remove it first.`,
+      },
+    });
+    expect(await readFile(path.join(wowHome, 'skills', 'Tidy', 'SKILL.md'), 'utf8')).toBe(
+      'Mine, by hand.',
+    );
+    expect(groupOf('tidy', 'yours')).toBeUndefined();
+  });
+
+  it('answers a save whose file cannot be written with the reason, and lists what is on disk', async () => {
+    // A file where the skill's folder would go makes the write fail on every platform.
+    await mkdir(path.join(wowHome, 'skills'), { recursive: true });
+    await writeFile(path.join(wowHome, 'skills', 'tidy'), 'not a folder');
+    const reply = await rpcDispatch({ type: 'skill.create', skill: tidy });
+    expect(reply).toMatchObject({ error: { code: 'rejected' } });
+    expect(JSON.stringify(reply)).toContain(
+      JSON.stringify(`Could not write ${path.join(wowHome, 'skills', 'tidy', 'SKILL.md')}: `).slice(
+        1,
+        -1,
+      ),
+    );
+    await server.skills.refresh();
+    expect(groupOf('tidy', 'yours')).toBeUndefined();
+  });
+
+  it('keeps an own skill saved while a scan that read the folder before was still going', async () => {
+    dispatch({ type: 'skill.create', skill: tidy });
+    await server.skills.refresh();
+    // A file the scan skips is logged after the folders are read and before the list is sent:
+    // the update commits exactly then.
+    await mkdir(path.join(userHome, '.claude', 'skills', 'broken'), { recursive: true });
+    await writeFile(
+      path.join(userHome, '.claude', 'skills', 'broken', 'SKILL.md'),
+      '---\nname: [unclosed\n---\n',
+    );
+    let updated = false;
+    onLog = (line) => {
+      if (updated || !line.includes('skipped skill file')) return;
+      updated = true;
+      dispatch({ type: 'skill.update', skill: { ...tidy, text: 'Sort the imports.' } });
+    };
+    await server.skills.refresh();
+    expect(updated).toBe(true);
+    expect(groupOf('tidy', 'yours')?.text).toBe('Sort the imports.');
+    await server.skills.refresh();
+    expect(groupOf('tidy', 'yours')?.text).toBe('Sort the imports.');
   });
 
   it('lists a file added under wow home by hand after a refresh', async () => {

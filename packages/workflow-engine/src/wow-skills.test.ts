@@ -224,6 +224,20 @@ describe('built-in skills attached by themselves (spec 12, 13)', () => {
     );
   });
 
+  it('sends the Intent-Unit line once with a unit template written before wow skills', () => {
+    const { start } = firstStart(
+      workflow(step('ship')),
+      context({
+        unitPromptTemplate:
+          'Unit {{unitKey}} of {{intentId}}. Put this line in its body: Intent-Unit: {{intentId}}/{{unitKey}}',
+      }),
+      true,
+    );
+    const prompt = start?.type === 'startStep' ? start.prompt : '';
+    expect(prompt.split('Intent-Unit: demo/U2')).toHaveLength(2);
+    expect(prompt).toContain('<skill name="wow-pull-request">\nPut the line in.\n</skill>');
+  });
+
   it('attaches nothing with the setting off and keeps the sentences', () => {
     const { start } = firstStart(
       workflow(step('ship', { expectedArtifacts: ['docs/a.md'] })),

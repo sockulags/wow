@@ -18,6 +18,7 @@ import {
   notifications,
   projects,
   providerInstances,
+  threadItems,
   threads,
   workflowRuns,
   workflows,
@@ -969,6 +970,55 @@ describe('rules on a step (workflow branches)', () => {
       'check-work#1: verdict changes requested → build',
       'build#2: next step',
     ]);
+  });
+
+  it('sends a held turn made with skills with the skills named and their texts left out of the thread', async () => {
+    answers = { build: 'Built.', 'check-work': 'CHANGES_REQUESTED' };
+    host.pulls = [checks(going('test'))];
+    // An empty go-back text makes the rerun send the step's whole prompt, skills included.
+    set('workflows.goBackTemplate', '');
+    createRules([
+      step('build', { alsoFollow: [{ name: 'wow-handover' }] }),
+      step('check-work', {
+        gateAfter: true,
+        gateAfterCondition: ['checks'],
+        rules: [goTo(changesRequested, 'build')],
+      }),
+    ]);
+    await start();
+    dispatch({ type: 'thread.sendMessage', threadId: 'r1.build', text: 'hang' });
+    host.pulls = [checks(passed('test'))];
+    now = new Date(now.getTime() + server.settings.get('hosts.pollSeconds') * 1000);
+    await server.hosts.poll();
+    await server.hosts.idle();
+    await server.workflows.settled();
+    expect(run().steps[0]).toMatchObject({ state: 'running', attempt: 2 });
+    expect(run().steps[0]?.heldSkills?.map((skill) => skill.name)).toEqual([
+      'build',
+      'wow-handover',
+    ]);
+
+    answers['check-work'] = 'APPROVED';
+    dispatch({ type: 'thread.interrupt', threadId: 'r1.build' });
+    await server.workflows.settled();
+    await settle();
+    expect(prompts.filter((prompt) => prompt.includes('<skill name="wow-handover">'))).toHaveLength(
+      2,
+    );
+    const sent = db()
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, 'r1.build'))
+      .orderBy(threadItems.index)
+      .all()
+      .filter((item) => JSON.stringify(item.payload).includes('"skills"'));
+    expect(sent).toHaveLength(2);
+    for (const item of sent) {
+      expect(JSON.stringify(item.payload)).not.toContain('<skill');
+      expect(item.payload).toMatchObject({ skills: [{ name: 'build' }, { name: 'wow-handover' }] });
+    }
+    expect(run().steps[0]?.heldSkills).toBeUndefined();
+    expect(run().steps[0]).toMatchObject({ state: 'done', attempt: 2 });
   });
 
   it('refuses a workflow whose rule names a missing step, with the reason', () => {

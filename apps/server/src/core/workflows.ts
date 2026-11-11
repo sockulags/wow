@@ -580,7 +580,14 @@ function transitionEvents(
     if (USER_CAUSES.has(cause)) throw new CommandRejected('rejected', refusal);
     if (read.thread(rerun.threadId) && read.runningTurn(rerun.threadId)) {
       const steps = run.steps.map((entry) =>
-        entry.stepId === rerun.stepId ? { ...entry, heldPrompt: rerun.prompt } : entry,
+        entry.stepId === rerun.stepId
+          ? {
+              ...entry,
+              heldPrompt: rerun.prompt,
+              ...(rerun.shown === undefined ? {} : { heldShown: rerun.shown }),
+              ...(rerun.skills === undefined ? {} : { heldSkills: rerun.skills }),
+            }
+          : entry,
       );
       return transitionEvents(
         cause,
@@ -720,7 +727,7 @@ function heldTurnEvents(
   ) {
     return [];
   }
-  const { heldPrompt: prompt, ...sent } = held;
+  const { heldPrompt: prompt, heldShown: shown, heldSkills: skills, ...sent } = held;
   const effect = {
     type: 'sendBack' as const,
     runId,
@@ -728,6 +735,8 @@ function heldTurnEvents(
     threadId: held.threadId,
     attempt: held.attempt ?? 1,
     prompt,
+    ...(shown === undefined ? {} : { shown }),
+    ...(skills === undefined ? {} : { skills }),
   };
   return [
     ...sendBackTurn(effect, read, context),

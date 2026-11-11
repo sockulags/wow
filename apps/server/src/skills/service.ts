@@ -1,4 +1,4 @@
-import type { Skill } from '@wow/contracts';
+import type { Command, Skill } from '@wow/contracts';
 import {
   chokidarWatch,
   claudePluginRoots,
@@ -8,10 +8,14 @@ import {
   type SkillRoot,
   type SkillWatcher,
   type WatchFactory,
+  ownSkillsDir,
   removeOwnSkill,
+  skillFileName,
   wowSkillRoots,
   writeOwnSkill,
 } from '@wow/skills';
+import { existsSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Commit, Engine } from '../core/engine.js';
@@ -36,7 +40,8 @@ export interface SkillsServiceDeps {
 // whenever a watched folder changes, and one on request (the builder's refresh). The watched
 // folders follow the skills settings and the project list. wow's built-in skills and the user's
 // own skills are read like any other folder; an own skill saved or deleted by command has its
-// file written or removed here once the command has committed.
+// file written or removed here once the command has committed. A write that fails is answered
+// to the command (`writeFailure`) and a scan puts the list back to what is on disk.
 export class SkillsService {
   readonly #deps: SkillsServiceDeps;
   readonly #unsubscribe: (() => void)[] = [];
@@ -45,6 +50,9 @@ export class SkillsService {
   #tail: Promise<unknown> = Promise.resolve();
   #queued: Promise<Skill[]> | undefined;
   #stopped = false;
+  // Counts own-skill commits, so a scan that read the folder before one does not undo it.
+  #ownGeneration = 0;
+  #lastWriteFailure: { readonly commandId: string; readonly message: string } | undefined;
 
   constructor(deps: SkillsServiceDeps) {
     this.#deps = deps;
@@ -56,7 +64,7 @@ export class SkillsService {
         if (key.startsWith('skills.')) this.#rootsMayHaveChanged();
       }),
       this.#deps.engine.onCommit((commit) => {
-        if (this.#writeOwnSkills(commit.events)) this.#rootsMayHaveChanged();
+        if (this.#writeOwnSkills(commit.commandId, commit.events)) this.#rootsMayHaveChanged();
         else if (commit.topics.has('projects')) this.#rootsMayHaveChanged();
       }),
     );
@@ -84,25 +92,52 @@ export class SkillsService {
     this.#watcher = undefined;
   }
 
+  // Refuses a new own skill whose folder already holds a SKILL.md the list does not show (one
+  // the scan skipped, or on Windows one whose name differs only in case), so it is not
+  // overwritten. The orchestrator does no I/O, so this runs before the command is decided.
+  async refusal(command: Command): Promise<string | undefined> {
+    if (command.type !== 'skill.create') return undefined;
+    const dir = ownSkillsDir(this.#deps.wowHome);
+    const names = await readdir(dir).catch(() => [] as string[]);
+    const wanted = command.skill.name.toLowerCase();
+    const found = names.find(
+      (name) => name.toLowerCase() === wanted && existsSync(path.join(dir, name, skillFileName)),
+    );
+    return found === undefined
+      ? undefined
+      : `${path.join(dir, found, skillFileName)} is already there. Rename or remove it first.`;
+  }
+
+  // Why the file of the own skill a command saved or deleted could not be written or removed.
+  writeFailure(commandId: string): string | undefined {
+    const failure = this.#lastWriteFailure;
+    return failure?.commandId === commandId ? failure.message : undefined;
+  }
+
   // Synchronous, so the file is there when the command's answer reaches the client.
-  #writeOwnSkills(events: Commit['events']): boolean {
-    let wrote = false;
+  #writeOwnSkills(commandId: string, events: Commit['events']): boolean {
+    let touched = false;
     for (const { event } of events) {
+      if (event.kind !== 'skill.saved' && event.kind !== 'skill.deleted') continue;
+      touched = true;
+      const { dir } = event.payload.skill;
       try {
         if (event.kind === 'skill.saved') {
           const { skill, previous } = event.payload;
           writeOwnSkill(skill.dir, { ...skill, text: skill.text ?? '' });
           if (previous && previous.dir !== skill.dir) removeOwnSkill(previous.dir);
-          wrote = true;
-        } else if (event.kind === 'skill.deleted') {
-          removeOwnSkill(event.payload.skill.dir);
-          wrote = true;
+        } else {
+          removeOwnSkill(dir);
         }
       } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        const message = `Could not write ${path.join(dir, skillFileName)}: ${reason}`;
+        this.#lastWriteFailure = { commandId, message };
         this.#deps.logger.error('writing an own skill failed', error);
       }
     }
-    return wrote;
+    if (touched) this.#ownGeneration += 1;
+    return touched;
   }
 
   #rootsMayHaveChanged(): void {
@@ -128,6 +163,7 @@ export class SkillsService {
 
   async #scan(): Promise<Skill[]> {
     if (this.#stopped) return [];
+    const generation = this.#ownGeneration;
     const roots = await this.#roots();
     await this.#watch(roots);
     const scanned = await scanSkills(roots);
@@ -138,7 +174,8 @@ export class SkillsService {
     for (const problem of problems) {
       this.#deps.logger.warn(`skipped skill file ${problem.file}`, problem.message);
     }
-    if (this.#stopped) return skills;
+    // An own skill committed since this scan began: the scan its commit queued sends the list.
+    if (this.#stopped || generation !== this.#ownGeneration) return skills;
     this.#deps.engine.dispatch(`skills.sync:${randomUUID()}`, { type: 'skills.sync', skills });
     return skills;
   }

@@ -257,6 +257,10 @@ export const StepRun = z.object({
   // its thread is still answering a message the user typed there. It is sent when that turn
   // ends; until then the step is running without a turn of its own.
   heldPrompt: z.string().optional(),
+  // What the thread shows for that held message and the skills it goes with (wow skills spec
+  // 14), when it was made with skills.
+  heldShown: z.string().optional(),
+  heldSkills: z.array(SentSkill).optional(),
   // Where the run waits at this step while it does: after the step ended, or before the step
   // starts (its gate before, or the limit). Set by the engine, so a step that ran before and
   // keeps its end time is not read as waited after. Absent on runs stored without it.

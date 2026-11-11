@@ -88,7 +88,13 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     'server.info': () => ({ version: deps.info.version, home: deps.info.home, pid: process.pid }),
     dispatch: async ({ commandId, command }) => {
       await checkProjectFolder(command);
-      return deps.engine.dispatch(commandId, command);
+      const refused = await deps.skills.refusal(command);
+      if (refused !== undefined) throw new RpcFault('rejected', refused);
+      const result = deps.engine.dispatch(commandId, command);
+      // The command committed but its file could not be written; a scan puts the list back.
+      const failed = deps.skills.writeFailure(commandId);
+      if (failed !== undefined) throw new RpcFault('rejected', failed);
+      return result;
     },
     subscribe: (params, connection) => {
       const opened = deps.subscriptions.subscribe(params, connection.push);
