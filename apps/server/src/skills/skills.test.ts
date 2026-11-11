@@ -470,6 +470,27 @@ describe('own skills (spec 5, 6, 7)', () => {
     expect(groupOf('tidy', 'yours')?.text).toBe('Sort the imports.');
   });
 
+  it('answers a refresh overtaken by an own-skill commit with the list after that commit', async () => {
+    dispatch({ type: 'skill.create', skill: tidy });
+    await server.skills.refresh();
+    await mkdir(path.join(userHome, '.claude', 'skills', 'broken'), { recursive: true });
+    await writeFile(
+      path.join(userHome, '.claude', 'skills', 'broken', 'SKILL.md'),
+      '---\nname: [unclosed\n---\n',
+    );
+    let updated = false;
+    onLog = (line) => {
+      if (updated || !line.includes('skipped skill file')) return;
+      updated = true;
+      dispatch({ type: 'skill.update', skill: { ...tidy, text: 'Sort the imports.' } });
+    };
+    const list = await server.skills.refresh();
+    expect(updated).toBe(true);
+    expect(list.find((skill) => skill.source === 'yours' && skill.name === 'tidy')?.text).toBe(
+      'Sort the imports.',
+    );
+  });
+
   it('lists a file added under wow home by hand after a refresh', async () => {
     await writeSkill(path.join(wowHome, 'skills'), 'by-hand', 'Written by hand.');
     expect(groupOf('by-hand', 'yours')).toBeUndefined();

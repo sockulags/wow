@@ -73,16 +73,18 @@ export class SkillsService {
   }
 
   // Scans now. Calls that arrive while a scan is waiting to start share that scan, so a burst of
-  // file changes costs one more scan, not one each.
+  // file changes costs one more scan, not one each. A scan overtaken by an own-skill commit
+  // answers with the scan that commit queued, so no caller gets the list from before it.
   refresh(): Promise<Skill[]> {
     if (this.#queued) return this.#queued;
     const scan = this.#tail.then(() => {
       this.#queued = undefined;
       return this.#scan();
     });
-    this.#queued = scan;
     this.#tail = scan.catch(() => undefined);
-    return scan;
+    const answer = scan.then(({ skills, overtaken }) => (overtaken ? this.refresh() : skills));
+    this.#queued = answer;
+    return answer;
   }
 
   async stop(): Promise<void> {
@@ -160,8 +162,8 @@ export class SkillsService {
     return roots;
   }
 
-  async #scan(): Promise<Skill[]> {
-    if (this.#stopped) return [];
+  async #scan(): Promise<{ skills: Skill[]; overtaken: boolean }> {
+    if (this.#stopped) return { skills: [], overtaken: false };
     const generation = this.#ownGeneration;
     const roots = await this.#roots();
     await this.#watch(roots);
@@ -174,9 +176,10 @@ export class SkillsService {
       this.#deps.logger.warn(`skipped skill file ${problem.file}`, problem.message);
     }
     // An own skill committed since this scan began: the scan its commit queued sends the list.
-    if (this.#stopped || generation !== this.#ownGeneration) return skills;
+    if (this.#stopped) return { skills, overtaken: false };
+    if (generation !== this.#ownGeneration) return { skills, overtaken: true };
     this.#deps.engine.dispatch(`skills.sync:${randomUUID()}`, { type: 'skills.sync', skills });
-    return skills;
+    return { skills, overtaken: false };
   }
 
   async #watch(roots: readonly SkillRoot[]): Promise<void> {
