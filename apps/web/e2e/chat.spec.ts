@@ -47,6 +47,28 @@ async function startClaudeThread(page: Page, message: string) {
   await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
 }
 
+// A Codex thread whose "wait" turn runs until `endWait` ends it.
+async function startCodexWait(page: Page, message: string) {
+  await page.goto('/chat/new');
+  await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+  await choose(page.getByLabel('Project'), 'Demo');
+  await expect(page.getByTestId('model-bar')).toBeVisible();
+  await messageBox(page).fill(message);
+  await messageBox(page).press('Enter');
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+  await expect(page.getByTestId('thread-state')).toHaveText('Working');
+}
+
+// Ends the open thread's "wait" turn through the mock's control port (e2e/server.ts).
+async function endWait(page: Page) {
+  const threadId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+  const done = await fetch(
+    `http://127.0.0.1:${e2eOutlookControlPort}/turn-done?threadId=${threadId}`,
+    { method: 'PUT' },
+  );
+  expect(done.status).toBe(200);
+}
+
 // Puts the open thread back on the mock's first model, the default effort and Ask, through the
 // composer bar.
 async function resetBar(page: Page) {
@@ -448,18 +470,148 @@ test.describe('chat', () => {
     await expect(idle.getByRole('link', { name: /Count the tea leaves/ })).toBeVisible();
   });
 
-  test('queues a message written during a turn and sends it with Send now', async ({ page }) => {
-    await startThread(page, 'Wait for me');
-    await expect(page.getByTestId('thread-state')).toHaveText('Working');
-    await expect(page.getByTestId('turn-elapsed')).toBeVisible();
-    const composer = page.getByRole('combobox', { name: 'Message' });
-    await composer.fill('Then summarise it');
-    await composer.press('Enter');
+  test('keeps a draft and a queued message across threads and a reload @agent-workbench-49 @agent-workbench-50 @agent-workbench-52', async ({
+    page,
+  }) => {
+    await startCodexWait(page, 'Wait for the kettle');
+    const threadA = page.url();
     const queued = page.getByTestId('queued-message');
-    await expect(queued).toContainText('Then summarise it');
-    await queued.getByRole('button', { name: 'Send now' }).click();
+
+    // Enter during the turn: the server holds it, with Edit and Cancel.
+    await messageBox(page).fill('Then sum it up');
+    await messageBox(page).press('Enter');
+    await expect(queued).toContainText('Queued · sent when the turn ends');
+    await expect(queued).toContainText('Then sum it up');
+    await expect(messageBox(page)).toHaveValue('');
+    // Edit takes it off the queue and puts it back in the composer; Enter queues it again.
+    await queued.getByRole('button', { name: 'Edit' }).click();
     await expect(queued).toBeHidden();
-    await expect(conversation(page).getByText('You said: Then summarise it')).toBeVisible();
+    await expect(messageBox(page)).toHaveValue('Then sum it up');
+    await messageBox(page).press('Enter');
+    await expect(queued).toContainText('Then sum it up');
+
+    // A draft with a chip, then another thread: its composer is its own.
+    await messageBox(page).pressSequentially('/deli');
+    await messageBox(page).press('Enter');
+    await messageBox(page).pressSequentially('and list the cups');
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Provider instance'), 'Mock Claude');
+    await choose(page.getByLabel('Project'), 'Demo');
+    await messageBox(page).fill('Hello from the other thread');
+    await messageBox(page).press('Enter');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Hello from the other thread',
+    );
+    await expect(messageBox(page)).toHaveValue('');
+
+    await page.goto(threadA);
+    await expect(messageBox(page)).toHaveValue('and list the cups');
+    const picked = page.getByRole('list', { name: 'Picked skills' });
+    await expect(picked).toHaveText('deliver-work');
+    await expect(queued).toContainText('Then sum it up');
+    await page.reload();
+    await expect(messageBox(page)).toHaveValue('and list the cups');
+    await expect(picked).toHaveText('deliver-work');
+    await expect(queued).toContainText('Then sum it up');
+
+    // A second message joins the first; sending empties the composer.
+    await messageBox(page).press('Enter');
+    await expect(messageBox(page)).toHaveValue('');
+    await expect(picked).toBeHidden();
+    await expect(queued).toContainText('Then sum it up');
+    await expect(queued).toContainText('and list the cups');
+    await expect(queued.getByRole('list', { name: 'Queued with skills' })).toHaveText(
+      'deliver-work',
+    );
+
+    // The turn ends: the server sends what waited, as one message.
+    await endWait(page);
+    await expect(queued).toBeHidden();
+    const sent = conversation(page).getByTestId('item-user').last();
+    await expect(sent).toContainText('Then sum it up');
+    await expect(sent).toContainText('and list the cups');
+    await expect(sent.getByTestId('sent-from-queue')).toHaveText('Sent when the turn ended');
+    await expect(conversation(page).getByTestId('item-assistant_text').last()).toContainText(
+      'You said: $deliver-work Then sum it up',
+    );
+
+    // Cancel takes a queued message off, and the server sends nothing.
+    await messageBox(page).fill('Wait for the second kettle');
+    await messageBox(page).press('Enter');
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await messageBox(page).fill('Never mind this');
+    await messageBox(page).press('Enter');
+    await queued.getByRole('button', { name: 'Cancel' }).click();
+    await expect(queued).toBeHidden();
+    await endWait(page);
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(conversation(page).getByText('Never mind this')).toHaveCount(0);
+  });
+
+  test('hands a message to the running Claude Code turn and shows it sent @agent-workbench-51', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Wait for the tea');
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await messageBox(page).fill('Also warm the cups');
+    await messageBox(page).press('Enter');
+    const handed = conversation(page).getByTestId('item-user').last();
+    await expect(handed).toContainText('Also warm the cups');
+    await expect(handed.getByTestId('sent-from-queue')).toHaveText('Sent during the turn');
+    await expect(page.getByTestId('queued-message')).toBeHidden();
+    await endWait(page);
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(conversation(page).getByTestId('item-user')).toHaveCount(2);
+  });
+
+  test('runs /clear from the composer @agent-workbench-58 @agent-workbench-59 @agent-workbench-60', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Clear me later');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Clear me later',
+    );
+    const oldThread = page.url();
+    const bar = page.getByTestId('model-bar');
+    await bar.getByRole('button', { name: 'Effort' }).click();
+    await page
+      .getByRole('listbox', { name: 'Effort' })
+      .getByRole('option', { name: 'High' })
+      .click();
+    await expect(bar).toHaveText('Mock model·High·Ask');
+
+    const list = page.getByRole('listbox', { name: 'Skills' });
+    await messageBox(page).pressSequentially('/');
+    // wow's commands, then Claude Code's own, then the skills.
+    await expect(list.locator('[cmdk-group-heading]').first()).toHaveText('Commands');
+    await expect(list.locator('[cmdk-group-heading]').nth(1)).toHaveText('Claude Code commands');
+    const commands = list.getByRole('group', { name: 'Commands' }).getByRole('option');
+    for (const name of ['/model', '/effort', '/plan', '/compact', '/clear', '/done']) {
+      await expect(commands.filter({ hasText: name }).first()).toBeVisible();
+    }
+    // /fork has no palette command yet, so it is not listed.
+    await expect(commands.filter({ hasText: '/fork' })).toHaveCount(0);
+    const claude = list.getByRole('group', { name: 'Claude Code commands' }).getByRole('option');
+    await expect(claude).toHaveCount(2);
+    await expect(claude.first()).toContainText('/review');
+
+    // A Claude Code command goes into the text, to be sent as typed.
+    await messageBox(page).pressSequentially('rev');
+    await messageBox(page).press('Enter');
+    await expect(messageBox(page)).toHaveValue('/review ');
+    await messageBox(page).fill('');
+
+    await messageBox(page).pressSequentially('/cle');
+    await messageBox(page).press('Enter');
+    await expect(page).toHaveURL(/\/chat\/new$/);
+    await expect(page.getByLabel('Provider instance')).toHaveText(/Mock Claude/);
+    await expect(page.getByLabel('Project')).toHaveText(/Demo/);
+    await expect(page.getByTestId('model-bar')).toHaveText('Mock model·High·Ask');
+    await expect(threadList(page).getByRole('link', { name: /Clear me later/ })).toBeVisible();
+
+    // New threads start from the last one, so the later cases get the defaults back.
+    await page.goto(oldThread);
+    await resetBar(page);
   });
 
   test('a new thread starts from the last one (owner decision F-5)', async ({ page }) => {
@@ -630,6 +782,19 @@ test.describe('sketch', () => {
       'Promise.all(document.getAnimations().map((animation) => animation.finished))',
     );
     await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'model-bar') });
+  });
+
+  test('composer-queued', async ({ page }) => {
+    await startCodexWait(page, 'Wait for the kettle to boil');
+    await messageBox(page).fill('Then sum up what you found in three lines');
+    await messageBox(page).press('Enter');
+    await expect(page.getByTestId('queued-message')).toBeVisible();
+    await messageBox(page).pressSequentially('/deli');
+    await messageBox(page).press('Enter');
+    await messageBox(page).pressSequentially('and after that, list the cups we need');
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'composer-queued') });
+    await page.keyboard.press('Control+.');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
   });
 
   test('skill-chip', async ({ page }) => {

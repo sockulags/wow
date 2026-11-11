@@ -561,6 +561,9 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     ];
   }
   if (/wait/i.test(prompt)) {
+    // Runs until stopped or until the control port's /turn-done ends it, so a message written
+    // meanwhile is queued (agent workbench spec 50, 51).
+    waitingThreads.push(threadId);
     return [session, { type: 'textDelta', threadId, itemId: 'partial', delta: 'Working on it' }];
   }
   return [
@@ -584,6 +587,14 @@ const threadOf = (id: string) => id.split(separator)[0] ?? id;
 // send what follows through (the provider service takes a thread's events from any adapter).
 const backgroundThreads: string[] = [];
 let claudeMock: MockProviderAdapter | undefined;
+// Threads whose "wait" turn still runs, oldest first, and the chat copy's mock adapters, any of
+// which can send what ends them.
+const waitingThreads: string[] = [];
+const chatMocks: MockProviderAdapter[] = [];
+const chatMock = (adapter: MockProviderAdapter) => {
+  chatMocks.push(adapter);
+  return adapter;
+};
 
 // What the first question of a two-question ask was answered, per thread, until the second is.
 const answered = new Map<string, string[]>();
@@ -612,14 +623,17 @@ const chatScript: MockScript = (command) => {
       answered.delete(threadId);
       return finish(threadId, `You chose ${given.join(' and ')}.`, 'after');
     }
-    case 'interrupt':
+    case 'interrupt': {
+      const waiting = waitingThreads.indexOf(command.threadId);
+      if (waiting !== -1) waitingThreads.splice(waiting, 1);
       return [{ type: 'turnInterrupted', threadId: command.threadId }];
+    }
     default:
       return [];
   }
 };
 
-const chatClaude = () => (claudeMock = new MockProviderAdapter('claude', chatScript));
+const chatClaude = () => (claudeMock = chatMock(new MockProviderAdapter('claude', chatScript)));
 
 // "Update Codex" (settings tests): a Codex instance named "... differs" tests as a compatible
 // other version, one named "... incompatible" as incompatible with an npm update until the fake
@@ -896,11 +910,13 @@ const server = await startServer({
           : chatClaude(),
       // The chat copy's Codex lists models the way Codex reports them (agent workbench U1).
       codex: (instance) =>
-        new MockProviderAdapter(
-          'codex',
-          chatScript,
-          codexTest(instance),
-          home === e2eHome ? () => mockCodexModels : undefined,
+        chatMock(
+          new MockProviderAdapter(
+            'codex',
+            chatScript,
+            codexTest(instance),
+            home === e2eHome ? () => mockCodexModels : undefined,
+          ),
         ),
     },
     outlook: (mode, context) => {
@@ -926,6 +942,17 @@ const control = createServer((request, response) => {
         { type: 'turnStartedByProvider', threadId },
         ...finish(threadId, 'The background agent counted 42 leaves.', 'counted'),
       ]);
+    }
+  } else if (url.pathname === '/turn-done' && request.method === 'PUT') {
+    // Ends the "wait" turn of ?threadId=, else the oldest, so what was queued during it is sent.
+    const wanted = url.searchParams.get('threadId');
+    const at = wanted === null ? 0 : waitingThreads.indexOf(wanted);
+    const threadId = at === -1 ? undefined : waitingThreads.splice(at, 1)[0];
+    const adapter = chatMocks[0];
+    if (!threadId || !adapter) {
+      response.statusCode = 409;
+    } else {
+      adapter.emit(finish(threadId, 'Done waiting.', 'waited'));
     }
   } else if (url.pathname === '/opened' && request.method === 'GET') {
     response.setHeader('content-type', 'application/json');
