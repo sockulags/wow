@@ -985,8 +985,12 @@ alike. The card stays one row.
   Node 22 and the server has no date library): `instantOf` turns a local reading into an
   instant, taking the first of a reading that happens twice and, for a reading in the hour the
   clocks skip, the instant they jumped (02:30 becomes 03:00). Monthly falls on the start's day;
-  a month without it has none. `occurrences(series)` is a generator in start order and never
-  ends for `never` before year 9999, so every caller stops it by time or count.
+  a month without it has none. `occurrences(series, from?)` is a generator in start order and never
+  ends for `never` before year 9999, so every caller stops it by time or count. Given `from`
+  (an instant or a day) it jumps to that day by day number before it asks Intl for anything,
+  so a read far from the card's first day costs what a read near it does; an end after a count
+  counts the days it passes without working out their times, and a day past the series' last
+  one answers nothing at once.
 - **What is stored**: the rule, the days skipped by hand (`skippedDates`), and per reached
   occurrence a `card_occurrences` row (`CardOccurrence`): `fired` with its run, `failed` (the
   run could not start), `skipped` (the card's earlier run was still going) or `missed`, with a
