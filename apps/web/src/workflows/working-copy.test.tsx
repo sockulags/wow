@@ -5,12 +5,13 @@ import {
   type Connection,
   type ConnectionState,
 } from '@wow/client-runtime';
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
+import { outbox } from '@/test/outbox';
 import { renderApp } from '@/test/render';
 import { workflowCommands } from './commands';
 import {
@@ -103,13 +104,15 @@ const workflow: Workflow = {
 };
 
 function fake(runRow: WorkflowRun, refuse?: string) {
-  const asked: { method: string; params: unknown }[] = [];
-  const sent: Command[] = [];
+  const requests = outbox<{ method: string; params: unknown }>();
+  const asked = requests.sent;
+  const dispatches = outbox<Command>();
+  const sent = dispatches.sent;
   const listeners: ((rows: unknown[]) => void)[] = [];
   const connection: Connection = {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
     request(method, params) {
-      asked.push({ method, params });
+      requests.record({ method, params });
       if (method === 'workflowRuns.detectArtifacts') return Promise.resolve(runRow);
       if (method === 'workflowRuns.removeWorkingCopy') {
         if (refuse !== undefined) return Promise.reject(new Error(refuse));
@@ -119,7 +122,7 @@ function fake(runRow: WorkflowRun, refuse?: string) {
       }
       if (method === 'dispatch') {
         const { command, commandId } = params as { command: Command; commandId: string };
-        sent.push(command);
+        dispatches.record(command);
         return Promise.resolve({ commandId, seqs: [sent.length], duplicate: false });
       }
       return Promise.resolve([]);
@@ -145,7 +148,7 @@ function fake(runRow: WorkflowRun, refuse?: string) {
       createMemorySettingsSource(undefined, { 'providers.offerSetup': false }),
     ),
   };
-  return { runtime, asked, sent };
+  return { runtime, asked, sent, untilAsked: requests.until, untilSent: dispatches.until };
 }
 
 const line = async () => within(await screen.findByRole('group', { name: 'Working copy' }));
@@ -193,7 +196,7 @@ describe('working copy in the run view', () => {
 
   it('lists what a kept working copy holds and removes it after a confirmation (spec 37)', async () => {
     const user = userEvent.setup();
-    const { runtime, asked } = fake(run(kept));
+    const { runtime, asked, untilAsked } = fake(run(kept));
     await renderApp(route, runtime);
     const shown = await line();
     expect(shown.getByTestId('working-copy-status').textContent).toBe(
@@ -213,9 +216,8 @@ describe('working copy in the run view', () => {
     await user.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }),
     );
-    await waitFor(() =>
-      expect(screen.getByTestId('working-copy-status').textContent).toBe('Working copy removed'),
-    );
+    await act(() => untilAsked((requests) => removals(requests).length > 0));
+    expect(screen.getByTestId('working-copy-status').textContent).toBe('Working copy removed');
     expect(removals(asked)).toEqual([
       { method: 'workflowRuns.removeWorkingCopy', params: { runId: 'run-1' } },
     ]);
@@ -307,14 +309,13 @@ describe('working copy palette commands', () => {
   });
 
   it('switches "Own working copy" of a workflow from the palette', async () => {
-    const { runtime, sent } = fake(run(null));
+    const { runtime, sent, untilSent } = fake(run(null));
     const [toggle] = commands([]).filter((command) =>
       command.id.startsWith('workflow.ownWorkingCopy.'),
     );
     expect(toggle?.title).toBe('Deliver a unit: run in the project folder');
     toggle?.run({ connection: runtime.connection } as never);
-    await waitFor(() =>
-      expect(sent).toEqual([{ type: 'workflow.update', workflowId: 'w', ownWorkingCopy: false }]),
-    );
+    await act(() => untilSent((dispatched) => dispatched.length > 0));
+    expect(sent).toEqual([{ type: 'workflow.update', workflowId: 'w', ownWorkingCopy: false }]);
   });
 });

@@ -481,6 +481,7 @@ test.describe('calendar', () => {
 
   test('refuses an end before the start and says what a trigger will do', async ({ page }) => {
     await page.goto(`/calendar?view=day&date=${localDay(4)}`);
+    await expect(page.getByTestId(`day-${localDay(4)}`)).toBeVisible();
     await page.keyboard.press('c');
     const dialog = page.getByRole('dialog', { name: 'New card' });
     await expect(dialog.getByLabel('Title')).toHaveAttribute(

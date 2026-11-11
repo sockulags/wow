@@ -56,6 +56,7 @@ test.describe('palette', () => {
     await expect(plan).toBeHidden();
 
     await page.goto('/chat');
+    await expect(page.getByRole('navigation', { name: 'Threads' })).toBeVisible();
     // Before typing, the palette lists what needs you, recent things and the view's actions.
     await page.keyboard.press('Control+k');
     const palette = page.getByRole('dialog', { name: 'Command palette' });

@@ -154,6 +154,7 @@ test.describe('settings', () => {
 
   test('the wizard creates the detected CLIs from the palette', async ({ page }) => {
     await page.goto('/calendar');
+    await expect(page.getByRole('region', { name: 'Calendar' })).toBeVisible();
     await page.keyboard.press('Control+k');
     await page.getByRole('dialog').getByRole('combobox').fill('Detect installed providers');
     await page.keyboard.press('Enter');

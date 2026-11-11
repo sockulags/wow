@@ -6,12 +6,13 @@ import {
   type ConnectionState,
   type SettingValues,
 } from '@wow/client-runtime';
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
+import { outbox } from '@/test/outbox';
 import { renderApp } from '@/test/render';
 import { validateRunSearch } from './changes';
 import { workflowCommands } from './commands';
@@ -108,7 +109,8 @@ function fake(
   runRow: WorkflowRun = run,
   options: { readonly settings?: SettingValues; readonly refuse?: string } = {},
 ) {
-  const sent: Command[] = [];
+  const box = outbox<Command>();
+  const sent = box.sent;
   const topics: Readonly<Record<string, unknown[]>> = {
     workflowRuns: [runRow],
     workflows: [workflow],
@@ -131,7 +133,7 @@ function fake(
       }
       if (method !== 'dispatch') return Promise.resolve([]);
       const { command, commandId } = params as { command: Command; commandId: string };
-      sent.push(command);
+      box.record(command);
       return options.refuse === undefined
         ? Promise.resolve({ commandId, seqs: [sent.length], duplicate: false })
         : Promise.reject(new Error(options.refuse));
@@ -155,7 +157,7 @@ function fake(
       }),
     ),
   };
-  return { runtime, sent };
+  return { runtime, sent, until: box.until };
 }
 
 const panel = () => screen.findByRole('complementary', { name: 'Context panel' });
@@ -287,9 +289,8 @@ describe('Approve (spec 15)', () => {
     await renderApp(route, server.runtime);
     await gate();
     fireEvent.keyDown(window, { key: 'Enter', code: 'Enter', ctrlKey: true });
-    await waitFor(() =>
-      expect(server.sent).toEqual([{ type: 'workflowRun.continue', runId: 'run-1' }]),
-    );
+    await act(() => server.until((sent) => sent.length > 0));
+    expect(server.sent).toEqual([{ type: 'workflowRun.continue', runId: 'run-1' }]);
   });
 
   it('continues the run from the palette command', async () => {
@@ -302,9 +303,8 @@ describe('Approve (spec 15)', () => {
     }).find((entry) => entry.id === 'workflowRun.approve');
     expect(command).toMatchObject({ title: 'Run: approve', keybinding: 'keybindings.gateApprove' });
     command?.run({ connection: server.runtime.connection } as never);
-    await waitFor(() =>
-      expect(server.sent).toEqual([{ type: 'workflowRun.continue', runId: 'run-1' }]),
-    );
+    await act(() => server.until((sent) => sent.length > 0));
+    expect(server.sent).toEqual([{ type: 'workflowRun.continue', runId: 'run-1' }]);
   });
 });
 
@@ -327,7 +327,8 @@ describe('Send back (spec 16 to 18)', () => {
     expect(server.sent).toEqual([
       { type: 'workflowRun.sendBack', runId: 'run-1', note: 'Name the kettle.' },
     ]);
-    await waitFor(() => expect(bar.queryByRole('textbox')).toBeNull());
+    await act(() => server.until((sent) => sent.length > 0));
+    expect(bar.queryByRole('textbox')).toBeNull();
   });
 
   it('refuses an empty note and sends nothing', async () => {
@@ -352,11 +353,10 @@ describe('Send back (spec 16 to 18)', () => {
     const note = await bar.findByRole('textbox', { name: 'What should change?' });
     await user.type(note, 'Shorter.');
     fireEvent.keyDown(note, { key: 'Enter', code: 'Enter', ctrlKey: true, shiftKey: true });
-    await waitFor(() =>
-      expect(server.sent).toEqual([
-        { type: 'workflowRun.sendBack', runId: 'run-1', note: 'Shorter.' },
-      ]),
-    );
+    await act(() => server.until((sent) => sent.length > 0));
+    expect(server.sent).toEqual([
+      { type: 'workflowRun.sendBack', runId: 'run-1', note: 'Shorter.' },
+    ]);
   });
 
   it('puts the field away with Escape or Cancel and keeps the run as it is', async () => {

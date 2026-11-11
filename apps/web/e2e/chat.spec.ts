@@ -18,6 +18,7 @@ test.beforeEach(async ({ page }) => {
 
 async function startThread(page: Page, message: string) {
   await page.goto('/chat');
+  await expect(page.getByRole('navigation', { name: 'Threads' })).toBeVisible();
   await page.keyboard.press('Control+Alt+N');
   await expect(page).toHaveURL(/\/chat\/new$/);
   const composer = page.getByRole('combobox', { name: 'Message' });
@@ -382,6 +383,7 @@ test.describe('chat', () => {
   test('finds threads and actions in the palette', async ({ page }) => {
     await startThread(page, 'Palette target');
     await page.goto('/chat');
+    await expect(page.getByRole('navigation', { name: 'Threads' })).toBeVisible();
     await page.keyboard.press('Control+k');
     const palette = page.getByRole('dialog');
     await palette.getByRole('combobox').fill('palette target');

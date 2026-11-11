@@ -5,12 +5,13 @@ import {
   type Connection,
   type ConnectionState,
 } from '@wow/client-runtime';
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
+import { outbox } from '@/test/outbox';
 import { renderApp } from '@/test/render';
 import { workflowCommands } from './commands';
 import { triggerGroups, triggersHeld, triggersStore } from './triggers';
@@ -95,14 +96,15 @@ function fake(
   rows: Trigger[],
   { refuse, settings = {} }: { refuse?: string; settings?: Record<string, unknown> } = {},
 ) {
-  const sent: Command[] = [];
+  const box = outbox<Command>();
+  const sent = box.sent;
   const connection: Connection = {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
     request(method, params) {
       if (method === 'dispatch') {
         if (refuse !== undefined) return Promise.reject(new Error(refuse));
         const { command, commandId } = params as { command: Command; commandId: string };
-        sent.push(command);
+        box.record(command);
         return Promise.resolve({ commandId, seqs: [sent.length], duplicate: false });
       }
       return Promise.resolve([]);
@@ -127,7 +129,7 @@ function fake(
       createMemorySettingsSource(undefined, { 'providers.offerSetup': false, ...settings }),
     ),
   };
-  return { runtime, sent };
+  return { runtime, sent, until: box.until };
 }
 
 const panel = async () => within(await screen.findByRole('tabpanel', { name: 'Triggers' }));
@@ -194,7 +196,7 @@ describe('Triggers tab', () => {
 
   it('switches a trigger off and deletes one', async () => {
     const user = userEvent.setup();
-    const { runtime, sent } = fake([merged, failed]);
+    const { runtime, sent, until } = fake([merged, failed]);
     await renderApp(route, runtime);
     const shown = await panel();
     await user.click(
@@ -203,17 +205,16 @@ describe('Triggers tab', () => {
     await user.click(
       shown.getByRole('button', { name: 'Delete trigger: Checks failed → Fix the checks' }),
     );
-    await waitFor(() =>
-      expect(sent).toEqual([
-        { type: 'trigger.setEnabled', triggerId: 'a', enabled: false },
-        { type: 'trigger.delete', triggerId: 'bb' },
-      ]),
-    );
+    await act(() => until((commands) => commands.length === 2));
+    expect(sent).toEqual([
+      { type: 'trigger.setEnabled', triggerId: 'a', enabled: false },
+      { type: 'trigger.delete', triggerId: 'bb' },
+    ]);
   });
 
   it('asks for project, event and workflow in New trigger and creates it', async () => {
     const user = userEvent.setup();
-    const { runtime, sent } = fake([]);
+    const { runtime, sent, until } = fake([]);
     await renderApp(route, runtime);
     await user.click(await screen.findByRole('button', { name: 'New trigger' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'New trigger' }));
@@ -234,14 +235,15 @@ describe('Triggers tab', () => {
     await choose('Workflow', 'Fix the checks');
     await user.click(dialog.getByRole('button', { name: 'Create trigger' }));
 
-    await waitFor(() => expect(sent).toHaveLength(1));
+    await act(() => until((commands) => commands.length > 0));
+    expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
       type: 'trigger.create',
       projectId: 'tea',
       event: 'checksFailed',
       workflowId: 'fix',
     });
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('keeps the dialog open with what the server said when it refuses', async () => {
