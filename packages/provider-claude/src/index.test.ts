@@ -143,12 +143,15 @@ const backgroundChanged = (
 });
 
 // Claude Code's notice that a background task ended, which it then answers in a turn.
-const taskNotification = (id: string): FakeStep => ({
+const taskNotification = (
+  id: string,
+  status: 'completed' | 'failed' | 'stopped' = 'completed',
+): FakeStep => ({
   message: {
     type: 'system',
     subtype: 'task_notification',
     task_id: id,
-    status: 'completed',
+    status,
     output_file: '',
     summary: 'Done',
     uuid: '00000000-0000-4000-8000-0000000000de',
@@ -748,6 +751,27 @@ describe('@wow/provider-claude', () => {
       { type: 'turnCompleted', threadId: 't1' },
     ]);
     expect(h.queries[0]?.prompts).toEqual(['What is in the readme?']);
+  });
+
+  it('starts no turn for a background agent that was stopped', async () => {
+    const later = released();
+    const h = harness([
+      [
+        backgroundChanged([{ id: 'bg-1', description: 'Count the tea leaves' }]),
+        result(0),
+        later.step,
+        taskNotification('bg-1', 'stopped'),
+        backgroundChanged([]),
+      ],
+    ]);
+    const first = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await first;
+    const before = h.events.length;
+    const cleared = h.next('backgroundTasks');
+    later.release();
+    await cleared;
+    expect(h.events.slice(before).map((event) => event.type)).toEqual(['backgroundTasks']);
   });
 
   it('starts the turn that answers a background agent before the agent leaves the list', async () => {
