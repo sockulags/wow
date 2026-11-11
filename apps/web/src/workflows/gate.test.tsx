@@ -327,7 +327,8 @@ describe('Send back (spec 16 to 18)', () => {
     expect(server.sent).toEqual([
       { type: 'workflowRun.sendBack', runId: 'run-1', note: 'Name the kettle.' },
     ]);
-    await act(() => server.until((sent) => sent.length > 0));
+    // The field closes once the server has answered the command, a turn after it was sent.
+    await act(async () => undefined);
     expect(bar.queryByRole('textbox')).toBeNull();
   });
 

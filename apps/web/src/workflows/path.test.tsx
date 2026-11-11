@@ -432,7 +432,12 @@ describe('a step that ran more than once (spec 19)', () => {
     );
     fireEvent.click(only);
     const files = await screen.findByRole('navigation', { name: 'Changed files' });
-    await act(() => changes.untilDiff((asked) => asked.length > 0));
+    // The step's only file becomes the one shown, so its patch is asked for.
+    await act(() =>
+      changes.untilDiff((asked) =>
+        asked.some((params) => (params as { path?: string }).path === 'src/lid.ts'),
+      ),
+    );
     expect(within(files).queryByText(/kettle\.ts/)).toBeNull();
     expect(within(files).getByText(/lid\.ts/)).toBeTruthy();
   });

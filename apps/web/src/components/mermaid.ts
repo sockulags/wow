@@ -68,15 +68,23 @@ const linkAttributes = ['href', 'xlink:href', 'src'];
 // CSS that loads something. A `url(#id)` points inside the drawing (markers, gradients).
 const loadingCss = /@import|image-set\(|url\((?!\s*['"]?\s*#)/i;
 // CSS escapes can spell `url` without the letters (`u\\72l(`), so they are read the way CSS reads
-// them before checking; the library's own styles have none.
+// them before checking; the library's own styles have none. Reading once is not enough: an escaped
+// backslash leaves a new escape behind (`\\75rl(` reads as `\75rl(`), so it is read until no
+// backslash is left, and what is checked is also what is written back.
 const cssEscape = /\\(?:([0-9a-f]{1,6})(?:\r\n|[ \t\n\r\f])?|([\s\S]))?/gi;
-const unescaped = (css: string) =>
+const decodeOnce = (css: string) =>
   css.replace(cssEscape, (_, hex: string | undefined, char: string | undefined) => {
     if (hex === undefined) return char ?? '';
     const point = Number.parseInt(hex, 16);
     const valid = point > 0 && point <= 0x10ffff && (point < 0xd800 || point > 0xdfff);
     return String.fromCodePoint(valid ? point : 0xfffd);
   });
+// Every pass makes the text shorter, so this ends.
+function unescaped(css: string): string {
+  let text = css;
+  while (text.includes('\\')) text = decodeOnce(text);
+  return text;
+}
 
 function scrubStyle(css: string): string {
   return unescaped(css)
