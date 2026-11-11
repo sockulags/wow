@@ -8,6 +8,7 @@ import {
   UsageItemPayload,
   type Approval,
   type ApprovalDecision,
+  type BackgroundTask,
   type Question,
   type ThreadItem,
 } from '@wow/contracts';
@@ -19,6 +20,7 @@ import {
   CircleDashedIcon,
   CircleDotIcon,
   CircleIcon,
+  HourglassIcon,
   RotateCcwIcon,
   ShieldQuestionIcon,
   WrenchIcon,
@@ -688,6 +690,22 @@ function useNow(active: boolean): number {
 }
 
 // "Working · 0:42": how long the running turn has taken, from the turn's own start time.
+// Between turns: the agent's background work still runs, and it goes on by itself when it ends.
+export function BackgroundIndicator({ tasks }: { tasks: readonly BackgroundTask[] }) {
+  return (
+    <p
+      className="flex items-center gap-2 text-xs text-muted-foreground"
+      aria-live="polite"
+      data-testid="background-work"
+    >
+      <HourglassIcon className="size-3.5 shrink-0" aria-hidden />
+      <span>
+        Waiting for background work: {tasks.map((task) => task.description || task.id).join(', ')}
+      </span>
+    </p>
+  );
+}
+
 export function WorkingIndicator({ startedAt }: { startedAt: string | undefined }) {
   const now = useNow(startedAt !== undefined);
   return (

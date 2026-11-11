@@ -333,6 +333,21 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .run();
       return ['turns', 'threadItems', ...threadTopics];
     }
+    case 'turn.startedByProvider': {
+      const { turn } = event.payload;
+      tx.insert(turns).values(turn).run();
+      tx.update(threads)
+        .set({ state: 'working', updatedAt: turn.startedAt })
+        .where(eq(threads.id, turn.threadId))
+        .run();
+      return ['turns', ...threadTopics];
+    }
+    case 'thread.backgroundChanged':
+      tx.update(threads)
+        .set({ backgroundTasks: event.payload.tasks, updatedAt: event.payload.updatedAt })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
     case 'turn.interruptRequested':
       return [];
     case 'turn.usageRecorded':

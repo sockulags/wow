@@ -76,6 +76,11 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       answers. Write down what Claude says it received for each: expected the picked label for
       the first and your typed text for the second. Ask once more and answer with a choice and
       typed text together: expected "<label>, <your text>".
+- [ ] Ask Claude to run a background agent and wait for it ("Start a background agent that
+      counts the files in this folder, then end your turn and wait for it"). The turn ends and the
+      thread says "Waiting for background work" with the agent's description. Without writing
+      anything, Claude's answer appears when the agent is done, the thread goes to Working and then
+      Idle, and the new turn has its own usage. Write down whether the waiting line showed.
 
 ## 4. Codex turn
 

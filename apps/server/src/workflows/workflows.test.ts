@@ -379,6 +379,51 @@ describe('workflow runs', () => {
     expect(notifications.map((entry) => entry.reason)).toEqual(['failed']);
   });
 
+  // Claude Code goes on by itself once its background agent ends; the step ends with that turn.
+  it('ends a step only after the turn its background work started has ended', async () => {
+    script = (command) =>
+      command.type === 'startTurn'
+        ? [
+            { type: 'textDelta', threadId: command.threadId, itemId: 'a', delta: 'Started.' },
+            {
+              type: 'backgroundTasks',
+              threadId: command.threadId,
+              tasks: [{ id: 'bg-1', description: 'Count the tea leaves' }],
+            },
+            { type: 'turnCompleted', threadId: command.threadId },
+          ]
+        : [];
+    const firstEnded = new Promise<void>((resolve) => {
+      const off = server.engine.onCommit((commit) => {
+        if (commit.events.some(({ event }) => event.kind === 'turn.ended')) {
+          off();
+          resolve();
+        }
+      });
+    });
+    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf1', projectId: 'p1' });
+    await firstEnded;
+    await server.workflows.settled();
+    expect(run().steps[0]).toMatchObject({ state: 'running' });
+    expect(thread('r1.s1')?.backgroundTasks).toEqual([
+      { id: 'bg-1', description: 'Count the tea leaves' },
+    ]);
+
+    adapters[0]?.emit([
+      { type: 'backgroundTasks', threadId: 'r1.s1', tasks: [] },
+      { type: 'turnStartedByProvider', threadId: 'r1.s1' },
+      { type: 'textDelta', threadId: 'r1.s1', itemId: 'b', delta: 'Counted 42 leaves.' },
+      { type: 'turnCompleted', threadId: 'r1.s1' },
+    ]);
+    const waiting = await runBecomes((current) => current.state === 'waiting');
+    expect(waiting.steps[0]).toMatchObject({
+      state: 'waiting',
+      finalMessage: 'Counted 42 leaves.',
+    });
+    expect(thread('r1.s1')).toMatchObject({ state: 'needs_you', backgroundTasks: [] });
+    expect(startTurns()).toHaveLength(1);
+  });
+
   it('fails a step that has no model instead of sending an empty one', async () => {
     server.database.db
       .update(providerInstances)

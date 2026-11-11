@@ -28,6 +28,7 @@ import { Composer, type ComposerHandle } from './composer';
 import type { QuestionHold } from './question-card';
 import { useDispatch, useTopic } from './data';
 import {
+  BackgroundIndicator,
   ChatQuestions,
   ConversationItem,
   ToolCallGroup,
@@ -433,6 +434,11 @@ export function ThreadConversation({
           {running && thread.state === 'working' && (
             <div className="mt-3">
               <WorkingIndicator startedAt={running.startedAt} />
+            </div>
+          )}
+          {!running && thread.backgroundTasks && thread.backgroundTasks.length > 0 && (
+            <div className="mt-3">
+              <BackgroundIndicator tasks={thread.backgroundTasks} />
             </div>
           )}
         </div>

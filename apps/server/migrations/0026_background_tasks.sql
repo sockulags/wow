@@ -1,0 +1,1 @@
+ALTER TABLE `threads` ADD `background_tasks` text DEFAULT '[]' NOT NULL;

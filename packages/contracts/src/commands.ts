@@ -41,6 +41,7 @@ import {
 } from './hosts.js';
 import {
   ApprovalDecision,
+  BackgroundTask,
   ProviderEvent,
   ProviderKind,
   ProviderTestResult,
@@ -867,6 +868,17 @@ export const DomainEvent = z.discriminatedUnion('kind', [
         kind: ThreadKind.optional(),
       }),
     }),
+  }),
+  // A turn the provider started by itself, so there is no user message and nothing to send.
+  z.object({
+    kind: z.literal('turn.startedByProvider'),
+    aggregate: Id,
+    payload: z.object({ turn: Turn }),
+  }),
+  z.object({
+    kind: z.literal('thread.backgroundChanged'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, tasks: z.array(BackgroundTask), updatedAt: Timestamp }),
   }),
   z.object({
     kind: z.literal('turn.interruptRequested'),

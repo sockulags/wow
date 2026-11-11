@@ -410,6 +410,12 @@ meanwhile: Enter queues it, and it is sent when the turn ends. **Send now** stop
 sends it; the cross puts it back in the composer. A failed turn shows **Retry** (sends your last
 message again) and **Resume** (sends `chat.resumePrompt`) in the error row.
 
+When Claude starts work in the background (a background agent or command) and ends its turn to
+wait for it, the thread says "Waiting for background work" and names it. When that work ends,
+Claude goes on by itself: the new turn appears in the thread as it runs, without a message from
+you, its usage is counted, **Stop** stops it, and the thread is marked as after any turn. Should
+the server stop while Claude waits, the thread shows a failed turn; send a message to go on.
+
 ### Skills
 
 Type `/` at the start of a message or after a space to list skills with their descriptions,
@@ -592,6 +598,11 @@ instead is a side conversation and leaves the run waiting. **Stop** ends the run
 first, because a stopped run cannot be continued. The next step's prompt is its skill invocation, its extra prompt, and the handover from
 `workflows.handoverTemplate` (by default the previous step's final message and the expected
 artifact paths). Stopping a run keeps all its threads.
+
+A step whose turn ends while Claude still runs background work is not done yet: it ends with the
+turn Claude starts by itself once that work ends, and that turn's last message is the step's. When
+the background work ends before Claude ends its turn, wow cannot tell that Claude will go on, and
+the step ends with the first turn.
 
 ### Reviewing at a gate
 

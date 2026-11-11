@@ -105,6 +105,51 @@ const toolResult = (id: string, toolUseResult: unknown): FakeStep => ({
   } as unknown as SDKMessage,
 });
 
+const assistantText = (id: string, text: string): FakeStep => ({
+  message: {
+    type: 'assistant',
+    message: {
+      id: `msg_${id}`,
+      type: 'message',
+      role: 'assistant',
+      model: 'sonnet',
+      content: [{ type: 'text', text }],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+    parent_tool_use_id: null,
+    uuid: '00000000-0000-4000-8000-0000000000cc',
+    session_id: 'sess-1',
+  } as unknown as SDKMessage,
+});
+
+// What Claude Code reports as running in the background after a change (the whole list).
+const backgroundChanged = (
+  tasks: Array<{ id: string; description: string; ambient?: boolean }>,
+): FakeStep => ({
+  message: {
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    tasks: tasks.map((task) => ({
+      task_id: task.id,
+      task_type: 'local_agent',
+      description: task.description,
+      ...(task.ambient ? { ambient: true } : {}),
+    })),
+    uuid: '00000000-0000-4000-8000-0000000000dd',
+    session_id: 'sess-1',
+  } as unknown as SDKMessage,
+});
+
+const released = () => {
+  const gate: { release?: () => void } = {};
+  const hold = new Promise<void>((resolve) => {
+    gate.release = resolve;
+  });
+  return { step: { hold } satisfies FakeStep, release: () => gate.release?.() };
+};
+
 const initStep = () => loadFixture('turn.json')[0] as FakeStep;
 
 interface Harness {
@@ -640,6 +685,106 @@ describe('@wow/provider-claude', () => {
     expect(lists).toEqual([
       [{ id: '7', content: 'Write tests', status: 'pending' }],
       [{ id: '7', content: 'Write tests', status: 'completed' }],
+    ]);
+  });
+
+  // Claude Code goes on by itself once a background agent ends: more output and a second result
+  // arrive on the open stream without a startTurn.
+  it('reports a turn Claude Code starts by itself after its background work ends', async () => {
+    const later = released();
+    const h = harness([
+      [
+        assistantText('1', 'I started a background agent.'),
+        backgroundChanged([
+          { id: 'bg-1', description: 'Count the tea leaves' },
+          { id: 'mem', description: 'Memory', ambient: true },
+        ]),
+        result(0.01),
+        later.step,
+        backgroundChanged([]),
+        assistantText('2', 'The agent counted 42 leaves.'),
+        result(0.03),
+      ],
+    ]);
+    const first = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await first;
+    expect(h.events.filter((event) => event.type === 'backgroundTasks')).toEqual([
+      {
+        type: 'backgroundTasks',
+        threadId: 't1',
+        tasks: [{ id: 'bg-1', description: 'Count the tea leaves' }],
+      },
+    ]);
+    const before = h.events.length;
+    const second = h.next('turnCompleted');
+    later.release();
+    await second;
+    expect(h.events.slice(before)).toEqual([
+      { type: 'backgroundTasks', threadId: 't1', tasks: [] },
+      { type: 'turnStartedByProvider', threadId: 't1' },
+      {
+        type: 'textDelta',
+        threadId: 't1',
+        itemId: 'msg_2:full:0',
+        delta: 'The agent counted 42 leaves.',
+      },
+      expect.objectContaining({ type: 'usage', costUsd: expect.closeTo(0.02) }),
+      { type: 'contextUsage', threadId: 't1', usedTokens: 1500, maxTokens: 200_000 },
+      { type: 'turnCompleted', threadId: 't1' },
+    ]);
+    expect(h.queries[0]?.prompts).toEqual(['What is in the readme?']);
+  });
+
+  it('stops a turn Claude Code started by itself', async () => {
+    const later = released();
+    const stopped = released();
+    const h = harness([
+      [
+        backgroundChanged([{ id: 'bg-1', description: 'Count the tea leaves' }]),
+        result(0),
+        later.step,
+        backgroundChanged([]),
+        assistantText('2', 'Counting'),
+        stopped.step,
+        result(0),
+      ],
+    ]);
+    const first = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await first;
+    const streamed = h.next('textDelta');
+    later.release();
+    await streamed;
+    const interrupted = h.next('turnInterrupted');
+    await h.adapter.send({ type: 'interrupt', threadId: 't1' });
+    stopped.release();
+    expect(await interrupted).toEqual({ type: 'turnInterrupted', threadId: 't1' });
+    expect(h.queries[0]?.calls).toEqual(['interrupt']);
+    expect(h.events.map((event) => event.type)).not.toContain('turnFailed');
+  });
+
+  it('fails the turn background work would have started when Claude Code exits', async () => {
+    const h = harness([
+      [
+        backgroundChanged([{ id: 'bg-1', description: 'Count the tea leaves' }]),
+        result(0),
+        { crash: 'Claude Code process exited with code 1' },
+      ],
+    ]);
+    const failed = h.next('turnFailed');
+    await h.adapter.send(startTurn());
+    expect(await failed).toEqual({
+      type: 'turnFailed',
+      threadId: 't1',
+      error: 'Claude Code process exited with code 1',
+    });
+    const types = h.events.map((event) => event.type);
+    expect(types.slice(types.indexOf('turnCompleted'))).toEqual([
+      'turnCompleted',
+      'backgroundTasks',
+      'turnStartedByProvider',
+      'turnFailed',
     ]);
   });
 

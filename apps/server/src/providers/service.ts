@@ -10,14 +10,14 @@ import {
   type ProviderInstance,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
-import { eq } from 'drizzle-orm';
+import { eq, ne } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { AssistantRedactor } from '../assistant/redact.js';
 import { prepareAssistantFolder } from '../assistant/thread.js';
 import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
-import { providerInstances, turns } from '../db/schema.js';
+import { providerInstances, threads, turns } from '../db/schema.js';
 import type { ProviderAdapters } from '../hooks/providers.js';
 import type { Logger } from '../logger.js';
 import type { SettingsService } from '../settings/service.js';
@@ -59,15 +59,38 @@ export class ProviderService {
 
   // A turn that was running when the previous server process ended cannot finish: its provider
   // process is gone. The partial output stays; the thread can continue with a new turn.
+  // Background work went with the process too: the turn the provider would have started after
+  // it never comes, so it fails here, which also ends a workflow step that waited for it.
   recover(): void {
-    const running = this.#deps.db
-      .select({ threadId: turns.threadId })
-      .from(turns)
-      .where(eq(turns.state, 'running'))
-      .all();
-    for (const { threadId } of running) {
+    const running = new Set(
+      this.#deps.db
+        .select({ threadId: turns.threadId })
+        .from(turns)
+        .where(eq(turns.state, 'running'))
+        .all()
+        .map((row) => row.threadId),
+    );
+    for (const threadId of running) {
       this.#dispatch(threadId, [
+        { type: 'backgroundTasks', threadId, tasks: [] },
         { type: 'turnFailed', threadId, error: 'The server stopped while this turn was running' },
+      ]);
+    }
+    const waiting = this.#deps.db
+      .select({ id: threads.id })
+      .from(threads)
+      .where(ne(threads.backgroundTasks, []))
+      .all();
+    for (const { id: threadId } of waiting) {
+      if (running.has(threadId)) continue;
+      this.#dispatch(threadId, [
+        { type: 'backgroundTasks', threadId, tasks: [] },
+        { type: 'turnStartedByProvider', threadId },
+        {
+          type: 'turnFailed',
+          threadId,
+          error: 'The server stopped while the agent was waiting for background work',
+        },
       ]);
     }
   }

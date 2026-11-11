@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { e2eHome } from './env';
+import { e2eHome, e2eOutlookControlPort } from './env';
 import { choose } from './controls';
 import { sketchPath, sketching, sketchUse } from './sketch';
 
@@ -390,6 +390,34 @@ test.describe('chat', () => {
     await expect(
       conversation(page).getByText(/^Resumed mock-session-[0-9a-f]{8}\. You said: Continue/),
     ).toBeVisible();
+  });
+
+  // Owner report (findings Q): Claude Code goes on by itself when its background agent ends, and
+  // the reply shows without the user writing anything.
+  test('shows the turn the agent starts by itself when its background work ends', async ({
+    page,
+  }) => {
+    await startThread(page, 'Count the tea leaves in the background');
+    const items = conversation(page);
+    await expect(items.getByTestId('item-assistant_text')).toHaveText(
+      'I asked a background agent to count them.',
+    );
+    await expect(page.getByTestId('background-work')).toHaveText(
+      'Waiting for background work: Count the tea leaves',
+    );
+    const done = await fetch(`http://127.0.0.1:${e2eOutlookControlPort}/background-done`, {
+      method: 'PUT',
+    });
+    expect(done.status).toBe(200);
+    await expect(items.getByTestId('item-assistant_text')).toHaveText([
+      'I asked a background agent to count them.',
+      'The background agent counted 42 leaves.',
+    ]);
+    await expect(items.getByTestId('item-user')).toHaveCount(1);
+    await expect(page.getByTestId('background-work')).toBeHidden();
+    await expect(items.getByLabel('Turn usage')).toHaveCount(2);
+    const idle = threadList(page).getByRole('region', { name: 'Idle' });
+    await expect(idle.getByRole('link', { name: /Count the tea leaves/ })).toBeVisible();
   });
 
   test('queues a message written during a turn and sends it with Send now', async ({ page }) => {

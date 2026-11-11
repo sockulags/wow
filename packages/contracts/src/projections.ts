@@ -3,6 +3,7 @@ import type { HostKind } from './hosts.js';
 import {
   ApprovalDecision,
   ApprovalKind,
+  BackgroundTask,
   ProviderKind,
   ProviderUpdate,
   ProviderUpdateRun,
@@ -85,6 +86,8 @@ export const Thread = z.object({
   pinned: z.boolean(),
   runId: Id.nullable(),
   stepId: Id.nullable(),
+  // Background work of the agent still running; absent in threads stored before it was recorded.
+  backgroundTasks: z.array(BackgroundTask).optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });

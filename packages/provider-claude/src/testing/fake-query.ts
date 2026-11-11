@@ -24,7 +24,9 @@ export type FakeStep =
   | { readonly message: SDKMessage }
   | { readonly permission: PermissionStep }
   // Claude Code exits mid-turn; the SDK's iterator throws.
-  | { readonly crash: string };
+  | { readonly crash: string }
+  // Nothing comes until the test lets it go on (background work running in Claude Code).
+  | { readonly hold: Promise<unknown> };
 
 export const loadFixture = (name: string): FakeStep[] =>
   (
@@ -86,6 +88,10 @@ export class FakeQuery implements ClaudeQuery {
           continue;
         }
         if ('crash' in step) throw new Error(step.crash);
+        if ('hold' in step) {
+          await step.hold;
+          continue;
+        }
         this.#abort = new AbortController();
         const canUseTool = this.options.canUseTool;
         if (!canUseTool) throw new Error('The fake needs canUseTool for a permission step');

@@ -102,6 +102,15 @@ export class AssistantRedactor {
             })),
           });
           break;
+        case 'backgroundTasks':
+          out.push({
+            ...event,
+            tasks: event.tasks.map((task) => ({
+              ...task,
+              description: hideSecrets(task.description, compiled),
+            })),
+          });
+          break;
         case 'turnFailed':
           this.#end(out, compiled, () => true);
           out.push({ ...event, error: hideSecrets(event.error, compiled) });

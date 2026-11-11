@@ -7,6 +7,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   ApprovalDecision,
+  BackgroundTask,
   ApprovalKind,
   ProviderAdapter,
   ProviderAdapterContext,
@@ -99,6 +100,10 @@ interface Session {
   readonly instructions: string | undefined;
   providerSessionId: string | undefined;
   turnActive: boolean;
+  // The running turn is one Claude Code started by itself, after its background work ended.
+  selfStarted: boolean;
+  // What Claude Code last reported as running in the background (its own tasks excluded).
+  background: BackgroundTask[];
   interrupted: boolean;
   messageId: string;
   // Text streamed per item id, so a complete assistant message does not repeat it.
@@ -254,6 +259,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (!session) return;
     this.#sessions.delete(threadId);
     this.#cancelPending(threadId);
+    this.#setBackground(session, []);
     session.input.end();
     session.query?.close();
   }
@@ -315,6 +321,11 @@ export class ClaudeAdapter implements ProviderAdapter {
       throw new Error(`Unknown Claude permission mode "${command.permissionMode}"`);
     }
     let session = this.#sessions.get(command.threadId);
+    // A message sent just as Claude Code went on by itself waits in its queue for that turn.
+    if (session?.turnActive && session.selfStarted) {
+      session.input.push(userMessage(command.prompt));
+      return;
+    }
     if (session?.turnActive)
       throw new Error(`Thread ${command.threadId} already has a running turn`);
     if (session && session.toolsOnly !== (command.toolset !== undefined)) {
@@ -345,6 +356,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       session = await this.#open(command);
     }
     session.turnActive = true;
+    session.selfStarted = false;
     session.interrupted = false;
     session.input.push(userMessage(command.prompt));
   }
@@ -362,6 +374,8 @@ export class ClaudeAdapter implements ProviderAdapter {
       instructions: command.toolset ? command.instructions : undefined,
       providerSessionId: command.resumeId,
       turnActive: false,
+      selfStarted: false,
+      background: [],
       interrupted: false,
       messageId: '',
       streamed: new Map(),
@@ -408,6 +422,15 @@ export class ClaudeAdapter implements ProviderAdapter {
       if (current) this.#sessions.delete(session.threadId);
       session.input.end();
       if (current) this.#cancelPending(session.threadId);
+      // The background work ended with the process, so the turn it would have started fails.
+      if (current && !session.turnActive && session.background.length > 0) {
+        this.#setBackground(session, []);
+        this.#emit({ type: 'turnStartedByProvider', threadId: session.threadId });
+        session.turnActive = true;
+        failure ??= 'Claude Code stopped while background work was running';
+      } else if (current) {
+        this.#setBackground(session, []);
+      }
       if (session.turnActive) {
         session.turnActive = false;
         if (session.interrupted) {
@@ -425,6 +448,22 @@ export class ClaudeAdapter implements ProviderAdapter {
     }
   }
 
+  // Claude Code goes on by itself when background work it started ends: the stream that stays
+  // open after a result carries a new turn wow did not send. Its first output starts it here.
+  #selfStart(session: Session): void {
+    if (session.turnActive) return;
+    session.turnActive = true;
+    session.selfStarted = true;
+    session.interrupted = false;
+    this.#emit({ type: 'turnStartedByProvider', threadId: session.threadId });
+  }
+
+  #setBackground(session: Session, tasks: BackgroundTask[]): void {
+    if (JSON.stringify(tasks) === JSON.stringify(session.background)) return;
+    session.background = tasks;
+    this.#emit({ type: 'backgroundTasks', threadId: session.threadId, tasks });
+  }
+
   async #handle(session: Session, message: SDKMessage): Promise<void> {
     const threadId = session.threadId;
     switch (message.type) {
@@ -432,10 +471,19 @@ export class ClaudeAdapter implements ProviderAdapter {
         if (message.subtype === 'init' && message.session_id !== session.providerSessionId) {
           session.providerSessionId = message.session_id;
           this.#emit({ type: 'session', threadId, providerSessionId: message.session_id });
+        } else if (message.subtype === 'background_tasks_changed') {
+          // Ambient tasks are Claude Code's own housekeeping, not work anyone waits for.
+          this.#setBackground(
+            session,
+            message.tasks
+              .filter((task) => task.ambient !== true)
+              .map((task) => ({ id: task.task_id, description: task.description })),
+          );
         }
         return;
       case 'stream_event': {
         if (message.parent_tool_use_id !== null) return;
+        this.#selfStart(session);
         const event = message.event;
         if (event.type === 'message_start') session.messageId = event.message.id;
         if (event.type !== 'content_block_delta') return;
@@ -449,6 +497,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       }
       case 'assistant': {
         if (message.parent_tool_use_id !== null) return;
+        this.#selfStart(session);
         const id = message.message.id;
         message.message.content.forEach((block, index) => {
           if (block.type === 'text' || block.type === 'thinking') {
@@ -510,6 +559,7 @@ export class ClaudeAdapter implements ProviderAdapter {
         return;
       }
       case 'result': {
+        this.#selfStart(session);
         const usage = message.usage;
         const costUsd = Math.max(0, message.total_cost_usd - session.costUsd);
         session.costUsd = message.total_cost_usd;
@@ -537,6 +587,7 @@ export class ClaudeAdapter implements ProviderAdapter {
           }
         }
         session.turnActive = false;
+        session.selfStarted = false;
         session.streamed.clear();
         if (session.interrupted) {
           this.#emit({ type: 'turnInterrupted', threadId });

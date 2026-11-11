@@ -274,6 +274,8 @@ export class WorkflowRunner {
       });
       return;
     }
+    // Claude Code goes on by itself once its background work ends; the step ends with that turn.
+    if (turn.state === 'completed' && thread.backgroundTasks.length > 0) return;
     const commandId = `workflow:${turn.id}:ended`;
     if (turn.state !== 'completed') {
       this.#dispatch(commandId, {

@@ -147,7 +147,9 @@ provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env
                  updateRun(json)?   -- the last "Update Codex": state, command, output, times
 threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessionId?, title, model,
                  effort, permissionMode, state ('idle'|'working'|'needs_you'|'done'|'failed'),
-                 pinned, runId?, stepId?, createdAt, updatedAt
+                 pinned, runId?, stepId?, backgroundTasks(json: BackgroundTask[]), createdAt,
+                 updatedAt   -- backgroundTasks: the agent's work still running in the background,
+                 [] when none (migration 0026_background_tasks)
 turns            id, threadId, index, state, startedAt, endedAt, usage(json)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
@@ -254,7 +256,28 @@ ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode
 ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta | toolCallStarted |
                  toolCallOutput | toolCallCompleted | approvalRequested | questionAsked |
                  taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
+                 | turnStartedByProvider | backgroundTasks {tasks [{id, description}]}
 ```
+
+**Turns the provider starts.** Claude Code goes on with a thread by itself when background work
+it started (a background subagent or shell command) ends: the open `query()` stream carries more
+output and a second `result` without a prompt from wow. The adapter reports that turn with
+`turnStartedByProvider` at its first top-level `stream_event`, `assistant` or `result` message
+while no turn runs, and ends it with the usual `turnCompleted`, `turnFailed` or `turnInterrupted`;
+`interrupt` stops it like any turn. The orchestrator makes it turn `<threadId>:turn:<n>` with no
+user item (`turn.startedByProvider`): the thread goes to `working`, its items, usage and end are
+stored as for any turn, and the thread ends `idle`, `needs_you` or `failed` the same way. While a
+turn wow started runs, `turnStartedByProvider` is ignored and the output stays in that turn. A
+message sent while Claude Code's own turn runs goes into its input queue; Claude Code answers it
+after (or within) that turn. `backgroundTasks` is the SDK's level signal
+(`system/background_tasks_changed`, Claude Code's own `ambient` tasks left out), stored as the
+thread's `backgroundTasks` (`thread.backgroundChanged`); the chat shows "Waiting for background
+work" while it is not empty and no turn runs. When Claude Code exits with background work and no
+turn running, the adapter reports a started and failed turn; at startup `recover()` fails such a
+turn for every thread still listing background work. Codex: the generated app-server schema
+does not say whether codex starts turns by itself; the adapter treats a `turn/started` it did not
+ask for (no `turn/start` on its way, no running turn) as `turnStartedByProvider`, and reports no
+background work.
 
 `closeThread` ends the adapter's live session for a thread without a turn event (the provider's
 stored conversation stays): Claude closes that thread's `query()`, Codex forgets which codex
@@ -877,7 +900,11 @@ dispatches `thread.sendMessage` with the rendered prompt (`thread.sendPrepared` 
 with skills, see "Skills of a step"), so the provider service starts the turn
 like any other, and `interrupt` dispatches `thread.interrupt`. A step ends when the persisted
 `turn.ended` of its thread does: completed becomes `workflowRun.stepCompleted` with the turn's
-last assistant text as the final message, the artifacts found and the step's file hashes (see
+last assistant text as the final message (a completed turn that leaves the thread's
+`backgroundTasks` non-empty does not end the step: the step ends with the turn Claude Code starts
+once that work ends, and its final message, gate, verdict and artifacts are read then; background
+work that ends before the turn's result leaves no signal, so a turn Claude Code starts after such a
+result is shown in the thread but is not the step's outcome), the artifacts found and the step's file hashes (see
 "Run base and changes"), failed (with the turn's error
 item) or interrupted becomes `workflowRun.stepFailed`. Command ids derive from the turn, so a
 repeated report is a duplicate. A step with no model, effort or permission mode fails instead of

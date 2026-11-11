@@ -462,6 +462,96 @@ describe('provider service', () => {
     expect(() => dispatch({ type: 'thread.interrupt', threadId: 'missing' })).toThrow(/No thread/);
   });
 
+  // Claude Code goes on by itself when its background work ends (owner report, findings Q).
+  it('records a turn the provider starts by itself after background work, and stops it', async () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Count in the background' });
+    const first = committed('turn.ended');
+    adapter.emit(
+      { type: 'textDelta', threadId: 't1', itemId: 'm1:0', delta: 'Started an agent.' },
+      {
+        type: 'backgroundTasks',
+        threadId: 't1',
+        tasks: [{ id: 'bg-1', description: 'Count the tea leaves' }],
+      },
+      { type: 'turnCompleted', threadId: 't1' },
+    );
+    await first;
+    expect(thread()).toMatchObject({
+      state: 'idle',
+      backgroundTasks: [{ id: 'bg-1', description: 'Count the tea leaves' }],
+    });
+
+    const second = committed('turn.ended');
+    adapter.emit(
+      { type: 'backgroundTasks', threadId: 't1', tasks: [] },
+      { type: 'turnStartedByProvider', threadId: 't1' },
+      { type: 'textDelta', threadId: 't1', itemId: 'm2:0', delta: 'Counted 42 leaves.' },
+      { type: 'usage', threadId: 't1', inputTokens: 5, outputTokens: 6, cachedInputTokens: 0 },
+      { type: 'turnCompleted', threadId: 't1' },
+    );
+    await second;
+    expect(rows('turns')).toMatchObject([
+      { id: 't1:turn:0', state: 'completed' },
+      {
+        id: 't1:turn:1',
+        index: 1,
+        state: 'completed',
+        usage: { inputTokens: 5, outputTokens: 6, cachedInputTokens: 0 },
+      },
+    ]);
+    expect(rows('threadItems').filter((item) => item['turnId'] === 't1:turn:1')).toMatchObject([
+      { kind: 'assistant_text', payload: { text: 'Counted 42 leaves.' }, streaming: false },
+      { kind: 'usage' },
+    ]);
+    expect(thread()).toMatchObject({ state: 'idle', backgroundTasks: [] });
+    // Nothing was sent to the provider for the turn it started itself.
+    expect(adapter.sent.map((command) => command.type)).toEqual(['startTurn']);
+
+    // Stop works on such a turn like on any other.
+    const started = committed('turn.startedByProvider');
+    adapter.emit({ type: 'turnStartedByProvider', threadId: 't1' });
+    await started;
+    expect(thread()).toMatchObject({ state: 'working' });
+    dispatch({ type: 'thread.interrupt', threadId: 't1' });
+    expect(adapter.sent.at(-1)).toEqual({ type: 'interrupt', threadId: 't1' });
+    const stopped = committed('turn.ended');
+    adapter.emit({ type: 'turnInterrupted', threadId: 't1' });
+    await stopped;
+    expect(rows('turns')[2]).toMatchObject({ state: 'interrupted' });
+  });
+
+  it('keeps what the provider does by itself in the turn wow started while that runs', async () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Hi' });
+    const ended = committed('turn.ended');
+    adapter.emit(
+      { type: 'turnStartedByProvider', threadId: 't1' },
+      { type: 'textDelta', threadId: 't1', itemId: 'm1:0', delta: 'Hello' },
+      { type: 'turnCompleted', threadId: 't1' },
+    );
+    await ended;
+    expect(rows('turns')).toHaveLength(1);
+    expect(rows('threadItems').at(-1)).toMatchObject({ turnId: 't1:turn:0' });
+  });
+
+  it('fails the turn background work would have started when the server stopped', async () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Hi' });
+    const first = committed('turn.ended');
+    adapter.emit(
+      { type: 'backgroundTasks', threadId: 't1', tasks: [{ id: 'bg-1', description: 'Count' }] },
+      { type: 'turnCompleted', threadId: 't1' },
+    );
+    await first;
+    const recovered = committed('turn.ended');
+    service.recover();
+    await recovered;
+    expect(rows('turns').at(-1)).toMatchObject({ index: 1, state: 'failed' });
+    expect(thread()).toMatchObject({ state: 'failed', backgroundTasks: [] });
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      kind: 'error',
+      payload: { message: 'The server stopped while the agent was waiting for background work' },
+    });
+  });
+
   it('fails the turn when the provider refuses to start it', async () => {
     adapter.failNext = 'Unknown Claude effort "extreme"';
     const ended = committed('turn.ended');

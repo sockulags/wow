@@ -78,8 +78,22 @@ export type TaskStatus = z.infer<typeof TaskStatus>;
 
 const ThreadScoped = { threadId: z.string().min(1) };
 
+// Work the agent started in the background (a subagent or a shell command) that is still running.
+// When it ends, the provider may go on with the thread by itself in a turn wow did not start.
+export const BackgroundTask = z.object({ id: z.string().min(1), description: z.string() });
+export type BackgroundTask = z.infer<typeof BackgroundTask>;
+
 export const ProviderEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('session'), ...ThreadScoped, providerSessionId: z.string().min(1) }),
+  // The provider started a turn by itself (after background work ended); it ends with the usual
+  // turnCompleted, turnFailed or turnInterrupted.
+  z.object({ type: z.literal('turnStartedByProvider'), ...ThreadScoped }),
+  // Every background task still running, after a change: the list replaces the one before.
+  z.object({
+    type: z.literal('backgroundTasks'),
+    ...ThreadScoped,
+    tasks: z.array(BackgroundTask),
+  }),
   z.object({
     type: z.literal('textDelta'),
     ...ThreadScoped,

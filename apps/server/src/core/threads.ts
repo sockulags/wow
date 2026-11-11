@@ -625,6 +625,8 @@ function decideProviderEvents(
   // A thread deleted while its provider was still talking; nothing to record.
   if (!thread) return [];
   let turn: Turn | undefined = read.runningTurn(threadId);
+  let turnCount = read.turnCount(threadId);
+  let background = thread.backgroundTasks ?? [];
   let state = thread.state;
   let nextIndex = read.nextItemIndex(threadId);
   const created = new Set<string>();
@@ -692,6 +694,34 @@ function decideProviderEvents(
           payload: { threadId, providerSessionId: event.providerSessionId, updatedAt: now },
         });
       }
+      continue;
+    }
+    if (event.type === 'backgroundTasks') {
+      if (JSON.stringify(event.tasks) !== JSON.stringify(background)) {
+        background = event.tasks;
+        out.push({
+          kind: 'thread.backgroundChanged',
+          aggregate: threadId,
+          payload: { threadId, tasks: event.tasks, updatedAt: now },
+        });
+      }
+      continue;
+    }
+    if (event.type === 'turnStartedByProvider') {
+      // While a turn wow started still runs, what the provider does belongs to that turn.
+      if (turn) continue;
+      const index = turnCount++;
+      turn = {
+        id: turnId(threadId, index),
+        threadId,
+        index,
+        state: 'running',
+        startedAt: now,
+        endedAt: null,
+        usage: null,
+      };
+      out.push({ kind: 'turn.startedByProvider', aggregate: threadId, payload: { turn } });
+      state = 'working';
       continue;
     }
     // Events after the turn ended (late output of an interrupted turn) are dropped.
