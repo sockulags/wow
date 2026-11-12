@@ -10,16 +10,15 @@ import {
   SearchXIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { DETAILS_TAB, useLayout, useRuntime } from '@/app/runtime';
+import { useRuntime, useSetting } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { isoDate, localDate } from '@/calendar/time';
 import { formatDuration, useDateFormat } from '@/lib/format';
-import { isBelow } from '@/lib/use-breakpoint';
+import { isBelow, useBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
 import { useContextPanelShown } from '@/panel/panel-state';
-import { panelTabsOf } from '@/panel/viewer';
 import { runRead } from '@/plans/model';
 import { Artifact } from './artifact-link';
 import { runTabs, type RunSearch } from './changes';
@@ -36,6 +35,7 @@ import {
   eventSummary,
   gateOf,
   gateStanding,
+  isLive,
   passedByItself,
   runStateDotClass,
   runStateLabel,
@@ -206,10 +206,11 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
 
   const waiting = runs?.find((candidate) => candidate.id === runId)?.state === 'waiting';
   const panelShown = useContextPanelShown();
-  // A file or page tab is selected in place of the step's conversation (agent workbench spec 14).
-  const fileInPanel = useLayout(
-    (state) => panelTabsOf(state, `/workflows/runs/${runId}`).selected !== DETAILS_TAB,
-  );
+  const narrow = useBelow('narrow');
+  const panelWidth = useSetting('appearance.contextPanelWidth');
+  // Below the breakpoint the panel lies over the view (spec 78): the gate bar ends where the panel
+  // begins and puts its buttons under its text, so the panel never covers them.
+  const overlaid = narrow && panelShown;
 
   // At a gate the step's conversation and the gate bar belong in the side panel (review loop
   // spec 14), so a wide window shows it without changing the user's panel setting. It stays
@@ -251,13 +252,32 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
   const gate = gateOf(run);
   const tab = search.tab ?? 'steps';
   const pullRequestLabel = pullRequestTabLabel(runRead(hostReads, run.id));
-  // The panel's conversation carries the gate bar; without it (closed, or showing a file) the
-  // answers stay reachable here.
-  const gateInPanel = gate !== undefined && panelShown && !fileInPanel;
   const linkClass =
     'inline-flex items-center gap-1 rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring';
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* The gate bar stays at the top whatever the side panel shows (agent workbench spec 77). */}
+      {isLive(run) && (
+        <div
+          data-testid="run-gate"
+          className="flex shrink-0 flex-col gap-1 border-b border-border px-4 py-2"
+          style={overlaid ? { marginRight: `min(${panelWidth}px, calc(100% - 3rem))` } : undefined}
+        >
+          <GateBar
+            run={run}
+            workflow={workflow}
+            project={project}
+            inRunView
+            stacked={overlaid}
+            onError={setError}
+          />
+          {error && (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
+        </div>
+      )}
       <header className="flex shrink-0 flex-col gap-2 border-b border-border px-4 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span aria-hidden className={cn('size-2 rounded-full', runStateDotClass[run.state])} />
@@ -324,14 +344,6 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
           </p>
         )}
         <WorkingCopyLine run={run} />
-        {!gateInPanel && (
-          <GateBar run={run} workflow={workflow} project={project} onError={setError} />
-        )}
-        {error && !gateInPanel && (
-          <p role="alert" className="text-xs text-destructive">
-            {error}
-          </p>
-        )}
         <div role="tablist" aria-label="Run" className="flex gap-0.5">
           {runTabs.map(({ id, label }) => (
             <Button

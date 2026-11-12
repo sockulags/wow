@@ -17,6 +17,7 @@ import { Markdown } from '@/components/markdown';
 import { DisconnectedState, EmptyState, LoadingState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { OpenInEditorButton, useOpenInEditor } from './editor';
 import {
   closeViewer,
   copyFilePath,
@@ -116,6 +117,10 @@ const kindLabels: Readonly<Record<Exclude<FileReadResult['kind'], 'refused'>, st
   html: 'HTML page',
   text: 'Text',
 };
+
+const typingIn = (target: EventTarget): boolean =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
 
 const outsideTitle = (scope: FileScope): string =>
   'runId' in scope
@@ -217,6 +222,7 @@ export function FileViewer({
   readonly backLabel?: string;
 }) {
   const { layout } = useRuntime();
+  const editor = useOpenInEditor();
   const state = useFile(file.scope, file.path);
   const result = state?.status === 'done' ? state.result : undefined;
   const read = result && result.kind !== 'refused' ? result : undefined;
@@ -231,6 +237,13 @@ export function FileViewer({
       data-testid="file-viewer"
       className="flex min-h-0 flex-1 flex-col"
       onKeyDown={(event) => {
+        // Shift+Enter opens the file in the user's editor (spec 81), unless a text field has it.
+        if (
+          !typingIn(event.target) &&
+          editor.onKey(event, { scope: file.scope, path: file.path })
+        ) {
+          return;
+        }
         if (event.key !== 'Escape' || event.defaultPrevented) return;
         event.preventDefault();
         closeViewer(layout, file.from);
@@ -253,6 +266,7 @@ export function FileViewer({
               {file.fullSize ? <Minimize2Icon /> : <Maximize2Icon />}
             </IconButton>
           )}
+          <OpenInEditorButton target={{ scope: file.scope, path: file.path }} />
           <IconButton label="Copy path" size="icon-xs" onClick={() => copyFilePath(file)}>
             <CopyIcon />
           </IconButton>

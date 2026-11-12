@@ -180,6 +180,20 @@ export function parsePatch(patch: string): DiffLine[] {
   return rows;
 }
 
+// Where "Open in editor" puts the cursor in a changed file: its first added line, else where its
+// first change is in the folder's version.
+export function firstChangedLine(patch: string | null | undefined): number | undefined {
+  if (!patch) return undefined;
+  const rows = parsePatch(patch);
+  const added = rows.find((row) => row.kind === 'add');
+  if (added) return added.newNumber;
+  const index = rows.findIndex((row) => row.kind === 'remove');
+  if (index === -1) return undefined;
+  const after = rows.slice(index).find((row) => row.newNumber !== undefined);
+  const before = rows.slice(0, index).findLast((row) => row.newNumber !== undefined);
+  return after?.newNumber ?? (before?.newNumber !== undefined ? before.newNumber + 1 : 1);
+}
+
 // The changed files of the run on screen, as the tab last read them, so the palette can offer
 // each one. `refresh` counts the times the user asked to read them again.
 export interface ChangesState {

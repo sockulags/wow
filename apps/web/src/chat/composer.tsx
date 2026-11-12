@@ -720,6 +720,13 @@ export function Composer({
     textarea.current?.focus();
   };
 
+  // A comment from the thread's Changes goes on its own line after what is typed (spec 80).
+  const addText = (added: string) => {
+    const kept = text.replace(/\s+$/u, '');
+    const joined = kept === '' ? added : `${kept}\n${added}`;
+    update(joined, joined.length, undefined);
+  };
+
   // While a turn runs the server queues the message (agent workbench spec 50).
   const send = (checked = true) => {
     const message = text.trim();
@@ -760,9 +767,9 @@ export function Composer({
   // The palette reaches the composer on screen that takes skills. It registers once per chip
   // list, not per keystroke, so the palette's commands are not rebuilt while the writer types;
   // the registered actions reach this render's text and caret through a ref.
-  const actions = useRef({ openSkills, removeChip, putBack, removeImage });
+  const actions = useRef({ openSkills, removeChip, putBack, removeImage, addText });
   useLayoutEffect(() => {
-    actions.current = { openSkills, removeChip, putBack, removeImage };
+    actions.current = { openSkills, removeChip, putBack, removeImage, addText };
   });
   const chipNames = chips.map((chip) => chip.name).join('\n');
   useEffect(() => {
@@ -775,6 +782,7 @@ export function Composer({
       removeSkill: (index: number) => actions.current.removeChip(index),
       putBack: (value, refs, returned, mentioned) =>
         actions.current.putBack(value, refs, returned, mentioned),
+      addText: (added) => actions.current.addText(added),
     });
   }, [takesSkills, disabled, composerId, chipNames, draftKey]);
 

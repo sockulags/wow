@@ -1,6 +1,6 @@
 import { FileSymlinkIcon } from 'lucide-react';
 import type { MouseEvent } from 'react';
-import { useFileLinks } from '@/components/file-links';
+import { editorKeyOf, useFileLinks } from '@/components/file-links';
 import { Button } from '@/components/ui/button';
 import { WithTooltip } from '@/components/hint';
 
@@ -17,7 +17,13 @@ export function OpenFileButton({ path }: { readonly path: string }) {
   };
   return (
     <WithTooltip label={`Open ${path} in the side panel`}>
-      <Button size="xs" variant="ghost" aria-label={`Open ${path}`} onClick={open}>
+      <Button
+        size="xs"
+        variant="ghost"
+        aria-label={`Open ${path}`}
+        onClick={open}
+        onKeyDown={(event) => editorKeyOf(links, event, path)}
+      >
         <FileSymlinkIcon />
         Open
       </Button>
@@ -49,6 +55,7 @@ export function FileChip({ path }: { readonly path: string }) {
       data-testid="sent-file-chip"
       className={`${className} outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring`}
       onClick={() => links.open(path)}
+      onKeyDown={(event) => editorKeyOf(links, event, path)}
     >
       <span className="truncate">@{name}</span>
     </button>

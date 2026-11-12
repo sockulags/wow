@@ -19,6 +19,9 @@ export interface ActiveSkillComposer {
     images?: readonly SentImage[],
     files?: readonly string[],
   ): void;
+  // Adds a line after what is typed, without taking the focus: a diff line's comment in a thread's
+  // Changes (agent workbench spec 80).
+  addText(text: string): void;
 }
 
 interface SkillComposersState {

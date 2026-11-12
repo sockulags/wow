@@ -9,14 +9,16 @@ import { ResetButton, formatRawDefault, useSettingField } from './setting-row';
 
 // Where a shortcut works. Calendar keys only fire while the calendar is open, chat keys while a
 // thread is open (the composer's only while the composer has the focus), the side panel's tab
-// keys while the focus is in the panel; everything else is global.
-export type KeyScope = 'General' | 'Calendar' | 'Chat' | 'Panel';
+// keys while the focus is in the panel, diff keys while a line of a diff has the focus;
+// everything else is global.
+export type KeyScope = 'General' | 'Calendar' | 'Chat' | 'Panel' | 'Diff';
 
 export function keyScope(settingKey: string): KeyScope {
   const name = settingKey.replace(/^keybindings\./, '');
   if (name.startsWith('calendar') || name === 'newCard') return 'Calendar';
   if (name === 'stopTurn' || name.startsWith('composer')) return 'Chat';
   if (name.startsWith('panel')) return 'Panel';
+  if (name.startsWith('diff')) return 'Diff';
   return 'General';
 }
 
@@ -115,7 +117,7 @@ export function KeybindingsTable({ entries }: { entries: readonly SettingEntry[]
     labels[key] = definition.label;
   }
   const conflicts = keyConflicts(bindings);
-  const scopes: KeyScope[] = ['General', 'Calendar', 'Chat', 'Panel'];
+  const scopes: KeyScope[] = ['General', 'Calendar', 'Chat', 'Panel', 'Diff'];
   return (
     <div className="mt-4 flex flex-col gap-6">
       {scopes.map((scope) => {
@@ -128,7 +130,9 @@ export function KeybindingsTable({ entries }: { entries: readonly SettingEntry[]
                 ? 'Everywhere'
                 : scope === 'Panel'
                   ? 'In the side panel'
-                  : `In ${scope.toLowerCase()}`}
+                  : scope === 'Diff'
+                    ? 'On a diff line'
+                    : `In ${scope.toLowerCase()}`}
             </h3>
             <div role="table" aria-label={`${scope} shortcuts`}>
               <div role="rowgroup">

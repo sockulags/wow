@@ -161,7 +161,10 @@ function fake(
 }
 
 const panel = () => screen.findByRole('complementary', { name: 'Context panel' });
-const gate = async () => within(await panel()).getByRole('region', { name: 'Gate' });
+// The run view's own bar, at its top whatever the panel shows (agent workbench spec 77); the
+// send-back note is written there while the run view is on screen.
+const gate = async () =>
+  within(await screen.findByTestId('run-gate')).getByRole('region', { name: 'Gate' });
 
 // The run commands offered for the open run, without the per-run entries.
 const ids = (open: WorkflowRun, sendBackRunId?: string) =>
@@ -204,12 +207,13 @@ describe('run view at a gate', () => {
     // The panel opens for the gate although the stored setting keeps it closed.
     const side = await panel();
     expect(within(side).getByTestId('panel-step-thread')).toBeTruthy();
-    const bar = within(await gate());
+    const bar = within(within(side).getByRole('region', { name: 'Gate' }));
     expect(bar.getByRole('button', { name: 'Approve' })).toBeTruthy();
     expect(bar.getByRole('button', { name: 'Send back' })).toBeTruthy();
     expect(bar.getByRole('button', { name: 'Stop' })).toBeTruthy();
-    // One gate bar: the main area keeps the width for the tabs.
-    expect(screen.getAllByRole('region', { name: 'Gate' })).toHaveLength(1);
+    // The run view keeps its own bar at its top as well (agent workbench spec 77).
+    expect(screen.getAllByRole('region', { name: 'Gate' })).toHaveLength(2);
+    expect(within(await gate()).getByRole('button', { name: 'Approve' })).toBeTruthy();
   });
 
   it('keeps the gate bar in the run view when the panel is closed', async () => {

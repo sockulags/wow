@@ -1,4 +1,5 @@
 import {
+  changesListWidthBounds,
   RunDiff,
   runFolder,
   type Project,
@@ -7,25 +8,34 @@ import {
   type WorkflowRun,
 } from '@wow/contracts';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
-import { CopyIcon, FileTextIcon, GitCompareIcon, RefreshCwIcon } from 'lucide-react';
-import { useEffect, useId, useState } from 'react';
+import {
+  CopyIcon,
+  FileTextIcon,
+  GitCompareIcon,
+  MessageSquarePlusIcon,
+  RefreshCwIcon,
+} from 'lucide-react';
+import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import { useStore } from 'zustand';
-import { useRuntime } from '@/app/runtime';
+import { useRuntime, useSetting } from '@/app/runtime';
 import { errorMessage } from '@/chat/data';
-import { IconButton, ShortcutHint } from '@/components/hint';
+import { IconButton, ShortcutHint, WithTooltip } from '@/components/hint';
 import { EmptyState } from '@/components/states';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
+import { useRowActions } from '@/lib/row-actions';
 import { cn } from '@/lib/utils';
+import { isBinding, OpenInEditorButton, useOpenInEditor } from '@/panel/editor';
 import { openFile } from '@/panel/viewer';
 import {
   changedByStep,
   changesStore,
   emptyReason,
   fileStatusLabels,
+  firstChangedLine,
   fileStatusLetters,
   lineChanges,
   parsePatch,
@@ -36,6 +46,7 @@ import {
   type DiffLine,
   type RunSearch,
 } from './changes';
+import { addSendBackComment, canSendBack, lineComment } from './gate';
 import { artifactPath, attemptLabel } from './model';
 
 const statusClass: Readonly<Record<RunDiffFile['status'], string>> = {
@@ -61,6 +72,87 @@ const lineSign: Readonly<Record<DiffLine['kind'], string>> = {
   note: '',
 };
 
+// The step under review changed this file (spec 94): a small mark, its words in a tooltip.
+function ThisStepMark() {
+  return (
+    <WithTooltip label="This step changed it">
+      <span data-testid="this-step-mark" className="inline-flex items-center" tabIndex={-1}>
+        <span aria-hidden className="size-1.5 rounded-full bg-state-working" />
+        <span className="sr-only">This step</span>
+      </span>
+    </WithTooltip>
+  );
+}
+
+const clampListWidth = (value: number) =>
+  Math.round(Math.min(changesListWidthBounds.max, Math.max(changesListWidthBounds.min, value)));
+
+// The edge between the file list and the diff: drag it, or focus it and use the arrow keys. The
+// width is stored when the drag ends, so a drag is one settings write.
+function SplitHandle({
+  width,
+  onPreview,
+  onCommit,
+}: {
+  readonly width: number;
+  readonly onPreview: (width: number | undefined) => void;
+  readonly onCommit: (width: number) => void;
+}) {
+  const drag = useRef<{ readonly startX: number; readonly startWidth: number }>(undefined);
+  const latest = useRef(width);
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize changed files list"
+      aria-valuenow={width}
+      aria-valuemin={changesListWidthBounds.min}
+      aria-valuemax={changesListWidthBounds.max}
+      tabIndex={0}
+      data-testid="changes-split"
+      className="relative -mx-1 w-2 shrink-0 cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-1 after:w-px after:bg-border hover:after:bg-ring focus-visible:after:w-0.5 focus-visible:after:bg-ring"
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { startX: event.clientX, startWidth: width };
+        latest.current = width;
+      }}
+      onPointerMove={(event) => {
+        const start = drag.current;
+        if (!start) return;
+        latest.current = clampListWidth(start.startWidth + event.clientX - start.startX);
+        onPreview(latest.current);
+      }}
+      onPointerUp={() => {
+        if (!drag.current) return;
+        drag.current = undefined;
+        onCommit(latest.current);
+      }}
+      onPointerCancel={() => {
+        drag.current = undefined;
+        onPreview(undefined);
+      }}
+      onKeyDown={(event) => {
+        const step = event.shiftKey ? 64 : 16;
+        const next =
+          event.key === 'ArrowLeft'
+            ? width - step
+            : event.key === 'ArrowRight'
+              ? width + step
+              : event.key === 'Home'
+                ? changesListWidthBounds.min
+                : event.key === 'End'
+                  ? changesListWidthBounds.max
+                  : undefined;
+        if (next === undefined) return;
+        event.preventDefault();
+        onCommit(clampListWidth(next));
+      }}
+    />
+  );
+}
+
 function readAnswer(received: unknown): RunDiff | Error {
   const result = RunDiff.safeParse(received);
   return result.success
@@ -68,7 +160,187 @@ function readAnswer(received: unknown): RunDiff | Error {
     : new Error('The server answered in a form this app does not read.');
 }
 
-export function DiffLines({ path, patch }: { readonly path: string; readonly patch: string }) {
+// What can be done on the lines of a diff: a comment on a line (C, or the gutter), and "Open in
+// editor" at a line (Shift+Enter). Without them the diff only shows.
+export interface DiffLineActions {
+  comment?(line: number, text: string): void;
+  openAt?(line: number): void;
+}
+
+const lineOf = (row: DiffLine): number | undefined => row.newNumber ?? row.oldNumber;
+
+function LineComment({
+  line,
+  onAdd,
+  onCancel,
+}: {
+  readonly line: number;
+  readonly onAdd: (text: string) => void;
+  readonly onCancel: () => void;
+}) {
+  const [text, setText] = useState('');
+  const id = useId();
+  const add = () => {
+    if (text.trim() !== '') onAdd(text.trim());
+  };
+  return (
+    <form
+      aria-label={`Comment on line ${line}`}
+      className="flex flex-col gap-1.5 border-y border-border bg-background px-3 py-2 font-sans"
+      onSubmit={(event) => {
+        event.preventDefault();
+        add();
+      }}
+    >
+      <Label htmlFor={id} className="text-xs">
+        Comment on line {line}
+      </Label>
+      <Textarea
+        id={id}
+        autoFocus
+        rows={2}
+        value={text}
+        className="text-xs"
+        placeholder="What should change here? Enter adds it."
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            onCancel();
+          } else if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+            event.preventDefault();
+            add();
+          }
+        }}
+      />
+      <div className="flex justify-end gap-2">
+        <Button type="button" size="xs" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" size="xs" disabled={text.trim() === ''}>
+          Add comment
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function DiffRow({
+  row,
+  index,
+  actions,
+  register,
+  onWrite,
+  onMove,
+}: {
+  readonly row: DiffLine;
+  readonly index: number;
+  readonly actions: DiffLineActions | undefined;
+  readonly register: (index: number, element: HTMLTableRowElement | null) => void;
+  readonly onWrite: (index: number) => void;
+  readonly onMove: (index: number, step: 1 | -1) => boolean;
+}) {
+  const commentKey = useSetting('keybindings.diffComment');
+  const editorKey = useSetting('keybindings.openInEditor');
+  const line = lineOf(row);
+  const comment = line === undefined ? undefined : actions?.comment;
+  const openAt = line === undefined ? undefined : actions?.openAt;
+  const onLine = line !== undefined && (comment !== undefined || openAt !== undefined);
+  // The palette offers the focused line's actions, like a conversation row's (spec 80, 81).
+  const { onFocus } = useRowActions(
+    line === undefined
+      ? []
+      : [
+          ...(comment
+            ? [
+                {
+                  id: 'diffComment',
+                  title: `Comment on line ${line}`,
+                  keywords: ['diff', 'comment', 'note', 'send back'],
+                  run: () => onWrite(index),
+                },
+              ]
+            : []),
+          ...(openAt
+            ? [
+                {
+                  id: 'diffOpenInEditor',
+                  title: `Open line ${line} in editor`,
+                  keywords: ['diff', 'editor', 'code'],
+                  run: () => openAt(line),
+                },
+              ]
+            : []),
+        ],
+  );
+  return (
+    <tr
+      data-kind={row.kind}
+      data-line={line}
+      tabIndex={onLine ? 0 : undefined}
+      aria-label={onLine ? `Line ${line}: ${row.text}` : undefined}
+      ref={(element) => register(index, element)}
+      className={cn(
+        lineClass[row.kind],
+        'group',
+        onLine &&
+          'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+      )}
+      onFocus={onLine ? onFocus : undefined}
+      onKeyDown={(event) => {
+        if (!onLine || event.target !== event.currentTarget || line === undefined) return;
+        if (comment && isBinding(event, commentKey)) {
+          event.preventDefault();
+          event.stopPropagation();
+          onWrite(index);
+        } else if (openAt && isBinding(event, editorKey)) {
+          event.preventDefault();
+          event.stopPropagation();
+          openAt(line);
+        } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          if (onMove(index, event.key === 'ArrowDown' ? 1 : -1)) event.preventDefault();
+        }
+      }}
+    >
+      {actions?.comment && (
+        <td className="w-5 p-0 text-center align-middle select-none">
+          {comment && (
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label={`Comment on line ${line}`}
+              title={`Comment on line ${line}`}
+              className="inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 hover:bg-accent hover:text-foreground"
+              onClick={() => onWrite(index)}
+            >
+              <MessageSquarePlusIcon aria-hidden className="size-3" />
+            </button>
+          )}
+        </td>
+      )}
+      <td
+        className="w-10 px-2 text-right text-muted-foreground tabular-nums select-none"
+        onClick={comment ? () => onWrite(index) : undefined}
+      >
+        {row.oldNumber}
+      </td>
+      <td
+        className="w-10 px-2 text-right text-muted-foreground tabular-nums select-none"
+        onClick={comment ? () => onWrite(index) : undefined}
+      >
+        {row.newNumber}
+      </td>
+      <td aria-hidden className="w-4 text-center text-muted-foreground select-none">
+        {lineSign[row.kind]}
+      </td>
+      <td className="pr-3 whitespace-pre">{row.text}</td>
+    </tr>
+  );
+}
+
+// A diff that only shows, as in a chat edit row and an approval card.
+function PlainDiffLines({ path, patch }: { readonly path: string; readonly patch: string }) {
   const rows = parsePatch(patch);
   return (
     <table
@@ -97,12 +369,111 @@ export function DiffLines({ path, patch }: { readonly path: string; readonly pat
   );
 }
 
+export function DiffLines({
+  path,
+  patch,
+  actions,
+}: {
+  readonly path: string;
+  readonly patch: string;
+  readonly actions?: DiffLineActions | undefined;
+}) {
+  return actions ? (
+    <ActiveDiffLines path={path} patch={patch} actions={actions} />
+  ) : (
+    <PlainDiffLines path={path} patch={patch} />
+  );
+}
+
+function ActiveDiffLines({
+  path,
+  patch,
+  actions,
+}: {
+  readonly path: string;
+  readonly patch: string;
+  readonly actions: DiffLineActions;
+}) {
+  const rows = parsePatch(patch);
+  const [writing, setWriting] = useState<number>();
+  const [refocus, setRefocus] = useState<number>();
+  const rowRefs = useRef(new Map<number, HTMLTableRowElement>());
+  const comment = actions.comment;
+
+  // After a comment the focus goes back to its line, so the next line is one arrow away.
+  useEffect(() => {
+    if (refocus === undefined) return;
+    rowRefs.current.get(refocus)?.focus();
+    setRefocus(undefined);
+  }, [refocus]);
+
+  const close = (index: number) => {
+    setWriting(undefined);
+    setRefocus(index);
+  };
+  const register = (index: number, element: HTMLTableRowElement | null) => {
+    if (element) rowRefs.current.set(index, element);
+    else rowRefs.current.delete(index);
+  };
+  const move = (index: number, step: 1 | -1): boolean => {
+    for (let next = index + step; next >= 0 && next < rows.length; next += step) {
+      const target = rowRefs.current.get(next);
+      if (target && target.tabIndex === 0) {
+        target.focus();
+        return true;
+      }
+    }
+    return false;
+  };
+  return (
+    <table
+      aria-label={`Diff of ${path}`}
+      data-testid="diff-lines"
+      className="min-w-full border-collapse font-mono text-xs"
+    >
+      <tbody>
+        {rows.map((row, index) => {
+          const line = lineOf(row);
+          return (
+            // A diff is never reordered, so the position is the row's identity.
+            <Fragment key={index}>
+              <DiffRow
+                row={row}
+                index={index}
+                actions={actions}
+                register={register}
+                onWrite={setWriting}
+                onMove={move}
+              />
+              {writing === index && comment && line !== undefined && (
+                <tr>
+                  <td colSpan={5} className="p-0">
+                    <LineComment
+                      line={line}
+                      onCancel={() => close(index)}
+                      onAdd={(text) => {
+                        comment(line, text);
+                        close(index);
+                      }}
+                    />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 function FileDiff({
   run,
   project,
   file,
   answer,
   marked,
+  actions,
 }: {
   readonly run: WorkflowRun;
   readonly project: Project | undefined;
@@ -110,6 +481,7 @@ function FileDiff({
   // The server's answer for this file, once it has come.
   readonly answer: RunDiff | Error | undefined;
   readonly marked: boolean;
+  readonly actions: DiffLineActions;
 }) {
   const { settings, layout } = useRuntime();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -132,7 +504,7 @@ function FileDiff({
         <span data-testid="diff-counts" className="text-muted-foreground tabular-nums">
           {lineChanges(shown)}
         </span>
-        {marked && <Badge variant="info">This step</Badge>}
+        {marked && <ThisStepMark />}
         <span className="ml-auto flex items-center gap-1">
           {shown.status !== 'deleted' && (
             <Button
@@ -149,6 +521,16 @@ function FileDiff({
               <FileTextIcon aria-hidden />
               Open file
             </Button>
+          )}
+          {shown.status !== 'deleted' && (
+            <OpenInEditorButton
+              target={{
+                scope: { runId: run.id },
+                path: file.path,
+                line: answer instanceof Error ? undefined : firstChangedLine(answer?.patch),
+              }}
+              name={file.path}
+            />
           )}
           <IconButton
             label={`Copy path of ${file.path}`}
@@ -186,7 +568,7 @@ function FileDiff({
               : 'No line differs: the file is empty or only its mode changed.'}
           </p>
         ) : (
-          <DiffLines path={file.path} patch={answer.patch} />
+          <DiffLines path={file.path} patch={answer.patch} actions={actions} />
         )}
       </div>
     </section>
@@ -206,8 +588,12 @@ export function ChangesTab({
   readonly project: Project | undefined;
   readonly search: RunSearch;
 }) {
-  const { connection } = useRuntime();
+  const { connection, settings } = useRuntime();
   const navigate = useNavigate();
+  const editor = useOpenInEditor();
+  const storedWidth = useSetting('appearance.changesListWidth');
+  const [previewWidth, setPreviewWidth] = useState<number>();
+  const listWidth = previewWidth ?? storedWidth;
   const refresh = useStore(changesStore, (state) => state.refresh);
   const switchId = useId();
   const [list, setList] = useState<RunDiff | Error>();
@@ -268,6 +654,11 @@ export function ChangesTab({
     // `list` is here so a file's diff is read again with every new list.
   }, [connection, runId, selectedPath, list]);
 
+  // The preview stays until the stored width matches it, so the edge does not jump back.
+  useEffect(() => {
+    if (previewWidth !== undefined && previewWidth === storedWidth) setPreviewWidth(undefined);
+  }, [previewWidth, storedWidth]);
+
   const go = (next: RunSearch) =>
     void navigate({
       to: '/workflows/runs/$runId',
@@ -314,6 +705,24 @@ export function ChangesTab({
   const attempt = attemptLabel(step);
   const markedCount = files.filter((file) => changedByStep(file, step)).length;
   const total = files.length + list.omitted;
+  const shownAnswer = patch?.path === selectedPath ? patch?.answer : undefined;
+  const shownPatch = shownAnswer instanceof Error ? null : shownAnswer?.patch;
+  const editorTarget = (file: RunDiffFile, line?: number) => ({
+    scope: { runId },
+    path: file.path,
+    line: line ?? (file.path === selectedPath ? firstChangedLine(shownPatch) : undefined),
+  });
+  // Line comments gather in the send-back note while the run waits at a gate (spec 80).
+  const commentable = canSendBack(run);
+  const actionsFor = (file: RunDiffFile): DiffLineActions => ({
+    ...(commentable
+      ? {
+          comment: (line: number, text: string) =>
+            addSendBackComment(run, lineComment(file.path, line, text)),
+        }
+      : {}),
+    openAt: (line: number) => editor.open(editorTarget(file, line)),
+  });
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-1.5 text-xs">
@@ -359,7 +768,8 @@ export function ChangesTab({
         <div className="flex min-h-0 flex-1">
           <nav
             aria-label="Changed files"
-            className="w-72 max-w-[40%] shrink-0 overflow-y-auto border-r border-border p-1.5"
+            style={{ width: `${listWidth}px` }}
+            className="max-w-[60%] shrink-0 overflow-y-auto p-1.5"
           >
             <ul className="flex flex-col gap-0.5">
               {visible.map((file) => {
@@ -379,6 +789,9 @@ export function ChangesTab({
                           ...(stepOnly ? { stepOnly: true as const } : {}),
                         })
                       }
+                      onKeyDown={(event) =>
+                        file.status !== 'deleted' && editor.onKey(event, editorTarget(file))
+                      }
                       className={cn(
                         'flex w-full flex-col gap-0.5 rounded-sm px-2 py-1 text-left text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring',
                         current && 'bg-accent',
@@ -396,7 +809,7 @@ export function ChangesTab({
                       </span>
                       <span className="flex items-center gap-1.5 pl-[1.125rem] text-muted-foreground">
                         <span className="tabular-nums">{lineChanges(file)}</span>
-                        {marked && <Badge variant="info">This step</Badge>}
+                        {marked && <ThisStepMark />}
                       </span>
                     </button>
                   </li>
@@ -404,6 +817,14 @@ export function ChangesTab({
               })}
             </ul>
           </nav>
+          <SplitHandle
+            width={listWidth}
+            onPreview={setPreviewWidth}
+            onCommit={(next) => {
+              setPreviewWidth(next);
+              void settings.write('appearance.changesListWidth', next);
+            }}
+          />
           {selected && (
             <FileDiff
               key={selected.path}
@@ -412,6 +833,7 @@ export function ChangesTab({
               file={selected}
               answer={patch?.path === selected.path ? patch.answer : undefined}
               marked={changedByStep(selected, step)}
+              actions={actionsFor(selected)}
             />
           )}
         </div>

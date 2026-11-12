@@ -100,6 +100,8 @@ Default keys (all changeable in Settings → Keybindings):
 | Ctrl+Shift+D     | Run: Steps or Changes tab                |
 | Ctrl+Shift+Y     | Run: Steps or Path tab                   |
 | O                | Changes tab: this step only, and back    |
+| C                | Diff line: comment on it                 |
+| Shift+Enter      | Focused file or line: open in editor     |
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
@@ -787,14 +789,28 @@ the step ends with the first turn.
 
 ### Reviewing at a gate
 
-When a run waits at a gate, its run view shows the review tabs and the side panel shows the step's
-conversation with the gate bar (**Approve**, **Send back**, **Stop**). Each tab is also in the
-palette ("Run: show changes" and so on) and in the address, so a reload shows the same tab.
+When a run waits at a gate, its run view shows the gate bar (**Approve**, **Send back**, **Stop**)
+at its top, whatever the side panel shows, and the review tabs under it; the side panel shows the
+step's conversation with a copy of the gate bar. The note of **Send back** is written in the run
+view's bar. In a window narrower than 1200 px the side panel lies over the view when you open it;
+the gate bar then ends where the panel begins and puts its buttons under its text, so they stay
+in reach. Each tab is also in the palette ("Run: show changes" and so on) and in the address, so
+a reload shows the same tab. Workflows → **Runs** lists every run, the ones waiting for you
+first, then the running ones ("Go to runs" in the palette).
 
 - **Changes** (**Ctrl+Shift+D**, `keybindings.runChanges`; the same key goes back to Steps) lists
   every file added, changed, renamed or deleted since the run started, committed or not, including
   new files Git does not ignore, each with its added and removed lines. Pick a file for its diff
-  on the right. A file the step under review changed is marked; **This step only** (**O**,
+  on the right; drag the edge between the list and the diff (or focus it and use the arrow keys)
+  to make the list wider (`appearance.changesListWidth`). Focus a line of the diff and press **C**
+  (`keybindings.diffComment`), or click beside its line number, to write a comment on it; Enter
+  adds `src/bell.ts:12 – your words` to the send-back note, and **Ctrl+Shift+Enter** sends the note
+  back. In a chat thread's Changes the same comment goes into the thread's composer as a reply.
+  **Shift+Enter** (`keybindings.openInEditor`) on a changed file, a diff line, an artifact, a file
+  link in chat or in the file viewer opens the file in your editor at its line; the command is the
+  `viewer.editorCommand` setting (by default `code --goto {path}:{line}`, run by the wow server,
+  not through a shell unless `viewer.editorShell` is on). A file the step under review changed
+  carries a small mark ("This step changed it" on hover); **This step only** (**O**,
   `keybindings.changesStepOnly`) narrows the list to those. When the first step starts, wow
   records the commit the folder was on (the run's base); everything is compared with it. A binary
   file, or one larger than `diff.maxFileBytes`, shows its status and size without lines; past

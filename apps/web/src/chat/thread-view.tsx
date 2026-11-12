@@ -19,6 +19,7 @@ import {
   type RefObject,
 } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
+import { normalizeBinding } from '@/app/keybindings';
 import { FileLinkContext, type FileLinks } from '@/components/file-links';
 import { IconButton, WithTooltip } from '@/components/hint';
 import { EmptyState } from '@/components/states';
@@ -27,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
 import { rowActionScope } from '@/lib/row-actions';
 import { cn } from '@/lib/utils';
+import { openInEditor } from '@/panel/editor';
 import { routerPanelRoute } from '@/panel/model';
 import { fullPathOf, openFile, openHostItem } from '@/panel/viewer';
 import { GateBar } from '@/workflows/gate-bar';
@@ -315,7 +317,8 @@ export function ThreadConversation({
   const bar = useRef<ModelBarHandle>(null);
   const barKeys = useModelBarKeys(bar);
   const barId = useId();
-  const { settings, layout } = useRuntime();
+  const { settings, layout, connection } = useRuntime();
+  const editorBinding = useSetting('keybindings.openInEditor');
   // Read when a file opens: the conversation is also drawn without a router (tests, previews).
   const router: ReturnType<typeof useRouter> | undefined = useRouter({ warn: false });
   // Paths in messages, Open on tool rows and file chips open in a panel tab of the view on screen
@@ -335,8 +338,21 @@ export function ThreadConversation({
                   from: routerPanelRoute(router),
                 },
               ),
+            openInEditor: (path) =>
+              void openInEditor(connection, { scope: { threadId: thread.id }, path }),
+            editorKey: editorBinding === '' ? '' : normalizeBinding(editorBinding),
           },
-    [extras, thread.kind, thread.id, thread.cwd, settings, layout, router],
+    [
+      extras,
+      thread.kind,
+      thread.id,
+      thread.cwd,
+      settings,
+      layout,
+      router,
+      connection,
+      editorBinding,
+    ],
   );
 
   // Links to the user's hosts in messages are chips that open in a panel tab (agent workbench

@@ -1,4 +1,5 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, type KeyboardEvent, type ReactNode } from 'react';
+import { eventToBinding } from '@/app/keybindings';
 
 // File paths in chat messages (agent workbench spec 15): inline code or a link target that reads
 // as a path becomes a link that opens the file in a panel tab. The conversation of a chat or step
@@ -8,6 +9,20 @@ import { createContext, useContext, type ReactNode } from 'react';
 
 export interface FileLinks {
   open(path: string): void;
+  // "Open in editor" (spec 81) on a link, with Shift+Enter or the keybinding the setting names.
+  openInEditor?(path: string): void;
+  // The keybinding for openInEditor, normalized; empty when there is none.
+  readonly editorKey?: string;
+}
+
+// Whether a key on a file link asks for the editor; the link's owner opens it.
+export function editorKeyOf(links: FileLinks, event: KeyboardEvent, path: string): boolean {
+  if (!links.openInEditor || !links.editorKey || event.defaultPrevented) return false;
+  if (eventToBinding(event.nativeEvent) !== links.editorKey) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  links.openInEditor(path);
+  return true;
 }
 
 export const FileLinkContext = createContext<FileLinks | undefined>(undefined);
@@ -64,6 +79,7 @@ export function FileLink({
       title={`Open ${path} in the side panel`}
       className="cursor-pointer rounded-sm text-left underline decoration-dotted underline-offset-2 outline-none hover:decoration-solid focus-visible:ring-2 focus-visible:ring-ring"
       onClick={() => links.open(path)}
+      onKeyDown={(event) => editorKeyOf(links, event, path)}
     >
       {children}
     </button>

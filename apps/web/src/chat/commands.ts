@@ -6,6 +6,7 @@ import {
 } from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
+import { openInEditor } from '@/panel/editor';
 import type { ActiveSkillComposer } from './composer-store';
 import { canMarkDone } from './model';
 import { threadListCommands, type ThreadCommandData } from './thread-commands';
@@ -92,6 +93,19 @@ export function chatCommands({
   if (openThread) {
     const thread = openThread;
     const instance = instances.find((candidate) => candidate.id === thread.providerInstanceId);
+    // `/open` (agent workbench spec 58, 81): the thread's folder in the user's editor. The
+    // assistant's thread has no folder of the user's.
+    if (thread.kind !== 'assistant') {
+      commands.push({
+        id: 'chat.openInEditor',
+        title: "Open the thread's folder in your editor",
+        group: 'Chat',
+        keywords: ['editor', 'code', 'folder', 'open', 'ide'],
+        detail: thread.cwd,
+        run: ({ connection }) =>
+          void openInEditor(connection, { scope: { threadId: thread.id }, path: '.' }),
+      });
+    }
     // `/clear` (agent workbench spec 59): a new thread as this one is, the old one stays.
     commands.push({
       id: 'chat.clear',

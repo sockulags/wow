@@ -266,6 +266,7 @@ const openComposer = {
   openSkills: () => undefined,
   removeSkill: () => undefined,
   putBack: () => undefined,
+  addText: () => undefined,
 };
 
 const ids = (running: boolean, changes: Partial<Thread> = {}) =>
@@ -341,6 +342,7 @@ const composer = (id: string, draftKey: string | undefined) => {
       openSkills: () => undefined,
       removeSkill: () => undefined,
       putBack,
+      addText: () => undefined,
     },
   };
 };

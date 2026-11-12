@@ -16,6 +16,7 @@ import {
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
 import { safeHref } from '@/components/markdown';
+import { openInEditor } from '@/panel/editor';
 import { openFile } from '@/panel/viewer';
 import {
   fileStatusLabels,
@@ -355,6 +356,13 @@ function triggerCommands({
       run: ({ navigate }) => void navigate({ to: triggersPath }),
     },
     {
+      id: 'workflows.runs',
+      title: 'Go to runs',
+      group: 'Workflows',
+      keywords: ['runs', 'waiting', 'live', 'running', 'gate', 'tab'],
+      run: ({ navigate }) => void navigate({ to: '/workflows/runs' }),
+    },
+    {
       id: 'trigger.new',
       title: 'New event trigger',
       group: 'Workflows',
@@ -493,6 +501,14 @@ function changesCommands({
             from: `/workflows/runs/${runId}`,
           },
         ),
+    });
+    commands.push({
+      id: 'workflowRun.changes.openInEditor',
+      title: `Open in editor: ${chosen.path}`,
+      group: 'Workflows',
+      keywords: ['editor', 'code', 'ide', 'file'],
+      run: ({ connection }) =>
+        void openInEditor(connection, { scope: { runId }, path: chosen.path }),
     });
   }
   return commands;

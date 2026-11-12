@@ -69,6 +69,22 @@ export function setSendBackNote(note: string): void {
   );
 }
 
+// A comment on a diff line in the run's Changes (agent workbench spec 80) goes into the note as
+// `src/bell.ts:12 – text`, one per line; the note opens when it is not open yet.
+export const lineComment = (path: string, line: number, text: string): string =>
+  `${path}:${line} – ${text}`;
+
+export function addSendBackComment(run: WorkflowRun, comment: string): void {
+  if (!canSendBack(run)) return;
+  openSendBack(run);
+  gateStore.setState((state) => {
+    if (!state.sendBack) return state;
+    const kept = state.sendBack.note.replace(/\s+$/u, '');
+    const note = kept === '' ? comment : `${kept}\n${comment}`;
+    return { sendBack: { ...state.sendBack, note, error: undefined } };
+  });
+}
+
 export const cancelSendBack = (): void => gateStore.setState({ sendBack: undefined });
 
 const patch = (runId: string, changes: Partial<SendBackDraft>): void =>

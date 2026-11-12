@@ -33,7 +33,9 @@ export function panelSelection(pathname: string, search: Record<string, unknown>
   const run = /^\/workflows\/runs\/([^/]+)$/.exec(pathname)?.[1];
   if (run) return { view: 'run', runId: run };
   const workflow = /^\/workflows\/([^/]+)$/.exec(pathname)?.[1];
-  if (workflow && workflow !== 'new') return { view: 'workflow', workflowId: workflow };
+  if (workflow && !['new', 'runs', 'triggers'].includes(workflow)) {
+    return { view: 'workflow', workflowId: workflow };
+  }
   if (pathname.startsWith('/workflows')) return { view: 'workflows' };
   const item = /^\/backlog(?:\/([^/]+))?\/?$/.exec(pathname);
   if (item) {

@@ -1527,7 +1527,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - triggers: `triggers.eventsEnabled`, `triggers.forkPullRequests`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`,
   `viewer.fileListLimit`, `viewer.fileMatchesShown` (see "Files" and "Panel tabs and files in
-  chat")
+  chat"), `viewer.editorCommand`, `viewer.editorShell` (see "Open in editor" there)
 - diff: `diff.maxFileBytes`, `diff.maxFiles`, `diff.maxHashBytes` (the "Changes" page, see "Run base and changes")
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
@@ -1537,7 +1537,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance` (see
   "Assistant", "Question card" and "Models for steps")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
-  `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
+  `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`,
+  `appearance.changesListWidth` (see "Changes tab")
 - keybindings: `keybindings.*`, one per command that has a shortcut
 - desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
 - updates: `updates.enabled`, `updates.checkIntervalMinutes`
@@ -3233,8 +3234,14 @@ nothing. `path` is `/chat/<threadId>`. The web toaster and the desktop skip a ro
 
 ## Workflow builder and run view
 
-`apps/web/src/workflows`. The list's header is a tablist "Workflows view" with Workflows and
-Triggers. `/workflows/triggers` is the Triggers tab (`triggers-tab.tsx`, review loop spec 48):
+`apps/web/src/workflows`. The list's header is a tablist "Workflows view" with Workflows, Runs
+and Triggers (`listTabOf` in `workflows-view.tsx` reads the tab from the path). `/workflows/runs`
+and every `/workflows/runs/$runId` are the Runs tab (agent workbench spec 79): the runs only, in
+`runsTabOrder` (waiting for the user first, then running, then the rest, newest first in each),
+so a waiting run is found however many workflows there are; the tab counts the waiting runs and
+`/workflows/runs` alone shows "Pick a run" (`RunsHome`). Palette: "Go to runs"
+(`workflows.runs`). `/workflows/triggers` is the Triggers tab (`triggers-tab.tsx`, review loop
+spec 48):
 the event triggers of every project, grouped by project, each with its switch, the workflow it
 starts, a link to the last run it started and Delete (at once, with Undo, which makes the
 trigger again); "New trigger" is a dialog that asks for project, event and workflow, and a
@@ -3244,7 +3251,7 @@ palette commands (`workflows.triggers`, `trigger.new`, `trigger.toggle.<id>`,
 `trigger.delete.<id>`) act on the same thing; the rows come from the `triggers` topic alone. A
 run that an event started says so under its title (`run-event`).
 
-`/workflows` lists the workflows and their runs (live runs first) next
+`/workflows` lists the workflows next
 to `/workflows/new` (`?template=<kind>` starts from that entry of `workflows.templates`),
 `/workflows/$workflowId` (the builder for a saved workflow, Run now in a chosen project next to
 Save, and its runs) or `/workflows/runs/$runId`. The builder edits a local draft: name, template
@@ -3307,7 +3314,8 @@ tip, "No working copy was made" (the reason is on the failed step), "Working cop
 "Working copy kept: 2 files not committed, 1 commit not pushed (on agent/u2-bell)" with the
 newest unpushed commit's subject and the reason when it could not be removed. Kept copies are
 listed in three places: that line, "· working copy kept" on the run's row in the runs list, and
-a palette command "Remove working copy: <workflow>" for every kept copy. The command and the
+a palette command "Remove working copy: <workflow>" for every kept copy (the runs list is the
+Runs tab). The command and the
 line's button open the same question (`workingCopyStore`, a `ConfirmDialog` in the run view,
 which the command navigates to); Remove calls `workflowRuns.removeWorkingCopy` and a refusal
 stays on the line. A live run's copy has no button. Artifact links, the Changes tab's "Open
@@ -3398,11 +3406,17 @@ with its own link, above them "Last fetched <time> from <host>", the host's erro
 read failed, "Refresh now" (`hosts.refresh {runId}`) and "Open on host". Without a pull request
 it says why: not asked yet, the folder is on no branch, or no pull request has that branch as its
 head. See "Hosts". While the run on
-screen waits at a gate, a wide window shows the context panel with the step's conversation and
-the gate bar without changing `appearance.contextPanel` (the layout store's `contextPanelPeek`,
-see "Context panel"); it stays for that run until the user closes it or leaves the view. The run
-view's own gate bar shows only while the panel does not show the conversation (closed, or showing
-a file), so there is one gate bar on screen. Send back opens a note field in the gate bar. The
+screen waits at a gate, a wide window shows the context panel with the step's conversation
+without changing `appearance.contextPanel` (the layout store's `contextPanelPeek`, see "Context
+panel"); it stays for that run until the user closes it or leaves the view. The run view keeps
+its own gate bar at its top whatever the panel shows (`run-gate`, agent workbench spec 77), so the
+answers never move; the panel's conversation shows a copy (`GateBar` without `inRunView`) only
+while its conversation tab is selected. While the run view is on screen the note field opens in
+the run view's bar alone (the copy's Send back opens it there), so there is one note. Below
+`breakpoints.narrow`, where the panel lies over the view (spec 78), the run view's bar ends where
+the panel begins (a right margin of `appearance.contextPanelWidth`) and puts its buttons under
+its text (`stacked`), so the panel never covers Approve, Send back and Stop. Send back opens a
+note field in the gate bar. The
 note being written is view state in `gateStore` (`{runId, gate, note, busy, error}`), so the
 button, the palette and the key act on the same field; nothing about the run is kept there.
 `gate` names the wait it was written at (where the run waits, its path length, and the attempt
@@ -3426,15 +3440,34 @@ list is on the left (status letter, path, `+added −removed`, or "Binary file" 
 show" with the size), the chosen file's unified diff on the right with line numbers of both
 sides (`parsePatch`), not highlighted and not side by side. The step under review
 (`stepUnderReview`) is the one the gate asks about, else the last step that stored its hashes;
-its files carry a "This step" badge and "This step only" narrows the list to them. The switch is
+its files carry a small mark whose tooltip says "This step changed it" (`ThisStepMark`, agent
+workbench spec 94) and "This step only" narrows the list to them. The edge between the list and
+the diff is a `separator` (`SplitHandle`): dragging previews the width and writes
+`appearance.changesListWidth` once on release (bounds `changesListWidthBounds` in
+`@wow/contracts`); the arrow keys (Shift for four steps), Home and End write it at once. The
+switch is
 off for a run whose steps stored no hashes. "Open file" shows the file in the context panel's
 viewer through `openFile`; a deleted file has none. A status other than `ok` shows its reason in
 place of the list ("Not a Git repository", "Git was not found", "No base recorded", ...) and the
 Steps tab and gate bar work as before. `changesStore` holds the files the tab last read so the
 palette can offer them. Palette commands: Run: show changes / Run: show steps
 (`keybindings.runChanges`), Changes: this step only / every step (`keybindings.changesStepOnly`),
-Refresh changes, Changed file: <path> for each listed file, and Open changed file: <path> for
-the chosen one.
+Refresh changes, Changed file: <path> for each listed file, and Open changed file: <path> and
+Open in editor: <path> for the chosen one.
+
+**Line comments** (agent workbench spec 80). `DiffLines` takes `actions` (`DiffLineActions`:
+`comment(line, text)`, `openAt(line)`); with them each line of a diff is a focusable row
+(ArrowUp/ArrowDown move between lines). `keybindings.diffComment` (C) on a line, a click on its
+gutter mark or on its line numbers opens a comment field under the line; Enter adds the comment,
+Escape puts the field away, and the focus goes back to the line. The line is the folder's line
+number, the base's for a removed line. In a run's Changes, while the run waits at a gate where
+it can send back, a comment goes into the send-back note as `src/bell.ts:12 – text`, one per
+line (`addSendBackComment`, `lineComment` in `gate.ts`), opening the note when it is closed;
+the Send back key (Ctrl+Shift+Enter) sends it. In a chat thread's Changes the same line goes
+into the thread's composer after what is typed (`commentInComposer`, the composer's `addText`
+in `composer-store.ts`), without taking the focus. The focused line's actions are row actions
+(`lib/row-actions.ts`), so the palette offers "Comment on line N" and "Open line N in editor".
+The Keybindings page lists the key "On a diff line" (`keyScope` 'Diff').
 
 After a loop (workflow branches spec 19) a step keeps the hashes of its latest attempt only, so
 the server compares steps in the order they last ended (`run.path`), not in list order, and
@@ -3735,8 +3768,8 @@ the focus is in the panel, matched in the panel's own key handler: `keybindings.
 `backTab`, the tab shown before); the Keybindings page lists them "In the side panel". Closing
 the selected tab shows the one shown before it. Palette commands while tabs are open: "Close panel
 tab", "Next panel tab", "Previous panel tab", "Back to the panel tab shown before" (no key of
-their own, so their keys stay the panel's). The run view's gate bar shows while the panel shows
-the conversation tab.
+their own, so their keys stay the panel's). The run view's gate bar stays at the top of the run
+view whatever tab the panel shows; the panel's copy is part of its conversation tab.
 
 State (`panel-state.ts`). `appearance.contextPanel` stores whether it is open and
 `appearance.contextPanelWidth` its width (pixels, bounds `contextPanelWidthBounds` in
@@ -3781,6 +3814,30 @@ thread is open (its folder) or a run view (the run's folder). It sets the layout
 the file's own name first, fewer breaks first, shorter paths first) and shows at most
 `viewer.fileMatchesShown`, with a line when the list is cut or the folder had more files than
 `viewer.fileListLimit`.
+
+**Open in editor** (agent workbench spec 81, Interface). The server runs the editor, since it
+owns subprocesses; this also works in the browser build. RPC `files.openInEditor` takes a
+`FileScope`, a path and an optional line (`FileOpenInEditorParams`) and answers the full path it
+opened. `apps/server/src/files/editor.ts`: `findEditorPath` applies the `files.read` rules (inside
+a folder as written and after `realpath`; a folder is allowed, so `/open` opens the thread's
+folder), `planEditor` splits `viewer.editorCommand` into words (`commandWords`: spaces split,
+quotes keep a word together, a backslash is ordinary), fills `{path}` and `{line}` (the path goes
+last when the command names no `{path}`) and starts it as a program with arguments, no shell. On
+Windows a bare program name is looked up through PATHEXT (`findOnPath`), and a `.cmd` or `.bat`
+such as `code` runs through cmd.exe with its words quoted (`quoteForCmd`), since Node starts
+those only through a shell. With `viewer.editorShell` on, the command goes to the shell as one
+line with only the path quoted, so it can use shell syntax. `startEditor` starts it detached,
+without a window, and lets it go once it has started; a program that does not start is answered
+`rejected` with the reason, which the app shows as a toast. The app (`panel/editor.tsx`:
+`openInEditor`, `useOpenInEditor`, `OpenInEditorButton`, `isBinding`) offers it with
+`keybindings.openInEditor` (Shift+Enter) on the element that has the focus, matched in that
+element's own key handler, so Shift+Enter stays a line break in text fields: a changed file and a
+diff line in a run's or thread's Changes (at the line, or at the file's first changed line), an
+artifact, a chat file link, Open on a read row, a sent file chip (`FileLinks.openInEditor`,
+`editorKeyOf`) and the file viewer; the viewer, the Changes header and artifacts also have an
+"Open in editor" button. Palette: "Open file in editor" (`viewer.openInEditor`) for the file in
+the panel, "Open in editor: <path>" for the run's chosen changed file, and "Open the thread's
+folder in your editor" (`chat.openInEditor`, which `/open` runs).
 
 `@` in the composer (`fileSource`, the thread's scope): typed at the start of a word
 (`chat.fileTrigger`, default `@`, by the same `typedTrigger` and `skillQuery` as the skill list;
