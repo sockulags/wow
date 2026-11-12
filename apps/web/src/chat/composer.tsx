@@ -47,7 +47,7 @@ import {
   type ImageTarget,
 } from './image-chip';
 import { showImageComposer } from './image-commands';
-import { withMentions } from './mentions';
+import { withMentions, withoutMentionLines } from './mentions';
 import { ComposerSkillChip, SkillMark } from './skill-chip';
 import {
   paletteCommandsStore,
@@ -75,7 +75,12 @@ export interface ComposerHandle {
   text(): string;
   // A message taken back off the queue (Edit, agent workbench spec 52): its text before what the
   // box holds, its skills and images as chips.
-  putBack(text: string, skills: readonly SkillRef[], images?: readonly SentImage[]): void;
+  putBack(
+    text: string,
+    skills: readonly SkillRef[],
+    images?: readonly SentImage[],
+    files?: readonly string[],
+  ): void;
 }
 
 export interface ComposerProps {
@@ -686,12 +691,17 @@ export function Composer({
   };
 
   // A queued message back in the box: its text first, then what was typed since; its skills as
-  // chips where they are still listed, its images as they were.
+  // chips where they are still listed, its images and mentioned files as they were.
   const putBack = (
-    value: string,
+    queuedText: string,
     refs: readonly SkillRef[],
     returned: readonly SentImage[] = [],
+    mentioned: readonly string[] = [],
   ) => {
+    if (mentioned.length > 0) {
+      setFiles((current) => [...mentioned, ...current.filter((file) => !mentioned.includes(file))]);
+    }
+    const value = withoutMentionLines(queuedText, mentioned);
     if (returned.length > 0 && takesImages) {
       setImages((current) => [
         ...returned,
@@ -763,7 +773,8 @@ export function Composer({
       chips: chipNames === '' ? [] : chipNames.split('\n'),
       openSkills: () => actions.current.openSkills(),
       removeSkill: (index: number) => actions.current.removeChip(index),
-      putBack: (value, refs, returned) => actions.current.putBack(value, refs, returned),
+      putBack: (value, refs, returned, mentioned) =>
+        actions.current.putBack(value, refs, returned, mentioned),
     });
   }, [takesSkills, disabled, composerId, chipNames, draftKey]);
 

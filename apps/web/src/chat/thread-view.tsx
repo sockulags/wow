@@ -392,7 +392,12 @@ export function ThreadConversation({
     const queued = thread.queued;
     if (!queued) return;
     await cancelQueued();
-    composer.current?.putBack(queued.text, queued.skills ?? [], queued.images ?? []);
+    composer.current?.putBack(
+      queued.text,
+      queued.skills ?? [],
+      queued.images ?? [],
+      queued.files ?? [],
+    );
   };
   const approval = pendingApproval(approvals);
   const question = pendingQuestion(questions, items ?? [], running);

@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand';
 import { createLayoutStore, RuntimeProvider } from '@/app/runtime';
 import { createDraftStore } from './draft';
-import { mentionLine, withMentions, withoutMentions } from './mentions';
+import { mentionLine, withMentions, withoutMentionLines, withoutMentions } from './mentions';
 import { ThreadConversation } from './thread-view';
 
 // Agent workbench spec 56: `@` typed at the start of a word lists the thread folder's files; a
@@ -55,7 +55,10 @@ const instance: ProviderInstance = {
   updateRun: null,
 };
 
-function setup({ assistant = false }: { assistant?: boolean } = {}) {
+function setup({
+  assistant = false,
+  shown = thread,
+}: { assistant?: boolean; shown?: Thread } = {}) {
   const request = vi.fn<(method: string, params: unknown) => Promise<unknown>>((method) =>
     Promise.resolve(
       method === 'files.list'
@@ -87,7 +90,7 @@ function setup({ assistant = false }: { assistant?: boolean } = {}) {
       }}
     >
       <ThreadConversation
-        thread={thread}
+        thread={shown}
         instance={instance}
         {...(assistant ? { extras: { placeholder: 'Message' } } : {})}
       />
@@ -157,6 +160,35 @@ describe('@ in the composer @agent-workbench-56', () => {
     expect(screen.queryByTestId('composer-file-chip')).toBeNull();
   });
 
+  it('puts a queued message back on Edit with its files as chips, not as a line of text', async () => {
+    const { box, sent, user } = setup({
+      shown: {
+        ...thread,
+        queued: {
+          id: 'turn-1:queued:1',
+          text: '@src/timer.ts\n\nwhat does it ring?\n\n@README.md @src/timer.ts\n\nand the readme?',
+          files: ['src/timer.ts', 'README.md'],
+          queuedAt: '2026-11-02T08:01:00.000Z',
+        },
+      },
+    });
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect((box as HTMLTextAreaElement).value).toBe('what does it ring?\n\nand the readme?');
+    const chips = screen.getByRole('list', { name: 'Mentioned files' });
+    expect(
+      within(chips)
+        .getAllByTestId('composer-file-chip')
+        .map((chip) => chip.textContent),
+    ).toEqual(['@timer.ts', '@README.md']);
+    await user.type(box, '{Enter}');
+    expect(sent()).toContainEqual({
+      type: 'thread.sendMessage',
+      threadId: 'tea',
+      text: '@src/timer.ts @README.md\n\nwhat does it ring?\n\nand the readme?',
+      files: ['src/timer.ts', 'README.md'],
+    });
+  });
+
   it('offers no file list in the Assistant view', async () => {
     const { box, listed, user } = setup({ assistant: true });
     await user.type(box, '@ti');
@@ -174,5 +206,9 @@ describe('mention text', () => {
     expect(withoutMentions('@a.ts\n\nhi', ['a.ts'])).toBe('hi');
     expect(withoutMentions('@a.ts', ['a.ts'])).toBe('');
     expect(withoutMentions('written otherwise', ['a.ts'])).toBe('written otherwise');
+    expect(
+      withoutMentionLines('@a.ts\n\nhi\n\n@src/b.ts @a.ts\n\nthere', ['a.ts', 'src/b.ts']),
+    ).toBe('hi\n\nthere');
+    expect(withoutMentionLines('@a.ts and more\n\nhi', ['a.ts'])).toBe('@a.ts and more\n\nhi');
   });
 });

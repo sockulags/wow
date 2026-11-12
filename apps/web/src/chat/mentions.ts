@@ -19,3 +19,23 @@ export function withoutMentions(text: string, files: readonly string[]): string 
   if (text === line) return '';
   return text.startsWith(`${line}\n\n`) ? text.slice(line.length + 2) : text;
 }
+
+// A queued message's text without the mention lines its joined messages started with, for Edit:
+// the files come back as chips and Send names them again.
+export function withoutMentionLines(text: string, files: readonly string[]): string {
+  if (files.length === 0) return text;
+  const names = [...files].sort((a, b) => b.length - a.length);
+  const onlyMentions = (paragraph: string): boolean => {
+    let rest = paragraph;
+    while (rest !== '') {
+      const name = names.find((file) => rest === `@${file}` || rest.startsWith(`@${file} `));
+      if (name === undefined) return false;
+      rest = rest.slice(name.length + 1).replace(/^ /, '');
+    }
+    return true;
+  };
+  return text
+    .split('\n\n')
+    .filter((paragraph) => !onlyMentions(paragraph))
+    .join('\n\n');
+}

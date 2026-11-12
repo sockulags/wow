@@ -13,7 +13,12 @@ export interface ActiveSkillComposer {
   readonly chips: readonly string[];
   openSkills(): void;
   removeSkill(index: number): void;
-  putBack(text: string, skills: readonly SkillRef[], images?: readonly SentImage[]): void;
+  putBack(
+    text: string,
+    skills: readonly SkillRef[],
+    images?: readonly SentImage[],
+    files?: readonly string[],
+  ): void;
 }
 
 interface SkillComposersState {

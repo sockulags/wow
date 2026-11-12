@@ -323,7 +323,15 @@ describe('clear and compact', () => {
 });
 
 const composer = (id: string, draftKey: string | undefined) => {
-  const putBack = vi.fn<(text: string, skills: readonly unknown[]) => void>();
+  const putBack =
+    vi.fn<
+      (
+        text: string,
+        skills: readonly unknown[],
+        images?: readonly unknown[],
+        files?: readonly string[],
+      ) => void
+    >();
   return {
     putBack,
     entry: {
@@ -338,7 +346,12 @@ const composer = (id: string, draftKey: string | undefined) => {
 };
 
 describe('Edit queued message from the palette (agent workbench spec 52)', () => {
-  const queued = { id: 'q', text: 'Then this', queuedAt: '2026-11-02T08:00:00Z' };
+  const queued = {
+    id: 'q',
+    text: '@src/timer.ts\n\nThen this',
+    files: ['src/timer.ts'],
+    queuedAt: '2026-11-02T08:00:00Z',
+  };
   const editQueued = (composers: Parameters<typeof showSkillComposer>[0][]) => {
     const hide = composers.map((entry) => showSkillComposer(entry));
     const found = threadSkillComposer(skillComposerStore.getState(), 'a');
@@ -372,8 +385,13 @@ describe('Edit queued message from the palette (agent workbench spec 52)', () =>
     );
     command?.run({ connection: { request } } as unknown as CommandContext);
     await answered;
-    // No skills and no images went with it (agent workbench U8 puts images back too).
-    expect(own.putBack).toHaveBeenCalledWith('Then this', [], []);
+    // No skills and no images went with it; its files go back as chips (spec 56).
+    expect(own.putBack).toHaveBeenCalledWith(
+      '@src/timer.ts\n\nThen this',
+      [],
+      [],
+      ['src/timer.ts'],
+    );
     expect(panel.putBack).not.toHaveBeenCalled();
   });
 });
