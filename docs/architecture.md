@@ -2308,7 +2308,8 @@ decides what a command of the assistant does. The table names every type of `Ser
   that then lets the app do more: `scheduler.paused` off, `scheduler.missedPolicy` to `run`,
   `hosts.polling`, `triggers.eventsEnabled` or `viewer.htmlScripts` on. A change to
   `assistant.secretPatterns` is a proposal too, since that is the assistant's own net, and so
-  is any change to `assistant.allowCodex` or `triggers.forkPullRequests`, either way. Four
+  is any change to `assistant.allowCodex`, `triggers.forkPullRequests`, `viewer.editorCommand`
+  or `viewer.editorShell`, either way (the last two name a program the server runs). Four
   more are proposals though spec 9 does not list them, because they do the same kind of thing:
   another skill, extra prompt, provider or model on a step that has a permission mode or a
   gate that passes by itself (the yes once given for that step was for that work); taking a
@@ -3821,14 +3822,18 @@ owns subprocesses; this also works in the browser build. RPC `files.openInEditor
 opened. `apps/server/src/files/editor.ts`: `findEditorPath` applies the `files.read` rules (inside
 a folder as written and after `realpath`; a folder is allowed, so `/open` opens the thread's
 folder), `planEditor` splits `viewer.editorCommand` into words (`commandWords`: spaces split,
-quotes keep a word together, a backslash is ordinary), fills `{path}` and `{line}` (the path goes
-last when the command names no `{path}`) and starts it as a program with arguments, no shell. On
+quotes keep a word together, a backslash is ordinary), fills `{path}` and `{line}` in one pass, so a `$` or `{line}` in a file's name stays as it is
+(the path goes last when the command names no `{path}`) and starts it as a program with arguments, no shell. On
 Windows a bare program name is looked up through PATHEXT (`findOnPath`), and a `.cmd` or `.bat`
 such as `code` runs through cmd.exe with its words quoted (`quoteForCmd`), since Node starts
-those only through a shell. With `viewer.editorShell` on, the command goes to the shell as one
+those only through a shell. cmd.exe expands `%NAME%` even inside quotes and `cmd /c` has no
+sure escape for it, so a path with a `%` is answered `rejected` whenever cmd.exe would read the
+line (`EditorRefused`). With `viewer.editorShell` on, the command goes to the shell as one
 line with only the path quoted, so it can use shell syntax. `startEditor` starts it detached,
 without a window, and lets it go once it has started; a program that does not start is answered
-`rejected` with the reason, which the app shows as a toast. The app (`panel/editor.tsx`:
+`rejected` with the reason, which the app shows as a toast. Through a shell (the setting, or a
+`.cmd`) "started" means the shell started: a program the shell then does not find fails unseen.
+The assistant changes `viewer.editorCommand` and `viewer.editorShell` only as a proposal. The app (`panel/editor.tsx`:
 `openInEditor`, `useOpenInEditor`, `OpenInEditorButton`, `isBinding`) offers it with
 `keybindings.openInEditor` (Shift+Enter) on the element that has the focus, matched in that
 element's own key handler, so Shift+Enter stays a line break in text fields: a changed file and a

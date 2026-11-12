@@ -18,7 +18,7 @@ import { outbox } from '@/test/outbox';
 import { renderApp } from '@/test/render';
 import { firstChangedLine } from './changes';
 import { cancelSendBack, gateStore } from './gate';
-import { runsTabOrder } from './workflows-view';
+import { runsTabOrder, waitsForYou } from './workflows-view';
 
 // Run review polish (agent workbench spec 77 to 81, 94) against a fake server that records what
 // it is sent. The data is invented.
@@ -289,6 +289,41 @@ describe('the Runs tab (spec 79)', () => {
       'running',
       'done-new',
     ]);
+  });
+
+  it("counts and ranks a run that waits for the pull request's checks with the running ones", async () => {
+    const checks = at('checks', 'waiting', '2026-11-04T08:00:00.000Z');
+    const forChecks: WorkflowRun = {
+      ...checks,
+      steps: checks.steps.map((entry, index) =>
+        index === 0
+          ? {
+              ...entry,
+              gate: {
+                state: 'waitingForChecks',
+                parts: [{ part: 'checks', state: 'pending', detail: 'Checks are still running' }],
+                since: checks.startedAt,
+                at: checks.startedAt,
+              },
+            }
+          : entry,
+      ),
+    };
+    const runs = [
+      forChecks,
+      at('running', 'running', '2026-11-02T10:00:00.000Z'),
+      at('waiting-old', 'waiting', '2026-11-01T08:00:00.000Z'),
+    ];
+    expect(waitsForYou(forChecks)).toBe(false);
+    expect(runsTabOrder(runs).map((entry) => entry.id)).toEqual([
+      'waiting-old',
+      'checks',
+      'running',
+    ]);
+    await renderApp('/workflows/runs', fake({ runs }).runtime);
+    const tabs = within(await screen.findByRole('tablist', { name: 'Workflows view' }));
+    expect(tabs.getByRole('tab', { name: /Runs/ }).textContent).toBe('Runs1');
+    expect(screen.getByText('One run waits for you; they are listed first.')).toBeTruthy();
   });
 });
 

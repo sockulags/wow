@@ -9,6 +9,9 @@ import { candidatePaths, isInside } from './read.js';
 // has no other way to reach the editor. The command is split into words here and started as a
 // program with arguments; only `viewer.editorShell` hands it to a shell.
 
+// A launch wow will not make, with the reason for the user.
+export class EditorRefused extends Error {}
+
 export interface EditorTarget {
   // The full path of the file or folder.
   readonly path: string;
@@ -42,8 +45,10 @@ export function commandWords(command: string): string[] {
   return words;
 }
 
-const fill = (word: string, target: EditorTarget): string =>
-  word.replaceAll('{path}', target.path).replaceAll('{line}', String(target.line));
+// One pass with a function, so a `$&` or `{line}` in the path itself is never read as a
+// pattern or filled in again: the editor gets the path findEditorPath checked.
+const fill = (word: string, target: EditorTarget, shown: string = target.path): string =>
+  word.replace(/\{path\}|\{line\}/g, (found) => (found === '{path}' ? shown : String(target.line)));
 
 // The program and its arguments for a target. A command without {path} gets the path last.
 export function editorArgs(
@@ -52,15 +57,25 @@ export function editorArgs(
 ): { readonly file: string; readonly args: string[] } {
   const words = commandWords(command);
   const [file, ...rest] = words;
-  if (file === undefined || file === '') throw new Error('The editor command is empty.');
+  if (file === undefined || file === '') throw new EditorRefused('The editor command is empty.');
   const args = rest.map((word) => fill(word, target));
   if (!words.some((word) => word.includes('{path}'))) args.push(target.path);
   return { file: fill(file, target), args };
 }
 
 // cmd.exe reads `"…"` as one word and `""` inside it as a quote; a Windows path holds no quote.
+// It still expands `%NAME%` inside quotes and `cmd /c` has no sure escape for it, so a path with
+// a `%` is refused before it gets there (cmdSafe).
 export const quoteForCmd = (value: string): string =>
   /^[\w@./:=+\\-]+$/.test(value) ? value : `"${value.replaceAll('"', '""')}"`;
+
+function cmdSafe(target: EditorTarget): void {
+  if (target.path.includes('%')) {
+    throw new EditorRefused(
+      `${target.path} has a % in it, which cmd.exe would read as a variable and open another path, so it was not opened.`,
+    );
+  }
+}
 
 const quoteForSh = (value: string): string =>
   /^[\w@./:=+-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
@@ -92,9 +107,8 @@ export async function planEditor(options: PlanOptions): Promise<EditorLaunch> {
   if (options.shell) {
     // The line stays as written, shell syntax and all; only the path is quoted for the shell.
     const { command, target } = options;
-    const filled = command
-      .replaceAll('{path}', quote(target.path))
-      .replaceAll('{line}', String(target.line));
+    if (windows) cmdSafe(target);
+    const filled = fill(command, target, quote(target.path));
     const line = command.includes('{path}') ? filled : `${filled} ${quote(target.path)}`;
     return { file, args, shell: true, line };
   }
@@ -104,6 +118,7 @@ export async function planEditor(options: PlanOptions): Promise<EditorLaunch> {
       ? file
       : ((await findOnPath(file, { env: options.env, platform: options.platform })) ?? file);
   if (/\.(cmd|bat)$/i.test(found)) {
+    cmdSafe(options.target);
     return { file: found, args, shell: true, line: [found, ...args].map(quoteForCmd).join(' ') };
   }
   return { file: found, args, shell: false };
@@ -116,7 +131,8 @@ export type Spawn = (
 ) => ReturnType<typeof nodeSpawn>;
 
 // Starts the editor and lets it go: wow does not wait for it to close. Resolves once the program
-// has started, and rejects with the reason when it cannot.
+// has started, and rejects with the reason when it cannot. Through a shell that is once the shell
+// has started: a program the shell then does not find ends there, unseen.
 export function startEditor(
   launch: EditorLaunch,
   spawn: Spawn = nodeSpawn,

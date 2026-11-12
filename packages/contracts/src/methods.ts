@@ -352,8 +352,9 @@ export const rpcMethods = {
   },
   // Opens a file of a thread, run or project, or the folder itself, in the user's editor with
   // the command the `viewer.editorCommand` setting names. Refused, as `rejected` with the reason,
-  // for a path outside the scope's folders, one that is not there, or a command that does not
-  // start.
+  // for a path outside the scope's folders, one that is not there, a path cmd.exe would misread
+  // (a `%` on Windows), or a program that does not start; with a shell between (the
+  // `viewer.editorShell` setting, a Windows `.cmd`) that is the shell, not what it runs.
   'files.openInEditor': {
     params: FileOpenInEditorParams,
     result: FileOpenInEditorResult,

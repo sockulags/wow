@@ -6,7 +6,17 @@ import {
 } from '@wow/contracts';
 import { SecretStore, defaultProtector, plainProtector } from '@wow/secrets';
 import { spawn } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -436,7 +446,8 @@ describe('rpc', () => {
       path: 'src/timer.ts',
       line: 12,
     });
-    const file = path.join(thread, 'src', 'timer.ts');
+    // The editor gets real paths; a Windows runner's temp folder is an 8.3 short name.
+    const file = path.join(await realpath(thread), 'src', 'timer.ts');
     expect(opened).toMatchObject({ result: { path: file } });
     expect(editorCalls).toEqual([
       { file: 'code', args: ['--goto', `${file}:12`], shell: undefined },
@@ -452,7 +463,11 @@ describe('rpc', () => {
     await client.request('files.openInEditor', { threadId: 't1', path: 'docs/spec.md' });
     expect(editorCalls.at(-1)).toEqual({
       file: '/opt/My Editor/edit',
-      args: ['--line', '1', path.join(home, 'project', 'docs', 'spec.md')],
+      args: [
+        '--line',
+        '1',
+        path.join(await realpath(path.join(home, 'project')), 'docs', 'spec.md'),
+      ],
       shell: undefined,
     });
 

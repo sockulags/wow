@@ -7,15 +7,19 @@ import { useTopic } from '@/chat/data';
 import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { WorkflowRun } from '@wow/contracts';
-import { runStateDotClass, runStateLabel } from './model';
+import { gateStanding, runStateDotClass, runStateLabel } from './model';
 import { eventTriggers, triggersPath } from './triggers';
 
 export const runsPath = '/workflows/runs';
 
+// A run at a gate that waits for the pull request's checks is `waiting` too, but not for the user.
+export const waitsForYou = (run: WorkflowRun): boolean =>
+  run.state === 'waiting' && gateStanding(run)?.waitsFor !== 'checks';
+
 // The Runs tab's order (agent workbench spec 79): runs waiting for the user first, then running
-// ones, then the rest, newest first within each.
+// ones and those waiting for checks, then the rest, newest first within each.
 const liveRank = (run: WorkflowRun): number =>
-  run.state === 'waiting' ? 0 : run.state === 'running' ? 1 : 2;
+  waitsForYou(run) ? 0 : run.state === 'running' || run.state === 'waiting' ? 1 : 2;
 
 export const runsTabOrder = (runs: readonly WorkflowRun[]): WorkflowRun[] =>
   runs.toSorted((a, b) => liveRank(a) - liveRank(b) || b.startedAt.localeCompare(a.startedAt));
@@ -42,7 +46,7 @@ function WorkflowList() {
   const linkClass =
     'flex flex-col rounded-md px-2 py-1.5 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring';
   const active = { className: 'bg-sidebar-accent', 'aria-current': 'page' as const };
-  const needYou = runs.filter((run) => run.state === 'waiting').length;
+  const needYou = runs.filter(waitsForYou).length;
   const tabs: readonly { id: ListTab; to: string; label: string; count?: number }[] = [
     { id: 'workflows', to: '/workflows', label: 'Workflows' },
     { id: 'runs', to: runsPath, label: 'Runs', count: needYou },
@@ -215,7 +219,7 @@ export function WorkflowsHome() {
 // The Runs tab with no run open.
 export function RunsHome() {
   const runs = useTopic('workflowRuns');
-  const waiting = (runs ?? []).filter((run) => run.state === 'waiting').length;
+  const waiting = (runs ?? []).filter(waitsForYou).length;
   return (
     <EmptyState
       icon={PlayIcon}

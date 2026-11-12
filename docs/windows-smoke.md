@@ -264,7 +264,8 @@ Further checks against the same hosts:
       VS Code opens the file at its first changed line, no console window flashes, and a path
       with spaces opens too. Also try a file in the side panel's viewer and `/open` in a chat
       thread (its folder). Then set `viewer.editorCommand` to a program that is not there: a
-      toast says the editor command did not start.
+      toast says the editor command did not start. A file named `100%PATH%.txt` in the
+      folder is not opened: a toast says the % would be read as a variable.
 - [ ] At 1024 px wide, open a run that waits at a gate and open the side panel: Approve, Send
       back and Stop stay visible beside the panel, under the gate's text.
 - [ ] Optional: create an event trigger (Workflows → Triggers → New trigger, "Pull request

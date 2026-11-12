@@ -1227,6 +1227,23 @@ describe('proposals', () => {
     expect(changes()).toEqual([]);
   });
 
+  it('ask before the program "Open in editor" runs or its shell changes, either way', async () => {
+    asUser({ type: 'setting.set', key: 'viewer.editorShell', scope: 'global', value: true });
+    asUser({ type: 'setting.set', key: 'viewer.editorCommand', scope: 'global', value: 'subl' });
+    const untouched = before();
+    for (const [name, args] of [
+      ['set_setting', { key: 'viewer.editorCommand', scope: 'global', value: 'notepad {path}' }],
+      ['reset_setting', { key: 'viewer.editorCommand', scope: 'global' }],
+      ['set_setting', { key: 'viewer.editorShell', scope: 'global', value: false }],
+      ['reset_setting', { key: 'viewer.editorShell', scope: 'global' }],
+    ] as const) {
+      const result = await call(name, args);
+      expect([name, args.key, result.content.outcome]).toEqual([name, args.key, 'proposed']);
+    }
+    expect(before()).toBe(untouched);
+    expect(changes()).toEqual([]);
+  });
+
   it('ask before a project moves to another folder, and before a card with a workflow that starts now or within assistant.startSoonMinutes', async () => {
     const elsewhere = path.join(root, 'elsewhere');
     await mkdir(elsewhere, { recursive: true });

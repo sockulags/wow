@@ -93,13 +93,16 @@ const moreOnItsOwn: Readonly<Record<string, (next: unknown, current: unknown) =>
 };
 
 // Guards the assistant does not change without a yes either way: the net that hides
-// secret-looking text, whether it may run on Codex, where it could read files, and whether a
-// fork's pull request may start a run whose agent the fork's files steer.
+// secret-looking text, whether it may run on Codex, where it could read files, whether a
+// fork's pull request may start a run whose agent the fork's files steer, and the program the
+// server runs for "Open in editor" and whether a shell reads it.
 const guardSettings: ReadonlySet<string> = new Set([
   'assistant.secretPatterns',
   'assistant.askRefusedWords',
   'assistant.allowCodex',
   'triggers.forkPullRequests',
+  'viewer.editorCommand',
+  'viewer.editorShell',
 ]);
 
 // Where a tracker's token is sent. Spec 7 calls tracker host settings ordinary, but with the

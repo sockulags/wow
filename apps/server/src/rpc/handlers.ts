@@ -23,7 +23,13 @@ import type { Db } from '../db/database.js';
 import { projects, threads, turns, workflowRuns } from '../db/schema.js';
 import { ImageRefused, type ImageStore } from '../files/images.js';
 import { listFolderFiles } from '../files/list.js';
-import { findEditorPath, planEditor, startEditor, type Spawn } from '../files/editor.js';
+import {
+  EditorRefused,
+  findEditorPath,
+  planEditor,
+  startEditor,
+  type Spawn,
+} from '../files/editor.js';
 import { readViewerFile } from '../files/read.js';
 import type { HostLookup } from '../hosts/lookup.js';
 import type { HostPoller } from '../hosts/poller.js';
@@ -275,16 +281,17 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       const scope = fileScope(deps, params);
       const found = await findEditorPath(scope.roots, params.path, scope.place);
       if ('refused' in found) throw new RpcFault('rejected', found.message);
-      const launch = await planEditor({
-        command: deps.settings.get('viewer.editorCommand'),
-        shell: deps.settings.get('viewer.editorShell'),
-        target: { path: found.found, line: params.line ?? 1 },
-        platform: deps.editor?.platform ?? process.platform,
-        env: deps.editor?.env ?? process.env,
-      });
       try {
+        const launch = await planEditor({
+          command: deps.settings.get('viewer.editorCommand'),
+          shell: deps.settings.get('viewer.editorShell'),
+          target: { path: found.found, line: params.line ?? 1 },
+          platform: deps.editor?.platform ?? process.platform,
+          env: deps.editor?.env ?? process.env,
+        });
         await startEditor(launch, deps.editor?.spawn);
       } catch (failure) {
+        if (failure instanceof EditorRefused) throw new RpcFault('rejected', failure.message);
         const reason = failure instanceof Error ? failure.message : String(failure);
         throw new RpcFault(
           'rejected',

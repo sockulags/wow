@@ -1,13 +1,21 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { commandWords, editorArgs, findEditorPath, planEditor, startEditor } from './editor.js';
+import {
+  commandWords,
+  editorArgs,
+  EditorRefused,
+  findEditorPath,
+  planEditor,
+  startEditor,
+} from './editor.js';
 
 let folder: string;
 
 beforeEach(async () => {
-  folder = await mkdtemp(path.join(tmpdir(), 'wow-editor-'));
+  // findEditorPath answers real paths; a Windows runner's temp folder is an 8.3 short name.
+  folder = await realpath(await mkdtemp(path.join(tmpdir(), 'wow-editor-')));
 });
 
 afterEach(async () => {
@@ -15,6 +23,15 @@ afterEach(async () => {
 });
 
 const target = { path: '/work/tea timer/src/bell.ts', line: 12 };
+const odd = (name: string) => ({ path: `/w/${name}`, line: 3 });
+const plan = (name: string, shell: boolean) =>
+  planEditor({
+    command: 'code --goto {path}:{line}',
+    shell,
+    target: odd(name),
+    platform: 'linux',
+    env: {},
+  });
 
 describe('the editor command', () => {
   it('splits the setting into words, keeping quoted words and backslashes', () => {
@@ -61,6 +78,45 @@ describe('the editor command', () => {
       shell: true,
       line: "code --goto '/work/tea timer/src/bell.ts':12 || true",
     });
+  });
+
+  it('gives the editor the path as it is, whatever $ or {line} its name holds', async () => {
+    for (const name of ["a$&b$$c$'.ts", '{line}.ts', 'cash$', 'a b$`x.ts']) {
+      expect((await plan(name, false)).args).toEqual(['--goto', `/w/${name}:3`]);
+      expect(editorArgs('subl', odd(name)).args).toEqual([`/w/${name}`]);
+    }
+    expect((await plan('{line}.ts', true)).line).toBe("code --goto '/w/{line}.ts':3");
+    expect((await plan('cash$', true)).line).toBe("code --goto '/w/cash$':3");
+    expect((await plan("a$&b$$c$'.ts", true)).line).toBe(`code --goto '/w/a$&b$$c$'\\''.ts':3`);
+    expect((await plan('a b$`x.ts', true)).line).toBe("code --goto '/w/a b$`x.ts':3");
+  });
+
+  it('refuses a Windows path with a % before cmd.exe could expand it', async () => {
+    const bin = path.join(folder, 'bin');
+    await mkdir(bin);
+    await writeFile(path.join(bin, 'code.cmd'), '@echo off\r\n');
+    const percent = { path: 'C:\\work\\100%PATH%.ts', line: 1 };
+    for (const shell of [false, true]) {
+      await expect(
+        planEditor({
+          command: 'code --goto {path}:{line}',
+          shell,
+          target: percent,
+          platform: 'win32',
+          env: { PATH: bin, PATHEXT: '.EXE;.CMD' },
+        }),
+      ).rejects.toThrow(EditorRefused);
+    }
+    // A program started without cmd.exe reads the % as it is.
+    expect(
+      await planEditor({
+        command: 'C:\\Ed\\ed.exe {path}',
+        shell: false,
+        target: percent,
+        platform: 'win32',
+        env: {},
+      }),
+    ).toEqual({ file: 'C:\\Ed\\ed.exe', args: ['C:\\work\\100%PATH%.ts'], shell: false });
   });
 
   it('runs a Windows .cmd such as code the Windows way, through cmd.exe', async () => {
