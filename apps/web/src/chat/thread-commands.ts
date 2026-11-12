@@ -253,7 +253,8 @@ export function threadListCommands({
       ],
       detail: `Thread · ${isArchived(thread) ? 'Archived' : state}`,
       needsYou: thread.state === 'needs_you' && !isArchived(thread),
-      recentAt: thread.updatedAt,
+      // Archive hides the thread; the palette still finds it once something is typed (spec 68).
+      ...(isArchived(thread) ? { searchOnly: true } : { recentAt: thread.updatedAt }),
       ...(found && found.query !== '' && found.ids.has(thread.id) ? { foundBy: found.query } : {}),
       run: ({ navigate }) =>
         void navigate({ to: '/chat/$threadId', params: { threadId: thread.id } }),

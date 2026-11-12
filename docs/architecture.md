@@ -2788,7 +2788,8 @@ Next unread thread (`keybindings.nextBoldThread`, Alt+Shift+Down), "Show threads
 while there are chips, and "Show threads of all projects" while one is picked. A picked project
 that is no longer among the chips (`pickedProject`: its last thread left, or only one project has
 threads, so there are no chips) narrows nothing, since nothing on screen could undo it. The palette's thread entries
-carry the project name as a keyword and say "Archived" for an archived thread. The palette asks
+carry the project name as a keyword and say "Archived" for an archived thread, which is
+`searchOnly` (no `recentAt`), so the palette lists it only once something is typed. The palette asks
 `threads.search` for its text as well (`usePaletteThreadSearch`, into the `paletteThreadHits`
 store): a thread found there gets `foundBy` (the text), which `paletteScore` matches below any
 match in the command's own words; such an item gets a new React key, since cmdk scores an item

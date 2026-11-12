@@ -1,9 +1,9 @@
 import type { Thread } from '@wow/contracts';
 import type { Connection } from '@wow/client-runtime';
 import { describe, expect, it, vi } from 'vitest';
-import type { CommandContext } from '@/app/commands';
+import type { AppCommand, CommandContext } from '@/app/commands';
 import { worksInTextFields } from '@/app/keybindings';
-import { paletteScore } from '@/app/palette-model';
+import { paletteScore, startList } from '@/app/palette-model';
 import { onScreen, openThreadOf } from '@/app/notifications';
 import {
   filteredThreads,
@@ -163,6 +163,18 @@ describe('palette commands of the thread list (spec 67 to 69)', () => {
     expect(commands.find((command) => command.id === 'thread.Old musings')?.detail).toBe(
       'Thread · Archived',
     );
+  });
+
+  it('lists an archived thread only once something is typed', () => {
+    const commands = threadListCommands({ threads, projects, openThread: undefined, inChat: true });
+    const before = startList(commands, 'Chat', 10).flatMap(([, listed]) =>
+      listed.map((command) => command.id),
+    );
+    expect(before).toContain('thread.Kettle timer');
+    expect(before).not.toContain('thread.Old musings');
+    const archived = commands.find((command) => command.id === 'thread.Old musings');
+    expect(archived?.searchOnly).toBe(true);
+    expect(paletteScore(archived as AppCommand, 'musings')).toBeGreaterThan(0);
   });
 
   it('renames on F2, which works while the composer has the keyboard', () => {
