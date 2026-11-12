@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -57,6 +57,41 @@ describe('listFolderFiles', () => {
       'src/timer.ts',
     ]);
   });
+
+  it('leaves out tracked files deleted from disk and submodule folders', async () => {
+    runGit('init', '-q');
+    await write('kept.txt');
+    await write('gone.txt');
+    // A submodule's entry in the index is its folder.
+    await write('vendor/lib/inner.txt');
+    execFileSync('git', ['-C', path.join(folder, 'vendor/lib'), 'init', '-q']);
+    runGit('-C', path.join(folder, 'vendor/lib'), 'add', '.');
+    runGit('-C', path.join(folder, 'vendor/lib'), 'commit', '-q', '-m', 'Invented inner');
+    runGit('add', 'kept.txt', 'gone.txt', 'vendor/lib');
+    runGit('commit', '-q', '-m', 'Invented start');
+    await rm(path.join(folder, 'gone.txt'));
+    const listed = await listFolderFiles({ folder, limit: 100, git });
+    expect(listed).toEqual({ source: 'git', truncated: false, files: ['kept.txt'] });
+  });
+
+  // A script stands in for a git that lists two files and then hangs.
+  it.skipIf(process.platform === 'win32')(
+    'keeps what git listed when it runs out of time, without walking',
+    async () => {
+      await write('a.txt');
+      await write('b.txt');
+      await write('ignored/walked.txt');
+      const slowGit = path.join(folder, 'slow-git');
+      await writeFile(slowGit, "#!/bin/sh\nprintf 'a.txt\\0b.txt\\0'\nexec sleep 30\n");
+      await chmod(slowGit, 0o755);
+      const listed = await listFolderFiles({
+        folder,
+        limit: 100,
+        git: { timeoutMs: 500, git: slowGit },
+      });
+      expect(listed).toEqual({ source: 'git', truncated: true, files: ['a.txt', 'b.txt'] });
+    },
+  );
 
   it('stops at the limit inside Git', async () => {
     runGit('init', '-q');

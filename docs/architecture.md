@@ -131,7 +131,9 @@ projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see 
   names the files of the scope's first folder for "Open file…" and `@` (agent workbench spec 18,
   56), never their content: inside Git `git ls-files --cached --others --exclude-standard -z`
   (tracked plus untracked files Git does not ignore, read as the output streams and stopped at
-  `viewer.fileListLimit`), else a breadth-first walk that skips hidden folders and
+  `viewer.fileListLimit`; a name that is no file on disk, a tracked file deleted or a submodule's
+  folder, is left out; when git runs out of time the names read so far are the answer, marked
+  `truncated`, since a walk would list what Git ignores), else a breadth-first walk that skips hidden folders and
   `node_modules` and stops at the same limit; the answer says which (`source`) and whether it
   stopped (`truncated`). A
   relative path is looked for in each folder in order, a full path must lie in one of them. The

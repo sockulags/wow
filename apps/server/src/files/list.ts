@@ -1,6 +1,6 @@
 import type { FileListResult } from '@wow/contracts';
 import { spawn } from 'node:child_process';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { gitEnvironment, readOnlyGitArgs, type GitRunOptions } from '../projects/git.js';
 
@@ -18,7 +18,9 @@ export interface ListFilesRequest {
 type GitList = { readonly files: string[]; readonly truncated: boolean } | undefined;
 
 // undefined when the folder is not in a repository or git cannot run. Output is read as it comes
-// and git is stopped at the limit, so a huge repository costs no more than the limit.
+// and git is stopped at the limit, so a huge repository costs no more than the limit. When git
+// runs out of time, what it listed so far is kept: walking instead would list what the
+// repository ignores.
 function gitFiles(folder: string, limit: number, options: GitRunOptions): Promise<GitList> {
   return new Promise((resolve) => {
     const child = spawn(
@@ -38,7 +40,7 @@ function gitFiles(folder: string, limit: number, options: GitRunOptions): Promis
     };
     const timer = setTimeout(() => {
       child.kill();
-      finish(undefined);
+      finish({ files: [...files], truncated: true });
     }, options.timeoutMs);
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
@@ -91,12 +93,32 @@ async function walkFiles(
   return { files, truncated: false };
 }
 
+// Git's index still names a tracked file deleted from disk, and a submodule as one entry that is
+// a folder: neither can be opened.
+async function onDisk(folder: string, files: readonly string[]): Promise<string[]> {
+  const kept = await Promise.all(
+    files.map((file) =>
+      stat(path.join(folder, file)).then(
+        (found) => found.isFile(),
+        () => false,
+      ),
+    ),
+  );
+  return files.filter((_, index) => kept[index]);
+}
+
 export async function listFolderFiles({
   folder,
   limit,
   git,
 }: ListFilesRequest): Promise<FileListResult> {
   const fromGit = await gitFiles(folder, limit, git);
-  if (fromGit) return { ...fromGit, source: 'git' };
+  if (fromGit) {
+    return {
+      files: await onDisk(folder, fromGit.files),
+      truncated: fromGit.truncated,
+      source: 'git',
+    };
+  }
   return { ...(await walkFiles(folder, limit)), source: 'walk' };
 }
