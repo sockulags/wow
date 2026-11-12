@@ -730,9 +730,8 @@ test.describe('chat', () => {
     await expect(items.getByTestId('item-assistant_text')).toContainText(
       'I asked a background agent to count them.',
     );
-    await expect(page.getByTestId('background-work')).toHaveText(
-      'Waiting for background work: Count the tea leaves',
-    );
+    await expect(page.getByTestId('background-label')).toHaveText('Waiting for background work');
+    await expect(page.getByTestId('background-chip')).toContainText('Count the tea leaves');
     const done = await fetch(`http://127.0.0.1:${e2eOutlookControlPort}/background-done`, {
       method: 'PUT',
     });
@@ -746,6 +745,67 @@ test.describe('chat', () => {
     await expect(items.getByLabel('Turn usage')).toHaveCount(2);
     const idle = threadList(page).getByRole('region', { name: 'Idle' });
     await expect(idle.getByRole('link', { name: /Count the tea leaves/ })).toBeVisible();
+  });
+
+  // Agent workbench U11 (spec 44): the subagent's calls and note are listed under its call
+  // while it works; its answer shows after, with the count and the time.
+  test("shows a subagent's work under its call @agent-workbench-44", async ({ page }) => {
+    await startClaudeThread(page, 'Explore with an agent');
+    const agent = conversation(page).getByTestId('agent-row');
+    await expect(agent).toHaveCount(1);
+    await expect(agent.getByTestId('agent-task')).toHaveText('Agent: explore the auth code');
+    const work = agent.getByRole('list', { name: "The subagent's work" });
+    await expect(work.getByTestId('tool-command')).toHaveText('$ pnpm test auth');
+    await expect(work.getByRole('listitem')).toHaveCount(4);
+    await expect(agent.getByTestId('agent-facts')).toContainText('3 tool calls');
+    await expect(agent.getByTestId('agent-answer')).toHaveCount(0);
+
+    const done = await fetch(`http://127.0.0.1:${e2eOutlookControlPort}/agent-done`, {
+      method: 'PUT',
+    });
+    expect(done.status).toBe(200);
+    await expect(agent.getByTestId('agent-answer')).toContainText(
+      'The kettle checks mayStart in src/auth.ts',
+    );
+    await expect(agent.getByTestId('agent-facts')).toHaveText('3 tool calls · 1:32');
+    await expect(work).toBeHidden();
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(conversation(page).getByText('That is where the kettle checks it.')).toBeVisible();
+    // A reload shows the same, from what the server stored (spec 48).
+    await page.reload();
+    await expect(conversation(page).getByTestId('agent-facts')).toHaveText('3 tool calls · 1:32');
+    await conversation(page)
+      .getByRole('button', { name: /Agent: explore the auth code/ })
+      .click();
+    await expect(
+      conversation(page).getByRole('list', { name: "The subagent's work" }).getByRole('listitem'),
+    ).toHaveCount(4);
+  });
+
+  // Spec 90: two chips count up; one opens to its last output; Stop stops it; Ctrl+B on the
+  // running command sends it to the background.
+  test('sends a running command to the background and stops a background task @agent-workbench-90', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Serve the kettle app');
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await expect(page.getByTestId('background-chip')).toHaveCount(1);
+    await messageBox(page).focus();
+    await page.keyboard.press('Control+b');
+    const chips = page.getByTestId('background-chip');
+    await expect(chips).toHaveCount(2);
+    await expect(chips.nth(1)).toContainText('pnpm dev');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(page.getByTestId('background-label')).toHaveText('Waiting for background work');
+    // Each chip counts up from the time the server stored for it.
+    await expect(page.getByTestId('background-elapsed')).toHaveText([/^\d+:\d{2}$/, /^\d+:\d{2}$/]);
+
+    await chips.first().click();
+    const popover = page.getByRole('dialog');
+    await expect(popover.getByTestId('background-output')).toHaveText('Counted 30 leaves so far');
+    await popover.getByRole('button', { name: 'Stop' }).click();
+    await expect(chips).toHaveCount(1);
+    await expect(chips.first()).toContainText('pnpm dev');
   });
 
   test('keeps a draft and a queued message across threads and a reload @agent-workbench-49 @agent-workbench-50 @agent-workbench-52', async ({
@@ -1475,6 +1535,23 @@ test.describe('sketch', () => {
     await page.keyboard.press('Control+.');
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
     await resetBar(page);
+  });
+
+  test('subagent', async ({ page }) => {
+    // Work in the background, then a subagent at work in the same thread.
+    await startClaudeThread(page, 'Serve the kettle app');
+    await messageBox(page).focus();
+    await page.keyboard.press('Control+b');
+    await expect(page.getByTestId('background-chip')).toHaveCount(2);
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await messageBox(page).fill('Explore with an agent');
+    await messageBox(page).press('Enter');
+    await expect(
+      conversation(page).getByRole('list', { name: "The subagent's work" }).getByRole('listitem'),
+    ).toHaveCount(4);
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'subagent') });
+    await fetch(`http://127.0.0.1:${e2eOutlookControlPort}/agent-done`, { method: 'PUT' });
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
   });
 
   test('image-chip', async ({ page }) => {

@@ -1,4 +1,5 @@
 import type {
+  BackgroundTask,
   CalendarItem,
   ProviderCommand,
   ProviderEvent,
@@ -17,6 +18,7 @@ import {
   imagesReceived,
   mockCodexModels,
   mockCompaction,
+  mockSubagent,
   mockTwoTools,
   snapshot,
   startOutlookService,
@@ -792,6 +794,40 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   if (/reaches out/i.test(prompt)) {
     return [session, ...finish(threadId, reachingAnswer)];
   }
+  // A subagent's work under its call (agent workbench spec 44): it works until the control
+  // port's /agent-done ends it with its count, time and answer.
+  if (/explore with an agent/i.test(prompt)) {
+    agentThreads.push({ threadId, cwd: command.cwd });
+    return [session, ...mockSubagent(threadId, command.cwd).running];
+  }
+  // Background work (spec 90): a dev server that runs until Ctrl+B sends it to the background,
+  // beside a subagent already working there that has said how far it got.
+  if (/serve the kettle app/i.test(prompt)) {
+    const tasks: BackgroundTask[] = [
+      {
+        id: 'bg-leaves',
+        description: 'Count the tea leaves',
+        agent: true,
+        kind: 'agent',
+        lastOutput: 'Counted 30 leaves so far',
+      },
+    ];
+    servedThreads.set(threadId, tasks);
+    return [
+      session,
+      { type: 'backgroundTasks', threadId, tasks },
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'cmd-serve',
+        name: 'Bash',
+        input: { command: 'pnpm dev' },
+        kind: 'command',
+        command: 'pnpm dev',
+      },
+      { type: 'toolCallOutput', threadId, itemId: 'cmd-serve', output: 'Listening on :5173\n' },
+    ];
+  }
   if (/in the background/i.test(prompt)) {
     // Claude Code ends the turn with an agent still running; the control port's
     // /background-done ends it, and the agent goes on by itself in a turn wow did not start.
@@ -864,6 +900,10 @@ const kindOf = (id: string) => id.split(separator)[1];
 // Threads whose turn left background work running, oldest first, and a Claude mock adapter to
 // send what follows through (the provider service takes a thread's events from any adapter).
 const backgroundThreads: string[] = [];
+// Threads whose subagent still works (with their folder), and the background tasks of each
+// thread that served the kettle app, which Ctrl+B and Stop change.
+const agentThreads: Array<{ threadId: string; cwd: string }> = [];
+const servedThreads = new Map<string, BackgroundTask[]>();
 let claudeMock: MockProviderAdapter | undefined;
 // Threads whose "wait" turn still runs, oldest first, and the chat copy's mock adapters, any of
 // which can send what ends them.
@@ -944,6 +984,45 @@ const chatScript: MockScript = (command) => {
       }
       answered.delete(threadId);
       return finish(threadId, `You chose ${given.join(' and ')}.`, 'after');
+    }
+    // Claude Code answers Ctrl+B with the command's result saying it went to the background,
+    // and the turn goes on (spec 90).
+    case 'toBackground': {
+      const tasks = servedThreads.get(command.threadId);
+      if (!tasks || command.itemId !== 'cmd-serve') return [];
+      const next: BackgroundTask[] = [
+        ...tasks,
+        {
+          id: 'bg-serve',
+          description: 'pnpm dev',
+          kind: 'command',
+          lastOutput: 'Listening on :5173',
+        },
+      ];
+      servedThreads.set(command.threadId, next);
+      return [
+        {
+          type: 'toolCallOutput',
+          threadId: command.threadId,
+          itemId: 'cmd-serve',
+          output: 'Command running in the background with ID: bg-serve\n',
+        },
+        {
+          type: 'toolCallCompleted',
+          threadId: command.threadId,
+          itemId: 'cmd-serve',
+          status: 'ok',
+        },
+        { type: 'backgroundTasks', threadId: command.threadId, tasks: next },
+        ...finish(command.threadId, 'The kettle app runs in the background.', 'served'),
+      ];
+    }
+    case 'stopTask': {
+      const tasks = servedThreads.get(command.threadId);
+      if (!tasks) return [];
+      const next = tasks.filter((task) => task.id !== command.taskId);
+      servedThreads.set(command.threadId, next);
+      return [{ type: 'backgroundTasks', threadId: command.threadId, tasks: next }];
     }
     case 'interrupt': {
       const waiting = waitingThreads.indexOf(command.threadId);
@@ -1301,6 +1380,17 @@ const control = createServer((request, response) => {
         { type: 'backgroundTasks', threadId, tasks: [] },
         { type: 'turnStartedByProvider', threadId },
         ...finish(threadId, 'The background agent counted 42 leaves.', 'counted'),
+      ]);
+    }
+  } else if (url.pathname === '/agent-done' && request.method === 'PUT') {
+    // Ends the oldest working subagent and its turn.
+    const agentThread = agentThreads.shift();
+    if (!agentThread || !claudeMock) {
+      response.statusCode = 409;
+    } else {
+      claudeMock.emit([
+        ...mockSubagent(agentThread.threadId, agentThread.cwd).done,
+        ...finish(agentThread.threadId, 'That is where the kettle checks it.', 'explored'),
       ]);
     }
   } else if (url.pathname === '/turn-done' && request.method === 'PUT') {
