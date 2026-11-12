@@ -77,6 +77,29 @@ describe('listCodexSessions (agent workbench spec 72)', () => {
     ]);
   });
 
+  it('takes a prompt that starts with "<" as the user\'s and stops reading once it is known', async () => {
+    await rollout(
+      '2026/11/03',
+      'rollout-2026-11-03T08-00-00-invented.jsonl',
+      [
+        meta('12121212-3434-5656-7878-909090909090', '/work/kettle'),
+        userItem('<environment_context>\n  <cwd>/work/kettle</cwd>\n</environment_context>'),
+        userItem('<div class="kettle"> does not render, fix it'),
+        { type: 'turn_context', payload: { cwd: '/work/kettle' } },
+        { type: 'event_msg', payload: { type: 'user_message', message: 'A later message' } },
+      ],
+      '2026-11-03T09:00:00.000Z',
+    );
+    expect(await listCodexSessions(codexHome, { limit: 5, promptChars: 200 })).toEqual([
+      {
+        id: '12121212-3434-5656-7878-909090909090',
+        cwd: '/work/kettle',
+        firstPrompt: '<div class="kettle"> does not render, fix it',
+        lastUsedAt: '2026-11-03T09:00:00.000Z',
+      },
+    ]);
+  });
+
   it('reads an older rollout with its metadata at the top level, keeps the newest and cuts the prompt', async () => {
     await rollout(
       '2026/10/01',

@@ -125,12 +125,12 @@ export interface SettingDefinition<S extends z.ZodType = z.ZodType> {
 export const SettingPersonal = z.enum(['account', 'machine', 'person']);
 export type SettingPersonal = z.infer<typeof SettingPersonal>;
 
-// Which chat threads notify (agent workbench spec 65).
 // Which key sends the composer's message (agent workbench spec 97). With Ctrl+Enter, Enter makes
 // a new line; Shift+Enter always does.
 export const ChatSendKey = z.enum(['enter', 'modEnter']);
 export type ChatSendKey = z.infer<typeof ChatSendKey>;
 
+// Which chat threads notify (agent workbench spec 65).
 export const ChatNotifications = z.enum(['off', 'needsYou', 'needsYouAndFinished']);
 export type ChatNotifications = z.infer<typeof ChatNotifications>;
 

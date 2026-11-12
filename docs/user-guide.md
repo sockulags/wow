@@ -309,12 +309,12 @@ Cards are your own blocks of time. They never leave the app.
 - **Delete**: "Delete card" in the form deletes it at once; **Undo** in the message that follows
   puts it back. A card whose workflow run is still going asks first whether to stop the run.
 
-A card with a workflow and a project is a **trigger**: at the card's start time the workflow's
-first step starts (see "Triggers" below). Moving the card moves the trigger with it. Triggers carry
-a workflow icon and their state: Scheduled, Running, Needs you, Done, Failed, Stopped or Missed.
+A card with a workflow and a project is a **trigger**: at the card's start time the workflow's first
+step starts (see "Triggers" below). Moving the card moves the trigger with it. Triggers carry a
+workflow icon and their state: Scheduled, Running, Waiting for you, Done, Failed, Stopped or Missed.
 Plain cards show no state. A card with a workflow but no project is drawn dashed with "No project,
-will not run". The form says what a trigger will do ("Starts at 16:30 in Demo · 4 steps, 2
-gates"), warns when it will not run, and links to its run once it has one.
+will not run". The form says what a trigger will do ("Starts at 16:30 in Demo · 4 steps, 2 gates"),
+warns when it will not run, and links to its run once it has one.
 
 ### Repeating cards
 

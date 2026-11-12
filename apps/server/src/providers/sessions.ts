@@ -51,8 +51,11 @@ export async function listTerminalSessions(
       ? resolved.toLowerCase()
       : resolved;
   };
-  const projectOf = new Map(deps.projects.map((project) => [key(project.cwd), project.id]));
+  const projectOf = new Map(deps.projects.map((project) => [key(project.cwd), project]));
   const kindOf = new Map(deps.instances.map((instance) => [instance.id, instance.kind]));
+  // One spelling per folder, so the dialog groups 'C:\Work\Kettle' and 'c:\work\kettle' as one:
+  // the project's, else the first seen.
+  const spelling = new Map<string, string>();
   const exists = deps.isFolder ?? isFolder;
   // Two instances on one config folder see the same files: each session is listed once.
   const read = new Set<string>();
@@ -63,24 +66,34 @@ export async function listTerminalSessions(
     const folderKey = `${instance.kind}\n${key(configDir)}`;
     if (read.has(folderKey)) continue;
     read.add(folderKey);
+    const owned = deps.threads.filter(
+      (thread) =>
+        thread.providerSessionId !== null &&
+        kindOf.get(thread.providerInstanceId) === instance.kind,
+    );
+    // wow's own threads write to the same files; the limit counts the sessions started
+    // elsewhere, so those do not fall off the list for someone who mostly works in wow.
     const sessions = await deps.list[instance.kind](configDir, {
-      limit: deps.limit,
+      limit: deps.limit + owned.length,
       promptChars: deps.promptChars,
     }).catch(() => []);
-    for (const session of sessions) {
+    let elsewhere = 0;
+    for (const [index, session] of sessions.entries()) {
       if (!pathApi.isAbsolute(session.cwd)) continue;
-      const thread = deps.threads.find(
-        (candidate) =>
-          candidate.providerSessionId === session.id &&
-          kindOf.get(candidate.providerInstanceId) === instance.kind,
-      );
+      const thread = owned.find((candidate) => candidate.providerSessionId === session.id);
+      if (thread ? index >= deps.limit : elsewhere >= deps.limit) continue;
+      if (!thread) elsewhere += 1;
+      const folder = key(session.cwd);
+      const project = projectOf.get(folder);
+      const cwd = project?.cwd ?? spelling.get(folder) ?? pathApi.resolve(session.cwd);
+      spelling.set(folder, cwd);
       found.push({
         ...session,
-        cwd: pathApi.resolve(session.cwd),
+        cwd,
         providerInstanceId: instance.id,
         providerInstanceName: instance.name,
         kind: instance.kind,
-        projectId: projectOf.get(key(session.cwd)) ?? null,
+        projectId: project?.id ?? null,
         threadId: thread?.id ?? null,
         unavailable: null,
       });

@@ -220,8 +220,12 @@ function RenameProject({ project, onClose }: { project: Project; onClose: () => 
 function ProjectDefaults({ project, onClose }: { project: Project; onClose: () => void }) {
   const send = useDispatch();
   const id = useId();
-  const instances = useTopic('providerInstances') ?? [];
-  const [instanceId, setInstanceId] = useState(project.defaultProviderInstanceId ?? '');
+  const loaded = useTopic('providerInstances');
+  const instances = loaded ?? [];
+  const [chosen, setInstanceId] = useState(project.defaultProviderInstanceId ?? '');
+  // An instance removed since reads as none, so Save does not write its id back.
+  const instanceId =
+    loaded === undefined || instances.some((candidate) => candidate.id === chosen) ? chosen : '';
   const [value, setValue] = useState<ThreadSettingsValue>({
     model: project.defaultModel ?? '',
     effort: project.defaultEffort ?? '',

@@ -54,6 +54,7 @@ import {
   ProviderKind,
   ProviderTestResult,
   ProviderUpdate,
+  SessionId,
   ThreadState,
 } from './provider.js';
 import { QuestionReply } from './questions.js';
@@ -162,7 +163,7 @@ export const Command = z.discriminatedUnion('type', [
     // "Open session from Claude Code / Codex…" (agent workbench spec 72): the session of the
     // provider CLI this thread goes on with. Its first message resumes it, as a thread's own
     // stored session would.
-    resumeSessionId: z.string().min(1).optional(),
+    resumeSessionId: SessionId.optional(),
   }),
   // Makes the one assistant thread, or brings it in line with the provider instance, model and
   // effort the settings name now (app assistant spec 1). Refused with the reason when no

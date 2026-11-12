@@ -1,4 +1,4 @@
-import { cutSessionPrompt, type ProviderSession } from '@wow/contracts';
+import { cutSessionPrompt, SessionId, type ProviderSession } from '@wow/contracts';
 import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -10,7 +10,8 @@ import { decodeClaudeProjectName } from './discover.js';
 // `resume` takes. A session's first prompt is its first user line that is the user's own text:
 // tool results, Claude Code's own notes (`isMeta`), subagent lines and the markup it writes for
 // local commands are skipped, except that a slash command reads as the command and its
-// arguments. Files are read line by line and closed at the first prompt.
+// arguments. Files are read line by line and closed at the first prompt; a file without one is
+// read to its end.
 
 export interface SessionListOptions {
   // The newest sessions kept, by the time their file last changed.
@@ -22,10 +23,28 @@ export interface SessionListOptions {
 const tag = (text: string, name: string) =>
   new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim();
 
+// The tags Claude Code wraps its own user lines in. Other text that starts with "<" (a component
+// name, pasted HTML) is the user's.
+const ownTags = new Set([
+  'command-name',
+  'command-message',
+  'command-args',
+  'local-command-stdout',
+  'local-command-stderr',
+  'local-command-caveat',
+  'system-reminder',
+  'user-prompt-submit-hook',
+  'bash-input',
+  'bash-stdout',
+  'bash-stderr',
+  'task-notification',
+]);
+
 function promptText(text: string): string | undefined {
   const trimmed = text.trim();
   if (trimmed === '') return undefined;
-  if (!trimmed.startsWith('<')) return trimmed;
+  const opening = /^<([a-z][a-z-]*)>/.exec(trimmed)?.[1];
+  if (opening === undefined || !ownTags.has(opening)) return trimmed;
   const command = tag(trimmed, 'command-name');
   if (command === undefined) return undefined;
   const args = tag(trimmed, 'command-args');
@@ -118,7 +137,7 @@ export async function listClaudeSessions(
     files.map(async ({ file, folder, id, info }) => {
       const read = await readSession(file).catch(() => ({ cwd: undefined, prompt: undefined }));
       const cwd = read.cwd ?? decodeClaudeProjectName(folder);
-      if (!cwd || id === '') return undefined;
+      if (!cwd || !SessionId.safeParse(id).success) return undefined;
       return {
         id,
         cwd,

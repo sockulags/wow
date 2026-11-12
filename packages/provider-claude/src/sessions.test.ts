@@ -102,6 +102,35 @@ describe('listClaudeSessions (agent workbench spec 72)', () => {
     ]);
   });
 
+  it('takes a prompt that starts with "<" as the user\'s, but not Claude Code\'s own notes', async () => {
+    await session(
+      '-work-kettle',
+      'ffff.jsonl',
+      [
+        user('<local-command-stdout>Invented output</local-command-stdout>'),
+        user('<system-reminder>Invented reminder</system-reminder>'),
+        user('<Button> is broken in the kettle page, fix it'),
+        user('thanks'),
+      ],
+      '2026-11-07T08:00:00.000Z',
+    );
+    // A name that would reach the CLI as an option is no session id.
+    await session(
+      '-work-kettle',
+      '--dangerously-skip-permissions.jsonl',
+      [user('Invented')],
+      '2026-11-08T08:00:00.000Z',
+    );
+    expect(await listClaudeSessions(configDir, { limit: 5, promptChars: 200 })).toEqual([
+      {
+        id: 'ffff',
+        cwd: '/work/kettle',
+        firstPrompt: '<Button> is broken in the kettle page, fix it',
+        lastUsedAt: '2026-11-07T08:00:00.000Z',
+      },
+    ]);
+  });
+
   it('decodes the folder name for a session with no cwd and no prompt, and answers nothing without a projects folder', async () => {
     await session('-work-tea', 'eeee.jsonl', [{ type: 'summary' }], '2026-11-01T08:00:00.000Z');
     expect(await listClaudeSessions(configDir, { limit: 5, promptChars: 50 })).toEqual([

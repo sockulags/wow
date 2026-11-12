@@ -1787,38 +1787,44 @@ left out, and the rest come back newest first with the instances that used them.
 writes. The web app imports the checked rows as ordinary `project.create` commands, numbering a
 name that is taken, so the folder check and name rule above apply.
 
-**Sessions started in a terminal** ("Open session from Claude Code / Codex…", agent workbench
-spec 72). The adapter packages read their CLI's session files the way discovery does, one
+**Sessions started in a terminal** ("Open session from Claude Code / Codex…", agent workbench spec
+72). The adapter packages read their CLI's session files the way discovery does, one
 `ProviderSession {id, cwd, firstPrompt, lastUsedAt}` per file: `listClaudeSessions(configDir,
 {limit, promptChars})` in `packages/provider-claude/src/sessions.ts` takes
 `<configDir>/projects/*/<id>.jsonl` (the file name is the id `resume` takes; `agent-*` subagent
 transcripts are left out), the first `cwd` of the file, and as first prompt the first `user` line
 that is the user's own text (not `isMeta`, not a subagent's, not a tool result; a slash command
-reads as its name and arguments from Claude Code's `<command-name>` markup);
+reads as its name and arguments from Claude Code's `<command-name>` markup, and a line that starts
+with one of Claude Code's own tags is skipped, while other text starting with `<` is the user's);
 `listCodexSessions(codexHome, …)` in `packages/provider-codex/src/sessions.ts` takes every
 `<codexHome>/sessions/**/*.jsonl`, the `session_meta` id and `cwd` (older rollouts: the top-level
-fields, else the id in the file name) and as first prompt the first `user_message` event, else
-the first user message that is not one of Codex's own `<…>` notes. Only the newest
-`providers.sessionListLimit` files by modification time are opened, each read line by line and
-closed at the first prompt, and the prompt is cut to `providers.sessionPromptChars`
-(`cutSessionPrompt` in contracts). `apps/server/src/providers/sessions.ts`
-(`listTerminalSessions`) asks every instance (or the one `provider.listSessions
-{providerInstanceId?}` names) with its config directory or the default one, reads a config
-directory once when two instances share it, drops relative folders, and answers
-`TerminalSession` rows newest first: the session plus its instance, the `projectId` whose folder
-it is (compared as discovery compares folders), the `threadId` of a wow thread whose
-`providerSessionId` it already is, and `unavailable: "Its folder is gone"` when the folder no
-longer exists. Nothing is written and nothing is cached: the CLIs write these files while wow
-is not looking, so the list is read each time the dialog opens.
-The web app's `chat/terminal-sessions.tsx` (`TerminalSessionsDialog`, palette `chat.openSession`,
-layout `sessionDialog`) lists them per folder (`sessionsByFolder`, project name first), each with
-its first prompt ("No prompt" when there is none), provider, instance and time; a gone folder's
-session is greyed and cannot be picked. A pick opens the thread that already resumes it, or
-dispatches `thread.create` with `resumeSessionId`, the session's folder and project, the title
-from its first prompt and the start a new thread there would get (`threadDefaults`), then opens
-it. The server stores `resumeSessionId` as the thread's `providerSessionId`, so the first message
-goes out with it as `resumeId` like any later turn; `forkFrom` and `resumeSessionId` together are
-refused.
+fields, else the id in the file name) and as first prompt the first `user_message` event, else the
+first user message that is not one of Codex's own notes (`<environment_context>`,
+`<user_instructions>`), taken as soon as a line other than a user message follows it. Only the
+newest `providers.sessionListLimit` files by modification time are opened (more when wow's own
+threads hold some of them, see below), each read line by line and closed once the first prompt is
+known; a file without a prompt is read to its end. The prompt is cut to
+`providers.sessionPromptChars` (`cutSessionPrompt` in contracts).
+`apps/server/src/providers/sessions.ts` (`listTerminalSessions`) asks every instance (or the one
+`provider.listSessions {providerInstanceId?}` names) with its config directory or the default one,
+reads a config directory once when two instances share it, drops relative folders, and answers
+`TerminalSession` rows newest first. wow's own threads write to the same files, so it asks for
+`providers.sessionListLimit` plus the number of threads of that provider kind that hold a session,
+and keeps up to the limit of sessions no wow thread holds and those wow sessions that are among the
+newest limit. A folder gets one spelling (the project's, else the first seen), so the dialog groups
+`C:\Work\Kettle` and `c:\work\kettle` together. Each row is the session plus its instance, the
+`projectId` whose folder it is (compared as discovery compares folders), the `threadId` of a wow
+thread whose `providerSessionId` it already is, and `unavailable: "Its folder is gone"` when the
+folder no longer exists. Nothing is written and nothing is cached: the CLIs write these files while
+wow is not looking, so the list is read each time the dialog opens. The web app's
+`chat/terminal-sessions.tsx` (`TerminalSessionsDialog`, palette `chat.openSession`, layout
+`sessionDialog`) lists them per folder (`sessionsByFolder`, project name first), each with its first
+prompt ("No prompt" when there is none), provider, instance and time; a gone folder's session is
+greyed and cannot be picked. A pick opens the thread that already resumes it, or dispatches
+`thread.create` with `resumeSessionId`, the session's folder and project, the title from its first
+prompt and the start a new thread there would get (`threadDefaults`), then opens it. The server
+stores `resumeSessionId` as the thread's `providerSessionId`, so the first message goes out with it
+as `resumeId` like any later turn; `forkFrom` and `resumeSessionId` together are refused.
 
 **New thread defaults** (agent workbench spec 97). A project holds `defaultProviderInstanceId`,
 `defaultModel`, `defaultEffort` and `defaultPermissionMode` (the last two since migration

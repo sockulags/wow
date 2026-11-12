@@ -1,4 +1,4 @@
-import { cutSessionPrompt, type ProviderSession } from '@wow/contracts';
+import { cutSessionPrompt, SessionId, type ProviderSession } from '@wow/contracts';
 import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -9,7 +9,8 @@ import { createInterface } from 'node:readline';
 // session's metadata (`session_meta`, with `id` and `cwd`; older versions put them at the top
 // level). The first prompt is the first `user_message` event, else the first user message item
 // that is not one of the notes Codex sends first (`<environment_context>`, `<user_instructions>`).
-// `thread/resume` takes the id.
+// `thread/resume` takes the id. Files are read line by line and closed once the prompt is known;
+// a file without one is read to its end.
 
 export interface SessionListOptions {
   readonly limit: number;
@@ -30,8 +31,12 @@ function messageText(item: Record<string, unknown>): string | undefined {
       : [],
   );
   const joined = texts.join('\n').trim();
-  return joined === '' || joined.startsWith('<') ? undefined : joined;
+  return joined === '' || codexNotes.some((note) => joined.startsWith(note)) ? undefined : joined;
 }
+
+// What Codex sends ahead of the user's first message. Other text that starts with "<" (a
+// component name, pasted HTML) is the user's.
+const codexNotes = ['<environment_context>', '<user_instructions>'];
 
 // From the rollout's own name when the metadata has no id (`rollout-2026-11-01T08-00-00-<uuid>`).
 const idFromName = (name: string) =>
@@ -60,7 +65,11 @@ async function readSession(file: string) {
         const prompt = text(payload['message'])?.trim();
         if (prompt) return { id, cwd, prompt };
       }
-      fallback ??= messageText(payload);
+      const message = messageText(payload);
+      if (fallback === undefined) fallback = message;
+      // Codex records the user_message event right after the message item; once something else
+      // follows it, an older rollout without the event has nothing better further on.
+      else if (message === undefined && cwd !== undefined) return { id, cwd, prompt: fallback };
     }
     return { id, cwd, prompt: fallback };
   } finally {
@@ -98,7 +107,7 @@ export async function listCodexSessions(
     newest.map(async ({ file, modified }) => {
       const read = await readSession(file).catch(() => undefined);
       const id = read?.id ?? idFromName(path.basename(file));
-      if (!read?.cwd || !id) return undefined;
+      if (!read?.cwd || !id || !SessionId.safeParse(id).success) return undefined;
       return {
         id,
         cwd: read.cwd,

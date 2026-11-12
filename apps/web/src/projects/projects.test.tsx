@@ -187,6 +187,82 @@ describe('Settings → Projects', () => {
   });
 });
 
+const openDefaults = async (project: Project) => {
+  const user = userEvent.setup();
+  const server = fakeServer({ projects: [project], providerInstances: [instance] });
+  await renderApp('/settings/projects', runtimeFor(server.connection));
+  const row = within(await screen.findByRole('listitem', { name: 'wow' }));
+  await user.click(row.getByRole('button', { name: 'Thread defaults' }));
+  const dialog = within(await screen.findByRole('dialog', { name: 'New thread defaults for wow' }));
+  return { user, server, dialog };
+};
+
+describe('thread defaults (agent workbench spec 97)', () => {
+  const withDefaults: Project = {
+    ...wow,
+    defaultProviderInstanceId: 'claude-work',
+    defaultModel: 'opus',
+    defaultEffort: 'high',
+    defaultPermissionMode: 'plan',
+  };
+
+  it('saves what the project holds', async () => {
+    const { user, server, dialog } = await openDefaults(withDefaults);
+    expect(dialog.getByRole('combobox', { name: 'Default provider instance' }).textContent).toBe(
+      'Work',
+    );
+    await user.click(dialog.getByRole('button', { name: 'Save' }));
+    expect(server.commands).toEqual([
+      {
+        type: 'project.update',
+        projectId: 'p1',
+        defaultProviderInstanceId: 'claude-work',
+        defaultModel: 'opus',
+        defaultEffort: 'high',
+        defaultPermissionMode: 'plan',
+      },
+    ]);
+  });
+
+  it('clears all four with "As the last thread"', async () => {
+    const { user, server, dialog } = await openDefaults(withDefaults);
+    await user.click(dialog.getByRole('combobox', { name: 'Default provider instance' }));
+    await user.click(await screen.findByRole('option', { name: 'As the last thread' }));
+    await user.click(dialog.getByRole('button', { name: 'Save' }));
+    expect(server.commands).toEqual([
+      {
+        type: 'project.update',
+        projectId: 'p1',
+        defaultProviderInstanceId: null,
+        defaultModel: null,
+        defaultEffort: null,
+        defaultPermissionMode: null,
+      },
+    ]);
+  });
+
+  it('reads an instance removed since as none and does not write it back', async () => {
+    const { user, server, dialog } = await openDefaults({
+      ...withDefaults,
+      defaultProviderInstanceId: 'removed',
+    });
+    expect(dialog.getByRole('combobox', { name: 'Default provider instance' }).textContent).toBe(
+      'As the last thread',
+    );
+    await user.click(dialog.getByRole('button', { name: 'Save' }));
+    expect(server.commands).toEqual([
+      {
+        type: 'project.update',
+        projectId: 'p1',
+        defaultProviderInstanceId: null,
+        defaultModel: null,
+        defaultEffort: null,
+        defaultPermissionMode: null,
+      },
+    ]);
+  });
+});
+
 describe('project palette commands', () => {
   it('opens New project, and rename and remove for each project, from anywhere', async () => {
     const user = userEvent.setup();

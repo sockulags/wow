@@ -91,6 +91,8 @@ function deps(overrides: Partial<SessionListDeps> = {}): SessionListDeps & {
   };
 }
 
+const at = (day: number) => `2026-11-${String(day).padStart(2, '0')}T08:00:00.000Z`;
+
 describe('listTerminalSessions (agent workbench spec 72)', () => {
   it('lists every instance’s sessions once, newest first, with their project, thread and a gone folder', async () => {
     const given = deps();
@@ -153,7 +155,59 @@ describe('listTerminalSessions (agent workbench spec 72)', () => {
       }),
     );
     expect(sessions.map((session) => [session.cwd, session.projectId])).toEqual([
-      ['c:\\work\\kettle', 'kettle'],
+      ['C:\\Work\\Kettle', 'kettle'],
+    ]);
+  });
+
+  it('answers one spelling for a folder that is no project', async () => {
+    const sessions = await listTerminalSessions(
+      deps({
+        platform: 'win32',
+        projects: [],
+        list: {
+          claude: () =>
+            Promise.resolve([
+              { id: 'a', cwd: 'C:\\Work\\Tea', firstPrompt: null, lastUsedAt: '2026-11-02' },
+              { id: 'b', cwd: 'c:\\work\\tea', firstPrompt: null, lastUsedAt: '2026-11-01' },
+            ]),
+          codex: () => Promise.resolve([]),
+        },
+      }),
+    );
+    expect(sessions.map((session) => session.cwd)).toEqual(['C:\\Work\\Tea', 'C:\\Work\\Tea']);
+  });
+
+  it('keeps the limit for sessions started elsewhere when wow threads hold the newest ones', async () => {
+    const newest: ProviderSession[] = [9, 8, 7, 6, 5].map((day) => ({
+      id: `s-${day}`,
+      cwd: '/work/kettle',
+      firstPrompt: null,
+      lastUsedAt: at(day),
+    }));
+    const given = deps({
+      instances: [instance('claude-work', 'claude', '/home/me/.claude')],
+      threads: ['s-9', 's-8', 's-7'].map((id) => ({
+        id: `thread-${id}`,
+        providerInstanceId: 'claude-work',
+        providerSessionId: id,
+      })),
+      limit: 2,
+      list: {
+        claude: (configDir, options) => {
+          given.asked.push(`claude ${options.limit}`);
+          return Promise.resolve(newest.slice(0, options.limit));
+        },
+        codex: () => Promise.resolve([]),
+      },
+    });
+    const sessions = await listTerminalSessions(given);
+    expect(given.asked).toEqual(['claude 5']);
+    // The two started elsewhere, and of wow's own only those among the two newest.
+    expect(sessions.map((session) => [session.id, session.threadId])).toEqual([
+      ['s-9', 'thread-s-9'],
+      ['s-8', 'thread-s-8'],
+      ['s-6', null],
+      ['s-5', null],
     ]);
   });
 });

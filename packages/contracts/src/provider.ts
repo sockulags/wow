@@ -514,8 +514,12 @@ export type ProviderFolder = z.infer<typeof ProviderFolder>;
 // A session a provider CLI keeps in its own files (agent workbench spec 72), as its adapter
 // package read it: the id the CLI resumes it by, the folder it ran in, the first thing the user
 // typed (null when the file has none) and when the file last changed.
+// A CLI session id as Claude Code and Codex write them (a UUID, or a file name of that kind). It
+// goes to the CLI as the resume value, so nothing that reads as an option ("--…") is taken.
+export const SessionId = z.string().regex(/^[A-Za-z0-9_][A-Za-z0-9_-]*$/);
+
 export const ProviderSession = z.object({
-  id: z.string().min(1),
+  id: SessionId,
   cwd: z.string().min(1),
   firstPrompt: z.string().nullable(),
   lastUsedAt: z.iso.datetime({ offset: true }).nullable(),
