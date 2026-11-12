@@ -260,19 +260,19 @@ describe('the mock provider (agent workbench U10)', () => {
   });
 });
 
-describe('when a thread began to wait (spec 76)', () => {
-  const thread = () =>
-    (snapshot(database.db, { topic: 'threads' }) as { stateSince?: string | null }[])[0];
-  const approval = (id: string) =>
-    events({
-      type: 'approvalRequested',
-      threadId: 't1',
-      approvalId: id,
-      kind: 'command',
-      summary: `Run ${id}`,
-      request: { toolName: 'Bash' },
-    });
+const thread = () =>
+  (snapshot(database.db, { topic: 'threads' }) as { stateSince?: string | null }[])[0];
+const approval = (id: string) =>
+  events({
+    type: 'approvalRequested',
+    threadId: 't1',
+    approvalId: id,
+    kind: 'command',
+    summary: `Run ${id}`,
+    request: { toolName: 'Bash' },
+  });
 
+describe('when a thread began to wait (spec 76)', () => {
   it('keeps the time it came to need the user through a rename, a new model and a second approval', () => {
     later(10);
     approval('a1');
