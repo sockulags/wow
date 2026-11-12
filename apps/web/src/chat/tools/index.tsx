@@ -48,6 +48,7 @@ export function ToolCall({ payload, context }: { payload: ToolPayload; context: 
       parts={toolParts(payload, context)}
       kind={payload.kind}
       output={payload.output}
+      itemId={context.itemId}
       failed={payload.kind !== undefined && payload.status === 'error'}
     />
   );

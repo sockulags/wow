@@ -1,9 +1,9 @@
 import type { AgentState, ThreadItem } from '@wow/contracts';
 import { BotIcon, ChevronRightIcon } from 'lucide-react';
-import { useState } from 'react';
 import { Markdown } from '@/components/markdown';
 import { cn } from '@/lib/utils';
 import { ConversationItem, type ItemContext } from '../items';
+import { openKey, OutputKeyContext, useOpenState } from '../open-state';
 import { agentTask, formatDuration, toolDuration, type ToolPayload } from './facts';
 import { ToolOutput } from './output';
 import { useNow } from './time';
@@ -38,7 +38,8 @@ const nestedCalls = (items: readonly ThreadItem[]): number =>
 export function AgentCall({ payload, context }: { payload: ToolPayload; context: ItemContext }) {
   const nested = context.children ?? [];
   const working = agentWorking(payload, context);
-  const [opened, setOpened] = useState(false);
+  const id = context.itemId;
+  const [opened, setOpened] = useOpenState(id === undefined ? undefined : openKey('agent', id));
   const open = working || opened;
   const now = useNow(working && payload.startedAt !== undefined);
   const count = payload.toolCount ?? nestedCalls(nested);
@@ -68,7 +69,7 @@ export function AgentCall({ payload, context }: { payload: ToolPayload; context:
         type="button"
         aria-expanded={open}
         disabled={working}
-        onClick={() => setOpened((value) => !value)}
+        onClick={() => setOpened(!opened)}
         className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
       >
         <ChevronRightIcon
@@ -137,7 +138,9 @@ export function AgentCall({ payload, context }: { payload: ToolPayload; context:
           {payload.answer !== undefined ? (
             <Markdown text={answer} />
           ) : (
-            <ToolOutput output={answer} lines={context.outputLines} />
+            <OutputKeyContext value={id === undefined ? undefined : openKey('output', id)}>
+              <ToolOutput output={answer} lines={context.outputLines} />
+            </OutputKeyContext>
           )}
         </div>
       )}

@@ -1554,7 +1554,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
   `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength`, `chat.editDiffMaxLines` (see "Chat
   view"), `chat.contextWarnPercent`, `chat.reasoningOpen` (see "Conversation reading"), `chat.fileTrigger` (see "Panel tabs and files in chat"), `chat.imageMaxBytes` (see
-  "Images in the composer"), `chat.sendKey` (see "Chat view")
+  "Images in the composer"), `chat.sendKey` (see "Chat view"), `chat.findMaxMatches`,
+  `chat.exportReasoning` (see "Find in the conversation and copy it")
 - approvals: `approvals.alwaysAllow` (project-scoped; the "Approvals" page, see "Edits, approvals
   and a thread's Changes")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
@@ -3285,6 +3286,79 @@ stored by the server; the web app only draws it.
   with screen readers; the builder's rule keys get their own "Workflows" scope in the keybindings
   table so the shared keys are not reported as conflicts. E and F on a focused message are Edit
   and Fork (see "Edit and Fork").
+
+### Find in the conversation and copy it
+
+Thread work U1 (spec 1 to 9). No server contract: find and the export are built in the web app
+from the rows the thread view already subscribes to, with the rows' own words, so what is found
+and exported is what the conversation shows. Searching the page alone would miss closed rows.
+
+- **Text.** `chat/find.ts` `conversationText(source)` walks the view's entries (after
+  `groupToolCalls` and `nestSubagentWork`, with an edited message's earlier versions already left
+  out) and gives each shown item's text pieces in reading order, each with its row's item id and
+  the open-state keys of what holds it. A message is its markdown parsed with GFM and turned into
+  text (`markdownText`, mdast from `mdast-util-from-markdown` with the GFM extensions, the parse
+  react-markdown uses), so `**kettle**` is found as "kettle". Tool rows give their line
+  (`toolLine` in `conversation-markdown.ts`, without times), an MCP call's arguments as key: value,
+  an edit's diff lines, and their whole output, the earlier lines (before the last
+  `chat.toolOutputLines`) as a piece of their own that also opens "Show all N lines". Reasoning,
+  a subagent's prompt, nested rows and answer, approval and plan cards (summary, command, diff,
+  address, tool, plan text, note), question cards, error, divider and compaction lines and task
+  lists are text too. Never matched: the JSON behind Show JSON or Details, tool input otherwise,
+  usage rows, the composer, earlier versions. The streaming message is parsed again as it grows;
+  the others are kept per item while the bar is open.
+- **Matching.** `findMatches(pieces, query, limit)` folds case for every letter (`foldCase` keeps
+  each character's place) and stops at `chat.findMaxMatches` (1000); the bar then reads "1000+",
+  else "3 of 12" or "No matches" (`findCountText`). The current match is kept as (item id, nth
+  match of that row) and found again after every change (`keepCurrent`), so a streaming turn
+  grows the count without moving it (spec 5); only a move by the user scrolls.
+- **Opening.** Rows keep their open state in the conversation's store (`chat/open-state.ts`,
+  `createOpenStore` per thread on screen, `OpenStoreContext`, `useOpenState(key)`): a tool row
+  (`row:`), a group (`group:` with its first call's id), reasoning (`reasoning:`), a subagent's
+  list (`agent:`), an output's earlier lines (`output:`, through `OutputKeyContext` from the row)
+  and a task list update (`tasks:`). A click sets it, and so does find, once per match it lands
+  on, so what find opened stays open as if opened by hand. Reasoning remounts when find opens it
+  and Ctrl+O still opens or closes all of it. A row outside a conversation keeps its own state.
+- **Marking.** `chat/find-bar.tsx` (loaded on first use, with the parser) marks matches with the
+  CSS Custom Highlight API (`wow-find`, `wow-find-current`, colours `--find-match` and
+  `--find-current` in `tokens.css`) over the text nodes of the rows that hold matches (not a
+  nested row's, not button words), never by rewriting the markup. It paints after every commit
+  and, through a `MutationObserver`, when lazily rendered text arrives. Where the API is missing
+  (jsdom) the current match's row is outlined (`data-find-outline`); the row always carries
+  `data-find-current`.
+- **Bar and keys.** Ctrl+F (`keybindings.findInConversation`, Mod+F) opens the bar above the
+  conversation with its field focused from anywhere in the view, composer included (a Mod key
+  works in text fields); pressed again it selects the field. Enter and Shift+Enter are the field's
+  own; F3 and Shift+F3 (`keybindings.findNext`, `keybindings.findPrevious`) work from anywhere and
+  open the bar on the last search when it is closed. Escape closes it and gives the focus back to
+  where it was, else the composer. Palette ids `chat.find`, `chat.findNext`, `chat.findPrevious`.
+  The keys are in the keybindings table's Chat scope.
+- **Where.** The conversation registers `ConversationHandle.find` only for a chat thread in the
+  chat view (a step's thread opened there included): not the Assistant view, whose rows are its
+  own and which holds secret-field and change cards, and not a step's thread in the side panel.
+- **Export.** `chat/conversation-markdown.ts` `conversationMarkdown(input)`: the title as a
+  heading, one facts line (instance name, model label, project, folder, branch), "Exported
+  <time>", then "You · 20:41" and "<instance name> · 20:42" headings (the turn's start, and its
+  end for the agent) with each message as written (the `@path` line kept, images as
+  `[image: <name>]`, skills as "Skills: a, b") and one list line per tool call, approval, plan,
+  question, error, divider, compaction, task list update and stopped turn, worded as the rows
+  (`toolLine`, `approvalLine`, `questionLine`, `taskLine`, `settingsChangeText`,
+  `compactionText`): "$ pnpm test · exit 1 · 4.2 s", "Allowed once: $ pnpm test", "Denied: $ rm
+  -rf build · note: keep the build". A subagent call is its line and its answer as a quote. No
+  tool output or input, no usage, no queued message, no earlier version; reasoning only with
+  `chat.exportReasoning`. Palette `chat.copyMarkdown` and `chat.saveMarkdown`, and the thread
+  header's "More thread actions" menu (a shadcn `dropdown-menu`).
+- **Saving.** The shell that shows the dialog writes the file; the server gets no RPC that writes
+  to a path a client names. `Runtime.saveTextFile` (bootstrap, from the preload's
+  `wowDesktop.saveTextFile`) sends `SaveTextFileRequest {suggestedName, text}` (contracts
+  `desktop-files.ts`) on `wow:save-text-file` (`fileChannels` in `apps/desktop/src/app.ts`). The
+  main process answers only `wow://app` pages, as for `wow:pick-folder`
+  (`apps/desktop/src/main/save-text-file.ts`): it cuts the suggested name to a bare file name,
+  shows `dialog.showSaveDialog` in the documents folder with a Markdown filter, writes UTF-8
+  without a byte order mark and answers the path, or null when cancelled. The browser build has
+  no `saveTextFile`, so `saveTextFile(runtime, file)` in `app/runtime.tsx` downloads a Blob
+  instead. `exportFileName(title)` takes out what Windows refuses (`<>:"/\|?*` and control
+  characters), trailing dots and spaces, and device names.
 
 ### Edit and Fork
 

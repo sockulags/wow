@@ -26,7 +26,7 @@ import {
   PencilIcon,
   RotateCcwIcon,
 } from 'lucide-react';
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { formatBinding } from '@/app/keybindings';
 import { CopyButton, copyText } from '@/components/copy-button';
 import { useRowActions } from '@/lib/row-actions';
@@ -48,6 +48,7 @@ import { FileChip } from '@/panel/open-file-button';
 import { withoutMentions } from './mentions';
 import { SentImages } from './image-chip';
 import { SentSkillChip } from './skill-chip';
+import { openKey, useOpenState } from './open-state';
 import { TaskList, TaskMarker } from './task-pin';
 import { ToolCall } from './tools/index';
 import { useNow } from './tools/time';
@@ -61,6 +62,8 @@ export interface StopGoingBack {
 
 // What a row needs to know about the thread and the turn around it.
 export interface ItemContext {
+  // The item the row draws, whose open state the conversation keeps; absent outside one.
+  readonly itemId?: string | undefined;
   readonly cwd: string;
   readonly permissionLabel: string;
   // The turn of this item has ended (completed, failed or stopped).
@@ -436,13 +439,26 @@ const thoughtFor = (payload: ReasoningItemPayload): string => {
   return `Thought for ${seconds} s`;
 };
 
+// Find opens it too (thread work spec 4); Ctrl+O afterwards opens or closes it with the rest.
 function Reasoning({ payload, context }: { payload: ReasoningItemPayload; context: ItemContext }) {
   const done = context.reasoningDone ?? true;
   const lastLine = payload.text.trimEnd().split('\n').at(-1) ?? '';
+  const id = context.itemId;
+  const [found, setFound] = useOpenState(id === undefined ? undefined : openKey('reasoning', id));
+  const allKey = context.reasoningKey ?? 0;
+  const seenKey = useRef(allKey);
+  useEffect(() => {
+    if (seenKey.current === allKey) return;
+    seenKey.current = allKey;
+    if (found) setFound(false);
+  }, [allKey, found, setFound]);
   return (
     <details
-      key={context.reasoningKey ?? 0}
-      open={context.reasoningOpen}
+      key={`${allKey}:${found}`}
+      open={found || context.reasoningOpen}
+      onToggle={(event) => {
+        if (!event.currentTarget.open && found) setFound(false);
+      }}
       className="group text-xs text-muted-foreground"
     >
       <summary className="flex min-w-0 cursor-pointer list-none items-center gap-1.5 select-none">
@@ -688,7 +704,11 @@ function ItemBody({
         parsed.data.at === undefined ? (
           <TaskList tasks={parsed.data.tasks} turnEnded={context.turnEnded} />
         ) : (
-          <TaskMarker payload={parsed.data} turnEnded={context.turnEnded} />
+          <TaskMarker
+            payload={parsed.data}
+            turnEnded={context.turnEnded}
+            openKey={context.itemId === undefined ? undefined : openKey('tasks', context.itemId)}
+          />
         )
       ) : (
         <Unreadable item={item} />

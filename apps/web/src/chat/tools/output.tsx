@@ -1,9 +1,10 @@
 import { settingsRegistry } from '@wow/contracts';
-import { useState } from 'react';
+import { useContext } from 'react';
 import { CopyButton, copyText } from '@/components/copy-button';
 import { useRowActions } from '@/lib/row-actions';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { OutputKeyContext, useOpenState } from '../open-state';
 import { lastLines } from './facts';
 
 const defaultLines = settingsRegistry['chat.toolOutputLines'].default;
@@ -19,7 +20,8 @@ export function ToolOutput({
   lines?: number | undefined;
   label?: string;
 }) {
-  const [all, setAll] = useState(false);
+  // Find opens the earlier lines too (thread work spec 4), through the row's key.
+  const [all, setAll] = useOpenState(useContext(OutputKeyContext));
   const { shown, total } = lastLines(output, lines);
   const actions = useRowActions(
     output === ''

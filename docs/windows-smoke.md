@@ -143,6 +143,15 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       session is under that folder (`C:\…`) with its first prompt and time. Pick it, send "Go
       on": Claude answers in the same conversation (it remembers the first question). Rename the
       folder of another session: that one is greyed, "Its folder is gone".
+- [ ] **Find and save (thread work U1).** In a Claude thread with a long command output, press
+      Ctrl+F in the composer: the find bar opens with its field focused. Type a word from an
+      early line of the output: the count reads "1 of n", F3 opens the command row and "Show all"
+      lines, and the match is marked (Chromium's Custom Highlight API in Electron). Escape puts
+      the keyboard back in the composer. Then ⋯ → **Save conversation…**: the Windows save dialog
+      opens in Documents with the thread's title as the name (a `:` or `?` in the title taken
+      out) and the Markdown filter. Save, open the file in Notepad: accents and emoji read right
+      (UTF-8, no byte order mark), one line per tool call, no tool output. Cancel a second save:
+      nothing is written and no message shows.
 
 ## 4. Codex turn
 

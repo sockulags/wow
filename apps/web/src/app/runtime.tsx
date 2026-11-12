@@ -169,6 +169,33 @@ export interface Runtime {
   readonly pickFolder?: (() => Promise<string | null>) | undefined;
   // The desktop's "Restart now" for settings marked restartRequired. Absent in the browser build.
   readonly restartApp?: (() => void) | undefined;
+  // The desktop's native save dialog (thread work spec 7): it writes the text where the user
+  // chose and answers the path, or null when cancelled. Absent in the browser build, which
+  // downloads the file instead (`saveTextFile`).
+  readonly saveTextFile?: ((file: TextFile) => Promise<string | null>) | undefined;
+}
+
+export interface TextFile {
+  readonly suggestedName: string;
+  readonly text: string;
+}
+
+// Saves a text file the way this build can: the desktop's save dialog, else a download. The
+// server is never asked to write a file to a path the page names. Answers the path where the
+// desktop knows it, null when the dialog was cancelled, and the name for a download.
+export async function saveTextFile(runtime: Runtime, file: TextFile): Promise<string | null> {
+  if (runtime.saveTextFile) return runtime.saveTextFile(file);
+  const url = URL.createObjectURL(new Blob([file.text], { type: 'text/markdown;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = file.suggestedName;
+  link.style.display = 'none';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // The browser reads the address after the click returns.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  return file.suggestedName;
 }
 
 const RuntimeContext = createContext<Runtime | undefined>(undefined);
