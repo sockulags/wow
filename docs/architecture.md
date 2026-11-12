@@ -3641,7 +3641,11 @@ edge moves, else `appearance.contextPanelWidth`, capped) and puts its buttons un
 panel is capped so it leaves the sidebar rail, the workflows list and that room (`overlayCap`,
 `panel/model.ts`, from the window width), so the panel never covers Approve, Send back and Stop,
 whatever width is stored. The cap never goes under the panel's minimum width (280 px); in a
-window too small for both, the bar takes what is left beside the panel. The resize edge starts a
+window too small for both, the bar takes what is left beside the panel. 800 px is the narrowest
+window supported, the desktop window's own `minWidth` (`apps/desktop/src/main/index.ts`): there
+the bar still has its room beside a 280 px panel (`gate.spec.ts` checks Approve, Send back and Stop
+at 800 px), while under it the rail, the workflows list and the panel leave the bar less and less
+(nothing at about 584 px), so a narrower window is not laid out for; only a browser can make one. The resize edge starts a
 drag from the shown width and moves within the cap (keys too, End goes to the cap), so the width
 stored is the width shown, and its `aria-valuenow` and `aria-valuemax` are the shown width and
 the cap. Send back opens a
