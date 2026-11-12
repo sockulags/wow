@@ -113,9 +113,9 @@ describe('always allow rules (agent workbench spec 38, 39)', () => {
     expect(
       shellInner('"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile -Command "pnpm test"'),
     ).toBe('pnpm test');
-    expect(
-      shellInner("'C:\\Program Files\\PowerShell\\7\\pwsh.exe' -Command 'pnpm test'"),
-    ).toBe('pnpm test');
+    expect(shellInner("'C:\\Program Files\\PowerShell\\7\\pwsh.exe' -Command 'pnpm test'")).toBe(
+      'pnpm test',
+    );
     expect(shellInner('"C:\\Program Files\\Tools\\node.exe" /c "x"')).toBeUndefined();
     expect(shellInner('bash /d -c "x"')).toBeUndefined();
   });

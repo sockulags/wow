@@ -113,6 +113,10 @@ const approvalItem = (threadId: string) => {
   ).findLast((item) => item.kind === 'approval');
   return found?.payload as ApprovalItemPayload | undefined;
 };
+const toolRow = (threadId: string) =>
+  (snapshot(database.db, { topic: 'threadItems', threadId }) as ThreadItem[]).findLast(
+    (entry) => entry.kind === 'tool_call',
+  )?.payload;
 const threadState = (threadId: string) =>
   database.db.select({ state: threads.state }).from(threads).where(eq(threads.id, threadId)).get()
     ?.state;
@@ -313,11 +317,7 @@ describe('approvals in wow words (spec 36)', () => {
       diffWithoutFile: true,
     });
     await started;
-    const row = () =>
-      (snapshot(database.db, { topic: 'threadItems', threadId: 't1' }) as ThreadItem[]).findLast(
-        (entry) => entry.kind === 'tool_call',
-      )?.payload;
-    expect(row()).toMatchObject({ diffWithoutFile: true });
+    expect(toolRow('t1')).toMatchObject({ diffWithoutFile: true });
     const ended = committed('threadItem.patched');
     adapters.claude.emit({
       type: 'toolCallCompleted',
@@ -327,7 +327,7 @@ describe('approvals in wow words (spec 36)', () => {
       diff: '@@ -1 +1 @@\n-export const minutes = 3;\n+export const minutes = 5;',
     });
     await ended;
-    expect(row()).toMatchObject({ diffWithoutFile: false });
+    expect(toolRow('t1')).toMatchObject({ diffWithoutFile: false });
   });
 });
 
