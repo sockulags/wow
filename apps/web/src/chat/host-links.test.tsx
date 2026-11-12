@@ -124,6 +124,19 @@ describe('link recognition @agent-workbench-20 @agent-workbench-23', () => {
     ).toBeUndefined();
   });
 
+  it.each([
+    'https://ghe.example.invalid/acme/te%2561/pull/14',
+    'https://ghe.example.invalid/acme/te%3Fa/issues/3',
+    'https://lab.example.invalid/gitlab/te%23a/field/-/merge_requests/7',
+  ])('gives %s an address that is read again as the same item', (link) => {
+    const item = recogniseHostLink(link, rules);
+    if (!item) throw new Error('not recognised');
+    const again = recogniseHostLink(item.url, rules);
+    if (!again) throw new Error('its address is not recognised');
+    expect(hostItemKey(again)).toBe(hostItemKey(item));
+    expect(again.url).toBe(item.url);
+  });
+
   it('knows no link without a site, as for a host without a token', () => {
     expect(
       recogniseHostLink('https://ghe.example.invalid/acme/tea/pull/14', {
