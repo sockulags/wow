@@ -189,10 +189,11 @@ test.describe('triggers', () => {
       .getByRole('link', { name: 'Chat' })
       .click();
     await expect(
-      // A run's thread is listed by its step, with the workflow on the second line.
+      // A run's thread is listed by its step, with the workflow on the second line. Nobody has
+      // opened it yet, so it carries the unread mark between the two.
       page
         .getByRole('region', { name: 'Needs you' })
-        .getByRole('link', { name: /^deliver-work Bug e2e · / }),
+        .getByRole('link', { name: /^deliver-work (Unread )?Bug e2e · / }),
     ).toBeVisible();
 
     // Deleting the card asks whether to stop the run; the thread stays.
