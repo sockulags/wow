@@ -37,6 +37,11 @@ const userItem = (text: string) => ({
   payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
 });
 
+const assistantItem = (text: string) => ({
+  type: 'response_item',
+  payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] },
+});
+
 describe('listCodexSessions (agent workbench spec 72)', () => {
   it('lists each rollout with its id, folder, first prompt and time, newest first', async () => {
     await rollout(
@@ -86,6 +91,7 @@ describe('listCodexSessions (agent workbench spec 72)', () => {
         userItem('<environment_context>\n  <cwd>/work/kettle</cwd>\n</environment_context>'),
         userItem('<div class="kettle"> does not render, fix it'),
         { type: 'turn_context', payload: { cwd: '/work/kettle' } },
+        assistantItem('Looking at the kettle'),
         { type: 'event_msg', payload: { type: 'user_message', message: 'A later message' } },
       ],
       '2026-11-03T09:00:00.000Z',
@@ -127,5 +133,39 @@ describe('listCodexSessions (agent workbench spec 72)', () => {
     expect(
       await listCodexSessions(path.join(codexHome, 'missing'), { limit: 5, promptChars: 9 }),
     ).toEqual([]);
+  });
+
+  it('skips the instructions note and its context to the prompt Codex records (finding 139)', async () => {
+    await rollout(
+      '2026/11/04',
+      'rollout-2026-11-04T08-00-00-invented.jsonl',
+      [
+        meta('13131313-2424-3535-4646-575757575757', '/work/invented'),
+        userItem(
+          '# AGENTS.md instructions for /work/invented\n\n<INSTRUCTIONS>\nInvented rules\n</INSTRUCTIONS>',
+        ),
+        userItem('<environment_context>\n  <cwd>/work/invented</cwd>\n</environment_context>'),
+        userItem('Descale the kettle'),
+        { type: 'event_msg', payload: { type: 'user_message', message: 'Descale the kettle' } },
+      ],
+      '2026-11-04T09:00:00.000Z',
+    );
+    await rollout(
+      '2026/11/05',
+      'rollout-2026-11-05T08-00-00-invented.jsonl',
+      [
+        meta('14141414-2424-3535-4646-575757575757', '/work/invented'),
+        userItem('<future_note>Something Codex adds one day</future_note>'),
+        userItem('<environment_context>\n  <cwd>/work/invented</cwd>\n</environment_context>'),
+        userItem('Polish the spout'),
+        assistantItem('Polishing'),
+      ],
+      '2026-11-05T09:00:00.000Z',
+    );
+    expect(
+      (await listCodexSessions(codexHome, { limit: 5, promptChars: 200 })).map(
+        (session) => session.firstPrompt,
+      ),
+    ).toEqual(['Polish the spout', 'Descale the kettle']);
   });
 });

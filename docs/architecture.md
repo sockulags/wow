@@ -1800,7 +1800,9 @@ with one of Claude Code's own tags is skipped, while other text starting with `<
 `<codexHome>/sessions/**/*.jsonl`, the `session_meta` id and `cwd` (older rollouts: the top-level
 fields, else the id in the file name) and as first prompt the first `user_message` event, else the
 first user message that is not one of Codex's own notes (`<environment_context>`,
-`<user_instructions>`), taken as soon as a line other than a user message follows it. Only the
+`<user_instructions>`, `# AGENTS.md instructions`, `<INSTRUCTIONS>`; a user message after such a
+note replaces an earlier one, which was an unknown note), taken once a response item other than a
+user message (an answer, reasoning, a tool call) follows it. Only the
 newest `providers.sessionListLimit` files by modification time are opened (more when wow's own
 threads hold some of them, see below), each read line by line and closed once the first prompt is
 known; a file without a prompt is read to its end. The prompt is cut to

@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline';
 // as `<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`. The first line is the
 // session's metadata (`session_meta`, with `id` and `cwd`; older versions put them at the top
 // level). The first prompt is the first `user_message` event, else the first user message item
-// that is not one of the notes Codex sends first (`<environment_context>`, `<user_instructions>`).
+// that is not one of the notes Codex sends first (`codexNotes`).
 // `thread/resume` takes the id. Files are read line by line and closed once the prompt is known;
 // a file without one is read to its end.
 
@@ -22,8 +22,11 @@ const record = (value: unknown): value is Record<string, unknown> =>
 
 const text = (value: unknown) => (typeof value === 'string' && value !== '' ? value : undefined);
 
+const isUserItem = (item: Record<string, unknown>) =>
+  item['type'] === 'message' && item['role'] === 'user';
+
+// The text of a user message item; undefined for one of the notes Codex sends ahead of it.
 function messageText(item: Record<string, unknown>): string | undefined {
-  if (item['type'] !== 'message' || item['role'] !== 'user') return undefined;
   const content = Array.isArray(item['content']) ? item['content'] : [];
   const texts = content.flatMap((part: unknown) =>
     record(part) && (part['type'] === 'input_text' || part['type'] === 'text')
@@ -36,7 +39,12 @@ function messageText(item: Record<string, unknown>): string | undefined {
 
 // What Codex sends ahead of the user's first message. Other text that starts with "<" (a
 // component name, pasted HTML) is the user's.
-const codexNotes = ['<environment_context>', '<user_instructions>'];
+const codexNotes = [
+  '<environment_context>',
+  '<user_instructions>',
+  '# AGENTS.md instructions',
+  '<INSTRUCTIONS>',
+];
 
 // From the rollout's own name when the metadata has no id (`rollout-2026-11-01T08-00-00-<uuid>`).
 const idFromName = (name: string) =>
@@ -47,6 +55,7 @@ async function readSession(file: string) {
   let id: string | undefined;
   let cwd: string | undefined;
   let fallback: string | undefined;
+  let noteAfterFallback = false;
   try {
     for await (const line of lines) {
       let parsed: unknown;
@@ -65,11 +74,26 @@ async function readSession(file: string) {
         const prompt = text(payload['message'])?.trim();
         if (prompt) return { id, cwd, prompt };
       }
-      const message = messageText(payload);
-      if (fallback === undefined) fallback = message;
-      // Codex records the user_message event right after the message item; once something else
-      // follows it, an older rollout without the event has nothing better further on.
-      else if (message === undefined && cwd !== undefined) return { id, cwd, prompt: fallback };
+      // Rollouts wrap items in `response_item`; older ones wrote them bare.
+      const item =
+        parsed['type'] === 'response_item'
+          ? payload
+          : parsed['payload'] === undefined
+            ? parsed
+            : {};
+      if (isUserItem(item)) {
+        const message = messageText(item);
+        // A note Codex does not announce reads as the user's until one it does follows it.
+        if (message === undefined) noteAfterFallback = fallback !== undefined;
+        else if (fallback === undefined || noteAfterFallback) {
+          fallback = message;
+          noteAfterFallback = false;
+        }
+      } else if (typeof item['type'] === 'string' && fallback !== undefined && cwd !== undefined) {
+        // Codex records the user_message event before the model answers; once an answer, a
+        // reasoning item or a tool call follows, an older rollout without it has nothing better.
+        return { id, cwd, prompt: fallback };
+      }
     }
     return { id, cwd, prompt: fallback };
   } finally {
