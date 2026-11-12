@@ -123,18 +123,21 @@ function ResizeHandle({
   readonly onPreview: (width: number | undefined) => void;
   readonly onCommit: (width: number) => void;
 }) {
-  const drag = useRef<{ readonly startX: number; readonly startWidth: number }>(undefined);
+  const drag = useRef<{ readonly startX: number; readonly startWidth: number; moved: boolean }>(
+    undefined,
+  );
   const latest = useRef(width);
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { startX: event.clientX, startWidth: width };
+    drag.current = { startX: event.clientX, startWidth: width, moved: false };
     latest.current = width;
   };
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const start = drag.current;
     if (!start) return;
+    start.moved = true;
     latest.current = effectivePanelWidth(
       start.startWidth + start.startX - event.clientX,
       undefined,
@@ -143,9 +146,11 @@ function ResizeHandle({
     onPreview(latest.current);
   };
   const onPointerUp = () => {
-    if (!drag.current) return;
+    const start = drag.current;
+    if (!start) return;
     drag.current = undefined;
-    onCommit(latest.current);
+    // A click without a move would store the capped width over a wider stored one.
+    if (start.moved) onCommit(latest.current);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = event.shiftKey ? KEY_STEP * 4 : KEY_STEP;

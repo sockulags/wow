@@ -96,6 +96,20 @@ describe('context panel', () => {
     expect(runtime.settings.getState().values['appearance.contextPanelWidth']).toBe(464);
   });
 
+  it('over a run view keeps the stored width on a click of its edge without a move', async () => {
+    narrowWindow();
+    vi.stubGlobal('innerWidth', 1024);
+    const user = userEvent.setup();
+    const runtime = createTestRuntime(undefined, { 'appearance.contextPanelWidth': 720 });
+    await renderApp('/workflows/runs/run-1', runtime);
+    await user.click(screen.getByRole('button', { name: 'Toggle context panel' }));
+    const edge = screen.getByRole('separator', { name: 'Resize context panel' });
+    expect(edge.getAttribute('aria-valuenow')).toBe('464');
+    edge.setPointerCapture = () => undefined;
+    await user.pointer({ keys: '[MouseLeft]', target: edge });
+    expect(runtime.settings.getState().values['appearance.contextPanelWidth']).toBe(720);
+  });
+
   it('lists "Show in panel" only for a view with a selection', async () => {
     const user = userEvent.setup();
     await renderApp('/calendar?item=card-1');
