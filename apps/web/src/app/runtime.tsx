@@ -121,6 +121,9 @@ export interface LayoutState {
   // Set by "Focus context panel" when the panel still has to open; the panel takes the focus once
   // it is there and clears it.
   readonly contextPanelFocus: boolean;
+  // The width the panel's edge is being dragged to, before it is stored, so a view that keeps
+  // room next to the panel follows the drag.
+  readonly contextPanelPreview: number | undefined;
   // Panel tabs per route (agent workbench spec 13): a thread or a run keeps its own.
   readonly panelTabs: Readonly<Record<string, PanelTabs>>;
   readonly openFileDialog: OpenFileDialog | undefined;
@@ -139,6 +142,7 @@ export const createLayoutStore = (): LayoutStore =>
     sidebarOpen: true,
     contextPanelPeek: false,
     contextPanelFocus: false,
+    contextPanelPreview: undefined,
     panelTabs: {},
     openFileDialog: undefined,
     openHostDialog: undefined,

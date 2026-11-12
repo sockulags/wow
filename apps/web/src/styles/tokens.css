@@ -41,8 +41,11 @@
   --sidebar-accent-foreground: oklch(0.2 0 0);
   --sidebar-border: oklch(0.91 0 0);
 
-  /* State colors: the only accents in the shell. */
+  /* State colors: the only accents in the shell. Text in the "needs you" colour takes the darker
+     variant, at least 4.5:1 on the page, a card and a muted surface (agent workbench spec 85);
+     dots, fills and borders keep the bright one. */
   --state-needs-you: oklch(0.75 0.16 85);
+  --state-needs-you-text: oklch(0.52 0.12 72);
   --state-working: oklch(0.6 0.15 250);
   --state-done: oklch(0.6 0.14 150);
   --state-failed: oklch(0.58 0.22 27);
@@ -94,6 +97,7 @@
   --sidebar-border: oklch(1 0 0 / 8%);
 
   --state-needs-you: oklch(0.82 0.15 85);
+  --state-needs-you-text: var(--state-needs-you);
   --state-working: oklch(0.7 0.13 250);
   --state-done: oklch(0.72 0.13 150);
   --state-failed: oklch(0.68 0.19 22);

@@ -48,6 +48,9 @@ class ControlledAdapter implements ProviderAdapter {
         { id: 'sonnet', label: 'Sonnet', description: '', efforts: ['high'] },
       ]);
     }
+    if (command.type === 'listCommands') {
+      return Promise.resolve([{ name: 'review', description: 'Review the change' }]);
+    }
     return Promise.resolve({ ok: true });
   }
 
@@ -73,6 +76,7 @@ let context: ProviderAdapterContext | undefined;
 let service: ProviderService;
 let next = 0;
 let tick = 0;
+let nowMs = 0;
 
 const clock = () => new Date(Date.UTC(2026, 10, 2, 8, 0, (tick += 1)));
 const dispatch = (command: Command) => engine.dispatch(`c${(next += 1)}`, command);
@@ -87,6 +91,8 @@ const committed = (kind: DomainEventKind) =>
       }
     });
   });
+
+const commandListsAsked = () => adapter.sent.filter((command) => command.type === 'listCommands');
 
 const rows = (topic: 'threads' | 'turns' | 'threadItems' | 'approvals' | 'questions') =>
   snapshot(database.db, { topic, threadId: 't1' }) as Array<Record<string, unknown>>;
@@ -118,6 +124,7 @@ beforeEach(async () => {
     secrets,
     home: dir,
     assistant: () => undefined,
+    now: () => nowMs,
     logger: createLogger(
       () => 'error',
       () => undefined,
@@ -394,6 +401,39 @@ describe('provider service', () => {
       resumeId: 'sess-1',
     });
     expect(rows('turns').map((turn) => turn['id'])).toEqual(['t1:turn:0', 't1:turn:1']);
+  });
+
+  it("keeps a folder's command list for providers.commandListSeconds, then asks again", async () => {
+    nowMs = 1_000_000;
+    await service.listCommands('claude-work', '/work/demo');
+    await service.listCommands('claude-work', '/work/demo', 't1');
+    expect(commandListsAsked()).toHaveLength(1);
+    await service.listCommands('claude-work', '/work/other');
+    expect(commandListsAsked()).toHaveLength(2);
+    nowMs += 30_000;
+    await service.listCommands('claude-work', '/work/demo');
+    expect(commandListsAsked()).toHaveLength(3);
+    dispatch({
+      type: 'setting.set',
+      key: 'providers.commandListSeconds',
+      value: 0,
+      scope: 'provider:claude-work',
+    });
+    await service.listCommands('claude-work', '/work/demo');
+    expect(commandListsAsked()).toHaveLength(4);
+  });
+
+  it('shares one command probe between overlapping calls and drops the list on release', async () => {
+    nowMs = 1_000_000;
+    const [first, second] = await Promise.all([
+      service.listCommands('claude-work', '/work/demo'),
+      service.listCommands('claude-work', '/work/demo'),
+    ]);
+    expect(second).toEqual(first);
+    expect(commandListsAsked()).toHaveLength(1);
+    service.release('claude-work');
+    await service.listCommands('claude-work', '/work/demo');
+    expect(commandListsAsked()).toHaveLength(2);
   });
 
   it('pins and unpins a thread without touching its activity time', () => {

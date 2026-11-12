@@ -4,6 +4,7 @@ import {
   createSettingsStore,
   type Connection,
   type ConnectionState,
+  type SettingValues,
 } from '@wow/client-runtime';
 import {
   createMemoryHistory,
@@ -137,12 +138,12 @@ function connectionWith(topics: Record<string, unknown>, refused = false) {
   return { connection, sent };
 }
 
-const runtimeOf = (connection: Connection): Runtime => ({
+const runtimeOf = (connection: Connection, values: SettingValues = {}): Runtime => ({
   connection,
   layout: createLayoutStore(),
   draft: createDraftStore(),
   settings: createSettingsStore(
-    createMemorySettingsSource(undefined, { 'providers.offerSetup': false }),
+    createMemorySettingsSource(undefined, { 'providers.offerSetup': false, ...values }),
   ),
 });
 
@@ -289,6 +290,26 @@ describe('Shift+Tab and the colours (agent workbench spec 3, 4)', () => {
     await userEvent.setup().keyboard('{Escape}');
     expect(seen).toEqual([false]);
     expect(document.activeElement).toBe(box);
+  });
+
+  it('still leaves the composer in a panel laid over the view when the leave key is not Escape', async () => {
+    const { connection } = connectionWith({ turns: [], threadItems: [] });
+    render(
+      <RuntimeProvider
+        runtime={runtimeOf(connection, { 'keybindings.composerLeave': 'Mod+Shift+L' })}
+      >
+        <aside id="context-panel" data-overlay="">
+          <button type="button">Before the panel's composer</button>
+          <ThreadConversation thread={thread} instance={claude} compact />
+        </aside>
+      </RuntimeProvider>,
+    );
+    const box = screen.getByRole('combobox', { name: 'Message' });
+    box.focus();
+    await userEvent.setup().keyboard('{Control>}{Shift>}L{/Shift}{/Control}');
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: "Before the panel's composer" }),
+    );
   });
 
   it('reads the keys from the keybinding settings', () => {

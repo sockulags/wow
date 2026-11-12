@@ -154,6 +154,48 @@ test.describe('changes', () => {
   });
 });
 
+test.describe('line comments', () => {
+  test('sends back with line comments @agent-workbench-80', async ({ page }) => {
+    await startRun('comments-e2e-run');
+    await page.goto('/workflows/runs/comments-e2e-run?tab=changes');
+    const runGate = page.getByTestId('run-gate').getByRole('region', { name: 'Gate' });
+    await expect(runGate).toContainText('deliver-work finished');
+    await fileRow(page, 'Changed: src/timer.ts').click();
+    const diff = page.getByRole('table', { name: 'Diff of src/timer.ts' });
+    const added = diff.locator('tr[data-kind="add"]');
+    const first = await added.nth(0).getAttribute('data-line');
+    const second = await added.nth(1).getAttribute('data-line');
+
+    // C on a line opens a field under it; Enter adds the comment to the send-back note.
+    await added.nth(0).focus();
+    await page.keyboard.press('c');
+    await diff.getByRole('textbox', { name: `Comment on line ${first}` }).fill('Ring twice here.');
+    await page.keyboard.press('Enter');
+    await expect(added.nth(0)).toBeFocused();
+    // A click in the gutter does the same.
+    await added.nth(1).hover();
+    await added
+      .nth(1)
+      .getByRole('button', { name: `Comment on line ${second}` })
+      .click();
+    await page.keyboard.type('And here too.');
+    await page.keyboard.press('Enter');
+
+    const note = runGate.getByRole('textbox', { name: 'What should change?' });
+    await expect(note).toHaveValue(
+      `src/timer.ts:${first} – Ring twice here.\nsrc/timer.ts:${second} – And here too.`,
+    );
+    // Ctrl+Shift+Enter sends the note back to the step.
+    await added.nth(1).focus();
+    await page.keyboard.press('Control+Shift+Enter');
+    await expect(note).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Steps' }).click();
+    await expect(
+      page.getByRole('list', { name: 'Run steps' }).getByTestId('step-attempt'),
+    ).toHaveText('Attempt 2');
+  });
+});
+
 // The run tests above may leave the side panel open, with fields of its own.
 const main = (page: Page) => page.locator('#main-view');
 const messageBox = (page: Page) => main(page).getByRole('combobox', { name: 'Message' });
@@ -206,7 +248,17 @@ test.describe("a chat thread's changes", () => {
     await page.keyboard.press('o');
     await expect(listed).toHaveText([/src\/bell\.ts\+1 −1/]);
     await listed.first().click();
-    await expect(changes.getByRole('table', { name: 'Diff of src/bell.ts' })).toBeVisible();
+    const bellDiff = changes.getByRole('table', { name: 'Diff of src/bell.ts' });
+    await expect(bellDiff).toBeVisible();
+    // A comment on a line goes into the composer as a reply (spec 80).
+    const line = bellDiff.locator('tr[data-kind="add"]').first();
+    const number = await line.getAttribute('data-line');
+    await line.focus();
+    await page.keyboard.press('c');
+    await page.keyboard.type('Softer still.');
+    await page.keyboard.press('Enter');
+    await expect(messageBox(page)).toHaveValue(`src/bell.ts:${number} – Softer still.`);
+    await listed.first().focus();
     await page.keyboard.press('o');
     await expect(listed).toHaveCount(2);
 

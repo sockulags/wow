@@ -822,6 +822,7 @@ describe('palette commands for the assistant (spec 8, 9)', () => {
     ).toEqual([
       ['Yes: Turn on scripts in HTML files', true, undefined],
       ['No: Turn on scripts in HTML files', false, undefined],
+      ['Show proposal: Turn on scripts in HTML files', false, true],
       ['Undo: Work hours', false, true],
       ['Undo: Work hours', false, false],
     ]);

@@ -10,6 +10,7 @@ import { readParts } from './read';
 import { ToolRowFrame, type ToolParts } from './row';
 import { searchParts } from './search';
 import { webParts } from './web';
+import { wordsParts } from './words';
 
 // The row of one tool call by its kind. An edit without a diff (stored before edits carried one)
 // and a call without a kind are drawn as they were.
@@ -18,6 +19,8 @@ export function toolParts(
   context: ItemContext,
   extra?: ReactNode,
 ): ToolParts {
+  if (context.toolWords !== undefined)
+    return wordsParts(payload, context, context.toolWords, extra);
   switch (payload.kind) {
     case 'command':
       return commandParts(payload, context, extra);

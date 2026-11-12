@@ -165,6 +165,10 @@ const codePart = (part: string): string | undefined => {
   }
 };
 
+// The decoded parts encoded again for the item's address, so reading the address back gives the
+// same parts: `te%2561` stays `te%61`, and a `?` or `#` in a name stays in the path.
+const webPath = (path: string): string => path.split('/').map(encodeURIComponent).join('/');
+
 function onSite(link: URL, site: HostLinkSite): HostItemRef | undefined {
   const written = below(link, site.base);
   if (!written) return undefined;
@@ -186,23 +190,25 @@ function onSite(link: URL, site: HostLinkSite): HostItemRef | undefined {
     const [owner, repo, what, n] = parts;
     if (!owner || !repo || !n || !number.test(n)) return undefined;
     const path = `${owner}/${repo}`;
+    const at = webPath(path);
     if (what === 'pull' || what === 'pulls') {
-      return of('changeRequest', path, n, `${base}/${path}/pull/${n}`);
+      return of('changeRequest', path, n, `${base}/${at}/pull/${n}`);
     }
-    if (what === 'issues') return of('issue', path, n, `${base}/${path}/issues/${n}`);
+    if (what === 'issues') return of('issue', path, n, `${base}/${at}/issues/${n}`);
     return undefined;
   }
   if (site.host === 'gitlab') {
     const dash = parts.indexOf('-');
     if (dash < 2) return undefined;
     const path = parts.slice(0, dash).join('/');
+    const at = webPath(path);
     const what = parts[dash + 1];
     const n = parts[dash + 2] ?? '';
     if (!number.test(n)) return undefined;
     if (what === 'merge_requests') {
-      return of('changeRequest', path, n, `${base}/${path}/-/merge_requests/${n}`);
+      return of('changeRequest', path, n, `${base}/${at}/-/merge_requests/${n}`);
     }
-    if (what === 'issues') return of('issue', path, n, `${base}/${path}/-/issues/${n}`);
+    if (what === 'issues') return of('issue', path, n, `${base}/${at}/-/issues/${n}`);
     return undefined;
   }
   if (site.host === 'jira') {
@@ -279,14 +285,18 @@ export function bareHostRefs(text: string, rules: HostLinkRules): HostRefMatch[]
 }
 
 // `#333` or `#102030` in a message is far more often a colour than an issue: six digits, three of
-// the same digit, or three digits in a CSS declaration (`color: #123;`).
+// the same digit, or three digits after a colour property (`color: #123`). Any other colon is
+// not enough: `Fixes: #123` is an issue.
+const colourProperty =
+  /(?:^|[^\w-])[a-z-]*(?:color|background|border|fill|stroke|outline|shadow)[a-z-]*\s*:\s*$/i;
+
 function readsAsColour(text: string, start: number, written: string): boolean {
   if (!written.startsWith('#')) return false;
   const digits = written.slice(1);
   if (digits.length === 6) return true;
   if (digits.length !== 3) return false;
   if (/^(\d)\1\1$/.test(digits)) return true;
-  return /:\s*$/.test(text.slice(0, start)) || text.startsWith(';', start + written.length);
+  return colourProperty.test(text.slice(0, start));
 }
 
 function bareItem(written: string, rules: HostLinkRules): HostItemRef | undefined {

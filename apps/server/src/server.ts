@@ -34,6 +34,7 @@ import { readCurrentBranch, readHeadCommit } from './projects/git.js';
 import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
 import { ProviderUpdates, createNpmRunner, type RunNpm } from './providers/update.js';
+import type { Spawn } from './files/editor.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
 import { route } from './rpc/router.js';
 import { Scheduler, type SchedulerTimers } from './scheduler/service.js';
@@ -94,6 +95,8 @@ export interface StartOptions {
   readonly fetch?: typeof fetch;
   // Runs npm for "Update Codex" (`provider.update`); tests and the e2e server pass a fake one.
   readonly runNpm?: RunNpm;
+  // Starts the program of "Open in editor"; tests pass a stand-in that records the call.
+  readonly spawnEditor?: Spawn;
 }
 
 export interface RunningServer {
@@ -153,10 +156,13 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   let logger: Logger = createLogger(() => 'info', options.logSink);
   // Assigned once the tracker service exists; it caches each project's code host.
   let codeHost: ((projectId: string) => HostKind | undefined) | undefined;
+  // Assigned once the provider service exists; it caches each instance's model list.
+  let modelLabel: ((model: string, providerInstanceId?: string) => string | undefined) | undefined;
   const engine = new Engine(database.db, {
     onListenerError: (error) => logger.error('commit listener failed', error),
     home,
     codeHost: (projectId) => codeHost?.(projectId),
+    modelLabel: (model, providerInstanceId) => modelLabel?.(model, providerInstanceId),
     ...(options.clock ? { clock: options.clock } : {}),
   });
   const settings = new SettingsService(database.db, engine);
@@ -194,6 +200,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     assistant: () => assistantAccess,
     changes: folderChanges,
   });
+  modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
   const workspaces = new Workspaces({ db: database.db, engine, settings, logger });
   const workflows = new WorkflowRunner({
     db: database.db,
@@ -315,6 +322,11 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     outlook: () => outlook,
     info: { version, home },
     clock: options.clock ?? (() => new Date()),
+    editor: {
+      ...(options.spawnEditor ? { spawn: options.spawnEditor } : {}),
+      platform: options.platform ?? process.platform,
+      env,
+    },
   });
 
   const token = randomBytes(32).toString('base64url');

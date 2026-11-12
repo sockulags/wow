@@ -245,6 +245,10 @@ ticket_reads     id ('run:<runId>'), projectId, runId, host ('jira'), hostName, 
 page_reads       id ('run:<runId>'), projectId, runId, host ('confluence'), hostName,
                  pages(json: PageLink[]), fetchedAt?, error(json: HostError)?
                  -- the Confluence pages a run's texts link to, with the pages as last read
+host_item_reads  id ('thread:<threadId>:<hostItemKey>'), scope ('thread'), threadId,
+                 item(json: HostItemRef), hostName, data(json: HostItemData)?, fetchedAt?,
+                 error(json: HostError)?   -- an item a chat thread links to, as last read when
+                 its tab opened or on Refresh now (migration 0030)
 assistant_changes id (the command's id), at, commandType, what, from?, to?, place(json: {label,
                  path}), target(json: {kind, id}), expect(json)?, inverse(json: Command[]), state
                  ('applied'|'undone'), undoneAt?   -- what the assistant changed, with the record
@@ -458,7 +462,13 @@ thread it maps to, since the app-server has no request that unloads one.
   service dispatches `thread.handedOver {threadId, queuedId, offered {text, skills?, files?}}`: the queue
   empties and a `user` item with `queued: 'duringTurn'` joins the running turn (or the turn that
   just ended), so the conversation shows it sent. Not taken, it stays queued. The service offers a
-  thread one version at a time: a join while the adapter has not answered is not offered. When the
+  thread one version at a time: a join while the adapter has not answered is not offered then; if
+  that answer is "not taken", the join (the whole queue as it is now) is offered once more. The
+  thread's `turn.ended` (and the service's `stop`) lets go of an offer that is never answered, so
+  the next turn is offered its messages. A known limit: a "taken" answer that arrives after the
+  offered turn ended is still recorded, and if `thread.sendQueued` already sent the message, the
+  provider then has its text twice (ClaudeAdapter answers at once and Codex never takes one, so
+  neither answers late). When the
   answer names an older `queuedId` (joined or cancelled since), the orchestrator still shows
   `offered` in the running turn it was offered to (the turn id starts the queued id), keeps only
   the rest of a joined message (text after the offered one, skills and files it did not carry,
@@ -510,7 +520,11 @@ thread it maps to, since the app-server has no request that unloads one.
   `listCommands {cwd, threadId?}` answers `supportedCommands()` (name, description, argument hint)
   of the thread's live session, or of a short-lived query opened in `cwd`. Codex answers
   `handOver` with `{taken: false}` and `listCommands` with `[]`; RPC `provider.listCommands
-{providerInstanceId, cwd, threadId?}` returns the list (`ProviderSlashCommand[]`).
+{providerInstanceId, cwd, threadId?}` returns the list (`ProviderSlashCommand[]`). The provider
+  service keeps an answer per instance and folder for `providers.commandListSeconds` (30 s; 0 keeps
+  none), since a probe starts Claude Code in the folder and the list asks each time it opens.
+  Calls that overlap share one probe, stale answers go on the next miss, and releasing an
+  instance (or its row changing) drops its answers.
 - **Chat options.** What the composer bar offers per provider kind (permission modes with their
   short label and tone, the Shift+Tab cycle `modeCycle`, the effort that leaves the choice to the
   provider, the compact message) is `providerChatOptions` in `packages/contracts`, because the
@@ -1527,7 +1541,7 @@ A group marked with a unit (`(U12)`) belongs to a unit not delivered yet; its ke
 until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
-  `providers.offerSetup`
+  `providers.commandListSeconds`, `providers.offerSetup`
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.toolOutputLines`,
   `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
   `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength`, `chat.editDiffMaxLines` (see "Chat
@@ -1568,7 +1582,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - triggers: `triggers.eventsEnabled`, `triggers.forkPullRequests`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`,
   `viewer.fileListLimit`, `viewer.fileMatchesShown` (see "Files" and "Panel tabs and files in
-  chat")
+  chat"), `viewer.editorCommand`, `viewer.editorShell` (see "Open in editor" there)
 - diff: `diff.maxFileBytes`, `diff.maxFiles`, `diff.maxHashBytes` (the "Changes" page, see "Run base and changes")
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
@@ -1578,7 +1592,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance` (see
   "Assistant", "Question card" and "Models for steps")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
-  `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
+  `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`,
+  `appearance.changesListWidth` (see "Changes tab")
 - keybindings: `keybindings.*`, one per command that has a shortcut
 - desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
 - updates: `updates.enabled`, `updates.checkIntervalMinutes`
@@ -1879,6 +1894,17 @@ which names the stale file when that is the reason. "Refresh now" in the list re
 then asks the hosts about everything followed. Palette: "Plans: Refresh now", every intent (when
 searching), and for the open plan "Plan: follow" / "Plan: stop following", "Plan: refresh pull
 requests now", each unit and each unit's pull request.
+
+**Plan files and a unit's thread** (agent workbench spec 84). A file the plan has is a button:
+Enter or a click opens it rendered in a file tab of the panel, read with the `{projectId}` file
+scope from `<intents folder>/<intent>/<file>` (`planFilePath`; the folder is the project's own
+`plans.intentsDirectory` from the `settings` topic, else the global value,
+`intentsDirectoryOf`), so it gets the file viewer's refusals like any project file. Each unit
+has "Start a thread for this unit": it puts the project and `unitThreadText` (which unit of
+which plan, then its contract fields that have a value) in the new-thread draft
+(`DraftState.text`) and opens `/chat/new`, where the text waits in the composer, unsent. "Plan:
+run ready units with <workflow>" stays as it was. Palette: "Plan: open intent.md|spec.md|plan.md"
+for the files the plan has, and "Start a thread for <key>: <title>" per unit (searched for).
 
 **Plan run in the view** (`plan-run-section.tsx`, `plan-run.ts`; review loop spec 40, 41, 45).
 Above the units a plan with a `plan.md` has "Run ready units" and, when more than one workflow
@@ -2348,7 +2374,8 @@ decides what a command of the assistant does. The table names every type of `Ser
   that then lets the app do more: `scheduler.paused` off, `scheduler.missedPolicy` to `run`,
   `hosts.polling`, `triggers.eventsEnabled` or `viewer.htmlScripts` on. A change to
   `assistant.secretPatterns` is a proposal too, since that is the assistant's own net, and so
-  is any change to `assistant.allowCodex` or `triggers.forkPullRequests`, either way. Four
+  is any change to `assistant.allowCodex`, `triggers.forkPullRequests`, `viewer.editorCommand`
+  or `viewer.editorShell`, either way (the last two name a program the server runs). Four
   more are proposals though spec 9 does not list them, because they do the same kind of thing:
   another skill, extra prompt, provider or model on a step that has a permission mode or a
   gate that passes by itself (the yes once given for that step was for that work); taking a
@@ -2404,6 +2431,37 @@ the row. Undo is recorded when the change is made and is never a snapshot of any
 The shown texts go through the secret net; `inverse` and `expect` keep the real values,
 because undo needs them. They are in `AssistantChangeRecord` (the event and the table) and not
 in `AssistantChange`, the row of the topic, so neither a tool nor a client gets them.
+
+**Values in the settings page's words** (agent workbench spec 95). A setting's value in a change
+row, a proposal line or an Undo refusal is `settingValueWords` (`packages/contracts/src/
+setting-words.ts`), which the settings page reads too (`formatWorkHours`, `formatDays`,
+`settingUnitDisplay`): "From Outlook", "08:00–16:00, Mon–Fri", "On", an option's label, "10 min",
+an "always allow" list as its rules' words. A shape it has no words for is said as before. A
+model is named by its label: `DecideContext.modelLabel` reads `ProviderService.modelLabel`, the
+labels of the last `listModels` answer of each instance (the bar, the builder and the
+assistant's step checks ask for them); a model no list has named yet shows its id, nothing is
+asked for it while deciding. `assistant.model`, a step's model and a project's `defaultModel`
+are named so, `assistant.providerInstanceId` and `defaultProviderInstanceId` by the instance's
+name. A default that reads "From Outlook" carries no "(default)", since it says where it comes
+from.
+
+**The rule proposal** (agent workbench spec 41; `builtTools` in `assistant/tools.ts`). The tool
+`propose_always_allow_rule {projectId, rule}` (`AlwaysAllowRuleRequest`, `assistantRuleTool`)
+writes the project's `approvals.alwaysAllow` list with the rule added (`addedAt` the tool's
+clock) as a `setting.set`, which the class table always holds as a proposal (`moreOnItsOwn`), so
+the rule is stored only on Yes and the assistant has no way to store one itself. A built tool
+writes its command from a smaller input than the command's own and goes through the same
+dispatch as the change tools. It refuses an unknown project and a command prefix that
+`prefixRuleable` rejects (a shell, a wrapper such as `sudo` or `npx`, an interpreter given
+code, anything that chains, pipes or quotes: `ruleCovers` would never match it), and answers
+"unchanged" for a rule the project has, comparing with the project's own row (`projectRules`,
+the list rules are answered from, never the resolved value). The class table (`rulesRefusal` in
+`classes.ts`) holds every `approvals.alwaysAllow` change from the assistant to the same terms,
+`set_setting` included: a scope that is not `project:<existing id>` is refused with a pointer to
+the rule tool, and an added command rule `prefixRuleable` rejects is refused in the tool's
+words. The card (`rulesCard` in `changes.ts`) reads "Always
+allow `pnpm test` in Tea" with a line per rule added or removed in `ruleText`'s words, and its
+place, like every change of that setting, is Settings → Approvals.
 
 **Proposals.** A proposal row (`AssistantProposal`, topic `assistantProposals`) holds a title
 ("Start Delivery in Tea"), one line per thing that would change, and the place. The server's
@@ -2526,8 +2584,23 @@ cards) ends the run. Its open state is the window's own.
   `sendUnchecked()`: the box's current text goes through the composer's own send path (queued by
   the server while a turn runs, as the answer to a waiting question), skipping only the check.
 - Palette (`assistant/commands.ts`): Yes and No for every waiting proposal (Yes under "Needs
-  you"), Undo for every applied change (the newest before typing). A refusal from the palette
-  is a toast with the reason. The sidebar counts waiting proposals as "need you".
+  you"), "Show proposal: <title>" (searched for), Undo for every applied change (the newest
+  before typing). A refusal from the palette is a toast with the reason. The sidebar counts
+  waiting proposals as "need you".
+- Tool rows (agent workbench spec 82). `ConversationExtras.toolWords(item)` says how a tool
+  call reads: undefined for the tool's own row, a text for a row in those words
+  (`chat/tools/words.tsx`, carried as `ItemContext.toolWords`), null for no row at all. The
+  Assistant view answers null for one of wow's calls that has a change row or proposal after
+  it, a card (`askOf`) or a question card (`askedQuestionsOf`), since that card already shows
+  the call; such a call stands alone in `groupToolCalls` (its `alone` argument) and only what
+  follows it is drawn. Every other call of wow's reads in the words of
+  `assistantToolWords` (`packages/contracts`, "Read your workflows"); a server test checks that
+  every tool `AssistantTools.list()` offers has words there.
+- Waiting line (spec 96, `WaitingLine` in `rows.tsx`). While a proposal waits, the composer's
+  notice line says "1 proposal waits: <title>" (or "N proposals wait", naming the oldest) with
+  Yes, No (no reason; the card's No takes one) and Show. Show, like the palette's "Show
+  proposal", sets `proposalFocus` (`assistant/model.ts`); the card with that id scrolls into
+  view, takes the focus and clears it. A held message's line sits below it.
 
 **First start** (app assistant spec 24 to 27; `apps/web/src/app/first-start.tsx`,
 `apps/web/src/providers/connect-step.tsx`). The spec decided to reuse the provider onboarding and
@@ -2908,9 +2981,13 @@ on the provider's default model and that model's default effort when neither the
 the instance names one. Keys while the composer has the focus (`useModelBarKeys`, `barKeyOf`):
 `keybindings.composerModel` (Mod+Shift+M) and `keybindings.composerEffort` (Mod+Shift+E) open the
 lists, `keybindings.composerModeCycle` (Shift+Tab) moves to `nextPermissionMode` (from the mode it last
-sent while the thread has not shown it yet, so a quick second press goes one further), and
+sent while the thread has not shown it yet, so a quick second press goes one further;
+`ModelBarProps.onChange` may return the `thread.configure` dispatch, and its rejection clears that
+pending mode, so the next press cycles from the mode the thread shows), and
 `keybindings.composerLeave` (Escape, after the skill list's own Escape) focuses what comes before
-the composer, since Shift+Tab no longer leaves it. They are matched in the composer's key handler,
+the composer, since Shift+Tab no longer leaves it. Inside `#context-panel[data-overlay]` an
+Escape is not taken by the composer, so the panel's own Escape closes it; a leave key rebound to
+anything else still leaves there. They are matched in the composer's key handler,
 not by the global keybinding listener, so they do nothing elsewhere. A list that closes returns
 the focus to the composer unless the user already moved on. The palette reaches the bar on screen
 through `modelBarStore` (`chat/model-commands.ts`; the bar whose conversation had the focus last
@@ -3035,7 +3112,13 @@ before (no `at`) is drawn in full as before. The panel's thread Details has a Ta
 
 Copy (`components/copy-button.tsx`): an assistant message has Copy (its markdown) and Copy text
 (what it reads on screen) on hover or focus; fenced code in markdown has Copy code
-(`CodeBlock copy`); tool output has Copy output. `copyText` does the write; when the browser has
+(`CodeBlock copy`), and a fence labelled with a path (`fenceLabel` in `markdown-body.tsx`: a word
+after the language, `title="…"`, `ts:src/a.ts`, or the language itself, each read by
+`filePathOf`; a bare word needs a slash or an extension that does not read as a host, and the
+language itself a slash, so `vb.net` and `text and/or` stay languages, and `C:\work\a.ts` is a
+drive, not `C` joined to a path) shows the path above the block with Open file (also the row action "Open file
+<path>"), through the conversation's `FileLinkContext`, so not in the Assistant view; tool output
+has Copy output. `copyText` does the write; when the browser has
 no clipboard or refuses the write, the error toast "Nothing was copied" says so and the button
 does not turn to Copied. The same actions are palette commands for the row or message that last
 had the focus (`lib/row-actions.ts`, `chat/row-commands.ts`): each copyable element registers its
@@ -3179,8 +3262,8 @@ diff drawn with the run Changes tab's `DiffLines`, and Open file. Open file is
 `ItemContext.openFile`, the conversation's `FileLinkContext` `open`: the file in a panel tab of
 the view on screen, in the thread's scope, for a chat thread and a step's thread alike, Git or
 not (see "Panel tabs and files in chat"). It is not offered for a file outside the thread's
-folder (the path stays absolute), nor on a running edit row or a pending approval card, whose
-file has not changed yet, nor in the Assistant view, which opens no files. An `edit` row without
+folder (the path stays absolute), nor on an edit row that is not `ok` (running, failed or
+denied) or an approval card that is pending or denied, whose file has not changed, nor in the Assistant view, which opens no files. An `edit` row without
 a diff (stored before) is drawn as the generic row it was.
 
 **Approvals in wow's words** (spec 36). `approvalRequested` carries `facts: ApprovalFacts` (the
@@ -3216,9 +3299,16 @@ named tool. Edits, plans, a Codex permissions request and a command with `;`, `&
 first word is a shell or a program that runs what it is handed (`bash`, `cmd`, `powershell`,
 `env`, `sudo`, `xargs`, `busybox`, `npx`, …; such a rule would allow every later script), whose
 first word sets a variable (`FOO=1 bash x.sh`), whose first two words are a runner (`pnpm exec`,
-`pnpm dlx`, `npm exec`, `yarn dlx`, `uv run`, …), an interpreter followed by an option
-(`node -e`, `python -c`, `python -m`; `node scripts/build.mjs` keeps its rule) or a `find`/`fd`
-that runs a program for what it finds (`-exec`, `-execdir`, `-ok`, `-x`), a thread without a
+`pnpm dlx`, `npm exec`, `yarn dlx`, `uv run`, `deno eval`, …; for a package manager every word
+counts, not only the first two, since options take values and some sub-commands forward
+(`pnpm --filter web --silent exec`, `yarn workspace web exec`), and yarn, pnpm and bun naming a
+shell or interpreter anywhere, `yarn bash`, get none; words after a `--` that follows a named
+sub-command are not looked at, nor anything after `add`, `install`, `remove` and the like as the
+first word, which takes package names), an interpreter followed by an option
+(`node -e`, `python3.12 -c`, `python -m`, `tsx -e`; `node scripts/build.mjs` keeps its rule) or a
+`find`/`fd` that runs a program for what it finds (`-exec`, `-exec=…`, `-execdir`, `-ok`, `-x`).
+A program is named without its folder and without `.exe`, `.cmd`, `.bat`, `.com` or `.ps1`, so
+`npx.cmd` is `npx`. None either for a thread without a
 project or the assistant. The same test runs when a stored rule is matched, so an older rule
 never answers such a command. Codex reports a command as the shell line it runs
 (`/bin/zsh -lc '…'`, on Windows `cmd.exe /d /s /c "…"`, `powershell.exe -Command "…"` or a
@@ -3361,8 +3451,14 @@ nothing. `path` is `/chat/<threadId>`. The web toaster and the desktop skip a ro
 
 ## Workflow builder and run view
 
-`apps/web/src/workflows`. The list's header is a tablist "Workflows view" with Workflows and
-Triggers. `/workflows/triggers` is the Triggers tab (`triggers-tab.tsx`, review loop spec 48):
+`apps/web/src/workflows`. The list's header is a tablist "Workflows view" with Workflows, Runs
+and Triggers (`listTabOf` in `workflows-view.tsx` reads the tab from the path). `/workflows/runs`
+and every `/workflows/runs/$runId` are the Runs tab (agent workbench spec 79): the runs only, in
+`runsTabOrder` (waiting for the user first, then running, then the rest, newest first in each),
+so a waiting run is found however many workflows there are; the tab counts the waiting runs and
+`/workflows/runs` alone shows "Pick a run" (`RunsHome`). Palette: "Go to runs"
+(`workflows.runs`). `/workflows/triggers` is the Triggers tab (`triggers-tab.tsx`, review loop
+spec 48):
 the event triggers of every project, grouped by project, each with its switch, the workflow it
 starts, a link to the last run it started and Delete (at once, with Undo, which makes the
 trigger again); "New trigger" is a dialog that asks for project, event and workflow, and a
@@ -3372,7 +3468,7 @@ palette commands (`workflows.triggers`, `trigger.new`, `trigger.toggle.<id>`,
 `trigger.delete.<id>`) act on the same thing; the rows come from the `triggers` topic alone. A
 run that an event started says so under its title (`run-event`).
 
-`/workflows` lists the workflows and their runs (live runs first) next
+`/workflows` lists the workflows next
 to `/workflows/new` (`?template=<kind>` starts from that entry of `workflows.templates`),
 `/workflows/$workflowId` (the builder for a saved workflow, Run now in a chosen project next to
 Save, and its runs) or `/workflows/runs/$runId`. The builder edits a local draft: name, template
@@ -3435,7 +3531,8 @@ tip, "No working copy was made" (the reason is on the failed step), "Working cop
 "Working copy kept: 2 files not committed, 1 commit not pushed (on agent/u2-bell)" with the
 newest unpushed commit's subject and the reason when it could not be removed. Kept copies are
 listed in three places: that line, "· working copy kept" on the run's row in the runs list, and
-a palette command "Remove working copy: <workflow>" for every kept copy. The command and the
+a palette command "Remove working copy: <workflow>" for every kept copy (the runs list is the
+Runs tab). The command and the
 line's button open the same question (`workingCopyStore`, a `ConfirmDialog` in the run view,
 which the command navigates to); Remove calls `workflowRuns.removeWorkingCopy` and a refusal
 stays on the line. A live run's copy has no button. Artifact links, the Changes tab's "Open
@@ -3526,11 +3623,21 @@ with its own link, above them "Last fetched <time> from <host>", the host's erro
 read failed, "Refresh now" (`hosts.refresh {runId}`) and "Open on host". Without a pull request
 it says why: not asked yet, the folder is on no branch, or no pull request has that branch as its
 head. See "Hosts". While the run on
-screen waits at a gate, a wide window shows the context panel with the step's conversation and
-the gate bar without changing `appearance.contextPanel` (the layout store's `contextPanelPeek`,
-see "Context panel"); it stays for that run until the user closes it or leaves the view. The run
-view's own gate bar shows only while the panel does not show the conversation (closed, or showing
-a file), so there is one gate bar on screen. Send back opens a note field in the gate bar. The
+screen waits at a gate, a wide window shows the context panel with the step's conversation
+without changing `appearance.contextPanel` (the layout store's `contextPanelPeek`, see "Context
+panel"); it stays for that run until the user closes it or leaves the view. The run view keeps
+its own gate bar at its top whatever the panel shows (`run-gate`, agent workbench spec 77), so the
+answers never move; the panel's conversation shows a copy (`GateBar` without `inRunView`) only
+while its conversation tab is selected. While the run view is on screen the note field opens in
+the run view's bar alone (the copy's Send back opens it there), so there is one note. Below
+`breakpoints.narrow`, where the panel lies over the view (spec 78), the run view's bar ends where
+the panel begins (a right margin of the panel's width, the drag preview in the layout store's
+`contextPanelPreview` while its edge moves, else `appearance.contextPanelWidth`) and puts its
+buttons under its text (`stacked`, wrapping). The bar keeps `gateRoom` (16rem, its widest button
+and padding): over a run view the panel is capped so it leaves the sidebar rail, the workflows
+list and that room (`overlayRoom`, `panel/model.ts`), so the panel never covers Approve, Send
+back and Stop, whatever width is stored. Send back opens a
+note field in the gate bar. The
 note being written is view state in `gateStore` (`{runId, gate, note, busy, error}`), so the
 button, the palette and the key act on the same field; nothing about the run is kept there.
 `gate` names the wait it was written at (where the run waits, its path length, and the attempt
@@ -3554,15 +3661,34 @@ list is on the left (status letter, path, `+added −removed`, or "Binary file" 
 show" with the size), the chosen file's unified diff on the right with line numbers of both
 sides (`parsePatch`), not highlighted and not side by side. The step under review
 (`stepUnderReview`) is the one the gate asks about, else the last step that stored its hashes;
-its files carry a "This step" badge and "This step only" narrows the list to them. The switch is
+its files carry a small mark whose tooltip says "This step changed it" (`ThisStepMark`, agent
+workbench spec 94) and "This step only" narrows the list to them. The edge between the list and
+the diff is a `separator` (`SplitHandle`): dragging previews the width and writes
+`appearance.changesListWidth` once on release (bounds `changesListWidthBounds` in
+`@wow/contracts`); the arrow keys (Shift for four steps), Home and End write it at once. The
+switch is
 off for a run whose steps stored no hashes. "Open file" shows the file in the context panel's
 viewer through `openFile`; a deleted file has none. A status other than `ok` shows its reason in
 place of the list ("Not a Git repository", "Git was not found", "No base recorded", ...) and the
 Steps tab and gate bar work as before. `changesStore` holds the files the tab last read so the
 palette can offer them. Palette commands: Run: show changes / Run: show steps
 (`keybindings.runChanges`), Changes: this step only / every step (`keybindings.changesStepOnly`),
-Refresh changes, Changed file: <path> for each listed file, and Open changed file: <path> for
-the chosen one.
+Refresh changes, Changed file: <path> for each listed file, and Open changed file: <path> and
+Open in editor: <path> for the chosen one.
+
+**Line comments** (agent workbench spec 80). `DiffLines` takes `actions` (`DiffLineActions`:
+`comment(line, text)`, `openAt(line)`); with them each line of a diff is a focusable row
+(ArrowUp/ArrowDown move between lines). `keybindings.diffComment` (C) on a line, a click on its
+gutter mark or on its line numbers opens a comment field under the line; Enter adds the comment,
+Escape puts the field away, and the focus goes back to the line. The line is the folder's line
+number, the base's for a removed line. In a run's Changes, while the run waits at a gate where
+it can send back, a comment goes into the send-back note as `src/bell.ts:12 – text`, one per
+line (`addSendBackComment`, `lineComment` in `gate.ts`), opening the note when it is closed;
+the Send back key (Ctrl+Shift+Enter) sends it. In a chat thread's Changes the same line goes
+into the thread's composer after what is typed (`commentInComposer`, the composer's `addText`
+in `composer-store.ts`), without taking the focus. The focused line's actions are row actions
+(`lib/row-actions.ts`), so the palette offers "Comment on line N" and "Open line N in editor".
+The Keybindings page lists the key "On a diff line" (`keyScope` 'Diff').
 
 After a loop (workflow branches spec 19) a step keeps the hashes of its latest attempt only, so
 the server compares steps in the order they last ended (`run.path`), not in list order, and
@@ -3652,7 +3778,12 @@ card's `body`). A new card starts with the project of the card changed last (`la
 and the zone is named only when it is not the system's. "Delete card" deletes at once and offers
 Undo (`offerUndo`, owner decision F-9), which creates the card again with the same id and fields;
 a card whose run is live first asks "Stop run and delete" or "Keep run and delete". The dialog
-gives focus back to whatever had it when it opened.
+gives focus back to whatever had it when it opened. Its fields scroll inside the dialog and the
+footer (Delete on the left, Cancel and Create card or Save card on the right) sits outside them,
+so it stays in view in a 900 px window with a workflow and a repeat (agent workbench spec 83).
+`keybindings.calendarSaveCard` (Mod+Enter) saves from any field; the form takes the key before
+the app's own bindings (Approve shares it) can. From 1200 px the dialog is wider and "Run a
+workflow" and Repeat sit side by side.
 
 Repeating cards (recurring cards spec 11 to 17, `occurrences.ts`). The view reads
 `calendar.occurrences` for the days it shows (`viewRange`: local midnight of the first day to
@@ -3863,8 +3994,8 @@ the focus is in the panel, matched in the panel's own key handler: `keybindings.
 `backTab`, the tab shown before); the Keybindings page lists them "In the side panel". Closing
 the selected tab shows the one shown before it. Palette commands while tabs are open: "Close panel
 tab", "Next panel tab", "Previous panel tab", "Back to the panel tab shown before" (no key of
-their own, so their keys stay the panel's). The run view's gate bar shows while the panel shows
-the conversation tab.
+their own, so their keys stay the panel's). The run view's gate bar stays at the top of the run
+view whatever tab the panel shows; the panel's copy is part of its conversation tab.
 
 State (`panel-state.ts`). `appearance.contextPanel` stores whether it is open and
 `appearance.contextPanelWidth` its width (pixels, bounds `contextPanelWidthBounds` in
@@ -3909,6 +4040,37 @@ thread is open (its folder) or a run view (the run's folder). It sets the layout
 the file's own name first, fewer breaks first, shorter paths first) and shows at most
 `viewer.fileMatchesShown`, with a line when the list is cut or the folder had more files than
 `viewer.fileListLimit`.
+
+**Open in editor** (agent workbench spec 81, Interface). The server runs the editor, since it
+owns subprocesses; this also works in the browser build. RPC `files.openInEditor` takes a
+`FileScope`, a path and an optional line (`FileOpenInEditorParams`) and answers the full path it
+opened. `apps/server/src/files/editor.ts`: `findEditorPath` applies the `files.read` rules (inside
+a folder as written and after `realpath`; a folder is allowed, so `/open` opens the thread's
+folder), `planEditor` splits `viewer.editorCommand` into words (`commandWords`: spaces split,
+quotes keep a word together, a backslash is ordinary), fills `{path}` and `{line}` in one pass, so a `$` or `{line}` in a file's name stays as it is
+(the path goes last when the command names no `{path}`) and starts it as a program with arguments, no shell. On
+Windows a bare program name is looked up through PATHEXT (`findOnPath`), and a `.cmd` or `.bat`
+such as `code` runs through cmd.exe with its words quoted (`quoteForCmd`), since Node starts
+those only through a shell. cmd.exe expands `%NAME%` even inside quotes and `cmd /c` has no
+sure escape for it, so a path with a `%` is answered `rejected` whenever cmd.exe would read the
+line (`EditorRefused`). With `viewer.editorShell` on, the command goes to the shell as one
+line with only the path quoted, so it can use shell syntax. A line with `{path}` inside quotes,
+or right after or before a quote or the shell's escape character (`\` for sh, `^` for cmd.exe),
+is refused (`pathQuoted`): the user's quotes would cancel wow's and leave a name's `$(…)` or `&`
+to the shell. `startEditor` starts it detached,
+without a window, and lets it go once it has started; a program that does not start is answered
+`rejected` with the reason, which the app shows as a toast. Through a shell (the setting, or a
+`.cmd`) "started" means the shell started: a program the shell then does not find fails unseen.
+The assistant changes `viewer.editorCommand` and `viewer.editorShell` only as a proposal. The app (`panel/editor.tsx`:
+`openInEditor`, `useOpenInEditor`, `OpenInEditorButton`, `isBinding`) offers it with
+`keybindings.openInEditor` (Shift+Enter) on the element that has the focus, matched in that
+element's own key handler, so Shift+Enter stays a line break in text fields: a changed file and a
+diff line in a run's or thread's Changes (at the line, or at the file's first changed line), an
+artifact, a chat file link, Open on a read row, a sent file chip (`FileLinks.openInEditor`,
+`editorKeyOf`) and the file viewer; the viewer, the Changes header and artifacts also have an
+"Open in editor" button. Palette: "Open file in editor" (`viewer.openInEditor`) for the file in
+the panel, "Open in editor: <path>" for the run's chosen changed file, and "Open the thread's
+folder in your editor" (`chat.openInEditor`, which `/open` runs).
 
 `@` in the composer (`fileSource`, the thread's scope): typed at the start of a word
 (`chat.fileTrigger`, default `@`, by the same `typedTrigger` and `skillQuery` as the skill list;
@@ -3957,8 +4119,8 @@ its path) and the project's Jira key. `recogniseHostLink(url, rules)` reads
 three Confluence page forms; anything else, an address with a user name or password, and any
 other scheme stay plain links. `bareHostRefs(text, rules)` finds `KEY-n` for the project's Jira
 key and `#n` (and `!n` on GitLab) for its repository, never inside a word, path or address, and
-never a `#n` that reads as a colour (six digits, three of one digit, or three digits after `:` or
-before `;`).
+never a `#n` that reads as a colour (six digits, three of one digit, or three digits after a
+colour property such as `color:` or `background:`; `Fixes: #123` stays an issue).
 `recogniseHostRef` takes one address or one key (the palette and `hosts.lookup`). A thread
 without a project has no repository or key, so its bare references stay text; its links still
 resolve against Settings → Trackers. `HostItemRef` names one item (host, kind, site, path, id,
@@ -4143,6 +4305,13 @@ pickers, whose popups ignore the theme: they compose `ChoiceSelect` (shadcn Sele
 list, stepped by `calendar.snapMinutes`) from `apps/web/src/components`. A Vitest guard
 (`src/test/native-controls.test.ts`) fails on `<select>`, `<option>`, `<datalist>`, `list=` and
 date or time inputs outside `components/ui`.
+
+Text in the "needs you" colour, such as "Waiting for you", uses `--state-needs-you-text`
+(`text-state-needs-you-text`), a darker amber in the light theme that keeps at least 4.5:1 on the
+page, cards, muted surfaces and popovers; dots, fills and borders keep the bright
+`--state-needs-you` (agent workbench spec 85). `src/styles/tokens.test.ts` measures both themes
+from the token values (OKLCH to sRGB luminance) and fails on any `text-state-needs-you` left in
+a view.
 
 Shared pieces in `apps/web/src/components` (views compose them; none restyles `components/ui`):
 

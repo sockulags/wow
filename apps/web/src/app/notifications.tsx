@@ -44,7 +44,7 @@ const icons = {
 } as const;
 const iconClass = {
   started: 'text-state-working',
-  waiting: 'text-state-needs-you',
+  waiting: 'text-state-needs-you-text',
   failed: 'text-state-failed',
   skipped: 'text-muted-foreground',
   finished: 'text-state-done',

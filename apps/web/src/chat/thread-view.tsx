@@ -30,6 +30,7 @@ import {
 } from 'react';
 import { useStore } from 'zustand';
 import { useRuntime, useSetting } from '@/app/runtime';
+import { normalizeBinding } from '@/app/keybindings';
 import { FileLinkContext, type FileLinks } from '@/components/file-links';
 import { IconButton, WithTooltip } from '@/components/hint';
 import { EmptyState } from '@/components/states';
@@ -38,6 +39,7 @@ import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
 import { rowActionScope } from '@/lib/row-actions';
 import { cn } from '@/lib/utils';
+import { openInEditor } from '@/panel/editor';
 import { routerPanelRoute } from '@/panel/model';
 import { fullPathOf, openFile, openHostItem } from '@/panel/viewer';
 import { GateBar } from '@/workflows/gate-bar';
@@ -316,6 +318,9 @@ export interface ConversationExtras {
   // Its own composer bar (the assistant's settings), or null for none; left out, the thread's
   // own bar, so extras for another reason never drop it.
   readonly modelBar?: Omit<ModelBarProps, 'ref' | 'returnFocus'> | null;
+  // How a tool call reads: undefined as the tool's own row, a text for a row in those words,
+  // null for no row of its own (what `after` draws for it already says it, spec 82).
+  toolWords?(item: ThreadItem): string | null | undefined;
 }
 
 // A thread's conversation, its gate bar and its composer: the chat view's thread and, narrower,
@@ -361,7 +366,8 @@ export function ThreadConversation({
   const bar = useRef<ModelBarHandle>(null);
   const barKeys = useModelBarKeys(bar);
   const barId = useId();
-  const { settings, layout } = useRuntime();
+  const { settings, layout, connection } = useRuntime();
+  const editorBinding = useSetting('keybindings.openInEditor');
   // Read when a file opens: the conversation is also drawn without a router (tests, previews).
   const router: ReturnType<typeof useRouter> | undefined = useRouter({ warn: false });
   // Paths in messages, Open on tool rows and file chips open in a panel tab of the view on screen
@@ -381,8 +387,21 @@ export function ThreadConversation({
                   from: routerPanelRoute(router),
                 },
               ),
+            openInEditor: (path) =>
+              void openInEditor(connection, { scope: { threadId: thread.id }, path }),
+            editorKey: editorBinding === '' ? '' : normalizeBinding(editorBinding),
           },
-    [extras, thread.kind, thread.id, thread.cwd, settings, layout, router],
+    [
+      extras,
+      thread.kind,
+      thread.id,
+      thread.cwd,
+      settings,
+      layout,
+      router,
+      connection,
+      editorBinding,
+    ],
   );
 
   // Links to the user's hosts in messages are chips that open in a panel tab (agent workbench
@@ -487,7 +506,12 @@ export function ThreadConversation({
     const queued = thread.queued;
     if (!queued) return;
     await cancelQueued();
-    composer.current?.putBack(queued.text, queued.skills ?? [], queued.images ?? []);
+    composer.current?.putBack(
+      queued.text,
+      queued.skills ?? [],
+      queued.images ?? [],
+      queued.files ?? [],
+    );
   };
   const approval = pendingApproval(approvals);
   const question = pendingQuestion(questions, items ?? [], running);
@@ -514,8 +538,15 @@ export function ThreadConversation({
       ? (permissionOptions(instance.kind, id).find((option) => option.id === id)?.label ?? id)
       : id;
   const reasoningOpen = reasoningToggle?.open ?? reasoningByDefault;
+  const words = new Map(
+    (items ?? []).flatMap((item) => {
+      const said = item.kind === 'tool_call' ? extras?.toolWords?.(item) : undefined;
+      return said === undefined ? [] : [[item.id, said] as const];
+    }),
+  );
   const itemContext = (turnId: string, itemId: string): ItemContext => {
     const turn = turnById.get(turnId);
+    const said = words.get(itemId);
     return {
       modelLabel,
       modeLabel,
@@ -525,6 +556,7 @@ export function ThreadConversation({
       reasoningKey: reasoningToggle?.count ?? 0,
       children: children.get(itemId),
       childContext: (child) => itemContext(child.turnId, child.id),
+      ...(typeof said === 'string' ? { toolWords: said } : {}),
       cwd: thread.cwd,
       permissionLabel,
       turnEnded: turn !== undefined && turn.state !== 'running',
@@ -565,7 +597,11 @@ export function ThreadConversation({
   const afters = new Map(top.map((item) => [item.id, extras?.after?.(item)]));
   const entries: ConversationEntry[] = groupQuestions(
     groupTools
-      ? groupToolCalls(top, (item) => Boolean(afters.get(item.id)))
+      ? groupToolCalls(
+          top,
+          (item) => Boolean(afters.get(item.id)),
+          (item) => words.get(item.id) === null,
+        )
       : top.map((item) => ({ kind: 'item', item })),
   );
   const backgroundTasks = thread.backgroundTasks ?? [];
@@ -653,7 +689,8 @@ export function ThreadConversation({
                   turn?.state === 'interrupted' && nextTurn !== turn.id ? turn : undefined;
                 return (
                   <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
-                    {entry.kind === 'item' ? (
+                    {entry.kind === 'item' &&
+                    words.get(entry.item.id) === null ? null : entry.kind === 'item' ? (
                       <ConversationItem
                         item={entry.item}
                         approvals={approvals}

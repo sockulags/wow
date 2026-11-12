@@ -123,7 +123,7 @@ test.describe('plans', () => {
       'Keep warm for ten minutes',
     ]);
     await expect(page.getByTestId('plan-file-plan.md')).toContainText('units in issues');
-    await expect(units.getByRole('button')).toHaveCount(0);
+    await expect(units.getByRole('button', { name: /^Contract of/ })).toHaveCount(0);
     await expect(units.getByTestId('unit-depends')).toHaveCount(0);
     await expect(units.getByTestId('unit-blocked')).toHaveText(
       'Blocked: the thermostat is on order',
@@ -180,6 +180,46 @@ test.describe('plans', () => {
 
     await plans(page).getByRole('button', { name: 'Refresh now' }).click();
     await expect(unit(page, 'U2').getByTestId('unit-contract')).toBeVisible();
+  });
+});
+
+// Agent workbench spec 84: the plan's files open rendered in the panel, and a unit starts a
+// thread draft with its contract, unsent.
+test.describe('plan files and unit threads', () => {
+  test("opens a plan file and starts a unit's thread @agent-workbench-84", async ({ page }) => {
+    await openTeaTimer(page);
+    const files = page.getByRole('region', { name: 'Files' });
+    const spec = files.getByRole('button', { name: 'Open spec.md' });
+    await spec.focus();
+    await page.keyboard.press('Enter');
+    const panel = page.getByRole('complementary', { name: 'Context panel' });
+    await expect(panel.getByRole('tab', { name: 'spec.md' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    const viewer = panel.getByRole('region', { name: 'File viewer' });
+    await expect(viewer.getByTestId('viewer-path')).toHaveText(
+      'plan-files/2026-01-tea-timer/spec.md',
+    );
+    await expect(
+      viewer.getByRole('heading', { name: 'A tea timer that rings when the tea is ready' }),
+    ).toBeVisible();
+    await files.getByRole('button', { name: 'Open plan.md' }).click();
+    await expect(panel.getByRole('tab', { name: 'plan.md' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+
+    await unit(page, 'U1').getByRole('button', { name: 'Start a thread for U1' }).click();
+    await expect(page).toHaveURL(/\/chat\/new$/);
+    const composer = page.getByRole('combobox', { name: 'Message' });
+    await expect(composer).toHaveValue(
+      /^Work on unit U1 "Count down from a chosen time" of "A tea timer that rings when the tea is ready" \(plan-files\/2026-01-tea-timer\/plan\.md\)\.\n\nIts contract:\n\nOutcome: the timer counts down from one to twenty minutes/,
+    );
+    await expect(page.getByRole('combobox', { name: 'Project' })).toContainText('Demo');
+    // Unsent: no thread was made.
+    await expect(page).toHaveURL(/\/chat\/new$/);
+    await composer.fill('');
   });
 });
 

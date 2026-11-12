@@ -28,14 +28,21 @@ class QueueAdapter implements ProviderAdapter {
   readonly requiresModel = false;
   readonly sent: ProviderCommand[] = [];
   readonly held: Array<(taken: boolean) => void> = [];
+  readonly #offered: Array<() => void> = [];
   readonly #listeners = new Set<(event: ProviderEvent) => void>();
   constructor(
     readonly kind: ProviderKind,
     readonly takes: boolean | 'later',
   ) {}
 
+  // Resolves when the next handOver arrives.
+  offered(): Promise<void> {
+    return new Promise((resolve) => this.#offered.push(resolve));
+  }
+
   send(command: ProviderCommand): Promise<unknown> {
     this.sent.push(command);
+    if (command.type === 'handOver') this.#offered.splice(0).forEach((resolve) => resolve());
     if (command.type === 'handOver' && this.takes === 'later') {
       return new Promise((resolve) => this.held.push((taken) => resolve({ taken })));
     }
@@ -147,11 +154,17 @@ describe('queued messages', () => {
   it('holds a message written during a Codex turn, joins the next one and sends both when the turn ends (spec 50)', async () => {
     await setup('codex', false);
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Then sum it up' });
+    const again = adapter.offered();
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'In three lines' });
     expect(thread()?.['queued']).toMatchObject({ text: 'Then sum it up\n\nIn three lines' });
-    // Codex was offered the first and took it not; the join came while it decided, so it waits
-    // with the rest. Nothing else went to it.
-    expect(adapter.sent.map((command) => command.type)).toEqual(['startTurn', 'handOver']);
+    // Codex was offered the first and took it not; the join came while it decided, so it was
+    // offered once more, as a whole, and waits. Nothing else went to it.
+    await again;
+    expect(adapter.sent.map((command) => command.type)).toEqual([
+      'startTurn',
+      'handOver',
+      'handOver',
+    ]);
 
     const sent = committed('turn.started');
     adapter.emit({ type: 'turnCompleted', threadId: 't1' });
@@ -300,6 +313,40 @@ describe('queued messages', () => {
       images: [{ id: image, mediaType: 'image/png' }],
     });
     expect(handedOver()).toEqual(['@src/timer.ts what rings?']);
+  });
+
+  it('offers a join made during an offer once more when the first was not taken', async () => {
+    await setup('claude', 'later');
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Also check the license' });
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'And the changelog' });
+    expect(handedOver()).toEqual(['Also check the license']);
+    const again = adapter.offered();
+    adapter.held[0]?.(false);
+    await again;
+    expect(handedOver()).toEqual([
+      'Also check the license',
+      'Also check the license\n\nAnd the changelog',
+    ]);
+
+    const shown = committed('threadItem.added');
+    adapter.held[1]?.(true);
+    await shown;
+    expect(thread()?.['queued']).toBeNull();
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      turnId: 't1:turn:0',
+      payload: { text: 'Also check the license\n\nAnd the changelog', queued: 'duringTurn' },
+    });
+  });
+
+  it('offers to the next turn although the last offer was never answered', async () => {
+    await setup('claude', 'later');
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Never answered' });
+    const sent = committed('turn.started');
+    adapter.emit({ type: 'turnCompleted', threadId: 't1' });
+    await sent;
+    expect(prompts()).toEqual(['Read the readme', 'Never answered']);
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'During the second turn' });
+    expect(handedOver()).toEqual(['Never answered', 'During the second turn']);
   });
 
   it('shows a message the provider took after it was cancelled', async () => {

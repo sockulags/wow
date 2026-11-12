@@ -1,4 +1,5 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, type KeyboardEvent, type ReactNode } from 'react';
+import { eventToBinding } from '@/app/keybindings';
 
 // File paths in chat messages (agent workbench spec 15): inline code or a link target that reads
 // as a path becomes a link that opens the file in a panel tab. The conversation of a chat or step
@@ -8,6 +9,20 @@ import { createContext, useContext, type ReactNode } from 'react';
 
 export interface FileLinks {
   open(path: string): void;
+  // "Open in editor" (spec 81) on a link, with Shift+Enter or the keybinding the setting names.
+  openInEditor?(path: string): void;
+  // The keybinding for openInEditor, normalized; empty when there is none.
+  readonly editorKey?: string;
+}
+
+// Whether a key on a file link asks for the editor; the link's owner opens it.
+export function editorKeyOf(links: FileLinks, event: KeyboardEvent, path: string): boolean {
+  if (!links.openInEditor || !links.editorKey || event.defaultPrevented) return false;
+  if (eventToBinding(event.nativeEvent) !== links.editorKey) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  links.openInEditor(path);
+  return true;
 }
 
 export const FileLinkContext = createContext<FileLinks | undefined>(undefined);
@@ -16,6 +31,8 @@ export const useFileLinks = (): FileLinks | undefined => useContext(FileLinkCont
 
 const pathCharacters = /^(?:[A-Za-z]:[\\/])?[\p{L}\p{N}\p{M}_.@~+\-/\\()[\]$]+$/u;
 const extension = /\.[A-Za-z][A-Za-z0-9]{0,9}$/;
+const hostName =
+  /\.(?:com|net|org|io|dev|app|cloud|co|info|biz|internal|local|lan|localhost|test|example|invalid)$/i;
 
 // The narrow rule (spec 15, Open risks): no spaces, no colon but a drive's (so no address
 // scheme), and a file extension or a slash. `src/timer.ts`, `README.md`, `docs/` and
@@ -25,8 +42,13 @@ const extension = /\.[A-Za-z][A-Za-z0-9]{0,9}$/;
 export function filePathOf(text: string): string | undefined {
   const value = text.trim();
   if (value === '' || value !== text || value.length > 400) return undefined;
-  const bare = value.replace(/#[^#/\\]*$/, '').replace(/:\d+(?::\d+)?$/, '');
+  const named = value.replace(/#[^#/\\]*$/, '');
+  const bare = named.replace(/:\d+(?::\d+)?$/, '');
   if (bare.startsWith('-') || !pathCharacters.test(bare)) return undefined;
+  // `example.com:8080` and `user@host.com:22` are a host and a port, not a line.
+  if (bare !== named && !/[\\/]/.test(bare) && (bare.includes('@') || hostName.test(bare))) {
+    return undefined;
+  }
   if (/^[./\\]+$/.test(bare)) return undefined;
   const last =
     bare
@@ -37,6 +59,9 @@ export function filePathOf(text: string): string | undefined {
 }
 
 export const isFilePath = (text: string): boolean => filePathOf(text) !== undefined;
+
+// `example.com` or `notes.app`: a word that ends like a host name rather than a file.
+export const readsAsHost = (text: string): boolean => hostName.test(text);
 
 export function FileLink({
   path,
@@ -54,6 +79,7 @@ export function FileLink({
       title={`Open ${path} in the side panel`}
       className="cursor-pointer rounded-sm text-left underline decoration-dotted underline-offset-2 outline-none hover:decoration-solid focus-visible:ring-2 focus-visible:ring-ring"
       onClick={() => links.open(path)}
+      onKeyDown={(event) => editorKeyOf(links, event, path)}
     >
       {children}
     </button>

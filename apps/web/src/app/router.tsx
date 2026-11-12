@@ -28,7 +28,7 @@ import { EditWorkflowView, NewWorkflowView } from '@/workflows/builder';
 import { validateRunSearch } from '@/workflows/changes';
 import { RunView } from '@/workflows/run-view';
 import { TriggersTab } from '@/workflows/triggers-tab';
-import { WorkflowsHome, WorkflowsLayout } from '@/workflows/workflows-view';
+import { RunsHome, WorkflowsHome, WorkflowsLayout } from '@/workflows/workflows-view';
 import { isSettingGroup, settingsByGroup } from './sections';
 import { Shell } from './shell';
 
@@ -116,6 +116,12 @@ const triggersRoute = createRoute({
   getParentRoute: () => workflowsRoute,
   path: '/triggers',
   component: TriggersTab,
+});
+
+const runsRoute = createRoute({
+  getParentRoute: () => workflowsRoute,
+  path: '/runs',
+  component: RunsHome,
 });
 
 const workflowRunRoute = createRoute({
@@ -231,6 +237,7 @@ const routeTree = rootRoute.addChildren([
     workflowsIndexRoute,
     triggersRoute,
     newWorkflowRoute,
+    runsRoute,
     workflowRunRoute,
     workflowRoute,
   ]),

@@ -100,6 +100,8 @@ Default keys (all changeable in Settings → Keybindings):
 | Ctrl+Shift+D     | Run: Steps or Changes tab                |
 | Ctrl+Shift+Y     | Run: Steps or Path tab                   |
 | O                | Changes tab: this step only, and back    |
+| C                | Diff line: comment on it                 |
+| Shift+Enter      | Focused file or line: open in editor     |
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
@@ -309,6 +311,9 @@ Cards are your own blocks of time. They never leave the app.
   With the context panel open, a click shows the card there and **Edit card** opens the dialog.
 - **Delete**: "Delete card" in the form deletes it at once; **Undo** in the message that follows
   puts it back. A card whose workflow run is still going asks first whether to stop the run.
+- **Save from the keyboard**: **Ctrl+Enter** (`keybindings.calendarSaveCard`) creates or saves the
+  card from any field of the form. Delete, Cancel and Create card stay at the bottom of the form
+  while its fields scroll, also in a small window.
 
 A card with a workflow and a project is a **trigger**: at the card's start time the workflow's
 first step starts (see "Triggers" below). Moving the card moves the trigger with it. Triggers carry
@@ -383,7 +388,8 @@ can type in to filter. While the composer has the cursor:
   back. Bypass permissions and Full access are never in that cycle; pick them from the list.
 - **Escape** (`keybindings.composerLeave`) takes the cursor out of the composer to what comes
   before it, which is what Shift+Tab does everywhere else. In a context panel laid over the view
-  (a narrow window) Escape closes the panel instead.
+  (a narrow window) Escape closes the panel instead; a different key set for leaving the composer
+  still leaves it there.
 
 The mode is coloured by what it allows: Plan only blue, Accept edits (and Codex's Auto) green,
 Bypass permissions and Full access red with a warning sign. A pick applies to the next turn and
@@ -427,7 +433,7 @@ Every tool call is one line, drawn by what the call does:
   src/timer.ts +4 −1"; opened, it shows the change in colour, removed lines red and added lines
   green, with **Open file**, which opens the file in a tab of the side panel (not offered for a
   file outside the thread's folder, and not while the edit is still running or its request waits
-  for your answer, since the file has not changed yet). A new file shows as
+  for your answer, nor when it was denied or failed, since the file has not changed). A new file shows as
   added lines. Before Claude Code writes a whole file (its Write), the request and the row show
   only the new content, as added lines, with "The new content only; the file's current content
   is not shown": it may replace a file that exists. Once written, the row shows the real change. A very long diff is cut at `chat.editDiffMaxLines` lines; the thread's Changes
@@ -461,10 +467,11 @@ list sent again adds nothing. The thread's Details in the context panel has a Ta
 the latest list. Tasks a finished turn left open read "not finished".
 
 **Copying**: an assistant message has **Copy** (its markdown) and **Copy text** (what it reads on
-screen) under it on hover or when you tab to it; a code block has **Copy code** in its corner;
-tool output has **Copy output**. The palette has the same commands for the message or row the
-keyboard was last on: "Copy message", "Copy message text", "Copy code", "Copy output" and "Show
-all N lines". When nothing could be copied (the browser has no clipboard or refused it), a notice
+screen) under it on hover or when you tab to it; a code block has **Copy code** in its corner,
+and one labelled with a path (such as ` ```ts src/timer.ts `) shows the path above it with
+**Open file**, which opens the file in a side panel tab; tool output has **Copy output**. The
+palette has the same commands for the message or row the keyboard was last on: "Copy message",
+"Copy message text", "Copy code", "Copy output", "Open file <path>" and "Show all N lines". When nothing could be copied (the browser has no clipboard or refused it), a notice
 "Nothing was copied" says so.
 
 **Changes**: a chat thread in a Git folder shows a chip in its header, such as "+42 −7 in 5
@@ -588,7 +595,9 @@ set it to `$` if you prefer the old key. In a thread, the list starts with "Comm
 `/effort`, `/plan`, `/compact`, `/clear`, `/done`, `/stop` and the others that apply to the
 thread, each running the palette command of that name. `/clear` starts a new thread with the same
 provider, model, effort, mode and folder. Below them come Claude Code's own commands; picking one
-puts `/name` in the message, sent as typed. Codex reports none. A slash anywhere else (a path such as `src/app`, a date
+puts `/name` in the message, sent as typed. A folder's list is kept for 30 seconds (Settings →
+Providers, "Command list kept for"), so a command added meanwhile shows after that. Codex reports
+none. A slash anywhere else (a path such as `src/app`, a date
 such as `2026/11/12`) or in pasted text opens nothing.
 
 A picked skill becomes a chip in front of the text: its name with the mark of its group. Backspace
@@ -831,14 +840,29 @@ the step ends with the first turn.
 
 ### Reviewing at a gate
 
-When a run waits at a gate, its run view shows the review tabs and the side panel shows the step's
-conversation with the gate bar (**Approve**, **Send back**, **Stop**). Each tab is also in the
-palette ("Run: show changes" and so on) and in the address, so a reload shows the same tab.
+When a run waits at a gate, its run view shows the gate bar (**Approve**, **Send back**, **Stop**)
+at its top, whatever the side panel shows, and the review tabs under it; the side panel shows the
+step's conversation with a copy of the gate bar. The note of **Send back** is written in the run
+view's bar. In a window narrower than 1200 px the side panel lies over the view when you open it;
+the gate bar then ends where the panel begins and puts its buttons under its text, so they stay
+in reach. Each tab is also in the palette ("Run: show changes" and so on) and in the address, so
+a reload shows the same tab. Workflows → **Runs** lists every run, the ones waiting for you
+first, then the running ones ("Go to runs" in the palette).
 
 - **Changes** (**Ctrl+Shift+D**, `keybindings.runChanges`; the same key goes back to Steps) lists
   every file added, changed, renamed or deleted since the run started, committed or not, including
   new files Git does not ignore, each with its added and removed lines. Pick a file for its diff
-  on the right. A file the step under review changed is marked; **This step only** (**O**,
+  on the right; drag the edge between the list and the diff (or focus it and use the arrow keys)
+  to make the list wider (`appearance.changesListWidth`). Focus a line of the diff and press **C**
+  (`keybindings.diffComment`), or click beside its line number, to write a comment on it; Enter
+  adds `src/bell.ts:12 – your words` to the send-back note, and **Ctrl+Shift+Enter** sends the note
+  back. In a chat thread's Changes the same comment goes into the thread's composer as a reply.
+  **Shift+Enter** (`keybindings.openInEditor`) on a changed file, a diff line, an artifact, a file
+  link in chat or in the file viewer opens the file in your editor at its line; the command is the
+  `viewer.editorCommand` setting (by default `code --goto {path}:{line}`, run by the wow server,
+  not through a shell unless `viewer.editorShell` is on; in a shell line write `{path}` without
+  quotes, since wow quotes it). A file the step under review changed
+  carries a small mark ("This step changed it" on hover); **This step only** (**O**,
   `keybindings.changesStepOnly`) narrows the list to those. When the first step starts, wow
   records the commit the folder was on (the run's base); everything is compared with it. A binary
   file, or one larger than `diff.maxFileBytes`, shows its status and size without lines; past
@@ -1059,6 +1083,11 @@ to see its units on the right: key, title, dependencies, the `blocked:` note and
 line, and the other intents still show. The palette finds every intent by its title and each unit
 of the open plan as "Unit <key>: <title>".
 
+Press Enter on `intent.md`, `spec.md` or `plan.md` (or click it) to read it, rendered, in the side
+panel. **Start a thread for this unit** on a unit opens a new chat thread in the project with the
+unit's contract as its first message; nothing is sent until you send it. The palette has "Plan:
+open spec.md" and the like, and "Start a thread for <key>: <title>".
+
 ### Unit status
 
 Turn **Follow** on for a plan ("Plan: follow" in the palette) and wow reads its pull requests from the project's host (see
@@ -1276,6 +1305,17 @@ starting a run ("Start <workflow> in <project>"). A card with a workflow that st
 `assistant.startSoonMinutes` (15) from now is a proposal too. A value longer than `assistant.valueLength` (160) characters is cut
 short on its line; "show all of it" under the line opens the whole of it. The palette has Yes and No for every
 waiting proposal and Undo for every change.
+
+Rows say values as the settings page does ("Work hours: From Outlook → 08:00–16:00, Mon–Fri") and
+name models by their label. A tool call that a row or card already shows has no row of its own;
+any other reads in words, such as "Read your workflows". While a proposal waits, a line above the
+composer names it ("1 proposal waits: …") with **Yes**, **No** and **Show**, which brings the card
+into view.
+
+Ask it to always allow a command or a tool in a project ("always allow `pnpm test` in Tea") and it
+proposes the rule; the rule is stored, under Settings → Approvals, only when you press Yes. It
+never stores one itself, and it cannot propose a rule for a command that runs other commands,
+such as `bash` or `npx`, nor a rule outside a project, whichever way it asks.
 
 It never answers a gate: approving, sending back or stopping a run is yours, and wow refuses those
 commands from the assistant. It can read the list of skills and the text of a wow skill, and can

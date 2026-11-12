@@ -88,7 +88,8 @@ test.describe('workflows', () => {
     await expect(page).toHaveURL(/\/workflows\/runs\/[0-9a-f-]{36}$/);
 
     const runSteps = page.getByRole('list', { name: 'Run steps' }).getByTestId('run-step');
-    const gate = page.getByRole('region', { name: 'Gate' });
+    // The run view's own bar; the panel's conversation shows a copy (agent workbench spec 77).
+    const gate = page.getByTestId('run-gate').getByRole('region', { name: 'Gate' });
     await expect(gate).toContainText('capture-intent finished. Approve starts plan-work.');
     await expect(page.getByTestId('run-state')).toHaveText('Waiting for you');
     // The finished step is done; the marker after it says the run waits (audit D-03).
@@ -141,7 +142,12 @@ test.describe('workflows', () => {
     await expect(gate).toBeHidden();
     await expect(runSteps.nth(1).getByRole('link', { name: 'Open thread' })).toBeVisible();
 
-    // Delete happens at once and Undo brings the workflow back (owner decision F-9).
+    // Delete happens at once and Undo brings the workflow back (owner decision F-9). A run's
+    // view keeps the list on its Runs tab; the workflows are on the Workflows tab.
+    await page
+      .getByRole('tablist', { name: 'Workflows view' })
+      .getByRole('tab', { name: 'Workflows' })
+      .click();
     await page
       .getByRole('region', { name: 'Workflow definitions' })
       .getByRole('link', { name: /Feature e2e/ })

@@ -34,6 +34,9 @@ async function startRun(runId: string): Promise<void> {
 
 const panel = (page: Page) => page.getByRole('complementary', { name: 'Context panel' });
 const gate = (page: Page) => panel(page).getByRole('region', { name: 'Gate' });
+// The run view keeps its own bar at its top (agent workbench spec 77); the send-back note is
+// written there while the run view is on screen.
+const runGate = (page: Page) => page.getByTestId('run-gate').getByRole('region', { name: 'Gate' });
 const conversation = (page: Page) => panel(page).getByTestId('conversation');
 const steps = (page: Page) => page.getByRole('list', { name: 'Run steps' }).getByTestId('run-step');
 const NOTE = 'Name the kettle in the bell and write it down.';
@@ -59,9 +62,10 @@ test.describe('gate', () => {
     await expect(panel(page).getByTestId('panel-step-thread')).toContainText('Step 1 of 3');
     await expect(conversation(page)).toContainText('The tea timer rings twice now.');
     await expect(gate(page)).toContainText('deliver-work finished. Approve starts check-work.');
-    await expect(page.getByRole('region', { name: 'Gate' })).toHaveCount(1);
+    await expect(page.getByRole('region', { name: 'Gate' })).toHaveCount(2);
     for (const name of ['Approve', 'Send back', 'Stop']) {
       await expect(gate(page).getByRole('button', { name, exact: true })).toBeVisible();
+      await expect(runGate(page).getByRole('button', { name, exact: true })).toBeVisible();
     }
 
     await page.getByRole('tab', { name: 'Changes' }).click();
@@ -70,7 +74,7 @@ test.describe('gate', () => {
     ).toHaveCount(7);
     await page.getByRole('tab', { name: 'Artifacts' }).click();
     const artifacts = page.getByRole('list', { name: 'Artifacts of deliver-work' });
-    await expect(artifacts.getByRole('button', { name: /^Open/ })).toHaveText([
+    await expect(artifacts.getByRole('button', { name: /^Open docs/ })).toHaveText([
       /Open docs\/guide\.md/,
     ]);
     for (const name of ['Pull request', 'Ticket', 'Pages']) {
@@ -82,10 +86,11 @@ test.describe('gate', () => {
 
     // Send back by key: the note field opens in place. An empty note is refused (spec 18).
     await page.keyboard.press('Control+Shift+Enter');
-    const note = gate(page).getByRole('textbox', { name: 'What should change?' });
+    const note = runGate(page).getByRole('textbox', { name: 'What should change?' });
     await expect(note).toBeFocused();
-    await gate(page).getByRole('button', { name: 'Send it back' }).click();
-    await expect(gate(page).getByRole('alert')).toHaveText(
+    await expect(page.getByRole('textbox', { name: 'What should change?' })).toHaveCount(1);
+    await runGate(page).getByRole('button', { name: 'Send it back' }).click();
+    await expect(runGate(page).getByRole('alert')).toHaveText(
       'Write what should change before you send the step back.',
     );
     await expect(page.getByTestId('run-state')).toHaveText('Waiting for you');
@@ -104,7 +109,7 @@ test.describe('gate', () => {
     );
     await expect(gate(page).getByRole('textbox')).toHaveCount(0);
     await page.getByRole('tab', { name: 'Artifacts' }).click();
-    await expect(artifacts.getByRole('button', { name: /^Open/ })).toHaveText([
+    await expect(artifacts.getByRole('button', { name: /^Open docs/ })).toHaveText([
       /Open docs\/guide\.md/,
       /Open docs\/kettle\.md/,
     ]);
@@ -140,6 +145,84 @@ test.describe('gate', () => {
   });
 });
 
+test.describe('a narrow window', () => {
+  test.use({ viewport: { width: 1024, height: 768 } });
+
+  test('keeps the gate bar in view at 1024 px @agent-workbench-77 @agent-workbench-78', async ({
+    page,
+  }) => {
+    await startRun('gate-narrow-run');
+    await page.goto('/workflows/runs/gate-narrow-run?tab=changes');
+    await expect(runGate(page)).toContainText('deliver-work finished');
+    // Below 1200 px the panel does not open by itself; opened, it lies over the view.
+    await expect(panel(page)).toHaveCount(0);
+    await page.keyboard.press('Control+j');
+    await expect(panel(page)).toHaveAttribute('data-overlay', '');
+    await expect(conversation(page)).toContainText('The tea timer rings twice now.');
+    const edge = await panel(page).boundingBox();
+    expect(edge).not.toBeNull();
+    const text = await runGate(page).getByText('deliver-work finished').boundingBox();
+    for (const name of ['Approve', 'Send back', 'Stop']) {
+      const button = runGate(page).getByRole('button', { name, exact: true });
+      await expect(button).toBeVisible();
+      const box = await button.boundingBox();
+      // Left of the panel, and under the gate's text.
+      expect((box?.x ?? Infinity) + (box?.width ?? 0)).toBeLessThanOrEqual(edge?.x ?? 0);
+      expect(box?.y ?? 0).toBeGreaterThan(text?.y ?? Infinity);
+      // Nothing lies over it: a trial click finds the button itself under the pointer.
+      await button.click({ trial: true, timeout: 2000 });
+    }
+    // A file in the panel leaves the run view's bar where it is (spec 77).
+    await runGate(page).getByRole('button', { name: 'Open docs/guide.md' }).click();
+    await expect(panel(page).getByRole('region', { name: 'File viewer' })).toBeVisible();
+    await expect(panel(page).getByRole('region', { name: 'Gate' })).toHaveCount(0);
+    await runGate(page).getByRole('button', { name: 'Approve' }).click({ trial: true });
+    await page.keyboard.press('Control+Enter');
+    await expect(runGate(page)).toContainText('check-work finished');
+  });
+
+  test('keeps the gate bar in view at 1024 px with the widest panel @agent-workbench-78', async ({
+    page,
+  }) => {
+    await startRun('gate-narrow-wide-run');
+    await page.goto('/workflows/runs/gate-narrow-wide-run?tab=changes');
+    await expect(runGate(page)).toContainText('deliver-work finished');
+    await page.keyboard.press('Control+j');
+    await expect(panel(page)).toHaveAttribute('data-overlay', '');
+    const handle = page.getByTestId('context-panel-resize');
+    const start = await handle.boundingBox();
+    expect(start).not.toBeNull();
+    const x = (start?.x ?? 0) + (start?.width ?? 0) / 2;
+    const y = (start?.y ?? 0) + (start?.height ?? 0) / 2;
+    const buttonsClearOfPanel = async (click: boolean) => {
+      const edge = await panel(page).boundingBox();
+      for (const name of ['Approve', 'Send back', 'Stop']) {
+        const button = runGate(page).getByRole('button', { name, exact: true });
+        const box = await button.boundingBox();
+        expect((box?.x ?? Infinity) + (box?.width ?? 0)).toBeLessThanOrEqual(edge?.x ?? 0);
+        if (click) await button.click({ trial: true, timeout: 2000 });
+      }
+    };
+    // From the default 380 px to the largest width, 720 px: while the edge is dragged and once
+    // it is stored, the bar keeps room for its buttons.
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x - 340, y);
+    await expect(handle).toHaveAttribute('aria-valuenow', '720');
+    await buttonsClearOfPanel(false);
+    await page.mouse.up();
+    await buttonsClearOfPanel(true);
+    // Back to the default for the tests after this one.
+    const moved = await handle.boundingBox();
+    const back = (moved?.x ?? 0) + (moved?.width ?? 0) / 2;
+    await page.mouse.move(back, y);
+    await page.mouse.down();
+    await page.mouse.move(back + 340, y);
+    await page.mouse.up();
+    await expect(handle).toHaveAttribute('aria-valuenow', '380');
+  });
+});
+
 test.describe('sketch', () => {
   test.skip(!sketching, 'Set WOW_E2E_SKETCHES to write the screenshots');
   test.use(sketchUse);
@@ -149,8 +232,8 @@ test.describe('sketch', () => {
     await page.goto('/workflows/runs/gate-sketch-run?tab=changes');
     await expect(gate(page)).toContainText('deliver-work finished');
     await gate(page).getByRole('button', { name: 'Send back' }).click();
-    await gate(page).getByRole('textbox', { name: 'What should change?' }).fill(NOTE);
-    await gate(page).getByRole('button', { name: 'Send it back' }).click();
+    await runGate(page).getByRole('textbox', { name: 'What should change?' }).fill(NOTE);
+    await runGate(page).getByRole('button', { name: 'Send it back' }).click();
     await expect(conversation(page)).toContainText('Second attempt');
     await expect(gate(page)).toContainText('deliver-work finished');
     await page
@@ -159,7 +242,7 @@ test.describe('sketch', () => {
       .click();
     await expect(page.getByRole('table', { name: 'Diff of src/bell.ts' })).toContainText('kettle');
     await gate(page).getByRole('button', { name: 'Send back' }).click();
-    await gate(page)
+    await runGate(page)
       .getByRole('textbox', { name: 'What should change?' })
       .fill('Ring once more when the tea has steeped for too long.');
     // The "Waiting for you" toasts would cover the composer in the picture.
@@ -168,5 +251,35 @@ test.describe('sketch', () => {
     }
     await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
     await page.screenshot({ path: sketchPath('2026-11-review-loop', 'gate-review') });
+  });
+
+  test.describe('narrow', () => {
+    test.use({ ...sketchUse, viewport: { width: 1024, height: 768 } });
+
+    test('the run view at a gate with the panel over it', async ({ page }) => {
+      await startRun('gate-sketch-narrow-run');
+      await page.goto('/workflows/runs/gate-sketch-narrow-run?tab=changes');
+      await expect(runGate(page)).toContainText('deliver-work finished');
+      await page
+        .getByRole('navigation', { name: 'Changed files' })
+        .getByRole('button', { name: 'Changed: src/bell.ts' })
+        .click();
+      const diff = page.getByRole('table', { name: 'Diff of src/bell.ts' });
+      await diff.locator('tr[data-kind="add"]').first().focus();
+      await page.keyboard.press('c');
+      await page.keyboard.type('Say which kettle rings.');
+      await page.keyboard.press('Enter');
+      await expect(runGate(page).getByRole('textbox', { name: 'What should change?' })).toHaveValue(
+        /src\/bell\.ts:\d+ – Say which kettle rings\./,
+      );
+      await page.keyboard.press('Control+j');
+      await expect(panel(page)).toHaveAttribute('data-overlay', '');
+      await expect(conversation(page)).toContainText('The tea timer rings twice now.');
+      for (const close of await page.locator('[data-sonner-toast] [data-close-button]').all()) {
+        await close.click();
+      }
+      await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+      await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'run-gate') });
+    });
   });
 });

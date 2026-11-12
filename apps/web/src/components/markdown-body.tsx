@@ -9,8 +9,11 @@ import {
   recogniseHostRef,
   useHostLinks,
 } from '@/chat/host-links';
+import { FileTextIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useRowActions } from '@/lib/row-actions';
 import { CodeBlock } from './code-block';
-import { FileLink, filePathOf, isFilePath, useFileLinks } from './file-links';
+import { FileLink, filePathOf, isFilePath, readsAsHost, useFileLinks } from './file-links';
 import { safeHref } from './markdown';
 import { MermaidDiagram } from './mermaid-diagram';
 
@@ -120,24 +123,99 @@ const components: Components = {
     const path = typeof children === 'string' ? filePathOf(children) : undefined;
     return files && path !== undefined ? <FileLink path={path}>{code}</FileLink> : code;
   },
-  pre: ({ node, children }) => {
+  pre: function Pre({ node, children }) {
+    const files = useFileLinks();
     const code = node?.children[0];
     if (code?.type !== 'element' || code.tagName !== 'code') return <pre>{children}</pre>;
     const classes = code.properties['className'];
-    const language = Array.isArray(classes)
+    const fence = Array.isArray(classes)
       ? (classes.map(String).find((name) => name.startsWith('language-')) ?? '').slice(9)
       : '';
     const text = code.children
       .map((child) => (child.type === 'text' ? child.value : ''))
       .join('')
       .replace(/\n$/, '');
-    return language.toLowerCase() === 'mermaid' ? (
-      <MermaidDiagram source={text} />
-    ) : (
-      <CodeBlock code={text} language={language} className="text-xs" copy />
+    if (fence.toLowerCase() === 'mermaid') return <MermaidDiagram source={text} />;
+    const label = fenceLabel(fence, code.data?.meta ?? '');
+    const block = <CodeBlock code={text} language={label.language} className="text-xs" copy />;
+    if (!files || label.path === undefined) return block;
+    const path = label.path;
+    return (
+      <LabelledCode path={path} onOpen={() => files.open(path)}>
+        {block}
+      </LabelledCode>
     );
   },
 };
+
+// A fence's label (agent workbench spec 32), as models write it: after the language
+// (```ts src/timer.ts, ```js title="build.mjs"), joined to it (```ts:src/timer.ts) or as the
+// language itself (```src/timer.ts). The language left over highlights the code. A bare word
+// needs a slash, or an extension that does not read as a host, and the fence itself a slash, so
+// ```text and/or, ```vb.net and ```example.com stay languages.
+const named = /(?:^|\s)(?:title|file|filename|path)=(?:"([^"]*)"|'([^']*)'|(\S+))/i;
+const hasSlash = (path: string) => /[\\/]/.test(path);
+
+function fenceLabel(fence: string, meta: string): { language: string; path?: string } {
+  const label = named.exec(meta);
+  if (label) {
+    const path = filePathOf(label[1] ?? label[2] ?? label[3] ?? '');
+    if (path !== undefined) return { language: fence, path };
+  }
+  for (const word of meta.trim().split(/\s+/)) {
+    if (/^\w+=/.test(word)) continue;
+    const path = filePathOf(word);
+    if (path === undefined) continue;
+    const last = path.split(/[\\/]/).at(-1) ?? '';
+    if ((hasSlash(path) && last.includes('.')) || (!hasSlash(path) && !readsAsHost(path))) {
+      return { language: fence, path };
+    }
+  }
+  // `C:\work\a.ts` is a drive, not a language joined to a path.
+  const colon = /^[A-Za-z]:[\\/]/.test(fence) ? -1 : fence.indexOf(':');
+  if (colon > 0) {
+    const path = filePathOf(fence.slice(colon + 1));
+    if (path !== undefined) return { language: fence.slice(0, colon), path };
+  }
+  const path = filePathOf(fence);
+  if (path !== undefined && hasSlash(path)) {
+    return { language: path.split('.').at(-1) ?? '', path };
+  }
+  return { language: fence };
+}
+
+function LabelledCode({
+  path,
+  onOpen,
+  children,
+}: {
+  readonly path: string;
+  readonly onOpen: () => void;
+  readonly children: ReactNode;
+}) {
+  const actions = useRowActions([
+    { id: 'openFile', title: `Open file ${path}`, keywords: ['open', 'file', 'code'], run: onOpen },
+  ]);
+  return (
+    <div className="space-y-1" {...actions}>
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 truncate font-mono text-2xs text-muted-foreground">{path}</span>
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          className="ml-auto"
+          aria-label={`Open file ${path}`}
+          onClick={onOpen}
+        >
+          <FileTextIcon aria-hidden />
+          Open file
+        </Button>
+      </div>
+      {children}
+    </div>
+  );
+}
 
 // A link target as written: markdown encodes spaces and other characters in it.
 function safeDecode(href: string): string | undefined {

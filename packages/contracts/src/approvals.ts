@@ -98,7 +98,7 @@ const wrappers: ReadonlySet<string> = new Set([
   'uvx',
 ]);
 
-// Runners named by two words: `pnpm exec bash x.sh` runs bash.
+// Runners named by two words: `pnpm exec bash x.sh` runs bash, `deno eval x` runs x.
 const wrapperPairs: ReadonlySet<string> = new Set([
   'npm exec',
   'npm x',
@@ -109,7 +109,14 @@ const wrapperPairs: ReadonlySet<string> = new Set([
   'bun x',
   'pipx run',
   'uv run',
+  'deno eval',
 ]);
+
+// Package managers, whose sub-command may come after options (`pnpm --silent exec`,
+// `pnpm -C dir exec`). yarn, pnpm and bun also run an installed program named in place of a
+// sub-command (`yarn bash`).
+const managers: ReadonlySet<string> = new Set(['npm', 'pnpm', 'yarn', 'bun', 'pipx', 'uv']);
+const runsProgramByName: ReadonlySet<string> = new Set(['pnpm', 'yarn', 'bun']);
 
 // Interpreters: `node -e …` or `python -c …` run the text they are handed, so one followed by an
 // option gets no rule; one given a script file does.
@@ -117,13 +124,15 @@ const interpreters: ReadonlySet<string> = new Set([
   'node',
   'deno',
   'bun',
-  'python',
-  'python3',
   'py',
   'perl',
   'ruby',
   'php',
+  'tsx',
+  'ts-node',
 ]);
+const isInterpreter = (name: string) =>
+  interpreters.has(name) || /^python\d*(?:\.\d+)*$/.test(name);
 
 // `find … -exec rm {} +` (or `fd … -x rm`) runs a program for every file it finds.
 const finders: ReadonlySet<string> = new Set(['find', 'fd']);
@@ -140,8 +149,39 @@ const findRuns: ReadonlySet<string> = new Set([
 
 const posixShells: ReadonlySet<string> = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 
+// Windows runs `npx.cmd`, `pnpm.cmd` and `bash.exe` as `npx`, `pnpm` and `bash`.
 const programName = (word: string) =>
-  (word.split(/[\\/]/).at(-1) ?? word).toLowerCase().replace(/\.exe$/, '');
+  (word.split(/[\\/]/).at(-1) ?? word).toLowerCase().replace(/\.(?:exe|cmd|bat|com|ps1)$/, '');
+
+// Sub-commands whose further words are package names, not a program to run: `pnpm add -D tsx`
+// installs tsx. Only when the sub-command is the very first word, so no option value hides it.
+const takesPackages: ReadonlySet<string> = new Set([
+  'add',
+  'install',
+  'i',
+  'remove',
+  'rm',
+  'uninstall',
+  'update',
+  'up',
+  'upgrade',
+  'why',
+  'info',
+  'view',
+]);
+
+// The words a package manager may read as its sub-command or as a program to run. Options take
+// values (`--filter web`) and some sub-commands forward to another (`yarn workspace web exec`),
+// so which word is the sub-command is not guessed: every word counts.
+function managerWords(after: readonly string[]): string[] {
+  const lowered = after.map((word) => word.toLowerCase());
+  if (takesPackages.has(lowered[0] ?? '')) return [];
+  // Words after `--` go to the sub-command (`pnpm test -- --grep node`), but only once one was
+  // named before it.
+  const end = lowered.indexOf('--');
+  const named = end > 0 && lowered.slice(0, end).some((word) => !word.startsWith('-'));
+  return (named ? lowered.slice(0, end) : lowered).filter((word) => !word.startsWith('-'));
+}
 
 const runsAnother = (command: string) => {
   const [first, second, ...rest] = words(command);
@@ -152,11 +192,28 @@ const runsAnother = (command: string) => {
   if (wrappers.has(name)) return true;
   if (second === undefined) return false;
   if (wrapperPairs.has(`${name} ${second.toLowerCase()}`)) return true;
-  if (interpreters.has(name) && second.startsWith('-')) return true;
-  return finders.has(name) && [second, ...rest].some((word) => findRuns.has(word));
+  if (managers.has(name)) {
+    for (const word of managerWords([second, ...rest])) {
+      if (wrapperPairs.has(`${name} ${word}`)) return true;
+      if (runsProgramByName.has(name)) {
+        const program = programName(word);
+        if (wrappers.has(program) || isInterpreter(program)) return true;
+      }
+    }
+  }
+  if (isInterpreter(name) && second.startsWith('-')) return true;
+  // `-exec=rm` is `-exec rm` to some finders.
+  return (
+    finders.has(name) && [second, ...rest].some((word) => findRuns.has(word.split('=')[0] ?? word))
+  );
 };
 
 const ruleable = (command: string) => !shellControl.test(command) && !runsAnother(command);
+
+// Whether a command rule with this prefix could ever cover a request: the assistant's proposal
+// of a rule is refused otherwise (spec 41), since `ruleCovers` would never match it.
+export const prefixRuleable = (prefix: string): boolean =>
+  words(prefix).length > 0 && ruleable(prefix);
 
 // The command a shell is asked to run, when the line is only that: `/bin/zsh -lc 'pnpm test'`,
 // `bash -c "pnpm test"`, `powershell.exe -NoProfile -Command "pnpm test"`,

@@ -392,7 +392,7 @@ describe('starting from a setup file (spec 22)', () => {
     const id = apply(other, save(source).text);
     on(other, { type: 'setting.set', key: 'hosts.pollSeconds', scope: 'global', value: 900 });
     expect(() => on(other, { type: 'setup.undo', applicationId: id })).toThrow(
-      /The setup from team\.yaml cannot be undone\. .*it changed again since \(it is now 900\)/,
+      /The setup from team\.yaml cannot be undone\. .*it changed again since \(it is now 900 s\)/,
     );
     // Nothing was taken back.
     expect(stored(other, 'scheduler.tickSeconds')).toBe(45);

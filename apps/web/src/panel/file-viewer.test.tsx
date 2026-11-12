@@ -385,7 +385,7 @@ describe('viewer commands', () => {
     expect(
       viewerCommands({ panelTabs: {}, pathname: route, openRun: undefined, projects: [] }),
     ).toEqual([]);
-    const actions = ['Back to conversation', 'Copy file path'];
+    const actions = ['Back to conversation', 'Open file in editor', 'Copy file path'];
     expect(titles(fileAt('review/notes.md')).slice(2)).toEqual(actions);
     // The size switch is for a file the server read as a picture, not for one named like one.
     expect(titles(fileAt('review/screen.png')).slice(2)).toEqual(actions);

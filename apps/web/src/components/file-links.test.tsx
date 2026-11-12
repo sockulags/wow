@@ -9,6 +9,8 @@ beforeAll(loadMarkdown);
 
 // Agent workbench spec 15: paths in chat messages are file links.
 
+const fence = (label: string) => ['```' + label, 'x', '```', ''];
+
 describe('isFilePath', () => {
   it.each([
     'src/timer.ts',
@@ -32,6 +34,8 @@ describe('isFilePath', () => {
     ['docs/spec.md#rules', 'docs/spec.md'],
     ['C:\\work\\a.ts:3', 'C:\\work\\a.ts'],
     ['README.md', 'README.md'],
+    ['README.md:3', 'README.md'],
+    ['main.rs:12:4', 'main.rs'],
   ])('opens %s as the bare path %s', (text, path) => {
     expect(filePathOf(text)).toBe(path);
   });
@@ -45,6 +49,9 @@ describe('isFilePath', () => {
     '1.5:3',
     '#rules',
     'localhost:3000',
+    'example.com:8080',
+    'api.internal:443',
+    'user@host.com:22',
     '--force',
     'ringTwice',
     'a b.ts',
@@ -96,6 +103,74 @@ describe('file links in markdown @agent-workbench-15', () => {
     expect(screen.getByRole('link', { name: 'the site' }).getAttribute('href')).toBe(
       'https://example.test',
     );
+  });
+
+  it('gives a code block whose label is a path Open file @agent-workbench-32', async () => {
+    const user = userEvent.setup();
+    const open = vi.fn<(path: string) => void>();
+    const blocks = [
+      '```ts src/timer.ts',
+      'export const minutes = 5;',
+      '```',
+      '',
+      '```ts:src/bell.ts',
+      'ring();',
+      '```',
+      '',
+      '```js title="scripts/build.mjs"',
+      'build();',
+      '```',
+      '',
+      '```bash',
+      'pnpm test',
+      '```',
+    ].join('\n');
+    render(
+      <FileLinkContext value={{ open }}>
+        <Markdown text={blocks} />
+      </FileLinkContext>,
+    );
+    const buttons = await screen.findAllByRole('button', { name: /^Open file/ });
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Open file src/timer.ts',
+      'Open file src/bell.ts',
+      'Open file scripts/build.mjs',
+    ]);
+    for (const button of buttons) await user.click(button);
+    expect(open.mock.calls).toEqual([['src/timer.ts'], ['src/bell.ts'], ['scripts/build.mjs']]);
+    expect(screen.getAllByRole('button', { name: 'Copy code' })).toHaveLength(4);
+  });
+
+  it('reads a fence label as a path only when it is one', async () => {
+    const open = vi.fn<(path: string) => void>();
+    const blocks = [
+      ...fence('C:\\work\\a.ts'),
+      ...fence('ts title="my file.ts"'),
+      ...fence('ts title="src/b.ts" lines'),
+      ...fence('vb.net'),
+      ...fence('example.com'),
+      ...fence('text and/or'),
+      ...fence('ts timer.ts'),
+      ...fence('text example.com'),
+    ].join('\n');
+    render(
+      <FileLinkContext value={{ open }}>
+        <Markdown text={blocks} />
+      </FileLinkContext>,
+    );
+    expect(await screen.findAllByRole('button', { name: 'Copy code' })).toHaveLength(8);
+    const buttons = screen.getAllByRole('button', { name: /^Open file/ });
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Open file C:\\work\\a.ts',
+      'Open file src/b.ts',
+      'Open file timer.ts',
+    ]);
+  });
+
+  it('offers no Open file on a labelled code block where no thread opens files', async () => {
+    render(<Markdown text={'```ts src/timer.ts\nexport const minutes = 5;\n```'} />);
+    expect(await screen.findByRole('button', { name: 'Copy code' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Open file/ })).toBeNull();
   });
 
   it('keeps paths as text where no thread opens files (the Assistant view)', async () => {

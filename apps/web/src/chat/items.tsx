@@ -94,6 +94,8 @@ export interface ItemContext {
   // A subagent call's own calls and notes, drawn under it, and their context (spec 44).
   readonly children?: readonly ThreadItem[] | undefined;
   readonly childContext?: ((item: ThreadItem) => ItemContext) | undefined;
+  // A tool call the view names in words instead of by the tool's name.
+  readonly toolWords?: string | undefined;
 }
 
 // One row per thread item. Rows skip layout and paint while off screen, so a long conversation

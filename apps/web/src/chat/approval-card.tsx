@@ -135,12 +135,12 @@ function RequestBody({
   payload,
   details,
   context,
-  pending,
+  decision,
 }: {
   readonly payload: ApprovalItemPayload;
   readonly details: unknown;
   readonly context: ItemContext;
-  readonly pending: boolean;
+  readonly decision: Approval['decision'];
 }) {
   const facts = payload.facts;
   const folderLine = (folder: string) => (
@@ -168,8 +168,9 @@ function RequestBody({
           path={path}
           cut={payload.diffCut}
           withoutFile={facts.diffWithoutFile}
-          // Until the edit is allowed and made, the file has not changed and Changes lacks it.
-          onOpenFile={pending ? undefined : context.openFile}
+          // Until the edit is allowed and made, or when it was denied, the file has not changed
+          // and Changes lacks it.
+          onOpenFile={decision !== null && decision !== 'deny' ? context.openFile : undefined}
         />
         {folderLine(context.cwd)}
       </>
@@ -349,12 +350,12 @@ export function ApprovalCard({
         {payload.byRule ? (
           <ShieldCheckIcon className="size-4 shrink-0 text-state-done" />
         ) : (
-          <ShieldQuestionIcon className="size-4 shrink-0 text-state-needs-you" />
+          <ShieldQuestionIcon className="size-4 shrink-0 text-state-needs-you-text" />
         )}
         <Badge variant="outline">{kindLabels[payload.kind]}</Badge>
         <span className="min-w-0 font-mono text-xs break-all">{payload.summary}</span>
       </div>
-      <RequestBody payload={payload} details={details} context={context} pending={pending} />
+      <RequestBody payload={payload} details={details} context={context} decision={decision} />
       {details !== null && details !== undefined && (
         <details className="group text-xs">
           <summary className="flex cursor-pointer list-none items-center gap-1.5 text-muted-foreground select-none">

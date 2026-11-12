@@ -276,6 +276,15 @@ Further checks against the same hosts:
 - [ ] If a GitLab site is available: with `trackers.gitlab.baseUrl` and a token, a plan of a
       project on it shows unit status from merge requests, and Test connection shows the
       version.
+- [ ] **Open in editor with the default command.** With VS Code installed (`code` on the PATH
+      is `code.cmd`), open a run's Changes tab, focus a changed file and press Shift+Enter:
+      VS Code opens the file at its first changed line, no console window flashes, and a path
+      with spaces opens too. Also try a file in the side panel's viewer and `/open` in a chat
+      thread (its folder). Then set `viewer.editorCommand` to a program that is not there: a
+      toast says the editor command did not start. A file named `100%PATH%.txt` in the
+      folder is not opened: a toast says the % would be read as a variable.
+- [ ] At 1024 px wide, open a run that waits at a gate and open the side panel: Approve, Send
+      back and Stop stay visible beside the panel, under the gate's text.
 - [ ] Optional: create an event trigger (Workflows → Triggers → New trigger, "Pull request
       merged") and merge a followed pull request on the host: one run starts within
       `hosts.pollSeconds`, and polling again starts no second one.

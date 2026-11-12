@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ProviderInstance } from './projections.js';
+import { ProposedRuleSchema } from './approvals.js';
 import { AskedQuestion } from './questions.js';
 import { TrackerConnection } from './trackers.js';
 
@@ -262,6 +263,7 @@ What you can do
 - For anything that recurs (every weekday, every week, every month), make one repeating card with a repeat rule, never a card per day or one card per occurrence. Say how it repeats and when it fires next. To leave out one occurrence, skip that occurrence instead of changing the rule.
 - When a few answers are likely, ask with ask_questions: each question with a short header, its choices (the one you recommend first, marked recommended) and whether several may be picked; the person can always type their own answer instead. Ask one thing at a time unless the questions belong together, at most four at once. Then end your turn: the answer comes as the person's next message, marked as the answer to your questions. Never ask for a secret with it.
 - When you create or change a workflow, every step you write names a provider instance, a model and an effort. Read the instance's models and efforts with read_models and wow's guidance with read_model_guidance first, and choose from what read_models lists, never from memory: wow refuses a model the instance does not offer. Say in a sentence what you recommend for each step and why. When two choices differ in a way the person would care about, such as cost against quality, ask with ask_questions instead of choosing. An instance that read_models lists as not connected offers no models: say so and how to connect it.
+- When the person wants a command or a tool allowed without asking in a project, propose the rule with propose_always_allow_rule. It waits for their yes like any proposal; you never store a rule another way.
 - When the person asks why something does not work, run diagnose_setup and say each thing that fails, its reason and the place to fix it, as wow gave them. When it finds nothing, say so.
 - When wow's note says the first-start step just finished, greet the person: say what is set up and what a first run still needs, from the note's lists. Then go through its "To fill in" list in order, one thing per answer: a secret through show_secret_field, and anything else (work hours, project folders) by asking and then making the change. Move on when the person has answered or says to skip it. When a note says the person applied a setup file, go through its "To fill in" list the same way.
 
@@ -359,6 +361,74 @@ export const defaultAskRefusedWords: readonly string[] = [
 export const assistantProjectWorkTool = 'offer_project_work';
 export const ProjectWorkOffer = z.object({ text: z.string().min(1) }).strict();
 export type ProjectWorkOffer = z.infer<typeof ProjectWorkOffer>;
+
+// Proposes an "always allow" rule for a project (agent workbench spec 41): a command rule by
+// its first words or a tool rule by its name. It is always a proposal; the rule is stored only
+// when the user says yes.
+export const assistantRuleTool = 'propose_always_allow_rule';
+export const AlwaysAllowRuleRequest = z
+  .object({ projectId: Id, rule: ProposedRuleSchema })
+  .strict();
+export type AlwaysAllowRuleRequest = z.infer<typeof AlwaysAllowRuleRequest>;
+
+// Each of wow's tools in words, for the tool row of a call that no change row, proposal card,
+// secret field or question card already shows (agent workbench spec 82). The server's tests
+// check that every tool it offers is here.
+export const assistantToolWords: Readonly<Record<string, string>> = {
+  read_settings: 'Read your settings',
+  read_projects: 'Read your projects',
+  read_providers: 'Read your providers',
+  read_workflows: 'Read your workflows',
+  read_templates: 'Read the workflow templates',
+  read_skills: 'Read your skills',
+  read_skill: 'Read a skill',
+  read_calendar: 'Read your calendar',
+  read_backlog: 'Read your backlog',
+  read_runs: 'Read your runs',
+  read_triggers: 'Read your triggers',
+  read_notifications: 'Read your notifications',
+  read_connections: 'Read your connections',
+  test_connection: 'Tested a connection',
+  read_token_guide: 'Read the token guide',
+  diagnose_setup: 'Checked what does not work',
+  read_models: 'Read the models your providers offer',
+  read_model_guidance: 'Read the model guidance',
+  show_secret_field: 'Showed a secret field',
+  show_secret_variable: 'Showed a secret variable field',
+  ask_questions: 'Asked you',
+  offer_project_work: 'Offered to open it in Chat',
+  set_setting: 'Set a setting',
+  reset_setting: 'Reset a setting',
+  create_project: 'Added a project',
+  update_project: 'Changed a project',
+  create_card: 'Put a card on the calendar',
+  update_card: 'Changed a card',
+  skip_card_occurrence: 'Skipped an occurrence of a card',
+  delete_card: 'Removed a card',
+  start_card_run: "Started a card's workflow",
+  create_workflow: 'Created a workflow',
+  update_workflow: 'Changed a workflow',
+  delete_workflow: 'Deleted a workflow',
+  start_run: 'Started a workflow',
+  create_backlog_item: 'Added a backlog item',
+  update_backlog_item: 'Changed a backlog item',
+  delete_backlog_item: 'Deleted a backlog item',
+  plan_backlog_item: 'Planned a backlog item',
+  follow_plan: 'Followed a plan',
+  start_plan_run: "Ran a plan's ready units",
+  create_trigger: 'Made an event trigger',
+  set_trigger_enabled: 'Turned a trigger on or off',
+  delete_trigger: 'Deleted a trigger',
+  create_skill: 'Wrote a skill',
+  update_skill: 'Changed a skill',
+  delete_skill: 'Removed a skill',
+  [assistantRuleTool]: 'Proposed an always-allow rule',
+};
+
+// A tool name in words; one this table lacks reads as its own words ("read_x" → "Read x").
+export const assistantToolText = (tool: string): string =>
+  assistantToolWords[tool] ??
+  tool.replaceAll('_', ' ').replace(/^./, (first) => first.toUpperCase());
 
 // The name of one of wow's tools, from the name a provider reports for a tool call, or null for
 // any other tool. Claude Code names an MCP tool `mcp__<server>__<tool>` and Codex

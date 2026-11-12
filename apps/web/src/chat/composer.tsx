@@ -46,7 +46,7 @@ import {
   type ImageTarget,
 } from './image-chip';
 import { showImageComposer } from './image-commands';
-import { withMentions } from './mentions';
+import { withMentions, withoutMentionLines } from './mentions';
 import { ComposerSkillChip, SkillMark } from './skill-chip';
 import {
   paletteCommandsStore,
@@ -81,7 +81,12 @@ export interface ComposerHandle {
   text(): string;
   // A message taken back off the queue (Edit, agent workbench spec 52): its text before what the
   // box holds, its skills and images as chips.
-  putBack(text: string, skills: readonly SkillRef[], images?: readonly SentImage[]): void;
+  putBack(
+    text: string,
+    skills: readonly SkillRef[],
+    images?: readonly SentImage[],
+    files?: readonly string[],
+  ): void;
 }
 
 export interface ComposerProps {
@@ -598,9 +603,19 @@ export function Composer({
     sent.then(
       () => {
         setSending(false);
-        // Sent from a thread that is no longer on screen: only its stored draft goes.
+        // Sent from a thread that is no longer on screen: its stored draft goes, but images
+        // added there while the message was on its way stay.
         if (sentFrom === onScreen.current) clear(message.images);
-        else if (sentFrom !== undefined) writeDraft(sentFrom, { text: '', skills: [] });
+        else if (sentFrom !== undefined) {
+          const kept = (readDraft(sentFrom).images ?? []).filter(
+            (image) => !message.images.some((gone) => gone.id === image.id),
+          );
+          writeDraft(sentFrom, {
+            text: '',
+            skills: [],
+            ...(kept.length > 0 ? { images: kept } : {}),
+          });
+        }
       },
       (reason: unknown) => {
         setSending(false);
@@ -725,12 +740,17 @@ export function Composer({
   };
 
   // A queued message back in the box: its text first, then what was typed since; its skills as
-  // chips where they are still listed, its images as they were.
+  // chips where they are still listed, its images and mentioned files as they were.
   const putBack = (
-    value: string,
+    queuedText: string,
     refs: readonly SkillRef[],
     returned: readonly SentImage[] = [],
+    mentioned: readonly string[] = [],
   ) => {
+    if (mentioned.length > 0) {
+      setFiles((current) => [...mentioned, ...current.filter((file) => !mentioned.includes(file))]);
+    }
+    const value = withoutMentionLines(queuedText, mentioned);
     if (returned.length > 0 && takesImages) {
       setImages((current) => [
         ...returned,
@@ -747,6 +767,13 @@ export function Composer({
       setChips((current) => found.reduce(withSkill, [...current]));
     }
     textarea.current?.focus();
+  };
+
+  // A comment from the thread's Changes goes on its own line after what is typed (spec 80).
+  const addText = (added: string) => {
+    const kept = text.replace(/\s+$/u, '');
+    const joined = kept === '' ? added : `${kept}\n${added}`;
+    update(joined, joined.length, undefined);
   };
 
   // While a turn runs the server queues the message (agent workbench spec 50).
@@ -789,9 +816,9 @@ export function Composer({
   // The palette reaches the composer on screen that takes skills. It registers once per chip
   // list, not per keystroke, so the palette's commands are not rebuilt while the writer types;
   // the registered actions reach this render's text and caret through a ref.
-  const actions = useRef({ openSkills, removeChip, putBack, removeImage });
+  const actions = useRef({ openSkills, removeChip, putBack, removeImage, addText });
   useLayoutEffect(() => {
-    actions.current = { openSkills, removeChip, putBack, removeImage };
+    actions.current = { openSkills, removeChip, putBack, removeImage, addText };
   });
   const chipNames = chips.map((chip) => chip.name).join('\n');
   useEffect(() => {
@@ -802,7 +829,9 @@ export function Composer({
       chips: chipNames === '' ? [] : chipNames.split('\n'),
       openSkills: () => actions.current.openSkills(),
       removeSkill: (index: number) => actions.current.removeChip(index),
-      putBack: (value, refs, returned) => actions.current.putBack(value, refs, returned),
+      putBack: (value, refs, returned, mentioned) =>
+        actions.current.putBack(value, refs, returned, mentioned),
+      addText: (added) => actions.current.addText(added),
     });
   }, [takesSkills, disabled, composerId, chipNames, draftKey]);
 
