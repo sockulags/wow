@@ -150,7 +150,14 @@ export const codexProtocolFingerprint: ProtocolFingerprint = {
           },
         },
       ],
-      result: [{ path: 'thread.id', shape: { type: 'string', required: true, nullable: false } }],
+      result: [
+        { path: 'thread.id', shape: { type: 'string', required: true, nullable: false } },
+        {
+          path: 'instructionSources',
+          copes: true,
+          shape: { type: 'array', required: true, nullable: false },
+        },
+      ],
     },
     'thread/resume': {
       kind: 'clientRequest',
@@ -184,7 +191,14 @@ export const codexProtocolFingerprint: ProtocolFingerprint = {
           shape: { type: 'boolean', required: false, nullable: false },
         },
       ],
-      result: [{ path: 'thread.id', shape: { type: 'string', required: true, nullable: false } }],
+      result: [
+        { path: 'thread.id', shape: { type: 'string', required: true, nullable: false } },
+        {
+          path: 'instructionSources',
+          copes: true,
+          shape: { type: 'array', required: true, nullable: false },
+        },
+      ],
     },
     'turn/start': {
       kind: 'clientRequest',

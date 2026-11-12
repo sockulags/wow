@@ -1,3 +1,4 @@
+import path from 'node:path';
 import {
   providerChatOptions,
   type ProviderAdapter,
@@ -9,6 +10,7 @@ import {
   type ProviderModel,
   type ProviderSlashCommand,
   type ProviderTestResult,
+  type SessionTools,
 } from '@wow/contracts';
 
 export type ProviderAdapterFactory = (
@@ -229,6 +231,87 @@ export const mockClaudeCommands: readonly ProviderSlashCommand[] = [
   },
 ];
 
+// What the mock Claude Code reports its session can use at each turn (thread work spec 38): one
+// server connected with two tools, one that failed to start and one that needs a sign-in, with
+// built-in tools, a skill, the commands, a subagent and two plugins, one of which did not load.
+// All invented.
+export const mockClaudeSessionTools = (): SessionTools => ({
+  reportedAt: new Date().toISOString(),
+  complete: true,
+  mcpServers: [
+    {
+      name: 'tea-docs',
+      state: 'connected',
+      stateWord: 'connected',
+      error: null,
+      source: 'project',
+      version: '1.2.0',
+      address: 'https://docs.tea.example',
+      tools: [
+        {
+          name: 'search_docs',
+          description: 'Search the tea handbook (invented)',
+          readOnly: true,
+          destructive: false,
+        },
+        {
+          name: 'remove_page',
+          description: 'Remove a page of the handbook (invented)',
+          readOnly: false,
+          destructive: true,
+        },
+      ],
+    },
+    {
+      name: 'tea-tracker',
+      state: 'failed',
+      stateWord: 'failed',
+      error: 'spawn tea-tracker ENOENT',
+      source: 'user',
+      version: null,
+      address: 'tea-tracker',
+      tools: [],
+    },
+    {
+      name: 'tea-cloud',
+      state: 'needsAuth',
+      stateWord: 'needs-auth',
+      error: null,
+      source: 'claudeai',
+      version: null,
+      address: 'https://mcp.tea-cloud.example',
+      tools: [],
+    },
+  ],
+  builtInTools: ['Bash', 'Edit', 'Grep', 'Read'],
+  skills: [{ name: 'brew-guide', description: 'How long each tea steeps (invented)' }],
+  commands: mockClaudeCommands.map((entry) => ({ ...entry })),
+  agents: [{ name: 'Explore', description: 'Looks through the code (invented)', model: 'haiku' }],
+  plugins: [
+    { name: 'tea-kit', version: '0.4.1', loaded: true, errors: [] },
+    {
+      name: 'kettle-hooks@tea-market',
+      version: null,
+      loaded: false,
+      errors: ['hook-load-failed: the kettle hook did not load (invented)'],
+    },
+  ],
+  instructionFiles: [],
+});
+
+// The mock Codex reports only the instruction files its thread loaded (spec 42).
+export const mockCodexSessionTools = (cwd: string): SessionTools => ({
+  reportedAt: new Date().toISOString(),
+  complete: false,
+  mcpServers: [],
+  builtInTools: [],
+  skills: [],
+  commands: [],
+  agents: [],
+  plugins: [],
+  instructionFiles: [path.join(cwd, 'AGENTS.md')],
+});
+
 // What the mock says first in a turn that went back in the conversation (Edit, Fork): the
 // messages it still remembers, so a test sees what was kept (agent workbench spec 62, 71).
 export const keptMessagesText = (prompts: readonly string[]): string =>
@@ -310,6 +393,11 @@ export class MockProviderAdapter implements ProviderAdapter {
   readonly #listeners = new Set<(event: ProviderEvent) => void>();
   // Only a provider that can go back keeps points (agent workbench spec 63).
   readonly #conversations: MockConversations | undefined;
+  // Threads with a live session here, by their folder: a turn opens one, closeThread ends it.
+  readonly #live = new Map<string, string>();
+  // What the session reports it can use; a test changes it to see a Refresh store a new list.
+  // Null reports nothing.
+  sessionTools: ((cwd: string) => SessionTools) | null;
 
   // testResult answers "test"; the default is a ready instance.
   constructor(
@@ -331,6 +419,17 @@ export class MockProviderAdapter implements ProviderAdapter {
     this.#models = models;
     this.#conversations =
       providerChatOptions[kind].cannotGoBack === null ? new MockConversations() : undefined;
+    this.sessionTools = kind === 'claude' ? mockClaudeSessionTools : mockCodexSessionTools;
+  }
+
+  // A turn reports the session's tools first, as Claude Code's init message comes first; a turn
+  // with the app's tools only (the assistant) reports none.
+  #reported(command: ProviderCommand): ProviderEvent[] {
+    if (command.type === 'closeThread') this.#live.delete(command.threadId);
+    if (command.type !== 'startTurn' || command.toolset) return [];
+    this.#live.set(command.threadId, command.cwd);
+    const tools = this.sessionTools?.(command.cwd);
+    return tools ? [{ type: 'sessionTools', threadId: command.threadId, tools }] : [];
   }
 
   #passing(events: readonly ProviderEvent[]): ProviderEvent[] {
@@ -346,9 +445,10 @@ export class MockProviderAdapter implements ProviderAdapter {
         : [];
     // A go-back the mock cannot follow fails the turn, as Claude Code refuses an unknown point;
     // the turn wrote nothing, so it ends without a point.
+    const reported = this.#reported(command);
     const events = back.some((event) => event.type === 'turnFailed')
       ? back
-      : this.#passing([...back, ...this.#script(command)]);
+      : this.#passing([...reported, ...back, ...this.#script(command)]);
     setImmediate(() => {
       for (const event of events) for (const listener of this.#listeners) listener(event);
     });
@@ -365,6 +465,12 @@ export class MockProviderAdapter implements ProviderAdapter {
     // Claude Code takes a message into its running turn; Codex does not (spec 51).
     if (command.type === 'handOver') {
       return Promise.resolve({ taken: this.kind === 'claude' });
+    }
+    if (command.type === 'describeSession') {
+      const cwd = this.#live.get(command.threadId);
+      return Promise.resolve(
+        cwd === undefined || !this.sessionTools ? null : this.sessionTools(cwd),
+      );
     }
     if (command.type === 'listCommands') {
       return Promise.resolve(

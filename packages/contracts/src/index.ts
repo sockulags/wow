@@ -18,6 +18,7 @@ export * from './rpc.js';
 export * from './server-info.js';
 export * from './settings.js';
 export * from './setting-words.js';
+export * from './session-tools.js';
 export * from './setup.js';
 export * from './skills.js';
 export * from './template.js';

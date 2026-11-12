@@ -50,6 +50,7 @@ import {
   ProviderTestResult,
 } from './provider.js';
 import { SecretRef } from './settings.js';
+import { RefreshToolsOutcome, ThreadTools } from './session-tools.js';
 import { SetupApplication, SetupRead, SetupSaved } from './setup.js';
 import {
   ProjectGit,
@@ -88,6 +89,9 @@ export const subscriptionTopics = {
   pageReads: { row: PageRead, threadScoped: false },
   // What was read about the items a chat thread links to (agent workbench spec 22).
   hostItemReads: { row: HostItemRead, threadScoped: true },
+  // What a chat thread's session reported it can use (thread work spec 38): no row before its
+  // first report, one row after.
+  threadTools: { row: ThreadTools, threadScoped: true },
   settings: { row: SettingRow, threadScoped: false },
   assistantChanges: { row: AssistantChange, threadScoped: false },
   assistantProposals: { row: AssistantProposal, threadScoped: false },
@@ -334,6 +338,13 @@ export const rpcMethods = {
   'threads.diff': {
     params: ThreadDiffParams,
     result: ThreadDiff,
+  },
+  // Refresh in a chat thread's Tools tab (thread work spec 39): asks the thread's live session
+  // what it can use and stores a changed list. Without a live session nothing is asked
+  // (`noSession`); wow never starts a session or a server for it. Refused for the assistant.
+  'threads.refreshTools': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: z.object({ outcome: RefreshToolsOutcome }),
   },
   // "Remove working copy" (review loop spec 37): deletes a kept working copy of a run that has
   // ended, with whatever is uncommitted or unpushed in it. The app asks before it calls this.

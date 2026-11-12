@@ -58,6 +58,7 @@ import {
   ThreadState,
 } from './provider.js';
 import { QuestionReply } from './questions.js';
+import { SessionTools, ThreadTools, ThreadToolsSource } from './session-tools.js';
 import { CardOccurrence, LocalDay, RepeatRule } from './repeat.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
 import { SetupApplication } from './setup.js';
@@ -605,6 +606,15 @@ export const InternalCommand = z.discriminatedUnion('type', [
     base: z.object({ sha: z.string().min(1), files: z.array(FileHash) }).nullable(),
     mark: z.array(FileHash).nullable(),
   }),
+  // The provider service, with what a chat thread's session reported it can use (thread work
+  // spec 38, 39), or null when the session that reported the stored list is gone (a restart, the
+  // adapter released, a Refresh that found none). Stored only when it differs.
+  z.object({
+    type: z.literal('thread.toolsReported'),
+    threadId: Id,
+    tools: SessionTools.nullable(),
+    source: ThreadToolsSource,
+  }),
   // Replaces the plans projection with a fresh read of every project's intents folder; the
   // server's plans service sends it.
   z.object({ type: z.literal('plans.sync'), intents: z.array(PlanIntent) }),
@@ -980,6 +990,12 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('thread.pinned'),
     aggregate: Id,
     payload: z.object({ threadId: Id, pinned: z.boolean() }),
+  }),
+  // A chat thread's stored list of what its session can use, as it now is.
+  z.object({
+    kind: z.literal('thread.toolsReported'),
+    aggregate: Id,
+    payload: z.object({ tools: ThreadTools }),
   }),
   z.object({
     kind: z.literal('thread.changesMarked'),

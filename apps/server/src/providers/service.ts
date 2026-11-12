@@ -7,11 +7,14 @@ import {
   ProviderSlashCommand,
   ProviderTestResult,
   SecretRef,
+  SessionTools,
   secretPatterns,
   type ProviderAdapter,
   type ProviderCommand,
   type ProviderInstance,
   type QueuedMessage,
+  type RefreshToolsOutcome,
+  type ThreadToolsSource,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
 import { and, eq, isNotNull, ne } from 'drizzle-orm';
@@ -22,7 +25,7 @@ import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
 import { threadImagePath } from '../files/images.js';
-import { providerInstances, threads, turns, workflowRuns } from '../db/schema.js';
+import { providerInstances, threadTools, threads, turns, workflowRuns } from '../db/schema.js';
 import type { ProviderAdapters } from '../hooks/providers.js';
 import type { Logger } from '../logger.js';
 import type { SettingsService } from '../settings/service.js';
@@ -132,6 +135,15 @@ export class ProviderService {
         },
       ]);
     }
+    // No session lived through the restart, so no stored list can be asked again (thread work
+    // spec 39) until the next turn reports one.
+    for (const { threadId } of this.#deps.db
+      .select({ threadId: threadTools.threadId })
+      .from(threadTools)
+      .where(eq(threadTools.live, true))
+      .all()) {
+      this.#toolsReported(threadId, null, 'turn');
+    }
     // A message queued while a turn ran goes now that no turn runs (agent workbench spec 50).
     const queued = this.#deps.db
       .select({ id: threads.id, queued: threads.queued })
@@ -227,6 +239,72 @@ export class ProviderService {
       });
     this.#commandProbes.set(key, probe);
     return probe;
+  }
+
+  // Refresh in the Tools tab (thread work spec 39): asks the thread's live session only. Without
+  // one nothing is asked of the adapter, so no session or MCP server is started for it.
+  async refreshTools(threadId: string): Promise<RefreshToolsOutcome> {
+    const thread = this.#deps.db
+      .select({ kind: threads.kind, providerInstanceId: threads.providerInstanceId })
+      .from(threads)
+      .where(eq(threads.id, threadId))
+      .get();
+    if (!thread) throw new CommandRejected('not_found', `No thread ${threadId}`);
+    if (thread.kind === 'assistant') {
+      throw new CommandRejected('rejected', 'The assistant has no Tools tab');
+    }
+    const stored = this.#deps.db
+      .select({ live: threadTools.live })
+      .from(threadTools)
+      .where(eq(threadTools.threadId, threadId))
+      .get();
+    if (!stored?.live || !this.#adapters.has(thread.providerInstanceId)) {
+      this.#toolsReported(threadId, null, 'refresh');
+      return 'noSession';
+    }
+    const answer = await this.#adapter(thread.providerInstanceId).send({
+      type: 'describeSession',
+      threadId,
+    });
+    const tools = SessionTools.nullable().parse(answer);
+    const changed = this.#toolsReported(threadId, tools, 'refresh');
+    return tools === null ? 'noSession' : changed ? 'changed' : 'unchanged';
+  }
+
+  // Stores what a thread's session reported it can use, or that its session is gone (null).
+  // Answers whether anything was stored. The assistant's reports are not kept (spec 43).
+  #toolsReported(threadId: string, tools: SessionTools | null, source: ThreadToolsSource): boolean {
+    if (this.#stopped) return false;
+    const thread = this.#deps.db
+      .select({ kind: threads.kind })
+      .from(threads)
+      .where(eq(threads.id, threadId))
+      .get();
+    if (!thread || thread.kind === 'assistant') return false;
+    try {
+      return (
+        this.#deps.engine.dispatch(`tools:${randomUUID()}`, {
+          type: 'thread.toolsReported',
+          threadId,
+          tools,
+          source,
+        }).seqs.length > 0
+      );
+    } catch (error) {
+      this.#deps.logger.warn('the session tools were not stored', describeError(error));
+      return false;
+    }
+  }
+
+  // The live sessions of an instance's threads end with its adapter.
+  #toolsSessionsEnded(providerInstanceId: string): void {
+    const live = this.#deps.db
+      .select({ threadId: threadTools.threadId })
+      .from(threadTools)
+      .innerJoin(threads, eq(threads.id, threadTools.threadId))
+      .where(and(eq(threadTools.live, true), eq(threads.providerInstanceId, providerInstanceId)))
+      .all();
+    for (const { threadId } of live) this.#toolsReported(threadId, null, 'turn');
   }
 
   // Stops the instance's adapter (and its app-server process); the next use starts a new one.
@@ -412,6 +490,7 @@ export class ProviderService {
               type: 'closeThread',
               threadId,
             });
+            this.#toolsReported(threadId, null, 'turn');
           }
           break;
         }
@@ -458,6 +537,7 @@ export class ProviderService {
       .catch((error: unknown) => this.#deps.logger.error('provider adapter failed to stop', error));
     // The disposed adapter reports nothing more, so the background work it listed is gone.
     if (adapter) {
+      this.#toolsSessionsEnded(providerInstanceId);
       const listed = this.#deps.db
         .select({ id: threads.id })
         .from(threads)
@@ -664,6 +744,11 @@ export class ProviderService {
     const parsed = ProviderEvent.safeParse(event);
     if (!parsed.success) {
       this.#deps.logger.warn('provider sent an invalid event', parsed.error.issues);
+      return;
+    }
+    // Not a thread item: what the session can use is its own projection (thread work spec 38).
+    if (parsed.data.type === 'sessionTools') {
+      this.#toolsReported(parsed.data.threadId, parsed.data.tools, 'turn');
       return;
     }
     const batch = this.#pending.get(parsed.data.threadId);

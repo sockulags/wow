@@ -65,9 +65,9 @@ projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see 
   The same port answers plain HTTP on one path, `/assistant/mcp`, for the assistant's tools
   (see "Assistant"); every other HTTP request gets 426. That path has a token of its own.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
-  topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
-  touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
-  with their connection.
+  topics (`turns`, `threadItems`, `approvals`, `questions`, `hostItemReads`, `threadTools`) need a
+  `threadId`. After a commit that touched a topic, every subscriber of it gets the topic's full
+  current rows. Subscriptions end with their connection.
 - **Client runtime.** `packages/client-runtime` queues requests until the socket opens, fails
   in-flight requests when it drops, reconnects with capped exponential backoff and subscribes again
   after every reconnect. It reads the port and token from `server.json` (`ServerInfo`). It
@@ -254,6 +254,10 @@ host_item_reads  id ('thread:<threadId>:<hostItemKey>'), scope ('thread'), threa
                  item(json: HostItemRef), hostName, data(json: HostItemData)?, fetchedAt?,
                  error(json: HostError)?   -- an item a chat thread links to, as last read when
                  its tab opened or on Refresh now (migration 0030)
+thread_tools     threadId, tools(json: SessionTools), source ('turn'|'refresh'), live,
+                 reportedAt   -- what a chat thread's session last reported it can use; live
+                 while the session that reported it is open in its adapter (migration
+                 0034_thread_tools)
 assistant_changes id (the command's id), at, commandType, what, from?, to?, place(json: {label,
                  path}), target(json: {kind, id}), expect(json)?, inverse(json: Command[]), state
                  ('applied'|'undone'), undoneAt?   -- what the assistant changed, with the record
@@ -296,6 +300,7 @@ ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode
                  answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
                  listModels | handOver {threadId, prompt} -> {taken} |
                  listCommands {cwd, threadId?} -> [{name, description, argumentHint?}] |
+                 describeSession {threadId} -> SessionTools | null |
                  stopTask {threadId, taskId} | toBackground {threadId, itemId?} | test
 ProviderEvent:   session {providerSessionId} | textDelta {itemId, delta, parentItemId?} |
                  reasoningDelta |
@@ -309,7 +314,8 @@ ProviderEvent:   session {providerSessionId} | textDelta {itemId, delta, parentI
                  turnCompleted {resumePoint?} | turnFailed {error, resumePoint?} |
                  turnInterrupted {resumePoint?} | turnStartedByProvider |
                  backgroundTasks {tasks [{id, description, agent?, kind?, lastOutput?}]} |
-                 commandRefused {command stopTask|toBackground, error} (made by the server)
+                 commandRefused {command stopTask|toBackground, error} (made by the server) |
+                 sessionTools {tools: SessionTools}
 ```
 
 **Tool facts.** Each adapter normalizes a tool call into `ToolFacts` (`provider.ts`): `kind`
@@ -3369,6 +3375,66 @@ and exported is what the conversation shows. Searching the page alone would miss
   instead. `exportFileName(title)` takes out what Windows refuses (`<>:"/\|?*` and control
   characters) and direction marks, cuts the title to 120 characters, drops trailing dots and
   spaces, and renames a device name, also one followed by a dot ("CON.backup").
+
+### What the session can use
+
+Thread work U5 (spec 37 to 44). A chat thread's panel has a Tools tab with what the provider
+reported for the thread's session: MCP servers with state, error, source, version, address and
+tools, built-in tools, skills, slash commands, subagents, plugins and instruction files. wow only
+shows reports; it never starts a session, a probe or an MCP server to fill the tab, since starting
+Claude Code in a folder starts the servers a repository's `.mcp.json` names.
+
+- **Contract.** `packages/contracts/src/session-tools.ts`: `SessionTools {reportedAt, complete,
+mcpServers, builtInTools, skills, commands, agents, plugins, instructionFiles}` and
+  `McpServerInfo {name, state, stateWord, error, source, version, address, tools [{name,
+description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `needsAuth`,
+  `pending`, `disabled`, `other`. Only named fields, every text and list bounded
+  (`sessionToolsLimits`); `boundedSessionTools` cuts what an adapter read to fit. No field can
+  hold a server's config, environment, headers or arguments (spec 41). ProviderEvent
+  `sessionTools {threadId, tools}`, ProviderCommand `describeSession {threadId}` answering
+  `SessionTools` or null without a live session. Topic `threadTools` (thread-scoped) with rows
+  `ThreadTools {threadId, tools, source, live}`; RPC `threads.refreshTools {threadId}` answering
+  `{outcome: changed | unchanged | noSession}`.
+- **Claude Code** (`provider-claude/src/session-tools.ts`). At each `system/init` of a thread's
+  session (not the assistant's tools-only one) the adapter reads the init message's tools, MCP
+  servers (name, status, source), slash commands, skills, agents, plugins and `plugin_errors`,
+  then completes it from the live query's `mcpServerStatus()`, `supportedCommands()` and
+  `supportedAgents()` (the `ClaudeQuery` seam in `sdk.ts` declares both new calls) and emits
+  `sessionTools`. A server's `config` gives only `address` (`mcpAddress`: an http or sse URL's
+  scheme, host and port; a stdio command's file name). When a live call fails, the init message's
+  names and states go out with `complete: false`. `system/commands_changed` replaces the
+  commands. `describeSession` asks the same calls of the thread's live query and answers null
+  when there is none.
+- **Codex** (`provider-codex/src/adapter.ts`). `thread/start` and `thread/resume` answer
+  `instructionSources` (added to the generator's `FIELDS` as `instructionSources?` and to
+  `fingerprint.ts`); the adapter emits them as `instructionFiles` with `complete: false`.
+  `describeSession` answers the loaded thread's list, else null. The generated protocol has no
+  method that lists servers, tools or skills; none is added until a codex that defines one is
+  generated and checked. The web app adds the servers and tools the thread's own `mcp` tool rows
+  name, marked "Seen in this thread's tool calls", with a line that Codex reports no list.
+- **Server.** `ProviderService` takes a `sessionTools` event out of the batch and dispatches the
+  internal `thread.toolsReported {threadId, tools, source}` (`core/thread-tools.ts`). It is stored
+  only when the list (everything but `reportedAt`, compared by `sameSessionTools`) or its
+  liveness changed, with the server's time; the assistant is refused. `tools: null` marks the
+  stored list not live: at `recover()` (no session survives a restart), when an instance's
+  adapter is released, when a thread moves to another instance, and when Refresh finds the
+  session gone. `refreshTools(threadId)` asks the adapter only while the stored row is live and
+  the instance's adapter exists; otherwise it answers `noSession` and sends nothing.
+- **Web** (`panel/tools-tab.tsx`). Tab kind `tools` (`openTools`, `toolsTabId` in
+  `panel/viewer.ts`), `ToolsTab` with the reported line ("Reported as the turn of 20:41 started"
+  or "Reported on Refresh at …"), Refresh only while `live`, a filter over every section
+  (`filterSessionTools`), counts per section, "Sign in from Claude Code: /mcp in a terminal" for a
+  server that needs sign-in. `ToolsChip` in the thread header shows while a server failed or
+  needs sign-in ("1 MCP server failed") and opens the tab. Details has a "Session tools" section
+  with a summary and "Show session tools". Palette `chat.sessionTools` (Show or Hide session
+  tools) and, with a live session, `chat.refreshTools`; no key and no setting. A thread stored
+  before this change has no row and shows "No list yet" until its next turn. The assistant is
+  never an open chat thread, so it gets no tab, chip or command.
+- **Mocks.** `MockProviderAdapter` reports `mockClaudeSessionTools()` (tea-docs connected with two
+  tools, tea-tracker failed with "spawn tea-tracker ENOENT", tea-cloud needing sign-in) at every
+  turn of a Claude instance and `mockCodexSessionTools(cwd)` (the folder's `AGENTS.md`) for Codex;
+  `describeSession` answers while the thread had a turn and no `closeThread`; a test sets
+  `sessionTools` to change the report or to null for a session that is gone.
 
 ### Edit and Fork
 

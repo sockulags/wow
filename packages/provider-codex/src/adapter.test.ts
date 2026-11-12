@@ -130,9 +130,12 @@ function setup(makeProcess: () => FakeCodexProcess, options: Partial<CodexAdapte
     ...options,
   });
   const events: ProviderEvent[] = [];
+  // What the session can use is kept apart, so the turns' event lists read as they did (U5).
+  const tools: ProviderEvent[] = [];
   adapter.onEvent((event) => {
     // Every event the adapter emits must pass the shared contract.
-    events.push(ProviderEventSchema.parse(event));
+    const parsed = ProviderEventSchema.parse(event);
+    (parsed.type === 'sessionTools' ? tools : events).push(parsed);
   });
   const take = (): ProviderEvent[] => events.splice(0);
   const current = (): FakeCodexProcess => {
@@ -140,7 +143,7 @@ function setup(makeProcess: () => FakeCodexProcess, options: Partial<CodexAdapte
     if (!child) throw new Error('no app-server started');
     return child;
   };
-  return { adapter, events, take, processes, launches, timers, current };
+  return { adapter, events, tools, take, processes, launches, timers, current };
 }
 
 const startTurn = {
@@ -781,6 +784,53 @@ describe('CodexAdapter', () => {
     ]);
   });
 
+  // Thread work spec 42 (U5): Codex tells only the instruction files a thread loaded.
+  it('reports the instruction files a thread loaded and describes only a loaded thread', async () => {
+    const { adapter, tools, current } = setup(
+      () =>
+        new ScriptedCodex({
+          ...baseAnswers,
+          'thread/start': () => ({
+            thread: { id: 'codex-thread' },
+            instructionSources: ['/work/demo/AGENTS.md', '/home/demo/.codex/AGENTS.md'],
+          }),
+        }),
+    );
+    await expect(adapter.send({ type: 'describeSession', threadId: 'thread-1' })).resolves.toBe(
+      null,
+    );
+    await adapter.send(startTurn);
+    expect(tools).toHaveLength(1);
+    const [reported] = tools;
+    expect(reported).toMatchObject({
+      type: 'sessionTools',
+      threadId: 'thread-1',
+      tools: {
+        complete: false,
+        mcpServers: [],
+        skills: [],
+        instructionFiles: ['/work/demo/AGENTS.md', '/home/demo/.codex/AGENTS.md'],
+      },
+    });
+    await expect(
+      adapter.send({ type: 'describeSession', threadId: 'thread-1' }),
+    ).resolves.toMatchObject({
+      instructionFiles: ['/work/demo/AGENTS.md', '/home/demo/.codex/AGENTS.md'],
+    });
+    // Nothing more is asked of codex for it.
+    expect(written(current(), 'mcpServerStatus/list')).toBeUndefined();
+    current().exit('codex app-server exited (code 3): panic');
+    await expect(adapter.send({ type: 'describeSession', threadId: 'thread-1' })).resolves.toBe(
+      null,
+    );
+  });
+
+  it('reports no instruction files from a codex that leaves the field out', async () => {
+    const { adapter, tools } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(startTurn);
+    expect(tools).toMatchObject([{ type: 'sessionTools', tools: { instructionFiles: [] } }]);
+  });
+
   const assistantTurn = {
     ...startTurn,
     threadId: 'assistant',
@@ -835,9 +885,11 @@ describe('CodexAdapter', () => {
   };
 
   it('starts an assistant thread with the wow MCP server, a read-only sandbox without network and the given folder', async () => {
-    const { adapter, current } = setup(() => new ScriptedCodex(baseAnswers));
+    const { adapter, current, tools } = setup(() => new ScriptedCodex(baseAnswers));
     await adapter.send(assistantTurn);
     expect(written(current(), 'thread/start')?.['params']).toEqual(toolsOnlySettings);
+    // The assistant has no Tools tab (thread work spec 43).
+    expect(tools).toEqual([]);
     expect(written(current(), 'turn/start')?.['params']).toEqual({
       threadId: 'codex-thread',
       input: [{ type: 'text', text: 'Set my work hours to 8 to 4', text_elements: [] }],
