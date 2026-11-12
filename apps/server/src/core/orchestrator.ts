@@ -174,6 +174,8 @@ export interface DecideContext {
   // The code host a project's git data names (TrackerService caches it), so a GitLab project is
   // worded as one before its first host read; undefined while not read.
   readonly codeHost?: ((projectId: string) => HostKind | undefined) | undefined;
+  // The platform whose folder names a decision compares; the server's own unless a test says.
+  readonly platform?: NodeJS.Platform | undefined;
 }
 
 // The code host to word a project's change requests and events in: its newest host read, else

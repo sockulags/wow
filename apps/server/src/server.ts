@@ -158,6 +158,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     onListenerError: (error) => logger.error('commit listener failed', error),
     home,
     codeHost: (projectId) => codeHost?.(projectId),
+    platform: options.platform ?? process.platform,
     ...(options.clock ? { clock: options.clock } : {}),
   });
   const settings = new SettingsService(database.db, engine);

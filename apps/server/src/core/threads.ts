@@ -60,7 +60,7 @@ import {
   type DecideContext,
   type ReadModel,
 } from './orchestrator.js';
-import path from 'node:path';
+import { folderKey } from '../files/folder-key.js';
 import { editGoBack, forkEvents } from './go-back.js';
 import { messageWithSkills } from './skills.js';
 
@@ -619,7 +619,12 @@ export function decideThread(
         throw new CommandRejected('not_found', `No project ${command.projectId}`);
       }
       if (command.resumeSessionId !== undefined) {
-        const holder = sessionHolder(read, command.providerInstanceId, command.resumeSessionId);
+        const holder = sessionHolder(
+          read,
+          command.providerInstanceId,
+          command.resumeSessionId,
+          context.platform ?? process.platform,
+        );
         if (holder) {
           throw new CommandRejected(
             'conflict',
@@ -1973,13 +1978,18 @@ function decideProviderEvents(
 // Two threads going on with one CLI session would interleave in its file. A session id names a
 // session within the config folder its instance reads; an instance on the default folder ('')
 // may read any, so it counts as the same.
-function sessionHolder(read: ReadModel, providerInstanceId: string, sessionId: string) {
+function sessionHolder(
+  read: ReadModel,
+  providerInstanceId: string,
+  sessionId: string,
+  platform: NodeJS.Platform,
+) {
   const instance = read.providerInstance(providerInstanceId);
   if (!instance) return undefined;
   const sameFiles = (configDir: string) =>
     configDir === '' ||
     instance.configDir === '' ||
-    path.resolve(configDir) === path.resolve(instance.configDir);
+    folderKey(configDir, platform) === folderKey(instance.configDir, platform);
   return read.threadsWithSession(sessionId).find((thread) => {
     const other = read.providerInstance(thread.providerInstanceId);
     return other?.kind === instance.kind && sameFiles(other.configDir);

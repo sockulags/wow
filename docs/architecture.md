@@ -1831,7 +1831,8 @@ stores `resumeSessionId` as the thread's `providerSessionId`, so the first messa
 as `resumeId` like any later turn; `forkFrom` and `resumeSessionId` together are refused, and so
 is a `resumeSessionId` another thread already goes on with on an instance of the same kind reading
 the same config folder (an instance on the default folder counts as reading any), since two threads
-would write to one session file.
+would write to one session file. Folders are compared with the same key as the session listing
+(`files/folder-key.ts`: resolved, and case-folded on Windows and macOS).
 
 **New thread defaults** (agent workbench spec 97). A project holds `defaultProviderInstanceId`,
 `defaultModel`, `defaultEffort` and `defaultPermissionMode` (the last two since migration

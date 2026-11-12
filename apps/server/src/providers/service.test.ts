@@ -77,6 +77,19 @@ let tick = 0;
 const clock = () => new Date(Date.UTC(2026, 10, 2, 8, 0, (tick += 1)));
 const dispatch = (command: Command) => engine.dispatch(`c${(next += 1)}`, command);
 
+// Goes on with the terminal session on 'claude-shout' through an engine of its own platform.
+const resumeOn = (on: Engine, threadId: string) =>
+  on.dispatch(`c${(next += 1)}`, {
+    type: 'thread.create',
+    threadId,
+    providerInstanceId: 'claude-shout',
+    cwd: '/work/kettle',
+    model: 'sonnet',
+    effort: 'high',
+    permissionMode: 'default',
+    resumeSessionId: 'terminal-session-1',
+  });
+
 // Resolves once a commit with an event of this kind has been applied.
 const committed = (kind: DomainEventKind) =>
   new Promise<void>((resolve) => {
@@ -463,6 +476,12 @@ describe('provider service', () => {
     expect(rows('threads').find((row) => row['id'] === 't6')?.['providerSessionId']).toBe(
       'terminal-session-1',
     );
+
+    // On Windows a config folder spelled in another case is the same folder (finding 141).
+    instance('claude-shout', '/HOME/ME/.CLAUDE');
+    const windows = new Engine(database.db, { clock, platform: 'win32' });
+    expect(() => resumeOn(windows, 't7')).toThrow(held);
+    resumeOn(new Engine(database.db, { clock, platform: 'linux' }), 't8');
   });
 
   it('pins and unpins a thread without touching its activity time', () => {

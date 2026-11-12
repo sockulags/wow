@@ -8,6 +8,7 @@ import type {
 } from '@wow/contracts';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
+import { folderKey } from '../files/folder-key.js';
 
 // "Open session from Claude Code / Codex…" (agent workbench spec 72). Each adapter package reads
 // its own CLI's session files; this asks every configured instance (or the one named), names the
@@ -44,13 +45,7 @@ export async function listTerminalSessions(
   providerInstanceId?: string,
 ): Promise<TerminalSession[]> {
   const pathApi = deps.platform === 'win32' ? path.win32 : path.posix;
-  // The same folder on Windows and macOS may differ in case and separators.
-  const key = (cwd: string) => {
-    const resolved = pathApi.resolve(cwd);
-    return deps.platform === 'win32' || deps.platform === 'darwin'
-      ? resolved.toLowerCase()
-      : resolved;
-  };
+  const key = (cwd: string) => folderKey(cwd, deps.platform);
   const projectOf = new Map(deps.projects.map((project) => [key(project.cwd), project]));
   // A session id names a session only within the config folder an instance reads.
   const filesOf = (instance: ProviderInstance) =>
@@ -68,13 +63,13 @@ export async function listTerminalSessions(
   for (const instance of deps.instances) {
     if (providerInstanceId !== undefined && instance.id !== providerInstanceId) continue;
     const configDir = instance.configDir || deps.defaultConfigDir(instance.kind);
-    const folderKey = filesOf(instance);
-    if (read.has(folderKey)) continue;
-    read.add(folderKey);
+    const files = filesOf(instance);
+    if (read.has(files)) continue;
+    read.add(files);
     const owned = deps.threads.filter(
       (thread) =>
         thread.providerSessionId !== null &&
-        filesOfInstance.get(thread.providerInstanceId) === folderKey,
+        filesOfInstance.get(thread.providerInstanceId) === files,
     );
     // wow's own threads write to the same files; the limit counts the sessions started
     // elsewhere, so those do not fall off the list for someone who mostly works in wow.
