@@ -236,8 +236,10 @@ function queueMessage(
   text: string,
   picked: readonly SkillRef[],
   added: readonly SentImage[] = [],
+  mentioned: readonly string[] = [],
 ): DomainEvent {
   const before = thread.queued ?? undefined;
+  const files = [...new Set([...(before?.files ?? []), ...mentioned])];
   const images = [...(before?.images ?? [])];
   for (const image of added) {
     if (!images.some((entry) => entry.id === image.id)) images.push(image);
@@ -254,6 +256,7 @@ function queueMessage(
       : text,
     ...(skills.length > 0 ? { skills } : {}),
     ...(images.length > 0 ? { images } : {}),
+    ...(files.length > 0 ? { files } : {}),
     queuedAt: before?.queuedAt ?? context.now,
   };
   // A hand-over carries text only, so a message with images waits for the turn's end.
@@ -477,10 +480,10 @@ export function decideThread(
         throw new CommandRejected('rejected', 'The assistant takes no file mentions');
       }
       const running = read.runningTurn(stored.id);
-      // A queued message keeps its text, which names the files; the chips go with a message
-      // sent at once.
       if (running) {
-        return [queueMessage(read, context, stored, running, command.text, picked, images)];
+        return [
+          queueMessage(read, context, stored, running, command.text, picked, images, command.files),
+        ];
       }
       return messageTurn(
         read,
@@ -520,7 +523,7 @@ export function decideThread(
           waiting.text,
           waiting.skills ?? [],
           'afterTurn',
-          undefined,
+          waiting.files,
           waiting.images ?? [],
         ),
       ];
@@ -552,6 +555,7 @@ export function decideThread(
             payload: {
               text: waiting.text,
               ...(skills && skills.length > 0 ? { skills } : {}),
+              ...(waiting.files && waiting.files.length > 0 ? { files: waiting.files } : {}),
               queued: 'duringTurn',
             },
             streaming: false,

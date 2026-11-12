@@ -81,6 +81,9 @@ export const QueuedMessage = z.object({
   // Images of the message (agent workbench spec 53). A queue with images waits for the turn's
   // end; it is not handed to the running turn.
   images: z.array(SentImage).optional(),
+  // Files mentioned with `@` (agent workbench spec 56), once each; absent on messages queued
+  // before they were kept.
+  files: z.array(z.string().min(1)).optional(),
   queuedAt: Timestamp,
 });
 export type QueuedMessage = z.infer<typeof QueuedMessage>;

@@ -370,9 +370,10 @@ thread it maps to, since the app-server has no request that unloads one.
   fails the turn with the reason; a turn still `running` at startup failed with the previous server
   process and is marked so. Events after a turn ended are dropped.
 - **Queued messages** (agent workbench spec 50 to 52). `thread.sendMessage` while a turn runs does
-  not start a turn: it sets the thread's `queued` (`QueuedMessage {id, text, skills?, queuedAt}`,
-  a JSON column of `threads`, migration `0027_queued_messages`) through `thread.queueChanged`. A
-  second message joins it (texts separated by a blank line, skills once each) and gets a new `id`
+  not start a turn: it sets the thread's `queued` (`QueuedMessage {id, text, skills?, images?, files?,
+  queuedAt}`, a JSON column of `threads`, migration `0027_queued_messages`) through
+  `thread.queueChanged`. A second message joins it (texts separated by a blank line, skills,
+  images and `@` files once each; the files go on the user item it becomes) and gets a new `id`
   (the old one plus `+`), so whatever acts on the queue acts on one version of it. For a chat or
   step thread the event carries `handOver {providerInstanceId, prompt}` (the prompt with the
   skills in front, as `thread.sendMessage` would send it); the provider service then sends the

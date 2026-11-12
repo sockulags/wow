@@ -1,4 +1,4 @@
-import type { Command } from '@wow/contracts';
+import type { ServerCommand } from '@wow/contracts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -16,7 +16,7 @@ let engine: Engine;
 let next = 0;
 
 const clock = () => new Date('2026-11-02T08:00:00.000Z');
-const dispatch = (command: Command) => engine.dispatch(`c${(next += 1)}`, command);
+const dispatch = (command: ServerCommand) => engine.dispatch(`c${(next += 1)}`, command);
 
 beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), 'wow-mentions-'));
@@ -67,6 +67,35 @@ describe('file mentions', () => {
     expect(userItems()).toMatchObject([
       { payload: { text: '@src/timer.ts\n\nWhat does it ring?', files: ['src/timer.ts'] } },
     ]);
+  });
+
+  it('keeps the files of a message queued while a turn runs, joined once each', () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Start' });
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: '@src/timer.ts what rings?',
+      files: ['src/timer.ts'],
+    });
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: '@src/timer.ts and @docs/spec.md',
+      files: ['src/timer.ts', 'docs/spec.md'],
+    });
+    dispatch({
+      type: 'provider.events',
+      threadId: 't1',
+      events: [{ type: 'turnCompleted', threadId: 't1' }],
+    });
+    const [thread] = snapshot(database.db, { topic: 'threads' }) as Array<{
+      queued: { id: string; files?: string[] } | null;
+    }>;
+    expect(thread?.queued?.files).toEqual(['src/timer.ts', 'docs/spec.md']);
+    dispatch({ type: 'thread.sendQueued', threadId: 't1', queuedId: thread?.queued?.id ?? '' });
+    expect(userItems().at(-1)).toMatchObject({
+      payload: { queued: 'afterTurn', files: ['src/timer.ts', 'docs/spec.md'] },
+    });
   });
 
   it('stores no files on a message without mentions', () => {
