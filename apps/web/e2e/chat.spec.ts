@@ -1520,6 +1520,8 @@ test.describe('chat', () => {
     // Copy and save from the header's menu (spec 7, 8).
     await page.getByRole('button', { name: 'More thread actions' }).click();
     await page.getByRole('menuitem', { name: 'Copy conversation as Markdown' }).click();
+    // The clipboard is written once the toast says so.
+    await expect(page.getByText('Conversation copied as Markdown')).toBeVisible();
     const copied = (await page.evaluate<string>('navigator.clipboard.readText()')).replaceAll(
       '\r\n',
       '\n',
@@ -1577,7 +1579,7 @@ test.describe('chat', () => {
 
     // Codex lists nothing of its own: its instruction files and the servers its calls used.
     await page.goto('/chat/new');
-    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await pickInstance(page, 'Mock Codex');
     await choose(page.getByLabel('Project'), 'Demo');
     await messageBox(page).fill('Run the tools');
     await messageBox(page).press('Enter');

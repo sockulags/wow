@@ -145,7 +145,11 @@ const mugGit = (...args: string[]) =>
 
 async function startMugThread(page: Page, text: string): Promise<void> {
   await page.goto('/chat/new');
-  await choose(main(page).getByLabel('Provider instance'), 'Mock Claude');
+  // The instance list hands the keyboard back to its button a moment after it closes; the
+  // project's list opened before that would lose it and close again (as in chat.spec).
+  const instance = main(page).getByLabel('Provider instance');
+  await choose(instance, 'Mock Claude');
+  await expect(instance).toBeFocused();
   await choose(main(page).getByRole('combobox', { name: 'Project' }), 'Tea mug');
   await expect(main(page).getByRole('switch', { name: 'Own working copy' })).toHaveAttribute(
     'aria-checked',
