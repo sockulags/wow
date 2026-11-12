@@ -38,6 +38,9 @@ import {
   type QuestionStatus,
 } from './question-card';
 import { formatCost, formatTokens } from './model';
+import { FileChip } from '@/panel/open-file-button';
+import { withoutMentions } from './mentions';
+import { SentImages } from './image-chip';
 import { SentSkillChip } from './skill-chip';
 import { TaskList, TaskMarker } from './task-pin';
 import { ToolCall } from './tools/index';
@@ -170,7 +173,15 @@ export function QueuedMessageItem({
   );
 }
 
-function UserMessage({ payload, context }: { payload: TextItemPayload; context: ItemContext }) {
+function UserMessage({
+  threadId,
+  payload,
+  context,
+}: {
+  threadId: string;
+  payload: TextItemPayload;
+  context: ItemContext;
+}) {
   // The answer to the assistant's questions shows on their card; here only that it was sent.
   if (payload.answers) {
     return (
@@ -182,8 +193,25 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
   // The skills it was sent with are chips; a message stored before them shows its text as it was
   // (wow skills spec 14, 18).
   const skills = payload.skills ?? [];
+  const files = payload.files ?? [];
+  const images = payload.images ?? [];
+  const text = withoutMentions(payload.text, files);
   return (
     <div className="group flex flex-col items-end gap-0.5">
+      {images.length > 0 && <SentImages threadId={threadId} images={images} />}
+      {files.length > 0 && (
+        <div
+          role="list"
+          aria-label="Sent with files"
+          className="flex max-w-[85%] flex-wrap justify-end gap-1"
+        >
+          {files.map((file) => (
+            <span role="listitem" key={file}>
+              <FileChip path={file} />
+            </span>
+          ))}
+        </div>
+      )}
       {skills.length > 0 && (
         <div
           role="list"
@@ -197,9 +225,9 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
           ))}
         </div>
       )}
-      {payload.text.trim() !== '' && (
+      {text.trim() !== '' && (
         <div className="w-fit max-w-[85%] rounded-lg bg-secondary px-3 py-2 text-sm whitespace-pre-wrap text-secondary-foreground">
-          {payload.text}
+          {text}
         </div>
       )}
       {payload.queued && (
@@ -400,7 +428,7 @@ function ItemBody({
     case 'user': {
       const parsed = TextItemPayload.safeParse(item.payload);
       return parsed.success ? (
-        <UserMessage payload={parsed.data} context={context} />
+        <UserMessage threadId={item.threadId} payload={parsed.data} context={context} />
       ) : (
         <Unreadable item={item} />
       );

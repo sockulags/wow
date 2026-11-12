@@ -72,10 +72,33 @@ export function extraArgs(launchArgs: readonly string[]): Record<string, string 
   return args;
 }
 
-export function userMessage(text: string): SDKUserMessage {
+// An image of the message, already read: Claude Code takes it as a base64 image block.
+export interface MessageImage {
+  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+  readonly base64: string;
+}
+
+// The images go before the text, as the Messages API suggests for a question about an image.
+export function userMessage(text: string, images: readonly MessageImage[] = []): SDKUserMessage {
   return {
     type: 'user',
-    message: { role: 'user', content: text },
+    message: {
+      role: 'user',
+      content:
+        images.length === 0
+          ? text
+          : [
+              ...images.map((image) => ({
+                type: 'image' as const,
+                source: {
+                  type: 'base64' as const,
+                  media_type: image.mediaType,
+                  data: image.base64,
+                },
+              })),
+              ...(text === '' ? [] : [{ type: 'text' as const, text }]),
+            ],
+    },
     parent_tool_use_id: null,
   };
 }

@@ -14,6 +14,7 @@ import {
   MockJira,
   MockProviderAdapter,
   createNpmRunner,
+  imagesReceived,
   mockCodexModels,
   snapshot,
   startOutlookService,
@@ -382,6 +383,13 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     providerSessionId: command.resumeId ?? `mock-session-${threadId.slice(0, 8)}`,
   };
   const resumed = command.resumeId === undefined ? '' : `Resumed ${command.resumeId}. `;
+  // Images pasted or dropped on the composer (agent workbench spec 53): the mock says how many
+  // it got and of which types, so the case sees what the adapter was handed.
+  const images = command.images ?? [];
+  if (images.length > 0) {
+    const types = images.map((image) => image.mediaType.slice('image/'.length)).join(', ');
+    return [session, ...finish(threadId, `${imagesReceived(images.length)} Types: ${types}.`)];
+  }
   // A step of a unit's run: the agent opens the unit's pull request, as deliver-work would, and
   // says which unit it was told about.
   const unit = /^Unit: (\S+) (.*)$/m.exec(prompt);
@@ -725,6 +733,54 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   if (/break the build/i.test(prompt)) {
     return [session, { type: 'turnFailed', threadId, error: 'The build broke' }];
   }
+  // Paths in an answer (agent workbench spec 15, 16): inline code, a relative markdown link, and
+  // one that leaves the folder.
+  if (/show the file/i.test(prompt)) {
+    return [
+      session,
+      ...finish(
+        threadId,
+        'The timer is in `src/timer.ts`, as the [spec](docs/spec.md) says. Notes outside: `../outside.txt`.',
+      ),
+    ];
+  }
+  // A Read as the Claude adapter reports it (agent workbench spec 17): its facts name the file by
+  // its full path, and the row's Open shows it in a panel tab.
+  if (/read the timer/i.test(prompt)) {
+    const timerPath = path.join(command.cwd, 'src', 'timer.ts');
+    return [
+      session,
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'read-timer',
+        name: 'Read',
+        input: { file_path: timerPath },
+        kind: 'read',
+        path: timerPath,
+      },
+      {
+        type: 'toolCallOutput',
+        threadId,
+        itemId: 'read-timer',
+        output: 'export const ringTwice\n',
+      },
+      { type: 'toolCallCompleted', threadId, itemId: 'read-timer', status: 'ok' },
+      ...finish(threadId, 'The timer rings twice.'),
+    ];
+  }
+  // Links to the user's hosts in an answer (agent workbench spec 20, 23, 24): a pull request and
+  // a Jira issue on the hosts the tea garden project has tokens for, a bare key of its Jira
+  // project, and a link to a host wow has no token for.
+  if (/link the work/i.test(prompt)) {
+    return [
+      session,
+      ...finish(
+        threadId,
+        `The work is in ${trackerUrl}/github/acme/tea-garden/pull/14 for [the ticket](${trackerUrl}/jira/browse/DEMO-41). DEMO-42 comes next. Background: [elsewhere](https://elsewhere.example.invalid/acme/tea/pull/3).`,
+      ),
+    ];
+  }
   if (/table and a diagram/i.test(prompt)) {
     return [session, ...finish(threadId, markdownAnswer)];
   }
@@ -1022,6 +1078,17 @@ if (home === e2ePanelHome) {
     'peer.createOffer().then((offer) => peer.setLocalDescription(offer));',
   ].join(' ');
   await mkdir(review, { recursive: true });
+  // What a chat thread in the project opens from its messages, the palette and `@`.
+  await mkdir(path.join(home, 'src'), { recursive: true });
+  await mkdir(path.join(home, 'docs'), { recursive: true });
+  await writeFile(
+    path.join(home, 'src', 'timer.ts'),
+    'export const ringTwice = (ring: () => void) => {\n  ring();\n  ring();\n};\n',
+  );
+  await writeFile(
+    path.join(home, 'docs', 'spec.md'),
+    '# Tea timer\n\nThe timer rings **twice** when the tea is ready.\n',
+  );
   await writeFile(
     path.join(review, 'notes.md'),
     [

@@ -196,6 +196,11 @@ export const codexProtocolFingerprint: ProtocolFingerprint = {
           path: 'input[]<text>.text_elements',
           shape: { type: 'array', required: false, nullable: false },
         },
+        {
+          path: 'input[]<localImage>.path',
+          copes: true,
+          shape: { type: 'string', required: true, nullable: false },
+        },
         { path: 'cwd', shape: { type: 'string', required: false, nullable: true } },
         { path: 'model', shape: { type: 'string', required: false, nullable: true } },
         { path: 'effort', shape: { type: 'string', required: false, nullable: true } },

@@ -112,6 +112,13 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
         return db.select().from(t.ticketReads).orderBy(asc(t.ticketReads.id)).all();
       case 'pageReads':
         return db.select().from(t.pageReads).orderBy(asc(t.pageReads.id)).all();
+      case 'hostItemReads':
+        return db
+          .select()
+          .from(t.hostItemReads)
+          .where(eq(t.hostItemReads.threadId, threadId))
+          .orderBy(asc(t.hostItemReads.id))
+          .all();
       case 'assistantChanges': {
         // In the order they were made (spec 13): the insertion order of the table. Without what
         // Undo puts back: it holds real values and is the server's alone.

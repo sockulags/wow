@@ -9,7 +9,7 @@ import { calendarCommands } from '@/calendar/commands';
 import { validateCalendarSearch } from '@/calendar/search';
 import { approvalCommands, approvalCardStore } from '@/chat/approval-card';
 import { chatCommands } from '@/chat/commands';
-import { threadChangesCommands, threadChangesStore } from '@/chat/thread-changes';
+import { changesShown, threadChangesCommands, threadChangesStore } from '@/chat/thread-changes';
 import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
 import {
@@ -22,6 +22,11 @@ import { rowActionCommands } from '@/chat/row-commands';
 import { activeTaskPin, taskPinCommands, taskPinStore } from '@/chat/task-pin';
 import { focusedRowActions, rowActionStore } from '@/lib/row-actions';
 import { paletteThreadHits, threadListStore } from '@/chat/thread-commands';
+import {
+  activeImageComposer,
+  imageComposerCommands,
+  imageComposerStore,
+} from '@/chat/image-commands';
 import { activeModelBar, modelBarCommands, modelBarStore } from '@/chat/model-commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
@@ -32,8 +37,13 @@ import { connectStore } from '@/providers/connect-step';
 import { setupCommands } from '@/settings/setup';
 import { skillCommands } from '@/settings/skills';
 import { formatWhen } from '@/lib/format';
-import { panelCommands, viewerCommands } from '@/panel/commands';
-import { panelSelection } from '@/panel/model';
+import {
+  hostItemCommands,
+  openFileCommands,
+  panelCommands,
+  viewerCommands,
+} from '@/panel/commands';
+import { panelRoute, panelSelection } from '@/panel/model';
 import { planCommands } from '@/plans/commands';
 import { openPlan, runRead } from '@/plans/model';
 import { runPullRequest } from '@/workflows/pull-request-tab';
@@ -71,7 +81,9 @@ export function useCommands(gated = false): {
   const projects = useTopic('projects');
   const turns = useTopic('turns', openThreadId);
   const approvalOffer = useStore(approvalCardStore, (state) => state.offer);
-  const changesOpen = useStore(threadChangesStore, (state) => state.threadId);
+  const changesOpen = useLayout((state) =>
+    changesShown(state, panelRoute(pathname, locationSearch), openThreadId),
+  );
   const changesTurnOnly = useStore(threadChangesStore, (state) => state.turnOnly);
   // The calendar's zone with "outlook" resolved (F-8), for the cards' "when".
   const { zone: calendarZone } = useCalendarPrefs();
@@ -102,8 +114,8 @@ export function useCommands(gated = false): {
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
     [pathname, locationSearch],
   );
-  const viewer = useLayout((state) => state.viewer);
-  const page = useLayout((state) => state.page);
+  const panelTabs = useLayout((state) => state.panelTabs);
+  const tabsRoute = panelRoute(pathname, locationSearch);
   const changedFiles = useStore(changesStore, (state) =>
     state.runId === openRunId ? state.files : undefined,
   );
@@ -127,6 +139,7 @@ export function useCommands(gated = false): {
   const taskPinOpen = useStore(taskPinStore, (state) =>
     taskPin === undefined ? false : (state.open[taskPin] ?? false),
   );
+  const imageComposer = useStore(imageComposerStore, activeImageComposer);
   const modelBar = useStore(modelBarStore, activeModelBar);
   const all = useMemo(() => {
     const zone = calendarZone;
@@ -139,6 +152,18 @@ export function useCommands(gated = false): {
       runs?.find((run) => run.id === openRunId) ??
       (openThread ? gateRunForThread(openThread, runs ?? []) : undefined);
     const openRunProject = projects?.find((project) => project.id === openRun?.projectId);
+    // Whose files "Open file…" lists: the open chat or step thread's, else the run view's run's.
+    const viewRun = openRunId !== undefined && openRun?.id === openRunId ? openRun : undefined;
+    const fileTarget =
+      openThread && openThread.kind !== 'assistant'
+        ? { scope: { threadId: openThread.id }, folder: openThread.cwd, from: tabsRoute }
+        : viewRun && openRunProject
+          ? {
+              scope: { runId: viewRun.id },
+              folder: runFolder(viewRun, openRunProject.cwd),
+              from: tabsRoute,
+            }
+          : undefined;
     return [
       // Cards say when they are ("Card · Tomorrow 10:00").
       ...calendarCommands({
@@ -157,7 +182,8 @@ export function useCommands(gated = false): {
       ...approvalCommands(approvalOffer),
       ...threadChangesCommands(
         openThread?.runId === null ? openThread.id : undefined,
-        changesOpen !== undefined && changesOpen === openThread?.id,
+        tabsRoute,
+        changesOpen,
         changesTurnOnly,
       ),
       ...chatCommands({
@@ -220,6 +246,7 @@ export function useCommands(gated = false): {
       ...skillComposerCommands(skillComposer),
       ...taskPinCommands(taskPin, taskPinOpen),
       ...rowActionCommands(focusedRowActions({ areas: rowAreas })),
+      ...imageComposerCommands(imageComposer),
       ...modelBarCommands(modelBar),
       ...assistantCommands({
         changes: assistantChanges ?? [],
@@ -229,12 +256,20 @@ export function useCommands(gated = false): {
       ...skillCommands(skills ?? []),
       ...panelCommands(panelSelection(pathname, locationSearch)),
       ...viewerCommands({
-        viewer,
-        pathname,
+        panelTabs,
+        pathname: tabsRoute,
         openRun,
         projects: projects ?? [],
-        page,
         pageReads: pageReads ?? [],
+      }),
+      ...openFileCommands(fileTarget),
+      ...hostItemCommands({
+        target:
+          openThread && openThread.kind !== 'assistant'
+            ? { threadId: openThread.id, from: tabsRoute }
+            : undefined,
+        panelTabs,
+        pathname: tabsRoute,
       }),
       ...connectCommands(connectShown),
       ...providerCommands(instances ?? []),
@@ -252,6 +287,7 @@ export function useCommands(gated = false): {
     changesTurnOnly,
     pathname,
     locationSearch,
+    tabsRoute,
     updateState,
     staticCommands,
     threads,
@@ -274,8 +310,7 @@ export function useCommands(gated = false): {
     assistantProposals,
     setupApplications,
     skills,
-    viewer,
-    page,
+    panelTabs,
     pageReads,
     planIntents,
     planRuns,
@@ -295,6 +330,7 @@ export function useCommands(gated = false): {
     taskPinOpen,
     listProjectId,
     paletteHits,
+    imageComposer,
     modelBar,
   ]);
   const commands = useMemo(

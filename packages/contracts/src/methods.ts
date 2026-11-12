@@ -1,9 +1,16 @@
 import { z } from 'zod';
 import { CalendarRange, CalendarRangeParams } from './repeat.js';
 import { AssistantChange, AssistantProposal } from './assistant.js';
+import {
+  AttachmentPutParams,
+  AttachmentPutResult,
+  AttachmentReadParams,
+  AttachmentReadResult,
+} from './attachments.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RunDiff, RunDiffParams, ThreadDiff, ThreadDiffParams } from './diff.js';
-import { FileReadParams, FileReadResult } from './files.js';
+import { FileListParams, FileListResult, FileReadParams, FileReadResult } from './files.js';
+import { HostItemRead, HostLookupParams, HostLookupResult } from './host-links.js';
 import { ChangeRequest, HostRead, HostRefreshParams, PageRead, TicketRead } from './hosts.js';
 import {
   Approval,
@@ -71,6 +78,8 @@ export const subscriptionTopics = {
   hostReads: { row: HostRead, threadScoped: false },
   ticketReads: { row: TicketRead, threadScoped: false },
   pageReads: { row: PageRead, threadScoped: false },
+  // What was read about the items a chat thread links to (agent workbench spec 22).
+  hostItemReads: { row: HostItemRead, threadScoped: true },
   settings: { row: SettingRow, threadScoped: false },
   assistantChanges: { row: AssistantChange, threadScoped: false },
   assistantProposals: { row: AssistantProposal, threadScoped: false },
@@ -287,6 +296,13 @@ export const rpcMethods = {
     params: HostRefreshParams,
     result: z.object({ reads: z.array(HostRead) }),
   },
+  // A chat thread's links (agent workbench spec 20 to 25): the sites and references wow may read
+  // for the thread, the item a link or reference names, and its read. Reads only when asked
+  // (`read`), never on a timer. A host that fails is an answer (the read's `error`).
+  'hosts.lookup': {
+    params: HostLookupParams,
+    result: HostLookupResult,
+  },
   // Looks for each started step's expected artifacts in the project folder (behavior 26, run
   // view open) and stores what it finds.
   'workflowRuns.detectArtifacts': {
@@ -316,11 +332,28 @@ export const rpcMethods = {
     params: z.object({ projectId: z.string().min(1), globs: z.array(z.string().min(1)) }),
     result: z.object({ files: z.array(z.string()) }),
   },
-  // Reads one file of a run for the viewer. Only files inside the run's working folder or the
-  // project folder are read; anything else is answered as `refused` with the reason.
+  // Reads one file for the viewer, of a run, a thread or a project. Only files inside the scope's
+  // folders are read; anything else is answered as `refused` with the reason.
   'files.read': {
     params: FileReadParams,
     result: FileReadResult,
+  },
+  // Lists the files of a thread's, run's or project's folder for "Open file…" and `@`.
+  'files.list': {
+    params: FileListParams,
+    result: FileListResult,
+  },
+  // Stores one image for a thread's next message (agent workbench spec 53 to 55). Refused, as
+  // `rejected` with the reason, when it is too large, not a PNG, JPEG, GIF or WebP, or for a
+  // model the provider says takes no images, and for the assistant's thread (spec 61).
+  'attachments.put': {
+    params: AttachmentPutParams,
+    result: AttachmentPutResult,
+  },
+  // One stored image of a thread, for its chip and its message.
+  'attachments.read': {
+    params: AttachmentReadParams,
+    result: AttachmentReadResult,
   },
   // Each project folder's git status and remotes, for the rows in Settings → Projects. Read only.
   'projects.git': {

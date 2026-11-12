@@ -94,7 +94,8 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       output names an exit code anyway. The read is one line "Read README.md" and the search
       "Search <word>" (with "in <folder>" when Claude gave a path). Neither may show the thread's
       own folder in front of the file; when one does, write down the path exactly as shown
-      (separator, drive letter's case, a leading `\\?\`), since that is what Claude sent.
+      (separator, drive letter's case, a leading `\\?\`), since that is what Claude sent. Open on
+      the read row shows `README.md` in a side panel tab.
 - [ ] **Task list (Claude Code).** Ask Claude to make a todo list of three steps and work
       through them. Expected: the pin above the composer reads "0/3 · <first step>", Ctrl+T opens
       it, and each change adds one "Updated tasks (n/3)" line. Write down which tools Claude used
@@ -106,7 +107,8 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       opening to the diff with line numbers (from the result's `structuredPatch`; without it the
       row shows the old and new text without line numbers: write down which you saw). The header
       chip reads "+n −m in 2 files"; Ctrl+Shift+D lists both, and after a second message that
-      edits only `notes.txt`, This turn only (O) lists just that one.
+      edits only `notes.txt`, This turn only (O) lists just that one. Open file on a row opens the
+      file in a side panel tab beside the Changes tab.
 - [ ] **Deny with a note (Claude Code).** Ask Claude to run `npm install`, press D, write "Use
       pnpm instead" and Enter. Write down what Claude says it was told: expected the note.
 - [ ] **Always allow (Claude Code).** Ask Claude to run `pnpm --version`, press Y: the card showed
@@ -117,6 +119,13 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       leave plan mode. Write down whether the card says "The plan as written in the conversation"
       (the request carried no `plan`) or shows the plan without that line (it did). Press Enter:
       the bar shows Accept edits and Claude edits without asking.
+- [ ] Images on Claude. Take a screenshot with Win+Shift+S, paste it into the composer with
+      Ctrl+V and drop a PNG file from Explorer on it: two pictures show; Backspace at the start of
+      the text takes the dropped one off. Drop it again, ask "What do these two pictures show?"
+      and send. Write down whether Claude describes both (they went as image blocks), and that
+      `%USERPROFILE%\.wow\images\t-<thread id>` holds the two files. Drop a BMP: it is refused with
+      the reason. Copy a few cells in Excel and paste them with Ctrl+V: the text goes into the
+      box and no picture is added.
 
 ## 4. Codex turn
 
@@ -134,6 +143,10 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       models and marks you see, which come from `model/list` (`description`, `isDefault`,
       `defaultReasoningEffort`, `inputModalities`, `hidden`). Shift+Tab goes Auto, Ask untrusted,
       Read only and never Full access.
+- [ ] Images on Codex. On a model with the image icon, paste a screenshot and send "What is in
+      this picture?": write down whether Codex describes it (it went as a `localImage` path under
+      `%USERPROFILE%\.wow\images`). On a model without the icon, pasting is refused with the
+      reason.
 - [ ] Ask Codex to ask you a question with choices with its user input tool (this may need
       Codex's plan mode or collaboration mode; write down how you got it to ask). Answer with a
       choice and typed text in **Other** together. Write down what Codex says it received:

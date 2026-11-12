@@ -2,6 +2,7 @@ import type {
   DomainEvent,
   ProviderEvent,
   QueuedMessage,
+  SentImage,
   SentSkill,
   SkillRef,
   ServerCommand,
@@ -20,6 +21,7 @@ import {
   diffCounts,
   planStartModes,
   proposeRule,
+  AttachmentId,
   QuestionOption,
   ruleCovers,
   sameRule,
@@ -27,6 +29,7 @@ import {
   type ApprovalPlan,
   type ProposedRule,
   askAnswerPrompt,
+  attachmentMediaType,
   askAnswerText,
   askedQuestionsOf,
   assistantThreadId,
@@ -136,6 +139,8 @@ function turnStarted(
     answers,
     skills,
     queued: mark,
+    files,
+    images,
   }: {
     text: string;
     prompt: string;
@@ -143,6 +148,8 @@ function turnStarted(
     answers?: { askItemId: string; replies: QuestionReply[] };
     skills?: SentSkill[] | undefined;
     queued?: 'afterTurn';
+    files?: readonly string[] | undefined;
+    images?: readonly SentImage[] | undefined;
   },
 ): DomainEvent {
   const index = read.turnCount(thread.id);
@@ -171,6 +178,8 @@ function turnStarted(
           ...(answers ? { answers } : {}),
           ...(skills && skills.length > 0 ? { skills } : {}),
           ...(mark ? { queued: mark } : {}),
+          ...(files && files.length > 0 ? { files: [...files] } : {}),
+          ...(images && images.length > 0 ? { images: [...images] } : {}),
         },
         streaming: false,
       },
@@ -182,6 +191,7 @@ function turnStarted(
         effort: thread.effort,
         permissionMode: thread.permissionMode,
         resumeId: thread.providerSessionId,
+        ...(images && images.length > 0 ? { images: images.map((image) => image.id) } : {}),
         ...(assistant ? { kind: 'assistant' as const } : {}),
       },
     },
@@ -196,15 +206,46 @@ const unarchived = (threadId: string): DomainEvent => ({
   payload: { threadId, archived: false },
 });
 
-// A message needs text or a skill, and the assistant takes no skills (wow skills spec 20).
-function checkMessage(thread: Thread, text: string, picked: readonly SkillRef[]): void {
-  if (text.trim() === '' && picked.length === 0) {
-    throw new CommandRejected('rejected', 'A message needs text or a skill');
+// A message needs text, a skill or an image; the assistant takes no skills (wow skills spec 20)
+// and no images (agent workbench spec 61), and a workflow step's thread takes no images either.
+function checkMessage(
+  thread: Thread,
+  text: string,
+  picked: readonly SkillRef[],
+  images: readonly SentImage[] = [],
+): void {
+  if (text.trim() === '' && picked.length === 0 && images.length === 0) {
+    throw new CommandRejected('rejected', 'A message needs text, a skill or an image');
   }
   if (thread.kind === 'assistant' && picked.length > 0) {
     throw new CommandRejected('rejected', 'The assistant takes no skills');
   }
+  if (thread.kind === 'assistant' && images.length > 0) {
+    throw new CommandRejected('rejected', 'The assistant takes no images');
+  }
+  if (thread.stepId !== null && images.length > 0) {
+    throw new CommandRejected('rejected', 'A workflow step takes no images');
+  }
 }
+
+// The images a message names, with their type, which the id carries.
+const sentImages = (
+  attachments: readonly { readonly id: string; readonly name?: string | undefined }[] = [],
+): SentImage[] => {
+  const seen = new Set<string>();
+  return attachments.flatMap(({ id, name }) => {
+    const parsed = AttachmentId.safeParse(id);
+    if (!parsed.success || seen.has(parsed.data)) return [];
+    seen.add(parsed.data);
+    return [
+      {
+        id: parsed.data,
+        mediaType: attachmentMediaType(parsed.data),
+        ...(name !== undefined ? { name } : {}),
+      },
+    ];
+  });
+};
 
 const queueChanged = (
   threadId: string,
@@ -227,8 +268,15 @@ function queueMessage(
   running: Turn,
   text: string,
   picked: readonly SkillRef[],
+  added: readonly SentImage[] = [],
+  mentioned: readonly string[] = [],
 ): DomainEvent {
   const before = thread.queued ?? undefined;
+  const files = [...new Set([...(before?.files ?? []), ...mentioned])];
+  const images = [...(before?.images ?? [])];
+  for (const image of added) {
+    if (!images.some((entry) => entry.id === image.id)) images.push(image);
+  }
   const skills = [...(before?.skills ?? [])];
   for (const ref of picked) {
     if (!skills.some((skill) => skill.name === ref.name && skill.source === ref.source))
@@ -240,6 +288,8 @@ function queueMessage(
       ? [before.text, text.trim()].filter((part) => part.trim() !== '').join('\n\n')
       : text,
     ...(skills.length > 0 ? { skills } : {}),
+    ...(images.length > 0 ? { images } : {}),
+    ...(files.length > 0 ? { files } : {}),
     queuedAt: before?.queuedAt ?? context.now,
   };
   if (thread.kind === 'assistant') return queueChanged(thread.id, message);
@@ -252,6 +302,8 @@ function offerQueued(
   thread: Thread,
   message: QueuedMessage,
 ): DomainEvent {
+  // A hand-over carries text only, so a message with images waits for the turn's end.
+  if ((message.images ?? []).length > 0) return queueChanged(thread.id, message);
   const skills = message.skills ?? [];
   const prompt =
     skills.length > 0
@@ -271,6 +323,7 @@ function handedOverItem(
   turn: Turn,
   text: string,
   picked: readonly SkillRef[],
+  files: readonly string[],
 ): DomainEvent {
   const skills =
     picked.length > 0 ? messageWithSkills(read, context, thread, picked, text).skills : undefined;
@@ -287,6 +340,7 @@ function handedOverItem(
       payload: {
         text,
         ...(skills && skills.length > 0 ? { skills } : {}),
+        ...(files.length > 0 ? { files: [...files] } : {}),
         queued: 'duringTurn',
       },
       streaming: false,
@@ -301,12 +355,17 @@ function handedOverEarlier(
   context: DecideContext,
   thread: Thread,
   queuedId: string,
-  offered: { readonly text: string; readonly skills?: readonly SkillRef[] | undefined },
+  offered: {
+    readonly text: string;
+    readonly skills?: readonly SkillRef[] | undefined;
+    readonly files?: readonly string[] | undefined;
+  },
 ): DomainEvent[] {
   const running = read.runningTurn(thread.id);
   if (!running || !queuedId.startsWith(`${running.id}:queued:`)) return [];
   const given = offered.skills ?? [];
-  const events = [handedOverItem(read, context, thread, running, offered.text, given)];
+  const givenFiles = offered.files ?? [];
+  const events = [handedOverItem(read, context, thread, running, offered.text, given, givenFiles)];
   const waiting = thread.queued;
   if (!waiting) return events;
   if (!waiting.id.startsWith(`${queuedId}+`) || !waiting.text.startsWith(offered.text)) {
@@ -316,11 +375,17 @@ function handedOverEarlier(
   const skills = (waiting.skills ?? []).filter(
     (skill) => !given.some((ref) => ref.name === skill.name && ref.source === skill.source),
   );
-  if (text.trim() === '' && skills.length === 0) return [...events, queueChanged(thread.id, null)];
+  const files = (waiting.files ?? []).filter((file) => !givenFiles.includes(file));
+  const images = waiting.images ?? [];
+  if (text.trim() === '' && skills.length === 0 && images.length === 0) {
+    return [...events, queueChanged(thread.id, null)];
+  }
   const rest: QueuedMessage = {
     id: waiting.id,
     text,
     ...(skills.length > 0 ? { skills } : {}),
+    ...(images.length > 0 ? { images } : {}),
+    ...(files.length > 0 ? { files } : {}),
     queuedAt: waiting.queuedAt,
   };
   return [...events, offerQueued(read, context, thread, rest)];
@@ -335,8 +400,10 @@ function messageTurn(
   text: string,
   picked: readonly SkillRef[],
   mark?: 'afterTurn',
+  files?: readonly string[],
+  images: readonly SentImage[] = [],
 ): DomainEvent[] {
-  checkMessage(stored, text, picked);
+  checkMessage(stored, text, picked, images);
   const assistant = stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
   const thread = assistant?.thread ?? stored;
   const notes = assistant
@@ -357,6 +424,8 @@ function messageTurn(
       assistant: assistant !== undefined,
       skills: withSkills.skills,
       ...(mark ? { queued: mark } : {}),
+      files,
+      images,
     }),
     ...(thread.archived ? [unarchived(thread.id)] : []),
   ];
@@ -526,15 +595,28 @@ export function decideThread(
     case 'thread.sendMessage': {
       const stored = requireThread(read, command.threadId);
       const picked = command.skills ?? [];
-      checkMessage(stored, command.text, picked);
+      const images = sentImages(command.attachments);
+      checkMessage(stored, command.text, picked, images);
+      if (stored.kind === 'assistant' && (command.files ?? []).length > 0) {
+        throw new CommandRejected('rejected', 'The assistant takes no file mentions');
+      }
       const running = read.runningTurn(stored.id);
       if (running) {
         return [
-          queueMessage(read, context, stored, running, command.text, picked),
+          queueMessage(read, context, stored, running, command.text, picked, images, command.files),
           ...(stored.archived ? [unarchived(stored.id)] : []),
         ];
       }
-      return messageTurn(read, context, stored, command.text, picked);
+      return messageTurn(
+        read,
+        context,
+        stored,
+        command.text,
+        picked,
+        undefined,
+        command.files,
+        images,
+      );
     }
     case 'thread.cancelQueued': {
       const thread = requireThread(read, command.threadId);
@@ -556,7 +638,16 @@ export function decideThread(
       }
       return [
         queueChanged(thread.id, null),
-        ...messageTurn(read, context, thread, waiting.text, waiting.skills ?? [], 'afterTurn'),
+        ...messageTurn(
+          read,
+          context,
+          thread,
+          waiting.text,
+          waiting.skills ?? [],
+          'afterTurn',
+          waiting.files,
+          waiting.images ?? [],
+        ),
       ];
     }
     case 'thread.handedOver': {
@@ -572,7 +663,15 @@ export function decideThread(
       if (!turn) return [queueChanged(thread.id, null)];
       return [
         queueChanged(thread.id, null),
-        handedOverItem(read, context, thread, turn, waiting.text, waiting.skills ?? []),
+        handedOverItem(
+          read,
+          context,
+          thread,
+          turn,
+          waiting.text,
+          waiting.skills ?? [],
+          waiting.files ?? [],
+        ),
       ];
     }
     case 'thread.sendPrepared': {

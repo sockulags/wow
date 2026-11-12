@@ -6,6 +6,7 @@ import {
   type Command,
   type DetectedProvider,
   type DiscoveredProject,
+  type FileScope,
 } from '@wow/contracts';
 import { OutlookError } from '@wow/outlook-bridge';
 import type { SecretStore } from '@wow/secrets';
@@ -20,7 +21,10 @@ import { searchThreads } from '../core/thread-search.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
 import { projects, threads, turns, workflowRuns } from '../db/schema.js';
+import { ImageRefused, type ImageStore } from '../files/images.js';
+import { listFolderFiles } from '../files/list.js';
 import { readViewerFile } from '../files/read.js';
+import type { HostLookup } from '../hosts/lookup.js';
 import type { HostPoller } from '../hosts/poller.js';
 import type { OutlookService } from '../outlook/service.js';
 import type { ProviderService } from '../providers/service.js';
@@ -58,12 +62,51 @@ export interface HandlerDeps {
   readonly providerUpdates: ProviderUpdates;
   readonly trackers: TrackerService;
   readonly hosts: HostPoller;
+  readonly hostLookup: HostLookup;
+  readonly images: ImageStore;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
   readonly discoverProjects: () => Promise<DiscoveredProject[]>;
   // Undefined until the Outlook service has started, or when the server runs without one.
   readonly outlook: () => OutlookService | undefined;
   readonly info: { readonly version: string; readonly home: string };
   readonly clock: () => Date;
+}
+
+// The folders a file of a run, thread or project may come from, first folder first, and how a
+// refusal names them (agent workbench Interface). The assistant's thread has none: its folder is
+// wow's own, and its view takes no files.
+function fileScope(
+  deps: HandlerDeps,
+  scope: FileScope,
+): { readonly roots: string[]; readonly place: string } {
+  const projectFolder = (projectId: string) => {
+    const project = deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
+    if (!project) throw new RpcFault('not_found', `No project ${projectId}`);
+    return project.cwd;
+  };
+  if ('runId' in scope) {
+    const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, scope.runId)).get();
+    if (!run) throw new RpcFault('not_found', `No run ${scope.runId}`);
+    const cwd = projectFolder(run.projectId);
+    // A run with its own working copy reads from there first; the project folder stays allowed.
+    return {
+      roots: run.workingCopy ? [run.workingCopy.path, cwd] : [cwd],
+      place: "the run's working folder and the project folder",
+    };
+  }
+  if ('threadId' in scope) {
+    const thread = deps.db.select().from(threads).where(eq(threads.id, scope.threadId)).get();
+    if (!thread) throw new RpcFault('not_found', `No thread ${scope.threadId}`);
+    if (thread.kind === 'assistant') {
+      throw new RpcFault('rejected', "The assistant's thread has no files to open");
+    }
+    if (thread.projectId === null) return { roots: [thread.cwd], place: "the thread's folder" };
+    return {
+      roots: [...new Set([thread.cwd, projectFolder(thread.projectId)])],
+      place: "the thread's folder and the project folder",
+    };
+  }
+  return { roots: [projectFolder(scope.projectId)], place: 'the project folder' };
 }
 
 function requireOutlook(deps: HandlerDeps): OutlookService {
@@ -102,6 +145,16 @@ function innerCommands(command: Command, deps: HandlerDeps): Command[] {
   return [];
 }
 
+// A refused image is the user's to fix, so it answers `rejected` with the sentence.
+async function imageCall<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof ImageRefused) throw new RpcFault('rejected', error.message);
+    throw error;
+  }
+}
+
 export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
   return {
     'server.info': () => ({ version: deps.info.version, home: deps.info.home, pid: process.pid }),
@@ -110,6 +163,10 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       for (const checked of [command, ...innerCommands(command, deps)]) {
         const refused = await deps.skills.refusal(checked);
         if (refused !== undefined) throw new RpcFault('rejected', refused);
+      }
+      if (command.type === 'thread.sendMessage' && (command.attachments ?? []).length > 0) {
+        const missing = await deps.images.refusal(command);
+        if (missing !== undefined) throw new RpcFault('rejected', missing);
       }
       const result = deps.engine.dispatch(commandId, command);
       // The command committed but its file could not be written; a scan puts the list back.
@@ -167,6 +224,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     'skills.refresh': async () => ({ skills: inListOrder(await deps.skills.refresh()) }),
     'plans.refresh': async () => ({ intents: await deps.plans.refresh() }),
     'hosts.refresh': async (params) => ({ reads: await deps.hosts.refresh(params) }),
+    'hosts.lookup': (params) => deps.hostLookup.lookup(params),
     'projects.git': async () => ({ projects: await deps.trackers.projectsGit() }),
     'trackers.project': ({ projectId }) => deps.trackers.projectTrackers(projectId),
     'trackers.preview': ({ backlogItemId, service, projectId }) =>
@@ -186,16 +244,24 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       if (!project) throw new RpcFault('not_found', `No project ${projectId}`);
       return { files: await detectArtifacts(project.cwd, globs) };
     },
-    'files.read': async ({ runId, path: requested }) => {
-      const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();
-      if (!run) throw new RpcFault('not_found', `No run ${runId}`);
-      const project = deps.db.select().from(projects).where(eq(projects.id, run.projectId)).get();
-      if (!project) throw new RpcFault('not_found', `No project ${run.projectId}`);
-      // A run with its own working copy reads from there first; the project folder stays allowed.
+    'files.read': async (params) => {
+      const scope = fileScope(deps, params);
       return readViewerFile({
-        roots: run.workingCopy ? [run.workingCopy.path, project.cwd] : [project.cwd],
-        path: requested,
+        roots: scope.roots,
+        path: params.path,
         maxBytes: deps.settings.get('viewer.maxFileBytes'),
+        place: scope.place,
+      });
+    },
+    'attachments.put': (params) => imageCall(() => deps.images.put(params)),
+    'attachments.read': (params) => imageCall(() => deps.images.read(params)),
+    'files.list': async (params) => {
+      const [folder] = fileScope(deps, params).roots;
+      if (folder === undefined) throw new RpcFault('not_found', 'No folder to list');
+      return listFolderFiles({
+        folder,
+        limit: deps.settings.get('viewer.fileListLimit'),
+        git: { timeoutMs: deps.settings.get('trackers.gitTimeoutMs') },
       });
     },
     'workflowRuns.diff': async ({ runId, path: asked }) => {

@@ -9,6 +9,9 @@ import {
   ProviderModel,
   providerChatOptions,
 } from '@wow/contracts';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ClaudeAdapter, extraArgs, providerKind } from './index.js';
 import type { SDKMessage } from './sdk.js';
@@ -1132,6 +1135,65 @@ describe('@wow/provider-claude', () => {
     expect(h.events).toContainEqual({ type: 'turnStartedByProvider', threadId: 't1' });
     expect(h.queries[0]?.prompts).toEqual(['What is in the readme?', 'Then sum it up']);
     expect(h.queries[0]?.priorities).toEqual([undefined, 'next']);
+  });
+
+  // Agent workbench spec 53: the images wow stored go to Claude Code as base64 image blocks in
+  // the user message, before its text.
+  it('sends the images of a message as image blocks before the text @agent-workbench-53', async () => {
+    const folder = await mkdtemp(path.join(tmpdir(), 'wow claude images '));
+    const screenshot = path.join(folder, 'a.png');
+    const photo = path.join(folder, 'b.jpg');
+    await writeFile(screenshot, Buffer.from('invented png bytes'));
+    await writeFile(photo, Buffer.from('invented jpeg bytes'));
+    try {
+      const h = harness([[result(0.01)]]);
+      const done = h.next('turnCompleted');
+      await h.adapter.send(
+        startTurn({
+          prompt: 'What is wrong here?',
+          images: [
+            { path: screenshot, mediaType: 'image/png' },
+            { path: photo, mediaType: 'image/jpeg' },
+          ],
+        }),
+      );
+      await done;
+      expect(h.queries[0]?.messages[0]?.message).toEqual({
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: 'image/png',
+              data: Buffer.from('invented png bytes').toString('base64'),
+            },
+          },
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: 'image/jpeg',
+              data: Buffer.from('invented jpeg bytes').toString('base64'),
+            },
+          },
+          { type: 'text', text: 'What is wrong here?' },
+        ],
+      });
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+
+  it('sends a message without images as plain text, as before', async () => {
+    const h = harness([[result(0.01)]]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(h.queries[0]?.messages[0]?.message).toEqual({
+      role: 'user',
+      content: 'What is in the readme?',
+    });
   });
 
   it('takes no message when no turn runs', async () => {

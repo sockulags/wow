@@ -1,23 +1,25 @@
 import {
   providerChatOptions,
   type ProviderInstance,
+  type SentImage,
   type SkillRef,
   type Thread,
   type ThreadItem,
 } from '@wow/contracts';
-import { Link } from '@tanstack/react-router';
+import { Link, useRouter } from '@tanstack/react-router';
 import { CircleCheckIcon, PinIcon, RotateCcwIcon, SearchXIcon, Undo2Icon } from 'lucide-react';
 import {
   Fragment,
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   type ReactNode,
   type RefObject,
 } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
-import { openFile } from '@/panel/viewer';
+import { FileLinkContext, type FileLinks } from '@/components/file-links';
 import { IconButton, WithTooltip } from '@/components/hint';
 import { EmptyState } from '@/components/states';
 import { Badge } from '@/components/ui/badge';
@@ -25,11 +27,15 @@ import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
 import { rowActionScope } from '@/lib/row-actions';
 import { cn } from '@/lib/utils';
+import { routerPanelRoute } from '@/panel/model';
+import { fullPathOf, openFile, openHostItem } from '@/panel/viewer';
 import { GateBar } from '@/workflows/gate-bar';
-import { artifactPath, gateRunForThread } from '@/workflows/model';
+import { gateRunForThread } from '@/workflows/model';
 import { Composer, type ComposerHandle } from './composer';
 import type { QuestionHold } from './question-card';
 import { useDispatch, useTopic } from './data';
+import { HostLinkContext, useHostLinkRules, type HostLinks } from './host-links';
+import { PastedLinks } from './pasted-links';
 import {
   BackgroundIndicator,
   ChatQuestions,
@@ -54,7 +60,7 @@ import {
 } from './model';
 import { ModelBar, useModelBarKeys, type ModelBarHandle, type ModelBarProps } from './model-bar';
 import { frontModelBar } from './model-commands';
-import { openThreadChanges, ThreadChangesChip, useThreadDiff } from './thread-changes';
+import { ThreadChangesChip } from './thread-changes';
 import { ThreadTitle } from './thread-title';
 import {
   groupQuestions,
@@ -290,7 +296,6 @@ export function ThreadConversation({
 }) {
   const threadId = thread.id;
   const send = useDispatch();
-  const runtime = useRuntime();
   const turns = useTopic('turns', threadId) ?? [];
   const items = useTopic('threadItems', threadId);
   const approvals = useTopic('approvals', threadId) ?? [];
@@ -310,6 +315,51 @@ export function ThreadConversation({
   const bar = useRef<ModelBarHandle>(null);
   const barKeys = useModelBarKeys(bar);
   const barId = useId();
+  const { settings, layout } = useRuntime();
+  // Read when a file opens: the conversation is also drawn without a router (tests, previews).
+  const router: ReturnType<typeof useRouter> | undefined = useRouter({ warn: false });
+  // Paths in messages, Open on tool rows and file chips open in a panel tab of the view on screen
+  // (agent workbench spec 15 to 17, 56); the Assistant view has none.
+  const fileLinks = useMemo<FileLinks | undefined>(
+    () =>
+      extras || thread.kind === 'assistant'
+        ? undefined
+        : {
+            open: (path) =>
+              openFile(
+                { settings, layout },
+                {
+                  scope: { threadId: thread.id },
+                  path,
+                  fullPath: fullPathOf(thread.cwd, path),
+                  from: routerPanelRoute(router),
+                },
+              ),
+          },
+    [extras, thread.kind, thread.id, thread.cwd, settings, layout, router],
+  );
+
+  // Links to the user's hosts in messages are chips that open in a panel tab (agent workbench
+  // spec 20 to 25); the Assistant view has none, like file links.
+  const linksOn = fileLinks !== undefined;
+  const hostRules = useHostLinkRules(linksOn ? thread.id : undefined);
+  const hostReads = useTopic('hostItemReads', linksOn ? thread.id : undefined);
+  const hostLinks = useMemo<HostLinks | undefined>(
+    () =>
+      linksOn
+        ? {
+            threadId: thread.id,
+            rules: hostRules,
+            reads: hostReads ?? [],
+            open: (item) =>
+              openHostItem(
+                { settings, layout },
+                { threadId: thread.id, item, from: routerPanelRoute(router) },
+              ),
+          }
+        : undefined,
+    [linksOn, thread.id, hostRules, hostReads, settings, layout, router],
+  );
 
   useEffect(() => {
     if (autoFocus) composer.current?.focus();
@@ -319,12 +369,21 @@ export function ThreadConversation({
   const last = lastTurn(turns);
   const canResume = !running && (last?.state === 'failed' || last?.state === 'interrupted');
   const compactPrompt = instance ? providerChatOptions[instance.kind].compactPrompt : null;
-  const message = (text: string, skills?: readonly SkillRef[]) =>
+  const message = (
+    text: string,
+    skills?: readonly SkillRef[],
+    files?: readonly string[],
+    images?: readonly SentImage[],
+  ) =>
     send({
       type: 'thread.sendMessage',
       threadId,
       text,
       ...(skills ? { skills: [...skills] } : {}),
+      ...(files && files.length > 0 ? { files: [...files] } : {}),
+      ...(images && images.length > 0
+        ? { attachments: images.map(({ id, name }) => (name ? { id, name } : { id })) }
+        : {}),
     });
   const stop = () => void send({ type: 'thread.interrupt', threadId });
   const cancelQueued = () => send({ type: 'thread.cancelQueued', threadId });
@@ -333,13 +392,8 @@ export function ThreadConversation({
     const queued = thread.queued;
     if (!queued) return;
     await cancelQueued();
-    composer.current?.putBack(queued.text, queued.skills ?? []);
+    composer.current?.putBack(queued.text, queued.skills ?? [], queued.images ?? []);
   };
-  const { diff: threadDiff } = useThreadDiff(
-    threadId,
-    undefined,
-    thread.runId === null && thread.kind !== 'assistant',
-  );
   const approval = pendingApproval(approvals);
   const question = pendingQuestion(questions, items ?? [], running);
   const gateRun = gateRunForThread(thread, runs);
@@ -355,23 +409,6 @@ export function ThreadConversation({
       )?.label ?? thread.permissionMode)
     : thread.permissionMode;
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
-  // An edited file opens in the thread's Changes, or for a step in the run's file viewer. A chat
-  // thread whose folder has nothing to compare (outside Git, stored before Changes) has no Open
-  // file, since its Changes would only say why.
-  const openEdited = (path: string) => {
-    const relative = path.replaceAll('\\', '/');
-    if (thread.runId === null) {
-      openThreadChanges(runtime, threadId, relative);
-      return;
-    }
-    openFile(runtime, {
-      runId: thread.runId,
-      path: relative,
-      fullPath: artifactPath(thread.cwd, relative),
-      // The view on screen when the row was clicked; the app's history is the browser's.
-      from: window.location.pathname,
-    });
-  };
   const itemContext = (turnId: string, itemId: string): ItemContext => {
     const turn = turnById.get(turnId);
     return {
@@ -384,9 +421,9 @@ export function ThreadConversation({
       formatAt: when,
       questionHold: extras?.questionHold,
       outputLines,
-      ...(thread.kind === 'assistant' || (thread.runId === null && threadDiff?.status !== 'ok')
-        ? {}
-        : { openFile: openEdited }),
+      // An edited file opens in a tab of the view on screen, like a path in a message (spec 17,
+      // 33); the Assistant view opens none.
+      ...(fileLinks ? { openFile: fileLinks.open } : {}),
       recovery:
         itemId === errorId
           ? {
@@ -397,7 +434,12 @@ export function ThreadConversation({
                     onRetry: () =>
                       void (thread.stepId !== null
                         ? send({ type: 'thread.retry', threadId })
-                        : message(retry.text, retry.skills.length > 0 ? retry.skills : undefined)),
+                        : message(
+                            retry.text,
+                            retry.skills.length > 0 ? retry.skills : undefined,
+                            undefined,
+                            retry.images.length > 0 ? retry.images : undefined,
+                          )),
                   }
                 : {}),
               onResume: () => void message(resumePrompt),
@@ -418,15 +460,24 @@ export function ThreadConversation({
   // while an approval waits, the buttons above answer it and the composer only queues the next
   // message (audit C-04).
   const answerQuestion = question
-    ? (text: string, skills?: readonly SkillRef[]) =>
+    ? (
+        text: string,
+        skills?: readonly SkillRef[],
+        _files?: readonly string[],
+        images?: readonly SentImage[],
+      ) =>
         skills
           ? Promise.reject(
               new Error('An answer takes no skills. Remove the chip, or answer on the card.'),
             )
-          : send({
-              type: 'question.answer',
-              answers: [{ questionId: question.id, reply: { picked: [], text } }],
-            })
+          : images
+            ? Promise.reject(
+                new Error('An answer takes no images. Remove them, or answer on the card.'),
+              )
+            : send({
+                type: 'question.answer',
+                answers: [{ questionId: question.id, reply: { picked: [], text } }],
+              })
     : undefined;
   const placeholder = question
     ? 'Type your answer, or answer on the card above'
@@ -454,152 +505,159 @@ export function ThreadConversation({
 
   const column = compact ? 'w-full px-3' : 'mx-auto w-full max-w-3xl px-4';
   return (
-    <>
-      <div
-        ref={container}
-        onScroll={onScroll}
-        className={cn('min-h-0 flex-1 overflow-y-auto', compact ? 'py-3' : 'py-4')}
-        data-testid="conversation"
-      >
-        <div className={column}>
-          <ol aria-label="Conversation" className="flex flex-col gap-3" onFocus={rowActionScope}>
-            {entries.map((entry, index) => {
-              const tail = entry.kind === 'item' ? entry.item : entry.items.at(-1);
-              const after = tail && afters.get(tail.id);
-              const next = entries[index + 1];
-              const nextTurn = next?.kind === 'item' ? next.item.turnId : next?.items[0]?.turnId;
-              const turn = tail && turnById.get(tail.turnId);
-              // A stopped turn ends with its line; Resume sits on the last one (spec 89).
-              const stopped =
-                turn?.state === 'interrupted' && nextTurn !== turn.id ? turn : undefined;
-              return (
-                <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
-                  {entry.kind === 'item' ? (
-                    <ConversationItem
-                      item={entry.item}
-                      approvals={approvals}
-                      questions={questions}
-                      context={itemContext(entry.item.turnId, entry.item.id)}
-                    />
-                  ) : entry.kind === 'questions' ? (
-                    <li data-testid="item-question" data-item-id={entry.id}>
-                      <ChatQuestions
-                        items={entry.items}
+    <FileLinkContext value={fileLinks}>
+      <HostLinkContext value={hostLinks}>
+        <div
+          ref={container}
+          onScroll={onScroll}
+          className={cn('min-h-0 flex-1 overflow-y-auto', compact ? 'py-3' : 'py-4')}
+          data-testid="conversation"
+        >
+          <div className={column}>
+            <ol aria-label="Conversation" className="flex flex-col gap-3" onFocus={rowActionScope}>
+              {entries.map((entry, index) => {
+                const tail = entry.kind === 'item' ? entry.item : entry.items.at(-1);
+                const after = tail && afters.get(tail.id);
+                const next = entries[index + 1];
+                const nextTurn = next?.kind === 'item' ? next.item.turnId : next?.items[0]?.turnId;
+                const turn = tail && turnById.get(tail.turnId);
+                // A stopped turn ends with its line; Resume sits on the last one (spec 89).
+                const stopped =
+                  turn?.state === 'interrupted' && nextTurn !== turn.id ? turn : undefined;
+                return (
+                  <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
+                    {entry.kind === 'item' ? (
+                      <ConversationItem
+                        item={entry.item}
+                        approvals={approvals}
                         questions={questions}
-                        turnEnded={itemContext(entry.items[0]?.turnId ?? '', entry.id).turnEnded}
-                        hold={extras?.questionHold}
+                        context={itemContext(entry.item.turnId, entry.item.id)}
                       />
-                    </li>
-                  ) : (
-                    <ToolCallGroup
-                      items={entry.items}
-                      contextOf={(item) => itemContext(item.turnId, item.id)}
-                      closed={next !== undefined || after !== undefined}
+                    ) : entry.kind === 'questions' ? (
+                      <li data-testid="item-question" data-item-id={entry.id}>
+                        <ChatQuestions
+                          items={entry.items}
+                          questions={questions}
+                          turnEnded={itemContext(entry.items[0]?.turnId ?? '', entry.id).turnEnded}
+                          hold={extras?.questionHold}
+                        />
+                      </li>
+                    ) : (
+                      <ToolCallGroup
+                        items={entry.items}
+                        contextOf={(item) => itemContext(item.turnId, item.id)}
+                        closed={next !== undefined || after !== undefined}
+                      />
+                    )}
+                    {after && <li>{after}</li>}
+                    {stopped && (
+                      <li>
+                        <StoppedLine
+                          turn={stopped}
+                          formatAt={when}
+                          resume={
+                            canResume && stopped.id === last?.id
+                              ? { onResume: () => void message(resumePrompt), prompt: resumePrompt }
+                              : undefined
+                          }
+                        />
+                      </li>
+                    )}
+                  </Fragment>
+                );
+              })}
+              {extras?.end && <li>{extras.end}</li>}
+              {thread.queued && (
+                <QueuedMessageItem
+                  queued={thread.queued}
+                  onCancel={cancelQueued}
+                  onEdit={editQueued}
+                />
+              )}
+            </ol>
+            {running && thread.state === 'working' && (
+              <div className="mt-3">
+                <WorkingIndicator startedAt={running.startedAt} />
+              </div>
+            )}
+            {!running && thread.backgroundTasks && thread.backgroundTasks.length > 0 && (
+              <div className="mt-3">
+                <BackgroundIndicator tasks={thread.backgroundTasks} />
+              </div>
+            )}
+          </div>
+        </div>
+        <div
+          className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}
+          // The palette's model commands go to the bar whose composer had the focus last.
+          onFocus={() => frontModelBar(barId)}
+        >
+          <TaskPin threadId={threadId} items={items ?? []} turns={turns} />
+          {gateRun && (
+            <GateBar
+              run={gateRun}
+              workflow={workflows.find((candidate) => candidate.id === gateRun.workflowId)}
+              project={projects.find((candidate) => candidate.id === gateRun.projectId)}
+              review={false}
+            />
+          )}
+          {hostLinks && <PastedLinks draftKey={threadId} links={hostLinks} />}
+          <Composer
+            ref={composer}
+            providerKind={extras ? undefined : instance?.kind}
+            running={running !== undefined && !question}
+            placeholder={placeholder}
+            blockedReason={extras?.blockedReason}
+            onSend={answerQuestion ?? message}
+            onStop={stop}
+            notice={extras?.notice}
+            bar={modelBar}
+            onBarKey={barKeys}
+            // The Assistant view keeps no draft (its text may hold a secret) and lists no commands.
+            draftKey={extras ? undefined : threadId}
+            commandSource={
+              extras || compact || !instance
+                ? undefined
+                : { providerInstanceId: instance.id, cwd: thread.cwd, threadId }
+            }
+            {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
+            fileSource={fileLinks ? { threadId } : undefined}
+            // Images go only with chat threads: the Assistant view (spec 61) and a workflow step,
+            // wherever it is shown, take none.
+            imageTarget={fileLinks && thread.stepId === null ? { threadId } : undefined}
+            footer={
+              (showMeter && context) || (canResume && !errorId && !stoppedLineResumes) ? (
+                <div className="flex min-h-6 flex-wrap items-center gap-3">
+                  {showMeter && context && (
+                    <ContextMeter
+                      context={context}
+                      onCompact={
+                        compactPrompt !== null && !running
+                          ? () => void message(compactPrompt)
+                          : undefined
+                      }
                     />
                   )}
-                  {after && <li>{after}</li>}
-                  {stopped && (
-                    <li>
-                      <StoppedLine
-                        turn={stopped}
-                        formatAt={when}
-                        resume={
-                          canResume && stopped.id === last?.id
-                            ? { onResume: () => void message(resumePrompt), prompt: resumePrompt }
-                            : undefined
-                        }
-                      />
-                    </li>
+                  {canResume && !errorId && !stoppedLineResumes && (
+                    // A stopped turn has no error row to carry Resume, so it sits here.
+                    <WithTooltip label={`Sends: ${resumePrompt}`}>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        className="ml-auto"
+                        onClick={() => void message(resumePrompt)}
+                      >
+                        <RotateCcwIcon />
+                        Resume
+                      </Button>
+                    </WithTooltip>
                   )}
-                </Fragment>
-              );
-            })}
-            {extras?.end && <li>{extras.end}</li>}
-            {thread.queued && (
-              <QueuedMessageItem
-                queued={thread.queued}
-                onCancel={cancelQueued}
-                onEdit={editQueued}
-              />
-            )}
-          </ol>
-          {running && thread.state === 'working' && (
-            <div className="mt-3">
-              <WorkingIndicator startedAt={running.startedAt} />
-            </div>
-          )}
-          {!running && thread.backgroundTasks && thread.backgroundTasks.length > 0 && (
-            <div className="mt-3">
-              <BackgroundIndicator tasks={thread.backgroundTasks} />
-            </div>
-          )}
-        </div>
-      </div>
-      <div
-        className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}
-        // The palette's model commands go to the bar whose composer had the focus last.
-        onFocus={() => frontModelBar(barId)}
-      >
-        <TaskPin threadId={threadId} items={items ?? []} turns={turns} />
-        {gateRun && (
-          <GateBar
-            run={gateRun}
-            workflow={workflows.find((candidate) => candidate.id === gateRun.workflowId)}
-            project={projects.find((candidate) => candidate.id === gateRun.projectId)}
-            review={false}
+                </div>
+              ) : undefined
+            }
           />
-        )}
-        <Composer
-          ref={composer}
-          providerKind={extras ? undefined : instance?.kind}
-          running={running !== undefined && !question}
-          placeholder={placeholder}
-          blockedReason={extras?.blockedReason}
-          onSend={answerQuestion ?? message}
-          onStop={stop}
-          notice={extras?.notice}
-          bar={modelBar}
-          onBarKey={barKeys}
-          // The Assistant view keeps no draft (its text may hold a secret) and lists no commands.
-          draftKey={extras ? undefined : threadId}
-          commandSource={
-            extras || compact || !instance
-              ? undefined
-              : { providerInstanceId: instance.id, cwd: thread.cwd, threadId }
-          }
-          {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
-          footer={
-            (showMeter && context) || (canResume && !errorId && !stoppedLineResumes) ? (
-              <div className="flex min-h-6 flex-wrap items-center gap-3">
-                {showMeter && context && (
-                  <ContextMeter
-                    context={context}
-                    onCompact={
-                      compactPrompt !== null && !running
-                        ? () => void message(compactPrompt)
-                        : undefined
-                    }
-                  />
-                )}
-                {canResume && !errorId && !stoppedLineResumes && (
-                  // A stopped turn has no error row to carry Resume, so it sits here.
-                  <WithTooltip label={`Sends: ${resumePrompt}`}>
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      className="ml-auto"
-                      onClick={() => void message(resumePrompt)}
-                    >
-                      <RotateCcwIcon />
-                      Resume
-                    </Button>
-                  </WithTooltip>
-                )}
-              </div>
-            ) : undefined
-          }
-        />
-      </div>
-    </>
+        </div>
+      </HostLinkContext>
+    </FileLinkContext>
   );
 }

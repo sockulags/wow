@@ -1,13 +1,13 @@
 import { pageSourceLabels } from '@wow/contracts';
-import { ArrowLeftIcon, ExternalLinkIcon, FileXIcon, ImageOffIcon } from 'lucide-react';
+import { ArrowLeftIcon, ExternalLinkIcon, FileXIcon } from 'lucide-react';
 import { useRuntime, type ViewerPage } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
 import { safeHref } from '@/components/markdown';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
-import { pageTitle, runPageRead } from '@/workflows/pages-tab';
-import { closeViewer, pageDocument } from './viewer';
+import { PageBody, pageTitle, runPageRead } from '@/workflows/pages-tab';
+import { closeViewer } from './viewer';
 
 // A linked Confluence page in the context panel (review loop spec 35): its body as Confluence
 // rendered it, in a frame without an origin where nothing runs and nothing is fetched, with
@@ -27,12 +27,12 @@ export function PageViewer({ page }: { readonly page: ViewerPage }) {
       onKeyDown={(event) => {
         if (event.key !== 'Escape' || event.defaultPrevented) return;
         event.preventDefault();
-        closeViewer(layout);
+        closeViewer(layout, page.from);
       }}
     >
       <div className="flex shrink-0 flex-col gap-1 border-b border-border px-2 py-2">
         <div className="flex items-center gap-1">
-          <Button size="xs" variant="ghost" onClick={() => closeViewer(layout)}>
+          <Button size="xs" variant="ghost" onClick={() => closeViewer(layout, page.from)}>
             <ArrowLeftIcon />
             Back to conversation
           </Button>
@@ -73,26 +73,7 @@ export function PageViewer({ page }: { readonly page: ViewerPage }) {
           description="wow has not read this page yet, or it is no longer linked from this run."
         />
       ) : (
-        <>
-          <p
-            data-testid="page-pictures-note"
-            className="flex shrink-0 items-center gap-1.5 border-b border-border px-4 py-1.5 text-2xs text-muted-foreground"
-          >
-            <ImageOffIcon aria-hidden className="size-3.5 shrink-0" />
-            Pictures and attachments need your Confluence sign-in, so they do not load here. Open
-            the page on the host to see them.
-          </p>
-          {/* The sandbox gives the page no origin and runs nothing in it; its policy lets it
-              fetch nothing. */}
-          <iframe
-            title={shown.title || 'Confluence page'}
-            data-testid="page-frame"
-            sandbox=""
-            referrerPolicy="no-referrer"
-            srcDoc={pageDocument(shown.body)}
-            className="min-h-0 w-full flex-1 bg-white [color-scheme:light]"
-          />
-        </>
+        <PageBody page={shown} />
       )}
     </section>
   );

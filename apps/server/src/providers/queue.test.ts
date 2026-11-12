@@ -269,6 +269,39 @@ describe('queued messages', () => {
     expect(prompts()).toEqual(['Read the readme']);
   });
 
+  it('keeps the files the provider took on its item, and the rest of a join with its images queued', async () => {
+    await setup('claude', 'later');
+    const image = '0f8fad5b-d9cb-469f-a165-70867728950e.png';
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: '@src/timer.ts what rings?',
+      files: ['src/timer.ts'],
+    });
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: '@docs/spec.md and this screenshot',
+      files: ['docs/spec.md'],
+      attachments: [{ id: image }],
+    });
+    expect(handedOver()).toEqual(['@src/timer.ts what rings?']);
+
+    const shown = committed('threadItem.added');
+    adapter.held[0]?.(true);
+    await shown;
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      payload: { text: '@src/timer.ts what rings?', files: ['src/timer.ts'], queued: 'duringTurn' },
+    });
+    // The rest keeps its own file and its image, and a message with an image is not offered.
+    expect(thread()?.['queued']).toMatchObject({
+      text: '@docs/spec.md and this screenshot',
+      files: ['docs/spec.md'],
+      images: [{ id: image, mediaType: 'image/png' }],
+    });
+    expect(handedOver()).toEqual(['@src/timer.ts what rings?']);
+  });
+
   it('shows a message the provider took after it was cancelled', async () => {
     await setup('claude', 'later');
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Too late to take back' });
@@ -285,7 +318,7 @@ describe('queued messages', () => {
   it('refuses an empty message while a turn runs', async () => {
     await setup('codex', false);
     expect(() => dispatch({ type: 'thread.sendMessage', threadId: 't1', text: '  ' })).toThrow(
-      /needs text or a skill/,
+      /needs text, a skill or an image/,
     );
     expect(thread()?.['queued']).toBeNull();
   });
@@ -322,6 +355,35 @@ describe('queued messages', () => {
     expect(thread()).toMatchObject({ queued: null, state: 'working' });
     expect(rows('threadItems').at(-1)).toMatchObject({
       payload: { text: 'Waiting since yesterday', queued: 'afterTurn' },
+    });
+  });
+
+  it('keeps the images of a message written during a Claude Code turn and sends them when it ends @agent-workbench-53', async () => {
+    await setup('claude', true);
+    const image = '0f8fad5b-d9cb-469f-a165-70867728950e.png';
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: 'And this screenshot',
+      attachments: [{ id: image }],
+    });
+    // A hand-over carries text only, so Claude Code is not offered it.
+    expect(adapter.sent.map((command) => command.type)).toEqual(['startTurn']);
+    expect(thread()?.['queued']).toMatchObject({
+      text: 'And this screenshot',
+      images: [{ id: image, mediaType: 'image/png' }],
+    });
+
+    const sent = committed('turn.started');
+    adapter.emit({ type: 'turnCompleted', threadId: 't1' });
+    await sent;
+    expect(adapter.sent.at(-1)).toMatchObject({
+      type: 'startTurn',
+      prompt: 'And this screenshot',
+      images: [{ path: path.join(dir, 'images', 't-t1', image), mediaType: 'image/png' }],
+    });
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      payload: { images: [{ id: image }], queued: 'afterTurn' },
     });
   });
 });

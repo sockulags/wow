@@ -1,6 +1,11 @@
-import { ServerMessage, type RpcResponse, type SubscriptionPush } from '@wow/contracts';
+import {
+  ServerMessage,
+  assistantThreadId,
+  type RpcResponse,
+  type SubscriptionPush,
+} from '@wow/contracts';
 import { SecretStore, defaultProtector, plainProtector } from '@wow/secrets';
-import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -189,6 +194,44 @@ describe('rpc', () => {
     await client.close();
   });
 
+  const send = (commandId: string, command: Record<string, unknown>) =>
+    client.request('dispatch', { commandId, command });
+  const readFileOf = (params: Record<string, unknown>) => client.request('files.read', params);
+  // A project folder with a thread in a folder inside it, and files of every kind the viewer
+  // refuses (agent workbench spec 16).
+  const threadFiles = async () => {
+    const project = path.join(home, 'project');
+    const thread = path.join(project, 'app');
+    await mkdir(path.join(thread, 'src'), { recursive: true });
+    await mkdir(path.join(project, 'docs'), { recursive: true });
+    await writeFile(path.join(thread, 'src', 'timer.ts'), 'export const ring = 2;\n');
+    await writeFile(path.join(project, 'docs', 'spec.md'), '# Invented spec\n');
+    await writeFile(path.join(thread, 'blob.bin'), Buffer.from([0x50, 0x4b, 3, 4, 0, 0xff, 0]));
+    await writeFile(path.join(home, 'outside.txt'), 'outside the project\n');
+    await send('c0', {
+      type: 'providerInstance.create',
+      providerInstanceId: 'mock',
+      kind: 'claude',
+      name: 'Mock',
+      binaryPath: 'claude',
+      configDir: '',
+      env: {},
+      launchArgs: [],
+    });
+    await send('c1', { type: 'project.create', projectId: 'p1', name: 'wow', cwd: project });
+    await send('c2', {
+      type: 'thread.create',
+      threadId: 't1',
+      providerInstanceId: 'mock',
+      projectId: 'p1',
+      cwd: thread,
+      model: 'mock-model',
+      effort: 'default',
+      permissionMode: 'default',
+    });
+    return thread;
+  };
+
   it('answers server.info', async () => {
     const response = await client.request('server.info');
     expect(response).toMatchObject({ id: '1', result: { home: server.home, pid: process.pid } });
@@ -376,6 +419,165 @@ describe('rpc', () => {
     expect(
       await client.request('files.read', { runId: 'r1', path: 'review/long.log' }),
     ).toMatchObject({ result: { kind: 'refused', reason: 'too_large' } });
+  });
+
+  it('reads a file of a thread or a project only inside their folders @agent-workbench-16', async () => {
+    const thread = await threadFiles();
+    await send('c3', {
+      type: 'thread.create',
+      threadId: 't2',
+      providerInstanceId: 'mock',
+      cwd: thread,
+      model: 'mock-model',
+      effort: 'default',
+      permissionMode: 'default',
+    });
+
+    // The thread's folder first, then its project's folder.
+    expect(await readFileOf({ threadId: 't1', path: 'src/timer.ts' })).toMatchObject({
+      result: { kind: 'text', text: 'export const ring = 2;\n' },
+    });
+    expect(await readFileOf({ threadId: 't1', path: 'docs/spec.md' })).toMatchObject({
+      result: { kind: 'markdown', text: '# Invented spec\n' },
+    });
+    expect(
+      await readFileOf({ threadId: 't1', path: path.join(thread, 'src', 'timer.ts') }),
+    ).toMatchObject({ result: { kind: 'text' } });
+    // Outside, a binary and a too large file are refused in words.
+    expect(await readFileOf({ threadId: 't1', path: '../../outside.txt' })).toMatchObject({
+      result: {
+        kind: 'refused',
+        reason: 'outside',
+        message:
+          "../../outside.txt is outside the thread's folder and the project folder, so it was not read.",
+      },
+    });
+    expect(await readFileOf({ threadId: 't1', path: 'blob.bin' })).toMatchObject({
+      result: { kind: 'refused', reason: 'binary' },
+    });
+    // A thread without a project reads its own folder only.
+    expect(await readFileOf({ threadId: 't2', path: '../docs/spec.md' })).toMatchObject({
+      result: {
+        kind: 'refused',
+        reason: 'outside',
+        message: "../docs/spec.md is outside the thread's folder, so it was not read.",
+      },
+    });
+    // A project reads its folder.
+    expect(await readFileOf({ projectId: 'p1', path: 'app/src/timer.ts' })).toMatchObject({
+      result: { kind: 'text' },
+    });
+    expect(await readFileOf({ projectId: 'p1', path: '../outside.txt' })).toMatchObject({
+      result: {
+        kind: 'refused',
+        reason: 'outside',
+        message: '../outside.txt is outside the project folder, so it was not read.',
+      },
+    });
+    expect(await readFileOf({ threadId: 'nope', path: 'a.md' })).toMatchObject({
+      error: { code: 'not_found' },
+    });
+    expect(await readFileOf({ projectId: 'nope', path: 'a.md' })).toMatchObject({
+      error: { code: 'not_found' },
+    });
+
+    await send('c4', {
+      type: 'setting.set',
+      key: 'viewer.maxFileBytes',
+      scope: 'global',
+      value: 1000,
+    });
+    await writeFile(path.join(thread, 'long.log'), 'x'.repeat(1001));
+    expect(await readFileOf({ threadId: 't1', path: 'long.log' })).toMatchObject({
+      result: { kind: 'refused', reason: 'too_large' },
+    });
+  });
+
+  // Making a link on Windows needs a privilege CI does not have.
+  it.skipIf(process.platform === 'win32')(
+    "refuses a thread's link that leads outside its folders",
+    async () => {
+      const thread = await threadFiles();
+      await symlink(path.join(home, 'outside.txt'), path.join(thread, 'leads-out.txt'));
+      expect(await readFileOf({ threadId: 't1', path: 'leads-out.txt' })).toMatchObject({
+        result: { kind: 'refused', reason: 'outside' },
+      });
+    },
+  );
+
+  it('lists a thread folder outside Git through files.list, up to the limit @agent-workbench-18', async () => {
+    const folder = path.join(home, 'plain');
+    await mkdir(path.join(folder, 'src'), { recursive: true });
+    await writeFile(path.join(folder, 'README.md'), '# Invented\n');
+    await writeFile(path.join(folder, 'src', 'timer.ts'), 'export {};\n');
+    await send('c0', {
+      type: 'providerInstance.create',
+      providerInstanceId: 'mock',
+      kind: 'claude',
+      name: 'Mock',
+      binaryPath: 'claude',
+      configDir: '',
+      env: {},
+      launchArgs: [],
+    });
+    await send('c1', {
+      type: 'thread.create',
+      threadId: 't1',
+      providerInstanceId: 'mock',
+      cwd: folder,
+      model: 'mock-model',
+      effort: 'default',
+      permissionMode: 'default',
+    });
+    expect(await client.request('files.list', { threadId: 't1' })).toMatchObject({
+      result: { files: ['README.md', 'src/timer.ts'], source: 'walk', truncated: false },
+    });
+    await send('c2', {
+      type: 'setting.set',
+      key: 'viewer.fileListLimit',
+      scope: 'global',
+      value: 10,
+    });
+    for (let index = 0; index < 12; index += 1) {
+      await writeFile(path.join(folder, `note-${String(index).padStart(2, '0')}.txt`), '');
+    }
+    const limited = (await client.request('files.list', { threadId: 't1' })) as {
+      result: { files: string[]; truncated: boolean };
+    };
+    expect(limited.result.files).toHaveLength(10);
+    expect(limited.result.truncated).toBe(true);
+    expect(await client.request('files.list', { threadId: 'nope' })).toMatchObject({
+      error: { code: 'not_found' },
+    });
+  });
+
+  it("answers files.read and files.list for the assistant's thread with rejected", async () => {
+    await send('c0', {
+      type: 'providerInstance.create',
+      providerInstanceId: 'mock',
+      kind: 'claude',
+      name: 'Mock',
+      binaryPath: 'claude',
+      configDir: '',
+      env: {},
+      launchArgs: [],
+    });
+    await send('c1', {
+      type: 'setting.set',
+      key: 'assistant.providerInstanceId',
+      scope: 'global',
+      value: 'mock',
+    });
+    await client.request('provider.test', { providerInstanceId: 'mock' });
+    expect(
+      await send('c3', { type: 'thread.openAssistant', fallbackModel: 'mock-model' }),
+    ).not.toHaveProperty('error');
+    expect(await readFileOf({ threadId: assistantThreadId, path: 'README.md' })).toMatchObject({
+      error: { code: 'rejected' },
+    });
+    expect(await client.request('files.list', { threadId: assistantThreadId })).toMatchObject({
+      error: { code: 'rejected' },
+    });
   });
 
   it.each([

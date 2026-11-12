@@ -1,9 +1,10 @@
 import { ThreadDiff, type RunDiffFile, type RunDiffStatus, type Turn } from '@wow/contracts';
+import { useRouter } from '@tanstack/react-router';
 import { ArrowLeftIcon, GitCompareIcon, RefreshCwIcon } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 import { createStore, useStore } from 'zustand';
 import type { AppCommand } from '@/app/commands';
-import { useRuntime, type LayoutStore } from '@/app/runtime';
+import { useRuntime, type LayoutStore, type ViewerChanges } from '@/app/runtime';
 import { IconButton, ShortcutHint } from '@/components/hint';
 import { EmptyState } from '@/components/states';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +13,8 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
-import { setContextPanelShown } from '@/panel/panel-state';
+import { routerPanelRoute } from '@/panel/model';
+import { changesTabId, closeTab, closeViewer, openChanges, panelTabsOf } from '@/panel/viewer';
 import type { SettingsStore } from '@wow/client-runtime';
 import { DiffLines } from '@/workflows/changes-tab';
 import {
@@ -25,11 +27,11 @@ import { errorMessage, useTopic } from './data';
 
 // A chat thread's Changes (agent workbench spec 34, 35): what changed in its folder since its
 // first turn, from the server's `threads.diff`, with "This turn only" narrowing the list to what
-// changed since the last turn began. It is one view with an open function, shown in the context
-// panel in place of the thread's details until Back; the panel's tabs (U5) can hold it as a tab.
+// changed since the last turn began. It is one view with an open function, shown in a tab of the
+// thread's panel beside Details and the thread's files.
 
 interface ThreadChangesState {
-  // The thread whose Changes are open in the panel, and the file shown in it.
+  // The thread whose Changes were opened last, and the file shown in them.
   readonly threadId: string | undefined;
   readonly path: string | undefined;
   readonly turnOnly: boolean;
@@ -48,20 +50,31 @@ interface PanelContext {
   readonly layout: LayoutStore;
 }
 
-export function openThreadChanges(context: PanelContext, threadId: string, path?: string): void {
+// `from` is the route of the thread's view, whose panel gets the tab.
+export function openThreadChanges(
+  context: PanelContext,
+  threadId: string,
+  from: string,
+  path?: string,
+): void {
   threadChangesStore.setState((state) => ({
     threadId,
     path,
     turnOnly: state.threadId === threadId ? state.turnOnly : false,
   }));
-  setContextPanelShown(context, true);
+  openChanges(context, { threadId, from });
 }
 
-export const closeThreadChanges = (): void =>
-  threadChangesStore.setState({ threadId: undefined, path: undefined });
+export const closeThreadChanges = (layout: LayoutStore, from: string, threadId: string): void =>
+  closeTab(layout, from, changesTabId(threadId));
 
-export const useOpenThreadChanges = (threadId: string | undefined): boolean =>
-  useStore(threadChangesStore, (state) => threadId !== undefined && state.threadId === threadId);
+// Whether the thread's Changes are the tab its panel shows.
+export const changesShown = (
+  state: Parameters<typeof panelTabsOf>[0],
+  from: string,
+  threadId: string | undefined,
+): boolean =>
+  threadId !== undefined && panelTabsOf(state, from).selected === changesTabId(threadId);
 
 // What a turn list changes when it matters here: a turn starts, gets its mark or ends. A turn
 // starts before wow has read the folder for it, so its Changes are read again once it has.
@@ -119,6 +132,8 @@ export function changesSummary(files: readonly RunDiffFile[]): string | undefine
 // The header chip (spec 34): the thread's whole changes, opening its Changes.
 export function ThreadChangesChip({ threadId }: { readonly threadId: string }) {
   const { settings, layout } = useRuntime();
+  // Read when clicked: the chip is also drawn without a router (tests).
+  const router: ReturnType<typeof useRouter> | undefined = useRouter({ warn: false });
   const { diff } = useThreadDiff(threadId);
   const summary = diff?.status === 'ok' ? changesSummary(diff.files) : undefined;
   if (summary === undefined) return null;
@@ -128,7 +143,7 @@ export function ThreadChangesChip({ threadId }: { readonly threadId: string }) {
         type="button"
         data-testid="thread-changes-chip"
         aria-label={`Changes: ${summary}`}
-        onClick={() => openThreadChanges({ settings, layout }, threadId)}
+        onClick={() => openThreadChanges({ settings, layout }, threadId, routerPanelRoute(router))}
       >
         <GitCompareIcon aria-hidden />
         {summary}
@@ -202,7 +217,9 @@ function FilePatch({ threadId, file }: { readonly threadId: string; readonly fil
   return <DiffLines path={file.path} patch={diff.patch} />;
 }
 
-export function ThreadChanges({ threadId }: { readonly threadId: string }) {
+export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) {
+  const { threadId, from } = changes;
+  const { layout } = useRuntime();
   const { diff, error } = useThreadDiff(threadId);
   const turnOnly = useStore(threadChangesStore, (state) => state.turnOnly);
   const selected = useStore(threadChangesStore, (state) => state.path);
@@ -219,9 +236,9 @@ export function ThreadChanges({ threadId }: { readonly threadId: string }) {
       className="flex min-h-0 flex-1 flex-col"
     >
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5">
-        <Button size="xs" variant="ghost" onClick={closeThreadChanges}>
+        <Button size="xs" variant="ghost" onClick={() => closeViewer(layout, from)}>
           <ArrowLeftIcon aria-hidden />
-          Back
+          Back to details
         </Button>
         <span className="text-xs text-muted-foreground" data-testid="thread-changes-summary">
           {changesSummary(files) ?? ''}
@@ -321,6 +338,8 @@ export function ThreadChanges({ threadId }: { readonly threadId: string }) {
 // "This turn only" (O) while they are open.
 export function threadChangesCommands(
   threadId: string | undefined,
+  // The route of the thread's view, whose panel holds the tab.
+  route: string,
   open: boolean,
   turnOnly: boolean,
 ): AppCommand[] {
@@ -333,8 +352,8 @@ export function threadChangesCommands(
       keywords: ['changes', 'diff', 'files', 'git'],
       keybinding: 'keybindings.threadChanges',
       run: (context) => {
-        if (open) closeThreadChanges();
-        else openThreadChanges(context, threadId);
+        if (open) closeThreadChanges(context.layout, route, threadId);
+        else openThreadChanges(context, threadId, route);
       },
     },
   ];

@@ -38,6 +38,22 @@ export interface MockPullRequest {
   readonly fork?: string | null;
 }
 
+// An issue (agent workbench spec 21). Pull requests are issues to GitHub too: asking for a pull
+// request's number under /issues answers it with `pull_request`.
+export interface MockGitHubIssue {
+  readonly number: number;
+  readonly title: string;
+  readonly body: string;
+  readonly state: 'open' | 'closed';
+  readonly user: string;
+  readonly labels?: readonly string[];
+  readonly comments?: readonly {
+    readonly id: number;
+    readonly user: string;
+    readonly body: string;
+  }[];
+}
+
 export interface MockRequest {
   readonly method: string;
   // Path and query below the API root, such as `/repos/acme/tea/pulls/12`.
@@ -57,6 +73,7 @@ export class MockGitHub {
   // Where the invented pull requests "live" for their links.
   readonly webUrl: string;
   pulls: MockPullRequest[] = [];
+  issues: MockGitHubIssue[] = [];
   // Off: the search endpoint is not there, like on an older Enterprise Server.
   search = true;
   // Off: neither check runs nor commit statuses exist on this host.
@@ -160,6 +177,48 @@ export class MockGitHub {
           path: comment.path,
           html_url: comment.url ?? `${this.#pullUrl(pull.number)}#discussion_r${comment.id}`,
           created_at: '2026-11-03T08:15:00Z',
+        })),
+      );
+    }
+    const issue = new RegExp(`^${repo}/issues/(\\d+)(/comments)?$`).exec(url.pathname);
+    if (issue) {
+      const number = Number(issue[1]);
+      const pull = this.pulls.find((candidate) => candidate.number === number);
+      const found = this.issues.find((candidate) => candidate.number === number);
+      const html = `${this.webUrl}/${this.owner}/${this.repo}/issues/${number}`;
+      if (issue[2] === undefined) {
+        if (pull) {
+          return json(200, {
+            number,
+            title: pull.title,
+            body: pull.body,
+            state: pull.state,
+            html_url: this.#pullUrl(number),
+            user: { login: 'someone' },
+            labels: [],
+            pull_request: { html_url: this.#pullUrl(number) },
+          });
+        }
+        if (!found) return json(404, { message: 'Not Found' });
+        return json(200, {
+          number,
+          title: found.title,
+          body: found.body,
+          state: found.state,
+          html_url: html,
+          user: { login: found.user },
+          labels: (found.labels ?? []).map((name) => ({ name })),
+        });
+      }
+      if (!found && !pull) return json(404, { message: 'Not Found' });
+      return json(
+        200,
+        (found?.comments ?? []).map((comment) => ({
+          id: comment.id,
+          user: { login: comment.user },
+          body: comment.body,
+          html_url: `${html}#issuecomment-${comment.id}`,
+          created_at: '2026-11-03T08:20:00Z',
         })),
       );
     }

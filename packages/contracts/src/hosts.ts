@@ -102,8 +102,14 @@ export const HostError = z.object({
 });
 export type HostError = z.infer<typeof HostError>;
 
-export const HostReadScope = z.enum(['plan', 'run']);
+// Whose host read it is: a followed plan or a run (both polled), or a chat thread, whose links
+// are read only when their tab opens and on Refresh now (agent workbench spec 22).
+export const HostReadScope = z.enum(['plan', 'run', 'thread']);
 export type HostReadScope = z.infer<typeof HostReadScope>;
+
+// The scopes the host poller reads.
+export const PolledHostScope = HostReadScope.exclude(['thread']);
+export type PolledHostScope = z.infer<typeof PolledHostScope>;
 
 // What was last read for one followed plan or one run: which change requests are its own, when
 // that was fetched and what went wrong since. A failed read keeps the last data and its time.
@@ -111,7 +117,7 @@ export const HostRead = z.object({
   // `plan:<planIntentId>` or `run:<runId>`.
   id: Id,
   projectId: Id,
-  scope: HostReadScope,
+  scope: PolledHostScope,
   host: HostKind,
   // The host as the user knows it: github.com or the Enterprise host. Empty while not set up.
   hostName: z.string(),
@@ -147,7 +153,7 @@ export const changeRequestId = (projectId: string, number: number): string =>
 // One scope of a poll as the poller reports it: read, or failed with the reason.
 export const HostReadOutcome = z.object({
   id: Id,
-  scope: HostReadScope,
+  scope: PolledHostScope,
   branch: z.string().nullable(),
   result: z.discriminatedUnion('ok', [
     z.object({ ok: z.literal(true), changeRequestIds: z.array(Id) }),
@@ -212,6 +218,26 @@ export const TicketReadOutcome = z.object({
   ]),
 });
 export type TicketReadOutcome = z.infer<typeof TicketReadOutcome>;
+
+// An issue of a code host as last read (agent workbench spec 21): GitHub's or GitLab's. Read
+// only, like the rest.
+export const IssueState = z.enum(['open', 'closed']);
+export type IssueState = z.infer<typeof IssueState>;
+
+export const Issue = z.object({
+  host: HostKind,
+  number: z.number().int().positive(),
+  title: z.string(),
+  state: IssueState,
+  author: z.string(),
+  labels: z.array(z.string()),
+  // Markdown as the host has it. Written by someone else: shown through the shared renderer,
+  // which never runs HTML, and never put into a prompt.
+  body: z.string(),
+  url: z.string().min(1),
+  comments: z.array(ReviewComment),
+});
+export type Issue = z.infer<typeof Issue>;
 
 // A Confluence page as last read (review loop spec 35): what the Pages tab lists and the viewer
 // shows. Read only.

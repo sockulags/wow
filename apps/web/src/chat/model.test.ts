@@ -372,7 +372,8 @@ describe('Edit queued message from the palette (agent workbench spec 52)', () =>
     );
     command?.run({ connection: { request } } as unknown as CommandContext);
     await answered;
-    expect(own.putBack).toHaveBeenCalledWith('Then this', []);
+    // No skills and no images went with it (agent workbench U8 puts images back too).
+    expect(own.putBack).toHaveBeenCalledWith('Then this', [], []);
     expect(panel.putBack).not.toHaveBeenCalled();
   });
 });

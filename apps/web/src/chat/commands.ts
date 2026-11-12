@@ -143,7 +143,7 @@ export function chatCommands({
           run: ({ connection }) => {
             if (!connection) return;
             dispatch(connection, { type: 'thread.cancelQueued', threadId: thread.id }).then(
-              () => openComposer.putBack(queued.text, queued.skills ?? []),
+              () => openComposer.putBack(queued.text, queued.skills ?? [], queued.images ?? []),
               () => undefined,
             );
           },

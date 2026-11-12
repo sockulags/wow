@@ -566,6 +566,25 @@ export const settingsRegistry = {
     default: 500,
     scope: 'global',
   }),
+  'chat.fileTrigger': defineSetting({
+    schema: z.string().regex(/^\S$/u, 'One character that is not a space'),
+    group: 'chat',
+    label: 'File list character',
+    description:
+      "Typed at the start of a word, this character opens the list of the thread folder's files in the composer. A picked file becomes a chip and the message names its path. When it is the same as the skill list character, the skill list wins.",
+    default: '@',
+    scope: 'global',
+  }),
+  'chat.imageMaxBytes': defineSetting({
+    schema: z.number().int().min(10_000).max(50_000_000),
+    group: 'chat',
+    label: 'Largest image',
+    description:
+      'An image pasted or dropped on the composer that is larger than this is refused and not added. Claude and Codex may refuse smaller ones themselves.',
+    default: 5_000_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
   'calendar.zone': defineSetting({
     personal: 'person',
     schema: TimeZoneSetting,
@@ -1301,6 +1320,24 @@ export const settingsRegistry = {
     default: false,
     scope: 'global',
   }),
+  'viewer.fileListLimit': defineSetting({
+    schema: z.number().int().min(10).max(200_000),
+    group: 'viewer',
+    label: 'Files listed',
+    description:
+      'How many files of a thread\'s folder "Open file…" and @ in the composer list at most. A folder outside Git is walked until this many are found.',
+    default: 5000,
+    scope: 'global',
+  }),
+  'viewer.fileMatchesShown': defineSetting({
+    schema: z.number().int().min(5).max(1000),
+    group: 'viewer',
+    label: 'File matches shown',
+    description:
+      'How many matching files "Open file…" and @ in the composer show while you type. Typing more narrows them.',
+    default: 50,
+    scope: 'global',
+  }),
   'viewer.highlightMaxBytes': defineSetting({
     schema: z.number().int().min(0).max(50_000_000),
     group: 'viewer',
@@ -1722,6 +1759,31 @@ export const settingsRegistry = {
     'Composer: leave',
     'Move the focus out of the composer to what comes before it, as Shift+Tab does elsewhere, since in the composer Shift+Tab changes the permission mode.',
     'Escape',
+  ),
+  'keybindings.openFile': keybinding(
+    'Open file',
+    "List the files of the open thread's or run's folder, filter them as you type, and open the pick in a panel tab.",
+    'Mod+P',
+  ),
+  'keybindings.panelCloseTab': keybinding(
+    'Panel: close tab',
+    'Close the selected tab of the side panel, while the focus is in the panel. Details stays.',
+    'Alt+W',
+  ),
+  'keybindings.panelNextTab': keybinding(
+    'Panel: next tab',
+    'Select the next tab of the side panel, while the focus is in the panel.',
+    'Ctrl+Tab',
+  ),
+  'keybindings.panelPreviousTab': keybinding(
+    'Panel: previous tab',
+    'Select the tab before in the side panel, while the focus is in the panel.',
+    'Ctrl+Shift+Tab',
+  ),
+  'keybindings.panelBackTab': keybinding(
+    'Panel: back',
+    'Go back to the tab of the side panel shown before, while the focus is in the panel.',
+    'Alt+ArrowLeft',
   ),
   'keybindings.questionFocus': keybinding(
     'Question: go to the card',

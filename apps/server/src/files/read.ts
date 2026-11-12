@@ -48,7 +48,7 @@ const startsWith = (bytes: Uint8Array, ...head: number[]) =>
   head.every((byte, index) => bytes[index] === byte);
 
 // Pictures are told by their first bytes, not by their name.
-function sniffImage(bytes: Uint8Array): ImageMediaType | undefined {
+export function sniffImage(bytes: Uint8Array): ImageMediaType | undefined {
   if (startsWith(bytes, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'image/png';
   if (startsWith(bytes, 0xff, 0xd8, 0xff)) return 'image/jpeg';
   if (startsWith(bytes, 0x47, 0x49, 0x46, 0x38)) return 'image/gif';
@@ -81,11 +81,13 @@ const markdownExtensions = new Set(['.md', '.markdown']);
 const htmlExtensions = new Set(['.html', '.htm']);
 
 export interface ReadFileRequest {
-  // The run's working folder first, then the project folder. A relative path is looked for in
-  // each, in this order.
+  // The run's working folder or the thread's folder first, then the project folder. A relative
+  // path is looked for in each, in this order.
   readonly roots: readonly string[];
   readonly path: string;
   readonly maxBytes: number;
+  // The folders in words for a refusal, such as "the thread's folder and the project folder".
+  readonly place?: string;
   // Stands in for the disk in tests of a file that cannot be opened.
   readonly fs?: { readonly stat: typeof stat; readonly readFile: typeof readFile };
 }
@@ -103,6 +105,7 @@ export async function readViewerFile({
   roots,
   path: requested,
   maxBytes,
+  place = "the run's working folder and the project folder",
   fs = { stat, readFile },
 }: ReadFileRequest): Promise<FileReadResult> {
   // A locked file (common on Windows) or one without read permission is an answer for the
@@ -116,10 +119,7 @@ export async function readViewerFile({
   }
   const candidates = candidatePaths(roots, requested, path, [...roots, ...realRoots]);
   if (candidates.length === 0) {
-    return refused(
-      'outside',
-      `${requested} is outside the run's working folder and the project folder, so it was not read.`,
-    );
+    return refused('outside', `${requested} is outside ${place}, so it was not read.`);
   }
   for (const candidate of candidates) {
     const real = await realpath(candidate).catch(() => undefined);
@@ -127,7 +127,7 @@ export async function readViewerFile({
     if (!realRoots.some((root) => isInside(root, real))) {
       return refused(
         'outside',
-        `${requested} is a link to a place outside the run's working folder and the project folder, so it was not read.`,
+        `${requested} is a link to a place outside ${place}, so it was not read.`,
       );
     }
     let found;

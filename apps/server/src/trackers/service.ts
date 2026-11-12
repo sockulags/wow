@@ -1,7 +1,10 @@
 import {
   OutlookProfile,
   SecretRef,
+  gitHubWebBase,
   settingsRegistry,
+  type HostLinkRules,
+  type HostLinkSite,
   type BacklogItem,
   type BacklogRemote,
   type ProjectGit,
@@ -114,6 +117,17 @@ export interface ProjectJiraHost {
   readonly projectKey: string;
   // The branch the project folder is on, read only when it is needed.
   readonly branch: () => Promise<string | null>;
+}
+
+// The sites a chat thread's links may be read from, with what reading them takes (agent
+// workbench spec 20, 23, 24). Only sites with a token are here; `rules` is what the app sees,
+// without any token.
+export interface LinkHosts {
+  readonly rules: HostLinkRules;
+  readonly github?: { readonly baseUrl: string; readonly token: string; readonly name: string };
+  readonly gitlab?: { readonly baseUrl: string; readonly token: string; readonly name: string };
+  readonly jira?: { readonly signIn: JiraSignIn; readonly name: string };
+  readonly confluence?: { readonly signIn: ConfluenceSignIn; readonly name: string };
 }
 
 const trimmed = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
@@ -449,6 +463,97 @@ export class TrackerService {
     const site = this.#deps.settings.resolve('trackers.confluence.baseUrl', { projectId }).value;
     const baseUrl = typeof site === 'string' ? site : '';
     return { confluence, baseUrl, name: hostOf(baseUrl) ?? '' };
+  }
+
+  // The hosts a chat thread's links are read from: the thread's project's settings, else the
+  // ones in Settings → Trackers. The same rule as the poller's for where a token may go: a site
+  // the user stored, or for GitHub the remote's host when it is the one they stored or the token
+  // is the project's own. The repository and Jira key are the project's only.
+  async linkHosts(projectId: string | null): Promise<LinkHosts> {
+    const project = projectId
+      ? this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get()
+      : undefined;
+    const context = project ? { projectId: project.id } : {};
+    const git = project ? await this.#folderGit(project.id, project.cwd).catch(() => null) : null;
+    const values = new Map(
+      this.#resolve(project?.id ?? null, git).map((entry) => [entry.key, entry]),
+    );
+    const text = (key: string) => trimmed(values.get(key)?.value);
+    const sites: HostLinkSite[] = [];
+    let repository: HostLinkRules['repository'] = null;
+    let github: LinkHosts['github'];
+    let gitlab: LinkHosts['gitlab'];
+    let jira: LinkHosts['jira'];
+    let confluence: LinkHosts['confluence'];
+
+    const githubToken = this.#deps.settings.resolve('trackers.github.token', context);
+    const api = values.get('trackers.github.baseUrl');
+    const apiUrl = text('trackers.github.baseUrl');
+    const githubName = hostOf(apiUrl) ?? '';
+    const stored = this.#deps.settings.resolve('trackers.github.baseUrl', context).value;
+    const chosen =
+      api?.source !== 'gitRemote' ||
+      githubToken.source.startsWith('project:') ||
+      hostOf(String(stored)) === githubName;
+    const githubSecret = chosen ? await this.#token(githubToken.value) : '';
+    if (apiUrl !== '' && githubSecret !== '') {
+      github = { baseUrl: apiUrl, token: githubSecret, name: githubName };
+      const base = gitHubWebBase(apiUrl);
+      sites.push({ host: 'github', base, name: githubName });
+      const owner = text('trackers.github.owner');
+      const repo = text('trackers.github.repo');
+      if (project && owner !== '' && repo !== '') {
+        repository = { host: 'github', base, path: `${owner}/${repo}` };
+      }
+    }
+
+    const gitlabSite = trimmed(
+      this.#deps.settings.resolve('trackers.gitlab.baseUrl', context).value,
+    );
+    const gitlabToken = await this.#token(
+      this.#deps.settings.resolve('trackers.gitlab.token', context).value,
+    );
+    if (gitlabSite !== '' && gitlabToken !== '') {
+      const name = hostOf(gitlabSite) ?? '';
+      gitlab = { baseUrl: gitlabSite, token: gitlabToken, name };
+      const base = gitlabSite.replace(/\/+$/, '');
+      sites.push({ host: 'gitlab', base, name });
+      const own = project ? this.#gitlabProject(project.id, git) : null;
+      // A project whose remote is on the GitLab site has its repository there (review loop
+      // spec 34), whatever the GitHub settings say.
+      if (own) repository = { host: 'gitlab', base, path: own.path };
+    }
+
+    const jiraConfig = await this.#jiraConfig(values);
+    if (
+      jiraConfig.baseUrl !== '' &&
+      jiraConfig.token !== '' &&
+      (jiraConfig.authMode === 'pat' || jiraConfig.email !== '')
+    ) {
+      const name = hostOf(jiraConfig.baseUrl) ?? '';
+      jira = { signIn: jiraConfig, name };
+      sites.push({ host: 'jira', base: jiraConfig.baseUrl.trim().replace(/\/+$/, ''), name });
+    }
+
+    const confluenceSignIn = await this.#confluence(project?.id ?? null);
+    if (confluenceSignIn.config) {
+      const name = hostOf(confluenceSignIn.config.baseUrl) ?? '';
+      confluence = { signIn: confluenceSignIn.config, name };
+      sites.push({
+        host: 'confluence',
+        base: confluenceSignIn.config.baseUrl.replace(/\/+$/, ''),
+        name,
+      });
+    }
+
+    const jiraKey = project && jira ? jiraConfig.projectKey.trim() || null : null;
+    return {
+      rules: { sites, repository, jiraKey },
+      ...(github ? { github } : {}),
+      ...(gitlab ? { gitlab } : {}),
+      ...(jira ? { jira } : {}),
+      ...(confluence ? { confluence } : {}),
+    };
   }
 
   // Whose settings apply to the item: see publishTarget.

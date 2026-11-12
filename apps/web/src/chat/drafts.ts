@@ -1,4 +1,4 @@
-import { Skill } from '@wow/contracts';
+import { SentImage, Skill } from '@wow/contracts';
 import { z } from 'zod';
 
 // What is typed in a thread's composer and not sent yet, text and chips, kept per thread in the
@@ -9,9 +9,18 @@ import { z } from 'zod';
 export interface ComposerDraft {
   readonly text: string;
   readonly skills: readonly Skill[];
+  // Files mentioned with `@` (spec 56); absent in drafts kept before them.
+  readonly files?: readonly string[] | undefined;
+  // Images pasted or dropped (spec 53), already stored by the server; absent in older drafts.
+  readonly images?: readonly SentImage[] | undefined;
 }
 
-const StoredDraft = z.object({ text: z.string(), skills: z.array(Skill) });
+const StoredDraft = z.object({
+  text: z.string(),
+  skills: z.array(Skill),
+  files: z.array(z.string()).optional(),
+  images: z.array(SentImage).optional(),
+});
 
 const storageKey = (key: string) => `wow.composerDraft.${key}`;
 
@@ -23,6 +32,19 @@ function storage(): Storage | undefined {
     return undefined;
   }
 }
+
+// Who wants to know when a draft changes: the pasted-link chips above the composer (agent
+// workbench spec 25) read the draft the composer keeps, without the composer knowing them.
+const listeners = new Set<(key: string) => void>();
+
+export function onDraftChange(listener: (key: string) => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+const changed = (key: string) => {
+  for (const listener of listeners) listener(key);
+};
 
 export const emptyDraft: ComposerDraft = { text: '', skills: [] };
 
@@ -37,16 +59,38 @@ export function readDraft(key: string): ComposerDraft {
   }
 }
 
+// The draft's text as last written, also while storage is missing.
+const texts = new Map<string, string>();
+export const draftText = (key: string): string => texts.get(key) ?? readDraft(key).text;
+
 // An empty draft is removed, so sending clears it.
 export function writeDraft(key: string, draft: ComposerDraft): void {
+  texts.set(key, draft.text);
   try {
-    if (draft.text === '' && draft.skills.length === 0) {
+    const files = draft.files ?? [];
+    const images = draft.images ?? [];
+    if (
+      draft.text === '' &&
+      draft.skills.length === 0 &&
+      files.length === 0 &&
+      images.length === 0
+    ) {
       storage()?.removeItem(storageKey(key));
       return;
     }
-    storage()?.setItem(storageKey(key), JSON.stringify({ text: draft.text, skills: draft.skills }));
+    storage()?.setItem(
+      storageKey(key),
+      JSON.stringify({
+        text: draft.text,
+        skills: draft.skills,
+        ...(files.length > 0 ? { files } : {}),
+        ...(images.length > 0 ? { images } : {}),
+      }),
+    );
   } catch {
     // Kept on screen only; see storage().
+  } finally {
+    changed(key);
   }
 }
 

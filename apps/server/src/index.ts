@@ -21,6 +21,7 @@ export {
 export {
   MockGitHub,
   type MockCheckRun,
+  type MockGitHubIssue,
   type MockPullRequest,
   type MockReviewComment,
 } from './hosts/mock-github.js';
@@ -28,6 +29,7 @@ export { MockJira, type MockIssue } from './hosts/mock-jira.js';
 export { MockConfluence, type MockPage } from './hosts/mock-confluence.js';
 export {
   MockGitLab,
+  type MockGitLabIssue,
   type MockGitLabJob,
   type MockGitLabNote,
   type MockMergeRequest,

@@ -1,4 +1,4 @@
-import type { SkillRef } from '@wow/contracts';
+import type { SentImage, SkillRef } from '@wow/contracts';
 import { createStore } from 'zustand';
 
 // The composer on screen that takes skills, so the palette reaches it: open its skill list,
@@ -13,7 +13,7 @@ export interface ActiveSkillComposer {
   readonly chips: readonly string[];
   openSkills(): void;
   removeSkill(index: number): void;
-  putBack(text: string, skills: readonly SkillRef[]): void;
+  putBack(text: string, skills: readonly SkillRef[], images?: readonly SentImage[]): void;
 }
 
 interface SkillComposersState {

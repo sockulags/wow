@@ -566,6 +566,8 @@ describe("a thread's Changes (spec 34, 35)", () => {
     h.show(<ThreadChangesChip threadId="t1" />);
     await user.click(await screen.findByRole('button', { name: 'Changes: +42 −7 in 2 files' }));
     expect(threadChangesStore.getState().threadId).toBe('t1');
+    // A tab of the thread's panel, selected (no router here, so the route is '').
+    expect(h.runtime.layout.getState().panelTabs['']?.selected).toBe('changes:t1');
   });
 
   it('lists the files, narrows to this turn and shows a file’s diff', async () => {
@@ -584,15 +586,14 @@ describe("a thread's Changes (spec 34, 35)", () => {
       },
     });
     act(() => threadChangesStore.setState({ threadId: 't1' }));
-    h.show(<ThreadChanges threadId="t1" />);
+    h.show(<ThreadChanges changes={{ threadId: 't1', from: '/chat/t1' }} />);
     expect(await names()).toEqual(['MREADME.md+2 −0', 'Msrc/timer.ts+40 −7']);
     await user.click(screen.getByText('src/timer.ts'));
     expect(await screen.findByRole('table', { name: 'Diff of src/timer.ts' })).toBeTruthy();
-    expect(threadChangesCommands('t1', true, false).map((command) => command.keybinding)).toEqual([
-      'keybindings.threadChanges',
-      'keybindings.changesStepOnly',
-    ]);
-    act(() => threadChangesCommands('t1', true, false)[1]?.run({} as never));
+    expect(
+      threadChangesCommands('t1', '/chat/t1', true, false).map((command) => command.keybinding),
+    ).toEqual(['keybindings.threadChanges', 'keybindings.changesStepOnly']);
+    act(() => threadChangesCommands('t1', '/chat/t1', true, false)[1]?.run({} as never));
     expect(await names()).toEqual(['MREADME.md+2 −0']);
   });
 
@@ -612,7 +613,7 @@ describe("a thread's Changes (spec 34, 35)", () => {
       [turn],
     );
     act(() => threadChangesStore.setState({ threadId: 't1' }));
-    h.show(<ThreadChanges threadId="t1" />);
+    h.show(<ThreadChanges changes={{ threadId: 't1', from: '/chat/t1' }} />);
     expect(await screen.findByText('No starting point')).toBeTruthy();
     h.request.mockImplementation((method) =>
       Promise.resolve(method === 'threads.diff' ? listing : null),
@@ -626,7 +627,7 @@ describe("a thread's Changes (spec 34, 35)", () => {
       'threads.diff': { ...listing, status: 'noBase', files: [], turnPaths: null },
     });
     act(() => threadChangesStore.setState({ threadId: 't1' }));
-    h.show(<ThreadChanges threadId="t1" />);
+    h.show(<ThreadChanges changes={{ threadId: 't1', from: '/chat/t1' }} />);
     expect(await screen.findByText('No starting point')).toBeTruthy();
   });
 });

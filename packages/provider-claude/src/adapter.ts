@@ -23,6 +23,7 @@ import type {
   TaskStatus,
 } from '@wow/contracts';
 import { markRecommended, replyText } from '@wow/contracts';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
 import { AsyncQueue } from './queue.js';
@@ -33,6 +34,7 @@ import {
   isEffortLevel,
   isPermissionMode,
   userMessage,
+  type MessageImage,
   type CanUseTool,
   type ClaudeQuery,
   type Options,
@@ -217,6 +219,16 @@ function approvalFacts(
 
 // One adapter per provider instance. Each thread gets one Agent SDK query() in streaming input
 // mode that lives across turns, so interrupt, setModel and setPermissionMode work mid-session.
+// The message's images as wow stored them (agent workbench spec 53, 55), as image blocks.
+async function readImages(images: NonNullable<StartTurn['images']>): Promise<MessageImage[]> {
+  return Promise.all(
+    images.map(async (image) => ({
+      mediaType: image.mediaType,
+      base64: (await readFile(image.path)).toString('base64'),
+    })),
+  );
+}
+
 export class ClaudeAdapter implements ProviderAdapter {
   readonly kind = 'claude' as const;
   // Claude Code picks a model itself when a step names none.
@@ -383,10 +395,12 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (!isPermissionMode(command.permissionMode)) {
       throw new Error(`Unknown Claude permission mode "${command.permissionMode}"`);
     }
+    // Read before anything changes, so a missing image fails the turn and leaves the session.
+    const message = userMessage(command.prompt, await readImages(command.images ?? []));
     let session = this.#sessions.get(command.threadId);
     // A message sent just as Claude Code went on by itself waits in its queue for that turn.
     if (session?.turnActive && session.selfStarted) {
-      session.input.push(userMessage(command.prompt));
+      session.input.push(message);
       return;
     }
     if (session?.turnActive)
@@ -421,7 +435,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     session.turnActive = true;
     session.selfStarted = false;
     session.interrupted = false;
-    session.input.push(userMessage(command.prompt));
+    session.input.push(message);
   }
 
   async #open(command: StartTurn): Promise<Session> {

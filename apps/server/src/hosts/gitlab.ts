@@ -1,5 +1,5 @@
 import { intentUnitLines } from '@wow/agent-os';
-import type { HostCheck, ReviewComment } from '@wow/contracts';
+import type { HostCheck, Issue, ReviewComment } from '@wow/contracts';
 import {
   gitLabApi,
   gitLabHeaders,
@@ -306,6 +306,41 @@ export function createGitLabHost(
         `state=all&source_branch=${encodeURIComponent(branch)}&order_by=created_at&sort=desc&per_page=1`,
       );
       return newest;
+    },
+    async readIssue(number) {
+      const body = await getOr(
+        `${project}/issues/${number}`,
+        none,
+        () => undefined,
+        (answer) => answer,
+      );
+      const url = hostLink(field(body, 'web_url'));
+      if (url === null) {
+        throw new HostFailure(
+          'failed',
+          `${name} answered issue #${number} in a form wow cannot read; check the GitLab URL`,
+        );
+      }
+      const comments = await getOr(
+        `${project}/issues/${number}/notes?sort=desc&order_by=created_at&per_page=${pageSize}`,
+        none,
+        () => [],
+        (answer) => list(answer).flatMap((entry) => note(entry, url) ?? []),
+      );
+      const issue: Issue = {
+        host: 'gitlab',
+        number,
+        title: text(field(body, 'title')),
+        state: field(body, 'state') === 'closed' ? 'closed' : 'open',
+        author: text(field(field(body, 'author'), 'username')),
+        labels: list(field(body, 'labels')).flatMap((label) =>
+          typeof label === 'string' && label !== '' ? [label] : [],
+        ),
+        body: text(field(body, 'description')),
+        url,
+        comments,
+      };
+      return issue;
     },
     async read(request) {
       const current =

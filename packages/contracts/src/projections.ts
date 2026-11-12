@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SentImage } from './attachments.js';
 import type { HostKind } from './hosts.js';
 import { ApprovalPlan, ProposedRuleSchema } from './approvals.js';
 import {
@@ -80,6 +81,12 @@ export const QueuedMessage = z.object({
   id: Id,
   text: z.string(),
   skills: z.array(SkillRef).optional(),
+  // Images of the message (agent workbench spec 53). A queue with images waits for the turn's
+  // end; it is not handed to the running turn.
+  images: z.array(SentImage).optional(),
+  // Files mentioned with `@` (agent workbench spec 56), once each; absent on messages queued
+  // before they were kept.
+  files: z.array(z.string().min(1)).optional(),
   queuedAt: Timestamp,
 });
 export type QueuedMessage = z.infer<typeof QueuedMessage>;
@@ -177,6 +184,13 @@ export const TextItemPayload = z.object({
   // went into the running turn (Claude Code takes it there), `afterTurn` was sent by the server
   // when the turn ended. Absent for a message sent at once.
   queued: z.enum(['duringTurn', 'afterTurn']).optional(),
+  // Files the user mentioned with `@` (agent workbench spec 56), as written, relative to the
+  // thread's folder. `text` names each as `@path` on its first line; the thread shows them as
+  // chips. Absent for older messages and messages without mentions.
+  files: z.array(z.string().min(1)).optional(),
+  // Images pasted or dropped on the composer (agent workbench spec 53), stored by the server for
+  // the thread and read back for display with `attachments.read`. Absent for older messages.
+  images: z.array(SentImage).optional(),
 });
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 

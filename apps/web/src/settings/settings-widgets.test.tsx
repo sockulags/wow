@@ -76,6 +76,7 @@ describe('keybindings', () => {
     expect(keyScope('keybindings.calendarToday')).toBe('Calendar');
     expect(keyScope('keybindings.stopTurn')).toBe('Chat');
     expect(keyScope('keybindings.palette')).toBe('General');
+    expect(keyScope('keybindings.panelNextTab')).toBe('Panel');
     const conflicts = keyConflicts({
       'keybindings.palette': 'Mod+K',
       'keybindings.calendarToday': 'Ctrl+K',

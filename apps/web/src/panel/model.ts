@@ -5,6 +5,7 @@ import {
   type Turn,
   type WorkflowRun,
 } from '@wow/contracts';
+import { useRouterState, type useRouter } from '@tanstack/react-router';
 import { validateCalendarSearch } from '@/calendar/search';
 import { reviewedStepIndex } from '@/workflows/model';
 
@@ -41,6 +42,25 @@ export function panelSelection(pathname: string, search: Record<string, unknown>
   }
   return { view: 'other' };
 }
+
+// What a view's panel tabs are kept under (agent workbench spec 11): its path, and in the
+// calendar the selected card too, whose step thread the panel shows, so each card has its own.
+export function panelRoute(pathname: string, search: Record<string, unknown>): string {
+  const selection = panelSelection(pathname, search);
+  return selection.view === 'calendar' && selection.itemId !== undefined
+    ? `${pathname}?item=${encodeURIComponent(selection.itemId)}`
+    : pathname;
+}
+
+// The route of the view on screen, read when something opens; '' where there is no router (a
+// conversation drawn in a test or preview).
+export const routerPanelRoute = (router: ReturnType<typeof useRouter> | undefined): string =>
+  router ? panelRoute(router.state.location.pathname, router.state.location.search) : '';
+
+export const usePanelRoute = (): string =>
+  useRouterState({
+    select: (state) => panelRoute(state.location.pathname, state.location.search),
+  });
 
 // Whether the selection names something; the empty state shows otherwise.
 export const hasSelection = (selection: PanelSelection): boolean => {

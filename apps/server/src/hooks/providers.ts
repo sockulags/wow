@@ -19,12 +19,22 @@ export type ProviderAdapterFactory = (
 // Maps a provider command to the events the mock answers with. The default echoes the prompt.
 export type MockScript = (command: ProviderCommand) => ProviderEvent[];
 
+// The prompt, and how many images came with it (agent workbench spec 53), so a test sees that
+// they reached the adapter.
+export const imagesReceived = (count: number): string =>
+  `Received ${count} image${count === 1 ? '' : 's'}.`;
+
+const echoed = (command: Extract<ProviderCommand, { type: 'startTurn' }>): string => {
+  const count = command.images?.length ?? 0;
+  return count === 0 ? command.prompt : `${command.prompt}\n\n${imagesReceived(count)}`;
+};
+
 const echo: MockScript = (command) => {
   if (command.type !== 'startTurn') return [];
   const { threadId } = command;
   return [
     { type: 'session', threadId, providerSessionId: `mock-${threadId}` },
-    { type: 'textDelta', threadId, itemId: `${threadId}-text`, delta: command.prompt },
+    { type: 'textDelta', threadId, itemId: `${threadId}-text`, delta: echoed(command) },
     { type: 'usage', threadId, inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
     { type: 'turnCompleted', threadId },
   ];

@@ -563,7 +563,16 @@ export class CodexAdapter implements ProviderAdapter {
       }
       const params: TurnStartParams = {
         threadId: thread.codexId,
-        input: [{ type: 'text', text: command.prompt, text_elements: [] }],
+        // Codex reads the files wow stored itself (agent workbench spec 53, 55).
+        input: [
+          ...(command.prompt === '' && (command.images ?? []).length > 0
+            ? []
+            : [{ type: 'text' as const, text: command.prompt, text_elements: [] }]),
+          ...(command.images ?? []).map((image) => ({
+            type: 'localImage' as const,
+            path: image.path,
+          })),
+        ],
         cwd: command.cwd,
         model: command.model,
         effort: command.effort,

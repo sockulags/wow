@@ -1,15 +1,42 @@
 import { z } from 'zod';
 
-// One file of a run, read for the viewer in the side panel (review loop spec 6 to 8). The path
-// is relative to the run's working folder or the project folder, or absolute inside one of them.
-export const FileReadParams = z.object({
-  runId: z.string().min(1),
-  path: z
-    .string()
-    .min(1)
-    .refine((value) => !value.includes('\0'), 'A path cannot hold a NUL character'),
-});
+const FilePath = z
+  .string()
+  .min(1)
+  .refine((value) => !value.includes('\0'), 'A path cannot hold a NUL character');
+
+// Whose folders a file is read from or listed in (agent workbench Interface): a run (its working
+// folder, then the project folder), a chat or step thread (its folder, then its project's
+// folder) or a project (its folder). Files outside those folders are never read.
+const RunScope = z.object({ runId: z.string().min(1) });
+const ThreadScope = z.object({ threadId: z.string().min(1) });
+const ProjectScope = z.object({ projectId: z.string().min(1) });
+export const FileScope = z.union([RunScope, ThreadScope, ProjectScope]);
+export type FileScope = z.infer<typeof FileScope>;
+
+// One file for the viewer in the side panel (review loop spec 6 to 8, agent workbench spec 15,
+// 16). The path is relative to the scope's first folder, or to a later one, or absolute inside
+// one of them.
+export const FileReadParams = z.union([
+  RunScope.extend({ path: FilePath }),
+  ThreadScope.extend({ path: FilePath }),
+  ProjectScope.extend({ path: FilePath }),
+]);
 export type FileReadParams = z.infer<typeof FileReadParams>;
+
+// The files of the scope's first folder for "Open file…" and `@` (agent workbench spec 18, 56):
+// what Git tracks plus the untracked files it does not ignore, or a bounded walk where the folder
+// is not in Git. Paths are relative with forward slashes; at most `viewer.fileListLimit` of them.
+export const FileListParams = FileScope;
+export type FileListParams = z.infer<typeof FileListParams>;
+
+export const FileListResult = z.object({
+  files: z.array(z.string().min(1)),
+  source: z.enum(['git', 'walk']),
+  // More files were there than the limit lets through.
+  truncated: z.boolean(),
+});
+export type FileListResult = z.infer<typeof FileListResult>;
 
 // Why a file was not read. The server reads nothing in these cases; `message` says it in words.
 export const FileRefusal = z.enum([
