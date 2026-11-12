@@ -7,6 +7,7 @@ import {
   e2eChangesTrackerPort,
   e2eChangesWorkflowId,
 } from './env';
+import { choose } from './controls';
 import { sketchPath, sketching, sketchUse } from './sketch';
 
 // U3 ground truth (review loop spec 11, 12) against its own copy of the e2e server, whose home
@@ -150,6 +151,60 @@ test.describe('changes', () => {
     await expect(gate(page)).toContainText('deliver-work finished');
     await page.getByRole('tab', { name: 'Steps' }).click();
     await expect(page.getByRole('list', { name: 'Run steps' })).toBeVisible();
+  });
+});
+
+// The run tests above may leave the side panel open, with fields of its own.
+const main = (page: Page) => page.locator('#main-view');
+const messageBox = (page: Page) => main(page).getByRole('combobox', { name: 'Message' });
+
+test.describe("a chat thread's changes", () => {
+  test("lists a thread's changes @agent-workbench-34 @agent-workbench-35", async ({ page }) => {
+    await page.goto('/chat/new');
+    await choose(main(page).getByLabel('Provider instance'), 'Mock Claude');
+    await choose(main(page).getByRole('combobox', { name: 'Project' }), 'Tea chat');
+    await expect(main(page).getByTestId('model-bar')).toBeVisible();
+    await messageBox(page).fill('Edit the timer');
+    await messageBox(page).press('Enter');
+    await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+    const conversation = main(page).getByRole('list', { name: 'Conversation' });
+    await conversation
+      .getByRole('region', { name: 'Approval request' })
+      .getByRole('button', { name: 'Allow once' })
+      .click();
+    await expect(conversation.getByText('The timer rings twice now.')).toBeVisible();
+    await messageBox(page).fill('Edit the bell');
+    await messageBox(page).press('Enter');
+    await expect(conversation.getByText('The bell rings softly now.')).toBeVisible();
+
+    // The header sums both turns; the chip opens the Changes beside the thread.
+    const chip = page.getByTestId('thread-changes-chip');
+    await expect(chip).toHaveText('+2 −1 in 2 files');
+    await chip.click();
+    const changes = page.getByTestId('thread-changes');
+    const listed = changes.getByTestId('thread-changes-file');
+    await expect(listed).toHaveText([/src\/bell\.ts\+1 −1/, /src\/timer\.ts\+1 −0/]);
+    // "This turn only" (O) narrows to what changed since the last turn began.
+    await page.keyboard.press('o');
+    await expect(listed).toHaveText([/src\/bell\.ts\+1 −1/]);
+    await listed.first().click();
+    await expect(changes.getByRole('table', { name: 'Diff of src/bell.ts' })).toBeVisible();
+    await page.keyboard.press('o');
+    await expect(listed).toHaveCount(2);
+
+    // A thread whose folder is not in Git says why instead of listing files.
+    await page.goto('/chat/new');
+    await choose(main(page).getByRole('combobox', { name: 'Project' }), 'Demo');
+    await messageBox(page).fill('Hello from a plain folder');
+    await messageBox(page).press('Enter');
+    await expect(main(page).getByRole('list', { name: 'Conversation' })).toContainText(
+      'You said: Hello from a plain folder',
+    );
+    await expect(page.getByTestId('thread-changes-chip')).toHaveCount(0);
+    await page.keyboard.press('Control+Shift+D');
+    await expect(
+      page.getByTestId('thread-changes').getByRole('heading', { name: 'Not a Git repository' }),
+    ).toBeVisible();
   });
 });
 

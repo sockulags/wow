@@ -42,6 +42,7 @@ import {
   e2eChangesProjectId,
   e2eChangesWorkflowId,
   e2eCopyProjectId,
+  e2eThreadChangesProjectId,
   e2eCopyWorkflowId,
   e2eGateProjectId,
   e2eConditionWorkflowId,
@@ -208,7 +209,9 @@ const changesRepo = path.join(home, 'tea-timer');
 // The gate tests (review loop spec 14 to 16) get a copy of their own, so a run of theirs does not
 // reseed the folder the Changes tests are reading.
 const gateRepo = path.join(home, 'tea-kettle');
-const teaRepos = new Set([changesRepo, gateRepo]);
+// A chat thread's Changes (agent workbench U6) read their own copy.
+const chatRepo = path.join(home, 'tea-chat');
+const teaRepos = new Set([changesRepo, gateRepo, chatRepo]);
 // The working copy tests (review loop spec 36, 37): the agent must find itself in a working copy
 // under the server's own `workspaces` folder, never in this repository.
 const copyRepo = path.join(home, 'tea-cup');
@@ -464,6 +467,103 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       ...finish(threadId, 'The repo holds a kettle.'),
     ];
   }
+  // Edits and approvals (agent workbench U6). "Edit the timer" asks to apply an edit seen as a
+  // diff and writes it once allowed, in a tea repository only; "edit the bell" edits without
+  // asking; "watch the tests" and "run the tests once" ask for commands an "always allow" rule
+  // covers; "plan the work" writes a plan and asks to leave plan mode.
+  if (/edit the timer/i.test(prompt)) {
+    editFolders.set(threadId, command.cwd);
+    const timerPath = `${command.cwd}/src/timer.ts`;
+    const facts = { kind: 'edit', path: timerPath, diff: timerEditDiff } as const;
+    return [
+      session,
+      { type: 'textDelta', threadId, itemId: 'intro', delta: 'The timer should ring twice.' },
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'edit-timer',
+        name: 'Edit',
+        input: { file_path: timerPath },
+        ...facts,
+      },
+      {
+        type: 'approvalRequested',
+        threadId,
+        approvalId: `${threadId}${separator}edit`,
+        kind: 'fileChange',
+        summary: 'Edit src/timer.ts',
+        request: { toolName: 'Edit', input: { file_path: timerPath } },
+        facts,
+      },
+    ];
+  }
+  if (/edit the bell/i.test(prompt)) {
+    if (inTeaRepo(command.cwd)) writeInRepo(command.cwd, 'src/bell.ts', bellEdited);
+    return [
+      session,
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'edit-bell',
+        name: 'Edit',
+        input: { file_path: `${command.cwd}/src/bell.ts` },
+        kind: 'edit',
+        path: `${command.cwd}/src/bell.ts`,
+        diff: bellEditDiff,
+      },
+      { type: 'toolCallCompleted', threadId, itemId: 'edit-bell', status: 'ok' },
+      ...finish(threadId, 'The bell rings softly now.'),
+    ];
+  }
+  const ruleCommand = /watch the tests/i.test(prompt)
+    ? 'pnpm test --watch'
+    : /run the tests once/i.test(prompt)
+      ? 'pnpm test'
+      : undefined;
+  if (ruleCommand) {
+    return [
+      session,
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'tool-1',
+        name: 'Bash',
+        input: { command: ruleCommand },
+        kind: 'command',
+        command: ruleCommand,
+      },
+      {
+        type: 'approvalRequested',
+        threadId,
+        approvalId: `${threadId}${separator}approval`,
+        kind: 'command',
+        summary: ruleCommand,
+        request: { command: ruleCommand },
+        facts: { kind: 'command', command: ruleCommand, cwd: command.cwd },
+      },
+    ];
+  }
+  if (/plan the work/i.test(prompt)) {
+    return [
+      session,
+      ...words(teaPlan).map((delta): ProviderEvent => ({
+        type: 'textDelta',
+        threadId,
+        itemId: 'plan',
+        delta,
+      })),
+      {
+        type: 'approvalRequested',
+        threadId,
+        // One id per request, since a thread may plan more than once.
+        approvalId: `${threadId}${separator}plan${separator}${(planRequests += 1)}`,
+        kind: 'plan',
+        summary: 'Exit plan mode',
+        request: { toolName: 'ExitPlanMode', input: { plan: teaPlan } },
+        facts: { kind: 'other', plan: teaPlan },
+      },
+    ];
+  }
   // Tool rows (agent workbench U4): a task list, a command that exits 1 after 4.2 s in a folder
   // of its own, a read, an MCP call, and a command that keeps running, so the turn runs on.
   if (/run the tools/i.test(prompt)) {
@@ -666,7 +766,30 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   ];
 }
 
+const timerEditDiff = [
+  '@@ -3,4 +3,5 @@',
+  ' export function startTimer(minutes: number): void {',
+  '   const ms = minutes * 60_000;',
+  '   setTimeout(() => ring(), ms);',
+  '+  setTimeout(() => ring(), ms + 2_000);',
+  ' }',
+].join('\n');
+const bellEdited = "export const ring = (): void => console.log('ding, softly');\n";
+const bellEditDiff = [
+  '@@ -1 +1 @@',
+  "-export const ring = (): void => console.log('ding');",
+  "+export const ring = (): void => console.log('ding, softly');",
+].join('\n');
+const teaPlan = [
+  '## Plan: ring twice',
+  '',
+  '1. Read `src/timer.ts` and `src/bell.ts`.',
+  '2. Ring a second time two seconds after the first.',
+  '3. Add a test that counts the rings.',
+].join('\n');
+
 const threadOf = (id: string) => id.split(separator)[0] ?? id;
+const kindOf = (id: string) => id.split(separator)[1];
 
 // Threads whose turn left background work running, oldest first, and a Claude mock adapter to
 // send what follows through (the provider service takes a thread's events from any adapter).
@@ -681,6 +804,10 @@ const chatMock = (adapter: MockProviderAdapter) => {
   return adapter;
 };
 
+let planRequests = 0;
+// The folder of each thread whose "edit the timer" waits for its approval.
+const editFolders = new Map<string, string>();
+
 // What the first question of a two-question ask was answered, per thread, until the second is.
 const answered = new Map<string, string[]>();
 
@@ -691,6 +818,46 @@ const chatScript: MockScript = (command) => {
     case 'answerApproval': {
       const threadId = threadOf(command.approvalId);
       const allowed = command.decision !== 'deny';
+      if (kindOf(command.approvalId) === 'edit') {
+        const cwd = editFolders.get(threadId);
+        if (allowed && cwd && inTeaRepo(cwd)) {
+          writeInRepo(
+            cwd,
+            'src/timer.ts',
+            timerSource('ring()').replace('ms);', 'ms);\n  setTimeout(() => ring(), ms + 2_000);'),
+          );
+        }
+        return [
+          {
+            type: 'toolCallCompleted',
+            threadId,
+            itemId: 'edit-timer',
+            status: allowed ? 'ok' : 'error',
+            ...(allowed ? { diff: timerEditDiff } : {}),
+          },
+          ...finish(
+            threadId,
+            allowed ? 'The timer rings twice now.' : 'I left the timer.',
+            'after',
+          ),
+        ];
+      }
+      if (kindOf(command.approvalId) === 'plan') {
+        return finish(
+          threadId,
+          allowed
+            ? 'Starting on the plan.'
+            : `I will keep planning${command.note ? `: ${command.note}` : '.'}`,
+          'after',
+        );
+      }
+      // Claude Code hears a denial's note as the denial's message (agent workbench spec 37).
+      if (!allowed && command.note) {
+        return [
+          { type: 'toolCallCompleted', threadId, itemId: 'tool-1', status: 'error' },
+          ...finish(threadId, `The command was denied: ${command.note}`, 'after'),
+        ];
+      }
       return [
         { type: 'toolCallOutput', threadId, itemId: 'tool-1', output: 'All 12 tests passed\n' },
         { type: 'toolCallCompleted', threadId, itemId: 'tool-1', status: allowed ? 'ok' : 'error' },
@@ -719,6 +886,20 @@ const chatScript: MockScript = (command) => {
 };
 
 const chatClaude = () => (claudeMock = chatMock(new MockProviderAdapter('claude', chatScript)));
+
+// Codex takes no message with a decline and goes on with its turn (agent workbench spec 37):
+// the turn runs until wow stops it and sends the note as the next message.
+const codexScript: MockScript = (command) =>
+  command.type === 'answerApproval' && command.decision === 'deny' && command.note
+    ? [
+        {
+          type: 'toolCallCompleted',
+          threadId: threadOf(command.approvalId),
+          itemId: 'tool-1',
+          status: 'error',
+        },
+      ]
+    : chatScript(command);
 
 // "Update Codex" (settings tests): a Codex instance named "... differs" tests as a compatible
 // other version, one named "... incompatible" as incompatible with an npm update until the fake
@@ -913,6 +1094,7 @@ if (home === e2ePanelHome) {
 if (home === e2eChangesHome) {
   seedTeaRepo(changesRepo);
   seedTeaRepo(gateRepo);
+  seedTeaRepo(chatRepo);
   seedCopyRepo();
   // The host tests: a repository on a branch that has a pull request, with a plan in it.
   seedTeaRepo(hostRepo);
@@ -998,7 +1180,7 @@ const server = await startServer({
         chatMock(
           new MockProviderAdapter(
             'codex',
-            chatScript,
+            codexScript,
             codexTest(instance),
             home === e2eHome ? () => mockCodexModels : undefined,
           ),
@@ -1374,6 +1556,12 @@ if (home === e2eChangesHome) {
   });
   // The working copy tests: the same agent again; the test turns "Own working copy" on in the
   // builder before it starts a run.
+  server.engine.dispatch('seed-thread-changes-project', {
+    type: 'project.create',
+    projectId: e2eThreadChangesProjectId,
+    name: 'Tea chat',
+    cwd: chatRepo,
+  });
   server.engine.dispatch('seed-copy-project', {
     type: 'project.create',
     projectId: e2eCopyProjectId,

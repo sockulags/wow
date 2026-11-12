@@ -384,9 +384,158 @@ test.describe('chat', () => {
       'Deny',
     ]);
     await approval.getByRole('button', { name: 'Deny' }).click();
+    // An empty note denies without one (agent workbench spec 37).
+    await approval.getByTestId('approval-note').press('Enter');
     await expect(approval).toContainText('Denied');
     await expect(conversation(page).getByText('The command was denied.')).toBeVisible();
     await expect(conversation(page).getByTestId('item-tool_call')).toContainText('error');
+  });
+
+  test('approves an edit seen as a diff @agent-workbench-33 @agent-workbench-36', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Edit the timer');
+    const approval = conversation(page).getByRole('region', { name: 'Approval request' });
+    await expect(approval.getByRole('table', { name: 'Diff of src/timer.ts' })).toBeVisible();
+    await expect(
+      approval.getByRole('table', { name: 'Diff of src/timer.ts' }).locator('tr[data-kind="add"]'),
+    ).toHaveCount(1);
+    // An edit has no rule of its own: Accept edits is for that (spec 38).
+    await expect(
+      approval.getByRole('button', { name: 'Always allow in this project' }),
+    ).toHaveCount(0);
+    await expect(approval).toBeFocused();
+    await page.keyboard.press('a');
+    await expect(approval.getByTestId('approval-decision')).toHaveText('Allowed once');
+    await expect(conversation(page).getByText('The timer rings twice now.')).toBeVisible();
+    const row = conversation(page).getByTestId('item-tool_call');
+    await expect(row.getByTestId('tool-line')).toHaveText('Edit src/timer.ts');
+    await expect(row.getByTestId('edit-counts')).toHaveText('+1 −0');
+    await row.getByTestId('tool-line').click();
+    await expect(row.getByRole('table', { name: 'Diff of src/timer.ts' })).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Open file' })).toBeVisible();
+  });
+
+  test('denies with a note @agent-workbench-37', async ({ page }) => {
+    // Claude Code hears the note as the denial's message.
+    await startClaudeThread(page, 'Approve deleting the cache');
+    const approval = conversation(page).getByRole('region', { name: 'Approval request' });
+    await expect(approval).toBeFocused();
+    await page.keyboard.press('d');
+    const note = approval.getByPlaceholder('No, and tell it what to do instead');
+    await expect(note).toBeFocused();
+    await note.fill('Move it to the trash instead');
+    await note.press('Enter');
+    await expect(approval.getByTestId('approval-decision')).toHaveText(
+      'Denied: Move it to the trash instead',
+    );
+    await expect(
+      conversation(page).getByText('The command was denied: Move it to the trash instead'),
+    ).toBeVisible();
+
+    // Codex takes no message with a decline: the turn stops and the note is the next message.
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await choose(page.getByLabel('Project'), 'Demo');
+    await expect(page.getByTestId('model-bar')).toBeVisible();
+    await messageBox(page).fill('Approve clearing the logs');
+    await messageBox(page).press('Enter');
+    const codexApproval = conversation(page).getByRole('region', { name: 'Approval request' });
+    await expect(codexApproval).toBeFocused();
+    await page.keyboard.press('d');
+    await codexApproval.getByTestId('approval-note').fill('Keep the logs of today');
+    await codexApproval.getByTestId('approval-note').press('Enter');
+    await expect(codexApproval.getByTestId('approval-decision')).toHaveText(
+      'Denied: Keep the logs of today',
+    );
+    await expect(conversation(page).getByTestId('turn-stopped')).toBeVisible();
+    await expect(conversation(page).getByText('You said: Keep the logs of today')).toBeVisible();
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+  });
+
+  test('always allows a command in this project @agent-workbench-38 @agent-workbench-39 @agent-workbench-40', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Watch the tests');
+    const approval = conversation(page).getByRole('region', { name: 'Approval request' });
+    // The card shows the rule before it is stored.
+    await expect(approval.getByTestId('approval-rule')).toHaveText(
+      'Run commands starting with pnpm test',
+    );
+    await expect(approval).toBeFocused();
+    await page.keyboard.press('y');
+    await expect(approval.getByTestId('approval-decision')).toHaveText(
+      'Always allowed in this project: Run commands starting with pnpm test',
+    );
+    await expect(conversation(page).getByText('The command ran.')).toBeVisible();
+
+    // Another thread of the project, on the other provider: wow answers by the rule.
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await choose(page.getByLabel('Project'), 'Demo');
+    await expect(page.getByTestId('model-bar')).toBeVisible();
+    await messageBox(page).fill('Run the tests once');
+    await messageBox(page).press('Enter');
+    const byRule = conversation(page).getByRole('region', { name: 'Approval request' });
+    await expect(byRule.getByTestId('approval-decision')).toHaveText(
+      'Allowed by rule: Run commands starting with pnpm test',
+    );
+    await expect(conversation(page).getByText('The command ran.')).toBeVisible();
+
+    // Removed in Settings, the next request asks again.
+    await page.goto('/settings/approvals');
+    const rule = page.getByTestId('always-allow-rule');
+    await expect(rule).toHaveCount(1);
+    await expect(rule).toContainText('Run commands starting with pnpm test');
+    await expect(rule).toContainText('Added');
+    await rule.getByRole('button', { name: /Remove/ }).click();
+    await expect(page.getByTestId('always-allow-rule')).toHaveCount(0);
+    await startClaudeThread(page, 'Run the tests once');
+    const asks = conversation(page).getByRole('region', { name: 'Approval request' });
+    await expect(asks.getByRole('button', { name: 'Allow once' })).toBeVisible();
+    await page.keyboard.press('a');
+    await expect(asks.getByTestId('approval-decision')).toHaveText('Allowed once');
+  });
+
+  test('starts from a plan @agent-workbench-42 @agent-workbench-43', async ({ page }) => {
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Provider instance'), 'Mock Claude');
+    await choose(page.getByLabel('Project'), 'Demo');
+    const bar = page.getByTestId('model-bar');
+    await expect(bar).toBeVisible();
+    await bar.getByRole('button', { name: 'Permission mode' }).click();
+    await page
+      .getByRole('listbox', { name: 'Permission mode' })
+      .getByRole('option', { name: /^Plan only/ })
+      .click();
+    await expect(bar.getByRole('button', { name: 'Permission mode' })).toHaveText('Plan only');
+    await messageBox(page).fill('Plan the work');
+    await messageBox(page).press('Enter');
+    await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+    const card = conversation(page).getByTestId('plan-card');
+    await expect(card.getByRole('heading', { name: 'Plan: ring twice' })).toBeVisible();
+    // The first choice has the focus, so Enter starts the plan accepting edits.
+    await expect(card.getByRole('button', { name: 'Start, accept edits' })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(card.getByTestId('approval-decision')).toHaveText('Started, accepting edits');
+    await expect(bar.getByRole('button', { name: 'Permission mode' })).toHaveText('Accept edits');
+    await expect(conversation(page).getByText('Starting on the plan.')).toBeVisible();
+
+    // Keep planning with its digit key and a note.
+    await messageBox(page).fill('Plan the work again');
+    await messageBox(page).press('Enter');
+    const again = conversation(page).getByTestId('plan-card').last();
+    await expect(again.getByRole('button', { name: 'Start, accept edits' })).toBeFocused();
+    await page.keyboard.press('3');
+    await again.getByPlaceholder('What to change in the plan').fill('Write the test first');
+    await page.keyboard.press('Enter');
+    await expect(again.getByTestId('approval-decision')).toHaveText(
+      'Kept planning: Write the test first',
+    );
+    await expect(
+      conversation(page).getByText('I will keep planning: Write the test first'),
+    ).toBeVisible();
+    await resetBar(page);
   });
 
   test('allows a command for the session', async ({ page }) => {
@@ -1019,6 +1168,24 @@ test.describe('sketch', () => {
     await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'tool-rows') });
     await page.keyboard.press('Control+.');
     await expect(conversation(page).getByTestId('turn-stopped')).toBeVisible();
+  });
+
+  test('approval-diff', async ({ page }) => {
+    await startClaudeThread(page, 'Edit the timer');
+    const approval = conversation(page).getByRole('region', { name: 'Approval request' });
+    await expect(approval.getByRole('table', { name: 'Diff of src/timer.ts' })).toBeVisible();
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'approval-diff') });
+    await page.keyboard.press('a');
+    await expect(conversation(page).getByText('The timer rings twice now.')).toBeVisible();
+  });
+
+  test('plan-card', async ({ page }) => {
+    await startClaudeThread(page, 'Plan the work');
+    const card = conversation(page).getByTestId('plan-card');
+    await expect(card.getByRole('heading', { name: 'Plan: ring twice' })).toBeVisible();
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'plan-card') });
+    await page.keyboard.press('2');
+    await expect(card.getByTestId('approval-decision')).toHaveText('Started, asking each time');
   });
 
   test('model-bar', async ({ page }) => {
