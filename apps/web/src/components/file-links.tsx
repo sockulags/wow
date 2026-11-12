@@ -16,6 +16,8 @@ export const useFileLinks = (): FileLinks | undefined => useContext(FileLinkCont
 
 const pathCharacters = /^(?:[A-Za-z]:[\\/])?[\p{L}\p{N}\p{M}_.@~+\-/\\()[\]$]+$/u;
 const extension = /\.[A-Za-z][A-Za-z0-9]{0,9}$/;
+const hostName =
+  /\.(?:com|net|org|io|dev|app|cloud|co|info|biz|internal|local|lan|localhost|test|example|invalid)$/i;
 
 // The narrow rule (spec 15, Open risks): no spaces, no colon but a drive's (so no address
 // scheme), and a file extension or a slash. `src/timer.ts`, `README.md`, `docs/` and
@@ -25,8 +27,13 @@ const extension = /\.[A-Za-z][A-Za-z0-9]{0,9}$/;
 export function filePathOf(text: string): string | undefined {
   const value = text.trim();
   if (value === '' || value !== text || value.length > 400) return undefined;
-  const bare = value.replace(/#[^#/\\]*$/, '').replace(/:\d+(?::\d+)?$/, '');
+  const named = value.replace(/#[^#/\\]*$/, '');
+  const bare = named.replace(/:\d+(?::\d+)?$/, '');
   if (bare.startsWith('-') || !pathCharacters.test(bare)) return undefined;
+  // `example.com:8080` and `user@host.com:22` are a host and a port, not a line.
+  if (bare !== named && !/[\\/]/.test(bare) && (bare.includes('@') || hostName.test(bare))) {
+    return undefined;
+  }
   if (/^[./\\]+$/.test(bare)) return undefined;
   const last =
     bare

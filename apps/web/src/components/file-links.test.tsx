@@ -32,6 +32,8 @@ describe('isFilePath', () => {
     ['docs/spec.md#rules', 'docs/spec.md'],
     ['C:\\work\\a.ts:3', 'C:\\work\\a.ts'],
     ['README.md', 'README.md'],
+    ['README.md:3', 'README.md'],
+    ['main.rs:12:4', 'main.rs'],
   ])('opens %s as the bare path %s', (text, path) => {
     expect(filePathOf(text)).toBe(path);
   });
@@ -45,6 +47,9 @@ describe('isFilePath', () => {
     '1.5:3',
     '#rules',
     'localhost:3000',
+    'example.com:8080',
+    'api.internal:443',
+    'user@host.com:22',
     '--force',
     'ringTwice',
     'a b.ts',
