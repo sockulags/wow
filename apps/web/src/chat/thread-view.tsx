@@ -53,7 +53,6 @@ import { errorMessage, useDispatch, useModels, useTopic } from './data';
 import { copyText } from '@/components/copy-button';
 import { conversationStore, showConversation, showGoBack } from './conversation-nav';
 import { forkThread, goBackView, stopGoingBack } from './go-back';
-import { withoutMentions } from './mentions';
 import { notify } from '@/lib/feedback';
 import { takeLanded } from './needs-you';
 import { HostLinkContext, useHostLinkRules, type HostLinks } from './host-links';
@@ -581,12 +580,8 @@ export function ThreadConversation({
     const lastSent = goBack.editable;
     if (!goesBack || !lastSent) return false;
     setEditing({ threadId, turnId: lastSent.turnId });
-    composer.current?.putBack(
-      withoutMentions(lastSent.text, lastSent.files),
-      lastSent.skills,
-      lastSent.images,
-      lastSent.files,
-    );
+    // putBack drops the mention line where the files come back as chips.
+    composer.current?.putBack(lastSent.text, lastSent.skills, lastSent.images, lastSent.files);
     return true;
   };
   const cancelEdit = () => {

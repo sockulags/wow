@@ -94,6 +94,9 @@ Default keys (all changeable in Settings → Keybindings):
 | Ctrl+O           | Chat: open or close all reasoning                            |
 | Alt+Up / Down    | Chat: previous message, next message                         |
 | C                | Chat: copy the message that has the keyboard                 |
+| E                | Chat: edit your last message, when it has the keyboard       |
+| F                | Chat: fork from the message that has the keyboard            |
+| Up               | Chat, in an empty message box: edit your last message        |
 | End              | Chat: back to the newest output                              |
 | T, N, P          | Calendar: today, next, previous                              |
 | D, W             | Calendar: day view, week view                                |

@@ -161,7 +161,12 @@ test.describe('sessions started in a terminal', () => {
     const gone = rows.filter({ hasText: 'Invented: tidy the gone notes' });
     await expect(gone).toContainText('Its folder is gone');
     await expect(gone).toHaveAttribute('aria-disabled', 'true');
-    await expect(list.getByText(e2eWorkspace(home, 'alpha'), { exact: false })).toHaveCount(1);
+    // The folder as the session file spells it; on Windows its separators are backslashes.
+    const alphaFolder = e2eWorkspace(home, 'alpha')
+      .split(/[\\/]/)
+      .map((part) => part.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[\\\\/]');
+    await expect(list.getByText(new RegExp(alphaFolder))).toHaveCount(1);
 
     await alpha.click();
     await expect(page).toHaveURL(/\/chat\/[^/]+$/);
