@@ -1488,6 +1488,18 @@ describe('CodexAdapter', () => {
     ).rejects.toThrow(/Codex cannot/);
   });
 
+  // Agent workbench spec 63, 71: the generated protocol has no fork or rollback, so Edit and Fork
+  // are not offered, and a go-back that reached the adapter anyway is refused with the reason.
+  it('refuses to go back in the conversation, saying why', async () => {
+    const { adapter, launches } = setup(() => new ScriptedCodex(baseAnswers));
+    expect(providerChatOptions.codex.cannotGoBack).toMatch(/Codex cannot go back/);
+    await expect(
+      adapter.send({ ...startTurn, resumeId: 'codex-1', goBack: { at: 'x', fork: true } }),
+    ).rejects.toThrow(/Codex cannot go back/);
+    // Refused before an app-server is started.
+    expect(launches).toEqual([]);
+  });
+
   // The fallback where nothing of the agent's own thread reaches wow: the row alone.
   it('shows a failed collab agent without a nested list when its thread sends nothing', async () => {
     const { adapter, take, current } = setup(() => new ScriptedCodex(baseAnswers));

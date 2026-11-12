@@ -100,6 +100,47 @@ describe('projects', () => {
     expect(projects()[0]?.name).toBe('Wow App');
   });
 
+  it('keeps the thread defaults a project is created or updated with (agent workbench spec 97)', () => {
+    run({
+      type: 'project.create',
+      projectId: 'p2',
+      name: 'tea',
+      cwd: '/work/tea',
+      defaultProviderInstanceId: 'claude-work',
+      defaultModel: 'opus',
+      defaultEffort: 'high',
+      defaultPermissionMode: 'plan',
+    });
+    const tea = () => projects().find((project) => project.id === 'p2');
+    expect(tea()).toMatchObject({
+      defaultProviderInstanceId: 'claude-work',
+      defaultModel: 'opus',
+      defaultEffort: 'high',
+      defaultPermissionMode: 'plan',
+    });
+    run({ type: 'project.update', projectId: 'p2', defaultEffort: 'low' });
+    expect(tea()).toMatchObject({ defaultEffort: 'low', defaultPermissionMode: 'plan' });
+    run({
+      type: 'project.update',
+      projectId: 'p2',
+      defaultProviderInstanceId: null,
+      defaultModel: null,
+      defaultEffort: null,
+      defaultPermissionMode: null,
+    });
+    expect(tea()).toMatchObject({
+      defaultProviderInstanceId: null,
+      defaultModel: null,
+      defaultEffort: null,
+      defaultPermissionMode: null,
+    });
+    // A project made before the two fields existed reads them as null.
+    expect(projects().find((project) => project.id === 'p1')).toMatchObject({
+      defaultEffort: null,
+      defaultPermissionMode: null,
+    });
+  });
+
   it('removes a project: threads keep their folder, cards lose the project and the trigger', () => {
     run({
       type: 'thread.create',

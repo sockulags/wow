@@ -160,7 +160,7 @@ test.describe('plans', () => {
   test('opens plans, units and a refresh from the palette and the keyboard', async ({ page }) => {
     await page.goto('/calendar');
     await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible();
-    await page.keyboard.press('Control+5');
+    await page.keyboard.press('Control+4');
     await expect(page).toHaveURL(/\/plans$/);
 
     await page.keyboard.press('Control+k');

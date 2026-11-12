@@ -75,7 +75,7 @@ function whyOf(
 ): string | undefined {
   if (visit.reason === null) {
     if (visit.ended !== 'done' || !last || run.state !== 'waiting') return undefined;
-    return gateStanding(run)?.waitsFor === 'checks' ? 'waiting for checks' : 'waiting for you';
+    return gateStanding(run)?.waitsFor === 'checks' ? 'Waiting for checks' : 'Waiting for you';
   }
   const parts = [visit.reason];
   // When the list decided, the rule that held is not in the reason: say what was found.

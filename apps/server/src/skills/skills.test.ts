@@ -91,6 +91,7 @@ const rpcDispatch = (command: ServerCommand) => {
     trackers: undefined as never,
     detectProviders: () => Promise.resolve([]),
     discoverProjects: () => Promise.resolve([]),
+    listSessions: () => Promise.resolve([]),
     outlook: () => undefined,
     info: { version: '0.0.0', home: wowHome },
     clock: () => new Date(),

@@ -229,6 +229,77 @@ export const mockClaudeCommands: readonly ProviderSlashCommand[] = [
   },
 ];
 
+// What the mock says first in a turn that went back in the conversation (Edit, Fork): the
+// messages it still remembers, so a test sees what was kept (agent workbench spec 62, 71).
+export const keptMessagesText = (prompts: readonly string[]): string =>
+  prompts.length === 0
+    ? 'Starting a new conversation.'
+    : `Picked up after: ${prompts.map((prompt) => `"${prompt}"`).join(', ')}.`;
+
+const endsTurn = (event: ProviderEvent) =>
+  event.type === 'turnCompleted' || event.type === 'turnFailed' || event.type === 'turnInterrupted';
+
+// The mock's own record of a Claude Code conversation: each session's turns with the point it
+// gave after each, so a turn that goes back keeps what Claude Code would keep.
+class MockConversations {
+  readonly #sessions = new Map<string, { prompt: string; point: string }[]>();
+  readonly #sessionOf = new Map<string, string>();
+  readonly #prompts = new Map<string, string>();
+  #count = 0;
+
+  startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): ProviderEvent[] {
+    const { threadId, goBack } = command;
+    this.#prompts.set(threadId, command.prompt);
+    if (!goBack) {
+      if (!this.#sessionOf.has(threadId) && command.resumeId)
+        this.#sessionOf.set(threadId, command.resumeId);
+      return [];
+    }
+    const before = command.resumeId ? (this.#sessions.get(command.resumeId) ?? []) : [];
+    const at = goBack.at === null ? -1 : before.findIndex((entry) => entry.point === goBack.at);
+    if (goBack.at !== null && at === -1) {
+      return [{ type: 'turnFailed', threadId, error: `No message ${goBack.at} to go back to` }];
+    }
+    const kept = before.slice(0, at + 1);
+    this.#count += 1;
+    const session =
+      goBack.fork || goBack.at === null || !command.resumeId
+        ? `mock-${threadId}-${this.#count}`
+        : command.resumeId;
+    this.#sessions.set(session, kept);
+    this.#sessionOf.set(threadId, session);
+    return [
+      { type: 'session', threadId, providerSessionId: session },
+      {
+        type: 'textDelta',
+        threadId,
+        itemId: `${threadId}-kept-${this.#count}`,
+        delta: keptMessagesText(kept.map((entry) => entry.prompt)),
+      },
+    ];
+  }
+
+  // A script's session id stands until the mock went back; a turn's end gets its point.
+  passing(event: ProviderEvent): ProviderEvent {
+    const { threadId } = event;
+    if (event.type === 'session') {
+      const known = this.#sessionOf.get(threadId);
+      if (known) return { ...event, providerSessionId: known };
+      this.#sessionOf.set(threadId, event.providerSessionId);
+      return event;
+    }
+    if (!endsTurn(event)) return event;
+    const session = this.#sessionOf.get(threadId);
+    if (!session) return event;
+    const entries = this.#sessions.get(session) ?? [];
+    const point = `${session}:${entries.length + 1}`;
+    entries.push({ prompt: this.#prompts.get(threadId) ?? '', point });
+    this.#sessions.set(session, entries);
+    this.#prompts.delete(threadId);
+    return { ...event, resumePoint: point };
+  }
+}
+
 export class MockProviderAdapter implements ProviderAdapter {
   readonly kind: ProviderKind;
   readonly requiresModel: boolean;
@@ -237,6 +308,8 @@ export class MockProviderAdapter implements ProviderAdapter {
   readonly #testResult: () => ProviderTestResult;
   readonly #models: () => readonly ProviderModel[];
   readonly #listeners = new Set<(event: ProviderEvent) => void>();
+  // Only a provider that can go back keeps points (agent workbench spec 63).
+  readonly #conversations: MockConversations | undefined;
 
   // testResult answers "test"; the default is a ready instance.
   constructor(
@@ -256,11 +329,26 @@ export class MockProviderAdapter implements ProviderAdapter {
     this.#script = script;
     this.#testResult = testResult;
     this.#models = models;
+    this.#conversations =
+      providerChatOptions[kind].cannotGoBack === null ? new MockConversations() : undefined;
+  }
+
+  #passing(events: readonly ProviderEvent[]): ProviderEvent[] {
+    const conversations = this.#conversations;
+    return conversations ? events.map((event) => conversations.passing(event)) : [...events];
   }
 
   send(command: ProviderCommand): Promise<unknown> {
     this.sent.push(command);
-    const events = this.#script(command);
+    const back =
+      command.type === 'startTurn' && this.#conversations
+        ? this.#conversations.startTurn(command)
+        : [];
+    // A go-back the mock cannot follow fails the turn, as Claude Code refuses an unknown point;
+    // the turn wrote nothing, so it ends without a point.
+    const events = back.some((event) => event.type === 'turnFailed')
+      ? back
+      : this.#passing([...back, ...this.#script(command)]);
     setImmediate(() => {
       for (const event of events) for (const listener of this.#listeners) listener(event);
     });
@@ -289,7 +377,8 @@ export class MockProviderAdapter implements ProviderAdapter {
   // Events the provider sends without a command: a turn it starts by itself after its
   // background work ends.
   emit(events: readonly ProviderEvent[]): void {
-    for (const event of events) for (const listener of this.#listeners) listener(event);
+    for (const event of this.#passing(events))
+      for (const listener of this.#listeners) listener(event);
   }
 
   onEvent(listener: (event: ProviderEvent) => void): () => void {

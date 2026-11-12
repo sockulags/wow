@@ -305,6 +305,7 @@ export class ProviderService {
             effort: start.effort,
             permissionMode: start.permissionMode,
             ...(start.resumeId === null ? {} : { resumeId: start.resumeId }),
+            ...(start.goBack ? { goBack: start.goBack } : {}),
             ...(start.images && start.images.length > 0
               ? {
                   images: start.images.map((id) => ({

@@ -69,6 +69,14 @@ test.describe('assistant', () => {
     await page.keyboard.press('Control+6');
     await expect(page).toHaveURL(/\/assistant$/);
     await expect(page.getByTestId('assistant-provider')).toContainText('Mock Claude');
+    // The model by its label, not its id (agent workbench spec 86).
+    await expect(page.getByTestId('assistant-provider').getByTestId('model-name')).toHaveAttribute(
+      'data-model-id',
+      /.+/,
+    );
+    await expect(page.getByTestId('assistant-provider').getByTestId('model-name')).not.toHaveText(
+      /^mock-/,
+    );
     await expect(composer(page)).toBeFocused();
 
     await say(page, 'Make my work hours end at four');

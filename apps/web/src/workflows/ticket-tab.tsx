@@ -102,7 +102,7 @@ export function TicketBody({
           </div>
           {source && (
             <div className="flex items-center gap-1">
-              <dt>Found in</dt>
+              <dt className="sr-only">Key found</dt>
               <dd data-testid="ticket-source">{ticketSourceLabels[source]}</dd>
             </div>
           )}

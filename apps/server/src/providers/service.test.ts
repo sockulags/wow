@@ -81,6 +81,19 @@ let nowMs = 0;
 const clock = () => new Date(Date.UTC(2026, 10, 2, 8, 0, (tick += 1)));
 const dispatch = (command: Command) => engine.dispatch(`c${(next += 1)}`, command);
 
+// Goes on with the terminal session on 'claude-shout' through an engine of its own platform.
+const resumeOn = (on: Engine, threadId: string) =>
+  on.dispatch(`c${(next += 1)}`, {
+    type: 'thread.create',
+    threadId,
+    providerInstanceId: 'claude-shout',
+    cwd: '/work/kettle',
+    model: 'sonnet',
+    effort: 'high',
+    permissionMode: 'default',
+    resumeSessionId: 'terminal-session-1',
+  });
+
 // Resolves once a commit with an event of this kind has been applied.
 const committed = (kind: DomainEventKind) =>
   new Promise<void>((resolve) => {
@@ -434,6 +447,81 @@ describe('provider service', () => {
     service.release('claude-work');
     await service.listCommands('claude-work', '/work/demo');
     expect(commandListsAsked()).toHaveLength(2);
+  });
+
+  it('resumes a session started in a terminal from the first message of its thread (spec 72)', async () => {
+    dispatch({
+      type: 'thread.create',
+      threadId: 't2',
+      providerInstanceId: 'claude-work',
+      cwd: '/work/kettle',
+      title: 'Make the kettle whistle twice',
+      model: 'sonnet',
+      effort: 'high',
+      permissionMode: 'default',
+      resumeSessionId: 'terminal-session-1',
+    });
+    const created = (
+      snapshot(database.db, { topic: 'threads' }) as Array<Record<string, unknown>>
+    ).find((row) => row['id'] === 't2');
+    expect(created?.['providerSessionId']).toBe('terminal-session-1');
+    dispatch({ type: 'thread.sendMessage', threadId: 't2', text: 'Go on' });
+    await service.idle();
+    expect(
+      adapter.sent.find((command) => command.type === 'startTurn' && command.threadId === 't2'),
+    ).toMatchObject({ cwd: '/work/kettle', prompt: 'Go on', resumeId: 'terminal-session-1' });
+    expect(() =>
+      dispatch({
+        type: 'thread.create',
+        threadId: 't3',
+        providerInstanceId: 'claude-work',
+        cwd: '/work/kettle',
+        model: 'sonnet',
+        effort: 'high',
+        permissionMode: 'default',
+        resumeSessionId: 'terminal-session-1',
+        forkFrom: { threadId: 't2', turnId: 't2:turn:0' },
+      }),
+    ).toThrow('A thread forks or resumes a session, not both');
+
+    // Two threads writing to one session would interleave in its file (finding 142).
+    const resume = (threadId: string, providerInstanceId: string) =>
+      dispatch({
+        type: 'thread.create',
+        threadId,
+        providerInstanceId,
+        cwd: '/work/kettle',
+        model: 'sonnet',
+        effort: 'high',
+        permissionMode: 'default',
+        resumeSessionId: 'terminal-session-1',
+      });
+    const instance = (providerInstanceId: string, configDir: string) =>
+      dispatch({
+        type: 'providerInstance.create',
+        providerInstanceId,
+        kind: 'claude',
+        name: providerInstanceId,
+        binaryPath: 'claude',
+        configDir,
+        env: {},
+        launchArgs: [],
+      });
+    instance('claude-default', '');
+    instance('claude-home', '/home/me/.claude-home');
+    const held = 'Thread "Make the kettle whistle twice" already goes on with this session';
+    expect(() => resume('t4', 'claude-work')).toThrow(held);
+    expect(() => resume('t5', 'claude-default')).toThrow(held);
+    resume('t6', 'claude-home');
+    expect(rows('threads').find((row) => row['id'] === 't6')?.['providerSessionId']).toBe(
+      'terminal-session-1',
+    );
+
+    // On Windows a config folder spelled in another case is the same folder (finding 141).
+    instance('claude-shout', '/HOME/ME/.CLAUDE');
+    const windows = new Engine(database.db, { clock, platform: 'win32' });
+    expect(() => resumeOn(windows, 't7')).toThrow(held);
+    resumeOn(new Engine(database.db, { clock, platform: 'linux' }), 't8');
   });
 
   it('pins and unpins a thread without touching its activity time', () => {

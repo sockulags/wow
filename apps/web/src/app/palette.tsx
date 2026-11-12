@@ -116,6 +116,9 @@ export function CommandPalette({
       title="Command palette"
       description="Search threads, views, settings and actions"
       showCloseButton={false}
+      // Anchored near the top rather than centred, so the input stays put as results change
+      // (agent workbench spec 93).
+      className="top-[12vh] translate-y-0"
       // A command that moved the focus on purpose ("Show in panel") keeps it there.
       onCloseAutoFocus={(event) => {
         if (takePanelFocusRequest(layout, true)) event.preventDefault();

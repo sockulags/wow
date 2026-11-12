@@ -1,0 +1,198 @@
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { listCodexSessions } from './sessions.js';
+
+// Invented Codex rollouts under `sessions/YYYY/MM/DD`, in the shapes Codex writes them.
+
+let codexHome: string;
+
+beforeEach(async () => {
+  codexHome = await mkdtemp(path.join(tmpdir(), 'wow-codex-sessions-'));
+});
+
+afterEach(async () => {
+  await rm(codexHome, { recursive: true, force: true });
+});
+
+async function rollout(day: string, name: string, lines: unknown[], modified: string) {
+  const dir = path.join(codexHome, 'sessions', ...day.split('/'));
+  await mkdir(dir, { recursive: true });
+  const file = path.join(dir, name);
+  await writeFile(
+    file,
+    lines.map((line) => (typeof line === 'string' ? line : JSON.stringify(line))).join('\n'),
+  );
+  await utimes(file, new Date(modified), new Date(modified));
+}
+
+const meta = (id: string, cwd: string) => ({
+  timestamp: '2026-11-01T08:00:00.000Z',
+  type: 'session_meta',
+  payload: { id, timestamp: '2026-11-01T08:00:00.000Z', cwd, originator: 'codex_cli_rs' },
+});
+const userItem = (text: string) => ({
+  type: 'response_item',
+  payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+});
+
+const assistantItem = (text: string) => ({
+  type: 'response_item',
+  payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] },
+});
+
+const roleItem = (role: string, text: string) => ({
+  type: 'response_item',
+  payload: { type: 'message', role, content: [{ type: 'input_text', text }] },
+});
+
+describe('listCodexSessions (agent workbench spec 72)', () => {
+  it('lists each rollout with its id, folder, first prompt and time, newest first', async () => {
+    await rollout(
+      '2026/11/01',
+      'rollout-2026-11-01T08-00-00-invented.jsonl',
+      [
+        meta('11111111-2222-3333-4444-555555555555', '/work/kettle'),
+        userItem('<environment_context>\n  <cwd>/work/kettle</cwd>\n</environment_context>'),
+        userItem('Fix the whistle'),
+        { type: 'event_msg', payload: { type: 'user_message', message: 'Fix the whistle' } },
+      ],
+      '2026-11-01T09:00:00.000Z',
+    );
+    await rollout(
+      '2026/11/02',
+      'rollout-2026-11-02T08-00-00-invented.jsonl',
+      [
+        meta('66666666-7777-8888-9999-000000000000', '/work/tea'),
+        '{"broken":',
+        userItem('<user_instructions>Invented</user_instructions>'),
+        userItem('Steep the tea\nfor three minutes'),
+      ],
+      '2026-11-02T09:00:00.000Z',
+    );
+    expect(await listCodexSessions(codexHome, { limit: 10, promptChars: 200 })).toEqual([
+      {
+        id: '66666666-7777-8888-9999-000000000000',
+        cwd: '/work/tea',
+        firstPrompt: 'Steep the tea for three minutes',
+        lastUsedAt: '2026-11-02T09:00:00.000Z',
+      },
+      {
+        id: '11111111-2222-3333-4444-555555555555',
+        cwd: '/work/kettle',
+        firstPrompt: 'Fix the whistle',
+        lastUsedAt: '2026-11-01T09:00:00.000Z',
+      },
+    ]);
+  });
+
+  it('takes a prompt that starts with "<" as the user\'s and stops reading once it is known', async () => {
+    await rollout(
+      '2026/11/03',
+      'rollout-2026-11-03T08-00-00-invented.jsonl',
+      [
+        meta('12121212-3434-5656-7878-909090909090', '/work/kettle'),
+        userItem('<environment_context>\n  <cwd>/work/kettle</cwd>\n</environment_context>'),
+        userItem('<div class="kettle"> does not render, fix it'),
+        { type: 'turn_context', payload: { cwd: '/work/kettle' } },
+        assistantItem('Looking at the kettle'),
+        { type: 'event_msg', payload: { type: 'user_message', message: 'A later message' } },
+      ],
+      '2026-11-03T09:00:00.000Z',
+    );
+    expect(await listCodexSessions(codexHome, { limit: 5, promptChars: 200 })).toEqual([
+      {
+        id: '12121212-3434-5656-7878-909090909090',
+        cwd: '/work/kettle',
+        firstPrompt: '<div class="kettle"> does not render, fix it',
+        lastUsedAt: '2026-11-03T09:00:00.000Z',
+      },
+    ]);
+  });
+
+  it('reads an older rollout with its metadata at the top level, keeps the newest and cuts the prompt', async () => {
+    await rollout(
+      '2026/10/01',
+      'rollout-2026-10-01T08-00-00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl',
+      [
+        { timestamp: '2026-10-01T08:00:00.000Z', cwd: '/work/old' },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Boil water' }] },
+      ],
+      '2026-10-01T09:00:00.000Z',
+    );
+    await rollout(
+      '2026/09/01',
+      'rollout-old.jsonl',
+      [meta('x', '/work/older')],
+      '2026-09-01T09:00:00.000Z',
+    );
+    expect(await listCodexSessions(codexHome, { limit: 1, promptChars: 4 })).toEqual([
+      {
+        id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        cwd: '/work/old',
+        firstPrompt: 'Boil…',
+        lastUsedAt: '2026-10-01T09:00:00.000Z',
+      },
+    ]);
+    expect(
+      await listCodexSessions(path.join(codexHome, 'missing'), { limit: 5, promptChars: 9 }),
+    ).toEqual([]);
+  });
+
+  it('skips the instructions note and its context to the prompt Codex records (finding 139)', async () => {
+    await rollout(
+      '2026/11/04',
+      'rollout-2026-11-04T08-00-00-invented.jsonl',
+      [
+        meta('13131313-2424-3535-4646-575757575757', '/work/invented'),
+        userItem(
+          '# AGENTS.md instructions for /work/invented\n\n<INSTRUCTIONS>\nInvented rules\n</INSTRUCTIONS>',
+        ),
+        userItem('<environment_context>\n  <cwd>/work/invented</cwd>\n</environment_context>'),
+        userItem('Descale the kettle'),
+        { type: 'event_msg', payload: { type: 'user_message', message: 'Descale the kettle' } },
+      ],
+      '2026-11-04T09:00:00.000Z',
+    );
+    await rollout(
+      '2026/11/05',
+      'rollout-2026-11-05T08-00-00-invented.jsonl',
+      [
+        meta('14141414-2424-3535-4646-575757575757', '/work/invented'),
+        userItem('<future_note>Something Codex adds one day</future_note>'),
+        userItem('<environment_context>\n  <cwd>/work/invented</cwd>\n</environment_context>'),
+        userItem('Polish the spout'),
+        assistantItem('Polishing'),
+      ],
+      '2026-11-05T09:00:00.000Z',
+    );
+    expect(
+      (await listCodexSessions(codexHome, { limit: 5, promptChars: 200 })).map(
+        (session) => session.firstPrompt,
+      ),
+    ).toEqual(['Polish the spout', 'Descale the kettle']);
+  });
+
+  it('reads on past developer and system messages among the opening notes (finding 142)', async () => {
+    await rollout(
+      '2026/11/06',
+      'rollout-2026-11-06T08-00-00-invented.jsonl',
+      [
+        meta('15151515-2424-3535-4646-575757575757', '/work/invented'),
+        userItem('<future_note>Something Codex adds one day</future_note>'),
+        roleItem('developer', '<permissions instructions>Invented</permissions instructions>'),
+        roleItem('system', 'Invented system note'),
+        userItem('<environment_context>\n  <cwd>/work/invented</cwd>\n</environment_context>'),
+        userItem('Fill the kettle'),
+        assistantItem('Filling'),
+      ],
+      '2026-11-06T09:00:00.000Z',
+    );
+    expect(
+      (await listCodexSessions(codexHome, { limit: 5, promptChars: 200 })).map(
+        (session) => session.firstPrompt,
+      ),
+    ).toEqual(['Fill the kettle']);
+  });
+});

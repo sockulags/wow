@@ -2,7 +2,7 @@ import type { Workflow, WorkflowRun } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { MessageSquareIcon, RouteIcon } from 'lucide-react';
 import { EmptyState } from '@/components/states';
-import { formatDuration, useDateFormat } from '@/lib/format';
+import { tookText, useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { pathRows, visitStateDotClass, visitStateLabels } from './path';
 
@@ -76,7 +76,7 @@ export function PathTab({
               {row.stepNumber !== undefined && <span>Step {row.stepNumber}</span>}
               <span>Started {when(row.startedAt)}</span>
               {row.durationMs !== undefined && (
-                <span className="tabular-nums">Took {formatDuration(row.durationMs)}</span>
+                <span className="tabular-nums">{tookText(row.durationMs)}</span>
               )}
               {row.threadId && (
                 <Link

@@ -60,7 +60,7 @@ test.describe('tickets', () => {
     await expect(ticket.getByTestId('ticket-type')).toHaveText('Story');
     await expect(ticket.getByTestId('ticket-assignee')).toHaveText('Mira Invented');
     await expect(ticket.getByTestId('ticket-source')).toHaveText(
-      'the issue its backlog item was published as',
+      "From the backlog item's Jira issue",
     );
     await expect(tab.getByTestId('host-fetched')).toHaveText(
       /^Last fetched .* from 127\.0\.0\.1:\d+$/,

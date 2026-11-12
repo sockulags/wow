@@ -20,6 +20,8 @@ const conversationKeys = new Set([
   'previousMessage',
   'nextMessage',
   'copyMessage',
+  'editMessage',
+  'forkMessage',
   'conversationEnd',
 ]);
 

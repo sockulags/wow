@@ -22,6 +22,8 @@ import {
   CircleAlertIcon,
   CircleDashedIcon,
   ClockIcon,
+  GitForkIcon,
+  PencilIcon,
   RotateCcwIcon,
 } from 'lucide-react';
 import { useRef, useState, type ReactNode } from 'react';
@@ -51,6 +53,12 @@ import { ToolCall } from './tools/index';
 import { useNow } from './tools/time';
 import { effortLabel, formatElapsed, type WorkingFacts } from './view-model';
 
+export interface StopGoingBack {
+  readonly title: string;
+  readonly detail: string;
+  readonly run: () => void;
+}
+
 // What a row needs to know about the thread and the turn around it.
 export interface ItemContext {
   readonly cwd: string;
@@ -67,6 +75,8 @@ export interface ItemContext {
         readonly onRetry?: () => void;
         readonly onResume: () => void;
         readonly resumePrompt: string;
+        // A go-back the provider refused: stop going back (`thread.dropGoBack`).
+        readonly goOn?: StopGoingBack | undefined;
       }
     | undefined;
   readonly formatAt: (iso: string) => string;
@@ -96,6 +106,52 @@ export interface ItemContext {
   readonly childContext?: ((item: ThreadItem) => ItemContext) | undefined;
   // A tool call the view names in words instead of by the tool's name.
   readonly toolWords?: string | undefined;
+  // Edit (the last message only) and "Fork from here" on a user message (agent workbench spec
+  // 62, 71); absent where they are not offered.
+  readonly onEdit?: (() => void) | undefined;
+  readonly onFork?: (() => void) | undefined;
+  // The exchanges Edit replaced with this message, oldest first ("Earlier version", spec 62).
+  readonly earlier?: readonly EarlierExchange[] | undefined;
+}
+
+// A replaced exchange as "Earlier version" shows it: the message and what answered it.
+export interface EarlierExchange {
+  readonly turnId: string;
+  readonly text: string;
+  readonly answers: readonly string[];
+  readonly toolCalls: number;
+}
+
+function EarlierVersions({ versions }: { versions: readonly EarlierExchange[] }) {
+  return (
+    <details data-testid="earlier-version" className="group w-full max-w-[85%] text-xs">
+      <summary className="ml-auto flex w-fit cursor-pointer list-none items-center gap-1 text-muted-foreground select-none">
+        <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />
+        {versions.length === 1 ? 'Earlier version' : `${versions.length} earlier versions`}
+      </summary>
+      <ol aria-label="Earlier versions" className="mt-1 flex flex-col gap-2">
+        {versions.map((version) => (
+          <li
+            key={version.turnId}
+            data-testid="earlier-exchange"
+            className="flex flex-col gap-1 rounded-md border border-dashed border-border px-3 py-2"
+          >
+            <p className="self-end whitespace-pre-wrap text-muted-foreground">{version.text}</p>
+            {version.toolCalls > 0 && (
+              <p className="text-muted-foreground">
+                Used {version.toolCalls} tool{version.toolCalls === 1 ? '' : 's'}
+              </p>
+            )}
+            {version.answers.map((answer, index) => (
+              <div key={index} className="text-foreground/80">
+                <Markdown text={answer} streaming={false} />
+              </div>
+            ))}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
 }
 
 // One row per thread item. Rows skip layout and paint while off screen, so a long conversation
@@ -262,14 +318,38 @@ function UserMessage({
           {queuedMarks[payload.queued]}
         </span>
       )}
-      {context.at && (
-        <time
-          data-testid="message-time"
-          dateTime={context.at}
-          className="text-2xs text-muted-foreground tabular-nums"
-        >
-          {context.formatAt(context.at)}
-        </time>
+      <div className="flex items-center gap-1">
+        {(context.onEdit || context.onFork) && (
+          <div
+            data-testid="message-go-back"
+            className="flex gap-0.5 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+          >
+            {context.onEdit && (
+              <Button size="xs" variant="ghost" onClick={context.onEdit}>
+                <PencilIcon />
+                Edit
+              </Button>
+            )}
+            {context.onFork && (
+              <Button size="xs" variant="ghost" onClick={context.onFork}>
+                <GitForkIcon />
+                Fork from here
+              </Button>
+            )}
+          </div>
+        )}
+        {context.at && (
+          <time
+            data-testid="message-time"
+            dateTime={context.at}
+            className="text-2xs text-muted-foreground tabular-nums"
+          >
+            {context.formatAt(context.at)}
+          </time>
+        )}
+      </div>
+      {context.earlier && context.earlier.length > 0 && (
+        <EarlierVersions versions={context.earlier} />
       )}
     </div>
   );
@@ -517,6 +597,13 @@ function ErrorRow({ payload, context }: { payload: ErrorItemPayload; context: It
               <Button size="xs" variant="outline" onClick={recovery.onRetry}>
                 <RotateCcwIcon />
                 Retry
+              </Button>
+            </WithTooltip>
+          )}
+          {recovery.goOn && (
+            <WithTooltip label={recovery.goOn.detail}>
+              <Button size="xs" variant="outline" onClick={recovery.goOn.run}>
+                {recovery.goOn.title}
               </Button>
             </WithTooltip>
           )}

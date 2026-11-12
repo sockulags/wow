@@ -44,6 +44,7 @@ import {
 import {
   DetectedProvider,
   DiscoveredProject,
+  TerminalSession,
   ProviderModel,
   ProviderSlashCommand,
   ProviderTestResult,
@@ -238,6 +239,13 @@ export const rpcMethods = {
       threadId: z.string().min(1).optional(),
     }),
     result: z.array(ProviderSlashCommand),
+  },
+  // The configured instances' recent sessions, read from the CLIs' own session files (agent
+  // workbench spec 72), newest first; one instance when it is named. "Open session from Claude
+  // Code / Codex…" opens one as a thread with `thread.create`'s `resumeSessionId`.
+  'provider.listSessions': {
+    params: z.object({ providerInstanceId: z.string().min(1).optional() }),
+    result: z.object({ sessions: z.array(TerminalSession) }),
   },
   // Asks for the assistant thread (app assistant spec 1, 27): makes it when it is not there yet,
   // moves it when the settings name another provider instance, model or effort, and answers the

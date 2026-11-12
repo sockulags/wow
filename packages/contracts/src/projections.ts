@@ -37,8 +37,12 @@ export const Project = z.object({
   id: Id,
   name: z.string().min(1),
   cwd: z.string().min(1),
+  // What a new thread in the project starts from (agent workbench spec 97); null leaves it to the
+  // instance and the last thread. Absent in rows sent before the effort and mode were kept.
   defaultProviderInstanceId: Id.nullable(),
   defaultModel: z.string().min(1).nullable(),
+  defaultEffort: z.string().min(1).nullable().optional(),
+  defaultPermissionMode: z.string().min(1).nullable().optional(),
   createdAt: Timestamp,
 });
 export type Project = z.infer<typeof Project>;
@@ -91,6 +95,25 @@ export const QueuedMessage = z.object({
 });
 export type QueuedMessage = z.infer<typeof QueuedMessage>;
 
+// A thread's next turn goes back in the provider's conversation (agent workbench spec 62, 71):
+// to the point `at` of the session `resumeId` (null: a new conversation), in a new session when
+// `fork`. It stays until a turn ends with a point of its own, so a turn that failed before the
+// provider wrote anything goes back again.
+export const GoBack = z.object({
+  resumeId: z.string().min(1).nullable(),
+  at: z.string().min(1).nullable(),
+  fork: z.boolean(),
+});
+export type GoBack = z.infer<typeof GoBack>;
+
+// Where a turn left the provider's conversation: the session and the provider's point in it.
+export const ResumePointRef = z.object({ sessionId: z.string().min(1), at: z.string().min(1) });
+export type ResumePointRef = z.infer<typeof ResumePointRef>;
+
+// The thread and message a fork started from (spec 71).
+export const ForkOrigin = z.object({ threadId: Id, turnId: Id });
+export type ForkOrigin = z.infer<typeof ForkOrigin>;
+
 export const Thread = z.object({
   id: Id,
   kind: ThreadKind.optional(),
@@ -121,6 +144,10 @@ export const Thread = z.object({
   // began (agent workbench spec 76); a rename or a change of model does not move it. Null or
   // absent in rows from before.
   stateSince: Timestamp.nullable().optional(),
+  // Set while the next turn goes back in the conversation; null or absent otherwise.
+  goBack: GoBack.nullable().optional(),
+  // A fork's origin (spec 71); null or absent for a thread that is not a fork.
+  forkedFrom: ForkOrigin.nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -148,8 +175,19 @@ export const Turn = z.object({
   // A chat turn whose changed files wow read as it began (agent workbench spec 34, 35): its
   // thread's Changes can measure it. The turns topic sets it; a turn event carries none.
   marked: z.boolean().optional(),
+  // The turn Edit put in its place (agent workbench spec 62): the conversation goes on without
+  // this one, which shows as "Earlier version" on that turn's message. Null or absent otherwise.
+  replacedBy: Id.nullable().optional(),
+  // The provider gave a point to go back to at this turn's end, so the conversation can be
+  // forked after it and the next message edited (spec 62, 71). The turns topic sets it; turns
+  // from before it was kept have none.
+  resumable: z.boolean().optional(),
 });
 export type Turn = z.infer<typeof Turn>;
+
+// A turn a fork copied from its origin, with the point the origin's provider gave after it.
+export const CopiedTurn = Turn.extend({ resumePoint: ResumePointRef.nullable() });
+export type CopiedTurn = z.infer<typeof CopiedTurn>;
 
 export const ThreadItemKind = z.enum([
   'user',

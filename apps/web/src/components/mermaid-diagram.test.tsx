@@ -4,7 +4,7 @@ import { act } from 'react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadMarkdown } from '../test/markdown';
 import { Markdown } from './markdown';
-import { diagramView, scrubSvg, toggleDiagramSource } from './mermaid';
+import { diagramView, drawDiagram, fitDrawing, scrubSvg, toggleDiagramSource } from './mermaid';
 import { MermaidDiagram } from './mermaid-diagram';
 
 beforeAll(loadMarkdown);
@@ -72,6 +72,31 @@ describe('mermaid diagram (review loop spec 2)', () => {
     expect(screen.queryByRole('img')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Source' })).toBeNull();
     expect(mermaid.render).not.toHaveBeenCalled();
+  });
+
+  it('draws edge labels without a box behind them, in both themes (spec 99)', async () => {
+    for (const dark of [false, true]) {
+      await drawDiagram(source, dark);
+      expect(mermaid.initialize).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          theme: dark ? 'dark' : 'default',
+          themeVariables: { edgeLabelBackground: 'transparent' },
+        }),
+      );
+    }
+  });
+
+  it('grows the view box to hold a label drawn past its edge, and leaves a fitting one (spec 99)', () => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 200 400');
+    let box = { x: 4, y: 4, width: 260, height: 420 };
+    Object.assign(svg, { getBBox: () => box });
+    fitDrawing(svg);
+    expect(svg.getAttribute('viewBox')).toBe('-4 -4 276 436');
+    expect(svg.style.maxWidth).toBe('276px');
+    box = { x: 20, y: 20, width: 100, height: 100 };
+    fitDrawing(svg);
+    expect(svg.getAttribute('viewBox')).toBe('-4 -4 276 436');
   });
 
   it('gives a reason when drawing fails after the source parsed', async () => {

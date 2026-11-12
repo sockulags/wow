@@ -13,7 +13,7 @@ import type {
   TaskStatus,
   ToolFacts,
 } from '@wow/contracts';
-import { markRecommended, shellInner } from '@wow/contracts';
+import { markRecommended, providerChatOptions, shellInner } from '@wow/contracts';
 import {
   CompatibilityCache,
   checkInstalledCodex,
@@ -571,6 +571,13 @@ export class CodexAdapter implements ProviderAdapter {
 
   async #startTurn(command: StartTurn): Promise<unknown> {
     try {
+      // The generated protocol has no fork or rollback (agent workbench spec 63, 71).
+      if (command.goBack) {
+        throw new CodexError(
+          'unsupported',
+          providerChatOptions.codex.cannotGoBack ?? 'No going back',
+        );
+      }
       const { toolset } = command;
       const mode = toolset ? toolsOnlyMode : permissionMode(command.permissionMode);
       const connection = await this.#connect();

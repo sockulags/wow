@@ -134,6 +134,8 @@ export const readers = {
             folder: project.cwd,
             defaultProviderInstanceId: project.defaultProviderInstanceId,
             defaultModel: project.defaultModel,
+            defaultEffort: project.defaultEffort,
+            defaultPermissionMode: project.defaultPermissionMode,
             git: found
               ? { status: found.status, branch: found.branch, message: found.message }
               : null,

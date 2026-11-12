@@ -308,6 +308,87 @@ describe('images in the composer', () => {
     expect(startTurns()).toEqual([]);
   });
 
+  it('refuses an edit naming an image that is not stored for its thread', async () => {
+    thread('t1', 'claude', 'mock-model');
+    thread('t2', 'claude', 'mock-model');
+    const ended = committed('turn.ended');
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Brew the tea' });
+    await ended;
+    const image = resultOf<{ id: string }>(await put('t2', png()));
+    expect(
+      errorOf(
+        await rpc('dispatch', {
+          commandId: 'edit-other',
+          command: {
+            type: 'thread.editLast',
+            threadId: 't1',
+            turnId: 't1:turn:0',
+            text: 'Brew it green',
+            attachments: [image],
+          },
+        }),
+      ),
+    ).toEqual({
+      code: 'rejected',
+      message: 'An image of this message is no longer stored. Add it again.',
+    });
+    expect(startTurns()).toHaveLength(1);
+  });
+
+  it("copies a forked message's images to the fork, so it shows them and an edit there can send them", async () => {
+    thread('t1', 'claude', 'mock-model');
+    const image = resultOf<{ id: string }>(await put('t1', png()));
+    const ended = committed('turn.ended');
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: 'What is this tea?',
+      attachments: [image],
+    });
+    await ended;
+    resultOf(
+      await rpc('dispatch', {
+        commandId: 'fork-it',
+        command: {
+          type: 'thread.create',
+          threadId: 'f1',
+          providerInstanceId: 'claude',
+          cwd: path.join(root, 'tea'),
+          model: 'mock-model',
+          effort: 'low',
+          permissionMode: 'default',
+          forkFrom: { threadId: 't1', turnId: 't1:turn:0' },
+        },
+      }),
+    );
+    expect(
+      resultOf<{ base64: string }>(await rpc('attachments.read', { threadId: 'f1', id: image.id }))
+        .base64,
+    ).toBe(png().toString('base64'));
+    const edited = committed('turn.ended');
+    expect(
+      errorOf(
+        await rpc('dispatch', {
+          commandId: 'edit-fork',
+          command: {
+            type: 'thread.editLast',
+            threadId: 'f1',
+            turnId: 'f1:turn:0',
+            text: 'Which tea is it?',
+            attachments: [image],
+          },
+        }),
+      ),
+    ).toBeUndefined();
+    await edited;
+    expect(startTurns().at(-1)?.images).toEqual([
+      {
+        path: path.join(threadImageFolder(path.join(root, 'wow home'), 'f1'), image.id),
+        mediaType: 'image/png',
+      },
+    ]);
+  });
+
   it('takes no image for the assistant @agent-workbench-61', async () => {
     expect(errorOf(await put(assistantThreadId, png()))).toEqual({
       code: 'rejected',

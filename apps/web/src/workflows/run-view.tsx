@@ -10,12 +10,13 @@ import {
   SearchXIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { ModelName } from '@/chat/model-label';
 import { useLayout, useRuntime, useSetting } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { isoDate, localDate } from '@/calendar/time';
-import { formatDuration, useDateFormat } from '@/lib/format';
+import { tookText, useDateFormat } from '@/lib/format';
 import { isBelow, useBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
 import { effectivePanelWidth, gateRoom } from '@/panel/model';
@@ -111,7 +112,12 @@ function StepRow({
           {instanceName && (
             <span>
               {instanceName}
-              {step?.model ? ` · ${step.model}` : ''}
+              {step?.model && (
+                <>
+                  {' · '}
+                  <ModelName providerInstanceId={step.providerInstanceId} model={step.model} />
+                </>
+              )}
             </span>
           )}
           {attempt && (
@@ -120,9 +126,7 @@ function StepRow({
             </span>
           )}
           {stepRun.startedAt && <span>Started {when(stepRun.startedAt)}</span>}
-          {duration !== undefined && (
-            <span className="tabular-nums">Took {formatDuration(duration)}</span>
-          )}
+          {duration !== undefined && <span className="tabular-nums">{tookText(duration)}</span>}
           {stepRun.threadId && (
             <Link
               to="/chat/$threadId"

@@ -1,8 +1,8 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useStore } from 'zustand';
 import { Button } from '@/components/ui/button';
 import { CodeBlock } from './code-block';
-import { diagramView, drawDiagram, type Drawing } from './mermaid';
+import { diagramView, drawDiagram, fitDrawing, type Drawing } from './mermaid';
 
 // A `mermaid` fence drawn in place, with a switch to its source. Until it is drawn, and when it
 // cannot be drawn, the source shows as code; a failure adds one line saying why.
@@ -43,10 +43,16 @@ export function MermaidDiagram({
   }, [source, dark, key, shown]);
 
   const drawn = drawing?.for === key ? drawing.result : undefined;
+  const picture = useRef<HTMLDivElement>(null);
   // While a changed source is drawn, the drawing before it stays, so a diagram that follows
   // edits does not blink to code and back.
   const result = drawn ?? (drawing && 'svg' in drawing.result ? drawing.result : undefined);
   const code = <CodeBlock code={source} language="mermaid" className="text-xs" />;
+  const svg = result !== undefined && 'svg' in result ? result.svg : undefined;
+  useLayoutEffect(() => {
+    const drawnSvg = picture.current?.querySelector('svg');
+    if (svg !== undefined && drawnSvg) fitDrawing(drawnSvg);
+  }, [svg, everySource, own]);
   if (result === undefined) return <div aria-busy>{code}</div>;
   if ('reason' in result) {
     return (
@@ -79,6 +85,7 @@ export function MermaidDiagram({
         code
       ) : (
         <div
+          ref={picture}
           role="img"
           aria-label="Diagram"
           className="wow-diagram overflow-x-auto"

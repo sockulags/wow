@@ -123,6 +123,11 @@ test.describe('the path of a run', () => {
     await expect(gate(page).getByRole('button')).toHaveText(['Run once more', 'Stop']);
     await expect(steps(page).nth(0).getByTestId('step-state')).toHaveText('Waiting');
     await expect(steps(page).nth(0).getByTestId('step-attempt')).toHaveText('Attempt 3');
+    // The step's model by its label, the id in a tooltip (agent workbench spec 86).
+    const modelName = steps(page).nth(0).getByTestId('model-name');
+    await expect(modelName).toHaveText('Mock model');
+    await modelName.focus();
+    await expect(page.getByRole('tooltip')).toContainText('mock-model');
     await expect(steps(page).nth(0).getByTestId('step-limit')).toHaveText(
       'deliver-work has run 3 times: the limit',
     );

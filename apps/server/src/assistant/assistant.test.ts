@@ -364,6 +364,8 @@ describe('read tools', () => {
         folder: path.join(root, 'tea'),
         defaultProviderInstanceId: null,
         defaultModel: null,
+        defaultEffort: null,
+        defaultPermissionMode: null,
         git: expect.objectContaining({ status: 'ok' }) as unknown,
         // The address without the account and password written into it.
         remote: { name: 'origin', url: 'https://git.example/tea/pot.git', path: 'tea/pot' },

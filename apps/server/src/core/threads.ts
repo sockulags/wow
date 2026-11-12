@@ -1,6 +1,7 @@
 import type {
   CompactionItemPayload,
   DomainEvent,
+  GoBack,
   ProviderEvent,
   SettingsChangeItemPayload,
   QueuedMessage,
@@ -59,6 +60,8 @@ import {
   type DecideContext,
   type ReadModel,
 } from './orchestrator.js';
+import { folderKey } from '../files/folder-key.js';
+import { editGoBack, forkEvents } from './go-back.js';
 import { messageWithSkills } from './skills.js';
 
 // Decisions for provider instances, threads, turns, approvals and questions. Provider events
@@ -76,6 +79,8 @@ type ThreadCommand = Extract<
       | 'thread.openAssistant'
       | 'thread.greetAssistant'
       | 'thread.sendMessage'
+      | 'thread.editLast'
+      | 'thread.dropGoBack'
       | 'thread.sendPrepared'
       | 'thread.cancelQueued'
       | 'thread.sendQueued'
@@ -212,11 +217,22 @@ function turnStarted(
         model: thread.model,
         effort: thread.effort,
         permissionMode: thread.permissionMode,
-        resumeId: thread.providerSessionId,
+        ...startFrom(thread),
         ...(images && images.length > 0 ? { images: images.map((image) => image.id) } : {}),
         ...(assistant ? { kind: 'assistant' as const } : {}),
       },
     },
+  };
+}
+
+// Where the provider goes on from: the thread's own session, or the point Edit or Fork went
+// back to (agent workbench spec 62, 71).
+function startFrom(thread: Thread): { resumeId: string | null; goBack?: Omit<GoBack, 'resumeId'> } {
+  const back = thread.goBack;
+  if (!back) return { resumeId: thread.providerSessionId };
+  return {
+    resumeId: back.at === null ? null : back.resumeId,
+    goBack: { at: back.at, fork: back.fork },
   };
 }
 
@@ -593,8 +609,28 @@ export function decideThread(
           `No provider instance ${command.providerInstanceId}`,
         );
       }
+      if (command.forkFrom) {
+        if (command.resumeSessionId !== undefined) {
+          throw new CommandRejected('rejected', 'A thread forks or resumes a session, not both');
+        }
+        return forkEvents(read, command.threadId, command.forkFrom, command.title, now);
+      }
       if (command.projectId !== undefined && !read.project(command.projectId)) {
         throw new CommandRejected('not_found', `No project ${command.projectId}`);
+      }
+      if (command.resumeSessionId !== undefined) {
+        const holder = sessionHolder(
+          read,
+          command.providerInstanceId,
+          command.resumeSessionId,
+          context.platform ?? process.platform,
+        );
+        if (holder) {
+          throw new CommandRejected(
+            'conflict',
+            `Thread "${holder.title || holder.id}" already goes on with this session`,
+          );
+        }
       }
       return [
         {
@@ -606,7 +642,8 @@ export function decideThread(
             cwd: command.cwd,
             branch: command.branch ?? null,
             providerInstanceId: command.providerInstanceId,
-            providerSessionId: null,
+            // A session started in a terminal goes on in this thread (agent workbench spec 72).
+            providerSessionId: command.resumeSessionId ?? null,
             title: command.title ?? '',
             model: command.model,
             effort: command.effort,
@@ -673,6 +710,33 @@ export function decideThread(
         command.files,
         images,
       );
+    }
+    case 'thread.editLast': {
+      const stored = requireThread(read, command.threadId);
+      const goBack = editGoBack(read, stored, command.turnId);
+      const by = turnId(stored.id, read.turnCount(stored.id));
+      return [
+        {
+          kind: 'thread.goBackChanged',
+          aggregate: stored.id,
+          payload: { threadId: stored.id, goBack },
+        },
+        ...messageTurn(
+          read,
+          context,
+          { ...stored, goBack },
+          command.text,
+          command.skills ?? [],
+          undefined,
+          command.files,
+          sentImages(command.attachments),
+        ),
+        {
+          kind: 'turn.replaced',
+          aggregate: stored.id,
+          payload: { threadId: stored.id, turnId: command.turnId, by },
+        },
+      ];
     }
     case 'thread.cancelQueued': {
       const thread = requireThread(read, command.threadId);
@@ -974,6 +1038,25 @@ export function decideThread(
         );
       }
       return [stateChanged(thread.id, 'done', now)];
+    }
+    case 'thread.dropGoBack': {
+      const stored = requireThread(read, command.threadId);
+      if (read.runningTurn(stored.id)) {
+        throw new CommandRejected(
+          'conflict',
+          'A turn runs in this thread; stop it or let it end first.',
+        );
+      }
+      if (!stored.goBack) {
+        throw new CommandRejected('rejected', 'This thread is not going back in its conversation.');
+      }
+      return [
+        {
+          kind: 'thread.goBackChanged',
+          aggregate: stored.id,
+          payload: { threadId: stored.id, goBack: null },
+        },
+      ];
     }
     case 'thread.rename': {
       const thread = requireThread(read, command.threadId);
@@ -1380,6 +1463,8 @@ function decideProviderEvents(
   };
   let seen = thread.seen ?? true;
   let archived = thread.archived ?? false;
+  let goBack = Boolean(thread.goBack);
+  let sessionId = thread.providerSessionId;
   const unarchive = () => {
     if (!archived) return;
     archived = false;
@@ -1498,7 +1583,8 @@ function decideProviderEvents(
 
   for (const event of events) {
     if (event.type === 'session') {
-      if (event.providerSessionId !== thread.providerSessionId) {
+      if (event.providerSessionId !== sessionId) {
+        sessionId = event.providerSessionId;
         out.push({
           kind: 'thread.sessionStarted',
           aggregate: threadId,
@@ -1865,8 +1951,20 @@ function decideProviderEvents(
             state: ended,
             threadState: endedThreadState[ended],
             endedAt: now,
+            ...(event.resumePoint === undefined || sessionId === null
+              ? {}
+              : { resumePoint: { sessionId, at: event.resumePoint } }),
           },
         });
+        // The provider wrote the turn after going back, so the next one goes on from it.
+        if (event.resumePoint !== undefined && sessionId !== null && goBack) {
+          goBack = false;
+          out.push({
+            kind: 'thread.goBackChanged',
+            aggregate: threadId,
+            payload: { threadId, goBack: null },
+          });
+        }
         state = endedThreadState[ended];
         finished(current, ended);
         turn = undefined;
@@ -1875,4 +1973,25 @@ function decideProviderEvents(
     }
   }
   return out;
+}
+
+// Two threads going on with one CLI session would interleave in its file. A session id names a
+// session within the config folder its instance reads; an instance on the default folder ('')
+// may read any, so it counts as the same.
+function sessionHolder(
+  read: ReadModel,
+  providerInstanceId: string,
+  sessionId: string,
+  platform: NodeJS.Platform,
+) {
+  const instance = read.providerInstance(providerInstanceId);
+  if (!instance) return undefined;
+  const sameFiles = (configDir: string) =>
+    configDir === '' ||
+    instance.configDir === '' ||
+    folderKey(configDir, platform) === folderKey(instance.configDir, platform);
+  return read.threadsWithSession(sessionId).find((thread) => {
+    const other = read.providerInstance(thread.providerInstanceId);
+    return other?.kind === instance.kind && sameFiles(other.configDir);
+  });
 }

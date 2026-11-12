@@ -16,6 +16,9 @@ import type {
   CheckState,
   Command,
   FileHash,
+  ForkOrigin,
+  GoBack,
+  ResumePointRef,
   HostCheck,
   HostError,
   HostItemData,
@@ -79,6 +82,8 @@ export const projects = sqliteTable('projects', {
   cwd: text().notNull(),
   defaultProviderInstanceId: text(),
   defaultModel: text(),
+  defaultEffort: text(),
+  defaultPermissionMode: text(),
   createdAt: text().notNull(),
 });
 
@@ -130,6 +135,10 @@ export const threads = sqliteTable(
     baseFiles: json<FileHash[]>(),
     // When the thread came to its current state; null for a thread stored before it was kept.
     stateSince: text(),
+    // The next turn goes back in the provider's conversation (Edit, Fork); null otherwise. A
+    // fork's origin, null for a thread that is not one.
+    goBack: json<GoBack>(),
+    forkedFrom: json<ForkOrigin>(),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },
@@ -148,6 +157,10 @@ export const turns = sqliteTable(
     usage: json<Usage>(),
     // The changed files' hashes as the turn began, for "This turn only".
     fileMark: json<FileHash[]>(),
+    // The provider's point to go back to after this turn (Edit, Fork), and the turn Edit put in
+    // its place.
+    resumePoint: json<ResumePointRef>(),
+    replacedBy: text(),
   },
   (table) => [index('turns_thread_idx').on(table.threadId, table.index)],
 );

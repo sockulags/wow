@@ -127,8 +127,10 @@ test.describe('chat', () => {
     await startThread(page, 'Hello there');
     const items = conversation(page);
     await expect(items.getByTestId('item-assistant_text')).toContainText('You said: Hello there');
-    // The message, then its turn's start time.
-    await expect(items.getByTestId('item-user')).toHaveText(/^Hello there\d{2}:\d{2}$/);
+    // The message, its Edit and Fork actions, then its turn's start time.
+    await expect(items.getByTestId('item-user')).toHaveText(
+      /^Hello thereEditFork from here\d{2}:\d{2}$/,
+    );
 
     const reasoning = items.getByTestId('item-reasoning');
     await expect(reasoning.getByText('The user said hello.')).toBeHidden();
@@ -927,8 +929,8 @@ test.describe('chat', () => {
     for (const name of ['/model', '/effort', '/plan', '/compact', '/clear', '/done']) {
       await expect(commands.filter({ hasText: name }).first()).toBeVisible();
     }
-    // /fork has no palette command yet, so it is not listed.
-    await expect(commands.filter({ hasText: '/fork' })).toHaveCount(0);
+    // /fork is listed: the thread has an exchange to fork from.
+    await expect(commands.filter({ hasText: '/fork' })).toHaveCount(1);
     const claude = list.getByRole('group', { name: 'Claude Code commands' }).getByRole('option');
     await expect(claude).toHaveCount(2);
     await expect(claude.first()).toContainText('/review');
@@ -1390,6 +1392,61 @@ test.describe('chat', () => {
     await expect(page.getByTestId('run-state')).not.toHaveText('Waiting for you');
   });
 
+  test('edits the last message and forks from an earlier one @agent-workbench-62 @agent-workbench-63 @agent-workbench-71 @agent-workbench-74', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Descale the kettle');
+    await expect(conversation(page).getByText('You said: Descale the kettle')).toBeVisible();
+    await messageBox(page).fill('Build the timer');
+    await messageBox(page).press('Enter');
+    await expect(conversation(page).getByText(/You said: Build the timer/)).toBeVisible();
+    await messageBox(page).fill('Edit the timer');
+    await messageBox(page).press('Enter');
+    const approval = conversation(page).getByRole('region', { name: 'Approval request' });
+    await approval.getByRole('button', { name: /Allow once/ }).click();
+    await expect(conversation(page).getByText('The timer rings twice now.')).toBeVisible();
+
+    // Up in the empty composer brings the last message back; that turn changed a file.
+    await messageBox(page).focus();
+    await messageBox(page).press('ArrowUp');
+    await expect(messageBox(page)).toHaveValue('Edit the timer');
+    await expect(page.getByTestId('edit-files-note')).toHaveText(
+      'Files stay as they are: what that turn changed is not undone.',
+    );
+    await messageBox(page).fill('Add a bell to the timer');
+    await messageBox(page).press('Enter');
+    // The mock replays what it kept: the conversation goes on from before the edited message.
+    await expect(
+      conversation(page).getByText('Picked up after: "Descale the kettle", "Build the timer".'),
+    ).toBeVisible();
+    const users = conversation(page).getByTestId('item-user');
+    await expect(users).toHaveCount(3);
+    const earlier = users.nth(2).getByTestId('earlier-version');
+    await earlier.getByText('Earlier version').click();
+    await expect(earlier.getByTestId('earlier-exchange')).toContainText('Edit the timer');
+    await expect(earlier.getByTestId('earlier-exchange')).toContainText(
+      'The timer rings twice now.',
+    );
+
+    // F on the second message forks there: the first two exchanges, the same settings.
+    const origin = new URL(page.url()).pathname;
+    const bar = await page.getByTestId('model-bar').textContent();
+    await users.nth(1).focus();
+    await page.keyboard.press('f');
+    await expect(page).not.toHaveURL(origin);
+    await expect(page.getByTestId('thread-forked-from')).toContainText('Forked from');
+    await expect(conversation(page).getByTestId('item-user')).toHaveCount(2);
+    await expect(conversation(page).getByText('Add a bell to the timer')).toHaveCount(0);
+    await expect(page.getByTestId('model-bar')).toHaveText(bar ?? '');
+    await messageBox(page).fill('Add a light instead');
+    await messageBox(page).press('Enter');
+    await expect(
+      conversation(page).getByText('Picked up after: "Descale the kettle", "Build the timer".'),
+    ).toBeVisible();
+    await page.getByTestId('thread-forked-from').getByRole('link').click();
+    await expect(page).toHaveURL(origin);
+  });
+
   test('finds threads and actions in the palette', async ({ page }) => {
     await startThread(page, 'Palette target');
     await page.goto('/chat');
@@ -1404,7 +1461,8 @@ test.describe('chat', () => {
 
     await page.keyboard.press('Control+k');
     await palette.getByRole('combobox').fill('new thread');
-    await expect(palette.getByRole('option', { name: /New thread/ })).toBeVisible();
+    // Not "New thread defaults for project ...".
+    await expect(palette.getByRole('option', { name: /^New thread(?! defaults)/ })).toBeVisible();
   });
 });
 
@@ -1537,6 +1595,32 @@ test.describe('sketch', () => {
     await page.keyboard.press('Control+.');
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
     await resetBar(page);
+  });
+
+  test('fork', async ({ page }) => {
+    await startClaudeThread(page, 'Descale the kettle');
+    await expect(conversation(page).getByText('You said: Descale the kettle')).toBeVisible();
+    await messageBox(page).fill('Edit the timer');
+    await messageBox(page).press('Enter');
+    await conversation(page)
+      .getByRole('region', { name: 'Approval request' })
+      .getByRole('button', { name: /Allow once/ })
+      .click();
+    await expect(conversation(page).getByText('The timer rings twice now.')).toBeVisible();
+    await messageBox(page).focus();
+    await messageBox(page).press('ArrowUp');
+    await messageBox(page).fill('Add a bell to the timer');
+    await messageBox(page).press('Enter');
+    await expect(conversation(page).getByText(/Picked up after/)).toBeVisible();
+    const users = conversation(page).getByTestId('item-user');
+    await users.nth(1).getByText('Earlier version').click();
+    await messageBox(page).focus();
+    await messageBox(page).press('ArrowUp');
+    await expect(page.getByTestId('edit-notice')).toBeVisible();
+    await users.nth(0).hover();
+    await expect(users.nth(0).getByRole('button', { name: 'Fork from here' })).toBeVisible();
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'fork') });
+    await page.getByTestId('edit-notice').getByRole('button', { name: 'Cancel' }).click();
   });
 
   test('subagent', async ({ page }) => {
