@@ -1687,6 +1687,11 @@ export const settingsRegistry = {
     'Open the form for a new card on the day the calendar shows (while the calendar is open).',
     'C',
   ),
+  'keybindings.calendarSaveCard': keybinding(
+    'Calendar: save the card',
+    'Create or save the card while its form is open, from any field of it.',
+    'Mod+Enter',
+  ),
   'keybindings.calendarDeleteCard': keybinding(
     'Delete card',
     'Ask how to delete the card that has the focus in the calendar: a single card, or for a repeating card this occurrence or the whole series.',

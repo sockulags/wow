@@ -1,6 +1,12 @@
 import {
+  AlwaysAllowRule,
+  AlwaysAllowRuleRequest,
   Command,
+  assistantRuleTool,
   hideSecrets,
+  prefixRuleable,
+  ruleText,
+  sameRule,
   hideSecretsDeep,
   secretPatterns,
   type AssistantChangeRecord,
@@ -12,7 +18,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
-import { assistantChanges, assistantProposals } from '../db/schema.js';
+import { assistantChanges, assistantProposals, projects } from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import { checkProjectFolder } from '../rpc/handlers.js';
 import { RpcFault } from '../rpc/router.js';
@@ -161,6 +167,50 @@ export const changeTools = {
 
 export type ChangeToolName = keyof typeof changeTools;
 
+// A change tool whose command the tool writes from a smaller input than the command's own.
+interface BuiltTool<S extends z.ZodType = z.ZodType> {
+  readonly description: string;
+  readonly input: S;
+  // The command, or the reason it is refused, or null when it is already so.
+  build(args: z.output<S>, deps: AssistantToolsDeps): Command | { refused: string } | null;
+}
+
+const built = <S extends z.ZodType>(tool: BuiltTool<S>): BuiltTool => tool as unknown as BuiltTool;
+
+// The assistant proposes an "always allow" rule and never stores one itself (agent workbench
+// spec 41): the project's list with the rule added goes in a `setting.set`, which the class
+// table always holds as a proposal (classes.ts, `moreOnItsOwn`).
+export const builtTools: Readonly<Record<string, BuiltTool>> = {
+  [assistantRuleTool]: built({
+    description: `Proposes an "always allow" rule for a project: rule is {kind: "command", prefix} for commands that start with those words (such as "pnpm test"), or {kind: "tool", server, tool} for one tool (server null for the provider's own tools). Requests the rule covers are then allowed without asking in every thread of the project. A prefix that runs another program (a shell, sudo, npx, an interpreter given code) or that chains, pipes or quotes is refused. ${waits}`,
+    input: AlwaysAllowRuleRequest,
+    build: ({ projectId, rule }, deps) => {
+      const project = deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
+      if (!project) return { refused: `There is no project ${projectId}.` };
+      const proposed =
+        rule.kind === 'command'
+          ? { kind: 'command' as const, prefix: rule.prefix.trim().split(/\s+/).join(' ') }
+          : rule;
+      if (proposed.kind === 'command' && !prefixRuleable(proposed.prefix)) {
+        return {
+          refused: `${ruleText(proposed)} would allow more than that command, so wow offers no rule for it.`,
+        };
+      }
+      const current = z
+        .array(AlwaysAllowRule)
+        .catch([])
+        .parse(deps.settings.get('approvals.alwaysAllow', { projectId }));
+      if (current.some((stored) => sameRule(stored, proposed))) return null;
+      return {
+        type: 'setting.set',
+        key: 'approvals.alwaysAllow',
+        scope: `project:${projectId}`,
+        value: [...current, { ...proposed, addedAt: deps.clock().toISOString() }],
+      };
+    },
+  }),
+};
+
 function commandShape(type: CommandType) {
   const option = Command.options.find((candidate) => candidate.shape.type.value === type);
   if (!option) throw new Error(`No command ${type}`);
@@ -237,6 +287,9 @@ export class AssistantTools {
     for (const [name, tool] of Object.entries(looks)) {
       this.#inputs.set(name, tool.input);
     }
+    for (const [name, tool] of Object.entries(builtTools)) {
+      this.#inputs.set(name, tool.input);
+    }
     for (const [name, tool] of Object.entries<ChangeTool>(changeTools)) {
       // The table has the last word either way; a tool for a command it always refuses would
       // only offer something that cannot happen.
@@ -247,7 +300,11 @@ export class AssistantTools {
   }
 
   list(): ToolDescription[] {
-    const described: Record<string, { description: string }> = { ...looks, ...changeTools };
+    const described: Record<string, { description: string }> = {
+      ...looks,
+      ...builtTools,
+      ...changeTools,
+    };
     return [...this.#inputs].map(([name, input]) => ({
       name,
       description: described[name]?.description ?? name,
@@ -278,6 +335,13 @@ export class AssistantTools {
     try {
       const look = Object.hasOwn(looks, name) ? looks[name] : undefined;
       if (look) return { content: await look.read(parsed.data, this.#deps), isError: false };
+      const builder = Object.hasOwn(builtTools, name) ? builtTools[name] : undefined;
+      if (builder) {
+        const command = builder.build(parsed.data, this.#deps);
+        if (command === null) return this.#unchanged();
+        if ('refused' in command) return failed('refused', command.refused);
+        return this.#dispatch(command, {});
+      }
       const tool: ChangeTool = changeTools[name as ChangeToolName];
       return await this.#change(tool, parsed.data as Record<string, unknown>);
     } catch (error) {
@@ -302,6 +366,20 @@ export class AssistantTools {
     const command = Command.parse({ ...args, ...made, type: tool.type });
     await checkProjectFolder(command);
     await checkStepModels(command, this.#deps);
+    return this.#dispatch(command, made);
+  }
+
+  #unchanged(): { content: unknown; isError: boolean } {
+    return {
+      content: { outcome: 'unchanged', note: 'It is already so; nothing changed.' },
+      isError: false,
+    };
+  }
+
+  #dispatch(
+    command: Command,
+    made: Record<string, string>,
+  ): { content: unknown; isError: boolean } {
     const commandId = `assistant-${randomUUID()}`;
     this.#deps.engine.dispatch(commandId, command, 'assistant');
     const { db } = this.#deps;
@@ -332,9 +410,6 @@ export class AssistantTools {
         isError: false,
       };
     }
-    return {
-      content: { outcome: 'unchanged', note: 'It is already so; nothing changed.' },
-      isError: false,
-    };
+    return this.#unchanged();
   }
 }

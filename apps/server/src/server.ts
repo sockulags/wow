@@ -156,10 +156,13 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   let logger: Logger = createLogger(() => 'info', options.logSink);
   // Assigned once the tracker service exists; it caches each project's code host.
   let codeHost: ((projectId: string) => HostKind | undefined) | undefined;
+  // Assigned once the provider service exists; it caches each instance's model list.
+  let modelLabel: ((model: string, providerInstanceId?: string) => string | undefined) | undefined;
   const engine = new Engine(database.db, {
     onListenerError: (error) => logger.error('commit listener failed', error),
     home,
     codeHost: (projectId) => codeHost?.(projectId),
+    modelLabel: (model, providerInstanceId) => modelLabel?.(model, providerInstanceId),
     ...(options.clock ? { clock: options.clock } : {}),
   });
   const settings = new SettingsService(database.db, engine);
@@ -197,6 +200,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     assistant: () => assistantAccess,
     changes: folderChanges,
   });
+  modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
   const workspaces = new Workspaces({ db: database.db, engine, settings, logger });
   const workflows = new WorkflowRunner({
     db: database.db,

@@ -1840,6 +1840,17 @@ then asks the hosts about everything followed. Palette: "Plans: Refresh now", ev
 searching), and for the open plan "Plan: follow" / "Plan: stop following", "Plan: refresh pull
 requests now", each unit and each unit's pull request.
 
+**Plan files and a unit's thread** (agent workbench spec 84). A file the plan has is a button:
+Enter or a click opens it rendered in a file tab of the panel, read with the `{projectId}` file
+scope from `<intents folder>/<intent>/<file>` (`planFilePath`; the folder is the project's own
+`plans.intentsDirectory` from the `settings` topic, else the global value,
+`intentsDirectoryOf`), so it gets the file viewer's refusals like any project file. Each unit
+has "Start a thread for this unit": it puts the project and `unitThreadText` (which unit of
+which plan, then its contract fields that have a value) in the new-thread draft
+(`DraftState.text`) and opens `/chat/new`, where the text waits in the composer, unsent. "Plan:
+run ready units with <workflow>" stays as it was. Palette: "Plan: open intent.md|spec.md|plan.md"
+for the files the plan has, and "Start a thread for <key>: <title>" per unit (searched for).
+
 **Plan run in the view** (`plan-run-section.tsx`, `plan-run.ts`; review loop spec 40, 41, 45).
 Above the units a plan with a `plan.md` has "Run ready units" and, when more than one workflow
 is marked "For units", a select for the workflow (`unitWorkflows`, by name). The button is off
@@ -2366,6 +2377,32 @@ The shown texts go through the secret net; `inverse` and `expect` keep the real 
 because undo needs them. They are in `AssistantChangeRecord` (the event and the table) and not
 in `AssistantChange`, the row of the topic, so neither a tool nor a client gets them.
 
+**Values in the settings page's words** (agent workbench spec 95). A setting's value in a change
+row, a proposal line or an Undo refusal is `settingValueWords` (`packages/contracts/src/
+setting-words.ts`), which the settings page reads too (`formatWorkHours`, `formatDays`,
+`settingUnitDisplay`): "From Outlook", "08:00–16:00, Mon–Fri", "On", an option's label, "10 min",
+an "always allow" list as its rules' words. A shape it has no words for is said as before. A
+model is named by its label: `DecideContext.modelLabel` reads `ProviderService.modelLabel`, the
+labels of the last `listModels` answer of each instance (the bar, the builder and the
+assistant's step checks ask for them); a model no list has named yet shows its id, nothing is
+asked for it while deciding. `assistant.model`, a step's model and a project's `defaultModel`
+are named so, `assistant.providerInstanceId` and `defaultProviderInstanceId` by the instance's
+name. A default that reads "From Outlook" carries no "(default)", since it says where it comes
+from.
+
+**The rule proposal** (agent workbench spec 41; `builtTools` in `assistant/tools.ts`). The tool
+`propose_always_allow_rule {projectId, rule}` (`AlwaysAllowRuleRequest`, `assistantRuleTool`)
+writes the project's `approvals.alwaysAllow` list with the rule added (`addedAt` the tool's
+clock) as a `setting.set`, which the class table always holds as a proposal (`moreOnItsOwn`), so
+the rule is stored only on Yes and the assistant has no way to store one itself. A built tool
+writes its command from a smaller input than the command's own and goes through the same
+dispatch as the change tools. It refuses an unknown project and a command prefix that
+`prefixRuleable` rejects (a shell, a wrapper such as `sudo` or `npx`, an interpreter given
+code, anything that chains, pipes or quotes: `ruleCovers` would never match it), and answers
+"unchanged" for a rule the project has. The card (`rulesCard` in `changes.ts`) reads "Always
+allow `pnpm test` in Tea" with a line per rule added or removed in `ruleText`'s words, and its
+place, like every change of that setting, is Settings → Approvals.
+
 **Proposals.** A proposal row (`AssistantProposal`, topic `assistantProposals`) holds a title
 ("Start Delivery in Tea"), one line per thing that would change, and the place. The server's
 record (`AssistantProposalRecord`, the event and the table) also holds the command as the
@@ -2487,8 +2524,23 @@ cards) ends the run. Its open state is the window's own.
   `sendUnchecked()`: the box's current text goes through the composer's own send path (queued by
   the server while a turn runs, as the answer to a waiting question), skipping only the check.
 - Palette (`assistant/commands.ts`): Yes and No for every waiting proposal (Yes under "Needs
-  you"), Undo for every applied change (the newest before typing). A refusal from the palette
-  is a toast with the reason. The sidebar counts waiting proposals as "need you".
+  you"), "Show proposal: <title>" (searched for), Undo for every applied change (the newest
+  before typing). A refusal from the palette is a toast with the reason. The sidebar counts
+  waiting proposals as "need you".
+- Tool rows (agent workbench spec 82). `ConversationExtras.toolWords(item)` says how a tool
+  call reads: undefined for the tool's own row, a text for a row in those words
+  (`chat/tools/words.tsx`, carried as `ItemContext.toolWords`), null for no row at all. The
+  Assistant view answers null for one of wow's calls that has a change row or proposal after
+  it, a card (`askOf`) or a question card (`askedQuestionsOf`), since that card already shows
+  the call; such a call stands alone in `groupToolCalls` (its `alone` argument) and only what
+  follows it is drawn. Every other call of wow's reads in the words of
+  `assistantToolWords` (`packages/contracts`, "Read your workflows"); a server test checks that
+  every tool `AssistantTools.list()` offers has words there.
+- Waiting line (spec 96, `WaitingLine` in `rows.tsx`). While a proposal waits, the composer's
+  notice line says "1 proposal waits: <title>" (or "N proposals wait", naming the oldest) with
+  Yes, No (no reason; the card's No takes one) and Show. Show, like the palette's "Show
+  proposal", sets `proposalFocus` (`assistant/model.ts`); the card with that id scrolls into
+  view, takes the focus and clears it. A held message's line sits below it.
 
 **First start** (app assistant spec 24 to 27; `apps/web/src/app/first-start.tsx`,
 `apps/web/src/providers/connect-step.tsx`). The spec decided to reuse the provider onboarding and
@@ -3558,7 +3610,12 @@ card's `body`). A new card starts with the project of the card changed last (`la
 and the zone is named only when it is not the system's. "Delete card" deletes at once and offers
 Undo (`offerUndo`, owner decision F-9), which creates the card again with the same id and fields;
 a card whose run is live first asks "Stop run and delete" or "Keep run and delete". The dialog
-gives focus back to whatever had it when it opened.
+gives focus back to whatever had it when it opened. Its fields scroll inside the dialog and the
+footer (Delete on the left, Cancel and Create card or Save card on the right) sits outside them,
+so it stays in view in a 900 px window with a workflow and a repeat (agent workbench spec 83).
+`keybindings.calendarSaveCard` (Mod+Enter) saves from any field; the form takes the key before
+the app's own bindings (Approve shares it) can. From 1200 px the dialog is wider and "Run a
+workflow" and Repeat sit side by side.
 
 Repeating cards (recurring cards spec 11 to 17, `occurrences.ts`). The view reads
 `calendar.occurrences` for the days it shows (`viewRange`: local midnight of the first day to
@@ -4067,6 +4124,13 @@ pickers, whose popups ignore the theme: they compose `ChoiceSelect` (shadcn Sele
 list, stepped by `calendar.snapMinutes`) from `apps/web/src/components`. A Vitest guard
 (`src/test/native-controls.test.ts`) fails on `<select>`, `<option>`, `<datalist>`, `list=` and
 date or time inputs outside `components/ui`.
+
+Text in the "needs you" colour, such as "Waiting for you", uses `--state-needs-you-text`
+(`text-state-needs-you-text`), a darker amber in the light theme that keeps at least 4.5:1 on the
+page, cards, muted surfaces and popovers; dots, fills and borders keep the bright
+`--state-needs-you` (agent workbench spec 85). `src/styles/tokens.test.ts` measures both themes
+from the token values (OKLCH to sRGB luminance) and fails on any `text-state-needs-you` left in
+a view.
 
 Shared pieces in `apps/web/src/components` (views compose them; none restyles `components/ui`):
 

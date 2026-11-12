@@ -210,6 +210,11 @@ const runsAnother = (command: string) => {
 
 const ruleable = (command: string) => !shellControl.test(command) && !runsAnother(command);
 
+// Whether a command rule with this prefix could ever cover a request: the assistant's proposal
+// of a rule is refused otherwise (spec 41), since `ruleCovers` would never match it.
+export const prefixRuleable = (prefix: string): boolean =>
+  words(prefix).length > 0 && ruleable(prefix);
+
 // The command a shell is asked to run, when the line is only that: `/bin/zsh -lc 'pnpm test'`,
 // `bash -c "pnpm test"`, `powershell.exe -NoProfile -Command "pnpm test"`,
 // `"C:\Program Files\PowerShell\7\pwsh.exe" -Command "pnpm test"` or

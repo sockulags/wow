@@ -240,8 +240,8 @@ describe('the workflows the assistant writes (spec 15, 16)', () => {
       { providerInstanceId: 'claude-work', model: 'small-claude', effort: 'default' },
     ]);
     const change = content['change'] as Pick<AssistantChange, 'to'>;
-    expect(change.to).toContain('plan-work (Codex at work, codex-max, high)');
-    expect(change.to).toContain('deliver-work (Claude at work, small-claude, default)');
+    expect(change.to).toContain('plan-work (Codex at work, Max, high)');
+    expect(change.to).toContain('deliver-work (Claude at work, Small, default)');
   });
 
   it('refuses a model or an effort the instance does not offer, with what it offers', async () => {

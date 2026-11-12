@@ -78,6 +78,8 @@ export class ProviderService {
   readonly #commandProbes = new Map<string, Promise<ProviderSlashCommand[]>>();
   // Turns being prepared before they go out (the assistant's tools, a chat thread's marks).
   readonly #preparing = new Set<Promise<unknown>>();
+  // The last model list each instance answered, for model labels in change rows.
+  readonly #models = new Map<string, readonly ProviderModel[]>();
 
   constructor(deps: ProviderServiceDeps) {
     this.#deps = deps;
@@ -171,7 +173,23 @@ export class ProviderService {
 
   async listModels(providerInstanceId: string): Promise<ProviderModel[]> {
     const adapter = this.#adapter(providerInstanceId);
-    return ProviderModel.array().parse(await adapter.send({ type: 'listModels' }));
+    const models = ProviderModel.array().parse(await adapter.send({ type: 'listModels' }));
+    this.#models.set(providerInstanceId, models);
+    return models;
+  }
+
+  // A model's label from the lists answered so far: the named instance's, else any instance's
+  // that lists the id. Undefined while none does; nothing is asked for it.
+  modelLabel(model: string, providerInstanceId?: string): string | undefined {
+    const lists =
+      providerInstanceId === undefined
+        ? [...this.#models.values()]
+        : [this.#models.get(providerInstanceId) ?? []];
+    for (const list of lists) {
+      const found = list.find((entry) => entry.id === model);
+      if (found) return found.label === '' ? undefined : found.label;
+    }
+    return undefined;
   }
 
   // The / list asks each time it opens; for a thread without a live session Claude Code is

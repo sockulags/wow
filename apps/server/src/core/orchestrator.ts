@@ -158,6 +158,10 @@ export interface DecideContext {
   // The code host a project's git data names (TrackerService caches it), so a GitLab project is
   // worded as one before its first host read; undefined while not read.
   readonly codeHost?: ((projectId: string) => HostKind | undefined) | undefined;
+  // A model's label as its provider last listed it (ProviderService caches each list), so a
+  // change row names a model as the bar does; undefined while no list names it.
+  readonly modelLabel?:
+    ((model: string, providerInstanceId?: string) => string | undefined) | undefined;
 }
 
 // The code host to word a project's change requests and events in: its newest host read, else
