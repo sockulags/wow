@@ -454,8 +454,9 @@ list sent again adds nothing. The thread's Details in the context panel has a Ta
 the latest list. Tasks a finished turn left open read "not finished".
 
 **Copying**: an assistant message has **Copy** (its markdown) and **Copy text** (what it reads on
-screen) under it on hover or when you tab to it; a code block has **Copy code** in its corner;
-tool output has **Copy output**. The palette has the same commands for the message or row the
+screen) under it on hover or when you tab to it; a code block has **Copy code** in its corner,
+and one labelled with a path (such as ```` ```ts src/timer.ts ````) shows the path above it with
+**Open file**, which opens the file in a side panel tab; tool output has **Copy output**. The palette has the same commands for the message or row the
 keyboard was last on: "Copy message", "Copy message text", "Copy code", "Copy output" and "Show
 all N lines". When nothing could be copied (the browser has no clipboard or refused it), a notice
 "Nothing was copied" says so.

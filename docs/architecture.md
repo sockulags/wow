@@ -2992,7 +2992,11 @@ before (no `at`) is drawn in full as before. The panel's thread Details has a Ta
 
 Copy (`components/copy-button.tsx`): an assistant message has Copy (its markdown) and Copy text
 (what it reads on screen) on hover or focus; fenced code in markdown has Copy code
-(`CodeBlock copy`); tool output has Copy output. `copyText` does the write; when the browser has
+(`CodeBlock copy`), and a fence labelled with a path (`fenceLabel` in `markdown-body.tsx`: a word
+after the language, `title="…"`, `ts:src/a.ts`, or the language itself, each read by
+`filePathOf`) shows the path above the block with Open file (also the row action "Open file
+<path>"), through the conversation's `FileLinkContext`, so not in the Assistant view; tool output
+has Copy output. `copyText` does the write; when the browser has
 no clipboard or refuses the write, the error toast "Nothing was copied" says so and the button
 does not turn to Copied. The same actions are palette commands for the row or message that last
 had the focus (`lib/row-actions.ts`, `chat/row-commands.ts`): each copyable element registers its

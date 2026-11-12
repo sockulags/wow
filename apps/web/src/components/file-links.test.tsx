@@ -103,6 +103,48 @@ describe('file links in markdown @agent-workbench-15', () => {
     );
   });
 
+  it('gives a code block whose label is a path Open file @agent-workbench-32', async () => {
+    const user = userEvent.setup();
+    const open = vi.fn<(path: string) => void>();
+    const blocks = [
+      '```ts src/timer.ts',
+      'export const minutes = 5;',
+      '```',
+      '',
+      '```ts:src/bell.ts',
+      'ring();',
+      '```',
+      '',
+      '```js title="scripts/build.mjs"',
+      'build();',
+      '```',
+      '',
+      '```bash',
+      'pnpm test',
+      '```',
+    ].join('\n');
+    render(
+      <FileLinkContext value={{ open }}>
+        <Markdown text={blocks} />
+      </FileLinkContext>,
+    );
+    const buttons = await screen.findAllByRole('button', { name: /^Open file/ });
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Open file src/timer.ts',
+      'Open file src/bell.ts',
+      'Open file scripts/build.mjs',
+    ]);
+    for (const button of buttons) await user.click(button);
+    expect(open.mock.calls).toEqual([['src/timer.ts'], ['src/bell.ts'], ['scripts/build.mjs']]);
+    expect(screen.getAllByRole('button', { name: 'Copy code' })).toHaveLength(4);
+  });
+
+  it('offers no Open file on a labelled code block where no thread opens files', async () => {
+    render(<Markdown text={'```ts src/timer.ts\nexport const minutes = 5;\n```'} />);
+    expect(await screen.findByRole('button', { name: 'Copy code' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Open file/ })).toBeNull();
+  });
+
   it('keeps paths as text where no thread opens files (the Assistant view)', async () => {
     render(<Markdown text={text} />);
     expect(await screen.findByText('src/timer.ts', { selector: 'code' })).toBeTruthy();
