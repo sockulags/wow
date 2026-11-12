@@ -46,6 +46,8 @@ export function describeFolderHolders(folder: string): string {
   return tasks.length === 0 ? 'neither wmic nor tasklist could run' : tasks.join('\n');
 }
 
+// The holder lookup is always for the folder itself; a holder's command line names the folder,
+// not the probe, so the probe appears only in the step.
 const writeHeld = (folder: string, step: string, error: unknown): void => {
   const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
   process.stderr.write(
@@ -90,7 +92,7 @@ export function reportFolderHolders(
   try {
     rmSync(probe, { recursive: true, force: true });
   } catch (error) {
-    writeHeld(probe, `removing the probe ${probe} an earlier run left`, error);
+    writeHeld(folder, `removing the probe ${probe} an earlier run left`, error);
     return;
   }
   try {
@@ -102,7 +104,7 @@ export function reportFolderHolders(
   try {
     renameSync(probe, folder);
   } catch (error) {
-    writeHeld(probe, `renaming ${probe} back to ${folder}`, error);
+    writeHeld(folder, `renaming ${probe} back to ${folder}`, error);
     mkdirSync(folder, { recursive: true });
   }
 }
