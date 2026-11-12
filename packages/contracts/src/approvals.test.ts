@@ -94,6 +94,13 @@ describe('always allow rules (agent workbench spec 38, 39)', () => {
       'ts-node -e x',
       'find . -exec=rm',
       'fd x --exec=rm',
+      'pnpm --filter web --silent exec bash x.sh',
+      'pnpm -C dir --silent exec bash x',
+      'pnpm --filter web -r exec bash x',
+      'uv --project a --quiet run python -c x',
+      'yarn workspace web exec bash x.sh',
+      'yarn workspace web bash x.sh',
+      'pnpm -- exec bash x',
     ]) {
       expect([command, proposeRule('command', { command })]).toEqual([command, undefined]);
     }
@@ -101,7 +108,18 @@ describe('always allow rules (agent workbench spec 38, 39)', () => {
     expect(ruleCovers(node, 'command', { command: 'node -e process.exit(1)' })).toBe(false);
     const pnpm: AlwaysAllowRule = { kind: 'command', prefix: 'pnpm', addedAt: at };
     expect(ruleCovers(pnpm, 'command', { command: 'pnpm --silent exec bash x.sh' })).toBe(false);
+    expect(
+      ruleCovers(pnpm, 'command', { command: 'pnpm --filter web --silent exec bash x.sh' }),
+    ).toBe(false);
     expect(ruleCovers(pnpm, 'command', { command: 'pnpm --version' })).toBe(true);
+    expect(proposeRule('command', { command: 'pnpm test -- --grep node' })).toEqual({
+      kind: 'command',
+      prefix: 'pnpm test',
+    });
+    expect(proposeRule('command', { command: 'pnpm add -D tsx' })).toEqual({
+      kind: 'command',
+      prefix: 'pnpm add',
+    });
     const find: AlwaysAllowRule = { kind: 'command', prefix: 'find .', addedAt: at };
     expect(ruleCovers(find, 'command', { command: 'find . -exec rm x +' })).toBe(false);
     // A script a runner is not involved in still gets its rule.

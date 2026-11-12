@@ -45,6 +45,9 @@ export function filePathOf(text: string): string | undefined {
 
 export const isFilePath = (text: string): boolean => filePathOf(text) !== undefined;
 
+// `example.com` or `notes.app`: a word that ends like a host name rather than a file.
+export const readsAsHost = (text: string): boolean => hostName.test(text);
+
 export function FileLink({
   path,
   children,

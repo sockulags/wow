@@ -9,6 +9,8 @@ beforeAll(loadMarkdown);
 
 // Agent workbench spec 15: paths in chat messages are file links.
 
+const fence = (label: string) => ['```' + label, 'x', '```', ''];
+
 describe('isFilePath', () => {
   it.each([
     'src/timer.ts',
@@ -137,6 +139,32 @@ describe('file links in markdown @agent-workbench-15', () => {
     for (const button of buttons) await user.click(button);
     expect(open.mock.calls).toEqual([['src/timer.ts'], ['src/bell.ts'], ['scripts/build.mjs']]);
     expect(screen.getAllByRole('button', { name: 'Copy code' })).toHaveLength(4);
+  });
+
+  it('reads a fence label as a path only when it is one', async () => {
+    const open = vi.fn<(path: string) => void>();
+    const blocks = [
+      ...fence('C:\\work\\a.ts'),
+      ...fence('ts title="my file.ts"'),
+      ...fence('ts title="src/b.ts" lines'),
+      ...fence('vb.net'),
+      ...fence('example.com'),
+      ...fence('text and/or'),
+      ...fence('ts timer.ts'),
+      ...fence('text example.com'),
+    ].join('\n');
+    render(
+      <FileLinkContext value={{ open }}>
+        <Markdown text={blocks} />
+      </FileLinkContext>,
+    );
+    expect(await screen.findAllByRole('button', { name: 'Copy code' })).toHaveLength(8);
+    const buttons = screen.getAllByRole('button', { name: /^Open file/ });
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Open file C:\\work\\a.ts',
+      'Open file src/b.ts',
+      'Open file timer.ts',
+    ]);
   });
 
   it('offers no Open file on a labelled code block where no thread opens files', async () => {

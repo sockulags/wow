@@ -13,7 +13,7 @@ import { FileTextIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useRowActions } from '@/lib/row-actions';
 import { CodeBlock } from './code-block';
-import { FileLink, filePathOf, isFilePath, useFileLinks } from './file-links';
+import { FileLink, filePathOf, isFilePath, readsAsHost, useFileLinks } from './file-links';
 import { safeHref } from './markdown';
 import { MermaidDiagram } from './mermaid-diagram';
 
@@ -150,21 +150,37 @@ const components: Components = {
 
 // A fence's label (agent workbench spec 32), as models write it: after the language
 // (```ts src/timer.ts, ```js title="build.mjs"), joined to it (```ts:src/timer.ts) or as the
-// language itself (```src/timer.ts). The language left over highlights the code.
+// language itself (```src/timer.ts). The language left over highlights the code. A bare word
+// needs a slash, or an extension that does not read as a host, and the fence itself a slash, so
+// ```text and/or, ```vb.net and ```example.com stay languages.
+const named = /(?:^|\s)(?:title|file|filename|path)=(?:"([^"]*)"|'([^']*)'|(\S+))/i;
+const hasSlash = (path: string) => /[\\/]/.test(path);
+
 function fenceLabel(fence: string, meta: string): { language: string; path?: string } {
-  for (const word of meta.trim().split(/\s+/)) {
-    const path = filePathOf(
-      word.replace(/^(?:title|file|filename|path)=/i, '').replace(/^["']|["']$/g, ''),
-    );
+  const label = named.exec(meta);
+  if (label) {
+    const path = filePathOf(label[1] ?? label[2] ?? label[3] ?? '');
     if (path !== undefined) return { language: fence, path };
   }
-  const colon = fence.indexOf(':');
+  for (const word of meta.trim().split(/\s+/)) {
+    if (/^\w+=/.test(word)) continue;
+    const path = filePathOf(word);
+    if (path === undefined) continue;
+    const last = path.split(/[\\/]/).at(-1) ?? '';
+    if ((hasSlash(path) && last.includes('.')) || (!hasSlash(path) && !readsAsHost(path))) {
+      return { language: fence, path };
+    }
+  }
+  // `C:\work\a.ts` is a drive, not a language joined to a path.
+  const colon = /^[A-Za-z]:[\\/]/.test(fence) ? -1 : fence.indexOf(':');
   if (colon > 0) {
     const path = filePathOf(fence.slice(colon + 1));
     if (path !== undefined) return { language: fence.slice(0, colon), path };
   }
   const path = filePathOf(fence);
-  if (path !== undefined) return { language: path.split('.').at(-1) ?? '', path };
+  if (path !== undefined && hasSlash(path)) {
+    return { language: path.split('.').at(-1) ?? '', path };
+  }
   return { language: fence };
 }
 

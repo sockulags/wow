@@ -74,6 +74,8 @@ export class ProviderService {
     string,
     { readonly at: number; readonly commands: ProviderSlashCommand[] }
   >();
+  // A list being asked for, so calls that overlap share one probe.
+  readonly #commandProbes = new Map<string, Promise<ProviderSlashCommand[]>>();
   // Turns being prepared before they go out (the assistant's tools, a chat thread's marks).
   readonly #preparing = new Set<Promise<unknown>>();
 
@@ -185,12 +187,28 @@ export class ProviderService {
     const now = (this.#deps.now ?? Date.now)();
     const kept = this.#commandLists.get(key);
     if (kept && now - kept.at < keepMs) return kept.commands;
+    // Lists for folders no longer asked about go once they are stale.
+    for (const [other, list] of this.#commandLists) {
+      if (now - list.at >= keepMs) this.#commandLists.delete(other);
+    }
+    const pending = this.#commandProbes.get(key);
+    if (pending) return pending;
     const adapter = this.#adapter(providerInstanceId);
-    const commands = ProviderSlashCommand.array().parse(
-      await adapter.send({ type: 'listCommands', cwd, ...(threadId ? { threadId } : {}) }),
-    );
-    if (keepMs > 0) this.#commandLists.set(key, { at: now, commands });
-    return commands;
+    const probe = adapter
+      .send({ type: 'listCommands', cwd, ...(threadId ? { threadId } : {}) })
+      .then((answer) => {
+        const commands = ProviderSlashCommand.array().parse(answer);
+        // A release while it was asked drops the probe, and the old installation's answer.
+        if (keepMs > 0 && this.#commandProbes.get(key) === probe) {
+          this.#commandLists.set(key, { at: now, commands });
+        }
+        return commands;
+      })
+      .finally(() => {
+        if (this.#commandProbes.get(key) === probe) this.#commandProbes.delete(key);
+      });
+    this.#commandProbes.set(key, probe);
+    return probe;
   }
 
   // Stops the instance's adapter (and its app-server process); the next use starts a new one.
@@ -394,6 +412,11 @@ export class ProviderService {
   #release(providerInstanceId: string, secrets: readonly string[]): void {
     const adapter = this.#adapters.get(providerInstanceId);
     this.#adapters.delete(providerInstanceId);
+    for (const map of [this.#commandLists, this.#commandProbes]) {
+      for (const key of map.keys()) {
+        if (key.startsWith(`${providerInstanceId}\0`)) map.delete(key);
+      }
+    }
     adapter
       ?.dispose()
       .catch((error: unknown) => this.#deps.logger.error('provider adapter failed to stop', error));

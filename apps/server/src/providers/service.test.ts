@@ -417,6 +417,19 @@ describe('provider service', () => {
     expect(commandListsAsked()).toHaveLength(4);
   });
 
+  it('shares one command probe between overlapping calls and drops the list on release', async () => {
+    nowMs = 1_000_000;
+    const [first, second] = await Promise.all([
+      service.listCommands('claude-work', '/work/demo'),
+      service.listCommands('claude-work', '/work/demo'),
+    ]);
+    expect(second).toEqual(first);
+    expect(commandListsAsked()).toHaveLength(1);
+    service.release('claude-work');
+    await service.listCommands('claude-work', '/work/demo');
+    expect(commandListsAsked()).toHaveLength(2);
+  });
+
   it('pins and unpins a thread without touching its activity time', () => {
     const before = rows('threads')[0];
     expect(dispatch({ type: 'thread.setPinned', threadId: 't1', pinned: true }).seqs).toHaveLength(

@@ -469,6 +469,8 @@ thread it maps to, since the app-server has no request that unloads one.
 {providerInstanceId, cwd, threadId?}` returns the list (`ProviderSlashCommand[]`). The provider
   service keeps an answer per instance and folder for `providers.commandListSeconds` (30 s; 0 keeps
   none), since a probe starts Claude Code in the folder and the list asks each time it opens.
+  Calls that overlap share one probe, stale answers go on the next miss, and releasing an
+  instance (or its row changing) drops its answers.
 - **Chat options.** What the composer bar offers per provider kind (permission modes with their
   short label and tone, the Shift+Tab cycle `modeCycle`, the effort that leaves the choice to the
   provider, the compact message) is `providerChatOptions` in `packages/contracts`, because the
@@ -2998,7 +3000,9 @@ Copy (`components/copy-button.tsx`): an assistant message has Copy (its markdown
 (what it reads on screen) on hover or focus; fenced code in markdown has Copy code
 (`CodeBlock copy`), and a fence labelled with a path (`fenceLabel` in `markdown-body.tsx`: a word
 after the language, `title="…"`, `ts:src/a.ts`, or the language itself, each read by
-`filePathOf`) shows the path above the block with Open file (also the row action "Open file
+`filePathOf`; a bare word needs a slash or an extension that does not read as a host, and the
+language itself a slash, so `vb.net` and `text and/or` stay languages, and `C:\work\a.ts` is a
+drive, not `C` joined to a path) shows the path above the block with Open file (also the row action "Open file
 <path>"), through the conversation's `FileLinkContext`, so not in the Assistant view; tool output
 has Copy output. `copyText` does the write; when the browser has
 no clipboard or refuses the write, the error toast "Nothing was copied" says so and the button
@@ -3077,9 +3081,12 @@ named tool. Edits, plans, a Codex permissions request and a command with `;`, `&
 first word is a shell or a program that runs what it is handed (`bash`, `cmd`, `powershell`,
 `env`, `sudo`, `xargs`, `busybox`, `npx`, …; such a rule would allow every later script), whose
 first word sets a variable (`FOO=1 bash x.sh`), whose first two words are a runner (`pnpm exec`,
-`pnpm dlx`, `npm exec`, `yarn dlx`, `uv run`, `deno eval`, …; a package manager's sub-command is
-also found after options, `pnpm --silent exec` or `pnpm -C dir exec`, and yarn, pnpm and bun
-naming a shell or interpreter, `yarn bash`, get none), an interpreter followed by an option
+`pnpm dlx`, `npm exec`, `yarn dlx`, `uv run`, `deno eval`, …; for a package manager every word
+counts, not only the first two, since options take values and some sub-commands forward
+(`pnpm --filter web --silent exec`, `yarn workspace web exec`), and yarn, pnpm and bun naming a
+shell or interpreter anywhere, `yarn bash`, get none; words after a `--` that follows a named
+sub-command are not looked at, nor anything after `add`, `install`, `remove` and the like as the
+first word, which takes package names), an interpreter followed by an option
 (`node -e`, `python3.12 -c`, `python -m`, `tsx -e`; `node scripts/build.mjs` keeps its rule) or a
 `find`/`fd` that runs a program for what it finds (`-exec`, `-exec=…`, `-execdir`, `-ok`, `-x`).
 A program is named without its folder and without `.exe`, `.cmd`, `.bat`, `.com` or `.ps1`, so

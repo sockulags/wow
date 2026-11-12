@@ -153,15 +153,34 @@ const posixShells: ReadonlySet<string> = new Set(['sh', 'bash', 'zsh', 'dash', '
 const programName = (word: string) =>
   (word.split(/[\\/]/).at(-1) ?? word).toLowerCase().replace(/\.(?:exe|cmd|bat|com|ps1)$/, '');
 
-// The words a package manager may read as its sub-command: the first that is not an option, and
-// the next one too when an option came first, as that word may be the option's value.
-function subCommands(after: readonly string[]): string[] {
-  const first = after.findIndex((word) => !word.startsWith('-'));
-  if (first === -1) return [];
-  const found = [after[first] ?? ''];
-  const next = after[first + 1];
-  if (first > 0 && next !== undefined && !next.startsWith('-')) found.push(next);
-  return found.map((word) => word.toLowerCase());
+// Sub-commands whose further words are package names, not a program to run: `pnpm add -D tsx`
+// installs tsx. Only when the sub-command is the very first word, so no option value hides it.
+const takesPackages: ReadonlySet<string> = new Set([
+  'add',
+  'install',
+  'i',
+  'remove',
+  'rm',
+  'uninstall',
+  'update',
+  'up',
+  'upgrade',
+  'why',
+  'info',
+  'view',
+]);
+
+// The words a package manager may read as its sub-command or as a program to run. Options take
+// values (`--filter web`) and some sub-commands forward to another (`yarn workspace web exec`),
+// so which word is the sub-command is not guessed: every word counts.
+function managerWords(after: readonly string[]): string[] {
+  const lowered = after.map((word) => word.toLowerCase());
+  if (takesPackages.has(lowered[0] ?? '')) return [];
+  // Words after `--` go to the sub-command (`pnpm test -- --grep node`), but only once one was
+  // named before it.
+  const end = lowered.indexOf('--');
+  const named = end > 0 && lowered.slice(0, end).some((word) => !word.startsWith('-'));
+  return (named ? lowered.slice(0, end) : lowered).filter((word) => !word.startsWith('-'));
 }
 
 const runsAnother = (command: string) => {
@@ -174,7 +193,7 @@ const runsAnother = (command: string) => {
   if (second === undefined) return false;
   if (wrapperPairs.has(`${name} ${second.toLowerCase()}`)) return true;
   if (managers.has(name)) {
-    for (const word of subCommands([second, ...rest])) {
+    for (const word of managerWords([second, ...rest])) {
       if (wrapperPairs.has(`${name} ${word}`)) return true;
       if (runsProgramByName.has(name)) {
         const program = programName(word);
