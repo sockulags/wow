@@ -3917,8 +3917,8 @@ card surface, both with borders of at least 3:1, on a work-hours band lighter th
 Cards. `cardKind` (`items.ts`) tells a trigger (a workflow and a project) from a card with a
 workflow but no project (dashed, a warning icon and "No project, will not run") and a plain card.
 Only triggers carry a workflow icon, a state color on the left border and the state in sentence
-case (Scheduled, Running, Needs you, Done, Failed, Stopped, Missed); the calendar only creates them
-`scheduled`, the scheduler and the card's run change it. Local cards are created by clicking (a
+case (Scheduled, Running, Waiting for you, Done, Failed, Stopped, Missed); the calendar only
+creates them `scheduled`, the scheduler and the card's run change it. Local cards are created by clicking (a
 `calendar.cardMinutes` card) or dragging a range, then named in the card dialog; dragging a card
 moves it (also to another day), dragging its lower edge resizes it, both snapped to
 `calendar.snapMinutes`. While a drag is in progress the card is drawn where the pointer is; when
