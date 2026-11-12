@@ -3229,7 +3229,8 @@ toggles the sidebar otherwise; the keybindings table shows the two as sharing th
 When the adapter refuses `stopTask` or `toBackground` (Claude Code no longer running, the call
 not sent), the provider service hands the thread a `commandRefused` event, stored as an `error`
 item on the running or the last turn ("Could not stop the task: …", "Could not send it to the
-background: …"), so the refusal is not only in the log.
+background: …") with `notice: 'refused'` on its payload, so the refusal is not only in the log.
+Retry and Resume stay on the thread's last error that is not such a notice.
 
 ### Conversation reading
 
@@ -3779,12 +3780,21 @@ answers never move; the panel's conversation shows a copy (`GateBar` without `in
 while its conversation tab is selected. While the run view is on screen the note field opens in
 the run view's bar alone (the copy's Send back opens it there), so there is one note. Below
 `breakpoints.narrow`, where the panel lies over the view (spec 78), the run view's bar ends where
-the panel begins (a right margin of the panel's width, the drag preview in the layout store's
-`contextPanelPreview` while its edge moves, else `appearance.contextPanelWidth`) and puts its
-buttons under its text (`stacked`, wrapping). The bar keeps `gateRoom` (16rem, its widest button
-and padding): over a run view the panel is capped so it leaves the sidebar rail, the workflows
-list and that room (`overlayRoom`, `panel/model.ts`), so the panel never covers Approve, Send
-back and Stop, whatever width is stored. Send back opens a
+the panel begins (a right margin of the panel's shown width, `useShownPanelWidth` in
+`panel/panel-state.ts`: the drag preview in the layout store's `contextPanelPreview` while its
+edge moves, else `appearance.contextPanelWidth`, capped) and puts its buttons under its text
+(`stacked`, wrapping). The bar keeps 16rem (its widest button and padding): over a run view the
+panel is capped so it leaves the sidebar rail, the workflows list and that room (`overlayCap`,
+`panel/model.ts`, from the window width), so the panel never covers Approve, Send back and Stop,
+whatever width is stored. The cap never goes under the panel's minimum width (280 px); in a
+window too small for both, the bar takes what is left beside the panel. 800 px is the narrowest
+window supported, the desktop window's own `minWidth` (`apps/desktop/src/main/index.ts`): there
+the bar still has its room beside a 280 px panel (`gate.spec.ts` checks Approve, Send back and Stop
+at 800 px), while under it the rail, the workflows list and the panel leave the bar less and less
+(nothing at about 584 px), so a narrower window is not laid out for; only a browser can make one. The resize edge starts a
+drag from the shown width and moves within the cap (keys too, End goes to the cap), so the width
+stored is the width shown, and its `aria-valuenow` and `aria-valuemax` are the shown width and
+the cap. Send back opens a
 note field in the gate bar. The
 note being written is view state in `gateStore` (`{runId, gate, note, busy, error}`), so the
 button, the palette and the key act on the same field; nothing about the run is kept there.
@@ -3830,8 +3840,9 @@ Open in editor: <path> for the chosen one.
 gutter mark or on its line numbers opens a comment field under the line; Enter adds the comment,
 Escape puts the field away, and the focus goes back to the line. The line is the folder's line
 number, the base's for a removed line. In a run's Changes, while the run waits at a gate where
-it can send back, a comment goes into the send-back note as `src/bell.ts:12 – text`, one per
-line (`addSendBackComment`, `lineComment` in `gate.ts`), opening the note when it is closed;
+it can send back, a comment goes into the send-back note as `src/bell.ts:12 – text`
+(`src/bell.ts:12 (removed) – text` on a removed line, so the base's number is not read as the
+folder's), one per line (`addSendBackComment`, `lineComment` in `gate.ts`), opening the note when it is closed;
 the Send back key (Ctrl+Shift+Enter) sends it. In a chat thread's Changes the same line goes
 into the thread's composer after what is typed (`commentInComposer`, the composer's `addText`
 in `composer-store.ts`), without taking the focus. The focused line's actions are row actions
@@ -4148,7 +4159,7 @@ view whatever tab the panel shows; the panel's copy is part of its conversation 
 State (`panel-state.ts`). `appearance.contextPanel` stores whether it is open and
 `appearance.contextPanelWidth` its width (pixels, bounds `contextPanelWidthBounds` in
 `@wow/contracts`). The left edge is a `separator`: dragging previews the width and writes the
-setting once on release; the arrow keys (Shift for four steps), Home and End write it at once.
+setting once on release (a click without a move writes nothing, so it does not store a capped width); the arrow keys (Shift for four steps), Home and End write it at once.
 `lib/use-breakpoint.ts` holds the layout breakpoints (`breakpoints.narrow`, 1200 px) with
 `useBelow` and `isBelow`; below `narrow` the panel never takes room: opening it sets the layout
 store's `contextPanelPeek`, which lays it over the view (`data-overlay`, Escape closes it) and

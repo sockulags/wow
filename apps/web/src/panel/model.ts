@@ -142,15 +142,30 @@ export const clampPanelWidth = (width: number): number =>
 
 // The run view's gate bar keeps this much room beside a panel laid over the view: its widest
 // button and its padding (agent workbench spec 78).
-export const gateRoom = '16rem';
+const gateRoomRem = 16;
 
-// What a panel laid over the view leaves of the window. The panel is measured against the whole
-// window, the run view against what is left of the sidebar (below the narrow breakpoint at most
-// its 3rem rail) and the workflows list (16rem), so over a run view the panel leaves those and
-// the gate's room.
-export const overlayRoom = (view: PanelSelection['view']): string =>
-  view === 'run' ? `3rem + 16rem + ${gateRoom}` : '3rem';
+// The widest a panel laid over the view may be. The panel is measured against the whole window,
+// the run view against what is left of the sidebar (below the narrow breakpoint at most its 3rem
+// rail) and the workflows list (16rem), so over a run view the panel leaves those and the gate's
+// room. It never goes under the panel's minimum: in a window too small for that the gate bar
+// keeps what is left beside it.
+export const overlayCap = (
+  view: PanelSelection['view'],
+  windowWidth: number,
+  remPx: number,
+): number =>
+  Math.max(
+    contextPanelWidthBounds.min,
+    Math.floor(windowWidth - (view === 'run' ? 3 + 16 + gateRoomRem : 3) * remPx),
+  );
 
-// The width the panel takes: the drag preview while the edge moves, else the stored width.
-export const effectivePanelWidth = (stored: number, preview: number | undefined): number =>
-  clampPanelWidth(preview ?? stored);
+// The width the panel takes: the drag preview while the edge moves, else the stored width, and
+// over the view no more than the cap, so what is stored and reported is what is shown.
+export const effectivePanelWidth = (
+  stored: number,
+  preview: number | undefined,
+  cap?: number,
+): number => {
+  const width = clampPanelWidth(preview ?? stored);
+  return cap === undefined ? width : Math.min(width, cap);
+};

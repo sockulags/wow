@@ -203,23 +203,50 @@ test.describe('a narrow window', () => {
         if (click) await button.click({ trial: true, timeout: 2000 });
       }
     };
-    // From the default 380 px to the largest width, 720 px: while the edge is dragged and once
-    // it is stored, the bar keeps room for its buttons.
+    // From the default 380 px towards the largest width, 720 px: over the run view the edge stops
+    // where the gate bar's room begins (1024 px less 35rem), while it is dragged and once it is
+    // stored, and the width stored is the width shown.
     await page.mouse.move(x, y);
     await page.mouse.down();
     await page.mouse.move(x - 340, y);
-    await expect(handle).toHaveAttribute('aria-valuenow', '720');
+    await expect(handle).toHaveAttribute('aria-valuenow', '464');
     await buttonsClearOfPanel(false);
     await page.mouse.up();
+    await expect(handle).toHaveAttribute('aria-valuenow', '464');
+    expect((await panel(page).boundingBox())?.width).toBe(464);
     await buttonsClearOfPanel(true);
-    // Back to the default for the tests after this one.
+    // Back to the default for the tests after this one: the edge moves at once, no dead zone.
     const moved = await handle.boundingBox();
     const back = (moved?.x ?? 0) + (moved?.width ?? 0) / 2;
     await page.mouse.move(back, y);
     await page.mouse.down();
-    await page.mouse.move(back + 340, y);
+    await page.mouse.move(back + 84, y);
     await page.mouse.up();
     await expect(handle).toHaveAttribute('aria-valuenow', '380');
+  });
+});
+
+test.describe('a small window', () => {
+  test.use({ viewport: { width: 800, height: 768 } });
+
+  test('keeps the panel at its minimum and the gate bar beside it at 800 px @agent-workbench-78', async ({
+    page,
+  }) => {
+    await startRun('gate-small-run');
+    await page.goto('/workflows/runs/gate-small-run?tab=changes');
+    await expect(runGate(page)).toContainText('deliver-work finished');
+    await page.keyboard.press('Control+j');
+    await expect(panel(page)).toHaveAttribute('data-overlay', '');
+    await expect(page.getByTestId('context-panel-resize')).toHaveAttribute('aria-valuenow', '280');
+    const edge = await panel(page).boundingBox();
+    expect(edge?.width).toBe(280);
+    for (const name of ['Approve', 'Send back', 'Stop']) {
+      const button = runGate(page).getByRole('button', { name, exact: true });
+      await expect(button).toBeVisible();
+      const box = await button.boundingBox();
+      expect((box?.x ?? Infinity) + (box?.width ?? 0)).toBeLessThanOrEqual(edge?.x ?? 0);
+      await button.click({ trial: true, timeout: 2000 });
+    }
   });
 });
 

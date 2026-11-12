@@ -1635,7 +1635,7 @@ function decideProviderEvents(
         last,
         `${last.id}:refused:${nextIndex}`,
         'error',
-        { message: `${what}: ${event.error}` },
+        { message: `${what}: ${event.error}`, notice: 'refused' },
         false,
       );
       continue;

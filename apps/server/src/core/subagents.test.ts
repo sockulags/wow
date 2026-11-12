@@ -351,11 +351,15 @@ describe('background tasks (spec 90)', () => {
         {
           message:
             'Could not send it to the background: Claude Code could not send it to the background.',
+          notice: 'refused',
         },
       ],
       [
         't1:turn:0',
-        { message: 'Could not stop the task: Claude Code is not running for thread t1' },
+        {
+          message: 'Could not stop the task: Claude Code is not running for thread t1',
+          notice: 'refused',
+        },
       ],
     ]);
   });

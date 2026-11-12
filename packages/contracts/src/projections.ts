@@ -355,7 +355,11 @@ export const CompactionItemPayload = z.object({
 });
 export type CompactionItemPayload = z.infer<typeof CompactionItemPayload>;
 
-export const ErrorItemPayload = z.object({ message: z.string() });
+// `refused` marks the notice of a Stop or Ctrl+B the provider refused: Retry and Resume skip it.
+export const ErrorItemPayload = z.object({
+  message: z.string(),
+  notice: z.literal('refused').optional(),
+});
 export type ErrorItemPayload = z.infer<typeof ErrorItemPayload>;
 
 export const Approval = z.object({

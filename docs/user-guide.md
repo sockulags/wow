@@ -108,9 +108,13 @@ Default keys (all changeable in Settings → Keybindings):
 | C                | Diff line: comment on it                                     |
 | Shift+Enter      | Focused file or line: open in editor                         |
 
-Ctrl+B sends work to the background only in a Claude Code thread whose turn runs a command or
-subagent that can go there; otherwise it shows or hides the sidebar. Ctrl+Shift+J works from any
-view. C and the other single-letter chat keys only work while a message has the keyboard.
+Ctrl+B sends to the background only while the open thread runs a command or subagent its provider
+can move there (Claude Code), so the turn goes on; otherwise, on Windows and Linux, it shows or
+hides the sidebar as usual.
+Ctrl+Shift+J goes to the oldest approval, question, plan, gate or assistant proposal that waits for
+you, wherever it is; pressed again, to the next one. C copies the message that has the keyboard, as
+markdown for an answer and as written for your own; it and the other single-letter chat keys only
+work while a message has the keyboard.
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
@@ -882,7 +886,9 @@ at its top, whatever the side panel shows, and the review tabs under it; the sid
 step's conversation with a copy of the gate bar. The note of **Send back** is written in the run
 view's bar. In a window narrower than 1200 px the side panel lies over the view when you open it;
 the gate bar then ends where the panel begins and puts its buttons under its text, so they stay
-in reach. Each tab is also in the palette ("Run: show changes" and so on) and in the address, so
+in reach. Over a run the panel's edge stops where the gate bar's room begins, and the width you
+drag to there is the width kept; in a very small window the panel stays at its narrowest and the
+gate bar takes what is left beside it. Each tab is also in the palette ("Run: show changes" and so on) and in the address, so
 a reload shows the same tab. Workflows → **Runs** lists every run, the ones waiting for you
 first, then the running ones ("Go to runs" in the palette).
 
@@ -892,7 +898,8 @@ first, then the running ones ("Go to runs" in the palette).
   on the right; drag the edge between the list and the diff (or focus it and use the arrow keys)
   to make the list wider (`appearance.changesListWidth`). Focus a line of the diff and press **C**
   (`keybindings.diffComment`), or click beside its line number, to write a comment on it; Enter
-  adds `src/bell.ts:12 – your words` to the send-back note, and **Ctrl+Shift+Enter** sends the note
+  adds `src/bell.ts:12 – your words` to the send-back note (`src/bell.ts:12 (removed) – your words`
+  for a removed line, whose number is the one it had before), and **Ctrl+Shift+Enter** sends the note
   back. In a chat thread's Changes the same comment goes into the thread's composer as a reply.
   **Shift+Enter** (`keybindings.openInEditor`) on a changed file, a diff line, an artifact, a file
   link in chat or in the file viewer opens the file in your editor at its line; the command is the
