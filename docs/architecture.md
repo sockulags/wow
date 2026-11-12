@@ -3057,9 +3057,13 @@ named tool. Edits, plans, a Codex permissions request and a command with `;`, `&
 first word is a shell or a program that runs what it is handed (`bash`, `cmd`, `powershell`,
 `env`, `sudo`, `xargs`, `busybox`, `npx`, …; such a rule would allow every later script), whose
 first word sets a variable (`FOO=1 bash x.sh`), whose first two words are a runner (`pnpm exec`,
-`pnpm dlx`, `npm exec`, `yarn dlx`, `uv run`, …), an interpreter followed by an option
-(`node -e`, `python -c`, `python -m`; `node scripts/build.mjs` keeps its rule) or a `find`/`fd`
-that runs a program for what it finds (`-exec`, `-execdir`, `-ok`, `-x`), a thread without a
+`pnpm dlx`, `npm exec`, `yarn dlx`, `uv run`, `deno eval`, …; a package manager's sub-command is
+also found after options, `pnpm --silent exec` or `pnpm -C dir exec`, and yarn, pnpm and bun
+naming a shell or interpreter, `yarn bash`, get none), an interpreter followed by an option
+(`node -e`, `python3.12 -c`, `python -m`, `tsx -e`; `node scripts/build.mjs` keeps its rule) or a
+`find`/`fd` that runs a program for what it finds (`-exec`, `-exec=…`, `-execdir`, `-ok`, `-x`).
+A program is named without its folder and without `.exe`, `.cmd`, `.bat`, `.com` or `.ps1`, so
+`npx.cmd` is `npx`. None either for a thread without a
 project or the assistant. The same test runs when a stored rule is matched, so an older rule
 never answers such a command. Codex reports a command as the shell line it runs
 (`/bin/zsh -lc '…'`, on Windows `cmd.exe /d /s /c "…"`, `powershell.exe -Command "…"` or a

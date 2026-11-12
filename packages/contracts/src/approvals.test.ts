@@ -77,17 +77,45 @@ describe('always allow rules (agent workbench spec 38, 39)', () => {
       'node --eval x',
       'python3 -c print(1)',
       'python -m http.server',
+      'npx.cmd cowsay',
+      'NPX.CMD cowsay',
+      'pnpm.cmd exec bash x.sh',
+      'bash.bat x',
+      'pnpm --silent exec bash x.sh',
+      'pnpm -C dir exec bash x',
+      'npm --yes exec cowsay',
+      'yarn bash',
+      'yarn --silent bash x.sh',
+      'pnpm node -e x',
+      'python3.12 -c x',
+      'python3.12.cmd -c x',
+      'deno eval x',
+      'tsx -e x',
+      'ts-node -e x',
+      'find . -exec=rm',
+      'fd x --exec=rm',
     ]) {
       expect([command, proposeRule('command', { command })]).toEqual([command, undefined]);
     }
     const node: AlwaysAllowRule = { kind: 'command', prefix: 'node', addedAt: at };
     expect(ruleCovers(node, 'command', { command: 'node -e process.exit(1)' })).toBe(false);
+    const pnpm: AlwaysAllowRule = { kind: 'command', prefix: 'pnpm', addedAt: at };
+    expect(ruleCovers(pnpm, 'command', { command: 'pnpm --silent exec bash x.sh' })).toBe(false);
+    expect(ruleCovers(pnpm, 'command', { command: 'pnpm --version' })).toBe(true);
     const find: AlwaysAllowRule = { kind: 'command', prefix: 'find .', addedAt: at };
     expect(ruleCovers(find, 'command', { command: 'find . -exec rm x +' })).toBe(false);
     // A script a runner is not involved in still gets its rule.
     expect(proposeRule('command', { command: 'node scripts/build.mjs' })).toEqual({
       kind: 'command',
       prefix: 'node scripts/build.mjs',
+    });
+    expect(proposeRule('command', { command: 'pnpm --filter web test' })).toEqual({
+      kind: 'command',
+      prefix: 'pnpm',
+    });
+    expect(proposeRule('command', { command: 'pnpm.cmd test' })).toEqual({
+      kind: 'command',
+      prefix: 'pnpm.cmd test',
     });
     expect(proposeRule('command', { command: 'find . -name x' })).toEqual({
       kind: 'command',
