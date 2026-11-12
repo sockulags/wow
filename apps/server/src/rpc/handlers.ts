@@ -9,7 +9,7 @@ import {
 } from '@wow/contracts';
 import { OutlookError } from '@wow/outlook-bridge';
 import type { SecretStore } from '@wow/secrets';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { openAssistantThread } from '../assistant/thread.js';
@@ -19,7 +19,7 @@ import { readCalendarRange } from '../core/series.js';
 import { searchThreads } from '../core/thread-search.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
-import { projects, workflowRuns } from '../db/schema.js';
+import { projects, threads, turns, workflowRuns } from '../db/schema.js';
 import { readViewerFile } from '../files/read.js';
 import type { HostPoller } from '../hosts/poller.js';
 import type { OutlookService } from '../outlook/service.js';
@@ -31,7 +31,7 @@ import type { SkillsService } from '../skills/service.js';
 import { TrackerError } from '../trackers/http.js';
 import type { TrackerService } from '../trackers/service.js';
 import { detectArtifacts } from '../workflows/artifacts.js';
-import { changesOptions, readRunDiff } from '../workflows/changes.js';
+import { changesOptions, readRunDiff, readThreadDiff } from '../workflows/changes.js';
 import type { WorkflowRunner } from '../workflows/runner.js';
 import { WorkspaceRefused, type Workspaces } from '../workspaces/service.js';
 import { planSetup } from '../setup/plan.js';
@@ -206,6 +206,27 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       return readRunDiff({
         folder: runFolder(run, project.cwd),
         run,
+        path: asked,
+        options: changesOptions(deps.settings),
+      });
+    },
+    'threads.diff': async ({ threadId, path: asked }) => {
+      const thread = deps.db.select().from(threads).where(eq(threads.id, threadId)).get();
+      if (!thread) throw new RpcFault('not_found', `No thread ${threadId}`);
+      if (thread.runId !== null || thread.kind !== 'chat') {
+        throw new RpcFault('rejected', "A step's changes are its run's Changes tab.");
+      }
+      const last = deps.db
+        .select({ fileMark: turns.fileMark })
+        .from(turns)
+        .where(eq(turns.threadId, threadId))
+        .orderBy(desc(turns.index))
+        .get();
+      return readThreadDiff({
+        folder: thread.cwd,
+        baseSha: thread.baseSha,
+        baseFiles: thread.baseFiles,
+        mark: last?.fileMark ?? null,
         path: asked,
         options: changesOptions(deps.settings),
       });

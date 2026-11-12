@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   HandOverResult,
-  ApprovalDecision,
+  ProviderApprovalDecision,
   ProviderAdapter,
   ProviderCommand,
   ProviderEvent,
@@ -51,6 +51,7 @@ import {
 } from './protocol/generated/index.js';
 
 type ThreadItem = Extract<ServerNotification, { method: 'item/started' }>['params']['item'];
+type FileUpdateChange = Extract<ThreadItem, { type: 'fileChange' }>['changes'][number];
 type TokenUsage = Extract<
   ServerNotification,
   { method: 'thread/tokenUsage/updated' }
@@ -130,7 +131,7 @@ interface ThreadState {
   usageBaseline: TokenUsage | null;
   // Items whose text or output arrived as deltas, so item/completed does not repeat it.
   readonly streamed: Set<string>;
-  readonly fileChanges: Map<string, unknown>;
+  readonly fileChanges: Map<string, FileUpdateChange[]>;
 }
 
 interface OpenApproval {
@@ -207,6 +208,47 @@ const textOf = (value: unknown): string => {
   return JSON.stringify(value) ?? '';
 };
 
+const linesOf = (text: string): string[] => {
+  if (text === '') return [];
+  const lines = text.split('\n');
+  if (text.endsWith('\n')) lines.pop();
+  return lines;
+};
+
+// One change's hunks (agent workbench spec 33). codex gives an update as a unified diff and, as
+// far as its schema says, an added or deleted file as its content, which becomes all added or all
+// removed lines.
+function changeHunks(change: FileUpdateChange): string {
+  const diff = change.diff.replace(/\n$/, '');
+  if (change.kind.type === 'update' || diff.startsWith('@@') || diff.startsWith('--- ')) {
+    const at = diff.indexOf('@@');
+    return at < 0 ? '' : diff.slice(at);
+  }
+  const lines = linesOf(change.diff);
+  if (lines.length === 0) return '';
+  const count = lines.length === 1 ? '1' : `1,${lines.length}`;
+  return change.kind.type === 'add'
+    ? [`@@ -0,0 +${count} @@`, ...lines.map((line) => `+${line}`)].join('\n')
+    : [`@@ -${count} +0,0 @@`, ...lines.map((line) => `-${line}`)].join('\n');
+}
+
+// A file change's diff: one file's hunks, or each file's after its `---`/`+++` pair.
+export function fileChangeDiff(changes: readonly FileUpdateChange[]): string | undefined {
+  const [only] = changes;
+  if (!only) return undefined;
+  if (changes.length === 1) return changeHunks(only) || undefined;
+  const parts = changes.map((change) => {
+    const target =
+      change.kind.type === 'update' ? (change.kind.move_path ?? change.path) : change.path;
+    return [
+      `--- ${change.kind.type === 'add' ? '/dev/null' : `a/${change.path}`}`,
+      `+++ ${change.kind.type === 'delete' ? '/dev/null' : `b/${target}`}`,
+      changeHunks(change),
+    ].join('\n');
+  });
+  return parts.join('\n');
+}
+
 // The name and input a tool row shows, with the facts wow draws it by (agent workbench spec 27
 // to 29).
 type ToolView = { readonly name: string; readonly input: unknown } & ToolFacts;
@@ -223,6 +265,7 @@ function toolView(item: ThreadItem): ToolView | null {
       };
     case 'fileChange': {
       const [first] = item.changes;
+      const diff = fileChangeDiff(item.changes);
       return {
         name: 'fileChange',
         input: {
@@ -230,6 +273,7 @@ function toolView(item: ThreadItem): ToolView | null {
         },
         kind: 'edit',
         ...(first && item.changes.length === 1 ? { path: first.path } : {}),
+        ...(diff === undefined ? {} : { diff }),
       };
     }
     case 'mcpToolCall':
@@ -621,7 +665,9 @@ export class CodexAdapter implements ProviderAdapter {
     return { interrupted: true };
   }
 
-  #answerApproval(approvalId: string, decision: ApprovalDecision): unknown {
+  // codex takes no message with a decline (agent workbench spec 37): the server stops the turn
+  // and sends a denial's note as the next message, so the note never reaches this adapter.
+  #answerApproval(approvalId: string, decision: ProviderApprovalDecision): unknown {
     const approval = this.#approvals.get(approvalId);
     const connection = this.#connection;
     if (!approval || !connection)
@@ -840,7 +886,8 @@ export class CodexAdapter implements ProviderAdapter {
           codexThreadId: thread.codexId,
           params: message.params,
         });
-        const { command, reason } = message.params;
+        const { command, reason, cwd, proposedExecpolicyAmendment } = message.params;
+        const hint = proposedExecpolicyAmendment?.join(' ').trim();
         this.#emit({
           type: 'approvalRequested',
           threadId,
@@ -848,6 +895,12 @@ export class CodexAdapter implements ProviderAdapter {
           kind: 'command',
           summary: command ?? reason ?? 'Run a command',
           request: message.params,
+          facts: {
+            kind: 'command',
+            ...(command ? { command } : {}),
+            ...(cwd ? { cwd } : {}),
+            ...(hint ? { ruleHint: hint } : {}),
+          },
         });
         return;
       }
@@ -860,6 +913,8 @@ export class CodexAdapter implements ProviderAdapter {
           params: message.params,
         });
         const changes = thread.fileChanges.get(message.params.itemId);
+        const [first] = changes ?? [];
+        const diff = changes ? fileChangeDiff(changes) : undefined;
         this.#emit({
           type: 'approvalRequested',
           threadId,
@@ -867,6 +922,11 @@ export class CodexAdapter implements ProviderAdapter {
           kind: 'fileChange',
           summary: message.params.reason ?? 'Apply file changes',
           request: { ...message.params, changes },
+          facts: {
+            kind: 'edit',
+            ...(first && changes?.length === 1 ? { path: first.path } : {}),
+            ...(diff === undefined ? {} : { diff }),
+          },
         });
         return;
       }
@@ -1045,12 +1105,14 @@ export class CodexAdapter implements ProviderAdapter {
     const { output, ok } = toolResult(item);
     if (!streamed && output)
       this.#emit({ type: 'toolCallOutput', threadId, itemId: item.id, output });
+    const diff = item.type === 'fileChange' ? fileChangeDiff(item.changes) : undefined;
     this.#emit({
       type: 'toolCallCompleted',
       threadId,
       itemId: item.id,
       status: ok ? 'ok' : 'error',
       ...toolTimes(item),
+      ...(diff === undefined ? {} : { diff }),
     });
   }
 

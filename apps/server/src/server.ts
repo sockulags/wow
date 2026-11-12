@@ -170,6 +170,15 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const providers = new ProviderAdapters(options.hooks?.providers ?? {}, env);
   // Known once the server listens; the assistant's turn asks for it when it starts.
   let assistantAccess: { url: string; token: string } | undefined;
+  const folderChanges = {
+    base: (folder: string) => readRunBase(folder, changesOptions(settings)),
+    head: async (folder: string) => {
+      const head = await readHeadCommit(folder, changesOptions(settings).git);
+      return head.status === 'ok' ? head.sha : undefined;
+    },
+    snapshot: (folder: string, baseSha: string) =>
+      snapshotChanges(folder, baseSha, changesOptions(settings)),
+  };
   const providerService = new ProviderService({
     db: database.db,
     engine,
@@ -179,20 +188,14 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     home,
     assistant: () => assistantAccess,
+    changes: folderChanges,
   });
   const workspaces = new Workspaces({ db: database.db, engine, settings, logger });
   const workflows = new WorkflowRunner({
     db: database.db,
     engine,
     detectArtifacts: options.detectArtifacts ?? detectArtifacts,
-    changes: {
-      base: (folder) => readRunBase(folder, changesOptions(settings)),
-      head: async (folder) => {
-        const head = await readHeadCommit(folder, changesOptions(settings).git);
-        return head.status === 'ok' ? head.sha : undefined;
-      },
-      snapshot: (folder, baseSha) => snapshotChanges(folder, baseSha, changesOptions(settings)),
-    },
+    changes: folderChanges,
     prepare: (runId) => workspaces.prepare(runId),
     logger,
   });

@@ -120,6 +120,11 @@ export const threads = sqliteTable(
     archived: bool().notNull().default(false),
     seen: bool().notNull().default(true),
     queued: json<QueuedMessage>(),
+    // Where a chat thread's Changes are measured from (agent workbench spec 34): the commit its
+    // folder was on at the first turn, and what already differed then. Null for a thread stored
+    // before, or outside git.
+    baseSha: text(),
+    baseFiles: json<FileHash[]>(),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },
@@ -136,6 +141,8 @@ export const turns = sqliteTable(
     startedAt: text().notNull(),
     endedAt: text(),
     usage: json<Usage>(),
+    // The changed files' hashes as the turn began, for "This turn only".
+    fileMark: json<FileHash[]>(),
   },
   (table) => [index('turns_thread_idx').on(table.threadId, table.index)],
 );

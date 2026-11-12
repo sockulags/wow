@@ -14,8 +14,17 @@ import type {
   TurnState,
 } from '@wow/contracts';
 import {
+  AlwaysAllowRule,
+  ApprovalItemPayload,
   ChatNotifications,
+  planStartModes,
+  proposeRule,
   QuestionOption,
+  ruleCovers,
+  sameRule,
+  type ApprovalFacts,
+  type ApprovalPlan,
+  type ProposedRule,
   askAnswerPrompt,
   askAnswerText,
   askedQuestionsOf,
@@ -35,7 +44,12 @@ import {
   setupAppliedNote,
   storedGreeting,
 } from '../assistant/thread.js';
-import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
+import {
+  CommandRejected,
+  settingAggregate,
+  type DecideContext,
+  type ReadModel,
+} from './orchestrator.js';
 import { messageWithSkills } from './skills.js';
 
 // Decisions for provider instances, threads, turns, approvals and questions. Provider events
@@ -57,6 +71,7 @@ type ThreadCommand = Extract<
       | 'thread.cancelQueued'
       | 'thread.sendQueued'
       | 'thread.handedOver'
+      | 'thread.changesMarked'
       | 'thread.retry'
       | 'thread.answerQuestions'
       | 'thread.interrupt'
@@ -726,27 +741,22 @@ export function decideThread(
       if ((thread.seen ?? true) === seen) return [];
       return [seenChanged(thread.id, seen)];
     }
-    case 'approval.answer': {
-      const approval = read.approval(command.approvalId);
-      if (!approval) throw new CommandRejected('not_found', `No approval ${command.approvalId}`);
-      if (approval.decision !== null) {
-        throw new CommandRejected('conflict', `Approval ${approval.id} was already answered`);
-      }
-      const thread = requireThread(read, approval.threadId);
+    case 'approval.answer':
+      return answerApproval(command, read, context);
+    case 'thread.changesMarked': {
+      const thread = requireThread(read, command.threadId);
+      if (!command.base && !command.mark) return [];
       return [
         {
-          kind: 'approval.answered',
+          kind: 'thread.changesMarked',
           aggregate: thread.id,
           payload: {
-            approvalId: approval.id,
             threadId: thread.id,
-            providerInstanceId: thread.providerInstanceId,
-            providerApprovalId: providerIdOf(thread.id, approval.id),
-            decision: command.decision,
-            decidedAt: now,
+            turnId: command.turnId,
+            base: command.base,
+            mark: command.mark,
           },
         },
-        ...resumeWork(read, thread.id, thread.state, now),
       ];
     }
     case 'question.answer': {
@@ -828,6 +838,189 @@ const finishedAfterMs = (read: ReadModel, context: DecideContext): number => {
   const value = settingValue('chat.finishedAfterSeconds', read, context);
   return typeof value === 'number' ? value * 1000 : Number.POSITIVE_INFINITY;
 };
+
+// The rules stored for a project (agent workbench spec 38 to 40); a value that no longer parses
+// gives none, so a broken list asks again rather than allowing.
+export function projectRules(read: ReadModel, projectId: string): AlwaysAllowRule[] {
+  const parsed = AlwaysAllowRule.array().safeParse(
+    read.setting('approvals.alwaysAllow', `project:${projectId}`)?.value,
+  );
+  return parsed.success ? parsed.data : [];
+}
+
+const approvalPayloadOf = (read: ReadModel, itemId: string) => {
+  const parsed = ApprovalItemPayload.safeParse(read.threadItem(itemId)?.payload);
+  return parsed.success ? parsed.data : undefined;
+};
+
+const ruleOf = (rule: ProposedRule): ProposedRule =>
+  rule.kind === 'command'
+    ? { kind: 'command', prefix: rule.prefix }
+    : { kind: 'tool', server: rule.server, tool: rule.tool };
+
+function answerApproval(
+  command: Extract<ThreadCommand, { type: 'approval.answer' }>,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const now = context.now;
+  const approval = read.approval(command.approvalId);
+  if (!approval) throw new CommandRejected('not_found', `No approval ${command.approvalId}`);
+  if (approval.decision !== null) {
+    throw new CommandRejected('conflict', `Approval ${approval.id} was already answered`);
+  }
+  const thread = requireThread(read, approval.threadId);
+  const payload = approvalPayloadOf(read, approval.itemId);
+  const kind = read.providerInstance(thread.providerInstanceId)?.kind;
+  const note = command.decision === 'deny' ? command.note?.trim() || undefined : undefined;
+  const out: DomainEvent[] = [];
+  let permissionMode: string | undefined;
+  if (command.permissionMode !== undefined) {
+    if (approval.kind !== 'plan' || command.decision === 'deny') {
+      throw new CommandRejected('rejected', 'Only a plan is started in a mode');
+    }
+    if (!(planStartModes as readonly string[]).includes(command.permissionMode)) {
+      throw new CommandRejected('rejected', `A plan does not start in "${command.permissionMode}"`);
+    }
+    permissionMode = command.permissionMode;
+    // The bar shows the mode the work goes on in (spec 42); the adapter is already in it.
+    if (permissionMode !== thread.permissionMode) {
+      out.push({
+        kind: 'thread.configured',
+        aggregate: thread.id,
+        payload: {
+          threadId: thread.id,
+          providerInstanceId: thread.providerInstanceId,
+          changes: { permissionMode },
+          updatedAt: now,
+        },
+      });
+    }
+  }
+  if (command.decision === 'allowAlways') {
+    const rule = payload?.rule;
+    if (!rule || thread.projectId === null) {
+      throw new CommandRejected(
+        'rejected',
+        thread.projectId === null
+          ? 'A thread without a project has no rules to keep.'
+          : 'This request has no rule to keep; allow it once or for the session.',
+      );
+    }
+    const rules = projectRules(read, thread.projectId);
+    if (!rules.some((stored) => sameRule(stored, rule))) {
+      const scope = `project:${thread.projectId}` as const;
+      out.push({
+        kind: 'setting.changed',
+        aggregate: settingAggregate('approvals.alwaysAllow', scope),
+        payload: {
+          key: 'approvals.alwaysAllow',
+          scope,
+          value: [...rules, { ...ruleOf(rule), addedAt: now }],
+        },
+      });
+    }
+  }
+  out.push({
+    kind: 'approval.answered',
+    aggregate: thread.id,
+    payload: {
+      approvalId: approval.id,
+      threadId: thread.id,
+      providerInstanceId: thread.providerInstanceId,
+      providerApprovalId: providerIdOf(thread.id, approval.id),
+      decision: command.decision,
+      decidedAt: now,
+      ...(note === undefined ? {} : { note }),
+      ...(permissionMode === undefined ? {} : { permissionMode }),
+    },
+  });
+  if (note !== undefined || permissionMode !== undefined) {
+    out.push({
+      kind: 'threadItem.patched',
+      aggregate: thread.id,
+      payload: {
+        itemId: approval.itemId,
+        patch: {
+          ...(note === undefined ? {} : { note }),
+          ...(permissionMode === undefined ? {} : { permissionMode }),
+        },
+      },
+    });
+  }
+  // Codex takes no message with a decline (spec 37): the turn stops and the note is the next
+  // message, as Codex's own "tell it what to do instead" does. A step's turn is not stopped, since
+  // that would stop the step; its note waits for the turn to end.
+  const running = read.runningTurn(thread.id);
+  if (note !== undefined && kind === 'codex' && running) {
+    out.push(queueMessage(read, context, thread, running, note, []));
+    if (thread.runId === null) {
+      out.push({
+        kind: 'turn.interruptRequested',
+        aggregate: thread.id,
+        payload: {
+          threadId: thread.id,
+          turnId: running.id,
+          providerInstanceId: thread.providerInstanceId,
+        },
+      });
+    }
+  }
+  out.push(...resumeWork(read, thread.id, thread.state, now));
+  return out;
+}
+
+const textOf = (item: ThreadItem | undefined): string | undefined => {
+  const payload = item?.payload;
+  return typeof payload === 'object' && payload !== null && 'text' in payload
+    ? typeof payload.text === 'string'
+      ? payload.text
+      : undefined
+    : undefined;
+};
+
+// A plan approval's plan (spec 42): the request's own, else the turn's last assistant text,
+// labelled as written in the conversation (spec Open risks).
+function planOf(
+  facts: ApprovalFacts | undefined,
+  turn: Turn,
+  batch: { id: string; text: string } | undefined,
+  read: ReadModel,
+): ApprovalPlan {
+  const asked = facts?.plan?.trim();
+  if (asked) return { text: asked, from: 'request' };
+  const text = batch?.id.startsWith(`${turn.id}:`)
+    ? batch.text
+    : textOf(read.lastAssistantText(turn.id));
+  return { text: text?.trim() ?? '', from: 'conversation' };
+}
+
+function approvalFactsOf(
+  facts: ApprovalFacts | undefined,
+  read: ReadModel,
+  context: DecideContext,
+): { facts?: ApprovalFacts; diffCut?: true } {
+  if (!facts) return {};
+  const { diff, ...rest } = facts;
+  const cut = cutDiff(diff, read, context);
+  return {
+    facts: { ...rest, ...(cut.diff === undefined ? {} : { diff: cut.diff }) },
+    ...(cut.diffCut ? { diffCut: true } : {}),
+  };
+}
+
+// An edit's diff, cut to `chat.editDiffMaxLines` lines.
+function cutDiff(
+  diff: string | undefined,
+  read: ReadModel,
+  context: DecideContext,
+): { diff?: string; diffCut?: true } {
+  if (diff === undefined) return {};
+  const longest = settingValue('chat.editDiffMaxLines', read, context);
+  const lines = diff.split('\n');
+  if (typeof longest !== 'number' || lines.length <= longest) return { diff };
+  return { diff: lines.slice(0, longest).join('\n'), diffCut: true };
+}
 
 // Only a thread the user started notifies; a step's thread tells through its run, and the
 // assistant has its own view.
@@ -913,6 +1106,8 @@ function decideProviderEvents(
     seen = false;
     out.push(seenChanged(threadId, false));
   };
+  // The newest assistant text this batch wrote, for a plan request without its plan.
+  let lastText: { id: string; text: string } | undefined;
   const told = new Set<string>();
   const notifications = notifiesAsChat(thread) ? chatNotifications(read, context) : 'off';
   const needsYou = (key: string, summary: string, approvalId: string | null) => {
@@ -1064,6 +1259,12 @@ function decideProviderEvents(
       case 'textDelta':
       case 'reasoningDelta': {
         const id = itemId(event.itemId);
+        if (event.type === 'textDelta') {
+          lastText =
+            lastText?.id === id
+              ? { id, text: lastText.text + event.delta }
+              : { id, text: (textOf(read.threadItem(id)) ?? '') + event.delta };
+        }
         if (exists(id)) {
           out.push({
             kind: 'threadItem.appended',
@@ -1091,6 +1292,7 @@ function decideProviderEvents(
             'tool_call',
             {
               ...toolFactsOf(event),
+              ...cutDiff(event.diff, read, context),
               name: event.name,
               input: event.input ?? null,
               output: '',
@@ -1125,6 +1327,9 @@ function decideProviderEvents(
               endedAt: now,
               ...(event.exitCode === undefined ? {} : { exitCode: event.exitCode }),
               ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+              ...(event.diff === undefined
+                ? {}
+                : { diffCut: false, ...cutDiff(event.diff, read, context) }),
             },
             false,
           );
@@ -1134,6 +1339,29 @@ function decideProviderEvents(
       case 'approvalRequested': {
         const id = approvalRowId(threadId, event.approvalId);
         if (read.approval(id)) break;
+        const rowItemId = itemId(`approval:${event.approvalId}`);
+        const facts = approvalFactsOf(event.facts, read, context);
+        // A rule is only kept for a project, and the assistant is never offered one (spec 38).
+        const projectId = thread.kind === 'assistant' ? null : thread.projectId;
+        const rule = projectId === null ? undefined : proposeRule(event.kind, facts.facts);
+        const covering =
+          projectId === null
+            ? undefined
+            : projectRules(read, projectId).find((stored) =>
+                ruleCovers(stored, event.kind, facts.facts),
+              );
+        const plan =
+          event.kind === 'plan' ? planOf(event.facts, current, lastText, read) : undefined;
+        const payload: ApprovalItemPayload = {
+          approvalId: id,
+          kind: event.kind,
+          summary: event.summary,
+          ...(facts.facts === undefined ? {} : { facts: facts.facts }),
+          ...(facts.diffCut ? { diffCut: true } : {}),
+          ...(rule === undefined ? {} : { rule }),
+          ...(plan === undefined ? {} : { plan }),
+          ...(covering === undefined ? {} : { byRule: ruleOf(covering) }),
+        };
         out.push({
           kind: 'approval.requested',
           aggregate: threadId,
@@ -1141,25 +1369,32 @@ function decideProviderEvents(
             approval: {
               id,
               threadId,
-              itemId: itemId(`approval:${event.approvalId}`),
+              itemId: rowItemId,
               kind: event.kind,
               request: { summary: event.summary, details: event.request ?? null },
               decision: null,
               decidedAt: null,
             },
-            item: item(
-              current,
-              itemId(`approval:${event.approvalId}`),
-              'approval',
-              {
-                approvalId: id,
-                kind: event.kind,
-                summary: event.summary,
-              },
-              false,
-            ),
+            item: item(current, rowItemId, 'approval', payload, false),
           },
         });
+        // A stored rule answers by itself (spec 39): nobody is asked or told.
+        if (covering) {
+          out.push({
+            kind: 'approval.answered',
+            aggregate: threadId,
+            payload: {
+              approvalId: id,
+              threadId,
+              providerInstanceId: thread.providerInstanceId,
+              providerApprovalId: event.approvalId,
+              decision: 'allowOnce',
+              decidedAt: now,
+              byRule: true,
+            },
+          });
+          break;
+        }
         setState('needs_you');
         unarchive();
         needsYou(event.approvalId, event.summary, id);

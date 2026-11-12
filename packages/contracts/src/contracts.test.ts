@@ -132,6 +132,7 @@ describe('settings registry', () => {
       new Set([
         'providers',
         'chat',
+        'approvals',
         'calendar',
         'outlook',
         'scheduler',

@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import type { HostKind } from './hosts.js';
+import { ApprovalPlan, ProposedRuleSchema } from './approvals.js';
 import {
   ApprovalDecision,
+  ApprovalFacts,
   ApprovalKind,
   BackgroundTask,
   ProviderKind,
@@ -187,13 +189,30 @@ export const ToolCallItemPayload = ToolFacts.partial().extend({
   startedAt: Timestamp.optional(),
   endedAt: Timestamp.optional(),
   durationMs: z.number().nonnegative().optional(),
+  // An edit's diff was longer than `chat.editDiffMaxLines` and is cut there.
+  diffCut: z.boolean().optional(),
 });
 export type ToolCallItemPayload = z.infer<typeof ToolCallItemPayload>;
 
+// What the approval card shows (agent workbench spec 36 to 43). Every field after `summary` is
+// absent on an approval stored before the agent workbench, which then shows as it did.
 export const ApprovalItemPayload = z.object({
   approvalId: Id,
   kind: ApprovalKind,
   summary: z.string(),
+  // The request in wow's words: a command and its folder, an edit's diff, a tool's arguments.
+  facts: ApprovalFacts.optional(),
+  // The rule "Always allow in this project" would store; absent when it is not offered.
+  rule: ProposedRuleSchema.optional(),
+  // A plan approval's plan.
+  plan: ApprovalPlan.optional(),
+  // Set when a stored rule answered the request by itself (spec 39).
+  byRule: ProposedRuleSchema.optional(),
+  // The note a denial was sent with, and the mode a plan was started in.
+  note: z.string().optional(),
+  permissionMode: z.string().optional(),
+  // An edit diff longer than `chat.editDiffMaxLines` is cut; the file's own diff is in Changes.
+  diffCut: z.boolean().optional(),
 });
 export type ApprovalItemPayload = z.infer<typeof ApprovalItemPayload>;
 

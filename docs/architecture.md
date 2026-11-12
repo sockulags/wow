@@ -149,15 +149,22 @@ provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env
 threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessionId?, title, model,
                  effort, permissionMode, state ('idle'|'working'|'needs_you'|'done'|'failed'),
                  pinned, runId?, stepId?, backgroundTasks(json: BackgroundTask[]), archived, seen,
-                 queued(json: QueuedMessage)?, createdAt, updatedAt   -- backgroundTasks: the
+                 queued(json: QueuedMessage)?, baseSha?, baseFiles(json: FileHash[])?,
+                 createdAt, updatedAt   -- backgroundTasks: the
                  agent's work still running in the background, [] when none (migration
                  0026_background_tasks); archived and seen (false while unread) for the thread
                  list, false and true for older rows (migration 0027_thread_list); queued: the
-                 message waiting for the running turn to end (migration 0028_queued_messages)
-turns            id, threadId, index, state, startedAt, endedAt, usage(json)
+                 message waiting for the running turn to end (migration 0028_queued_messages);
+                 baseSha, baseFiles: where a chat thread's Changes are measured from, set at its
+                 first turn (migration 0029_thread_changes)
+turns            id, threadId, index, state, startedAt, endedAt, usage(json),
+                 fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
+                 turn began, for "This turn only" (migration 0029_thread_changes)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
-approvals        id, threadId, itemId, kind, request(json), decision?, decidedAt?
+approvals        id, threadId, itemId, kind ('command'|'fileChange'|'tool'|'plan'), request(json),
+                 decision? ('allowOnce'|'allowSession'|'allowAlways'|'deny'), decidedAt?   -- what
+                 the card shows (facts, rule, plan, byRule, note) is in the approval item's payload
 questions        id, threadId, itemId, request(json), answer?, answeredAt?   (answer: the reply
                  as one line; the item's payload holds the reply's picks and text)
 calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end, zone, allDay,
@@ -255,20 +262,22 @@ Both adapters implement one interface from `packages/contracts`:
 ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode, resumeId?,
                             toolset? {name, url, token}, instructions?}
                  interrupt {threadId} | closeThread {threadId} |
-                 answerApproval {approvalId, decision} |
+                 answerApproval {approvalId, decision, note?, permissionMode?} |
                  answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
                  listModels | handOver {threadId, prompt} -> {taken} |
                  listCommands {cwd, threadId?} -> [{name, description, argumentHint?}] | test
 ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta |
                  toolCallStarted {itemId, name, input, ...ToolFacts?} | toolCallOutput |
-                 toolCallCompleted {itemId, status, exitCode?, durationMs?} | approvalRequested | questionAsked |
+                 toolCallCompleted {itemId, status, exitCode?, durationMs?, diff?} |
+                 approvalRequested {approvalId, kind, summary, request, facts?} | questionAsked |
                  taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
                  | turnStartedByProvider | backgroundTasks {tasks [{id, description, agent?}]}
 ```
 
 **Tool facts.** Each adapter normalizes a tool call into `ToolFacts` (`provider.ts`): `kind`
 (`command`, `read`, `search`, `web`, `mcp`, `edit`, `other`) and, where the input gives them,
-`command`, `cwd`, `path`, `lines {from, to?}`, `pattern`, `url`, `query`, `server`, `tool`.
+`command`, `cwd`, `path`, `lines {from, to?}`, `pattern`, `url`, `query`, `server`, `tool`, and
+for an edit `diff` (see "Edits and approvals" below).
 Claude Code (`provider-claude/src/tools.ts`): Bash is a command (its result has no exit code or
 duration, so a failed one is only `error`), Read and NotebookRead reads (offset and limit become
 `lines`), Grep and Glob searches, WebFetch and WebSearch web, `mcp__<server>__<tool>` MCP, Edit,
@@ -316,7 +325,8 @@ thread it maps to, since the app-server has no request that unloads one.
   path, `env: {...process.env, CLAUDE_CONFIG_DIR, ...instance.env}`, `settingSources:
 ['user','project','local']` so skills and plugins load, `includePartialMessages: true` for
   deltas, `resume` with the stored session id, `canUseTool` turns a prompt into `approvalRequested`
-  and an `AskUserQuestion` call into `questionAsked`. `effort` passes through. Usage comes from
+  (with its facts; `ExitPlanMode` as a `plan` approval), answers a denial with its note as the
+  message, and an `AskUserQuestion` call into `questionAsked`. `effort` passes through. Usage comes from
   the result message and `getContextUsage()`.
 - **Codex** (`packages/provider-codex`): spawn `<binaryPath> app-server <launchArgs>` with
   `CODEX_HOME` and the instance env, newline-delimited JSON-RPC on stdio (codex leaves out the
@@ -1440,7 +1450,10 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `providers.offerSetup`
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.toolOutputLines`,
   `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
-  `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength` (see "Chat view")
+  `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength`, `chat.editDiffMaxLines` (see "Chat
+  view")
+- approvals: `approvals.alwaysAllow` (project-scoped; the "Approvals" page, see "Edits, approvals
+  and a thread's Changes")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.maxOccurrences` (see "Repeating cards"),
@@ -2761,8 +2774,9 @@ waits, the composer sends
 `question.answer` with its text as the answer's typed text. Questions are drawn by the question
 card (see "Question card"). The working clock reads the running turn's `startedAt` and redraws each second;
 it is display only, the state still comes from `turns`. A pending approval takes the focus, and
-the palette's approval commands (`keybindings.approvalAllowOnce|approvalAllowSession|approvalDeny`,
-plain keys, so they do nothing in text fields) answer it. A thread whose step a waiting run asks
+the palette's approval commands (`keybindings.approvalAllowOnce|approvalAllowSession|approvalAllowAlways|approvalDeny`,
+plain keys, so they do nothing in text fields) answer it (see "Edits, approvals and a thread's
+Changes"). A thread whose step a waiting run asks
 to review (`gateRunForThread`: the gate after this step, or before the next) shows the run view's
 `GateBar` above the composer, and the palette's Continue run and Stop run apply to that run.
 
@@ -2842,8 +2856,8 @@ the right "exit 1 · 4.2 s" or, without an exit code, "failed" / "done" with the
 "Fetch example.org", paths shown relative to the thread's folder, compared with either
 separator, any drive-letter case and without a verbatim `\\?\` or `\\?\UNC\` prefix); `mcp.tsx` reads
 `server › tool` with the arguments as `key: value` and the JSON behind Show JSON; `generic.tsx`
-is today's row (name, first input text, status words, input and output) for `other`, `edit` (its
-diff row comes later) and every call stored before kinds. Times (`time.tsx`, `facts.ts`): the
+is today's row (name, first input text, status words, input and output) for `other`, an `edit`
+without a diff and every call stored before kinds; `edit.tsx` draws an edit with a diff. Times (`time.tsx`, `facts.ts`): the
 provider's `durationMs` if it gave one, else `endedAt − startedAt`; a running call counts up from
 `startedAt` once a second (display only); a call its turn left running reads "not finished".
 Opened, output sits in `output.tsx`'s box with its last `chat.toolOutputLines` lines, "Show all N
@@ -2874,6 +2888,125 @@ lands on something else in the conversation (`rowActionScope`), or the row unmou
 (`StoppedLine`, from the turn's `endedAt`), which carries Resume on the last turn. The line reads
 the turn's stored state, so a turn stopped before this change gets it too: it was stopped, and no
 item, divider or marker is added to it (spec 48 is about new items, not about reading old ones).
+
+### Edits, approvals and a thread's Changes
+
+Agent workbench spec 33 to 43, U6.
+
+**Edits.** An edit carries a unified diff in wow's own field (`ToolFacts.diff`, hunks from the
+first `@@`; several files each after a `--- a/<path>` / `+++ b/<path>` pair), made in the adapter.
+Claude Code (`provider-claude/src/diff.ts`): when an Edit, MultiEdit or Write starts, its input
+gives the diff as the old text's lines removed and the new text's added, without the file around
+them (`replacedHunk`; a Write is all added lines); when the result comes, its `structuredPatch`
+gives the real hunks with line numbers and `toolCallCompleted.diff` replaces the first one. That
+is the spec's fallback for an old text that cannot be placed in the file: the row then still shows
+what was replaced. Codex (`fileChangeDiff` in `provider-codex/src/adapter.ts`): an update's `diff`
+is unified already (anything before its first `@@` is cut); an added or deleted file's `diff` is
+taken, as far as the schema says, as its content and drawn as all added or removed lines. The
+server keeps at most `chat.editDiffMaxLines` lines of a diff in a row or approval and marks it
+`diffCut`. `chat/tools/edit.tsx` reads "Edit src/timer.ts +4 −1" (`diffCounts` in
+`contracts/src/diff.ts` counts by the hunk headers, so a removed line reading `--- x` is not a
+header) and opens to the diff drawn with the run Changes tab's `DiffLines`, and Open file. Open
+file opens the thread's Changes at that file for a chat thread and the run's file viewer for a
+step's thread; once the panel tabs of U5 are in, it should open a file tab in thread scope. An
+`edit` row without a diff (stored before) is drawn as the generic row it was.
+
+**Approvals in wow's words** (spec 36). `approvalRequested` carries `facts: ApprovalFacts` (the
+tool facts of the call it would allow, an MCP tool's `arguments`, a plan's `plan`, and the
+command prefix the provider proposed, `ruleHint`): Claude Code's from `claudeToolFacts` on the
+request's tool and input (`tool` named for a tool that is not a command, an edit or MCP),
+Codex's command request from its `command`, `cwd` and `proposedExecpolicyAmendment`, its file
+change request from the item's changes. The orchestrator stores them on the approval item
+(`ApprovalItemPayload.facts`), with `rule` (what "always allow" would store), `plan`, `byRule`,
+`note`, `permissionMode` and `diffCut`; the approval row keeps its columns and takes the new
+decision `allowAlways`. `chat/approval-card.tsx` draws a command as `$ <command>` with its folder,
+an edit as its diff, a web address, a tool as `server › tool` with its arguments as `key: value`,
+and the provider's JSON behind Details. An approval stored before has no facts and is drawn as it
+was.
+
+**Deny with a note** (spec 37). Deny (D) opens a one-line note ("No, and tell it what to do
+instead"); Enter sends `approval.answer {decision: 'deny', note}`, an empty note denies without
+one, Escape closes it. `approval.answered` carries the note and the provider service passes it in
+`answerApproval {note}`: Claude Code's adapter answers `{behavior: 'deny', message: note}`. Codex
+takes no message with a decline, so for a Codex thread the same decision also queues the note
+(`thread.queueChanged`, see Queued messages) and asks for the turn to stop
+(`turn.interruptRequested`); when the turn ends the note goes as the next message. A workflow
+step's turn is not stopped, since that would stop the step: there the note waits for the turn's
+end. The adapter declines as before.
+
+**Always allow in this project** (spec 38 to 40). `proposeRule(kind, facts)` in
+`contracts/src/approvals.ts` gives the rule: a command rule (`{kind: 'command', prefix}`) from the
+provider's own prefix when it is one of the command's (Claude Code's `Bash(<prefix>:*)`
+suggestion, Codex's exec policy amendment), else the first word and the second when it is not an
+option (`pnpm test --watch` gives `pnpm test`); a tool rule (`{kind: 'tool', server, tool}`) for a
+named tool. Edits, plans, a Codex permissions request and a command with `;`, `&`, `|`, `<`, `>`,
+`` ` ``, `$`, brackets, a backslash or a line break get none, and neither does a thread without a
+project or the assistant. The card shows the rule ("Run commands starting with `pnpm test`",
+`ruleText`) under its fourth choice, Y (`keybindings.approvalAllowAlways`). `allowAlways` appends
+the rule with `addedAt` to the project's `approvals.alwaysAllow` (a `setting.changed` in the same
+commit) and the provider hears `allowOnce`: wow keeps its rules itself and writes nothing to a
+provider's settings. When a request arrives, the orchestrator compares it with the project's rules
+(`ruleCovers`: a command matches the prefix by whole words and never when it has shell control
+characters; a tool by server and name) and, when one covers it, stores the approval answered at
+once (`approval.answered {byRule: true}`, decision `allowOnce`) with `byRule` on its item: no
+`needs_you`, no notification, and the provider service answers the adapter as for any answer. The
+row reads "Allowed by rule: …". Settings → Approvals (`settings/always-allow-section.tsx`) lists
+each project's rules with when they were added; Remove writes the list without it, so the next
+request asks again. The assistant's proposal of a rule is U13's.
+
+**Plan card** (spec 42, 43). Claude Code's `ExitPlanMode` reaches `canUseTool`; the adapter
+reports it as an approval of kind `plan` with `facts.plan` when the input carries a `plan`
+string. The SDK's input type declares none, so without it the orchestrator takes the turn's last
+assistant text (`ReadModel.lastAssistantText`, or the text this batch streamed) and stores
+`plan {text, from: 'conversation'}`, which the card labels "The plan as written in the
+conversation". `chat/plan-card.tsx` renders the plan as markdown with "Start, accept edits"
+(focused, so Enter takes it; `keybindings.planAcceptEdits`, 1), "Start, ask each time" (2) and
+"Keep planning" (3), which opens the note. A start is `approval.answer {decision: 'allowOnce',
+permissionMode: 'acceptEdits' | 'default'}` (any other mode, or a mode on another kind, is
+refused); the orchestrator adds `thread.configured` with that mode so the bar shows it, and the
+adapter allows with `updatedPermissions: [{type: 'setMode', mode, destination: 'session'}]` and
+keeps the session's mode, so the configure that follows sends nothing. Keep planning denies with
+the note. The card's choices are palette commands from `approvalCommands` (`chat.plan.*`).
+Codex has no plan mode, so it never shows one.
+
+**Palette.** The card on screen writes its offer (approval id, kind, rule) to
+`approvalCardStore`; `approvalCommands(offer)` (wired in `app/use-commands.ts`) gives Allow once,
+Allow for this session, Always allow in this project (only with a rule) and Deny…, or the plan's
+three choices. They replace the approval commands `chatCommands` had.
+
+**A thread's Changes** (spec 34, 35). Before the provider service sends a chat thread's turn
+(`runId` null, kind `chat`) it reads the folder through git with the run's code
+(`RunChanges`): the first turn records the base (`readRunBase`: the commit and what already
+differed), every turn the changed files' hashes as it begins (`snapshotChanges`), and reports
+them as `thread.changesMarked {threadId, turnId, base, mark}` (stored as `threads.base_sha`,
+`base_files` and `turns.file_mark`, migration `0029_thread_changes`); then it sends the turn.
+Git that cannot say leaves them null and the turn goes as usual. A thread stored before has turns
+and no base and gets none later, so its Changes say so. `threads.diff {threadId, path?}` answers
+`ThreadDiff` (`RunDiff` plus `turnPaths`) from `readThreadDiff` in `workflows/changes.ts`: the
+folder against the base commit, without a file that already differed then and is unchanged
+since, and `turnPaths` the listed files whose content differs from the last turn's mark (null
+without a mark). A file that differed before the thread and changed again shows its whole diff
+against the commit, and "This turn only" narrows the list, not a file's diff, since no content is
+kept at a mark. `chat/thread-changes.tsx` is the view (`ThreadChanges`, opened with
+`openThreadChanges(context, threadId, path?)` and shown in the context panel in place of the
+thread's details until Back; U5's tabs can hold it as a tab), the header chip
+(`ThreadChangesChip`: "+42 −7 in 5 files", hidden when nothing changed or nothing can be
+compared) and the palette's Show changes (`keybindings.threadChanges`, Mod+Shift+D) and "This
+turn only" (`keybindings.changesStepOnly`, O, while open). Both read again when a turn of the
+thread starts or ends and on Refresh. A step's thread has no chip: its run has the Changes tab.
+
+Tests: `packages/provider-claude/src/index.test.ts` ("draws an Edit as a diff…", "sends the note
+of a denial…", "asks to leave plan mode…", "shows an MCP request…"), `tools.test.ts`,
+`packages/provider-codex/src/adapter.test.ts` (`fileChangeDiff`, "shows a command request with
+its folder…"), `packages/contracts/src/approvals.test.ts`, `apps/server/src/providers/approvals.test.ts`
+(facts and cut diffs, notes on both providers, rules across threads and providers and after
+removal, no rule without a project, plans, base and marks, outside Git, old threads),
+`apps/web/src/chat/approvals.test.tsx`, and the e2e cases "approves an edit seen as a diff",
+"denies with a note", "always allows a command in this project", "starts from a plan" in
+`chat.spec.ts` and "lists a thread's changes" in `changes.spec.ts` (project `tea-chat`, a
+repository of its own in the Changes copy). The mock agent answers "edit the timer", "edit the
+bell", "watch the tests", "run the tests once" and "plan the work"; its Codex declines a denial
+with a note without a message and goes on until stopped.
 
 ### Thread list, unread and chat notifications
 

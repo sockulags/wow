@@ -213,7 +213,15 @@ export const Command = z.discriminatedUnion('type', [
   // The thread was opened, or the user asked to see it as new again (spec 70).
   z.object({ type: z.literal('thread.markSeen'), threadId: Id }),
   z.object({ type: z.literal('thread.markUnread'), threadId: Id }),
-  z.object({ type: z.literal('approval.answer'), approvalId: Id, decision: ApprovalDecision }),
+  // `note` goes with a denial (agent workbench spec 37); `permissionMode` starts a plan in that
+  // mode (spec 42). `allowAlways` stores the rule the approval offers (spec 38).
+  z.object({
+    type: z.literal('approval.answer'),
+    approvalId: Id,
+    decision: ApprovalDecision,
+    note: z.string().max(4000).optional(),
+    permissionMode: z.string().min(1).optional(),
+  }),
   // Answers to an agent's questions, sent together when one ask holds several (questions
   // spec 3). Refused for a question whose turn ended.
   z.object({
@@ -516,6 +524,16 @@ export const InternalCommand = z.discriminatedUnion('type', [
   // The provider took the queued message `queuedId` into its running turn: it leaves the queue
   // and the conversation shows it as a user message of that turn.
   z.object({ type: z.literal('thread.handedOver'), threadId: Id, queuedId: Id }),
+  // The provider service, before a chat thread's turn is sent: the commit its folder is on and
+  // what already differed from it (first turn only), and the changed files' hashes as the turn
+  // begins (agent workbench spec 34). Null where git could not say.
+  z.object({
+    type: z.literal('thread.changesMarked'),
+    threadId: Id,
+    turnId: Id,
+    base: z.object({ sha: z.string().min(1), files: z.array(FileHash) }).nullable(),
+    mark: z.array(FileHash).nullable(),
+  }),
   // Replaces the plans projection with a fresh read of every project's intents folder; the
   // server's plans service sends it.
   z.object({ type: z.literal('plans.sync'), intents: z.array(PlanIntent) }),
@@ -872,6 +890,16 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     aggregate: Id,
     payload: z.object({ threadId: Id, pinned: z.boolean() }),
   }),
+  z.object({
+    kind: z.literal('thread.changesMarked'),
+    aggregate: Id,
+    payload: z.object({
+      threadId: Id,
+      turnId: Id,
+      base: z.object({ sha: z.string().min(1), files: z.array(FileHash) }).nullable(),
+      mark: z.array(FileHash).nullable(),
+    }),
+  }),
   // The thread's queued message changed: queued, joined, sent or cancelled (null). `handOver`
   // is set when the provider may take it into the running turn: the provider service offers it
   // the prompt, and answers `thread.handedOver` when it did.
@@ -989,6 +1017,10 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       providerApprovalId: Id,
       decision: ApprovalDecision,
       decidedAt: Timestamp,
+      note: z.string().min(1).optional(),
+      permissionMode: z.string().min(1).optional(),
+      // A stored rule answered it, not the user.
+      byRule: z.boolean().optional(),
     }),
   }),
   z.object({

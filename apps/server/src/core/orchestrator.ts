@@ -84,6 +84,8 @@ export interface ReadModel {
   // How many task lists the turn has and the payload of its newest one.
   turnTaskLists(turnId: string): { readonly count: number; readonly last: unknown };
   threadItem(id: string): ThreadItem | undefined;
+  // The turn's newest assistant text item, if it has one.
+  lastAssistantText(turnId: string): ThreadItem | undefined;
   approval(id: string): Approval | undefined;
   question(id: string): Question | undefined;
   // Approvals and questions of the thread that are still waiting for an answer.
@@ -259,7 +261,7 @@ export function decide(
   }
 }
 
-const settingAggregate = (key: string, scope: SettingScopeRef) => `setting:${scope}:${key}`;
+export const settingAggregate = (key: string, scope: SettingScopeRef) => `setting:${scope}:${key}`;
 
 function settingDefinition(key: string, context: DecideContext): SettingDefinition {
   const definition = Object.hasOwn(context.registry, key) ? context.registry[key] : undefined;

@@ -59,3 +59,46 @@ export const RunDiff = z.object({
   patch: z.string().nullable(),
 });
 export type RunDiff = z.infer<typeof RunDiff>;
+
+// A chat thread's changes (agent workbench spec 34, 35): the thread's folder against the commit
+// it was on when its first turn began. `noBase` is a thread stored before bases were recorded.
+// `turnPaths` are the listed files whose content changed since the last turn began, for "This
+// turn only"; null when that turn has no mark.
+export const ThreadDiffParams = z.object({
+  threadId: z.string().min(1),
+  path: z.string().min(1).optional(),
+});
+export type ThreadDiffParams = z.infer<typeof ThreadDiffParams>;
+
+export const ThreadDiff = RunDiff.extend({ turnPaths: z.array(z.string()).nullable() });
+export type ThreadDiff = z.infer<typeof ThreadDiff>;
+
+// Lines added and removed in a unified diff (hunks, with or without file headers). A hunk header
+// says how many lines follow, so a removed line that reads `--- x` is not taken for a header.
+export function diffCounts(diff: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  let oldLeft = 0;
+  let newLeft = 0;
+  for (const line of diff.split('\n')) {
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith('+')) {
+        added += 1;
+        newLeft -= 1;
+      } else if (line.startsWith('-')) {
+        removed += 1;
+        oldLeft -= 1;
+      } else if (!line.startsWith('\\')) {
+        oldLeft -= 1;
+        newLeft -= 1;
+      }
+      continue;
+    }
+    const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
+    if (hunk) {
+      oldLeft = hunk[1] === undefined ? 1 : Number(hunk[1]);
+      newLeft = hunk[2] === undefined ? 1 : Number(hunk[2]);
+    }
+  }
+  return { added, removed };
+}

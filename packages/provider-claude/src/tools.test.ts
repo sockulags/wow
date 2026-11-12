@@ -61,6 +61,19 @@ describe('Claude Code tool facts (agent workbench spec 27 to 29)', () => {
       kind: 'edit',
       path: 'src/new.ts',
     });
+    expect(
+      claudeToolFacts('MultiEdit', {
+        file_path: 'src/timer.ts',
+        edits: [
+          { old_string: 'x', new_string: 'y' },
+          { old_string: '', new_string: 'z\n' },
+        ],
+      }),
+    ).toEqual({
+      kind: 'edit',
+      path: 'src/timer.ts',
+      diff: '@@ -1 +1 @@\n-x\n+y\n@@ -0,0 +1 @@\n+z',
+    });
     expect(claudeToolFacts('TodoWrite', { todos: [] })).toEqual({ kind: 'other' });
     expect(claudeToolFacts('Read', 'not an object')).toEqual({ kind: 'read' });
   });

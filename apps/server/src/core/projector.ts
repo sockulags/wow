@@ -337,6 +337,17 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(threads.id, event.payload.threadId))
         .run();
       return threadTopics;
+    case 'thread.changesMarked': {
+      const { threadId, turnId, base, mark } = event.payload;
+      if (base) {
+        tx.update(threads)
+          .set({ baseSha: base.sha, baseFiles: base.files })
+          .where(eq(threads.id, threadId))
+          .run();
+      }
+      if (mark) tx.update(turns).set({ fileMark: mark }).where(eq(turns.id, turnId)).run();
+      return [];
+    }
     case 'thread.queueChanged':
       tx.update(threads)
         .set({ queued: event.payload.queued })
@@ -878,6 +889,13 @@ export function readModel(tx: DbOrTx): ReadModel {
         .get();
       return { count: total, last: last?.payload };
     },
+    lastAssistantText: (turnId) =>
+      tx
+        .select()
+        .from(threadItems)
+        .where(and(eq(threadItems.turnId, turnId), eq(threadItems.kind, 'assistant_text')))
+        .orderBy(desc(threadItems.index))
+        .get(),
     approval: (id) => tx.select().from(approvals).where(eq(approvals.id, id)).get(),
     question: (id) => tx.select().from(questions).where(eq(questions.id, id)).get(),
     openRequests: (threadId) =>

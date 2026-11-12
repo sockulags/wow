@@ -16,8 +16,14 @@ const Model = z.string().min(1);
 const Effort = z.string().min(1);
 const PermissionMode = z.string().min(1);
 
-export const ApprovalDecision = z.enum(['allowOnce', 'allowSession', 'deny']);
+// How the user answered an approval. `allowAlways` also stores a rule for the thread's project
+// (agent workbench spec 38); the provider only ever hears `ProviderApprovalDecision`.
+export const ApprovalDecision = z.enum(['allowOnce', 'allowSession', 'allowAlways', 'deny']);
 export type ApprovalDecision = z.infer<typeof ApprovalDecision>;
+
+// What an adapter is told: wow keeps its own rules, so "always" reaches it as "once".
+export const ProviderApprovalDecision = z.enum(['allowOnce', 'allowSession', 'deny']);
+export type ProviderApprovalDecision = z.infer<typeof ProviderApprovalDecision>;
 
 // Tools of the app handed to an agent: one MCP server reached over HTTP with a bearer token. A
 // turn that carries a toolset gets these tools and no others (no file, shell or network tool,
@@ -52,7 +58,12 @@ export const ProviderCommand = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('answerApproval'),
     approvalId: z.string().min(1),
-    decision: ApprovalDecision,
+    decision: ProviderApprovalDecision,
+    // A denial's note, for a provider that takes a message with it (Claude Code); empty or
+    // absent denies without one (agent workbench spec 37).
+    note: z.string().min(1).optional(),
+    // A plan approval that starts the work: the mode the thread goes on in (spec 42).
+    permissionMode: PermissionMode.optional(),
   }),
   z.object({
     type: z.literal('answerQuestion'),
@@ -95,7 +106,8 @@ export const ProviderSlashCommand = z.object({
 });
 export type ProviderSlashCommand = z.infer<typeof ProviderSlashCommand>;
 
-export const ApprovalKind = z.enum(['command', 'fileChange', 'tool']);
+// `plan` is Claude Code asking to leave plan mode (agent workbench spec 42).
+export const ApprovalKind = z.enum(['command', 'fileChange', 'tool', 'plan']);
 export type ApprovalKind = z.infer<typeof ApprovalKind>;
 
 export const TaskStatus = z.enum(['pending', 'in_progress', 'completed']);
@@ -132,8 +144,22 @@ export const ToolFacts = z.object({
   // An MCP call: the server and its tool.
   server: z.string().optional(),
   tool: z.string().optional(),
+  // An edit: its unified diff, hunks only (from the first `@@` on), made by the adapter (spec 33).
+  // Several files' hunks each follow a `--- a/<path>` and `+++ b/<path>` pair.
+  diff: z.string().optional(),
 });
 export type ToolFacts = z.infer<typeof ToolFacts>;
+
+// What an approval request is about, in wow's words (spec 36): the tool facts of the call it
+// would allow, an MCP tool's arguments, the plan of a plan approval (absent when the request did
+// not carry it), and the command prefix the provider itself proposed to allow from now on, which
+// wow reads only to word its own rule (spec 38).
+export const ApprovalFacts = ToolFacts.partial().extend({
+  arguments: z.unknown().optional(),
+  plan: z.string().optional(),
+  ruleHint: z.string().min(1).optional(),
+});
+export type ApprovalFacts = z.infer<typeof ApprovalFacts>;
 
 const PartialToolFacts = ToolFacts.partial();
 
@@ -203,6 +229,9 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     // duration the server's clock measures it.
     exitCode: z.number().int().optional(),
     durationMs: z.number().nonnegative().optional(),
+    // An edit's diff as the provider reported it once it was written; it replaces the one the
+    // call started with (made from the call's input).
+    diff: z.string().optional(),
   }),
   z.object({
     type: z.literal('approvalRequested'),
@@ -211,6 +240,7 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     kind: ApprovalKind,
     summary: z.string(),
     request: z.unknown(),
+    facts: ApprovalFacts.optional(),
   }),
   z.object({
     type: z.literal('questionAsked'),

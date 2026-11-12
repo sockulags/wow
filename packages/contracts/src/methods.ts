@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { CalendarRange, CalendarRangeParams } from './repeat.js';
 import { AssistantChange, AssistantProposal } from './assistant.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
-import { RunDiff, RunDiffParams } from './diff.js';
+import { RunDiff, RunDiffParams, ThreadDiff, ThreadDiffParams } from './diff.js';
 import { FileReadParams, FileReadResult } from './files.js';
 import { ChangeRequest, HostRead, HostRefreshParams, PageRead, TicketRead } from './hosts.js';
 import {
@@ -298,6 +298,11 @@ export const rpcMethods = {
   'workflowRuns.diff': {
     params: RunDiffParams,
     result: RunDiff,
+  },
+  // What a chat thread changed in its folder since its first turn (agent workbench spec 34).
+  'threads.diff': {
+    params: ThreadDiffParams,
+    result: ThreadDiff,
   },
   // "Remove working copy" (review loop spec 37): deletes a kept working copy of a run that has
   // ended, with whatever is uncommitted or unpushed in it. The app asks before it calls this.

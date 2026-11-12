@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AlwaysAllowRule } from './approvals.js';
 import { BuiltInSkillName } from './skills.js';
 import {
   SecretPattern,
@@ -22,6 +23,7 @@ export type SettingScope = z.infer<typeof SettingScope>;
 export const SettingGroup = z.enum([
   'providers',
   'chat',
+  'approvals',
   'calendar',
   'outlook',
   'scheduler',
@@ -47,6 +49,7 @@ export type SettingGroup = z.infer<typeof SettingGroup>;
 export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
   providers: 'Providers',
   chat: 'Chat',
+  approvals: 'Approvals',
   calendar: 'Calendar',
   outlook: 'Outlook',
   scheduler: 'Scheduler',
@@ -476,6 +479,24 @@ export const settingsRegistry = {
       'How many of the last lines of a command or tool output an opened row shows; "Show all" shows the rest.',
     default: 20,
     scope: 'global',
+  }),
+  'chat.editDiffMaxLines': defineSetting({
+    schema: z.number().int().min(20).max(20000),
+    group: 'chat',
+    label: 'Longest edit diff in a row',
+    description:
+      "An edit row or approval card shows at most this many lines of the edit's diff; the file's whole diff is in the thread's Changes.",
+    default: 400,
+    scope: 'global',
+  }),
+  'approvals.alwaysAllow': defineSetting({
+    schema: z.array(AlwaysAllowRule),
+    group: 'approvals',
+    label: 'Always allow in this project',
+    description:
+      'Requests these rules cover are allowed without asking, in every thread of the project, on Claude Code and Codex alike. A command rule covers commands that start with its words; a tool rule covers that tool. "Always allow in this project" on an approval adds one; nothing is written to the providers\' own settings.',
+    default: [],
+    scope: 'project',
   }),
   'chat.starterCount': defineSetting({
     schema: z.number().int().min(0).max(12),
@@ -1619,7 +1640,7 @@ export const settingsRegistry = {
   ),
   'keybindings.changesStepOnly': keybinding(
     'Changes: this step only',
-    "Narrow the open run's Changes tab to the files the step under review changed, and back (while the tab is open).",
+    "Narrow the open run's Changes tab to the files the step under review changed, or a thread's Changes to the last turn, and back (while they are open).",
     'O',
   ),
   'keybindings.ruleAdd': keybinding(
@@ -1654,8 +1675,33 @@ export const settingsRegistry = {
   ),
   'keybindings.approvalDeny': keybinding(
     'Approval: deny',
-    'Deny the request the open thread waits for.',
+    'Open the note of a denial for the request the open thread waits for; Enter denies with what it says, or without a note when it is empty.',
     'D',
+  ),
+  'keybindings.approvalAllowAlways': keybinding(
+    'Approval: always allow in this project',
+    'Allow the request the open thread waits for and store the rule its card shows, so the project allows such requests from now on.',
+    'Y',
+  ),
+  'keybindings.planAcceptEdits': keybinding(
+    'Plan: start, accept edits',
+    'Start the plan the open thread shows, in the mode that accepts edits.',
+    '1',
+  ),
+  'keybindings.planAskEachTime': keybinding(
+    'Plan: start, ask each time',
+    'Start the plan the open thread shows, in the mode that asks for each request.',
+    '2',
+  ),
+  'keybindings.planKeepPlanning': keybinding(
+    'Plan: keep planning',
+    'Open the note of "Keep planning" for the plan the open thread shows.',
+    '3',
+  ),
+  'keybindings.threadChanges': keybinding(
+    'Chat: show changes',
+    "Open the open thread's Changes in the side panel, and close them again.",
+    'Mod+Shift+D',
   ),
   'keybindings.composerModel': keybinding(
     'Composer: choose model',

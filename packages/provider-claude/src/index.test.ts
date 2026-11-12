@@ -261,6 +261,7 @@ describe('@wow/provider-claude', () => {
         kind: 'command',
         summary: 'Claude wants to run ls',
         request: { toolName: 'Bash', input: { command: 'ls' } },
+        facts: { kind: 'command', command: 'ls', ruleHint: 'ls' },
       },
       { type: 'toolCallOutput', threadId: 't1', itemId: 'toolu_bash', output: 'README.md\nsrc' },
       { type: 'toolCallCompleted', threadId: 't1', itemId: 'toolu_bash', status: 'ok' },
@@ -723,6 +724,175 @@ describe('@wow/provider-claude', () => {
     expect(h.queries[0]?.permissionResults).toEqual([
       { behavior: 'deny', message: 'The user denied this request.' },
     ]);
+  });
+
+  it('sends the note of a denial as its message (agent workbench spec 37)', async () => {
+    const steps = [...loadFixture('turn.json').slice(0, 8), result(0)];
+    const h = harness([steps], (event) => {
+      if (event.type === 'approvalRequested') {
+        void h.adapter.send({
+          type: 'answerApproval',
+          approvalId: event.approvalId,
+          decision: 'deny',
+          note: 'Use pnpm, not npm.',
+        });
+      }
+    });
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(h.queries[0]?.permissionResults).toEqual([
+      { behavior: 'deny', message: 'Use pnpm, not npm.' },
+    ]);
+  });
+
+  it('draws an Edit as a diff from its input, then from its result patch (spec 33)', async () => {
+    const input = { file_path: '/work/demo/src/timer.ts', old_string: 'a\nb', new_string: 'a\nc' };
+    const written: FakeStep = {
+      message: {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'toolu_e', content: 'ok' }],
+        },
+        parent_tool_use_id: null,
+        tool_use_result: {
+          filePath: '/work/demo/src/timer.ts',
+          structuredPatch: [
+            { oldStart: 3, oldLines: 2, newStart: 3, newLines: 2, lines: [' a', '-b', '+c'] },
+          ],
+        },
+        session_id: 'sess-1',
+      } as unknown as SDKMessage,
+    };
+    const created = { file_path: '/work/demo/src/new.ts', content: 'one\ntwo\n' };
+    const h = harness([
+      [
+        assistantToolUse('toolu_e', 'Edit', input),
+        written,
+        assistantToolUse('toolu_w', 'Write', created),
+        result(0),
+      ],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    const started = h.events.filter((event) => event.type === 'toolCallStarted');
+    expect(started).toEqual([
+      expect.objectContaining({
+        kind: 'edit',
+        path: '/work/demo/src/timer.ts',
+        diff: '@@ -1,2 +1,2 @@\n-a\n-b\n+a\n+c',
+      }),
+      expect.objectContaining({
+        kind: 'edit',
+        path: '/work/demo/src/new.ts',
+        diff: '@@ -0,0 +1,2 @@\n+one\n+two',
+      }),
+    ]);
+    expect(h.events.find((event) => event.type === 'toolCallCompleted')).toEqual({
+      type: 'toolCallCompleted',
+      threadId: 't1',
+      itemId: 'toolu_e',
+      status: 'ok',
+      diff: '@@ -3,2 +3,2 @@\n a\n-b\n+c',
+    });
+  });
+
+  it('asks to leave plan mode as a plan approval and starts in the chosen mode (spec 42)', async () => {
+    const plan = '1. Read the timer\n2. Add a bell';
+    const h = harness(
+      [
+        [
+          {
+            permission: { toolName: 'ExitPlanMode', input: { plan }, toolUseID: 'toolu_plan' },
+          },
+          { permission: { toolName: 'ExitPlanMode', input: {}, toolUseID: 'toolu_plan2' } },
+          result(0),
+        ],
+      ],
+      (event) => {
+        if (event.type !== 'approvalRequested') return;
+        void h.adapter.send(
+          event.approvalId === 'toolu_plan'
+            ? {
+                type: 'answerApproval',
+                approvalId: event.approvalId,
+                decision: 'allowOnce',
+                permissionMode: 'acceptEdits',
+              }
+            : {
+                type: 'answerApproval',
+                approvalId: event.approvalId,
+                decision: 'deny',
+                note: 'Plan the tests too.',
+              },
+        );
+      },
+    );
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ permissionMode: 'plan' }));
+    await done;
+    const asked = h.events.filter((event) => event.type === 'approvalRequested');
+    expect(asked).toEqual([
+      expect.objectContaining({ kind: 'plan', facts: { kind: 'other', plan } }),
+      // The request did not carry the plan: wow falls back to the conversation's text.
+      expect.objectContaining({ kind: 'plan', facts: {} }),
+    ]);
+    expect(h.queries[0]?.permissionResults).toEqual([
+      {
+        behavior: 'allow',
+        updatedInput: { plan },
+        updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+      },
+      { behavior: 'deny', message: 'Plan the tests too.' },
+    ]);
+    // The session already is in the new mode, so the thread's own mode change sends nothing.
+    await h.adapter.send({
+      type: 'setPermissionMode',
+      threadId: 't1',
+      permissionMode: 'acceptEdits',
+    });
+    expect(h.queries[0]?.calls).not.toContain('setPermissionMode:acceptEdits');
+  });
+
+  it('shows an MCP request as its server, tool and arguments (spec 36)', async () => {
+    const h = harness(
+      [
+        [
+          {
+            permission: {
+              toolName: 'mcp__github__create_issue',
+              input: { title: 'Bell' },
+              toolUseID: 'toolu_m',
+            },
+          },
+          result(0),
+        ],
+      ],
+      (event) => {
+        if (event.type === 'approvalRequested')
+          void h.adapter.send({
+            type: 'answerApproval',
+            approvalId: event.approvalId,
+            decision: 'allowOnce',
+          });
+      },
+    );
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(h.events.find((event) => event.type === 'approvalRequested')).toEqual(
+      expect.objectContaining({
+        kind: 'tool',
+        facts: {
+          kind: 'mcp',
+          server: 'github',
+          tool: 'create_issue',
+          arguments: { title: 'Bell' },
+        },
+      }),
+    );
   });
 
   it('follows TaskCreate and TaskUpdate as one task list', async () => {

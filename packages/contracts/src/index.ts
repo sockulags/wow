@@ -1,3 +1,4 @@
+export * from './approvals.js';
 export * from './asked.js';
 export * from './assistant.js';
 export * from './calendar-prefs.js';
