@@ -474,11 +474,6 @@ function CardForm({
         {zone !== systemZone() && (
           <p className="text-xs text-muted-foreground">Times are in {formatZone(zone)}.</p>
         )}
-        {error && (
-          <p role="alert" className="text-xs text-destructive">
-            {error}
-          </p>
-        )}
         {asking === 'which' && dialog.type === 'edit' && card && (
           <div
             role="alertdialog"
@@ -557,6 +552,12 @@ function CardForm({
           </div>
         )}
       </div>
+      {/* Outside the scrolling fields, so a refused save's reason is in view next to Save. */}
+      {error && (
+        <p role="alert" className="shrink-0 text-xs text-destructive">
+          {error}
+        </p>
+      )}
       <DialogFooter data-testid="card-form-footer" className="shrink-0 border-t border-border pt-4">
         {dialog.type === 'edit' && (
           <Button
