@@ -134,10 +134,12 @@ function RequestBody({
   payload,
   details,
   context,
+  pending,
 }: {
   readonly payload: ApprovalItemPayload;
   readonly details: unknown;
   readonly context: ItemContext;
+  readonly pending: boolean;
 }) {
   const facts = payload.facts;
   const folderLine = (folder: string) => (
@@ -164,7 +166,8 @@ function RequestBody({
           diff={facts.diff}
           path={path}
           cut={payload.diffCut}
-          onOpenFile={context.openFile}
+          // Until the edit is allowed and made, the file has not changed and Changes lacks it.
+          onOpenFile={pending ? undefined : context.openFile}
         />
         {folderLine(context.cwd)}
       </>
@@ -345,7 +348,7 @@ export function ApprovalCard({
         <Badge variant="outline">{kindLabels[payload.kind]}</Badge>
         <span className="min-w-0 font-mono text-xs break-all">{payload.summary}</span>
       </div>
-      <RequestBody payload={payload} details={details} context={context} />
+      <RequestBody payload={payload} details={details} context={context} pending={pending} />
       {details !== null && details !== undefined && (
         <details className="group text-xs">
           <summary className="flex cursor-pointer list-none items-center gap-1.5 text-muted-foreground select-none">

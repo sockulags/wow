@@ -426,7 +426,8 @@ Every tool call is one line, drawn by what the call does:
   src/timer.ts +4 −1"; opened, it shows the change in colour, removed lines red and added lines
   green, with **Open file**, which opens the thread's Changes at that file (not offered for a file
   outside the thread's folder, or when the folder is not in Git or the thread is older than
-  Changes). A new file shows as
+  Changes, and not while the edit is still running or its request waits for your answer, since
+  the file has not changed yet). A new file shows as
   added lines. A very long diff is cut at `chat.editDiffMaxLines` lines; the thread's Changes
   have all of it.
 - **Any other tool**, and every call stored before this version, keep the row they had: the

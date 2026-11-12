@@ -272,6 +272,60 @@ describe('the approval card (spec 36 to 38)', () => {
     expect(screen.getByText('Bell')).toBeTruthy();
   });
 
+  it('has no Open file on an edit that waits for its answer or is still being made', async () => {
+    const h = harness();
+    const opened = vi.fn<(path: string) => void>();
+    const edit: ApprovalItemPayload = {
+      approvalId: 't1:a2',
+      kind: 'fileChange',
+      summary: 'Write the bell',
+      facts: { kind: 'edit', path: '/work/kettle/src/bell.ts', diff: '@@ -0,0 +1 @@\n+ring();' },
+    };
+    const card = (decision: Approval['decision']) => {
+      const row = approvalRow(edit, decision);
+      return (
+        <ConversationItem
+          item={row.item}
+          approvals={[row.approval]}
+          questions={[]}
+          context={{ ...context, openFile: opened }}
+        />
+      );
+    };
+    const { rerender } = h.show(<ul>{card(null)}</ul>);
+    expect(screen.getByRole('table', { name: 'Diff of src/bell.ts' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open file' })).toBeNull();
+    rerender(
+      <RuntimeProvider runtime={h.runtime}>
+        <ul>{card('allowOnce')}</ul>
+      </RuntimeProvider>,
+    );
+    expect(screen.getByRole('button', { name: 'Open file' })).toBeTruthy();
+    rerender(
+      <RuntimeProvider runtime={h.runtime}>
+        <ul>
+          <ConversationItem
+            item={item('tool_call', {
+              kind: 'edit',
+              name: 'Write',
+              input: {},
+              output: '',
+              status: 'running',
+              path: '/work/kettle/src/bell.ts',
+              diff: '@@ -0,0 +1 @@\n+ring();',
+            })}
+            approvals={[]}
+            questions={[]}
+            context={{ ...context, awaitingApproval: true, openFile: opened }}
+          />
+        </ul>
+      </RuntimeProvider>,
+    );
+    await userEvent.setup().click(screen.getByText('Edit', { exact: false }));
+    expect(screen.getByTestId('edit-diff')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open file' })).toBeNull();
+  });
+
   it('opens a one-line note on Deny; Enter sends it, and an empty note denies without one (spec 37)', async () => {
     const user = userEvent.setup();
     const h = harness();

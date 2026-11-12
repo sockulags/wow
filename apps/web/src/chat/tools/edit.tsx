@@ -156,7 +156,8 @@ export function editParts(
           diff={payload.diff}
           path={target}
           cut={payload.diffCut}
-          onOpenFile={context.openFile}
+          // A running edit may still wait for its approval; the file is in Changes once made.
+          onOpenFile={payload.status === 'running' ? undefined : context.openFile}
         />
       ),
   };

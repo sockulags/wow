@@ -2912,7 +2912,8 @@ counts by the hunk headers, so a removed line reading `--- x` is not a header) a
 diff drawn with the run Changes tab's `DiffLines`, and Open file. Open file opens the thread's
 Changes at that file for a chat thread and the run's file viewer for a step's thread; it is not
 offered for a file outside the thread's folder (the path stays absolute), nor in a chat thread
-whose `threads.diff` status is not `ok`, since its Changes would only say why. Once the panel tabs
+whose `threads.diff` status is not `ok`, since its Changes would only say why, nor on a running
+edit row or a pending approval card, whose file is not in Changes yet. Once the panel tabs
 of U5 are in, it should open a file tab in thread scope. An
 `edit` row without a diff (stored before) is drawn as the generic row it was.
 
