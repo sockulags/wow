@@ -308,3 +308,53 @@ describe('a turn stopped before this change (agent workbench spec 48, 89)', () =
     expect(screen.getAllByRole('listitem')).toHaveLength(5);
   });
 });
+
+// Agent workbench spec 50 to 52: the message the server holds shows after the conversation with
+// Edit and Cancel; once sent it is a user message marked how it went.
+describe('a queued message (agent workbench spec 50 to 52)', () => {
+  const queued: Thread = {
+    ...thread,
+    state: 'working',
+    queued: {
+      id: 'turn-1:queued',
+      text: 'Then sum it up',
+      skills: [{ name: 'tidy-notes', source: 'yours' }],
+      queuedAt: '2026-11-02T08:01:30.000Z',
+    },
+  };
+
+  it('shows "Queued · sent when the turn ends" with its text and skills', () => {
+    setup({ shown: queued });
+    const row = screen.getByTestId('queued-message');
+    expect(row.textContent).toContain('Queued · sent when the turn ends');
+    expect(row.textContent).toContain('Then sum it up');
+    expect(screen.getByRole('list', { name: 'Queued with skills' }).textContent).toBe('tidy-notes');
+  });
+
+  it('takes it off the queue on Cancel', async () => {
+    const { sent, user } = setup({ shown: queued });
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(sent()).toEqual([{ type: 'thread.cancelQueued', threadId: thread.id }]);
+  });
+
+  it('puts it back in the composer on Edit once the server took it off', async () => {
+    const { box, sent, user } = setup({ shown: queued });
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(sent()).toEqual([{ type: 'thread.cancelQueued', threadId: thread.id }]);
+    expect((box as HTMLTextAreaElement).value).toBe('Then sum it up');
+    expect(
+      screen.queryAllByTestId('skill-chip').map((chip) => chip.getAttribute('aria-label')),
+    ).toEqual(['tidy-notes, Yours skill']);
+  });
+
+  it('marks a sent message by how it went', () => {
+    setup({
+      topics: {
+        threadItems: [
+          { ...failedItems[0], payload: { text: 'Also the license', queued: 'duringTurn' } },
+        ],
+      },
+    });
+    expect(screen.getByTestId('sent-from-queue').textContent).toBe('Sent during the turn');
+  });
+});

@@ -12,7 +12,7 @@ import {
   ToolFacts,
 } from './provider.js';
 import { QuestionOption, QuestionReply } from './questions.js';
-import { SentSkill } from './skills.js';
+import { SentSkill, SkillRef } from './skills.js';
 import { CardOccurrence, LocalDay, PastSeries, RepeatRule } from './repeat.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
 import {
@@ -71,6 +71,17 @@ export type ProviderInstance = z.infer<typeof ProviderInstance>;
 export const ThreadKind = z.enum(['chat', 'assistant']);
 export type ThreadKind = z.infer<typeof ThreadKind>;
 
+// A message written while a turn runs, held by the server until the turn ends (agent workbench
+// spec 50). A second message joins it: the texts one after the other, the skills once each. `id`
+// changes with every join, so whatever acts on the queue acts on the message as it was then.
+export const QueuedMessage = z.object({
+  id: Id,
+  text: z.string(),
+  skills: z.array(SkillRef).optional(),
+  queuedAt: Timestamp,
+});
+export type QueuedMessage = z.infer<typeof QueuedMessage>;
+
 export const Thread = z.object({
   id: Id,
   kind: ThreadKind.optional(),
@@ -95,6 +106,8 @@ export const Thread = z.object({
   // False once a turn ended or the thread started to need the user since it was last opened
   // (spec 70). The server keeps it, so every window and the tray agree. Absent means seen.
   seen: z.boolean().optional(),
+  // The message waiting for the running turn to end; null or absent when none waits.
+  queued: QueuedMessage.nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -155,6 +168,10 @@ export const TextItemPayload = z.object({
   // A user message or a step's prompt sent with skills (wow skills spec 14): their names, and
   // for a wow skill the text that was sent, which `text` leaves out. Absent for older messages.
   skills: z.array(SentSkill).optional(),
+  // A user message that was queued while a turn ran (agent workbench spec 50, 51): `duringTurn`
+  // went into the running turn (Claude Code takes it there), `afterTurn` was sent by the server
+  // when the turn ended. Absent for a message sent at once.
+  queued: z.enum(['duringTurn', 'afterTurn']).optional(),
 });
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 

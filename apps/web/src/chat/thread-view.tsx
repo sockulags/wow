@@ -10,6 +10,7 @@ import { CircleCheckIcon, PinIcon, RotateCcwIcon, SearchXIcon, Undo2Icon } from 
 import {
   Fragment,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   type ReactNode,
@@ -32,6 +33,7 @@ import {
   BackgroundIndicator,
   ChatQuestions,
   ConversationItem,
+  QueuedMessageItem,
   StoppedLine,
   WorkingIndicator,
   type ItemContext,
@@ -49,7 +51,8 @@ import {
   runningTurn,
   type ContextUsage,
 } from './model';
-import { ThreadSettings } from './thread-settings';
+import { ModelBar, useModelBarKeys, type ModelBarHandle, type ModelBarProps } from './model-bar';
+import { frontModelBar } from './model-commands';
 import { ThreadTitle } from './thread-title';
 import {
   groupQuestions,
@@ -164,16 +167,6 @@ function ThreadHeader({
         <span data-testid="thread-provider" className="text-xs text-muted-foreground">
           {instance ? providerLabel(instance, instances) : thread.providerInstanceId}
         </span>
-        {instance && (
-          <ThreadSettings
-            providerInstanceId={instance.id}
-            kind={instance.kind}
-            value={thread}
-            onChange={(changes) =>
-              void send({ type: 'thread.configure', threadId: thread.id, ...changes })
-            }
-          />
-        )}
       </div>
     </header>
   );
@@ -271,6 +264,9 @@ export interface ConversationExtras {
   // The same check for what is typed on an agent's question card.
   readonly questionHold?: QuestionHold;
   readonly notice?: ReactNode;
+  // Its own composer bar (the assistant's settings), or null for none; left out, the thread's
+  // own bar, so extras for another reason never drop it.
+  readonly modelBar?: Omit<ModelBarProps, 'ref' | 'returnFocus'> | null;
 }
 
 // A thread's conversation, its gate bar and its composer: the chat view's thread and, narrower,
@@ -307,6 +303,9 @@ export function ThreadConversation({
   const { container, onScroll } = useStickToBottom(items);
   const ownComposer = useRef<ComposerHandle>(null);
   const composer = extras?.composerRef ?? ownComposer;
+  const bar = useRef<ModelBarHandle>(null);
+  const barKeys = useModelBarKeys(bar);
+  const barId = useId();
 
   useEffect(() => {
     if (autoFocus) composer.current?.focus();
@@ -324,6 +323,14 @@ export function ThreadConversation({
       ...(skills ? { skills: [...skills] } : {}),
     });
   const stop = () => void send({ type: 'thread.interrupt', threadId });
+  const cancelQueued = () => send({ type: 'thread.cancelQueued', threadId });
+  // Off the queue first, so a message the server sent meanwhile is not put back as unsent.
+  const editQueued = async () => {
+    const queued = thread.queued;
+    if (!queued) return;
+    await cancelQueued();
+    composer.current?.putBack(queued.text, queued.skills ?? []);
+  };
   const approval = pendingApproval(approvals);
   const question = pendingQuestion(questions, items ?? [], running);
   const gateRun = gateRunForThread(thread, runs);
@@ -399,6 +406,22 @@ export function ThreadConversation({
         ? 'Write the next message; it is sent when the turn ends'
         : (extras?.placeholder ?? `Message the agent. Type ${skillTrigger} to pick a skill.`);
 
+  // A chat or step thread picks its model, effort and mode in the bar; the pick applies to the
+  // next turn (agent workbench spec 1, 2, 5).
+  const barProps: Omit<ModelBarProps, 'ref' | 'returnFocus'> | null | undefined =
+    extras?.modelBar !== undefined
+      ? extras.modelBar
+      : instance && {
+          providerInstanceId: instance.id,
+          kind: instance.kind,
+          value: thread,
+          defaults: { model: instance.defaultModel, effort: instance.defaultEffort },
+          onChange: (changes) => void send({ type: 'thread.configure', threadId, ...changes }),
+        };
+  const modelBar = barProps && (
+    <ModelBar id={barId} ref={bar} {...barProps} returnFocus={() => composer.current?.focus()} />
+  );
+
   const column = compact ? 'w-full px-3' : 'mx-auto w-full max-w-3xl px-4';
   return (
     <>
@@ -462,6 +485,13 @@ export function ThreadConversation({
               );
             })}
             {extras?.end && <li>{extras.end}</li>}
+            {thread.queued && (
+              <QueuedMessageItem
+                queued={thread.queued}
+                onCancel={cancelQueued}
+                onEdit={editQueued}
+              />
+            )}
           </ol>
           {running && thread.state === 'working' && (
             <div className="mt-3">
@@ -475,7 +505,11 @@ export function ThreadConversation({
           )}
         </div>
       </div>
-      <div className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}>
+      <div
+        className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}
+        // The palette's model commands go to the bar whose composer had the focus last.
+        onFocus={() => frontModelBar(barId)}
+      >
         <TaskPin threadId={threadId} items={items ?? []} turns={turns} />
         {gateRun && (
           <GateBar
@@ -494,6 +528,15 @@ export function ThreadConversation({
           onSend={answerQuestion ?? message}
           onStop={stop}
           notice={extras?.notice}
+          bar={modelBar}
+          onBarKey={barKeys}
+          // The Assistant view keeps no draft (its text may hold a secret) and lists no commands.
+          draftKey={extras ? undefined : threadId}
+          commandSource={
+            extras || compact || !instance
+              ? undefined
+              : { providerInstanceId: instance.id, cwd: thread.cwd, threadId }
+          }
           {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
           footer={
             (showMeter && context) || (canResume && !errorId && !stoppedLineResumes) ? (

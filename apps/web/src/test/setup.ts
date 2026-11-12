@@ -16,4 +16,7 @@ Element.prototype.releasePointerCapture ??= () => undefined;
 
 afterEach(() => {
   cleanup();
+  // Composer drafts are kept in the browser's storage (agent workbench spec 49); each test starts
+  // without the last one's.
+  globalThis.localStorage.clear();
 });

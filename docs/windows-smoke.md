@@ -81,6 +81,12 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       thread says "Waiting for background work" with the agent's description. Without writing
       anything, Claude's answer appears when the agent is done, the thread goes to Working and then
       Idle, and the new turn has its own usage. Write down whether the waiting line showed.
+- [ ] The composer bar on Claude. Open its model list (Ctrl+Shift+M): each model shows Claude
+      Code's description under its label, no image icon and no "(model's default)" in the effort
+      list (Claude Code's `supportedModels()` reports neither). With the cursor in the composer,
+      Shift+Tab goes Accept edits, Plan only, Ask and never Bypass permissions; Escape leaves the
+      composer. Pick Plan only and send "Plan a change to smoke.txt": write down whether Claude
+      plans without editing, which shows the mode reached Claude Code.
 - [ ] **Tool rows (Claude Code).** Ask Claude to run `cmd /c exit 1`, then `ping -n 4 127.0.0.1`,
       then to read `README.md` and to search the folder for a word. Expected: `$ cmd /c exit 1`
       with "failed · <time>" and `$ ping …` with "done · about 3 s": Claude Code's Bash result
@@ -105,6 +111,12 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       one, and answering it continues the turn.
 - [ ] The turn ends with usage.
 - [ ] Type `$`: picking a skill inserts `$name`.
+- [ ] The composer bar on Codex. Open its model list: each model shows its description, the
+      instance's default (or Codex's own) is marked, models that take images have the image icon,
+      and no hidden model is listed; the effort list marks the model's own default. Write down the
+      models and marks you see, which come from `model/list` (`description`, `isDefault`,
+      `defaultReasoningEffort`, `inputModalities`, `hidden`). Shift+Tab goes Auto, Ask untrusted,
+      Read only and never Full access.
 - [ ] Ask Codex to ask you a question with choices with its user input tool (this may need
       Codex's plan mode or collaboration mode; write down how you got it to ask). Answer with a
       choice and typed text in **Other** together. Write down what Codex says it received:

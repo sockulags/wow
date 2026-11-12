@@ -105,6 +105,7 @@ const FIELDS = {
       'data[].supportedReasoningEfforts',
       'data[].supportedReasoningEfforts[].reasoningEffort',
       'data[].defaultReasoningEffort',
+      'data[].inputModalities?',
       'nextCursor?',
     ],
   },

@@ -38,7 +38,7 @@ const browser = {
 };
 const sharedHosts = /[\\/](?:hosts|gitlab|tickets|pages)\.spec\.ts$/;
 // They all talk to the one assistant conversation of the assistant's server copy.
-const sharedAssistant = /[\\/](?:assistant|questions|models)\.spec\.ts$/;
+const sharedAssistant = /[\\/](?:app-assistant|assistant|questions|models)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: './e2e',

@@ -16,6 +16,7 @@ import { rowActionCommands } from '@/chat/row-commands';
 import { activeTaskPin, taskPinCommands, taskPinStore } from '@/chat/task-pin';
 import { focusedRowActions, rowActionStore } from '@/lib/row-actions';
 import { paletteThreadHits, threadListStore } from '@/chat/thread-commands';
+import { activeModelBar, modelBarCommands, modelBarStore } from '@/chat/model-commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
@@ -116,6 +117,7 @@ export function useCommands(gated = false): {
   const taskPinOpen = useStore(taskPinStore, (state) =>
     taskPin === undefined ? false : (state.open[taskPin] ?? false),
   );
+  const modelBar = useStore(modelBarStore, activeModelBar);
   const all = useMemo(() => {
     const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
@@ -202,6 +204,7 @@ export function useCommands(gated = false): {
       ...skillComposerCommands(skillComposer),
       ...taskPinCommands(taskPin, taskPinOpen),
       ...rowActionCommands(focusedRowActions({ areas: rowAreas })),
+      ...modelBarCommands(modelBar),
       ...assistantCommands({
         changes: assistantChanges ?? [],
         proposals: assistantProposals ?? [],
@@ -273,6 +276,7 @@ export function useCommands(gated = false): {
     taskPinOpen,
     listProjectId,
     paletteHits,
+    modelBar,
   ]);
   const commands = useMemo(
     () => (gated ? all.filter((command) => gateCommand(command.id)) : all),

@@ -10,6 +10,7 @@ import {
   type ApprovalDecision,
   type BackgroundTask,
   type Question,
+  type QueuedMessage,
   type ThreadItem,
   type Turn,
 } from '@wow/contracts';
@@ -18,6 +19,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   CircleDashedIcon,
+  ClockIcon,
   HourglassIcon,
   RotateCcwIcon,
   ShieldQuestionIcon,
@@ -87,6 +89,82 @@ function Unreadable({ item }: { item: ThreadItem }) {
   return <p className="text-xs text-muted-foreground">Unreadable {item.kind} item.</p>;
 }
 
+const queuedMarks: Readonly<Record<NonNullable<TextItemPayload['queued']>, string>> = {
+  duringTurn: 'Sent during the turn',
+  afterTurn: 'Sent when the turn ended',
+};
+
+// The message the server holds until the turn ends (agent workbench spec 50, 52), after the
+// conversation's rows. Edit and Cancel go while it waits; once sent it is a user message.
+export function QueuedMessageItem({
+  queued,
+  onEdit,
+  onCancel,
+}: {
+  queued: QueuedMessage;
+  onEdit(): Promise<unknown>;
+  onCancel(): Promise<unknown>;
+}) {
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const act = (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(undefined);
+    action().then(
+      () => setBusy(false),
+      (reason: unknown) => {
+        setBusy(false);
+        setError(errorMessage(reason));
+      },
+    );
+  };
+  const skills = queued.skills ?? [];
+  return (
+    <li data-testid="queued-message" className="flex flex-col items-end gap-1">
+      <span className="flex items-center gap-1 text-2xs text-muted-foreground">
+        <ClockIcon aria-hidden className="size-3" />
+        Queued · sent when the turn ends
+      </span>
+      {skills.length > 0 && (
+        <div
+          role="list"
+          aria-label="Queued with skills"
+          className="flex max-w-[85%] flex-wrap justify-end gap-1"
+        >
+          {skills.map((skill) => (
+            <Badge
+              role="listitem"
+              key={`${skill.source ?? 'folder'}:${skill.name}`}
+              variant="outline"
+              className="font-mono"
+            >
+              {skill.name}
+            </Badge>
+          ))}
+        </div>
+      )}
+      {queued.text.trim() !== '' && (
+        <div className="w-fit max-w-[85%] rounded-lg border border-dashed border-border px-3 py-2 text-sm whitespace-pre-wrap text-muted-foreground">
+          {queued.text}
+        </div>
+      )}
+      <div className="flex items-center gap-1">
+        <Button size="xs" variant="ghost" disabled={busy} onClick={() => act(onEdit)}>
+          Edit
+        </Button>
+        <Button size="xs" variant="ghost" disabled={busy} onClick={() => act(onCancel)}>
+          Cancel
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </li>
+  );
+}
+
 function UserMessage({ payload, context }: { payload: TextItemPayload; context: ItemContext }) {
   // The answer to the assistant's questions shows on their card; here only that it was sent.
   if (payload.answers) {
@@ -118,6 +196,11 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
         <div className="w-fit max-w-[85%] rounded-lg bg-secondary px-3 py-2 text-sm whitespace-pre-wrap text-secondary-foreground">
           {payload.text}
         </div>
+      )}
+      {payload.queued && (
+        <span data-testid="sent-from-queue" className="text-2xs text-muted-foreground">
+          {queuedMarks[payload.queued]}
+        </span>
       )}
       {context.at && (
         <time

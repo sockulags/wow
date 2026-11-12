@@ -1657,6 +1657,26 @@ export const settingsRegistry = {
     'Deny the request the open thread waits for.',
     'D',
   ),
+  'keybindings.composerModel': keybinding(
+    'Composer: choose model',
+    "Open the composer bar's model list, while the composer has the focus.",
+    'Mod+Shift+M',
+  ),
+  'keybindings.composerEffort': keybinding(
+    'Composer: choose effort',
+    "Open the composer bar's effort list, while the composer has the focus.",
+    'Mod+Shift+E',
+  ),
+  'keybindings.composerModeCycle': keybinding(
+    'Composer: next permission mode',
+    "Move the thread to the next permission mode in its provider's cycle, while the composer has the focus. Bypass permissions and Full access are never in the cycle.",
+    'Shift+Tab',
+  ),
+  'keybindings.composerLeave': keybinding(
+    'Composer: leave',
+    'Move the focus out of the composer to what comes before it, as Shift+Tab does elsewhere, since in the composer Shift+Tab changes the permission mode.',
+    'Escape',
+  ),
   'keybindings.questionFocus': keybinding(
     'Question: go to the card',
     'Put the keyboard on the question card that waits for an answer, in a chat thread or the Assistant view. There the arrow keys or digits pick, typing goes to "Other" and Enter sends.',

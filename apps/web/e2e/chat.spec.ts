@@ -33,6 +33,56 @@ async function startThread(page: Page, message: string) {
 
 const conversation = (page: Page) => page.getByRole('list', { name: 'Conversation' });
 const threadList = (page: Page) => page.getByRole('navigation', { name: 'Threads' });
+const messageBox = (page: Page) => page.getByRole('combobox', { name: 'Message' });
+
+// A thread on the Claude instance: a new thread starts on the instance of the newest thread,
+// which an earlier case may have put on Codex.
+async function startClaudeThread(page: Page, message: string) {
+  await page.goto('/chat/new');
+  await choose(page.getByLabel('Provider instance'), 'Mock Claude');
+  await choose(page.getByLabel('Project'), 'Demo');
+  await expect(page.getByTestId('model-bar')).toBeVisible();
+  await messageBox(page).fill(message);
+  await messageBox(page).press('Enter');
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+}
+
+// A Codex thread whose "wait" turn runs until `endWait` ends it.
+async function startCodexWait(page: Page, message: string) {
+  await page.goto('/chat/new');
+  await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+  await choose(page.getByLabel('Project'), 'Demo');
+  await expect(page.getByTestId('model-bar')).toBeVisible();
+  await messageBox(page).fill(message);
+  await messageBox(page).press('Enter');
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+  await expect(page.getByTestId('thread-state')).toHaveText('Working');
+}
+
+// Ends the open thread's "wait" turn through the mock's control port (e2e/server.ts).
+async function endWait(page: Page) {
+  const threadId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+  const done = await fetch(
+    `http://127.0.0.1:${e2eOutlookControlPort}/turn-done?threadId=${threadId}`,
+    { method: 'PUT' },
+  );
+  expect(done.status).toBe(200);
+}
+
+// Puts the open thread back on the mock's first model, the default effort and Ask, through the
+// composer bar.
+async function resetBar(page: Page) {
+  const bar = page.getByTestId('model-bar');
+  for (const [part, option] of [
+    ['Model', /^Mock model$/],
+    ['Effort', /^Default/],
+    ['Permission mode', /^Ask for permissions/],
+  ] as const) {
+    await bar.getByRole('button', { name: part }).click();
+    await page.getByRole('listbox', { name: part }).getByRole('option', { name: option }).click();
+  }
+  await expect(bar).toHaveText('Mock model·Default·Ask');
+}
 
 test.describe('chat', () => {
   test('streams a reply with reasoning, tool rows, tasks and usage', async ({ page }) => {
@@ -495,18 +545,165 @@ test.describe('chat', () => {
     await expect(idle.getByRole('link', { name: /Count the tea leaves/ })).toBeVisible();
   });
 
-  test('queues a message written during a turn and sends it with Send now', async ({ page }) => {
-    await startThread(page, 'Wait for me');
-    await expect(page.getByTestId('thread-state')).toHaveText('Working');
-    await expect(page.getByTestId('turn-elapsed')).toBeVisible();
-    const composer = page.getByRole('combobox', { name: 'Message' });
-    await composer.fill('Then summarise it');
-    await composer.press('Enter');
+  test('keeps a draft and a queued message across threads and a reload @agent-workbench-49 @agent-workbench-50 @agent-workbench-52', async ({
+    page,
+  }) => {
+    await startCodexWait(page, 'Wait for the kettle');
+    const threadA = page.url();
     const queued = page.getByTestId('queued-message');
-    await expect(queued).toContainText('Then summarise it');
-    await queued.getByRole('button', { name: 'Send now' }).click();
+
+    // Enter during the turn: the server holds it, with Edit and Cancel.
+    await messageBox(page).fill('Then sum it up');
+    await messageBox(page).press('Enter');
+    await expect(queued).toContainText('Queued · sent when the turn ends');
+    await expect(queued).toContainText('Then sum it up');
+    await expect(messageBox(page)).toHaveValue('');
+    // Edit takes it off the queue and puts it back in the composer; Enter queues it again.
+    await queued.getByRole('button', { name: 'Edit' }).click();
     await expect(queued).toBeHidden();
-    await expect(conversation(page).getByText('You said: Then summarise it')).toBeVisible();
+    await expect(messageBox(page)).toHaveValue('Then sum it up');
+    await messageBox(page).press('Enter');
+    await expect(queued).toContainText('Then sum it up');
+
+    // A draft with a chip, then another thread: its composer is its own.
+    await messageBox(page).pressSequentially('/deli');
+    await messageBox(page).press('Enter');
+    await messageBox(page).pressSequentially('and list the cups');
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Provider instance'), 'Mock Claude');
+    await choose(page.getByLabel('Project'), 'Demo');
+    await messageBox(page).fill('Hello from the other thread');
+    await messageBox(page).press('Enter');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Hello from the other thread',
+    );
+    await expect(messageBox(page)).toHaveValue('');
+
+    await page.goto(threadA);
+    await expect(messageBox(page)).toHaveValue('and list the cups');
+    const picked = page.getByRole('list', { name: 'Picked skills' });
+    await expect(picked).toHaveText('deliver-work');
+    await expect(queued).toContainText('Then sum it up');
+    await page.reload();
+    await expect(messageBox(page)).toHaveValue('and list the cups');
+    await expect(picked).toHaveText('deliver-work');
+    await expect(queued).toContainText('Then sum it up');
+
+    // A second message joins the first; sending empties the composer.
+    await messageBox(page).press('Enter');
+    await expect(messageBox(page)).toHaveValue('');
+    await expect(picked).toBeHidden();
+    await expect(queued).toContainText('Then sum it up');
+    await expect(queued).toContainText('and list the cups');
+    await expect(queued.getByRole('list', { name: 'Queued with skills' })).toHaveText(
+      'deliver-work',
+    );
+
+    // The turn ends: the server sends what waited, as one message.
+    await endWait(page);
+    await expect(queued).toBeHidden();
+    const sent = conversation(page).getByTestId('item-user').last();
+    await expect(sent).toContainText('Then sum it up');
+    await expect(sent).toContainText('and list the cups');
+    await expect(sent.getByTestId('sent-from-queue')).toHaveText('Sent when the turn ended');
+    await expect(conversation(page).getByTestId('item-assistant_text').last()).toContainText(
+      'You said: $deliver-work Then sum it up',
+    );
+
+    // Cancel takes a queued message off, and the server sends nothing.
+    await messageBox(page).fill('Wait for the second kettle');
+    await messageBox(page).press('Enter');
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await messageBox(page).fill('Never mind this');
+    await messageBox(page).press('Enter');
+    await queued.getByRole('button', { name: 'Cancel' }).click();
+    await expect(queued).toBeHidden();
+    await endWait(page);
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(conversation(page).getByText('Never mind this')).toHaveCount(0);
+  });
+
+  test('hands a message to the running Claude Code turn and shows it sent @agent-workbench-51', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Wait for the tea');
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await messageBox(page).fill('Also warm the cups');
+    await messageBox(page).press('Enter');
+    const handed = conversation(page).getByTestId('item-user').last();
+    await expect(handed).toContainText('Also warm the cups');
+    await expect(handed.getByTestId('sent-from-queue')).toHaveText('Sent during the turn');
+    await expect(page.getByTestId('queued-message')).toBeHidden();
+    await endWait(page);
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(conversation(page).getByTestId('item-user')).toHaveCount(2);
+  });
+
+  test('runs /clear from the composer @agent-workbench-58 @agent-workbench-59 @agent-workbench-60', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Clear me later');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Clear me later',
+    );
+    const oldThread = page.url();
+    const bar = page.getByTestId('model-bar');
+    await bar.getByRole('button', { name: 'Effort' }).click();
+    await page
+      .getByRole('listbox', { name: 'Effort' })
+      .getByRole('option', { name: 'High' })
+      .click();
+    await expect(bar).toHaveText('Mock model·High·Ask');
+
+    const list = page.getByRole('listbox', { name: 'Skills' });
+    await messageBox(page).pressSequentially('/');
+    // wow's commands, then Claude Code's own, then the skills.
+    await expect(list.locator('[cmdk-group-heading]').first()).toHaveText('Commands');
+    await expect(list.locator('[cmdk-group-heading]').nth(1)).toHaveText('Claude Code commands');
+    const commands = list.getByRole('group', { name: 'Commands' }).getByRole('option');
+    for (const name of ['/model', '/effort', '/plan', '/compact', '/clear', '/done']) {
+      await expect(commands.filter({ hasText: name }).first()).toBeVisible();
+    }
+    // /fork has no palette command yet, so it is not listed.
+    await expect(commands.filter({ hasText: '/fork' })).toHaveCount(0);
+    const claude = list.getByRole('group', { name: 'Claude Code commands' }).getByRole('option');
+    await expect(claude).toHaveCount(2);
+    await expect(claude.first()).toContainText('/review');
+
+    // A Claude Code command goes into the text, to be sent as typed.
+    await messageBox(page).pressSequentially('rev');
+    await messageBox(page).press('Enter');
+    await expect(messageBox(page)).toHaveValue('/review ');
+    await messageBox(page).fill('');
+
+    await messageBox(page).pressSequentially('/cle');
+    await messageBox(page).press('Enter');
+    await expect(page).toHaveURL(/\/chat\/new$/);
+    await expect(page.getByLabel('Provider instance')).toHaveText(/Mock Claude/);
+    await expect(page.getByLabel('Project')).toHaveText(/Demo/);
+    await expect(page.getByTestId('model-bar')).toHaveText('Mock model·High·Ask');
+    await expect(threadList(page).getByRole('link', { name: /Clear me later/ })).toBeVisible();
+
+    // New threads start from the last one, so the later cases get the defaults back.
+    await page.goto(oldThread);
+    await resetBar(page);
+  });
+
+  // U3's `/` list runs U2's "Rename thread" (spec 58, 67).
+  test('renames the thread with /rename from the composer', async ({ page }) => {
+    await startClaudeThread(page, 'Name me from the composer');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Name me from the composer',
+    );
+    await messageBox(page).pressSequentially('/rena');
+    await messageBox(page).press('Enter');
+    await expect(messageBox(page)).toHaveValue('');
+    const title = page.getByRole('textbox', { name: 'Thread title' });
+    await expect(title).toBeFocused();
+    await title.fill('Named by slash');
+    await title.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Named by slash' })).toBeVisible();
+    await expect(threadList(page).getByRole('link', { name: /Named by slash/ })).toBeVisible();
   });
 
   test('a new thread starts from the last one (owner decision F-5)', async ({ page }) => {
@@ -645,6 +842,116 @@ test.describe('chat', () => {
     await expect(renamed.getByTestId('thread-unread')).toHaveCount(0);
   });
 
+  test('picks model, effort and mode from the composer bar @agent-workbench-1 @agent-workbench-2 @agent-workbench-3 @agent-workbench-4 @agent-workbench-5 @agent-workbench-7', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Pick from the bar');
+    const bar = page.getByTestId('model-bar');
+    await expect(bar).toHaveText('Mock model·Default·Ask');
+    // The header keeps the project and the provider; the selects left it.
+    await expect(page.locator('header').getByRole('combobox')).toHaveCount(0);
+
+    const box = messageBox(page);
+    await box.focus();
+    await page.keyboard.press('Control+Shift+M');
+    const models = page.getByRole('listbox', { name: 'Model' });
+    await models.getByRole('option', { name: /Mock model, large/ }).click();
+    await expect(bar.getByRole('button', { name: 'Model' })).toHaveText('Mock model, large');
+    await expect(box).toBeFocused();
+    await page.keyboard.press('Control+Shift+E');
+    await page
+      .getByRole('listbox', { name: 'Effort' })
+      .getByRole('option', { name: /^High/ })
+      .click();
+    await expect(bar.getByRole('button', { name: 'Effort' })).toHaveText('High');
+
+    // Shift+Tab steps through Ask, Accept edits and Plan only; Bypass only from the list.
+    const mode = bar.getByRole('button', { name: 'Permission mode' });
+    await box.press('Shift+Tab');
+    await expect(mode).toHaveText('Accept edits');
+    await expect(mode).toHaveClass(/text-state-done/);
+    await box.press('Shift+Tab');
+    await expect(mode).toHaveText('Plan only');
+    await expect(mode).toHaveClass(/text-info/);
+    await box.press('Shift+Tab');
+    await expect(mode).toHaveText('Ask');
+    await expect(box).toBeFocused();
+    await mode.click();
+    await page
+      .getByRole('listbox', { name: 'Permission mode' })
+      .getByRole('option', { name: 'Bypass permissions' })
+      .click();
+    await expect(mode).toHaveText('Bypass permissions');
+    await expect(mode).toHaveClass(/text-destructive/);
+    // The second key leaves the composer.
+    await box.focus();
+    await box.press('Escape');
+    await expect(box).not.toBeFocused();
+
+    // thread.configure stored the picks: they hold after a reload.
+    await page.reload();
+    await expect(page.getByTestId('model-bar')).toHaveText(
+      'Mock model, large·High·Bypass permissions',
+    );
+    // A new thread starts from the last one, so the later cases get the defaults back.
+    await resetBar(page);
+
+    // A new thread has the same bar; on Codex the list says what the provider offers.
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await expect(page.getByTestId('model-bar')).toHaveText('Mock model for Codex·Medium·Read only');
+    await page.getByTestId('model-bar').getByRole('button', { name: 'Model' }).click();
+    const offered = page.getByRole('listbox', { name: 'Model' }).getByRole('option');
+    await expect(offered).toHaveText([
+      "Mock model for Codex(provider's default)Invented: the everyday mock model",
+      'Mock model for Codex, miniInvented: small and quick',
+    ]);
+    await expect(offered.first().getByRole('img', { name: 'Takes images' })).toBeVisible();
+    await expect(offered.last().getByRole('img', { name: 'Takes images' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await page.getByTestId('model-bar').getByRole('button', { name: 'Effort' }).click();
+    await expect(page.getByRole('listbox', { name: 'Effort' }).getByRole('option')).toHaveText([
+      'Low',
+      "Medium(model's default)",
+      'High',
+    ]);
+  });
+
+  test('sets the model from the palette @agent-workbench-6', async ({ page }) => {
+    await startClaudeThread(page, 'Pick from the palette');
+    const bar = page.getByTestId('model-bar');
+    await expect(bar).toHaveText('Mock model·Default·Ask');
+    await page.keyboard.press('Control+k');
+    const palette = page.getByRole('dialog');
+    await palette.getByRole('combobox').fill('Model: Mock model');
+    // The current model is marked.
+    await expect(
+      palette.getByRole('option', { name: /^Model: Mock model\s*Current/ }),
+    ).toBeVisible();
+    await palette.getByRole('combobox').fill('Model: Mock model, large');
+    await palette.getByRole('option', { name: /Model: Mock model, large/ }).click();
+    await expect(bar.getByRole('button', { name: 'Model' })).toHaveText('Mock model, large');
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('Permission mode: Plan only');
+    await palette.getByRole('option', { name: /Permission mode: Plan only/ }).click();
+    await expect(bar.getByRole('button', { name: 'Permission mode' })).toHaveText('Plan only');
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('Effort: High');
+    await palette.getByRole('option', { name: /Effort: High/ }).click();
+    await expect(bar.getByRole('button', { name: 'Effort' })).toHaveText('High');
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('Choose model');
+    await palette.getByRole('option', { name: /Choose model/ }).click();
+    await expect(page.getByRole('listbox', { name: 'Model' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.reload();
+    await expect(page.getByTestId('model-bar')).toHaveText('Mock model, large·High·Plan only');
+    await resetBar(page);
+  });
+
   test('finds threads and actions in the palette', async ({ page }) => {
     await startThread(page, 'Palette target');
     await page.goto('/chat');
@@ -710,6 +1017,41 @@ test.describe('sketch', () => {
     await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'tool-rows') });
     await page.keyboard.press('Control+.');
     await expect(conversation(page).getByTestId('turn-stopped')).toBeVisible();
+  });
+
+  test('model-bar', async ({ page }) => {
+    await startClaudeThread(page, 'Hello there');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Hello there',
+    );
+    const box = messageBox(page);
+    await box.focus();
+    await box.press('Shift+Tab');
+    await expect(
+      page.getByTestId('model-bar').getByRole('button', { name: 'Permission mode' }),
+    ).toHaveText('Accept edits');
+    await box.fill('Now run the tests');
+    await page.keyboard.press('Control+Shift+M');
+    await expect(page.getByRole('listbox', { name: 'Model' })).toBeVisible();
+    // The list fades in; the picture waits for that to end.
+    // (A string, since the e2e files are typed without the DOM.)
+    await page.evaluate(
+      'Promise.all(document.getAnimations().map((animation) => animation.finished))',
+    );
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'model-bar') });
+  });
+
+  test('composer-queued', async ({ page }) => {
+    await startCodexWait(page, 'Wait for the kettle to boil');
+    await messageBox(page).fill('Then sum up what you found in three lines');
+    await messageBox(page).press('Enter');
+    await expect(page.getByTestId('queued-message')).toBeVisible();
+    await messageBox(page).pressSequentially('/deli');
+    await messageBox(page).press('Enter');
+    await messageBox(page).pressSequentially('and after that, list the cups we need');
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'composer-queued') });
+    await page.keyboard.press('Control+.');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
   });
 
   test('skill-chip', async ({ page }) => {

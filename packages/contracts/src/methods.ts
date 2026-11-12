@@ -31,6 +31,7 @@ import {
   DetectedProvider,
   DiscoveredProject,
   ProviderModel,
+  ProviderSlashCommand,
   ProviderTestResult,
 } from './provider.js';
 import { SecretRef } from './settings.js';
@@ -211,6 +212,16 @@ export const rpcMethods = {
   'provider.listModels': {
     params: z.object({ providerInstanceId: z.string().min(1) }),
     result: z.array(ProviderModel),
+  },
+  // The provider's own slash commands for a thread's folder (agent workbench spec 60); empty for
+  // a provider that reports none (Codex).
+  'provider.listCommands': {
+    params: z.object({
+      providerInstanceId: z.string().min(1),
+      cwd: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: z.array(ProviderSlashCommand),
   },
   // Asks for the assistant thread (app assistant spec 1, 27): makes it when it is not there yet,
   // moves it when the settings name another provider instance, model or effort, and answers the

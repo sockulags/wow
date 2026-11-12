@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  HandOverResult,
   ApprovalDecision,
   ProviderAdapter,
   ProviderCommand,
@@ -64,7 +65,16 @@ export interface CodexModel {
   readonly efforts: readonly string[];
   readonly defaultEffort: string;
   readonly isDefault: boolean;
+  // Absent when this codex does not say which inputs the model takes.
+  readonly imageInput?: boolean;
 }
+
+// A codex older than the generated one may not send `inputModalities`; then nothing is said
+// about images (agent workbench spec 7, 54).
+const imageInputOf = (model: { readonly inputModalities?: readonly string[] }) =>
+  Array.isArray(model.inputModalities)
+    ? { imageInput: model.inputModalities.includes('image') }
+    : {};
 
 export interface CodexTestResult extends ProviderTestResult {
   readonly models: readonly CodexModel[];
@@ -358,6 +368,12 @@ export class CodexAdapter implements ProviderAdapter {
         return { appliesTo: 'nextTurn' };
       case 'listModels':
         return this.#listModels(await this.#connect());
+      // A message written during a turn waits for it to end (agent workbench spec 51), and Codex
+      // reports no slash commands of its own (spec 60).
+      case 'handOver':
+        return { taken: false } satisfies HandOverResult;
+      case 'listCommands':
+        return [];
       case 'test':
         return this.#test();
     }
@@ -681,6 +697,7 @@ export class CodexAdapter implements ProviderAdapter {
             efforts: model.supportedReasoningEfforts.map((option) => option.reasoningEffort),
             defaultEffort: model.defaultReasoningEffort,
             isDefault: model.isDefault,
+            ...imageInputOf(model),
           });
       cursor = page.nextCursor;
     } while (cursor);

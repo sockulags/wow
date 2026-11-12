@@ -8,13 +8,14 @@ import { KeybindingField } from './fields';
 import { ResetButton, formatRawDefault, useSettingField } from './setting-row';
 
 // Where a shortcut works. Calendar keys only fire while the calendar is open, chat keys while a
-// thread is open; everything else is global.
+// thread is open (the composer's only while the composer has the focus); everything else is
+// global.
 export type KeyScope = 'General' | 'Calendar' | 'Chat';
 
 export function keyScope(settingKey: string): KeyScope {
   const name = settingKey.replace(/^keybindings\./, '');
   if (name.startsWith('calendar') || name === 'newCard') return 'Calendar';
-  if (name === 'stopTurn') return 'Chat';
+  if (name === 'stopTurn' || name.startsWith('composer')) return 'Chat';
   return 'General';
 }
 

@@ -28,22 +28,30 @@ import { lastUsedInstanceId } from '@/providers/model';
 import { Composer, type ComposerHandle } from './composer';
 import { useDispatch, useModels, useTopic } from './data';
 import { effortOptions, threadTitle, titleFromMessage } from './model';
-import { ThreadSettings, type ThreadSettingsValue } from './thread-settings';
+import { ModelBar, useModelBarKeys, type ModelBarHandle } from './model-bar';
+import type { ThreadSettingsValue } from './thread-settings';
 import { lastUsedThread, providerLabel, recentFolders, starterSkills } from './view-model';
 
 // What a new thread on this instance starts with: what the last thread on it used (owner
-// decision F-5), else the instance defaults, else the first model the provider lists and the
-// first effort and permission mode offered for it.
+// decision F-5), else the instance defaults, else what the provider names as its default model
+// and the model's default effort (agent workbench spec 7, 8), else the first model the provider
+// lists and the first effort and permission mode offered for it.
 export function threadDefaults(
   instance: ProviderInstance,
   models: readonly ProviderModel[],
   last: Pick<Thread, 'providerInstanceId' | 'model' | 'effort' | 'permissionMode'> | undefined,
 ): ThreadSettingsValue {
   const fromLast = last?.providerInstanceId === instance.id ? last : undefined;
-  const model = fromLast?.model || instance.defaultModel || models[0]?.id || '';
+  const model =
+    fromLast?.model ||
+    instance.defaultModel ||
+    models.find((candidate) => candidate.isDefault)?.id ||
+    models[0]?.id ||
+    '';
   const effort =
     fromLast?.effort ||
     instance.defaultEffort ||
+    models.find((candidate) => candidate.id === model)?.defaultEffort ||
     effortOptions(instance.kind, models, model, '')[0] ||
     'default';
   const permissionMode =
@@ -90,6 +98,8 @@ export function NewThreadView() {
   const skillTrigger = useSetting('chat.skillTrigger');
   const picked = useStore(draft);
   const composer = useRef<ComposerHandle>(null);
+  const bar = useRef<ModelBarHandle>(null);
+  const barKeys = useModelBarKeys(bar);
   const [typingFolder, setTypingFolder] = useState(false);
   const [overrides, setOverrides] = useState<
     Partial<ThreadSettingsValue> & { readonly for?: string }
@@ -103,7 +113,15 @@ export function NewThreadView() {
     instances?.find((candidate) => candidate.status === 'ready') ??
     instances?.[0];
   const { models } = useModels(instance?.id);
-  const defaults = instance && threadDefaults(instance, models, last);
+  const seeded =
+    picked.settings && picked.settings.providerInstanceId === instance?.id
+      ? picked.settings
+      : undefined;
+  const defaults =
+    instance &&
+    (seeded
+      ? { model: seeded.model, effort: seeded.effort, permissionMode: seeded.permissionMode }
+      : threadDefaults(instance, models, last));
 
   // Nothing picked yet: the last thread's project, or its folder when it had none.
   const untouched = picked.projectId === undefined && picked.cwd === undefined;
@@ -170,7 +188,12 @@ export function NewThreadView() {
       text,
       ...(chosen ? { skills: [...chosen] } : {}),
     });
-    draft.setState({ projectId: undefined, cwd: undefined, providerInstanceId: undefined });
+    draft.setState({
+      projectId: undefined,
+      cwd: undefined,
+      providerInstanceId: undefined,
+      settings: undefined,
+    });
     await navigate({ to: '/chat/$threadId', params: { threadId } });
   };
 
@@ -257,20 +280,6 @@ export function NewThreadView() {
             ]}
             onValueChange={(value) => void choose(value)}
           />
-          {instance && settings && (
-            <ThreadSettings
-              providerInstanceId={instance.id}
-              kind={instance.kind}
-              value={settings}
-              onChange={(changes) =>
-                setOverrides((current) => ({
-                  ...(current.for === instance.id ? current : {}),
-                  ...changes,
-                  for: instance.id,
-                }))
-              }
-            />
-          )}
         </div>
         {typingFolder ? (
           <Input
@@ -307,6 +316,28 @@ export function NewThreadView() {
           blockedReason={blockedReason}
           placeholder={`What should the agent do? Type ${skillTrigger} to pick a skill.`}
           onSend={start}
+          onBarKey={barKeys}
+          bar={
+            instance &&
+            settings && (
+              // The draft's picks; the thread is created with them (agent workbench spec 5).
+              <ModelBar
+                ref={bar}
+                providerInstanceId={instance.id}
+                kind={instance.kind}
+                value={settings}
+                defaults={{ model: instance.defaultModel, effort: instance.defaultEffort }}
+                returnFocus={() => composer.current?.focus()}
+                onChange={(changes) =>
+                  setOverrides((current) => ({
+                    ...(current.for === instance.id ? current : {}),
+                    ...changes,
+                    for: instance.id,
+                  }))
+                }
+              />
+            )
+          }
         />
         {(starters.length > 0 || recentThread || openItems.length > 0) && (
           <section aria-label="Starters" className="flex flex-col gap-2 pt-1">

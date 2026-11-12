@@ -113,6 +113,11 @@ export const codexProtocolFingerprint: ProtocolFingerprint = {
           shape: { type: 'string', required: true, nullable: false },
         },
         {
+          path: 'data[].inputModalities',
+          copes: true,
+          shape: { type: 'array', required: true, nullable: false },
+        },
+        {
           path: 'nextCursor',
           copes: true,
           shape: { type: 'string', required: false, nullable: true },

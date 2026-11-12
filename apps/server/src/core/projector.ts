@@ -337,6 +337,12 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(threads.id, event.payload.threadId))
         .run();
       return threadTopics;
+    case 'thread.queueChanged':
+      tx.update(threads)
+        .set({ queued: event.payload.queued })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
     case 'thread.stateChanged':
       tx.update(threads)
         .set({ state: event.payload.state, updatedAt: event.payload.updatedAt })
