@@ -3112,7 +3112,10 @@ stored by the server; the web app only draws it.
   (`turnEndRows`), always visible (`message-time`).
 - **Scroll and keys.** `useStickToBottom` in thread-view.tsx follows the stream; once the user
   scrolled up, new items show the "New output" pill, which or End (`keybindings.conversationEnd`,
-  palette "Go to the newest output" while it shows) goes back down and follows again. User and
+  palette "Go to the newest output" while it shows) goes back down and follows again. End is a
+  plain key, which the key listener leaves to text fields; the command sets `AppCommand.atTextEnd`,
+  so it also runs from the composer once the caret is at the end of the text with nothing
+  selected, where End would do nothing. User and
   assistant rows are focusable (`li[data-message]`); Alt+Up/Alt+Down
   (`keybindings.previousMessage`/`nextMessage`) move between them and C
   (`keybindings.copyMessage`) copies the focused one's text. The conversation on screen (not a

@@ -17,9 +17,12 @@ import {
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
+import { useStore } from 'zustand';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand';
+import type { CommandContext } from '@/app/commands';
 import { createLayoutStore, RuntimeProvider } from '@/app/runtime';
+import { useGlobalKeybindings } from '@/app/use-commands';
 import { keyConflicts, keyScope } from '@/settings/keybindings-table';
 import { conversationCommands, conversationStore, toggleReasoning } from './conversation-nav';
 import { createDraftStore } from './draft';
@@ -478,6 +481,40 @@ describe('reading a long thread (spec 73 to 75)', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'New output' }));
     expect(scroller.scrollTop).toBe(2000);
     expect(screen.queryByRole('button', { name: 'New output' })).toBeNull();
+    expect(conversationStore.getState().scrolledUp).toBe(false);
+  });
+});
+
+// The app's key listener with the conversation's commands, as the shell has it.
+function ConversationKeys() {
+  const state = useStore(conversationStore);
+  const settings = createSettingsStore(createMemorySettingsSource(undefined, {}));
+  useGlobalKeybindings(conversationCommands({ ...state, reasoningOpen: false }, false), {
+    settings,
+  } as unknown as CommandContext);
+  return null;
+}
+
+describe('End from the composer (spec 73)', () => {
+  it('goes back to the newest output when the caret is at the end of the text, and moves the caret otherwise', async () => {
+    const items = conversation();
+    const { push } = setup({ turns: [turn(0), turn(1)], items });
+    render(<ConversationKeys />);
+    const scroller = screen.getByTestId('conversation');
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 2000 });
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 });
+    scroller.scrollTop = 100;
+    fireEvent.scroll(scroller);
+    push('threadItems', [...items, item('turn-1', 'assistant_text', { text: 'More.' })]);
+    expect(conversationStore.getState().scrolledUp).toBe(true);
+    const composer = screen.getByRole<HTMLTextAreaElement>('combobox', { name: /message/i });
+    await userEvent.setup().type(composer, 'Next step');
+    composer.setSelectionRange(2, 2);
+    fireEvent.keyDown(composer, { key: 'End', code: 'End' });
+    expect(scroller.scrollTop).toBe(100);
+    composer.setSelectionRange(9, 9);
+    fireEvent.keyDown(composer, { key: 'End', code: 'End' });
+    expect(scroller.scrollTop).toBe(2000);
     expect(conversationStore.getState().scrolledUp).toBe(false);
   });
 });

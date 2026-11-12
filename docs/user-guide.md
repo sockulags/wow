@@ -682,7 +682,8 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   default.
 - **Times**: each message shows when its turn started, each answer when its turn ended.
 - **Moving around**: scrolled up while output arrives, a **New output** pill shows; it or **End**
-  goes back down and follows again. **Alt+Up** and **Alt+Down** move from message to message, and
+  goes back down and follows again. End works from the message box too once the cursor is at the
+  end of what you typed (before that, it moves the cursor there). **Alt+Up** and **Alt+Down** move from message to message, and
   **C** copies the message that has the keyboard. All these keys are settings under Keybindings,
   for example if Alt+Up clashes with your screen reader.
 - **Next that needs you**: **Ctrl+Shift+J** goes to the oldest approval, question, plan, gate or

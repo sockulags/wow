@@ -378,6 +378,11 @@ const isEditable = (target: EventTarget | null): boolean =>
   target instanceof HTMLElement &&
   (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
 
+const caretAtTextEnd = (target: EventTarget | null): boolean =>
+  (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) &&
+  target.selectionStart === target.value.length &&
+  target.selectionEnd === target.value.length;
+
 // Applies the keybindings settings. Bindings are read at key time, so a change on the settings page
 // takes effect on the next key press.
 export function useGlobalKeybindings(
@@ -406,7 +411,12 @@ export function useGlobalKeybindings(
       if (!command) return;
       // Plain keys stay with text fields; shortcuts with Ctrl, Alt or Cmd, and F-keys, which type
       // nothing, work everywhere.
-      if (isEditable(event.target) && !worksInTextFields(pressed)) return;
+      if (
+        isEditable(event.target) &&
+        !worksInTextFields(pressed) &&
+        !(command.atTextEnd && caretAtTextEnd(event.target))
+      )
+        return;
       // A held key is still claimed (Ctrl+= must not fall through to the browser's page zoom),
       // but only repeatable commands run again.
       event.preventDefault();

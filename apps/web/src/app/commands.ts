@@ -43,6 +43,9 @@ export interface AppCommand {
   readonly keybinding?: SettingKey;
   // Runs again while its key is held down (zoom); other commands run once per press.
   readonly repeatable?: boolean;
+  // A plain key that also works from a text field when the caret is at the end of its text with
+  // nothing selected, where the key would do nothing there (End from the composer).
+  readonly atTextEnd?: boolean;
   // What kind of thing it opens, shown muted on the right ("Thread · Needs you").
   readonly detail?: string;
   // Listed under "Needs you" before the user types.

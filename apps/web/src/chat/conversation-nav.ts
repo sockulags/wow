@@ -94,6 +94,7 @@ export function conversationCommands(
             group: 'Chat' as const,
             keywords: ['scroll', 'bottom', 'end', 'follow'],
             keybinding: 'keybindings.conversationEnd' as const,
+            atTextEnd: true,
             run: () => handle.toEnd(),
           },
         ]
