@@ -3482,7 +3482,9 @@ its path) and the project's Jira key. `recogniseHostLink(url, rules)` reads
 `<base>/<path>/-/merge_requests|issues/<n>` (GitLab), `<base>/browse/<KEY-n>` (Jira) and the
 three Confluence page forms; anything else, an address with a user name or password, and any
 other scheme stay plain links. `bareHostRefs(text, rules)` finds `KEY-n` for the project's Jira
-key and `#n` (and `!n` on GitLab) for its repository, never inside a word, path or address.
+key and `#n` (and `!n` on GitLab) for its repository, never inside a word, path or address, and
+never a `#n` that reads as a colour (six digits, three of one digit, or three digits after `:` or
+before `;`).
 `recogniseHostRef` takes one address or one key (the palette and `hosts.lookup`). A thread
 without a project has no repository or key, so its bare references stay text; its links still
 resolve against Settings → Trackers. `HostItemRef` names one item (host, kind, site, path, id,
@@ -3512,7 +3514,8 @@ projects topics change), `HostLinkContext` (provided by `ThreadConversation` nex
 `FileLinkContext`, not for the Assistant), `HostChip` (icon, key, and once read the state: "PR
 #14 · Draft · 2 checks failed", "DEMO-42 · To Do", a page's title; Enter or click opens the tab,
 Shift+Enter or Shift+click the browser), `hostItemLabel`, `hostItemState`, `hostItemsIn`. The
-markdown body turns recognised links and inline code into chips, and a remark step marks bare
+markdown body turns recognised links and inline code into chips (inline code only for an address
+or a Jira key: `#n` and `!n` in code stay code), and a remark step marks bare
 references in text (`wow-host-ref:` links the anchor turns into chips). Panel tab kind `host`
 (`ViewerHostItem {threadId, item, from}`, `openHostItem` in `panel/viewer.ts`) renders
 `panel/host-tab.tsx`: it asks `hosts.lookup` with `open` when shown, shows the stored read with

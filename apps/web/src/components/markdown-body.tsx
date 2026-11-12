@@ -110,8 +110,12 @@ const components: Components = {
     const files = useFileLinks();
     const hosts = useHostLinks();
     const code = <code className="rounded bg-muted px-1 font-mono text-[0.9em]">{children}</code>;
+    // `#3` or `!7` in code is code (a selector, a colour, a shell history line); a Jira key or an
+    // address is still the item.
     const item =
-      hosts && typeof children === 'string' ? recogniseHostRef(children, hosts.rules) : undefined;
+      hosts && typeof children === 'string' && !/^\s*[#!]/.test(children)
+        ? recogniseHostRef(children, hosts.rules)
+        : undefined;
     if (item && hosts) return <HostChip item={item} links={hosts} />;
     const path = typeof children === 'string' ? filePathOf(children) : undefined;
     return files && path !== undefined ? <FileLink path={path}>{code}</FileLink> : code;

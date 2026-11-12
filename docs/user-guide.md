@@ -738,7 +738,8 @@ message names the file as `@path` for the agent. A pasted `@` opens nothing.
 A link in a chat to a pull or merge request, an issue, a Jira issue or a Confluence page on a host
 you stored a token for in Settings → Trackers shows as a chip with the host's icon and the item's
 key. In a project's thread, `DEMO-42` (the project's Jira key), `#14` and, on GitLab, `!7` are
-chips too. Press Enter on a chip, or click it, to open the item in a side panel tab: the pull
+chips too, except inside inline code (where only a Jira key or an address is a chip) and a `#`
+number that reads as a colour, such as `#333` or `#102030`. Press Enter on a chip, or click it, to open the item in a side panel tab: the pull
 request with its checks and review comments, the issue or ticket with its description, or the
 page. Shift+Enter or Shift+click opens it in your browser instead.
 

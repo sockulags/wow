@@ -113,6 +113,11 @@ describe('key recognition @agent-workbench-24', () => {
       'Fixes DEMO-42 and #14 (see #15). Not DEMO-0, XDEMO-3, OTHER-1, v1#2, a/#3, &#39; or #0.';
     expect(bareHostRefs(text, rules).map((match) => match.text)).toEqual(['DEMO-42', '#14', '#15']);
     expect(bareHostRefs('!7 is no GitHub reference', rules)).toEqual([]);
+    expect(
+      bareHostRefs('#333, #102030, color: #123; #111 but #123 and #1020', rules).map(
+        (match) => match.text,
+      ),
+    ).toEqual(['#123', '#1020']);
   });
 
   it('reads `!7` and `#4` on a GitLab repository', () => {
@@ -223,7 +228,7 @@ describe('chips @agent-workbench-20 @agent-workbench-21', () => {
     const user = userEvent.setup();
     const open = vi.fn<(item: HostItemRef) => void>();
     const text =
-      'See https://ghe.example.invalid/acme/tea/pull/14, [the ticket](https://jira.example.invalid/browse/DEMO-42) and `#3`. Also DEMO-7 and [elsewhere](https://github.com/acme/tea/pull/1).';
+      'See https://ghe.example.invalid/acme/tea/pull/14, [the ticket](https://jira.example.invalid/browse/DEMO-42) and #3. Also `DEMO-7` and [elsewhere](https://github.com/acme/tea/pull/1).';
     render(
       <HostLinkContext value={links(open)}>
         <Markdown text={text} />
@@ -242,6 +247,28 @@ describe('chips @agent-workbench-20 @agent-workbench-21', () => {
     chips[0]?.focus();
     await user.keyboard('{Enter}');
     expect(open).toHaveBeenCalledWith(expect.objectContaining({ kind: 'changeRequest', id: '14' }));
+  });
+
+  it('leaves `#n` and `!n` in inline code alone and keeps a Jira key there', async () => {
+    render(
+      <HostLinkContext value={{ ...links(vi.fn()), rules: gitlabRules }}>
+        <Markdown text="Run `#14`, `!7` and ` #4`, but `DEMO-42` is a ticket." />
+      </HostLinkContext>,
+    );
+    const chips = await screen.findAllByTestId('host-chip');
+    expect(chips.map((chip) => chip.textContent)).toEqual(['DEMO-42']);
+    expect(screen.getByText('#14').tagName).toBe('CODE');
+    expect(screen.getByText('!7').tagName).toBe('CODE');
+  });
+
+  it('leaves colours plain (#333, #102030) and keeps issue numbers', async () => {
+    render(
+      <HostLinkContext value={links(vi.fn())}>
+        <Markdown text="Text is #333 on #102030, set color: #123; and see #123 and #45." />
+      </HostLinkContext>,
+    );
+    const chips = await screen.findAllByTestId('host-chip');
+    expect(chips.map((chip) => chip.textContent)).toEqual(['#123', '#45']);
   });
 
   it('opens the browser on Shift+Enter and Shift+click instead (spec 21)', async () => {
