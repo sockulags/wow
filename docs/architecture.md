@@ -2853,9 +2853,13 @@ on the provider's default model and that model's default effort when neither the
 the instance names one. Keys while the composer has the focus (`useModelBarKeys`, `barKeyOf`):
 `keybindings.composerModel` (Mod+Shift+M) and `keybindings.composerEffort` (Mod+Shift+E) open the
 lists, `keybindings.composerModeCycle` (Shift+Tab) moves to `nextPermissionMode` (from the mode it last
-sent while the thread has not shown it yet, so a quick second press goes one further), and
+sent while the thread has not shown it yet, so a quick second press goes one further;
+`ModelBarProps.onChange` may return the `thread.configure` dispatch, and its rejection clears that
+pending mode, so the next press cycles from the mode the thread shows), and
 `keybindings.composerLeave` (Escape, after the skill list's own Escape) focuses what comes before
-the composer, since Shift+Tab no longer leaves it. They are matched in the composer's key handler,
+the composer, since Shift+Tab no longer leaves it. Inside `#context-panel[data-overlay]` an
+Escape is not taken by the composer, so the panel's own Escape closes it; a leave key rebound to
+anything else still leaves there. They are matched in the composer's key handler,
 not by the global keybinding listener, so they do nothing elsewhere. A list that closes returns
 the focus to the composer unless the user already moved on. The palette reaches the bar on screen
 through `modelBarStore` (`chat/model-commands.ts`; the bar whose conversation had the focus last

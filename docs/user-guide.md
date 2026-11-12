@@ -383,7 +383,8 @@ can type in to filter. While the composer has the cursor:
   back. Bypass permissions and Full access are never in that cycle; pick them from the list.
 - **Escape** (`keybindings.composerLeave`) takes the cursor out of the composer to what comes
   before it, which is what Shift+Tab does everywhere else. In a context panel laid over the view
-  (a narrow window) Escape closes the panel instead.
+  (a narrow window) Escape closes the panel instead; a different key set for leaving the composer
+  still leaves it there.
 
 The mode is coloured by what it allows: Plan only blue, Accept edits (and Codex's Auto) green,
 Bypass permissions and Full access red with a warning sign. A pick applies to the next turn and
