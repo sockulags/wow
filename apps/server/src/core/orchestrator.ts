@@ -89,6 +89,8 @@ export interface ReadModel {
   // Index the next item of the thread gets.
   nextItemIndex(threadId: string): number;
   itemExists(id: string): boolean;
+  // The newest tool call row of the thread for this provider item, in whichever turn it started.
+  toolCallRow(threadId: string, providerItemId: string): string | undefined;
   // How many task lists the turn has and the payload of its newest one.
   turnTaskLists(turnId: string): { readonly count: number; readonly last: unknown };
   threadItem(id: string): ThreadItem | undefined;

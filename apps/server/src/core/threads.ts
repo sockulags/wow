@@ -1536,10 +1536,31 @@ function decideProviderEvents(
     if (!turn) continue;
     const current = turn;
     const itemId = (providerItemId: string) => `${current.id}:${providerItemId}`;
+    // A call can outlive its turn (a subagent sent to the background, a Codex wait in a later
+    // turn): what belongs to it later goes to the row it started in.
+    const callRow = (providerItemId: string): string | undefined => {
+      const here = itemId(providerItemId);
+      if (exists(here)) return here;
+      const turnPrefix = `${threadId}:turn:`;
+      const suffix = `:${providerItemId}`;
+      const earlier = [...created].findLast(
+        (id) =>
+          id.startsWith(turnPrefix) &&
+          id.endsWith(suffix) &&
+          /^\d+$/.test(id.slice(turnPrefix.length, -suffix.length)),
+      );
+      return earlier ?? read.toolCallRow(threadId, providerItemId);
+    };
     switch (event.type) {
       case 'textDelta':
       case 'reasoningDelta': {
         const id = itemId(event.itemId);
+        const parent =
+          event.type === 'textDelta' && event.parentItemId !== undefined
+            ? callRow(event.parentItemId)
+            : undefined;
+        // Work of a subagent wow has no call for would read as the agent's own.
+        if (event.type === 'textDelta' && event.parentItemId !== undefined && !parent) break;
         if (event.type === 'textDelta' && event.parentItemId === undefined) {
           lastText =
             lastText?.id === id
@@ -1569,9 +1590,7 @@ function decideProviderEvents(
               ? { text: event.delta, startedAt: now, endedAt: now }
               : {
                   text: event.delta,
-                  ...(event.type === 'textDelta' && event.parentItemId !== undefined
-                    ? { parentItemId: itemId(event.parentItemId) }
-                    : {}),
+                  ...(parent === undefined ? {} : { parentItemId: parent }),
                 },
             // A subagent's note comes whole (spec 44), so it is not drawn as still being written.
             !(event.type === 'textDelta' && event.parentItemId !== undefined),
@@ -1581,6 +1600,8 @@ function decideProviderEvents(
       }
       case 'toolCallStarted': {
         const id = itemId(event.itemId);
+        const parent = event.parentItemId === undefined ? undefined : callRow(event.parentItemId);
+        if (event.parentItemId !== undefined && !parent) break;
         if (!exists(id)) {
           // The server's clock stamps the start, so a reload shows the same time (spec 30).
           add(
@@ -1595,9 +1616,7 @@ function decideProviderEvents(
               output: '',
               status: 'running',
               startedAt: now,
-              ...(event.parentItemId === undefined
-                ? {}
-                : { parentItemId: itemId(event.parentItemId) }),
+              ...(parent === undefined ? {} : { parentItemId: parent }),
             },
             true,
           );
@@ -1605,8 +1624,8 @@ function decideProviderEvents(
         break;
       }
       case 'toolCallOutput': {
-        const id = itemId(event.itemId);
-        if (exists(id)) {
+        const id = callRow(event.itemId);
+        if (id !== undefined) {
           out.push({
             kind: 'threadItem.appended',
             aggregate: threadId,
@@ -1616,8 +1635,8 @@ function decideProviderEvents(
         break;
       }
       case 'toolCallCompleted': {
-        const id = itemId(event.itemId);
-        if (exists(id)) {
+        const id = callRow(event.itemId);
+        if (id !== undefined) {
           patch(
             current,
             id,

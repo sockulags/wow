@@ -933,6 +933,19 @@ export function readModel(tx: DbOrTx): ReadModel {
     itemExists: (id) =>
       tx.select({ id: threadItems.id }).from(threadItems).where(eq(threadItems.id, id)).get() !==
       undefined,
+    toolCallRow: (threadId, providerItemId) =>
+      tx
+        .select({ id: threadItems.id })
+        .from(threadItems)
+        .where(
+          and(
+            eq(threadItems.threadId, threadId),
+            eq(threadItems.kind, 'tool_call'),
+            sql`${threadItems.id} = ${threadItems.turnId} || ':' || ${providerItemId}`,
+          ),
+        )
+        .orderBy(desc(threadItems.index))
+        .get()?.id,
     turnTaskLists: (turnId) => {
       const lists = and(eq(threadItems.turnId, turnId), eq(threadItems.kind, 'task_list'));
       const total = tx.select({ n: count() }).from(threadItems).where(lists).get()?.n ?? 0;

@@ -323,6 +323,10 @@ does arrives as ordinary `toolCallStarted` and `textDelta` events with `parentIt
 provider id of the subagent call; the server stores it as `parentItemId` (the call's row id) on
 the `tool_call` or `assistant_text` payload, so no migration was needed. When the call ends,
 `toolCallCompleted` may carry `toolCount`, `answer` and `agentState`, kept on the call's payload.
+A call can outlive its turn (a subagent sent to the background, a Codex `wait` in a later turn):
+the parent, and the row a later `toolCallOutput` or `toolCallCompleted` goes to, is the call's row
+in the current turn, else the newest of the thread (`ReadModel.toolCallRow`); nested work whose
+call the thread has no row for is dropped, so it never reads as the agent's own.
 A turn's last text (a step's final message, the plan fallback) is the thread's own agent's: items
 with a `parentItemId` are left out (`ownText` in `db/schema.ts`). Claude Code: `Agent` (`Task` in
 older versions) is the subagent call; its messages marked with `parent_tool_use_id` become the

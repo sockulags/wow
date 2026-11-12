@@ -159,6 +159,51 @@ describe('nested items (spec 44)', () => {
     expect(read.lastAssistantText('t1:turn:0')?.id).toBe('t1:turn:0:own');
   });
 
+  // A subagent sent to the background outlives its turn; what it does next arrives in the next.
+  it('keeps the work and the answer of a subagent that outlives its turn under its call', () => {
+    events(
+      call('agent-1', {
+        name: 'Agent',
+        kind: 'subagent',
+        description: 'explore the auth code',
+        pattern: undefined,
+      } as Partial<ProviderEvent>),
+      { type: 'turnCompleted', threadId: 't1' },
+    );
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Meanwhile, tidy the readme' });
+    later(30);
+    events(
+      call('sub-9', { parentItemId: 'agent-1' } as Partial<ProviderEvent>),
+      {
+        type: 'textDelta',
+        threadId: 't1',
+        itemId: 'sub-note',
+        delta: 'Found it.',
+        parentItemId: 'agent-1',
+      },
+      // A subagent wow never saw start leaves nothing in the conversation.
+      call('sub-lost', { parentItemId: 'agent-gone' } as Partial<ProviderEvent>),
+      {
+        type: 'toolCallCompleted',
+        threadId: 't1',
+        itemId: 'agent-1',
+        status: 'ok',
+        answer: 'Login is checked in src/auth.ts.',
+      },
+    );
+    expect(item('t1:turn:1:sub-9')?.payload).toMatchObject({ parentItemId: 't1:turn:0:agent-1' });
+    expect(item('t1:turn:1:sub-note')?.payload).toMatchObject({
+      parentItemId: 't1:turn:0:agent-1',
+    });
+    expect(item('t1:turn:1:sub-lost')).toBeUndefined();
+    expect(item('t1:turn:0:agent-1')?.payload).toMatchObject({
+      status: 'ok',
+      answer: 'Login is checked in src/auth.ts.',
+      endedAt: at(30),
+    });
+    expect(item('t1:turn:1:agent-1')).toBeUndefined();
+  });
+
   // Spec 48: a subagent call stored before kinds keeps its old shape and is read as before.
   it('reads an agent call stored before this change as it was', () => {
     database.db
