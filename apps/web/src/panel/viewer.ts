@@ -67,11 +67,15 @@ export const tabName = (tab: PanelTab): string =>
       ? tab.page.ref
       : tab.host.item.id;
 
+// A route whose last tab closes leaves no entry behind.
 function updateTabs(layout: LayoutStore, route: string, change: (tabs: PanelTabs) => PanelTabs) {
   layout.setState((state) => {
     const before = panelTabsOf(state, route);
     const after = change(before);
-    return after === before ? {} : { panelTabs: { ...state.panelTabs, [route]: after } };
+    if (after === before) return {};
+    if (after.tabs.length > 0) return { panelTabs: { ...state.panelTabs, [route]: after } };
+    const { [route]: _closed, ...rest } = state.panelTabs;
+    return { panelTabs: rest };
   });
 }
 
@@ -84,20 +88,28 @@ const choose = (tabs: PanelTabs, id: string): PanelTabs =>
         history: [...tabs.history.filter((entry) => entry !== id), tabs.selected],
       };
 
-// Where the focus was when a tab was opened from the main view (spec 87): Escape there still
-// closes the tab, as it does in the panel.
-let opener: Element | undefined;
-export const tabOpener = (): Element | undefined => (opener?.isConnected ? opener : undefined);
+// Where the focus was when each tab was opened from the main view (spec 87): Escape there still
+// closes that tab while it is the one shown, as it does in the panel. Elements, not state, so
+// they stay out of the layout store; a tab opened again from the panel keeps its opener.
+const openers = new Map<string, WeakRef<Element>>();
+const openerKey = (route: string, id: string) => `${route}\n${id}`;
 
-function rememberOpener(): void {
+export function tabOpener(route: string, id: string): Element | undefined {
+  const opener = openers.get(openerKey(route, id))?.deref();
+  return opener?.isConnected ? opener : undefined;
+}
+
+function rememberOpener(route: string, id: string): void {
   const active = document.activeElement;
   const panel = document.getElementById(CONTEXT_PANEL_ID);
-  if (active && active !== document.body && !panel?.contains(active)) opener = active;
+  if (active && active !== document.body && !panel?.contains(active)) {
+    openers.set(openerKey(route, id), new WeakRef(active));
+  }
 }
 
 // Opening an open item selects its tab (spec 11).
 function openTab(context: ViewerContext, route: string, tab: PanelTab): void {
-  rememberOpener();
+  rememberOpener(route, tab.id);
   updateTabs(context.layout, route, (tabs) =>
     choose(
       tabs.tabs.some((entry) => entry.id === tab.id)
@@ -189,10 +201,11 @@ export function backTab(layout: LayoutStore, route: string): void {
 // is not closed. The focus, if it was on something that goes away with the tab, moves to the
 // panel instead of being lost.
 export function closeTab(layout: LayoutStore, route: string, id?: string): void {
+  const closing = id ?? panelTabsOf(layout.getState(), route).selected;
+  if (closing !== DETAILS_TAB) openers.delete(openerKey(route, closing));
   const panel = document.getElementById(CONTEXT_PANEL_ID);
   const inside = panel?.contains(document.activeElement) === true;
   updateTabs(layout, route, (tabs) => {
-    const closing = id ?? tabs.selected;
     if (closing === DETAILS_TAB || !tabs.tabs.some((tab) => tab.id === closing)) return tabs;
     const rest = tabs.tabs.filter((tab) => tab.id !== closing);
     const open = (entry: string) => entry === DETAILS_TAB || rest.some((tab) => tab.id === entry);

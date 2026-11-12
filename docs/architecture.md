@@ -3391,8 +3391,9 @@ thread keeps its tabs while another thread is open, and each is read again when 
 route has tabs, `PanelTabStrip` shows the panel's own body first ("Details"; in a run view
 "Conversation", the step's thread, so a file or page opened there sits beside it instead of
 replacing it), then a tab per item with an icon by kind and its short name; opening an open item
-selects its tab (`openTab`). Opening keeps the focus where it was and remembers it (`tabOpener`):
-Escape there, outside a text field, closes the tab again, as Escape does in the panel. Keys while
+selects its tab (`openTab`). Opening keeps the focus where it was and remembers it for that tab
+(`tabOpener(route, id)`): Escape there, outside a text field, closes the tab again while it is the
+one shown, as Escape does in the panel. A route whose last tab closes drops its `panelTabs` entry. Keys while
 the focus is in the panel, matched in the panel's own key handler: `keybindings.panelCloseTab`
 (Alt+W, since Ctrl+W closes a browser tab), `keybindings.panelNextTab` (Ctrl+Tab),
 `keybindings.panelPreviousTab` (Ctrl+Shift+Tab) and `keybindings.panelBackTab` (Alt+ArrowLeft;

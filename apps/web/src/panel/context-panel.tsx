@@ -211,7 +211,7 @@ export function ContextPanel() {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       const active = document.activeElement;
-      if (typing(active) || active === null || active !== tabOpener()) return;
+      if (typing(active) || active === null || active !== tabOpener(route, tab.id)) return;
       if (active.closest('[role="dialog"], [role="alertdialog"]')) return;
       event.preventDefault();
       closeViewer(layout, route);

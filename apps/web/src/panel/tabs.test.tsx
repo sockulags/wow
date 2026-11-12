@@ -21,6 +21,7 @@ import { createDraftStore } from '@/chat/draft';
 import { renderApp } from '@/test/render';
 import { loadMarkdown } from '../test/markdown';
 import { viewerCommands } from './commands';
+import { selectTab } from './viewer';
 
 beforeAll(loadMarkdown);
 
@@ -352,6 +353,34 @@ describe('panel tabs in chat', () => {
     screen.getByRole('combobox', { name: 'Message' }).focus();
     fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
     expect(tabs()).toEqual(['Details', 'timer.ts *']);
+  });
+
+  it('closes with Escape only from the link that opened the tab shown @agent-workbench-87', async () => {
+    const { user, runtime } = await openThread();
+    const timerLink = await fileLink('src/timer.ts');
+    const specLink = await fileLink('spec');
+    await user.click(timerLink);
+    await user.click(specLink);
+    const timerTab = runtime.layout
+      .getState()
+      .panelTabs['/chat/tea']?.tabs.find((tab) => tab.id.endsWith('src/timer.ts'));
+    act(() => selectTab(runtime.layout, '/chat/tea', timerTab?.id ?? ''));
+    expect(tabs()).toEqual(['Details', 'timer.ts *', 'spec.md']);
+    specLink.focus();
+    await user.keyboard('{Escape}');
+    expect(tabs()).toEqual(['Details', 'timer.ts *', 'spec.md']);
+    timerLink.focus();
+    await user.keyboard('{Escape}');
+    expect(tabs()).toEqual(['Details', 'spec.md *']);
+  });
+
+  it('keeps no entry for a view whose last tab closed', async () => {
+    const { user, runtime } = await openThread();
+    await user.click(await fileLink('src/timer.ts'));
+    expect(Object.keys(runtime.layout.getState().panelTabs)).toEqual(['/chat/tea']);
+    await user.keyboard('{Escape}');
+    expect(tabs()).toEqual([]);
+    expect(runtime.layout.getState().panelTabs).toEqual({});
   });
 
   it('opens a file from "Open file…" with Ctrl+P, filtered as typed @agent-workbench-18', async () => {

@@ -26,7 +26,7 @@ export type FileReadParams = z.infer<typeof FileReadParams>;
 
 // The files of the scope's first folder for "Open file…" and `@` (agent workbench spec 18, 56):
 // what Git tracks plus the untracked files it does not ignore, or a bounded walk where the folder
-// is not in Git. Paths are relative with forward slashes; at most `files.listLimit` of them.
+// is not in Git. Paths are relative with forward slashes; at most `viewer.fileListLimit` of them.
 export const FileListParams = FileScope;
 export type FileListParams = z.infer<typeof FileListParams>;
 
