@@ -2800,7 +2800,9 @@ thread, which belongs to its run; there is no delete. `thread.markSeen` and
 keeps its order. The server sets `seen` false itself when a turn ends or a thread starts to need
 the user (an approval or a question), for every thread but the assistant's. The web app sends
 `thread.markSeen` when the open thread is on screen in a focused window and is unread, once per
-`updatedAt` while it stays open: so a turn ending while the user watches leaves it read, and
+`updatedAt` while it stays open, and again each time it turns from read to unread on screen (a
+second approval or question in a thread that already needs the user is stored unread without
+moving `updatedAt`): so a turn ending or a request arriving while the user watches leaves it read, and
 "Mark unread" (which then leaves for `/chat`) keeps it bold until the thread is opened again;
 leaving the thread forgets the handled `updatedAt`, so opening it again reads it. Unread rows are bold
 with a dot.

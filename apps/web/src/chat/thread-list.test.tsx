@@ -146,16 +146,38 @@ describe('the thread list (spec 66, 69, 70)', () => {
     const { router } = await renderApp('/chat/t1', runtime);
     const user = userEvent.setup();
     await waitFor(() => expect(rowTitles()).toEqual(['Kettle timer']));
-    // Marked unread (here or in another window) while it is open: it stays unread.
+    const markSeen = () => sentCommands(request).filter((c) => c.type === 'thread.markSeen');
+    // Mark unread leaves the thread, so it stays unread in the list.
+    act(() => runtime.layout.setState({ paletteOpen: true }));
+    await user.type(await screen.findByPlaceholderText('Type a command or search…'), 'Mark unread');
+    await user.click(await screen.findByRole('option', { name: /Mark unread/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/chat'));
     push('threads', [{ ...seen, seen: false }]);
-    expect(sentCommands(request).filter((c) => c.type === 'thread.markSeen')).toEqual([]);
-    await act(() => router.navigate({ to: '/chat' }));
+    expect(markSeen()).toEqual([]);
+    expect(sentCommands(request)).toContainEqual({ type: 'thread.markUnread', threadId: 't1' });
     await user.click(screen.getByRole('link', { name: /Kettle timer/ }));
-    await waitFor(() =>
-      expect(sentCommands(request).filter((c) => c.type === 'thread.markSeen')).toEqual([
-        { type: 'thread.markSeen', threadId: 't1' },
-      ]),
-    );
+    await waitFor(() => expect(markSeen()).toEqual([{ type: 'thread.markSeen', threadId: 't1' }]));
+    hasFocus.mockRestore();
+  });
+
+  it('reads the open thread again when a second request turns it unread', async () => {
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const waiting = thread('t1', 'Kettle timer', {
+      state: 'needs_you',
+      updatedAt: '2026-11-02T08:05:00.000Z',
+    });
+    const { runtime, request, push } = fake({ projects: [], threads: [waiting] });
+    await renderApp('/chat/t1', runtime);
+    await waitFor(() => expect(rowTitles()).toEqual(['Kettle timer']));
+    const markSeen = () => sentCommands(request).filter((c) => c.type === 'thread.markSeen');
+    expect(markSeen()).toEqual([]);
+    // The first request was read on screen; the second arrives while it still needs you, so
+    // the server stores it unread and its updatedAt does not move.
+    push('threads', [{ ...waiting, seen: false }]);
+    await waitFor(() => expect(markSeen()).toEqual([{ type: 'thread.markSeen', threadId: 't1' }]));
+    push('threads', [{ ...waiting, seen: true }]);
+    push('threads', [{ ...waiting, seen: false }]);
+    await waitFor(() => expect(markSeen()).toHaveLength(2));
     hasFocus.mockRestore();
   });
 

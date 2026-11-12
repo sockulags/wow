@@ -29,14 +29,16 @@ const baseName = (path: string) =>
     .at(-1) || path;
 
 // The open thread is read as soon as it is on screen in a focused window, and again whenever a
-// turn ends or a request arrives while it is (spec 70). "Mark unread" changes neither, so it
-// stays unread while the thread stays open; leaving the thread forgets what was handled, so
+// turn ends or a request arrives while it is (spec 70). A second request in a thread that
+// already needs you turns it unread without moving `updatedAt`, so turning unread on screen
+// counts as well. "Mark unread" leaves the thread, and leaving forgets what was handled, so
 // opening it again reads it.
 function useMarkSeen(threads: readonly Thread[] | undefined) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const send = useDispatch();
   const [focused, setFocused] = useState(() => document.hasFocus());
   const handled = useRef<string>(undefined);
+  const wasUnread = useRef<boolean>(undefined);
   useEffect(() => {
     const onFocus = () => setFocused(true);
     const onBlur = () => setFocused(false);
@@ -54,8 +56,11 @@ function useMarkSeen(threads: readonly Thread[] | undefined) {
   useEffect(() => {
     if (mark === undefined) {
       handled.current = undefined;
+      wasUnread.current = undefined;
       return;
     }
+    if (wasUnread.current === false && unread) handled.current = undefined;
+    wasUnread.current = unread;
     if (!focused || handled.current === mark) return;
     handled.current = mark;
     if (unread && openId)
