@@ -727,6 +727,60 @@ test.describe('repeating cards', () => {
   });
 });
 
+// Agent workbench spec 83: with a workflow and a repeat the form is taller than a 900 px window;
+// its fields scroll and the footer stays in view, and Ctrl+Enter saves from any field.
+test.describe('the card form in a small window', () => {
+  test.use({ viewport: { width: 900, height: 900 } });
+
+  test('keeps the footer in view at 900 px and saves with Ctrl+Enter @agent-workbench-83', async ({
+    page,
+  }) => {
+    const monday = mondayAhead();
+    await page.goto(`/calendar?view=week&date=${localDay(monday)}`);
+    await expect(page.getByTestId(`day-${localDay(monday)}`)).toBeVisible();
+    await page.getByRole('button', { name: 'New card', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'New card' });
+    await dialog.getByLabel('Title').fill('Kettle descale');
+    await dialog.getByLabel('Date').fill(localDay(monday));
+    await dialog.getByLabel('Start').fill('06:30');
+    await dialog.getByLabel('End').fill('06:45');
+    await choose(dialog.getByLabel('Workflow'), 'Backlog e2e');
+    await choose(dialog.getByLabel('Project'), 'Demo');
+    await choose(dialog.getByLabel('Repeats'), 'Weekly');
+    await expect(dialog.getByTestId('repeat-words')).toHaveText('Every week on Monday at 06:30');
+
+    const footer = dialog.getByTestId('card-form-footer');
+    for (const name of ['Cancel', 'Create card']) {
+      await expect(footer.getByRole('button', { name })).toBeInViewport({ ratio: 1 });
+    }
+    // The fields scroll inside the dialog; the footer stays where it is.
+    const notes = dialog.getByLabel('Notes');
+    await notes.scrollIntoViewIfNeeded();
+    await expect(notes).toBeInViewport();
+    await expect(footer.getByRole('button', { name: 'Create card' })).toBeInViewport({ ratio: 1 });
+
+    await notes.fill('Vinegar first');
+    await notes.press('Control+Enter');
+    await expect(dialog).toBeHidden();
+    const shown = occurrencesOf(page, 'Kettle descale');
+    await expect(shown.first()).toBeVisible();
+
+    // The edit form says Delete on the left of the same footer; the series goes again.
+    await shown.first().focus();
+    await page.keyboard.press('Enter');
+    const edit = page.getByRole('dialog', { name: 'Edit card' });
+    await expect(
+      edit.getByTestId('card-form-footer').getByRole('button', { name: 'Delete…' }),
+    ).toBeInViewport({ ratio: 1 });
+    await edit.getByRole('button', { name: 'Delete…' }).click();
+    await edit
+      .getByRole('alertdialog', { name: 'Delete which?' })
+      .getByRole('button', { name: 'The whole series' })
+      .click();
+    await expect(shown).toHaveCount(0);
+  });
+});
+
 test.describe('sketch', () => {
   test.skip(!sketching, 'Set WOW_E2E_SKETCHES to write the screenshots');
   test.use(sketchUse);

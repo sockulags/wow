@@ -36,8 +36,8 @@ test("a workflow made by the assistant shows each step's model @questions-15", a
 
   const row = conversation(page).getByTestId('assistant-change').last();
   await expect(row).toContainText('Workflow "Tea review"');
-  await expect(row).toContainText('plan-work (Mock Claude, mock-model-large, high)');
-  await expect(row).toContainText('check-work (Mock Claude, mock-model, low)');
+  await expect(row).toContainText('plan-work (Mock Claude, Mock model, large, high)');
+  await expect(row).toContainText('check-work (Mock Claude, Mock model, low)');
 
   await page.goto('/workflows');
   await page

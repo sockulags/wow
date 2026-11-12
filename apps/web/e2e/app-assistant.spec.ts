@@ -1,9 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { settingsRegistry } from '@wow/contracts';
 import { access, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { e2eAssistantHome } from './env';
+import { sketchPath, sketching, sketchUse } from './sketch';
 
 // U6 of the app assistant: the spec's ground truth names the behaviors `pnpm e2e` must cover.
 // Each case that covers one carries `@app-assistant-<n>` in its title, so
@@ -163,5 +164,94 @@ test.describe("the assistant's composer bar", () => {
       await page.getByTestId(`setting-${key}`).getByText('Reset to default').click();
       await expect(page.getByTestId(`setting-${key}`).getByRole('textbox')).toHaveValue('');
     }
+  });
+});
+
+const conversation = (page: Page) => page.getByRole('list', { name: 'Conversation' });
+
+async function say(page: Page, text: string): Promise<void> {
+  const composer = page.getByRole('combobox', { name: 'Message' });
+  await composer.fill(text);
+  await composer.press('Enter');
+  await expect(conversation(page).getByTestId('item-user').filter({ hasText: text })).toBeVisible();
+  await expect(conversation(page).locator(':scope > li').last()).toHaveAttribute(
+    'data-testid',
+    'item-assistant_text',
+  );
+}
+
+// Agent workbench U13 (spec 41, 82, 95, 96) on the assistant's server copy: the rule is only
+// proposed and waits for a yes on the line above the composer; wow's tool calls draw no raw
+// row; a change row says its values as the settings page does. It leaves the server as it found
+// it: the rule removed, the work hours undone.
+test.describe('assistant polish', () => {
+  test.use(sketching ? sketchUse : {});
+  test.beforeEach(async ({ page }) => {
+    const info: unknown = JSON.parse(
+      await readFile(path.join(e2eAssistantHome, 'server.json'), 'utf8'),
+    );
+    await page.addInitScript((serverInfo) => {
+      (globalThis as { wowServerInfo?: unknown }).wowServerInfo = serverInfo;
+    }, info);
+  });
+
+  test('the assistant proposes an always-allow rule @agent-workbench-41 @agent-workbench-82 @agent-workbench-95 @agent-workbench-96', async ({
+    page,
+  }) => {
+    await page.goto('/assistant');
+    await say(page, 'Make my work hours end at four, Monday to Friday');
+    const row = page.getByRole('region', { name: 'Change: Work hours' }).last();
+    await expect(row.getByTestId('assistant-change-values')).toHaveText(
+      'From Outlook → 08:00–16:00, Mon–Fri',
+    );
+
+    await say(page, 'Always allow `pnpm test` in Demo');
+    const card = page.getByRole('region', { name: 'Proposal: Always allow `pnpm test` in Demo' });
+    await expect(card).toHaveAttribute('data-state', 'pending');
+    await expect(card.getByRole('list', { name: 'What would change' })).toHaveText(
+      'Always allow: new: Run commands starting with `pnpm test`',
+    );
+    // No raw tool row repeats the card or the change row; the read reads in words.
+    await expect(conversation(page)).not.toContainText('mcp__wow__');
+    await expect(conversation(page).getByTestId('tool-words').last()).toHaveText(
+      'Read your projects',
+    );
+    const waiting = page.getByRole('status', { name: 'Waiting proposal' });
+    await expect(waiting.getByTestId('assistant-waiting-text')).toHaveText(
+      '1 proposal waits: Always allow `pnpm test` in Demo',
+    );
+    if (sketching) {
+      await page.screenshot({
+        path: sketchPath('2026-11-agent-workbench', 'assistant-polish'),
+      });
+    }
+
+    // Nothing is stored before the yes.
+    const approvals = await page.context().newPage();
+    const info: unknown = JSON.parse(
+      await readFile(path.join(e2eAssistantHome, 'server.json'), 'utf8'),
+    );
+    await approvals.addInitScript((serverInfo) => {
+      (globalThis as { wowServerInfo?: unknown }).wowServerInfo = serverInfo;
+    }, info);
+    await approvals.goto('/settings/approvals');
+    await expect(approvals.getByTestId('setting-approvals.alwaysAllow')).toContainText('No rules');
+
+    await waiting.getByRole('button', { name: 'Show' }).click();
+    await expect(card).toBeFocused();
+    await waiting.getByRole('button', { name: 'Yes' }).click();
+    await expect(card).toHaveAttribute('data-state', 'accepted');
+    await expect(waiting).toHaveCount(0);
+    const rule = approvals
+      .getByRole('region', { name: 'Rules of Demo' })
+      .getByTestId('always-allow-rule');
+    await expect(rule).toContainText('pnpm test');
+
+    // As it was: the rule removed and the work hours back.
+    await rule.getByRole('button', { name: 'Remove the rule in Demo' }).click();
+    await expect(approvals.getByTestId('setting-approvals.alwaysAllow')).toContainText('No rules');
+    await approvals.close();
+    await row.getByRole('button', { name: 'Undo' }).click();
+    await expect(row).toHaveAttribute('data-state', 'undone');
   });
 });

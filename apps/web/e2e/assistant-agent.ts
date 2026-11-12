@@ -4,7 +4,7 @@ import type {
   ProviderEvent,
   ServerCommand,
 } from '@wow/contracts';
-import { e2eProviderInstanceId } from './env';
+import { e2eProjectId, e2eProviderInstanceId } from './env';
 
 // The mock agent of the assistant's turns (e2e/assistant.spec.ts). An ordinary thread goes to
 // the chat tests' script; a turn that carries wow's toolset calls wow's tools in process, the
@@ -71,6 +71,20 @@ const reviewStep = (id: string, model: string, effort: string) => ({
 });
 
 function scenario(text: string, trackerUrl: string): Scenario {
+  // Agent workbench spec 41: the rule is only proposed; wow stores it on the user's yes.
+  const allow = /always allow `?([^`]+?)`? in Demo/i.exec(text);
+  if (allow?.[1]) {
+    return {
+      steps: [
+        { tool: 'read_projects', args: {} },
+        {
+          tool: 'propose_always_allow_rule',
+          args: { projectId: e2eProjectId, rule: { kind: 'command', prefix: allow[1] } },
+        },
+      ],
+      answer: `I proposed always allowing \`${allow[1]}\` in Demo. It waits for your yes above.`,
+    };
+  }
   if (/work hours/i.test(text)) {
     return {
       steps: [

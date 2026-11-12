@@ -69,7 +69,7 @@ test.describe('assistant', () => {
     await expect(composer(page)).toBeFocused();
 
     await say(page, 'Make my work hours end at four');
-    const row = page.getByRole('region', { name: 'Change: Work hours' });
+    const row = page.getByRole('region', { name: 'Change: Work hours' }).last();
     await expect(row).toContainText(/Work hours: .+ → 08:00–16:00/);
     await expect(row.getByRole('link', { name: 'Settings → Calendar' })).toBeVisible();
     if (sketching) await row.screenshot({ path: sketchPath(intent, 'change-row') });
@@ -238,7 +238,7 @@ test.describe('assistant', () => {
     await page.goto('/assistant');
     await say(page, 'Why does this not work?');
     const tool = conversation(page).getByTestId('item-tool_call').last();
-    await expect(tool).toContainText('diagnose_setup');
+    await expect(tool).toContainText('Checked what does not work');
     const reply = conversation(page).getByTestId('item-assistant_text').last();
     await expect(reply).toContainText(/\d+ things? (is|are) failing\./);
     // The seeded workflow names a skill that is not installed; the reply says so and where.
@@ -297,9 +297,9 @@ test.describe('assistant', () => {
     await row.focus();
     await page.keyboard.press('Enter');
     await expect(group.getByTestId('item-tool_call')).toHaveText([
-      /read_projects/,
-      /read_workflows/,
-      /read_skills/,
+      /Read your projects/,
+      /Read your workflows/,
+      /Read your skills/,
     ]);
   });
 });
