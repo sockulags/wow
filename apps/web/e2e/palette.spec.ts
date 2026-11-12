@@ -61,6 +61,27 @@ test.describe('palette', () => {
     await page.keyboard.press('Control+k');
     const palette = page.getByRole('dialog', { name: 'Command palette' });
     await expect(palette.getByText('Recent', { exact: true })).toBeVisible();
+    // The input stays put as the results shrink to one (agent workbench spec 93).
+    const input = palette.getByRole('combobox');
+    // This file is compiled without the DOM types, so the bit of them used here is spelled out.
+    interface Animated {
+      getAnimations(options: { subtree: boolean }): { finished: Promise<unknown> }[];
+    }
+    const settled = () =>
+      palette.evaluate((dialog) =>
+        Promise.all(
+          (dialog as unknown as Animated)
+            .getAnimations({ subtree: true })
+            .map((animation) => animation.finished),
+        ),
+      );
+    await settled();
+    expect(await palette.getByRole('option').count()).toBeGreaterThan(3);
+    const before = await input.boundingBox();
+    await input.fill('edit card quarterly');
+    await expect(palette.getByRole('option')).toHaveCount(1);
+    await settled();
+    expect((await input.boundingBox())?.y).toBe(before?.y);
     await page.keyboard.press('Escape');
     await expect(palette).toBeHidden();
 
