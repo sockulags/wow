@@ -78,6 +78,8 @@ export class ProviderService {
   readonly #commandProbes = new Map<string, Promise<ProviderSlashCommand[]>>();
   // Turns being prepared before they go out (the assistant's tools, a chat thread's marks).
   readonly #preparing = new Set<Promise<unknown>>();
+  // The start of a turn that is still being prepared, per thread.
+  readonly #starting = new Map<string, Promise<void>>();
   // The last model list each instance answered, for model labels in change rows.
   readonly #models = new Map<string, readonly ProviderModel[]>();
 
@@ -642,12 +644,28 @@ export class ProviderService {
           return send(ready);
         });
         this.#preparing.add(prepared);
-        prepared.catch((error: unknown) => {
-          this.#preparing.delete(prepared);
-          fail(error);
+        const settled = prepared.then(
+          () => undefined,
+          (error: unknown) => {
+            this.#preparing.delete(prepared);
+            fail(error);
+          },
+        );
+        this.#starting.set(threadId, settled);
+        void settled.then(() => {
+          if (this.#starting.get(threadId) === settled) this.#starting.delete(threadId);
         });
       } else {
-        send(command).catch(fail);
+        // A turn's start can still be reading the folder. What follows for the same thread (a
+        // message handed over, a stop) goes to the provider after it, in the order it was sent.
+        const start = this.#starting.get(threadId);
+        if (!start) {
+          send(command).catch(fail);
+        } else {
+          const after = start.then(() => send(command)).catch(fail);
+          this.#preparing.add(after);
+          void after.then(() => this.#preparing.delete(after));
+        }
       }
     } catch (error) {
       fail(error);
