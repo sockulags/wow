@@ -218,6 +218,26 @@ describe('Edit (spec 62, 63)', () => {
     ).toThrow(/Codex cannot go back in its conversation/);
   });
 
+  it('goes back again after a go-back the provider refused, since that turn left no point', async () => {
+    await threadOn('claude', 't1');
+    // A point Claude Code no longer knows (its session file cleaned up, say).
+    database.sqlite
+      .prepare("UPDATE turns SET resume_point = ? WHERE id = 't1:turn:1'")
+      .run(JSON.stringify({ sessionId: 'mock-t1', at: 'mock-t1:99' }));
+    const ended = turnEnded('t1');
+    dispatch({ type: 'thread.editLast', threadId: 't1', turnId: 't1:turn:2', text: 'Add a light' });
+    await ended;
+    const goBack = { resumeId: 'mock-t1', at: 'mock-t1:99', fork: false };
+    expect(turns('t1').at(-1)).toMatchObject({ state: 'failed', resumable: false });
+    expect(threadOf('t1')?.goBack).toEqual(goBack);
+    await send('t1', 'Add a light, please');
+    expect(starts('claude').at(-1)).toMatchObject({
+      resumeId: 'mock-t1',
+      goBack: { at: 'mock-t1:99', fork: false },
+    });
+    expect(threadOf('t1')?.goBack).toEqual(goBack);
+  });
+
   it('refuses when the exchange before was answered before points were kept', async () => {
     await threadOn('claude', 't1');
     // As a thread stored before this change: no point on its turns.

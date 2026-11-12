@@ -344,12 +344,11 @@ export class MockProviderAdapter implements ProviderAdapter {
       command.type === 'startTurn' && this.#conversations
         ? this.#conversations.startTurn(command)
         : [];
-    // A go-back the mock cannot follow fails the turn, as Claude Code refuses an unknown point.
-    const events = this.#passing(
-      back.some((event) => event.type === 'turnFailed')
-        ? back
-        : [...back, ...this.#script(command)],
-    );
+    // A go-back the mock cannot follow fails the turn, as Claude Code refuses an unknown point;
+    // the turn wrote nothing, so it ends without a point.
+    const events = back.some((event) => event.type === 'turnFailed')
+      ? back
+      : this.#passing([...back, ...this.#script(command)]);
     setImmediate(() => {
       for (const event of events) for (const listener of this.#listeners) listener(event);
     });
