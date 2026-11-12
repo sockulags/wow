@@ -42,6 +42,11 @@ const assistantItem = (text: string) => ({
   payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] },
 });
 
+const roleItem = (role: string, text: string) => ({
+  type: 'response_item',
+  payload: { type: 'message', role, content: [{ type: 'input_text', text }] },
+});
+
 describe('listCodexSessions (agent workbench spec 72)', () => {
   it('lists each rollout with its id, folder, first prompt and time, newest first', async () => {
     await rollout(
@@ -167,5 +172,27 @@ describe('listCodexSessions (agent workbench spec 72)', () => {
         (session) => session.firstPrompt,
       ),
     ).toEqual(['Polish the spout', 'Descale the kettle']);
+  });
+
+  it('reads on past developer and system messages among the opening notes (finding 142)', async () => {
+    await rollout(
+      '2026/11/06',
+      'rollout-2026-11-06T08-00-00-invented.jsonl',
+      [
+        meta('15151515-2424-3535-4646-575757575757', '/work/invented'),
+        userItem('<future_note>Something Codex adds one day</future_note>'),
+        roleItem('developer', '<permissions instructions>Invented</permissions instructions>'),
+        roleItem('system', 'Invented system note'),
+        userItem('<environment_context>\n  <cwd>/work/invented</cwd>\n</environment_context>'),
+        userItem('Fill the kettle'),
+        assistantItem('Filling'),
+      ],
+      '2026-11-06T09:00:00.000Z',
+    );
+    expect(
+      (await listCodexSessions(codexHome, { limit: 5, promptChars: 200 })).map(
+        (session) => session.firstPrompt,
+      ),
+    ).toEqual(['Fill the kettle']);
   });
 });

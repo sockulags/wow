@@ -89,7 +89,13 @@ async function readSession(file: string) {
           fallback = message;
           noteAfterFallback = false;
         }
-      } else if (typeof item['type'] === 'string' && fallback !== undefined && cwd !== undefined) {
+      } else if (
+        typeof item['type'] === 'string' &&
+        // Newer Codex writes developer and system messages among its opening notes.
+        (item['type'] !== 'message' || item['role'] === 'assistant') &&
+        fallback !== undefined &&
+        cwd !== undefined
+      ) {
         // Codex records the user_message event before the model answers; once an answer, a
         // reasoning item or a tool call follows, an older rollout without it has nothing better.
         return { id, cwd, prompt: fallback };
