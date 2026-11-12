@@ -3790,8 +3790,8 @@ its path) and the project's Jira key. `recogniseHostLink(url, rules)` reads
 three Confluence page forms; anything else, an address with a user name or password, and any
 other scheme stay plain links. `bareHostRefs(text, rules)` finds `KEY-n` for the project's Jira
 key and `#n` (and `!n` on GitLab) for its repository, never inside a word, path or address, and
-never a `#n` that reads as a colour (six digits, three of one digit, or three digits after `:` or
-before `;`).
+never a `#n` that reads as a colour (six digits, three of one digit, or three digits after a
+colour property such as `color:` or `background:`; `Fixes: #123` stays an issue).
 `recogniseHostRef` takes one address or one key (the palette and `hosts.lookup`). A thread
 without a project has no repository or key, so its bare references stay text; its links still
 resolve against Settings → Trackers. `HostItemRef` names one item (host, kind, site, path, id,

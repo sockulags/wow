@@ -146,6 +146,11 @@ describe('key recognition @agent-workbench-24', () => {
         (match) => match.text,
       ),
     ).toEqual(['#123', '#1020']);
+    expect(
+      bareHostRefs('Fixes: #123. Closes: #456, see #124; then background-color: #789', rules).map(
+        (match) => match.text,
+      ),
+    ).toEqual(['#123', '#456', '#124']);
   });
 
   it('reads `!7` and `#4` on a GitLab repository', () => {

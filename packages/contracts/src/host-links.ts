@@ -279,14 +279,18 @@ export function bareHostRefs(text: string, rules: HostLinkRules): HostRefMatch[]
 }
 
 // `#333` or `#102030` in a message is far more often a colour than an issue: six digits, three of
-// the same digit, or three digits in a CSS declaration (`color: #123;`).
+// the same digit, or three digits after a colour property (`color: #123`). Any other colon is
+// not enough: `Fixes: #123` is an issue.
+const colourProperty =
+  /(?:^|[^\w-])[a-z-]*(?:color|background|border|fill|stroke|outline|shadow)[a-z-]*\s*:\s*$/i;
+
 function readsAsColour(text: string, start: number, written: string): boolean {
   if (!written.startsWith('#')) return false;
   const digits = written.slice(1);
   if (digits.length === 6) return true;
   if (digits.length !== 3) return false;
   if (/^(\d)\1\1$/.test(digits)) return true;
-  return /:\s*$/.test(text.slice(0, start)) || text.startsWith(';', start + written.length);
+  return colourProperty.test(text.slice(0, start));
 }
 
 function bareItem(written: string, rules: HostLinkRules): HostItemRef | undefined {
