@@ -220,7 +220,7 @@ function ContextMeter({
       data-full={full || undefined}
       className={cn(
         'flex items-center gap-2 text-2xs tabular-nums',
-        full ? 'text-state-needs-you' : 'text-muted-foreground',
+        full ? 'text-state-needs-you-text' : 'text-muted-foreground',
       )}
     >
       <div
