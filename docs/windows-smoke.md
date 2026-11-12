@@ -159,6 +159,13 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       looked (Codex's `diff` of an added file is read as its content). Ask it to run a command
       that needs approval, press D, write a note and Enter: the turn stops ("Stopped") and your
       note is the next message; write down what Codex answered to it.
+- [ ] **Codex command card shows the inner command and offers a rule.** Ask Codex to run
+      `pnpm --version` in a mode where it asks. Expected: the card reads `$ pnpm --version`, not
+      the shell line around it, and offers "Always allow in this project". Write down the shell
+      line Codex sent (the card's Details), exactly: wow reads `cmd.exe /d /s /c "…"`,
+      `powershell.exe -NoProfile -Command "…"` and a quoted program path such as
+      `"C:\Program Files\PowerShell\7\pwsh.exe" -Command "…"`; any other form shows the
+      whole line and offers no rule.
 - [ ] **Always allow (Codex).** In a project where a Claude thread stored a rule (above), ask
       Codex to run the same command: no request, the row reads "Allowed by rule". Write down the
       prefix Codex proposed (`proposedExecpolicyAmendment`), if the card of a new command shows

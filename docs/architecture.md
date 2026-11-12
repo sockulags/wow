@@ -2947,8 +2947,15 @@ option (`pnpm test --watch` gives `pnpm test`); a tool rule (`{kind: 'tool', ser
 named tool. Edits, plans, a Codex permissions request and a command with `;`, `&`, `|`, `<`, `>`,
 `` ` ``, `$`, brackets, a backslash, a quote or a line break get none, and neither does one whose
 first word is a shell or a program that runs what it is handed (`bash`, `cmd`, `powershell`,
-`env`, `sudo`, `xargs`, …; such a rule would allow every later script), a thread without a
-project or the assistant. Codex reports a command as the shell line it runs (`/bin/zsh -lc '…'`);
+`env`, `sudo`, `xargs`, `busybox`, `npx`, …; such a rule would allow every later script), whose
+first word sets a variable (`FOO=1 bash x.sh`), whose first two words are a runner (`pnpm exec`,
+`pnpm dlx`, `npm exec`, `yarn dlx`, `uv run`, …), an interpreter followed by an option
+(`node -e`, `python -c`, `python -m`; `node scripts/build.mjs` keeps its rule) or a `find`/`fd`
+that runs a program for what it finds (`-exec`, `-execdir`, `-ok`, `-x`), a thread without a
+project or the assistant. The same test runs when a stored rule is matched, so an older rule
+never answers such a command. Codex reports a command as the shell line it runs
+(`/bin/zsh -lc '…'`, on Windows `cmd.exe /d /s /c "…"`, `powershell.exe -Command "…"` or a
+quoted program path such as `"C:\Program Files\PowerShell\7\pwsh.exe" -Command "…"`);
 its adapter puts the command inside (`shellInner`) in `facts.command` and keeps the line in
 `request`, so a rule made on Claude Code matches the same command on Codex. The card shows the rule ("Run commands starting with `pnpm test`",
 `ruleText`) under its fourth choice, Y (`keybindings.approvalAllowAlways`). `allowAlways` appends
@@ -2956,8 +2963,9 @@ the rule with `addedAt` to the project's `approvals.alwaysAllow` (a `setting.cha
 commit) and the provider hears `allowOnce`: wow keeps its rules itself and writes nothing to a
 provider's settings. When a request arrives, the orchestrator compares it with the project's rules
 (`ruleCovers`: a command matches the prefix by whole words and never when it has shell control
-characters; a tool by server and name) and, when one covers it, stores the approval answered at
-once (`approval.answered {byRule: true}`, decision `allowOnce`) with `byRule` on its item: no
+characters; a tool by server and name; case counts on every system, Windows too, although
+Windows finds `Pnpm` as `pnpm`: a different case only asks again, and a rule never covers more
+than its words say) and, when one covers it, stores the approval answered at once (`approval.answered {byRule: true}`, decision `allowOnce`) with `byRule` on its item: no
 `needs_you`, no notification, and the provider service answers the adapter as for any answer. The
 row reads "Allowed by rule: …". Settings → Approvals (`settings/always-allow-section.tsx`) lists
 each project's rules with when they were added; Remove writes the list without it, so the next

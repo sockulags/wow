@@ -91,6 +91,51 @@ const wrappers: ReadonlySet<string> = new Set([
   'command',
   'builtin',
   'start',
+  'busybox',
+  'npx',
+  'pnpx',
+  'bunx',
+  'uvx',
+]);
+
+// Runners named by two words: `pnpm exec bash x.sh` runs bash.
+const wrapperPairs: ReadonlySet<string> = new Set([
+  'npm exec',
+  'npm x',
+  'pnpm exec',
+  'pnpm dlx',
+  'yarn exec',
+  'yarn dlx',
+  'bun x',
+  'pipx run',
+  'uv run',
+]);
+
+// Interpreters: `node -e …` or `python -c …` run the text they are handed, so one followed by an
+// option gets no rule; one given a script file does.
+const interpreters: ReadonlySet<string> = new Set([
+  'node',
+  'deno',
+  'bun',
+  'python',
+  'python3',
+  'py',
+  'perl',
+  'ruby',
+  'php',
+]);
+
+// `find … -exec rm {} +` (or `fd … -x rm`) runs a program for every file it finds.
+const finders: ReadonlySet<string> = new Set(['find', 'fd']);
+const findRuns: ReadonlySet<string> = new Set([
+  '-exec',
+  '-execdir',
+  '-ok',
+  '-okdir',
+  '-x',
+  '-X',
+  '--exec',
+  '--exec-batch',
 ]);
 
 const posixShells: ReadonlySet<string> = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
@@ -99,28 +144,44 @@ const programName = (word: string) =>
   (word.split(/[\\/]/).at(-1) ?? word).toLowerCase().replace(/\.exe$/, '');
 
 const runsAnother = (command: string) => {
-  const [first] = words(command);
-  return first !== undefined && wrappers.has(programName(first));
+  const [first, second, ...rest] = words(command);
+  if (first === undefined) return false;
+  // `FOO=1 bash x.sh`: the program comes after the variables.
+  if (first.includes('=')) return true;
+  const name = programName(first);
+  if (wrappers.has(name)) return true;
+  if (second === undefined) return false;
+  if (wrapperPairs.has(`${name} ${second.toLowerCase()}`)) return true;
+  if (interpreters.has(name) && second.startsWith('-')) return true;
+  return finders.has(name) && [second, ...rest].some((word) => findRuns.has(word));
 };
 
 const ruleable = (command: string) => !shellControl.test(command) && !runsAnother(command);
 
 // The command a shell is asked to run, when the line is only that: `/bin/zsh -lc 'pnpm test'`,
-// `bash -c "pnpm test"` or `powershell.exe -NoProfile -Command "pnpm test"` give `pnpm test`.
-// Undefined for anything else. Codex reports a command as the shell line it runs.
+// `bash -c "pnpm test"`, `powershell.exe -NoProfile -Command "pnpm test"`,
+// `"C:\Program Files\PowerShell\7\pwsh.exe" -Command "pnpm test"` or
+// `cmd.exe /d /s /c "pnpm test"` give `pnpm test`. Undefined for anything else. Codex reports a
+// command as the shell line it runs.
 export function shellInner(line: string): string | undefined {
   const match =
-    /^\s*(\S+)((?:\s+-{1,2}[\w-]+)*?)\s+(-l?c|-Command|\/c)\s+(?:'([^']*)'|"([^"]*)")\s*$/i.exec(
+    /^\s*("[^"]+"|'[^']+'|\S+)((?:\s+(?:-{1,2}[\w-]+|\/[a-z]))*?)\s+(-l?c|-Command|\/c)\s+(?:'([^']*)'|"([^"]*)")\s*$/i.exec(
       line,
     );
   if (!match) return undefined;
-  const [, program = '', , runSwitch = '', single, double] = match;
-  const name = programName(program);
+  const [, program = '', switches = '', runSwitch = '', single, double] = match;
+  const name = programName(program.replace(/^["']|["']$/g, ''));
   const asks = runSwitch.toLowerCase();
+  // cmd takes `/d /s` before `/c`; the others take dashed options.
+  const options = words(switches);
+  const cmdOptions = options.every((option) => option.startsWith('/'));
+  const dashOptions = options.every((option) => option.startsWith('-'));
   const fits =
-    (posixShells.has(name) && (asks === '-c' || asks === '-lc')) ||
-    ((name === 'powershell' || name === 'pwsh') && (asks === '-command' || asks === '-c')) ||
-    (name === 'cmd' && asks === '/c');
+    (posixShells.has(name) && dashOptions && (asks === '-c' || asks === '-lc')) ||
+    ((name === 'powershell' || name === 'pwsh') &&
+      dashOptions &&
+      (asks === '-command' || asks === '-c')) ||
+    (name === 'cmd' && cmdOptions && asks === '/c');
   const inner = (single ?? double ?? '').trim();
   return fits && inner !== '' ? inner : undefined;
 }

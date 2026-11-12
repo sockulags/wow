@@ -61,6 +61,40 @@ describe('always allow rules (agent workbench spec 38, 39)', () => {
     });
   });
 
+  it('offers no rule for a command behind variables or a runner that runs what it is handed', () => {
+    for (const command of [
+      'FOO=1 bash x.sh',
+      'FOO=1 pnpm test',
+      'busybox sh x',
+      'pnpm exec bash x.sh',
+      'pnpm dlx cowsay hi',
+      'npm exec cowsay',
+      'yarn dlx cowsay',
+      'npx cowsay',
+      'find . -exec rm x +',
+      'find . -name x -execdir rm {} +',
+      'node -e process.exit(1)',
+      'node --eval x',
+      'python3 -c print(1)',
+      'python -m http.server',
+    ]) {
+      expect([command, proposeRule('command', { command })]).toEqual([command, undefined]);
+    }
+    const node: AlwaysAllowRule = { kind: 'command', prefix: 'node', addedAt: at };
+    expect(ruleCovers(node, 'command', { command: 'node -e process.exit(1)' })).toBe(false);
+    const find: AlwaysAllowRule = { kind: 'command', prefix: 'find .', addedAt: at };
+    expect(ruleCovers(find, 'command', { command: 'find . -exec rm x +' })).toBe(false);
+    // A script a runner is not involved in still gets its rule.
+    expect(proposeRule('command', { command: 'node scripts/build.mjs' })).toEqual({
+      kind: 'command',
+      prefix: 'node scripts/build.mjs',
+    });
+    expect(proposeRule('command', { command: 'find . -name x' })).toEqual({
+      kind: 'command',
+      prefix: 'find .',
+    });
+  });
+
   it('reads the command a shell line runs (Codex reports the shell line)', () => {
     expect(shellInner("/bin/zsh -lc 'pnpm test --watch'")).toBe('pnpm test --watch');
     expect(shellInner('bash -c "pnpm test"')).toBe('pnpm test');
@@ -73,6 +107,19 @@ describe('always allow rules (agent workbench spec 38, 39)', () => {
     expect(shellInner("bash -lc ''")).toBeUndefined();
   });
 
+  it('reads the shell lines Codex reports on Windows', () => {
+    expect(shellInner('cmd.exe /d /s /c "pnpm test"')).toBe('pnpm test');
+    expect(shellInner('C:\\Windows\\System32\\cmd.exe /S /C "pnpm test"')).toBe('pnpm test');
+    expect(
+      shellInner('"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile -Command "pnpm test"'),
+    ).toBe('pnpm test');
+    expect(
+      shellInner("'C:\\Program Files\\PowerShell\\7\\pwsh.exe' -Command 'pnpm test'"),
+    ).toBe('pnpm test');
+    expect(shellInner('"C:\\Program Files\\Tools\\node.exe" /c "x"')).toBeUndefined();
+    expect(shellInner('bash /d -c "x"')).toBeUndefined();
+  });
+
   it('covers a command by whole words of its prefix and a tool by its name', () => {
     const tests: AlwaysAllowRule = { kind: 'command', prefix: 'pnpm test', addedAt: at };
     expect(ruleCovers(tests, 'command', { command: 'pnpm test' })).toBe(true);
@@ -83,6 +130,8 @@ describe('always allow rules (agent workbench spec 38, 39)', () => {
     const shell: AlwaysAllowRule = { kind: 'command', prefix: '/bin/bash', addedAt: at };
     expect(ruleCovers(shell, 'command', { command: "/bin/bash -lc 'rm -rf ~/work'" })).toBe(false);
     expect(ruleCovers(tests, 'command', { command: 'pnpm test "a b"' })).toBe(false);
+    // Case counts, also on Windows: a rule never covers more than it says (docs/architecture.md).
+    expect(ruleCovers(tests, 'command', { command: 'Pnpm test' })).toBe(false);
     const issue: AlwaysAllowRule = {
       kind: 'tool',
       server: 'github',

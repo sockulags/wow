@@ -488,8 +488,10 @@ how much of the context window the thread uses, with a Compact action for Claude
     allowed without asking, on Claude Code and Codex alike, and its row reads "Allowed by rule:
     …". A command that chains, pipes, redirects or quotes (`&&`, `;`, `|`, `>`, `"`) is never
     covered, and neither is one that hands another command to a shell or a wrapper (`bash -c`,
-    `powershell -Command`, `sudo`, `env`); when Codex runs a command through your shell, the
-    command inside it is what is shown and matched. Edits get no rule (use the Accept edits mode
+    `powershell -Command`, `sudo`, `env`, `FOO=1 …`, `npx`, `pnpm exec`, `node -e`,
+    `python -c`, `find … -exec`); when Codex runs a command through your shell, the
+    command inside it is what is shown and matched. A rule matches the case it was stored in:
+    `Pnpm test` asks again even where `pnpm test` is allowed. Edits get no rule (use the Accept edits mode
     for that), and a thread without a project does not offer it. Settings → Approvals lists each
     project's rules (the project setting `approvals.alwaysAllow`) with when they were added;
     **Remove** makes the next such request ask again. The app assistant cannot add a rule without
