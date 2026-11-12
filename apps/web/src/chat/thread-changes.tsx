@@ -87,10 +87,13 @@ export function useThreadDiff(
   useEffect(() => {
     if (!connection) return;
     let current = true;
-    connection.request('threads.diff', path === undefined ? { threadId } : { threadId, path }).then(
-      (received) => current && setAnswer({ diff: parsed(received), for: asked }),
-      (error: unknown) => current && setAnswer({ error: errorMessage(error), for: asked }),
-    );
+    connection
+      .request('threads.diff', path === undefined ? { threadId } : { threadId, path })
+      .then(parsed)
+      .then(
+        (diff) => current && setAnswer({ diff, for: asked }),
+        (error: unknown) => current && setAnswer({ error: errorMessage(error), for: asked }),
+      );
     return () => {
       current = false;
     };
