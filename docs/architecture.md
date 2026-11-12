@@ -2751,7 +2751,9 @@ before (no `at`) is drawn in full as before. The panel's thread Details has a Ta
 Copy (`components/copy-button.tsx`): an assistant message has Copy (its markdown) and Copy text
 (what it reads on screen) on hover or focus; fenced code in markdown has Copy code
 (`CodeBlock copy`); tool output has Copy output. A stopped turn ends with "Stopped by you · 20:41"
-(`StoppedLine`, from the turn's `endedAt`), which carries Resume on the last turn.
+(`StoppedLine`, from the turn's `endedAt`), which carries Resume on the last turn. The line reads
+the turn's stored state, so a turn stopped before this change gets it too: it was stopped, and no
+item, divider or marker is added to it (spec 48 is about new items, not about reading old ones).
 
 ### Thread list, unread and chat notifications
 

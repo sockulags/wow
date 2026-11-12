@@ -262,3 +262,49 @@ describe("a step's thread and a waiting question (wow skills spec 14, 18)", () =
     expect(sent()).toEqual([]);
   });
 });
+
+const said = (
+  id: string,
+  turnId: string,
+  index: number,
+  kind: 'user' | 'assistant_text',
+): ThreadItem => ({
+  id,
+  threadId: thread.id,
+  turnId,
+  index,
+  kind,
+  payload: { text: `${kind} ${id}` },
+  streaming: false,
+});
+
+describe('a turn stopped before this change (agent workbench spec 48, 89)', () => {
+  // The line reads the turn's stored state and end time, which a turn stored before already
+  // has: it was stopped, so it says so. No item, divider or marker is added to it.
+  it('ends with the stopped line, and only the last turn carries Resume', () => {
+    const stopped: Turn = { ...failedTurn, state: 'interrupted' };
+    const later: Turn = {
+      ...failedTurn,
+      id: 'turn-2',
+      index: 1,
+      state: 'completed',
+      startedAt: '2026-11-02T08:03:00.000Z',
+      endedAt: '2026-11-02T08:04:00.000Z',
+    };
+    setup({
+      topics: {
+        turns: [stopped, later],
+        threadItems: [
+          said('a', 'turn-1', 0, 'user'),
+          said('b', 'turn-1', 1, 'assistant_text'),
+          said('c', 'turn-2', 2, 'user'),
+          said('d', 'turn-2', 3, 'assistant_text'),
+        ],
+      },
+    });
+    const line = screen.getByTestId('turn-stopped');
+    expect(line.textContent).toMatch(/^Stopped by you · /);
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+    expect(screen.getAllByRole('listitem')).toHaveLength(5);
+  });
+});

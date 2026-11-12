@@ -7,18 +7,26 @@ import { formatElapsed } from '../view-model';
 
 export type ToolPayload = ToolCallItemPayload;
 
+// Windows paths come with either separator and any drive-letter case, so they are compared in
+// one form; the form keeps every character's place, so the original can be cut at the same spot.
+const comparable = (path: string): string => {
+  const slashed = path.replaceAll('\\', '/');
+  return /^([a-z]:|\/\/)/i.test(slashed) ? slashed.toLowerCase() : slashed;
+};
+
+const trimmed = (folder: string) => folder.replace(/[\\/]+$/, '');
+
 // A path inside the thread's folder is shown relative to it.
 export function shownPath(path: string, cwd: string): string {
-  const folder = cwd.replace(/[\\/]+$/, '');
-  if (folder !== '' && path.length > folder.length + 1 && path.startsWith(folder)) {
-    const separator = path.charAt(folder.length);
-    if (separator === '/' || separator === '\\') return path.slice(folder.length + 1);
+  const folder = comparable(trimmed(cwd));
+  const whole = comparable(path);
+  if (folder !== '' && whole.length === path.length && whole.startsWith(`${folder}/`)) {
+    return path.slice(folder.length + 1);
   }
   return path;
 }
 
-const sameFolder = (a: string, b: string) =>
-  a.replace(/[\\/]+$/, '').replaceAll('\\', '/') === b.replace(/[\\/]+$/, '').replaceAll('\\', '/');
+const sameFolder = (a: string, b: string) => comparable(trimmed(a)) === comparable(trimmed(b));
 
 // The folder a command ran in, only when it is not the thread's own.
 export const otherFolder = (payload: ToolPayload, cwd: string): string | undefined =>

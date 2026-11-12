@@ -68,6 +68,53 @@ describe('the net over streamed text', () => {
     ).toBe('are set.<turnCompleted>');
   });
 
+  it('hides a lookalike in the tool facts as well as in the input', () => {
+    const redactor = new AssistantRedactor();
+    const command = `curl -H "Authorization: Bearer ${lookalike}" https://example.invalid`;
+    const url = `https://example.invalid/?token=${lookalike}`;
+    const pattern = `token=${lookalike}`;
+    const seen = redactor.redact(
+      threadId,
+      [
+        {
+          type: 'toolCallStarted',
+          threadId,
+          itemId: 'bash',
+          name: 'Bash',
+          input: { command },
+          kind: 'command',
+          command,
+          cwd: `/work/${lookalike}`,
+        },
+        {
+          type: 'toolCallStarted',
+          threadId,
+          itemId: 'fetch',
+          name: 'WebFetch',
+          input: { url },
+          kind: 'web',
+          url,
+        },
+        {
+          type: 'toolCallStarted',
+          threadId,
+          itemId: 'grep',
+          name: 'Grep',
+          input: { pattern },
+          kind: 'search',
+          pattern,
+          path: '/work',
+        },
+      ],
+      () => patterns,
+    );
+    expect(JSON.stringify(seen)).not.toContain('glpat');
+    const [bash, fetch, grep] = seen;
+    expect(bash).toMatchObject({ kind: 'command', command: expect.stringContaining(hiddenText) });
+    expect(fetch).toMatchObject({ kind: 'web', url: expect.stringContaining(hiddenText) });
+    expect(grep).toMatchObject({ pattern: expect.stringContaining(hiddenText), path: '/work' });
+  });
+
   it('holds tool output until the call completes and hides it whole', () => {
     const redactor = new AssistantRedactor();
     const seen = redactor.redact(
