@@ -1522,6 +1522,65 @@ test.describe('chat', () => {
     expect(withoutTime(await readFile(file, 'utf8'))).toBe(withoutTime(copied));
   });
 
+  test('lists what the session can use @thread-work-37 @thread-work-38 @thread-work-39 @thread-work-40 @thread-work-42', async ({
+    page,
+  }) => {
+    // The mock Claude Code reports tea-docs, tea-tracker and tea-cloud as each turn starts.
+    await startClaudeThread(page, 'What can you use here?');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    const chip = page.getByTestId('tools-chip');
+    await expect(chip).toHaveText('1 MCP server failed, 1 needs sign-in');
+    await chip.click();
+    const panel = page.getByRole('complementary', { name: 'Context panel' });
+    await expect(panel.getByRole('tab', { name: 'Tools', selected: true })).toBeVisible();
+    const tab = panel.getByTestId('tools-tab');
+    await expect(tab.getByTestId('tools-server-state')).toHaveText([
+      'Connected',
+      'Failed',
+      'Needs sign-in',
+    ]);
+    await expect(tab.getByTestId('tools-server-error')).toHaveText('spawn tea-tracker ENOENT');
+    await expect(tab).toContainText('Sign in from Claude Code: /mcp in a terminal');
+    await expect(tab.getByTestId('tools-server-facts').first()).toHaveText(
+      'project · 1.2.0 · https://docs.tea.example',
+    );
+    await expect(tab.getByRole('heading', { name: /^Plugins/ })).toHaveText('Plugins (2)');
+    await expect(tab.getByTestId('tools-reported')).toHaveText(/^Reported as the turn of /);
+
+    await tab.getByLabel('Filter session tools').fill('handbook');
+    await expect(tab.getByTestId('tools-server')).toHaveCount(1);
+    await expect(tab.getByRole('heading', { name: /^Skills/ })).toHaveText('Skills (0)');
+    await tab.getByLabel('Filter session tools').fill('');
+
+    // The live session is asked again and reports the same list (spec 39).
+    await tab.getByRole('button', { name: 'Refresh' }).click();
+    await expect(page.getByText('The session reports the same list')).toBeVisible();
+
+    // Codex lists nothing of its own: its instruction files and the servers its calls used.
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await choose(page.getByLabel('Project'), 'Demo');
+    await messageBox(page).fill('Run the tools');
+    await messageBox(page).press('Enter');
+    await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await expect(page.getByTestId('tools-chip')).toBeHidden();
+    await panel.getByTestId('open-session-tools').click();
+    const codex = panel.getByTestId('tools-tab');
+    await expect(codex.getByTestId('tools-codex')).toContainText(
+      'Codex reports no list of its servers, tools or skills to wow',
+    );
+    const seen = codex.getByTestId('tools-server');
+    await expect(seen).toHaveCount(1);
+    await expect(seen).toContainText('tracker');
+    await expect(seen).toContainText("Seen in this thread's tool calls");
+    await expect(seen).toContainText('find_issue');
+    await expect(codex).toContainText('AGENTS.md');
+    await messageBox(page).focus();
+    await page.keyboard.press('Control+.');
+    await expect(conversation(page).getByTestId('turn-stopped')).toContainText('Stopped by you');
+  });
+
   test('finds threads and actions in the palette', async ({ page }) => {
     await startThread(page, 'Palette target');
     await page.goto('/chat');
@@ -1726,6 +1785,15 @@ test.describe('sketch', () => {
     await page.keyboard.press('F3');
     await expect(page.getByTestId('find-count')).toHaveText('4 of 5');
     await page.screenshot({ path: sketchPath('2026-11-thread-work', 'find-bar') });
+  });
+
+  test('session-tools', async ({ page }) => {
+    await startClaudeThread(page, 'What can you use here?');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await page.getByTestId('tools-chip').click();
+    const tab = page.getByTestId('tools-tab');
+    await expect(tab.getByTestId('tools-server-state')).toHaveCount(3);
+    await page.screenshot({ path: sketchPath('2026-11-thread-work', 'session-tools') });
   });
 
   test('image-chip', async ({ page }) => {
