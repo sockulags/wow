@@ -1,4 +1,6 @@
 import {
+  AlwaysAllowRule,
+  sameRule,
   type CalendarItem,
   type ServerCommand,
   type SettingDefinition,
@@ -54,6 +56,14 @@ const gateAnswer = refused(
 const turnedOn = (on: unknown) => (next: unknown, current: unknown) =>
   next === on && current !== on;
 
+const storedRules = (value: unknown): AlwaysAllowRule[] =>
+  Array.isArray(value)
+    ? value.flatMap((entry) => {
+        const parsed = AlwaysAllowRule.safeParse(entry);
+        return parsed.success ? [parsed.data] : [];
+      })
+    : [];
+
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : [];
 
@@ -69,6 +79,16 @@ const moreOnItsOwn: Readonly<Record<string, (next: unknown, current: unknown) =>
   'workflows.alwaysStopSkills': (next, current) => {
     const kept = new Set(strings(next));
     return strings(current).some((skill) => !kept.has(skill));
+  },
+  // An "always allow" rule answers later requests without asking (agent workbench spec 41), so
+  // a rule the project does not already have waits for a yes; removing rules is ordinary.
+  'approvals.alwaysAllow': (next, current) => {
+    if (!Array.isArray(next)) return true;
+    const kept = storedRules(current);
+    return next.some((entry) => {
+      const parsed = AlwaysAllowRule.safeParse(entry);
+      return !parsed.success || !kept.some((rule) => sameRule(rule, parsed.data));
+    });
   },
 };
 

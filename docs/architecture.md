@@ -2265,11 +2265,12 @@ decides what a command of the assistant does. The table names every type of `Ser
   that then lets the app do more: `scheduler.paused` off, `scheduler.missedPolicy` to `run`,
   `hosts.polling`, `triggers.eventsEnabled` or `viewer.htmlScripts` on. A change to
   `assistant.secretPatterns` is a proposal too, since that is the assistant's own net, and so
-  is any change to `assistant.allowCodex` or `triggers.forkPullRequests`, either way. Three
+  is any change to `assistant.allowCodex` or `triggers.forkPullRequests`, either way. Four
   more are proposals though spec 9 does not list them, because they do the same kind of thing:
   another skill, extra prompt, provider or model on a step that has a permission mode or a
   gate that passes by itself (the yes once given for that step was for that work); taking a
-  skill off `workflows.alwaysStopSkills`; and a tracker's `baseUrl` or `authMode` while that
+  skill off `workflows.alwaysStopSkills`; a project's `approvals.alwaysAllow` with a rule it
+  does not already have (removing rules is ordinary); and a tracker's `baseUrl` or `authMode` while that
   tracker's token is stored at any scope, since the token would then be sent to the new address
   (a project's own token is sent to the address the project resolves, which can be the global
   one, so a global change counts for a project's token too). Two more close ways around a yes:
@@ -2904,11 +2905,15 @@ what was replaced. Codex (`fileChangeDiff` in `provider-codex/src/adapter.ts`): 
 is unified already (anything before its first `@@` is cut); an added or deleted file's `diff` is
 taken, as far as the schema says, as its content and drawn as all added or removed lines. The
 server keeps at most `chat.editDiffMaxLines` lines of a diff in a row or approval and marks it
-`diffCut`. `chat/tools/edit.tsx` reads "Edit src/timer.ts +4 −1" (`diffCounts` in
-`contracts/src/diff.ts` counts by the hunk headers, so a removed line reading `--- x` is not a
-header) and opens to the diff drawn with the run Changes tab's `DiffLines`, and Open file. Open
-file opens the thread's Changes at that file for a chat thread and the run's file viewer for a
-step's thread; once the panel tabs of U5 are in, it should open a file tab in thread scope. An
+`diffCut`; a tool row also stores `diffCounts {added, removed}` of the whole diff, counted before
+the cut. `chat/tools/edit.tsx` reads "Edit src/timer.ts +4 −1" (from `diffCounts` on the row, or
+for a row stored before it `diffCounts` in `contracts/src/diff.ts` over the stored diff, which
+counts by the hunk headers, so a removed line reading `--- x` is not a header) and opens to the
+diff drawn with the run Changes tab's `DiffLines`, and Open file. Open file opens the thread's
+Changes at that file for a chat thread and the run's file viewer for a step's thread; it is not
+offered for a file outside the thread's folder (the path stays absolute), nor in a chat thread
+whose `threads.diff` status is not `ok`, since its Changes would only say why. Once the panel tabs
+of U5 are in, it should open a file tab in thread scope. An
 `edit` row without a diff (stored before) is drawn as the generic row it was.
 
 **Approvals in wow's words** (spec 36). `approvalRequested` carries `facts: ApprovalFacts` (the
@@ -2940,8 +2945,12 @@ provider's own prefix when it is one of the command's (Claude Code's `Bash(<pref
 suggestion, Codex's exec policy amendment), else the first word and the second when it is not an
 option (`pnpm test --watch` gives `pnpm test`); a tool rule (`{kind: 'tool', server, tool}`) for a
 named tool. Edits, plans, a Codex permissions request and a command with `;`, `&`, `|`, `<`, `>`,
-`` ` ``, `$`, brackets, a backslash or a line break get none, and neither does a thread without a
-project or the assistant. The card shows the rule ("Run commands starting with `pnpm test`",
+`` ` ``, `$`, brackets, a backslash, a quote or a line break get none, and neither does one whose
+first word is a shell or a program that runs what it is handed (`bash`, `cmd`, `powershell`,
+`env`, `sudo`, `xargs`, …; such a rule would allow every later script), a thread without a
+project or the assistant. Codex reports a command as the shell line it runs (`/bin/zsh -lc '…'`);
+its adapter puts the command inside (`shellInner`) in `facts.command` and keeps the line in
+`request`, so a rule made on Claude Code matches the same command on Codex. The card shows the rule ("Run commands starting with `pnpm test`",
 `ruleText`) under its fourth choice, Y (`keybindings.approvalAllowAlways`). `allowAlways` appends
 the rule with `addedAt` to the project's `approvals.alwaysAllow` (a `setting.changed` in the same
 commit) and the provider hears `allowOnce`: wow keeps its rules itself and writes nothing to a
@@ -2960,8 +2969,9 @@ string. The SDK's input type declares none, so without it the orchestrator takes
 assistant text (`ReadModel.lastAssistantText`, or the text this batch streamed) and stores
 `plan {text, from: 'conversation'}`, which the card labels "The plan as written in the
 conversation". `chat/plan-card.tsx` renders the plan as markdown with "Start, accept edits"
-(focused, so Enter takes it; `keybindings.planAcceptEdits`, 1), "Start, ask each time" (2) and
-"Keep planning" (3), which opens the note. A start is `approval.answer {decision: 'allowOnce',
+(focused, so Enter takes it; `keybindings.planAcceptEdits`, 1), "Start, ask each time"
+(`keybindings.planAskEachTime`, 2) and "Keep planning" (`keybindings.planKeepPlanning`, 3), which
+opens the note. A start is `approval.answer {decision: 'allowOnce',
 permissionMode: 'acceptEdits' | 'default'}` (any other mode, or a mode on another kind, is
 refused); the orchestrator adds `thread.configured` with that mode so the bar shows it, and the
 adapter allows with `updatedPermissions: [{type: 'setMode', mode, destination: 'session'}]` and

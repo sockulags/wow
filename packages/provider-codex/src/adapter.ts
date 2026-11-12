@@ -12,7 +12,7 @@ import type {
   TaskStatus,
   ToolFacts,
 } from '@wow/contracts';
-import { markRecommended } from '@wow/contracts';
+import { markRecommended, shellInner } from '@wow/contracts';
 import {
   CompatibilityCache,
   checkInstalledCodex,
@@ -218,9 +218,21 @@ const linesOf = (text: string): string[] => {
 // One change's hunks (agent workbench spec 33). codex gives an update as a unified diff and, as
 // far as its schema says, an added or deleted file as its content, which becomes all added or all
 // removed lines.
+const hunkHeader = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/;
+
+// An added or removed file's text is its content unless it opens as a real diff does: a new
+// patch file or a document whose first line is `--- title` stays content.
+function opensAsDiff(diff: string): boolean {
+  const [first = '', second = '', third = ''] = diff.split('\n');
+  return (
+    hunkHeader.test(first) ||
+    (first.startsWith('--- ') && second.startsWith('+++ ') && hunkHeader.test(third))
+  );
+}
+
 function changeHunks(change: FileUpdateChange): string {
   const diff = change.diff.replace(/\n$/, '');
-  if (change.kind.type === 'update' || diff.startsWith('@@') || diff.startsWith('--- ')) {
+  if (change.kind.type === 'update' || opensAsDiff(diff)) {
     const at = diff.indexOf('@@');
     return at < 0 ? '' : diff.slice(at);
   }
@@ -666,7 +678,7 @@ export class CodexAdapter implements ProviderAdapter {
   }
 
   // codex takes no message with a decline (agent workbench spec 37): the server stops the turn
-  // and sends a denial's note as the next message, so the note never reaches this adapter.
+  // and sends a denial's note as the next message, so a note given here is not passed on.
   #answerApproval(approvalId: string, decision: ProviderApprovalDecision): unknown {
     const approval = this.#approvals.get(approvalId);
     const connection = this.#connection;
@@ -888,6 +900,9 @@ export class CodexAdapter implements ProviderAdapter {
         });
         const { command, reason, cwd, proposedExecpolicyAmendment } = message.params;
         const hint = proposedExecpolicyAmendment?.join(' ').trim();
+        // Codex reports the shell line it runs (`/bin/zsh -lc '…'`); the card and a rule are about
+        // the command inside it. The whole line stays in `request`.
+        const shown = command ? (shellInner(command) ?? command) : undefined;
         this.#emit({
           type: 'approvalRequested',
           threadId,
@@ -897,7 +912,7 @@ export class CodexAdapter implements ProviderAdapter {
           request: message.params,
           facts: {
             kind: 'command',
-            ...(command ? { command } : {}),
+            ...(shown ? { command: shown } : {}),
             ...(cwd ? { cwd } : {}),
             ...(hint ? { ruleHint: hint } : {}),
           },

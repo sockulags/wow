@@ -54,15 +54,76 @@ export const sameRule = (a: ProposedRule, b: ProposedRule): boolean =>
     ? b.kind === 'command' && a.prefix === b.prefix
     : b.kind === 'tool' && a.server === b.server && a.tool === b.tool;
 
-// A command that chains, pipes, redirects or substitutes is more than its first words, so no
-// prefix rule covers it and none is offered for it.
-const shellControl = /[;&|<>`$(){}\n\r\\]/;
+// A command that chains, pipes, redirects, substitutes or quotes is more than its first words, so
+// no prefix rule covers it and none is offered for it.
+const shellControl = /[;&|<>`$(){}\n\r\\'"]/;
 
 const words = (command: string) =>
   command
     .trim()
     .split(/\s+/)
     .filter((word) => word !== '');
+
+// Programs that run another command or script given to them. A rule for one of them would allow
+// whatever it is handed next (`bash -lc '…'` allows every script), so they never get one.
+const wrappers: ReadonlySet<string> = new Set([
+  'sh',
+  'bash',
+  'zsh',
+  'dash',
+  'ksh',
+  'fish',
+  'cmd',
+  'powershell',
+  'pwsh',
+  'wsl',
+  'env',
+  'sudo',
+  'doas',
+  'su',
+  'exec',
+  'eval',
+  'xargs',
+  'nohup',
+  'nice',
+  'time',
+  'timeout',
+  'command',
+  'builtin',
+  'start',
+]);
+
+const posixShells: ReadonlySet<string> = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
+
+const programName = (word: string) =>
+  (word.split(/[\\/]/).at(-1) ?? word).toLowerCase().replace(/\.exe$/, '');
+
+const runsAnother = (command: string) => {
+  const [first] = words(command);
+  return first !== undefined && wrappers.has(programName(first));
+};
+
+const ruleable = (command: string) => !shellControl.test(command) && !runsAnother(command);
+
+// The command a shell is asked to run, when the line is only that: `/bin/zsh -lc 'pnpm test'`,
+// `bash -c "pnpm test"` or `powershell.exe -NoProfile -Command "pnpm test"` give `pnpm test`.
+// Undefined for anything else. Codex reports a command as the shell line it runs.
+export function shellInner(line: string): string | undefined {
+  const match =
+    /^\s*(\S+)((?:\s+-{1,2}[\w-]+)*?)\s+(-l?c|-Command|\/c)\s+(?:'([^']*)'|"([^"]*)")\s*$/i.exec(
+      line,
+    );
+  if (!match) return undefined;
+  const [, program = '', , runSwitch = '', single, double] = match;
+  const name = programName(program);
+  const asks = runSwitch.toLowerCase();
+  const fits =
+    (posixShells.has(name) && (asks === '-c' || asks === '-lc')) ||
+    ((name === 'powershell' || name === 'pwsh') && (asks === '-command' || asks === '-c')) ||
+    (name === 'cmd' && asks === '/c');
+  const inner = (single ?? double ?? '').trim();
+  return fits && inner !== '' ? inner : undefined;
+}
 
 // The rule "always allow" would store for this request, or undefined when it gets none: an edit,
 // a plan, a request without a command or tool name, or a command that does more than one thing.
@@ -76,9 +137,9 @@ export function proposeRule(
   if (!facts) return undefined;
   if (kind === 'command') {
     const command = facts.command?.trim();
-    if (!command || shellControl.test(command)) return undefined;
+    if (!command || !ruleable(command)) return undefined;
     const hint = facts.ruleHint === undefined ? undefined : words(facts.ruleHint).join(' ');
-    if (hint && !shellControl.test(hint) && coversCommand(hint, command)) {
+    if (hint && ruleable(hint) && coversCommand(hint, command)) {
       return { kind: 'command', prefix: hint };
     }
     const [first, second] = words(command);
@@ -112,7 +173,7 @@ export function ruleCovers(
     return (
       kind === 'command' &&
       command !== undefined &&
-      !shellControl.test(command) &&
+      ruleable(command) &&
       coversCommand(words(rule.prefix).join(' '), command)
     );
   }

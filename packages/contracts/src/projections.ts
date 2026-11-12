@@ -191,6 +191,10 @@ export const ToolCallItemPayload = ToolFacts.partial().extend({
   durationMs: z.number().nonnegative().optional(),
   // An edit's diff was longer than `chat.editDiffMaxLines` and is cut there.
   diffCut: z.boolean().optional(),
+  // The lines the whole diff adds and removes, counted before any cut.
+  diffCounts: z
+    .object({ added: z.number().int().nonnegative(), removed: z.number().int().nonnegative() })
+    .optional(),
 });
 export type ToolCallItemPayload = z.infer<typeof ToolCallItemPayload>;
 

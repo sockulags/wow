@@ -424,7 +424,9 @@ Every tool call is one line, drawn by what the call does:
   one per line, **Show JSON** shows the arguments as sent, and the output sits below.
 - **An edit** (Claude Code's Edit, MultiEdit and Write, Codex's file changes) reads "Edit
   src/timer.ts +4 −1"; opened, it shows the change in colour, removed lines red and added lines
-  green, with **Open file**, which opens the thread's Changes at that file. A new file shows as
+  green, with **Open file**, which opens the thread's Changes at that file (not offered for a file
+  outside the thread's folder, or when the folder is not in Git or the thread is older than
+  Changes). A new file shows as
   added lines. A very long diff is cut at `chat.editDiffMaxLines` lines; the thread's Changes
   have all of it.
 - **Any other tool**, and every call stored before this version, keep the row they had: the
@@ -484,10 +486,14 @@ how much of the context window the thread uses, with a Compact action for Claude
     `pnpm test`" (the command's first words) or "Use the tool `github › create_issue`", and allows
     the request. From then on a request any thread of the project makes that the rule covers is
     allowed without asking, on Claude Code and Codex alike, and its row reads "Allowed by rule:
-    …". A command that chains, pipes or redirects (`&&`, `;`, `|`, `>`) is never covered. Edits
-    get no rule (use the Accept edits mode for that), and a thread without a project does not
-    offer it. Settings → Approvals lists each project's rules with when they were added; **Remove**
-    makes the next such request ask again. wow keeps the rules itself and writes nothing to Claude
+    …". A command that chains, pipes, redirects or quotes (`&&`, `;`, `|`, `>`, `"`) is never
+    covered, and neither is one that hands another command to a shell or a wrapper (`bash -c`,
+    `powershell -Command`, `sudo`, `env`); when Codex runs a command through your shell, the
+    command inside it is what is shown and matched. Edits get no rule (use the Accept edits mode
+    for that), and a thread without a project does not offer it. Settings → Approvals lists each
+    project's rules (the project setting `approvals.alwaysAllow`) with when they were added;
+    **Remove** makes the next such request ask again. The app assistant cannot add a rule without
+    your yes. wow keeps the rules itself and writes nothing to Claude
     Code's or Codex's settings.
 - **Plans**: in Plan only, when Claude Code is ready to leave plan mode, the thread shows a plan
   card: the plan as formatted text, **Start, accept edits** (Enter, or **1**), **Start, ask each

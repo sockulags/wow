@@ -173,6 +173,13 @@ test.describe("a chat thread's changes", () => {
       .getByRole('button', { name: 'Allow once' })
       .click();
     await expect(conversation.getByText('The timer rings twice now.')).toBeVisible();
+    // The edit row's Open file shows that file in the thread's Changes (spec 33).
+    const edit = conversation.getByTestId('item-tool_call');
+    await edit.getByTestId('tool-line').click();
+    await edit.getByRole('button', { name: 'Open file' }).click();
+    await expect(
+      page.getByTestId('thread-changes').getByRole('table', { name: 'Diff of src/timer.ts' }),
+    ).toBeVisible();
     await messageBox(page).fill('Edit the bell');
     await messageBox(page).press('Enter');
     await expect(conversation.getByText('The bell rings softly now.')).toBeVisible();

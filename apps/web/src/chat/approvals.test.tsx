@@ -135,6 +135,35 @@ describe('an edit row (spec 33)', () => {
     expect(opened).toHaveBeenCalledWith('src/timer.ts');
   });
 
+  it('counts the whole edit when its diff is cut, and has no Open file for a file outside the folder', async () => {
+    const user = userEvent.setup();
+    const opened = vi.fn<(path: string) => void>();
+    render(
+      <ul>
+        <ConversationItem
+          item={item('tool_call', {
+            kind: 'edit',
+            name: 'Edit',
+            input: {},
+            output: '',
+            status: 'ok',
+            path: '/elsewhere/notes.md',
+            diff: timerDiff,
+            diffCut: true,
+            diffCounts: { added: 120, removed: 30 },
+          })}
+          approvals={[]}
+          questions={[]}
+          context={{ ...context, turnEnded: true, openFile: opened }}
+        />
+      </ul>,
+    );
+    expect(screen.getByTestId('edit-counts').textContent).toBe('+120 −30');
+    await user.click(screen.getByText('Edit', { exact: false }));
+    expect(screen.getByTestId('edit-diff')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open file' })).toBeNull();
+  });
+
   it('splits a diff of several files by their headers, and leaves an old edit row as it was', () => {
     expect(
       diffParts(

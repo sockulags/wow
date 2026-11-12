@@ -413,7 +413,9 @@ test.describe('chat', () => {
     await expect(row.getByTestId('edit-counts')).toHaveText('+1 −0');
     await row.getByTestId('tool-line').click();
     await expect(row.getByRole('table', { name: 'Diff of src/timer.ts' })).toBeVisible();
-    await expect(row.getByRole('button', { name: 'Open file' })).toBeVisible();
+    // Demo's folder is not in Git, so its Changes could only say why: no Open file here
+    // (changes.spec opens one in a repository).
+    await expect(row.getByRole('button', { name: 'Open file' })).toHaveCount(0);
   });
 
   test('denies with a note @agent-workbench-37', async ({ page }) => {

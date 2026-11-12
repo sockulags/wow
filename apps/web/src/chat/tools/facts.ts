@@ -32,6 +32,10 @@ export function shownPath(path: string, cwd: string): string {
   return path;
 }
 
+// A path outside the thread's folder stays absolute after `shownPath`; nothing in the thread
+// can open it.
+export const isAbsolutePath = (path: string): boolean => /^(?:[\\/]|[a-z]:[\\/])/i.test(path);
+
 const sameFolder = (a: string, b: string) =>
   comparable(trimmed(plain(a))) === comparable(trimmed(plain(b)));
 

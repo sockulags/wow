@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { proposeRule, ruleCovers, ruleText, type AlwaysAllowRule } from './approvals.js';
+import {
+  proposeRule,
+  ruleCovers,
+  ruleText,
+  shellInner,
+  type AlwaysAllowRule,
+} from './approvals.js';
 import { diffCounts } from './diff.js';
 
 const at = '2026-11-02T08:00:00.000Z';
@@ -33,6 +39,40 @@ describe('always allow rules (agent workbench spec 38, 39)', () => {
     expect(proposeRule('command', undefined)).toBeUndefined();
   });
 
+  it('offers no rule for a shell or another program that runs what it is handed', () => {
+    for (const command of [
+      "/bin/bash -lc 'pnpm test --watch'",
+      'bash -lc "pnpm test"',
+      'powershell.exe -NoProfile -Command "pnpm test"',
+      'C:\\Windows\\System32\\cmd.exe /c pnpm test',
+      'sudo pnpm test',
+      'env FOO=1 pnpm test',
+      'xargs rm',
+      "node -e 'process.exit(1)'",
+    ]) {
+      expect([command, proposeRule('command', { command, ruleHint: 'pnpm test' })]).toEqual([
+        command,
+        undefined,
+      ]);
+    }
+    expect(proposeRule('command', { command: 'git status', ruleHint: 'bash' })).toEqual({
+      kind: 'command',
+      prefix: 'git status',
+    });
+  });
+
+  it('reads the command a shell line runs (Codex reports the shell line)', () => {
+    expect(shellInner("/bin/zsh -lc 'pnpm test --watch'")).toBe('pnpm test --watch');
+    expect(shellInner('bash -c "pnpm test"')).toBe('pnpm test');
+    expect(shellInner('powershell.exe -NoProfile -Command "pnpm test"')).toBe('pnpm test');
+    expect(shellInner('C:\\Windows\\System32\\cmd.exe /c "pnpm test"')).toBe('pnpm test');
+    expect(shellInner('pnpm test')).toBeUndefined();
+    expect(shellInner("bash -lc 'pnpm test' && rm -rf ~")).toBeUndefined();
+    expect(shellInner("node -c 'x'")).toBeUndefined();
+    expect(shellInner("cmd -lc 'x'")).toBeUndefined();
+    expect(shellInner("bash -lc ''")).toBeUndefined();
+  });
+
   it('covers a command by whole words of its prefix and a tool by its name', () => {
     const tests: AlwaysAllowRule = { kind: 'command', prefix: 'pnpm test', addedAt: at };
     expect(ruleCovers(tests, 'command', { command: 'pnpm test' })).toBe(true);
@@ -40,6 +80,9 @@ describe('always allow rules (agent workbench spec 38, 39)', () => {
     expect(ruleCovers(tests, 'command', { command: 'pnpm tests' })).toBe(false);
     expect(ruleCovers(tests, 'command', { command: 'pnpm test; rm -rf /' })).toBe(false);
     expect(ruleCovers(tests, 'fileChange', { command: 'pnpm test' })).toBe(false);
+    const shell: AlwaysAllowRule = { kind: 'command', prefix: '/bin/bash', addedAt: at };
+    expect(ruleCovers(shell, 'command', { command: "/bin/bash -lc 'rm -rf ~/work'" })).toBe(false);
+    expect(ruleCovers(tests, 'command', { command: 'pnpm test "a b"' })).toBe(false);
     const issue: AlwaysAllowRule = {
       kind: 'tool',
       server: 'github',

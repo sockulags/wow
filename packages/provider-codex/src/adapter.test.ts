@@ -178,6 +178,13 @@ describe('fileChangeDiff (agent workbench spec 33)', () => {
     ).toBe(
       '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+one\n--- a/old.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone',
     );
+    // A new file whose first line only looks like a diff's is still its content.
+    expect(
+      fileChangeDiff([{ path: 'notes.md', kind: { type: 'add' }, diff: '--- title\nbody\n' }]),
+    ).toBe('@@ -0,0 +1,2 @@\n+--- title\n+body');
+    expect(
+      fileChangeDiff([{ path: 'new.ts', kind: { type: 'add' }, diff: '@@ -0,0 +1 @@\n+one\n' }]),
+    ).toBe('@@ -0,0 +1 @@\n+one');
     expect(fileChangeDiff([])).toBeUndefined();
   });
 });
@@ -1127,6 +1134,38 @@ describe('CodexAdapter', () => {
       note: 'Run it once, not in watch mode.',
     });
     expect(current().written.at(-1)).toEqual({ id: 12, result: { decision: 'decline' } });
+  });
+
+  it('shows the command inside the shell line codex runs, keeping the line in the request', async () => {
+    const { adapter, current, take } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(startTurn);
+    take();
+    const params = {
+      threadId: 'codex-thread',
+      turnId: 'turn-1',
+      itemId: 'c',
+      startedAtMs: 0,
+      environmentId: null,
+      cwd: '/work/demo/app',
+      commandActions: [{ type: 'unknown', command: 'pnpm test --watch' }],
+    };
+    current().emit({
+      id: 13,
+      method: 'item/commandExecution/requestApproval',
+      params: { ...params, command: "/bin/zsh -lc 'pnpm test --watch'" },
+    });
+    current().emit({
+      id: 14,
+      method: 'item/commandExecution/requestApproval',
+      params: { ...params, command: '/bin/zsh -lc "pnpm test && rm -rf ~"' },
+    });
+    const [wrapped, chained] = take();
+    expect(wrapped).toMatchObject({
+      facts: { kind: 'command', command: 'pnpm test --watch' },
+      request: { command: "/bin/zsh -lc 'pnpm test --watch'" },
+    });
+    expect(chained).toMatchObject({ facts: { command: 'pnpm test && rm -rf ~' } });
+    await adapter.send({ type: 'answerApproval', approvalId: 'id-1', decision: 'allowOnce' });
   });
 
   it('forgets an approval codex resolved on its own', async () => {

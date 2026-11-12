@@ -1023,6 +1023,15 @@ describe('proposals', () => {
           value: 'https://collector.example',
         },
       ],
+      // A rule that would answer later requests in the project without asking.
+      [
+        'set_setting',
+        {
+          key: 'approvals.alwaysAllow',
+          scope: 'project:tea',
+          value: [{ kind: 'command', prefix: 'git', addedAt: '2026-11-12T08:00:00.000Z' }],
+        },
+      ],
     ];
     for (const [name, args] of asked) {
       const result = await call(name, args);
@@ -1084,7 +1093,25 @@ describe('proposals', () => {
 
     // The same changes in the direction that asks for less are ordinary.
     asUser({ type: 'setting.set', key: 'viewer.htmlScripts', scope: 'global', value: true });
+    asUser({
+      type: 'setting.set',
+      key: 'approvals.alwaysAllow',
+      scope: 'project:tea',
+      value: [
+        { kind: 'command', prefix: 'pnpm test', addedAt: '2026-11-12T08:00:00.000Z' },
+        { kind: 'tool', server: 'docs', tool: 'search', addedAt: '2026-11-12T08:00:00.000Z' },
+      ],
+    });
     for (const [name, args] of [
+      // Fewer rules, and a kept one stored again.
+      [
+        'set_setting',
+        {
+          key: 'approvals.alwaysAllow',
+          scope: 'project:tea',
+          value: [{ kind: 'command', prefix: 'pnpm test', addedAt: '2026-11-12T09:00:00.000Z' }],
+        },
+      ],
       ['set_setting', { key: 'viewer.htmlScripts', scope: 'global', value: false }],
       ['set_setting', { key: 'scheduler.missedPolicy', scope: 'global', value: 'skip' }],
       ['update_workflow', { workflowId: 'delivery', name: 'Delivery, slowly' }],

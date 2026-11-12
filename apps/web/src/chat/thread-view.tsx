@@ -54,7 +54,7 @@ import {
 } from './model';
 import { ModelBar, useModelBarKeys, type ModelBarHandle, type ModelBarProps } from './model-bar';
 import { frontModelBar } from './model-commands';
-import { openThreadChanges, ThreadChangesChip } from './thread-changes';
+import { openThreadChanges, ThreadChangesChip, useThreadDiff } from './thread-changes';
 import { ThreadTitle } from './thread-title';
 import {
   groupQuestions,
@@ -335,6 +335,11 @@ export function ThreadConversation({
     await cancelQueued();
     composer.current?.putBack(queued.text, queued.skills ?? []);
   };
+  const { diff: threadDiff } = useThreadDiff(
+    threadId,
+    undefined,
+    thread.runId === null && thread.kind !== 'assistant',
+  );
   const approval = pendingApproval(approvals);
   const question = pendingQuestion(questions, items ?? [], running);
   const gateRun = gateRunForThread(thread, runs);
@@ -350,7 +355,9 @@ export function ThreadConversation({
       )?.label ?? thread.permissionMode)
     : thread.permissionMode;
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
-  // An edited file opens in the thread's Changes, or for a step in the run's file viewer.
+  // An edited file opens in the thread's Changes, or for a step in the run's file viewer. A chat
+  // thread whose folder has nothing to compare (outside Git, stored before Changes) has no Open
+  // file, since its Changes would only say why.
   const openEdited = (path: string) => {
     const relative = path.replaceAll('\\', '/');
     if (thread.runId === null) {
@@ -376,7 +383,9 @@ export function ThreadConversation({
       formatAt: when,
       questionHold: extras?.questionHold,
       outputLines,
-      ...(thread.kind === 'assistant' ? {} : { openFile: openEdited }),
+      ...(thread.kind === 'assistant' || (thread.runId === null && threadDiff?.status !== 'ok')
+        ? {}
+        : { openFile: openEdited }),
       recovery:
         itemId === errorId
           ? {

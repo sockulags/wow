@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { DiffLines } from '@/workflows/changes-tab';
 import type { ItemContext } from '../items';
-import { shownPath, type ToolPayload } from './facts';
+import { isAbsolutePath, shownPath, type ToolPayload } from './facts';
 import type { ToolParts } from './row';
 import { ToolTime } from './time';
 
@@ -53,9 +53,13 @@ export function diffParts(diff: string): DiffPart[] {
     .filter((part) => part.hunks.trim() !== '');
 }
 
-export const editCounts = (diff: string | undefined): string | undefined => {
+// The server counts the whole diff before cutting it; a row stored before that counts what it has.
+export const editCounts = (
+  diff: string | undefined,
+  whole?: { readonly added: number; readonly removed: number },
+): string | undefined => {
   if (diff === undefined) return undefined;
-  const { added, removed } = diffCounts(diff);
+  const { added, removed } = whole ?? diffCounts(diff);
   return `+${added} −${removed}`;
 };
 
@@ -77,21 +81,22 @@ export function EditDiff({
     <div data-testid="edit-diff" className="flex flex-col gap-2">
       {parts.map((part, index) => {
         const file = part.path ?? path;
+        const open = file !== undefined && !isAbsolutePath(file) ? onOpenFile : undefined;
         return (
           // A diff's parts are never reordered.
           <div key={index} className="flex flex-col gap-1">
-            {(parts.length > 1 || onOpenFile) && file !== undefined && (
+            {(parts.length > 1 || open) && file !== undefined && (
               <div className="flex items-center gap-2">
                 <span className="min-w-0 truncate font-mono text-2xs text-muted-foreground">
                   {file}
                 </span>
-                {onOpenFile && (
+                {open && (
                   <Button
                     type="button"
                     size="xs"
                     variant="outline"
                     className="ml-auto"
-                    onClick={() => onOpenFile(file)}
+                    onClick={() => open(file)}
                   >
                     <FileTextIcon aria-hidden />
                     Open file
@@ -120,7 +125,7 @@ export function editParts(
   extra?: ReactNode,
 ): ToolParts {
   const target = payload.path === undefined ? undefined : shownPath(payload.path, context.cwd);
-  const counts = editCounts(payload.diff);
+  const counts = editCounts(payload.diff, payload.diffCounts);
   return {
     line: (
       <>

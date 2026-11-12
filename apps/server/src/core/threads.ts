@@ -17,6 +17,7 @@ import {
   AlwaysAllowRule,
   ApprovalItemPayload,
   ChatNotifications,
+  diffCounts,
   planStartModes,
   proposeRule,
   QuestionOption,
@@ -1022,6 +1023,13 @@ function cutDiff(
   return { diff: lines.slice(0, longest).join('\n'), diffCut: true };
 }
 
+// A tool row's diff with the counts of the whole of it, which a cut diff no longer gives.
+function cutToolDiff(diff: string | undefined, read: ReadModel, context: DecideContext) {
+  return diff === undefined
+    ? {}
+    : { ...cutDiff(diff, read, context), diffCounts: diffCounts(diff) };
+}
+
 // Only a thread the user started notifies; a step's thread tells through its run, and the
 // assistant has its own view.
 const threadTitleOf = (thread: Thread) =>
@@ -1292,7 +1300,7 @@ function decideProviderEvents(
             'tool_call',
             {
               ...toolFactsOf(event),
-              ...cutDiff(event.diff, read, context),
+              ...cutToolDiff(event.diff, read, context),
               name: event.name,
               input: event.input ?? null,
               output: '',
@@ -1329,7 +1337,7 @@ function decideProviderEvents(
               ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
               ...(event.diff === undefined
                 ? {}
-                : { diffCut: false, ...cutDiff(event.diff, read, context) }),
+                : { diffCut: false, ...cutToolDiff(event.diff, read, context) }),
             },
             false,
           );

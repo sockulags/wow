@@ -77,15 +77,18 @@ function parsed(received: unknown): ThreadDiff {
 export function useThreadDiff(
   threadId: string,
   path?: string,
+  // Off where the thread has no Changes (a step's or the assistant's thread).
+  wanted = true,
 ): { readonly diff: ThreadDiff | undefined; readonly error: string | undefined } {
   const { connection } = useRuntime();
   const turns = useTopic('turns', threadId) ?? [];
   const refresh = useStore(threadChangesStore, (state) => state.refresh);
   const key = turnsKey(turns);
   const [answer, setAnswer] = useState<{ diff?: ThreadDiff; error?: string; for: string }>();
-  const asked = `${threadId}\n${path ?? ''}\n${key}\n${refresh}`;
+  const what = `${threadId}\n${path ?? ''}`;
+  const asked = `${what}\n${key}\n${refresh}`;
   useEffect(() => {
-    if (!connection) return;
+    if (!connection || !wanted) return;
     let current = true;
     connection
       .request('threads.diff', path === undefined ? { threadId } : { threadId, path })
@@ -97,9 +100,11 @@ export function useThreadDiff(
     return () => {
       current = false;
     };
-  }, [connection, threadId, path, asked]);
-  // An answer for another file or an older read is kept on screen until the new one comes.
-  return { diff: answer?.diff, error: answer?.error };
+  }, [connection, threadId, path, asked, wanted]);
+  // An older read of the same thread and file stays on screen until the new one comes; one for
+  // another thread or file is never shown in its place.
+  const shown = answer !== undefined && answer.for.startsWith(`${what}\n`) ? answer : undefined;
+  return { diff: shown?.diff, error: shown?.error };
 }
 
 // "+42 −7 in 5 files"; undefined when nothing changed or there is nothing to compare.

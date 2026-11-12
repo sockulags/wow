@@ -278,6 +278,23 @@ describe('approvals in wow words (spec 36)', () => {
     const item = approvalItem('t1');
     expect(item?.diffCut).toBe(true);
     expect(item?.facts?.diff?.split('\n')).toHaveLength(20);
+    // A tool row keeps the counts of the whole edit next to its cut diff.
+    const row = committed('threadItem.added');
+    adapters.codex.emit({
+      type: 'toolCallStarted',
+      threadId: 't1',
+      itemId: 'edit-1',
+      name: 'Edit',
+      input: {},
+      kind: 'edit',
+      path: 'src/new.ts',
+      diff,
+    });
+    await row;
+    const tool = (
+      snapshot(database.db, { topic: 'threadItems', threadId: 't1' }) as ThreadItem[]
+    ).findLast((entry) => entry.kind === 'tool_call')?.payload;
+    expect(tool).toMatchObject({ diffCut: true, diffCounts: { added: 30, removed: 0 } });
   });
 });
 
