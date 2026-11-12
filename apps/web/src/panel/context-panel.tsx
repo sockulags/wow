@@ -10,6 +10,7 @@ import { IconButton } from '@/components/hint';
 import { useBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
 import { ThreadChanges } from '@/chat/thread-changes';
+import { ToolsTab } from './tools-tab';
 import { BacklogPanel } from './backlog-panel';
 import { CalendarPanel, useCalendarPanelTitle } from './calendar-panel';
 import { FileViewer } from './file-viewer';
@@ -215,6 +216,8 @@ export function ContextPanel() {
   const hostItem = tab?.kind === 'host' ? tab.host : undefined;
   // A chat thread's Changes (agent workbench spec 34) are one of its tabs.
   const changes = tab?.kind === 'changes' ? tab.changes : undefined;
+  // What the thread's session can use (thread work spec 37).
+  const tools = tab?.kind === 'tools' ? tab.tools : undefined;
   const { width, cap } = useShownPanelWidth(selection.view);
   const baseLabel = baseTabLabel(selection);
   const threads = useTopic('threads');
@@ -315,6 +318,8 @@ export function ContextPanel() {
             'File'
           ) : changes ? (
             'Changes'
+          ) : tools ? (
+            'Session tools'
           ) : page ? (
             'Page'
           ) : hostItem ? (
@@ -348,6 +353,8 @@ export function ContextPanel() {
           <HostTab key={tab.id} host={hostItem} />
         ) : changes && tab ? (
           <ThreadChanges key={tab.id} changes={changes} />
+        ) : tools && tab ? (
+          <ToolsTab key={tab.id} tools={tools} />
         ) : (
           <PanelBody selection={selection} />
         )}

@@ -323,6 +323,9 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         options: changesOptions(deps.settings),
       });
     },
+    'threads.refreshTools': async ({ threadId }) => ({
+      outcome: await deps.providers.refreshTools(threadId),
+    }),
     'threads.diff': async ({ threadId, path: asked }) => {
       const thread = deps.db.select().from(threads).where(eq(threads.id, threadId)).get();
       if (!thread) throw new RpcFault('not_found', `No thread ${threadId}`);

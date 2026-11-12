@@ -58,6 +58,10 @@
   --event-card-border: oklch(0.62 0 0);
   --event-work-hours: oklch(0.965 0.006 250);
   --event-now: var(--state-failed);
+
+  /* Find in the conversation (thread work spec 3): every match, and the current one stronger. */
+  --find-match: oklch(0.9 0.1 95);
+  --find-current: oklch(0.8 0.16 75);
 }
 
 .dark {
@@ -108,4 +112,7 @@
   --event-card-border: oklch(0.56 0 0);
   --event-work-hours: oklch(1 0 0 / 3.5%);
   --event-now: var(--state-failed);
+
+  --find-match: oklch(0.45 0.09 95);
+  --find-current: oklch(0.62 0.15 70);
 }

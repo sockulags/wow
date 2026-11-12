@@ -10,10 +10,16 @@ import type {
   ProviderUpdate,
   AgentState,
   QuestionReply,
+  SessionTools,
   TaskStatus,
   ToolFacts,
 } from '@wow/contracts';
-import { markRecommended, providerChatOptions, shellInner } from '@wow/contracts';
+import {
+  boundedSessionTools,
+  markRecommended,
+  providerChatOptions,
+  shellInner,
+} from '@wow/contracts';
 import {
   CompatibilityCache,
   checkInstalledCodex,
@@ -136,6 +142,8 @@ interface ThreadState {
   // The agents this thread spawned (spec 44): each receiving codex thread's spawn call, and the
   // state last reported for it.
   readonly agents: Map<string, { readonly itemId: string; state: AgentState | undefined }>;
+  // What the thread reported it can use when it started or resumed (thread work spec 42).
+  tools: SessionTools | null;
 }
 
 interface OpenApproval {
@@ -200,6 +208,23 @@ const accountLabel = (account: NonNullable<GetAccountResponse['account']>): stri
       return 'Signed in';
   }
 };
+
+// The instruction files a thread loaded, as Codex names them; a codex that leaves the field out
+// gives none. `complete` is false: Codex reports no list of servers, tools or skills.
+const instructionTools = (sources: unknown): SessionTools =>
+  boundedSessionTools({
+    reportedAt: new Date().toISOString(),
+    complete: false,
+    mcpServers: [],
+    builtInTools: [],
+    skills: [],
+    commands: [],
+    agents: [],
+    plugins: [],
+    instructionFiles: Array.isArray(sources)
+      ? sources.filter((source): source is string => typeof source === 'string')
+      : [],
+  });
 
 const taskStatus = (status: string): TaskStatus =>
   status === 'inProgress' ? 'in_progress' : status === 'completed' ? 'completed' : 'pending';
@@ -475,6 +500,11 @@ export class CodexAdapter implements ProviderAdapter {
         return { taken: false } satisfies HandOverResult;
       case 'listCommands':
         return [];
+      // Only a loaded thread answers; nothing is started or resumed for it (spec 39).
+      case 'describeSession': {
+        const thread = this.#threads.get(command.threadId);
+        return thread?.loaded ? thread.tools : null;
+      }
       // Codex's app-server has no request for either (spec 90); wow does not offer them there.
       case 'stopTask':
       case 'toBackground':
@@ -616,6 +646,12 @@ export class CodexAdapter implements ProviderAdapter {
           threadId: command.threadId,
           providerSessionId: thread.codexId,
         });
+        // Codex lists no servers, tools or skills to wow; the instruction files it loaded are what
+        // it tells (thread work spec 42). The assistant's thread has no Tools tab (spec 43).
+        if (!toolset) {
+          thread.tools = instructionTools(response.instructionSources);
+          this.#emit({ type: 'sessionTools', threadId: command.threadId, tools: thread.tools });
+        }
       }
       const params: TurnStartParams = {
         threadId: thread.codexId,
@@ -715,6 +751,7 @@ export class CodexAdapter implements ProviderAdapter {
       streamed: new Set(),
       fileChanges: new Map(),
       agents: new Map(),
+      tools: null,
     };
     this.#threads.set(wowId, thread);
     this.#byCodexId.set(codexId, thread);

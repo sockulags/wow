@@ -7,6 +7,7 @@ import {
   type PanelTab,
   type PanelTabs,
   type ViewerChanges,
+  type ViewerTools,
   type ViewerFile,
   type ViewerHostItem,
   type ViewerPage,
@@ -57,6 +58,7 @@ export const pageTabId = (page: Pick<ViewerPage, 'runId' | 'ref'>): string =>
 export const hostTabId = (host: Pick<ViewerHostItem, 'threadId' | 'item'>): string =>
   `host:${host.threadId}:${hostItemKey(host.item)}`;
 export const changesTabId = (threadId: string): string => `changes:${threadId}`;
+export const toolsTabId = (threadId: string): string => `tools:${threadId}`;
 
 // The short name a tab shows: the file's own name. Host items name themselves in tabs.tsx.
 export const tabName = (tab: PanelTab): string =>
@@ -69,7 +71,9 @@ export const tabName = (tab: PanelTab): string =>
       ? tab.page.ref
       : tab.kind === 'changes'
         ? 'Changes'
-        : tab.host.item.id;
+        : tab.kind === 'tools'
+          ? 'Tools'
+          : tab.host.item.id;
 
 // A route whose last tab closes leaves no entry behind.
 function updateTabs(layout: LayoutStore, route: string, change: (tabs: PanelTabs) => PanelTabs) {
@@ -157,6 +161,11 @@ export function openHostItem(context: ViewerContext, host: ViewerHostItem): void
 // A chat thread's Changes (agent workbench spec 34), in a tab of its view.
 export function openChanges(context: ViewerContext, changes: ViewerChanges): void {
   openTab(context, changes.from, { kind: 'changes', id: changesTabId(changes.threadId), changes });
+}
+
+// What a chat thread's session can use (thread work spec 37), in a tab of its view.
+export function openTools(context: ViewerContext, tools: ViewerTools): void {
+  openTab(context, tools.from, { kind: 'tools', id: toolsTabId(tools.threadId), tools });
 }
 
 export const selectedTab = (tabs: PanelTabs): PanelTab | undefined =>

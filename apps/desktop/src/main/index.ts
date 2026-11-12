@@ -23,6 +23,7 @@ import {
   appScheme,
   encodeServerInfoArg,
   appChannels,
+  fileChannels,
   folderChannels,
   hiddenFlag,
   productName,
@@ -35,6 +36,7 @@ import { electronUpdater } from './electron-updater.js';
 import { serverStartTimeoutMs, serverStopTimeoutMs } from './limits.js';
 import { routeOf } from './notifications.js';
 import { RpcClient } from './rpc-client.js';
+import { saveTextFile } from './save-text-file.js';
 import { ServerProcess, wowHome, type ServerEndpoint } from './server-process.js';
 
 // Electron entry. Everything with a decision in it lives in the controller and the modules next
@@ -291,6 +293,24 @@ ipcMain.handle(folderChannels.pick, async (event) => {
     ? await dialog.showOpenDialog(owner, options)
     : await dialog.showOpenDialog(options);
   return result.canceled ? null : (result.filePaths[0] ?? null);
+});
+
+ipcMain.handle(fileChannels.saveText, (event, request: unknown) => {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  return saveTextFile(request, {
+    fromApp: fromApp(event),
+    folder: app.getPath('documents'),
+    showSaveDialog: (options) => {
+      const dialogOptions: Electron.SaveDialogOptions = {
+        title: options.title,
+        defaultPath: options.defaultPath,
+        filters: options.filters.map((filter) => ({ ...filter })),
+      };
+      return owner
+        ? dialog.showSaveDialog(owner, dialogOptions)
+        : dialog.showSaveDialog(dialogOptions);
+    },
+  });
 });
 
 if (!app.requestSingleInstanceLock()) {

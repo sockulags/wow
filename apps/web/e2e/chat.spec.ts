@@ -31,6 +31,7 @@ async function startThread(page: Page, message: string) {
   await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
 }
 
+const withoutTime = (text: string) => text.replace(/\nExported [^\n]+\n/, '\n');
 const conversation = (page: Page) => page.getByRole('list', { name: 'Conversation' });
 const threadList = (page: Page) => page.getByRole('navigation', { name: 'Threads' });
 const messageBox = (page: Page) => page.getByRole('combobox', { name: 'Message' });
@@ -1466,6 +1467,139 @@ test.describe('chat', () => {
     await expect(page).toHaveURL(origin);
   });
 
+  test('finds text in closed rows and copies the conversation @thread-work-1 @thread-work-2 @thread-work-3 @thread-work-4 @thread-work-7 @thread-work-8', async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await startClaudeThread(page, 'Tell the kettle story');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    const group = conversation(page).getByTestId('item-tool_group');
+    await expect(group).toHaveAttribute('data-closed', 'true');
+    // From the composer, wherever the focus is in the view (spec 1).
+    await messageBox(page).focus();
+    await page.keyboard.press('Control+f');
+    const find = page.getByRole('searchbox', { name: 'Find in conversation' });
+    await expect(find).toBeFocused();
+    await find.pressSequentially('KETTLE');
+    const count = page.getByTestId('find-count');
+    await expect(count).toHaveText('1 of 5');
+    // Chromium has the Custom Highlight API: every match is marked, the current one apart.
+    expect(await page.evaluate('CSS.highlights.get("wow-find-current")?.size')).toBe(1);
+    const reasoning = conversation(page).getByTestId('item-reasoning').locator('details');
+    await expect(reasoning).not.toHaveAttribute('open');
+    await page.keyboard.press('F3');
+    await expect(count).toHaveText('2 of 5');
+    await expect(reasoning).toHaveAttribute('open', '');
+    await page.keyboard.press('Enter');
+    await expect(count).toHaveText('3 of 5');
+    await page.keyboard.press('Enter');
+    await expect(count).toHaveText('4 of 5');
+    const command = conversation(page)
+      .getByTestId('item-tool_call')
+      .filter({ hasText: 'cat story.txt' });
+    await expect(command.locator('details').first()).toHaveAttribute('open', '');
+    await expect(command.getByTestId('tool-output-text')).toContainText(
+      'line 3: the kettle whistled',
+    );
+    await expect(command.getByRole('button', { name: 'Show the last 20 lines' })).toBeVisible();
+    await page.keyboard.press('F3');
+    await expect(count).toHaveText('5 of 5');
+    await expect(group.locator('details').first()).toHaveAttribute('open', '');
+    await page.keyboard.press('F3');
+    await expect(count).toHaveText('1 of 5');
+    await page.keyboard.press('Shift+F3');
+    await expect(count).toHaveText('5 of 5');
+    expect(await page.evaluate('CSS.highlights.get("wow-find")?.size')).toBe(5);
+    // Escape gives the keyboard back and what find opened stays open (spec 1, 4).
+    await page.keyboard.press('Escape');
+    await expect(find).toHaveCount(0);
+    await expect(messageBox(page)).toBeFocused();
+    await expect(group.locator('details').first()).toHaveAttribute('open', '');
+
+    // Copy and save from the header's menu (spec 7, 8).
+    await page.getByRole('button', { name: 'More thread actions' }).click();
+    await page.getByRole('menuitem', { name: 'Copy conversation as Markdown' }).click();
+    const copied = (await page.evaluate<string>('navigator.clipboard.readText()')).replaceAll(
+      '\r\n',
+      '\n',
+    );
+    expect(copied).toMatch(/^# Tell the kettle story\n\nMock Claude · Mock model · Demo · /);
+    expect(copied).toMatch(/\n## You · [^\n]+\n\nTell the kettle story\n\n## Mock Claude · /);
+    expect(copied).toContain(
+      'Here is the **kettle** story.\n\n- $ cat story.txt · exit 0 · 0.4 s\n\nThen I read the notes.\n\n- Read notes/brew.md\n- Read notes/kettle.md\n',
+    );
+    expect(copied).not.toContain('the water warmed');
+    expect(copied).not.toContain('Tell it about the kettle');
+    await page.getByRole('button', { name: 'More thread actions' }).click();
+    const download = page.waitForEvent('download');
+    await page.getByRole('menuitem', { name: 'Save conversation…' }).click();
+    const saved = await download;
+    expect(saved.suggestedFilename()).toBe('Tell the kettle story.md');
+    const file = await saved.path();
+    // The same text; only the time of export may have moved on.
+    expect(withoutTime(await readFile(file, 'utf8'))).toBe(withoutTime(copied));
+  });
+
+  test('lists what the session can use @thread-work-37 @thread-work-38 @thread-work-39 @thread-work-40 @thread-work-42', async ({
+    page,
+  }) => {
+    // The mock Claude Code reports tea-docs, tea-tracker and tea-cloud as each turn starts.
+    await startClaudeThread(page, 'What can you use here?');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    const chip = page.getByTestId('tools-chip');
+    await expect(chip).toHaveText('1 MCP server failed, 1 needs sign-in');
+    await chip.click();
+    const panel = page.getByRole('complementary', { name: 'Context panel' });
+    await expect(panel.getByRole('tab', { name: 'Tools', selected: true })).toBeVisible();
+    const tab = panel.getByTestId('tools-tab');
+    await expect(tab.getByTestId('tools-server-state')).toHaveText([
+      'Connected',
+      'Failed',
+      'Needs sign-in',
+    ]);
+    await expect(tab.getByTestId('tools-server-error')).toHaveText('spawn tea-tracker ENOENT');
+    await expect(tab).toContainText('Sign in from Claude Code: /mcp in a terminal');
+    await expect(tab.getByTestId('tools-server-facts').first()).toHaveText(
+      'project · 1.2.0 · https://docs.tea.example',
+    );
+    await expect(tab.getByRole('heading', { name: /^Plugins/ })).toHaveText('Plugins (2)');
+    await expect(tab.getByTestId('tools-reported')).toHaveText(/^Reported as the turn of /);
+
+    await tab.getByLabel('Filter session tools').fill('handbook');
+    await expect(tab.getByTestId('tools-server')).toHaveCount(1);
+    await expect(tab.getByRole('heading', { name: /^Skills/ })).toHaveText('Skills (0)');
+    await tab.getByLabel('Filter session tools').fill('');
+
+    // The live session is asked again and reports the same list (spec 39).
+    await tab.getByRole('button', { name: 'Refresh' }).click();
+    await expect(page.getByText('The session reports the same list')).toBeVisible();
+
+    // Codex lists nothing of its own: its instruction files and the servers its calls used.
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await choose(page.getByLabel('Project'), 'Demo');
+    await messageBox(page).fill('Run the tools');
+    await messageBox(page).press('Enter');
+    await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await expect(page.getByTestId('tools-chip')).toBeHidden();
+    await panel.getByTestId('open-session-tools').click();
+    const codex = panel.getByTestId('tools-tab');
+    await expect(codex.getByTestId('tools-codex')).toContainText(
+      'Codex reports no list of its servers, tools or skills to wow',
+    );
+    const seen = codex.getByTestId('tools-server');
+    await expect(seen).toHaveCount(1);
+    await expect(seen).toContainText('tracker');
+    await expect(seen).toContainText("Seen in this thread's tool calls");
+    await expect(seen).toContainText('find_issue');
+    await expect(codex).toContainText('AGENTS.md');
+    await messageBox(page).focus();
+    await page.keyboard.press('Control+.');
+    await expect(conversation(page).getByTestId('turn-stopped')).toContainText('Stopped by you');
+  });
+
   test('finds threads and actions in the palette', async ({ page }) => {
     await startThread(page, 'Palette target');
     await page.goto('/chat');
@@ -1657,6 +1791,28 @@ test.describe('sketch', () => {
     await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'subagent') });
     await fetch(`http://127.0.0.1:${e2eOutlookControlPort}/agent-done`, { method: 'PUT' });
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+  });
+
+  test('find-bar', async ({ page }) => {
+    await startClaudeThread(page, 'Tell the kettle story');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await messageBox(page).focus();
+    await page.keyboard.press('Control+f');
+    await page.getByRole('searchbox', { name: 'Find in conversation' }).pressSequentially('kettle');
+    await page.keyboard.press('F3');
+    await page.keyboard.press('F3');
+    await page.keyboard.press('F3');
+    await expect(page.getByTestId('find-count')).toHaveText('4 of 5');
+    await page.screenshot({ path: sketchPath('2026-11-thread-work', 'find-bar') });
+  });
+
+  test('session-tools', async ({ page }) => {
+    await startClaudeThread(page, 'What can you use here?');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await page.getByTestId('tools-chip').click();
+    const tab = page.getByTestId('tools-tab');
+    await expect(tab.getByTestId('tools-server-state')).toHaveCount(3);
+    await page.screenshot({ path: sketchPath('2026-11-thread-work', 'session-tools') });
   });
 
   test('image-chip', async ({ page }) => {

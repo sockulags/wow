@@ -12,6 +12,7 @@ import {
   type HostRead,
   type TicketRead,
   type HostItemRead,
+  type ThreadTools,
   type PageRead,
   type OutlookStatus,
   type BacklogItem,
@@ -125,6 +126,8 @@ export interface ReadModel {
   ticketReads(projectId: string): TicketRead[];
   // What was last read about one item a chat thread links to.
   hostItemRead(id: string): HostItemRead | undefined;
+  // What the chat thread's session last reported it can use.
+  threadTools(threadId: string): ThreadTools | undefined;
   // What was last read about the pages the texts of the project's runs link to.
   pageReads(projectId: string): PageRead[];
   workflow(id: string): Workflow | undefined;

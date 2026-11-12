@@ -319,6 +319,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'thread.sendQueued': serverOnly,
   'thread.handedOver': serverOnly,
   'thread.changesMarked': serverOnly,
+  'thread.toolsReported': serverOnly,
   'thread.answerQuestions': refused(
     'Only the user answers your questions, on their card. End your turn and wait for the answer.',
   ),

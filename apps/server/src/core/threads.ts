@@ -63,6 +63,7 @@ import {
 import { folderKey } from '../files/folder-key.js';
 import { editGoBack, forkEvents } from './go-back.js';
 import { messageWithSkills } from './skills.js';
+import { decideThreadTools } from './thread-tools.js';
 
 // Decisions for provider instances, threads, turns, approvals and questions. Provider events
 // arrive as `provider.events` commands from the provider service and become thread items here, so
@@ -86,6 +87,7 @@ type ThreadCommand = Extract<
       | 'thread.sendQueued'
       | 'thread.handedOver'
       | 'thread.changesMarked'
+      | 'thread.toolsReported'
       | 'thread.retry'
       | 'thread.answerQuestions'
       | 'thread.interrupt'
@@ -1104,6 +1106,8 @@ export function decideThread(
     }
     case 'approval.answer':
       return answerApproval(command, read, context);
+    case 'thread.toolsReported':
+      return decideThreadTools(command, read, context);
     case 'thread.changesMarked': {
       const thread = requireThread(read, command.threadId);
       if (!command.base && !command.mark) return [];

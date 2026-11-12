@@ -1,8 +1,8 @@
 import type { ThreadItem } from '@wow/contracts';
 import { ChevronRightIcon } from 'lucide-react';
-import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { ConversationItem, type ItemContext } from '../items';
+import { openKey, useOpenState } from '../open-state';
 import { failedToolCalls } from '../view-model';
 import { groupSummary, payloadOf } from './facts';
 import { toolParts } from './index';
@@ -10,7 +10,7 @@ import { toolParts } from './index';
 // A run of tool calls as one row (`chat.groupToolCalls`). While it is open to more calls (its
 // turn runs and nothing came after it, or a call still runs) it draws its latest call, with that
 // call's time; closed, it says what was done: "Read 2 files, ran 1 command · 1 failed" (spec
-// 91). Open, it lists every call. The open state is this window's.
+// 91). Open, it lists every call. The open state is the conversation's, which find sets too.
 export function ToolCallGroup({
   items,
   contextOf,
@@ -21,8 +21,8 @@ export function ToolCallGroup({
   // Something came after the group in the conversation.
   closed?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   const first = items[0];
+  const [open, setOpen] = useOpenState(first && openKey('group', first.id));
   const latest = items.at(-1);
   if (first === undefined || latest === undefined) return null;
   const payloads = items.flatMap((item) => payloadOf(item) ?? []);
@@ -58,6 +58,7 @@ export function ToolCallGroup({
           'group/tools rounded-md border text-xs',
           failed > 0 ? 'border-state-failed/50' : 'border-border',
         )}
+        open={open}
         onToggle={(event) => setOpen(event.currentTarget.open)}
       >
         <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 select-none">

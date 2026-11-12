@@ -261,7 +261,8 @@ describe('@wow/provider-claude', () => {
     await h.adapter.send(startTurn());
     await done;
 
-    expect(h.events).toEqual([
+    // What the session can use has cases of its own (thread work U5).
+    expect(h.events.filter((event) => event.type !== 'sessionTools')).toEqual([
       { type: 'session', threadId: 't1', providerSessionId: 'sess-1' },
       { type: 'reasoningDelta', threadId: 't1', itemId: 'msg_1:0', delta: 'List the files first.' },
       { type: 'textDelta', threadId: 't1', itemId: 'msg_1:1', delta: 'Let me ' },
@@ -862,7 +863,8 @@ describe('@wow/provider-claude', () => {
     await asked;
     await h.adapter.send({ type: 'interrupt', threadId: 't1' });
     await interrupted;
-    expect(h.queries[0]?.calls).toEqual(['interrupt']);
+    expect(h.queries[0]?.calls).toContain('interrupt');
+    expect(h.queries[0]?.calls.filter((call) => call === 'interrupt')).toHaveLength(1);
     expect(h.queries[0]?.permissionResults).toEqual([
       { behavior: 'deny', message: 'The turn was interrupted.', interrupt: true },
     ]);

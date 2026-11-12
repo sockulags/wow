@@ -23,6 +23,8 @@ declare global {
       readonly pickFolder?: () => Promise<unknown>;
       // Relaunches the desktop app.
       readonly restart?: () => Promise<unknown>;
+      // The native save dialog for a text file; answers the path written or null.
+      readonly saveTextFile?: (file: { suggestedName: string; text: string }) => Promise<unknown>;
     };
   }
 }

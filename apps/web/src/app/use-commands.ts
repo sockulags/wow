@@ -10,6 +10,7 @@ import { validateCalendarSearch } from '@/calendar/search';
 import { approvalCommands, approvalCardStore } from '@/chat/approval-card';
 import { chatCommands } from '@/chat/commands';
 import { changesShown, threadChangesCommands, threadChangesStore } from '@/chat/thread-changes';
+import { sessionToolsCommands, toolsShown } from '@/panel/tools-tab';
 import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
 import {
@@ -91,6 +92,10 @@ export function useCommands(gated = false): {
     changesShown(state, panelRoute(pathname, locationSearch), openThreadId),
   );
   const changesTurnOnly = useStore(threadChangesStore, (state) => state.turnOnly);
+  const toolsOpen = useLayout((state) =>
+    toolsShown(state, panelRoute(pathname, locationSearch), openThreadId),
+  );
+  const toolsLive = useTopic('threadTools', openThreadId)?.[0]?.live === true;
   // The calendar's zone with "outlook" resolved (F-8), for the cards' "when".
   const { zone: calendarZone } = useCalendarPrefs();
   const openRunId = /^\/workflows\/runs\/([^/]+)$/.exec(pathname)?.[1];
@@ -194,6 +199,12 @@ export function useCommands(gated = false): {
         tabsRoute,
         changesOpen,
         changesTurnOnly,
+      ),
+      ...sessionToolsCommands(
+        openThread && openThread.kind !== 'assistant' ? openThread.id : undefined,
+        tabsRoute,
+        toolsOpen,
+        toolsLive,
       ),
       ...chatCommands({
         threads: threads ?? [],
@@ -372,6 +383,8 @@ export function useCommands(gated = false): {
     modelBar,
     conversation,
     reasoningByDefault,
+    toolsOpen,
+    toolsLive,
   ]);
   const commands = useMemo(
     () => (gated ? all.filter((command) => gateCommand(command.id)) : all),

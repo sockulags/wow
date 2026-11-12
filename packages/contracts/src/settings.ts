@@ -548,6 +548,24 @@ export const settingsRegistry = {
     default: false,
     scope: 'global',
   }),
+  'chat.findMaxMatches': defineSetting({
+    schema: z.number().int().min(1).max(100000),
+    group: 'chat',
+    label: 'Most matches find counts',
+    description:
+      'Find in a conversation (Ctrl+F) counts at most this many matches; with more, the bar reads the number and a plus, such as "1000+".',
+    default: 1000,
+    scope: 'global',
+  }),
+  'chat.exportReasoning': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Reasoning in a copied conversation',
+    description:
+      'Put the agent\'s reasoning in the Markdown that "Copy conversation as Markdown" and "Save conversation…" make. Off, the Markdown holds the messages and one line per tool call only.',
+    default: false,
+    scope: 'global',
+  }),
   'chat.editDiffMaxLines': defineSetting({
     schema: z.number().int().min(20).max(20000),
     group: 'chat',
@@ -1969,6 +1987,21 @@ export const settingsRegistry = {
     'Chat: edit the last message from the composer',
     'In an empty composer, put your last message back in it to change and send again. Sending replaces that message and its answer.',
     'ArrowUp',
+  ),
+  'keybindings.findInConversation': keybinding(
+    'Chat: find in the conversation',
+    "Open the find bar above the open thread's conversation, from anywhere in the view, the composer included. Pressed again, it selects what the field holds.",
+    'Mod+F',
+  ),
+  'keybindings.findNext': keybinding(
+    'Chat: next match',
+    'Go to the next match of the find bar, opening what holds it. Enter in the field does the same.',
+    'F3',
+  ),
+  'keybindings.findPrevious': keybinding(
+    'Chat: previous match',
+    'Go to the match before in the find bar. Shift+Enter in the field does the same.',
+    'Shift+F3',
   ),
   'keybindings.conversationEnd': keybinding(
     'Chat: back to the newest output',

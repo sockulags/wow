@@ -1,7 +1,9 @@
 import type {
   AccountInfo,
+  AgentInfo,
   CanUseTool,
   EffortLevel,
+  McpServerStatus,
   ModelInfo,
   Options,
   PermissionMode,
@@ -19,6 +21,10 @@ export interface ClaudeQuery extends AsyncIterable<SDKMessage> {
   applyFlagSettings(settings: { effortLevel?: EffortLevel | null }): Promise<void>;
   supportedModels(): Promise<ModelInfo[]>;
   supportedCommands(): Promise<SlashCommand[]>;
+  // What the session can use (thread work spec 38): the MCP servers with their state, config and
+  // tools, and the subagents. Only asked of a live session, never through a probe.
+  mcpServerStatus(): Promise<McpServerStatus[]>;
+  supportedAgents(): Promise<AgentInfo[]>;
   getContextUsage(options?: {
     detail?: 'summary' | 'full';
   }): Promise<{ totalTokens: number; maxTokens: number }>;
