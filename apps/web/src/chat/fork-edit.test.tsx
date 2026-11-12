@@ -358,6 +358,26 @@ describe('A go-back the provider refused', () => {
     expect(screen.getByRole('button', { name: 'Start a new conversation' })).toBeTruthy();
   });
 
+  it('stays on the failed turn when a refused Stop notice comes after it', () => {
+    const failed = failedEdit();
+    setup({
+      ...failed,
+      items: [
+        ...failed.items,
+        item(
+          3,
+          'error',
+          { message: 'Could not stop the task: it had ended', notice: 'refused' },
+          `${turnId(3)}:refused:9`,
+        ),
+      ],
+      shown: { goBack: { resumeId: 'session-1', at: 'point-1', fork: false } },
+    });
+    const goOn = screen.getByRole('button', { name: 'Go on without going back' });
+    expect(goOn.closest('li')?.textContent).toContain('No message to go back to');
+    expect(goOn.closest('li')?.textContent).not.toContain('Could not stop the task');
+  });
+
   it('is not offered when the thread does not go back or its last turn did not fail', () => {
     setup(failedEdit());
     expect(screen.queryByRole('button', { name: 'Go on without going back' })).toBeNull();
