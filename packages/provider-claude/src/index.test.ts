@@ -725,6 +725,22 @@ describe('@wow/provider-claude', () => {
     ).rejects.toThrow(/Unknown Claude permission mode/);
   });
 
+  it('does not name the old model on usage after the model changed without a new init', async () => {
+    const h = harness([[initStep(), result(0)], [result(0)], [result(0)]]);
+    let done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    await h.adapter.send({ type: 'setModel', threadId: 't1', model: 'opus' });
+    done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ prompt: 'And then?', model: 'opus' }));
+    await done;
+    done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ prompt: 'And now?', model: 'haiku' }));
+    await done;
+    const models = h.events.flatMap((event) => (event.type === 'usage' ? [event.model] : []));
+    expect(models).toEqual(['claude-sonnet-4-5', undefined, undefined]);
+  });
+
   it('interrupts a turn that waits for an approval and reports it interrupted', async () => {
     const steps = loadFixture('turn.json').slice(0, 7);
     const h = harness([steps]);

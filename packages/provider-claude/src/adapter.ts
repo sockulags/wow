@@ -311,6 +311,8 @@ export class ClaudeAdapter implements ProviderAdapter {
         if (session?.query && session.model !== command.model) {
           await session.query.setModel(command.model);
           session.model = command.model;
+          // Claude Code names the model again only in a new init; until then the one sent holds.
+          session.reportedModel = undefined;
         }
         return { ok: true };
       }
@@ -455,7 +457,10 @@ export class ClaudeAdapter implements ProviderAdapter {
       session = await this.#open({ ...command, ...(resumeId ? { resumeId } : {}) });
     } else if (session?.query) {
       const query = session.query;
-      if (session.model !== command.model) await query.setModel(command.model);
+      if (session.model !== command.model) {
+        await query.setModel(command.model);
+        session.reportedModel = undefined;
+      }
       if (session.permissionMode !== command.permissionMode)
         await query.setPermissionMode(command.permissionMode);
       if (session.effort !== command.effort) {

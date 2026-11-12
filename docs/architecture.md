@@ -3085,7 +3085,8 @@ stored by the server; the web app only draws it.
   first turn has none. The row reads "Model: Opus → Sonnet · Effort: high → low · Mode: Accept
   edits" with the provider's labels (`settingsChangeText` in `items.tsx`).
 - **Usage model.** `UsageItemPayload.model` is the provider's word for the model (Claude Code's
-  init message, which the adapter keeps per session and puts on `usage`), else the model of the
+  init message, which the adapter keeps per session and puts on `usage`, and forgets when wow
+  changes the model of the live session until the next init names one), else the model of the
   newest turn start, else the thread's. Rows stored before have none and show none.
 - **Compaction.** Claude Code's `system` message `compact_boundary` becomes ProviderEvent
   `compacted {trigger, preTokens, postTokens?}`, stored as a `compaction` item
