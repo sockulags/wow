@@ -16,6 +16,8 @@ import {
   createNpmRunner,
   imagesReceived,
   mockCodexModels,
+  mockCompaction,
+  mockTwoTools,
   snapshot,
   startOutlookService,
   startServer,
@@ -56,6 +58,7 @@ import {
   e2eCodexHome,
   e2eCodexInstanceId,
   e2eHome,
+  e2eNeedsYouWorkflowId,
   e2eEventBranch,
   e2eEventIntentId,
   e2eEventProjectId,
@@ -390,6 +393,8 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     const types = images.map((image) => image.mediaType.slice('image/'.length)).join(', ');
     return [session, ...finish(threadId, `${imagesReceived(images.length)} Types: ${types}.`)];
   }
+  // The step of the "Needs you e2e" workflow ends at once, so its run waits at the gate.
+  if (/sum-up/i.test(prompt)) return [session, ...finish(threadId, 'Summed up.')];
   // A step of a unit's run: the agent opens the unit's pull request, as deliver-work would, and
   // says which unit it was told about.
   const unit = /^Unit: (\S+) (.*)$/m.exec(prompt);
@@ -801,6 +806,15 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       ...finish(threadId, 'I asked a background agent to count them.'),
     ];
   }
+  // Conversation reading (agent workbench U10): `/compact` compacts as Claude Code reports it,
+  // and "two tools" runs a command, then a second one that keeps running until stopped.
+  if (/compact/i.test(prompt)) {
+    return [session, mockCompaction(threadId), ...finish(threadId, 'The conversation is shorter.')];
+  }
+  if (/two tools/i.test(prompt)) {
+    waitingThreads.push(threadId);
+    return [session, ...mockTwoTools(threadId, command.cwd)];
+  }
   if (/wait/i.test(prompt)) {
     // Runs until stopped or until the control port's /turn-done ends it, so a message written
     // meanwhile is queued (agent workbench spec 50, 51).
@@ -946,16 +960,28 @@ const chatClaude = () => (claudeMock = chatMock(new MockProviderAdapter('claude'
 // Codex takes no message with a decline and goes on with its turn (agent workbench spec 37):
 // the turn runs until wow stops it and sends the note as the next message.
 const codexScript: MockScript = (command) =>
-  command.type === 'answerApproval' && command.decision === 'deny' && command.note
+  // Codex counts tokens while its turn runs (agent workbench spec 45).
+  command.type === 'startTurn' && /two tools/i.test(command.prompt)
     ? [
+        ...chatScript(command),
         {
-          type: 'toolCallCompleted',
-          threadId: threadOf(command.approvalId),
-          itemId: 'tool-1',
-          status: 'error',
+          type: 'usage',
+          threadId: command.threadId,
+          inputTokens: 12_000,
+          outputTokens: 1_300,
+          cachedInputTokens: 0,
         },
       ]
-    : chatScript(command);
+    : command.type === 'answerApproval' && command.decision === 'deny' && command.note
+      ? [
+          {
+            type: 'toolCallCompleted',
+            threadId: threadOf(command.approvalId),
+            itemId: 'tool-1',
+            status: 'error',
+          },
+        ]
+      : chatScript(command);
 
 // "Update Codex" (settings tests): a Codex instance named "... differs" tests as a compatible
 // other version, one named "... incompatible" as incompatible with an npm update until the fake
@@ -1324,6 +1350,26 @@ if (!firstStart) {
 if (home === e2eAssistantHome) await server.providerService.test(e2eProviderInstanceId);
 // Only the chat server gets a Codex instance; the settings tests count and add instances themselves.
 if (home === e2eHome) {
+  // "Next that needs you" (agent workbench spec 76): a run of this waits at the gate after its
+  // only step, started through POST /run.
+  server.engine.dispatch('seed-needs-you-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eNeedsYouWorkflowId,
+    name: 'Needs you e2e',
+    steps: [
+      {
+        id: 'sum-up',
+        skillName: 'sum-up',
+        providerInstanceId: e2eProviderInstanceId,
+        model: 'mock-model',
+        effort: 'default',
+        permissionMode: 'default',
+        gateBefore: false,
+        gateAfter: true,
+        expectedArtifacts: [],
+      },
+    ],
+  });
   server.engine.dispatch('seed-codex-instance', {
     type: 'providerInstance.create',
     providerInstanceId: e2eCodexInstanceId,
