@@ -571,7 +571,9 @@ set it to `$` if you prefer the old key. In a thread, the list starts with "Comm
 `/effort`, `/plan`, `/compact`, `/clear`, `/done`, `/stop` and the others that apply to the
 thread, each running the palette command of that name. `/clear` starts a new thread with the same
 provider, model, effort, mode and folder. Below them come Claude Code's own commands; picking one
-puts `/name` in the message, sent as typed. Codex reports none. A slash anywhere else (a path such as `src/app`, a date
+puts `/name` in the message, sent as typed. A folder's list is kept for 30 seconds (Settings →
+Providers, "Command list kept for"), so a command added meanwhile shows after that. Codex reports
+none. A slash anywhere else (a path such as `src/app`, a date
 such as `2026/11/12`) or in pasted text opens nothing.
 
 A picked skill becomes a chip in front of the text: its name with the mark of its group. Backspace

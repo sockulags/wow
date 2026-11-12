@@ -434,6 +434,16 @@ export const settingsRegistry = {
     scope: 'provider',
     unit: 'ms',
   }),
+  'providers.commandListSeconds': defineSetting({
+    schema: z.number().int().min(0).max(3600),
+    group: 'providers',
+    label: 'Command list kept for',
+    description:
+      "How long the provider's own commands for a folder, as the composer's / list shows them, are kept before the provider is asked again. Asking may start Claude Code in the folder. 0 asks every time the list opens.",
+    default: 30,
+    scope: 'provider',
+    unit: 'seconds',
+  }),
   'providers.offerSetup': defineSetting({
     personal: 'machine',
     schema: z.boolean(),

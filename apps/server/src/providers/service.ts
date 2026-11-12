@@ -43,6 +43,8 @@ export interface ProviderServiceDeps {
   // Reads a chat thread's folder through git for its Changes (agent workbench spec 34); without
   // it, threads get no base and no marks.
   readonly changes?: RunChanges | undefined;
+  // Milliseconds since the epoch; tests pass their own.
+  readonly now?: (() => number) | undefined;
 }
 
 type StartTurn = Extract<ProviderCommand, { type: 'startTurn' }>;
@@ -62,6 +64,10 @@ export class ProviderService {
   #stopped = false;
   // Threads whose queued message the provider has been offered and not yet answered.
   readonly #handingOver = new Set<string>();
+  readonly #commandLists = new Map<
+    string,
+    { readonly at: number; readonly commands: ProviderSlashCommand[] }
+  >();
   // Turns being prepared before they go out (the assistant's tools, a chat thread's marks).
   readonly #preparing = new Set<Promise<unknown>>();
 
@@ -160,15 +166,25 @@ export class ProviderService {
     return ProviderModel.array().parse(await adapter.send({ type: 'listModels' }));
   }
 
+  // The / list asks each time it opens; for a thread without a live session Claude Code is
+  // started in the folder to answer, so an answer is kept a short while per instance and folder.
   async listCommands(
     providerInstanceId: string,
     cwd: string,
     threadId?: string,
   ): Promise<ProviderSlashCommand[]> {
+    const key = `${providerInstanceId}\0${cwd}`;
+    const keepMs =
+      this.#deps.settings.get('providers.commandListSeconds', { providerInstanceId }) * 1000;
+    const now = (this.#deps.now ?? Date.now)();
+    const kept = this.#commandLists.get(key);
+    if (kept && now - kept.at < keepMs) return kept.commands;
     const adapter = this.#adapter(providerInstanceId);
-    return ProviderSlashCommand.array().parse(
+    const commands = ProviderSlashCommand.array().parse(
       await adapter.send({ type: 'listCommands', cwd, ...(threadId ? { threadId } : {}) }),
     );
+    if (keepMs > 0) this.#commandLists.set(key, { at: now, commands });
+    return commands;
   }
 
   // Stops the instance's adapter (and its app-server process); the next use starts a new one.

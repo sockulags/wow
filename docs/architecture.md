@@ -456,7 +456,9 @@ thread it maps to, since the app-server has no request that unloads one.
   `listCommands {cwd, threadId?}` answers `supportedCommands()` (name, description, argument hint)
   of the thread's live session, or of a short-lived query opened in `cwd`. Codex answers
   `handOver` with `{taken: false}` and `listCommands` with `[]`; RPC `provider.listCommands
-{providerInstanceId, cwd, threadId?}` returns the list (`ProviderSlashCommand[]`).
+{providerInstanceId, cwd, threadId?}` returns the list (`ProviderSlashCommand[]`). The provider
+service keeps an answer per instance and folder for `providers.commandListSeconds` (30 s; 0 keeps
+none), since a probe starts Claude Code in the folder and the list asks each time it opens.
 - **Chat options.** What the composer bar offers per provider kind (permission modes with their
   short label and tone, the Shift+Tab cycle `modeCycle`, the effort that leaves the choice to the
   provider, the compact message) is `providerChatOptions` in `packages/contracts`, because the
@@ -1472,7 +1474,7 @@ A group marked with a unit (`(U12)`) belongs to a unit not delivered yet; its ke
 until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
-  `providers.offerSetup`
+  `providers.commandListSeconds`, `providers.offerSetup`
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.toolOutputLines`,
   `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
   `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength`, `chat.editDiffMaxLines` (see "Chat

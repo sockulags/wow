@@ -48,6 +48,9 @@ class ControlledAdapter implements ProviderAdapter {
         { id: 'sonnet', label: 'Sonnet', description: '', efforts: ['high'] },
       ]);
     }
+    if (command.type === 'listCommands') {
+      return Promise.resolve([{ name: 'review', description: 'Review the change' }]);
+    }
     return Promise.resolve({ ok: true });
   }
 
@@ -73,6 +76,7 @@ let context: ProviderAdapterContext | undefined;
 let service: ProviderService;
 let next = 0;
 let tick = 0;
+let nowMs = 0;
 
 const clock = () => new Date(Date.UTC(2026, 10, 2, 8, 0, (tick += 1)));
 const dispatch = (command: Command) => engine.dispatch(`c${(next += 1)}`, command);
@@ -118,6 +122,7 @@ beforeEach(async () => {
     secrets,
     home: dir,
     assistant: () => undefined,
+    now: () => nowMs,
     logger: createLogger(
       () => 'error',
       () => undefined,
@@ -388,6 +393,27 @@ describe('provider service', () => {
       resumeId: 'sess-1',
     });
     expect(rows('turns').map((turn) => turn['id'])).toEqual(['t1:turn:0', 't1:turn:1']);
+  });
+
+  it("keeps a folder's command list for providers.commandListSeconds, then asks again", async () => {
+    const asked = () => adapter.sent.filter((command) => command.type === 'listCommands');
+    nowMs = 1_000_000;
+    await service.listCommands('claude-work', '/work/demo');
+    await service.listCommands('claude-work', '/work/demo', 't1');
+    expect(asked()).toHaveLength(1);
+    await service.listCommands('claude-work', '/work/other');
+    expect(asked()).toHaveLength(2);
+    nowMs += 30_000;
+    await service.listCommands('claude-work', '/work/demo');
+    expect(asked()).toHaveLength(3);
+    dispatch({
+      type: 'setting.set',
+      key: 'providers.commandListSeconds',
+      value: 0,
+      scope: 'provider:claude-work',
+    });
+    await service.listCommands('claude-work', '/work/demo');
+    expect(asked()).toHaveLength(4);
   });
 
   it('pins and unpins a thread without touching its activity time', () => {
