@@ -10,7 +10,7 @@ import {
   SearchXIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { useLayout, useRuntime, useSetting } from '@/app/runtime';
+import { useRuntime } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
@@ -18,8 +18,7 @@ import { isoDate, localDate } from '@/calendar/time';
 import { formatDuration, useDateFormat } from '@/lib/format';
 import { isBelow, useBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
-import { effectivePanelWidth, gateRoom } from '@/panel/model';
-import { useContextPanelShown } from '@/panel/panel-state';
+import { useContextPanelShown, useShownPanelWidth } from '@/panel/panel-state';
 import { runRead } from '@/plans/model';
 import { Artifact } from './artifact-link';
 import { runTabs, type RunSearch } from './changes';
@@ -208,10 +207,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
   const waiting = runs?.find((candidate) => candidate.id === runId)?.state === 'waiting';
   const panelShown = useContextPanelShown();
   const narrow = useBelow('narrow');
-  const panelWidth = effectivePanelWidth(
-    useSetting('appearance.contextPanelWidth'),
-    useLayout((state) => state.contextPanelPreview),
-  );
+  const panelWidth = useShownPanelWidth('run').width;
   // Below the breakpoint the panel lies over the view (spec 78): the gate bar ends where the panel
   // begins and puts its buttons under its text, so the panel never covers them.
   const overlaid = narrow && panelShown;
@@ -265,9 +261,7 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
         <div
           data-testid="run-gate"
           className="flex shrink-0 flex-col gap-1 border-b border-border px-4 py-2"
-          style={
-            overlaid ? { marginRight: `min(${panelWidth}px, calc(100% - ${gateRoom}))` } : undefined
-          }
+          style={overlaid ? { marginRight: `min(${panelWidth}px, 100%)` } : undefined}
         >
           <GateBar
             run={run}

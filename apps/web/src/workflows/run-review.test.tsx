@@ -255,9 +255,13 @@ describe('the gate bar of a run view', () => {
     expect(panel()?.hasAttribute('data-overlay')).toBe(true);
     expect(top.style.marginRight).toContain('min(380px');
     // A drag of the panel's edge moves the bar's end with it, before the width is stored.
+    act(() => runtime.layout.setState({ contextPanelPreview: 420 }));
+    expect(top.style.marginRight).toContain('min(420px');
+    expect(panel()?.style.width).toContain('min(420px');
+    // Both stop at the panel's cap over a run view (jsdom's 1024 px window less 35rem).
     act(() => runtime.layout.setState({ contextPanelPreview: 720 }));
-    expect(top.style.marginRight).toContain('min(720px');
-    expect(panel()?.style.width).toContain('min(720px');
+    expect(top.style.marginRight).toContain('min(464px');
+    expect(panel()?.style.width).toContain('min(464px');
     expect(within(top).getByTestId('gate-row').className).toContain('flex-col');
     for (const name of ['Approve', 'Send back', 'Stop']) {
       expect(within(runGate()).getByRole('button', { name })).toBeTruthy();

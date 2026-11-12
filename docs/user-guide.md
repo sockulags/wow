@@ -845,7 +845,9 @@ at its top, whatever the side panel shows, and the review tabs under it; the sid
 step's conversation with a copy of the gate bar. The note of **Send back** is written in the run
 view's bar. In a window narrower than 1200 px the side panel lies over the view when you open it;
 the gate bar then ends where the panel begins and puts its buttons under its text, so they stay
-in reach. Each tab is also in the palette ("Run: show changes" and so on) and in the address, so
+in reach. Over a run the panel's edge stops where the gate bar's room begins, and the width you
+drag to there is the width kept; in a very small window the panel stays at its narrowest and the
+gate bar takes what is left beside it. Each tab is also in the palette ("Run: show changes" and so on) and in the address, so
 a reload shows the same tab. Workflows → **Runs** lists every run, the ones waiting for you
 first, then the running ones ("Go to runs" in the palette).
 

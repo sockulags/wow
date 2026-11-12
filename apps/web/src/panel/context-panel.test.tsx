@@ -75,6 +75,27 @@ describe('context panel', () => {
     expect(runtime.settings.getState().values['appearance.contextPanel']).toBe(true);
   });
 
+  it('over a run view reports and stores no more than the width it shows', async () => {
+    narrowWindow();
+    vi.stubGlobal('innerWidth', 1024);
+    const user = userEvent.setup();
+    const runtime = createTestRuntime(undefined, { 'appearance.contextPanelWidth': 720 });
+    await renderApp('/workflows/runs/run-1', runtime);
+    await user.click(screen.getByRole('button', { name: 'Toggle context panel' }));
+    const edge = screen.getByRole('separator', { name: 'Resize context panel' });
+    // 1024 px less the rail, the workflows list and the gate bar's room (35rem).
+    expect(edge.getAttribute('aria-valuenow')).toBe('464');
+    expect(edge.getAttribute('aria-valuemax')).toBe('464');
+    expect(panel()?.style.width).toBe('min(464px, 100%)');
+    edge.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(runtime.settings.getState().values['appearance.contextPanelWidth']).toBe(448);
+    await user.keyboard('{End}');
+    expect(runtime.settings.getState().values['appearance.contextPanelWidth']).toBe(464);
+    await user.keyboard('{ArrowLeft}');
+    expect(runtime.settings.getState().values['appearance.contextPanelWidth']).toBe(464);
+  });
+
   it('lists "Show in panel" only for a view with a selection', async () => {
     const user = userEvent.setup();
     await renderApp('/calendar?item=card-1');

@@ -3634,12 +3634,17 @@ answers never move; the panel's conversation shows a copy (`GateBar` without `in
 while its conversation tab is selected. While the run view is on screen the note field opens in
 the run view's bar alone (the copy's Send back opens it there), so there is one note. Below
 `breakpoints.narrow`, where the panel lies over the view (spec 78), the run view's bar ends where
-the panel begins (a right margin of the panel's width, the drag preview in the layout store's
-`contextPanelPreview` while its edge moves, else `appearance.contextPanelWidth`) and puts its
-buttons under its text (`stacked`, wrapping). The bar keeps `gateRoom` (16rem, its widest button
-and padding): over a run view the panel is capped so it leaves the sidebar rail, the workflows
-list and that room (`overlayRoom`, `panel/model.ts`), so the panel never covers Approve, Send
-back and Stop, whatever width is stored. Send back opens a
+the panel begins (a right margin of the panel's shown width, `useShownPanelWidth` in
+`panel/panel-state.ts`: the drag preview in the layout store's `contextPanelPreview` while its
+edge moves, else `appearance.contextPanelWidth`, capped) and puts its buttons under its text
+(`stacked`, wrapping). The bar keeps 16rem (its widest button and padding): over a run view the
+panel is capped so it leaves the sidebar rail, the workflows list and that room (`overlayCap`,
+`panel/model.ts`, from the window width), so the panel never covers Approve, Send back and Stop,
+whatever width is stored. The cap never goes under the panel's minimum width (280 px); in a
+window too small for both, the bar takes what is left beside the panel. The resize edge starts a
+drag from the shown width and moves within the cap (keys too, End goes to the cap), so the width
+stored is the width shown, and its `aria-valuenow` and `aria-valuemax` are the shown width and
+the cap. Send back opens a
 note field in the gate bar. The
 note being written is view state in `gateStore` (`{runId, gate, note, busy, error}`), so the
 button, the palette and the key act on the same field; nothing about the run is kept there.

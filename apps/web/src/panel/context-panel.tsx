@@ -16,15 +16,18 @@ import { FileViewer } from './file-viewer';
 import { HostTab } from './host-tab';
 import { PageViewer } from './page-viewer';
 import {
-  clampPanelWidth,
   effectivePanelWidth,
   hasSelection,
-  overlayRoom,
   panelRoute,
   panelSelection,
   type PanelSelection,
 } from './model';
-import { CONTEXT_PANEL_ID, closeContextPanel, takePanelFocusRequest } from './panel-state';
+import {
+  CONTEXT_PANEL_ID,
+  closeContextPanel,
+  takePanelFocusRequest,
+  useShownPanelWidth,
+} from './panel-state';
 import { ThreadPanel } from './thread-panel';
 import { PanelTabStrip } from './tabs';
 import {
@@ -107,13 +110,16 @@ function CalendarTitle({ itemId }: { readonly itemId: string }) {
 }
 
 // The left edge: drag it, or focus it and use the arrow keys. The width is stored when the drag
-// ends, so a drag is one settings write.
+// ends, so a drag is one settings write. Over the view it moves within the cap, so the width
+// stored is the one shown.
 function ResizeHandle({
   width,
+  cap,
   onPreview,
   onCommit,
 }: {
   readonly width: number;
+  readonly cap: number | undefined;
   readonly onPreview: (width: number | undefined) => void;
   readonly onCommit: (width: number) => void;
 }) {
@@ -129,7 +135,11 @@ function ResizeHandle({
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const start = drag.current;
     if (!start) return;
-    latest.current = clampPanelWidth(start.startWidth + start.startX - event.clientX);
+    latest.current = effectivePanelWidth(
+      start.startWidth + start.startX - event.clientX,
+      undefined,
+      cap,
+    );
     onPreview(latest.current);
   };
   const onPointerUp = () => {
@@ -147,11 +157,11 @@ function ResizeHandle({
           : event.key === 'Home'
             ? contextPanelWidthBounds.min
             : event.key === 'End'
-              ? contextPanelWidthBounds.max
+              ? (cap ?? contextPanelWidthBounds.max)
               : undefined;
     if (next === undefined) return;
     event.preventDefault();
-    onCommit(clampPanelWidth(next));
+    onCommit(effectivePanelWidth(next, undefined, cap));
   };
   return (
     <div
@@ -160,7 +170,7 @@ function ResizeHandle({
       aria-label="Resize context panel"
       aria-valuenow={width}
       aria-valuemin={contextPanelWidthBounds.min}
-      aria-valuemax={contextPanelWidthBounds.max}
+      aria-valuemax={cap ?? contextPanelWidthBounds.max}
       tabIndex={0}
       data-testid="context-panel-resize"
       className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-1 after:w-px after:bg-transparent hover:after:bg-ring focus-visible:after:w-0.5 focus-visible:after:bg-ring"
@@ -200,7 +210,7 @@ export function ContextPanel() {
   const hostItem = tab?.kind === 'host' ? tab.host : undefined;
   // A chat thread's Changes (agent workbench spec 34) are one of its tabs.
   const changes = tab?.kind === 'changes' ? tab.changes : undefined;
-  const width = effectivePanelWidth(storedWidth, preview);
+  const { width, cap } = useShownPanelWidth(selection.view);
   const baseLabel = baseTabLabel(selection);
   const threads = useTopic('threads');
   // A step thread's run view shows the conversation, not a thread's details.
@@ -246,10 +256,7 @@ export function ContextPanel() {
       aria-label="Context panel"
       tabIndex={-1}
       data-overlay={narrow ? '' : undefined}
-      style={{
-        width: `min(${width}px, 100%)`,
-        maxWidth: narrow ? `calc(100% - (${overlayRoom(selection.view)}))` : undefined,
-      }}
+      style={{ width: `min(${width}px, 100%)` }}
       className={cn(
         'relative flex shrink-0 flex-col border-l border-border bg-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
         narrow && 'absolute inset-y-0 right-0 z-40 border-border-strong shadow-2xl',
@@ -290,6 +297,7 @@ export function ContextPanel() {
     >
       <ResizeHandle
         width={width}
+        cap={cap}
         onPreview={setPreview}
         onCommit={(next) => {
           setPreview(next);
