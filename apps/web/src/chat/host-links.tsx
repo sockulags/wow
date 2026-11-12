@@ -202,9 +202,14 @@ export function HostChip({
   );
 }
 
-// The host items a text names: its web addresses on the thread's sites and its bare references,
-// once each, in order (spec 19, 25).
-export function hostItemsIn(text: string, rules: HostLinkRules): HostItemRef[] {
+// The host items a text names: its web addresses on the thread's sites and, unless only links
+// are wanted (the composer's pasted links), its bare references; once each, in order (spec 19,
+// 25).
+export function hostItemsIn(
+  text: string,
+  rules: HostLinkRules,
+  { linksOnly = false }: { readonly linksOnly?: boolean } = {},
+): HostItemRef[] {
   const found = new Map<string, HostItemRef>();
   const add = (item: HostItemRef) => {
     const key = hostItemKey(item);
@@ -214,6 +219,6 @@ export function hostItemsIn(text: string, rules: HostLinkRules): HostItemRef[] {
     const item = recogniseHostLink(match[0].replace(/[.,;:!?]+$/, ''), rules);
     if (item) add(item);
   }
-  for (const match of bareHostRefs(text, rules)) add(match.item);
+  if (!linksOnly) for (const match of bareHostRefs(text, rules)) add(match.item);
   return [...found.values()];
 }

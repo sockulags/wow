@@ -18,6 +18,7 @@ import {
   bareHostRefs,
   hostChipText,
   hostItemIcon,
+  hostItemsIn,
   recogniseHostLink,
   recogniseHostRef,
   type HostLinks,
@@ -407,6 +408,23 @@ const item = (id: string, kind: ThreadItem['kind'], payload: unknown): ThreadIte
   kind,
   payload,
   streaming: false,
+});
+
+describe('links in a draft @agent-workbench-25', () => {
+  it('finds the addresses once each without trailing punctuation, and no bare keys', () => {
+    const text =
+      'See https://ghe.example.invalid/acme/tea/pull/14, (https://jira.example.invalid/browse/DEMO-42) and https://ghe.example.invalid/acme/tea/pull/14. DEMO-7 #3';
+    expect(hostItemsIn(text, rules, { linksOnly: true }).map((found) => found.id)).toEqual([
+      '14',
+      'DEMO-42',
+    ]);
+    expect(hostItemsIn(text, rules).map((found) => found.id)).toEqual([
+      '14',
+      'DEMO-42',
+      'DEMO-7',
+      '3',
+    ]);
+  });
 });
 
 describe('Mentioned @agent-workbench-19', () => {
