@@ -42,6 +42,8 @@ import {
   type QuestionStatus,
 } from './question-card';
 import { formatCost, formatTokens } from './model';
+import { FileChip, OpenFileButton } from '@/panel/open-file-button';
+import { withoutMentions } from './mentions';
 import { SentSkillChip } from './skill-chip';
 import { failedToolCalls, formatElapsed } from './view-model';
 
@@ -174,8 +176,23 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
   // The skills it was sent with are chips; a message stored before them shows its text as it was
   // (wow skills spec 14, 18).
   const skills = payload.skills ?? [];
+  const files = payload.files ?? [];
+  const text = withoutMentions(payload.text, files);
   return (
     <div className="group flex flex-col items-end gap-0.5">
+      {files.length > 0 && (
+        <div
+          role="list"
+          aria-label="Sent with files"
+          className="flex max-w-[85%] flex-wrap justify-end gap-1"
+        >
+          {files.map((file) => (
+            <span role="listitem" key={file}>
+              <FileChip path={file} />
+            </span>
+          ))}
+        </div>
+      )}
       {skills.length > 0 && (
         <div
           role="list"
@@ -189,9 +206,9 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
           ))}
         </div>
       )}
-      {payload.text.trim() !== '' && (
+      {text.trim() !== '' && (
         <div className="w-fit max-w-[85%] rounded-lg bg-secondary px-3 py-2 text-sm whitespace-pre-wrap text-secondary-foreground">
-          {payload.text}
+          {text}
         </div>
       )}
       {payload.queued && (
@@ -280,6 +297,7 @@ function ToolCallLine({
       )}
       <span className="ml-auto flex shrink-0 items-center gap-2">
         {extra}
+        {payload.path !== undefined && <OpenFileButton path={payload.path} />}
         <span className={status.className}>{status.label}</span>
       </span>
     </>

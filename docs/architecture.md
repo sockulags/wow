@@ -50,7 +50,9 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   `workflowRuns.detectArtifacts` (`{runId}`), `workflowRuns.diff` (`{runId, path?}`, what the run
   changed since its base, see "Run base and changes"), `workflowRuns.removeWorkingCopy` (`{runId}`,
   deletes a kept working copy of an ended run, see "Working copies"), `workflows.matchArtifacts` (`{projectId, globs}`),
-  `files.read` (`{runId, path}`, one file of a run for the viewer, see "Files"), `outlook.open`
+  `files.read` (`{runId | threadId | projectId, path}`, one file for the viewer, see "Files"),
+  `files.list` (`{runId | threadId | projectId}`, the folder's file names for "Open file…" and
+  `@`, see "Files"), `outlook.open`
   (`{entryId}`), `outlook.refresh`, `projects.git` (every project folder's git
   status and remotes), `trackers.project` (`{projectId}`, one project's tracker settings with their
   sources and suggestions), `trackers.test` (`{service, projectId?}`, signs in with the tracker
@@ -114,10 +116,21 @@ projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see 
   plus the IANA zone they were entered in; `Temporal` polyfill (`@js-temporal/polyfill`) does zone
   math. Default zone is the system zone. Details in "Scheduler and triggers".
 - **Files.** `apps/server/src/files/read.ts` (`readViewerFile`) is the only way a whole file
-  leaves the server, and `files.read` is its only caller; there is no HTTP file server and no
-  directory listing. (`workflowRuns.diff` sends the changed lines of files git lists as changed
-  inside the run's folder, see "Run base and changes".) The handler gives it the folders the run may read (the project folder; a
-  run with its own working copy adds that folder in front) and `viewer.maxFileBytes`. A
+  leaves the server, and `files.read` is its only caller; there is no HTTP file server.
+  (`workflowRuns.diff` sends the changed lines of files git lists as changed inside the run's
+  folder, see "Run base and changes".) `files.read` takes a scope (`FileScope` in
+  `packages/contracts/src/files.ts`, agent workbench Interface): a run (the project folder; a run
+  with its own working copy adds that folder in front), a thread (its folder, then its project's
+  folder; a thread without a project only its own) or a project (its folder). The handler
+  (`fileScope` in `rpc/handlers.ts`) turns the scope into those folders and the words a refusal
+  names them with (`place`), and passes `viewer.maxFileBytes`. The assistant's thread has no
+  files (its folder is wow's own; `rejected`). `files.list` (`files/list.ts`, `listFolderFiles`)
+  names the files of the scope's first folder for "Open file…" and `@` (agent workbench spec 18,
+  56), never their content: inside Git `git ls-files --cached --others --exclude-standard -z`
+  (tracked plus untracked files Git does not ignore, read as the output streams and stopped at
+  `viewer.fileListLimit`), else a breadth-first walk that skips hidden folders and
+  `node_modules` and stops at the same limit; the answer says which (`source`) and whether it
+  stopped (`truncated`). A
   relative path is looked for in each folder in order, a full path must lie in one of them. The
   order of checks: the path as written must stay inside a folder, as registered or at its
   `realpath` (`path.resolve` and `path.relative`, so `..` and other drives are refused without
@@ -1414,7 +1427,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
   `providers.offerSetup`
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.starterCount`,
-  `chat.skillTrigger`
+  `chat.skillTrigger`, `chat.fileTrigger` (see "Panel tabs and files in chat")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.maxOccurrences` (see "Repeating cards"),
@@ -1446,7 +1459,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount`,
   `hosts.longestWaitMinutes`, `hosts.pageMaxBytes` (see "Hosts")
 - triggers: `triggers.eventsEnabled`, `triggers.forkPullRequests`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
-- viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
+- viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`,
+  `viewer.fileListLimit`, `viewer.fileMatchesShown` (see "Files" and "Panel tabs and files in
+  chat")
 - diff: `diff.maxFileBytes`, `diff.maxFiles`, `diff.maxHashBytes` (the "Changes" page, see "Run base and changes")
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
@@ -3239,14 +3254,16 @@ topics the views read.
   summed over `turns` (`threadUsage`) with the last context report, and the run, card and backlog
   item it belongs to.
 - No selection: a compact `EmptyState` that says what the view would show.
-- File viewer (`file-viewer.tsx`, `viewer.ts`; review loop spec 6 to 9): a state of the panel, not
-  a second panel. `openFile` stores `{runId, path, fullPath, from, fullSize, read}` as the layout
-  store's `viewer` and opens the panel; `read` is the kind and resolved path the server answered
-  (`noteFileRead`), so the palette acts on the same file the header does; while `viewer.from` is the route on screen
-  (`shownFile`), `FileViewer` takes the place of the panel's body, so the main view stays put
-  and leaving the view puts the file away. It is UI state like an open dialog; the content is
-  asked from the server with `files.read` each time a file is opened and never kept. The header
-  has Back to conversation (also Escape), Copy path (the path the server resolved, or the path
+- File viewer (`file-viewer.tsx`, `viewer.ts`; review loop spec 6 to 9): a file opens in a tab
+  of the panel (see "Panel tabs" below), not a second panel. `openFile` stores
+  `{scope, path, fullPath, from, fullSize, read}` (`ViewerFile`; callers that open a run's
+  artifact may pass `runId` for the scope) as a file tab of the route it was opened on and opens
+  the panel; `read` is the kind and resolved path the server answered (`noteFileRead`), so the
+  palette acts on the same file the header does. While its tab is selected (`shownFile`),
+  `FileViewer` takes the place of the panel's body, so the main view stays put. It is UI state
+  like an open dialog; the content is asked from the server with `files.read` each time the tab
+  is shown and never kept. The header has Back to conversation (Back to details on a chat
+  thread; both close the tab, so does Escape), Copy path (the path the server resolved, or the path
   as named until it has answered) and the path; markdown goes through `Markdown`, a picture is a `data:` URL fitted to the panel with a
   Full size switch, other text is a `CodeBlock` colored by its extension up to
   `viewer.highlightMaxBytes`, and a refusal shows the server's sentence. HTML is shown in an
@@ -3270,8 +3287,8 @@ topics the views read.
   artifact: <path>" for every found file of the open run, and Back to conversation, Copy file
   path while a file shows, and the picture's size switch once it is read as a picture.
 - Page viewer (`page-viewer.tsx`; review loop spec 35): the same place for a linked Confluence
-  page. `openPage` stores `{runId, ref, from}` as the layout store's `page` (opening a file
-  clears it and the other way round) and `shownPage` keeps it to the route it was opened on. The
+  page. `openPage` stores `{runId, ref, from}` as a page tab of the route it was opened on, and
+  `shownPage` is it while that tab is selected. The
   body is the server's last read from `pageReads`; nothing is asked of the host here. The header
   has Back to conversation (also Escape), "Open on host", the title and space, version, where it
   was linked from and when it was fetched. The body is shown in an `iframe` with `sandbox=""`
@@ -3281,6 +3298,25 @@ topics the views read.
   frame says so and points to "Open on host". Palette commands: "Open page: <title>" for every
   read page of the open run, and Back to conversation and "Open page on host: <title>" while a
   page shows.
+
+Panel tabs (`tabs.tsx`, `viewer.ts`; agent workbench spec 11 to 14, 87). The layout store's
+`panelTabs` keeps, per route (a thread's `/chat/<id>`, a run's `/workflows/runs/<id>`), the open
+tabs (`PanelTab`: a file or a page, its id from the scope and path or the run and ref), the
+selected one (`DETAILS_TAB` for the panel's own body) and the tabs shown before (`history`). So a
+thread keeps its tabs while another thread is open, and each is read again when shown. While a
+route has tabs, `PanelTabStrip` shows the panel's own body first ("Details"; in a run view
+"Conversation", the step's thread, so a file or page opened there sits beside it instead of
+replacing it), then a tab per item with an icon by kind and its short name; opening an open item
+selects its tab (`openTab`). Opening keeps the focus where it was and remembers it (`tabOpener`):
+Escape there, outside a text field, closes the tab again, as Escape does in the panel. Keys while
+the focus is in the panel, matched in the panel's own key handler: `keybindings.panelCloseTab`
+(Alt+W, since Ctrl+W closes a browser tab), `keybindings.panelNextTab` (Ctrl+Tab),
+`keybindings.panelPreviousTab` (Ctrl+Shift+Tab) and `keybindings.panelBackTab` (Alt+ArrowLeft;
+`backTab`, the tab shown before); the Keybindings page lists them "In the side panel". Closing
+the selected tab shows the one shown before it. Palette commands while tabs are open: "Close panel
+tab", "Next panel tab", "Previous panel tab", "Back to the panel tab shown before" (no key of
+their own, so their keys stay the panel's). The run view's gate bar shows while the panel shows
+the conversation tab.
 
 State (`panel-state.ts`). `appearance.contextPanel` stores whether it is open and
 `appearance.contextPanelWidth` its width (pixels, bounds `contextPanelWidthBounds` in
@@ -3297,6 +3333,50 @@ context panel" (`keybindings.focusContextPanel`, F6), which moves the focus into
 panel" while the view has a selection. A focus request made from the palette waits in the layout
 store (`contextPanelFocus`) and is taken in the palette's `onCloseAutoFocus`, because the dialog
 would otherwise put the focus back where it was.
+
+### Panel tabs and files in chat
+
+Agent workbench spec 15 to 18, 56. A chat or step thread's conversation (`ThreadConversation`)
+provides `FileLinkContext` (`components/file-links.tsx`), whose `open(path)` opens the file in a
+panel tab of the route on screen with the thread's scope (`{threadId}`); the Assistant view
+provides none, so it has no file links, Open buttons or `@`. The markdown renderer makes inline
+code and relative link targets that pass `isFilePath` into `FileLink` buttons (click or Enter):
+no spaces, no colon except a drive's, and a file extension or a slash. The rule is narrow on
+purpose; a miss opens a tab with the server's refusal ("There is no file …", "… is outside the
+thread's folder and the project folder …"), never a read outside. The `urlTransform` keeps such
+a relative target instead of dropping it; a picture's target still only shows as text.
+
+A tool row whose `ToolCallItemPayload.path` names a file has Open (`OpenFileButton` in
+`panel/open-file-button.tsx`, spec 17); the adapters fill `path`.
+
+"Open file…" (`panel.openFile`, `keybindings.openFile`, Mod+P) is listed while a chat or step
+thread is open (its folder) or a run view (the run's folder). It sets the layout store's
+`openFileDialog`; `OpenFileDialog` (`panel/file-list.tsx`) asks `files.list` each time it opens
+(`useFileList`), ranks the names with `filterFiles` (the typed letters in order, a match inside
+the file's own name first, fewer breaks first, shorter paths first) and shows at most
+`viewer.fileMatchesShown`, with a line when the list is cut or the folder had more files than
+`viewer.fileListLimit`.
+
+`@` in the composer (`fileSource`, the thread's scope): typed at the start of a word
+(`chat.fileTrigger`, default `@`, by the same `typedTrigger` and `skillQuery` as the skill list;
+when both characters are the same the skill list wins) it opens a list of the folder's files
+filtered as typed; a paste opens nothing. A pick takes the `@word` out and adds a file chip
+(`Mentioned files`, kept in the thread's draft as `files`); Backspace at caret 0 removes the last
+one. On send the composer puts `@path` for each file on the message's first line (`withMentions`
+in `chat/mentions.ts`, the form Claude Code and Codex read) and `thread.sendMessage` carries
+`files`; the server stores them on the user item (`TextItemPayload.files`) and refuses them for
+the assistant. The thread draws them as chips that open the file, with the text after the
+mention line (`withoutMentions`). A message queued during a turn keeps its text, so the paths,
+but not the chips.
+
+Tests: `apps/server/src/files/list.test.ts` (Git, ignore rules, the limit, the walk),
+`server.test.ts` ("reads a file of a thread or a project only inside their folders", "lists a
+thread folder outside Git through files.list"), `core/file-mentions.test.ts`,
+`apps/web/src/panel/tabs.test.tsx` (strip, keys, palette, thread switch, refusal, Open, chips,
+Escape, Ctrl+P), `components/file-links.test.tsx`, `panel/file-list.test.ts`,
+`chat/file-mentions.test.tsx`, and the e2e cases "opens a file from a chat message in a panel
+tab" and "mentions a file with @" in `panel.spec.ts` (the panel copy's project holds invented
+`src/timer.ts` and `docs/spec.md`, and the mock answers "show the file" with those paths).
 
 ## Backlog and trackers
 

@@ -2,11 +2,12 @@ import {
   ambiguousOwnSkill,
   ownSkillFolder,
   skillGroupLabels,
+  type FileScope,
   type ProviderKind,
   type Skill,
   type SkillRef,
 } from '@wow/contracts';
-import { ArrowUpIcon, SlashIcon, SquareIcon, TerminalIcon } from 'lucide-react';
+import { ArrowUpIcon, SlashIcon, SquareIcon, TerminalIcon, XIcon } from 'lucide-react';
 import {
   useEffect,
   useId,
@@ -24,6 +25,7 @@ import { WithTooltip } from '@/components/hint';
 import { Button } from '@/components/ui/button';
 import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command';
 import { cn } from '@/lib/utils';
+import { FileRow, fileListNote, filterFiles, useFileList } from '@/panel/file-list';
 import { showSkillComposer } from './composer-store';
 import { errorMessage, useTopic } from './data';
 import { readDraft, writeDraft, type ComposerDraft } from './drafts';
@@ -35,6 +37,7 @@ import {
   withoutQuery,
   type SkillQuery,
 } from './model';
+import { withMentions } from './mentions';
 import { ComposerSkillChip, SkillMark } from './skill-chip';
 import {
   paletteCommandsStore,
@@ -75,7 +78,9 @@ export interface ComposerProps {
   readonly blockedReason?: string | undefined;
   readonly placeholder: string;
   // `skills` is passed only when chips were picked, in their order (wow skills spec 10, 18).
-  onSend(text: string, skills?: readonly SkillRef[]): Promise<unknown>;
+  // `files` only when files were mentioned with `@` (agent workbench spec 56); the text then
+  // names them already.
+  onSend(text: string, skills?: readonly SkillRef[], files?: readonly string[]): Promise<unknown>;
   onStop?(): void;
   // Context meter and resume action, shown under the text box.
   readonly footer?: ReactNode;
@@ -94,6 +99,75 @@ export interface ComposerProps {
   readonly commandSource?: CommandSource | undefined;
   // The bar's keys while the box has the focus; true when the key was used.
   onBarKey?(event: KeyboardEvent<HTMLTextAreaElement>): boolean;
+  // Whose folder `@` lists (agent workbench spec 56). Without it `@` is only a character.
+  readonly fileSource?: FileScope | undefined;
+}
+
+// The `@` list: the thread folder's files as the user types (spec 56). The focus stays in the
+// text box, like the skill list's.
+function FilePicker({
+  id,
+  matches,
+  note,
+  active,
+  onPick,
+  onHover,
+}: {
+  id: string;
+  matches: readonly string[];
+  note: string | undefined;
+  active: string | undefined;
+  onPick(path: string): void;
+  onHover(path: string): void;
+}) {
+  return (
+    <div className="absolute bottom-full left-0 z-10 mb-1 w-full overflow-hidden rounded-md border border-border shadow-md">
+      <Command shouldFilter={false} value={active ?? ''} className={groupClass}>
+        <CommandList id={id} label="Files" className="max-h-72">
+          {matches.length > 0 && (
+            <CommandGroup heading="Files">
+              {matches.map((path) => (
+                <CommandItem
+                  key={path}
+                  value={path}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onPointerMove={() => onHover(path)}
+                  onSelect={() => onPick(path)}
+                >
+                  <FileRow path={path} />
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+          {note && <p className="px-3 py-2 text-xs text-muted-foreground">{note}</p>}
+        </CommandList>
+      </Command>
+    </div>
+  );
+}
+
+// A file picked from the `@` list, before the message is sent.
+function ComposerFileChip({ path, onRemove }: { path: string; onRemove(): void }) {
+  const name = path.split('/').at(-1) ?? path;
+  return (
+    <span
+      role="listitem"
+      title={path}
+      data-testid="composer-file-chip"
+      className="inline-flex max-w-64 items-center gap-1 rounded-md border border-border bg-background py-0.5 pr-0.5 pl-1.5 font-mono text-2xs"
+    >
+      <span className="truncate">@{name}</span>
+      <button
+        type="button"
+        aria-label={`Remove ${path}`}
+        className="flex size-4 items-center justify-center rounded-sm opacity-60 outline-none hover:bg-accent hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onRemove}
+      >
+        <XIcon className="size-3" />
+      </button>
+    </span>
+  );
 }
 
 // A row of the `/` list: a command (spec 58, 60) or a skill.
@@ -241,10 +315,11 @@ const inPickerOrder = (skills: readonly Skill[]): Skill[] =>
 const withSkill = (chips: readonly Skill[], skill: Skill): Skill[] =>
   chips.some((chip) => chip.id === skill.id) ? [...chips] : [...chips, skill];
 
-// What a message carries besides its text: the picked skills, as chips.
+// What a message carries besides its text: the picked skills and mentioned files, as chips.
 interface Message {
   readonly text: string;
   readonly skills: readonly Skill[];
+  readonly files: readonly string[];
 }
 
 const sameRef = (skill: Skill, ref: SkillRef): boolean => {
@@ -277,8 +352,10 @@ export function Composer({
   onBarKey,
   draftKey,
   commandSource,
+  fileSource,
 }: ComposerProps) {
   const pickerId = useId();
+  const filePickerId = useId();
   const composerId = useId();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const chipElements = useRef<(HTMLSpanElement | null)[]>([]);
@@ -299,6 +376,10 @@ export function Composer({
   // Where the list was opened by a typed trigger character; undefined while it is closed.
   const [openAt, setOpenAt] = useState<number>();
   const [chips, setChips] = useState<readonly Skill[]>(initial.skills);
+  const [files, setFiles] = useState<readonly string[]>(initial.files ?? []);
+  // Where the `@` list was opened by a typed `@`; undefined while it is closed.
+  const [fileOpenAt, setFileOpenAt] = useState<number>();
+  const [fileActive, setFileActive] = useState(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
   const [activeDescendant, setActiveDescendant] = useState<string>();
@@ -306,6 +387,8 @@ export function Composer({
   const skills = useTopic('skills');
   const stopBinding = useSetting('keybindings.stopTurn');
   const trigger = useSetting('chat.skillTrigger');
+  const fileTrigger = useSetting('chat.fileTrigger');
+  const matchesShown = useSetting('viewer.fileMatchesShown');
   const palette = useStore(paletteCommandsStore, (state) => state.commands);
   const takesSkills = providerKind !== undefined;
 
@@ -330,6 +413,17 @@ export function Composer({
     : [];
   const activeIndex = Math.min(active, Math.max(0, picks.length - 1));
   const activePick = picks[activeIndex];
+  // The `@` list (spec 56). When both lists share a character, the skill list wins.
+  const takesFiles = fileSource !== undefined && fileTrigger !== trigger;
+  const fileQuery = takesFiles ? skillQuery(text, caret, fileOpenAt, fileTrigger) : undefined;
+  const fileList = useFileList(fileSource, fileQuery !== undefined);
+  const fileMatches =
+    fileQuery && fileList.status === 'done'
+      ? filterFiles(fileList.files, fileQuery.query, matchesShown)
+      : [];
+  const fileNote = fileQuery ? fileListNote(fileList, fileMatches.length, matchesShown) : undefined;
+  const fileIndex = Math.min(fileActive, Math.max(0, fileMatches.length - 1));
+  const activeFile = fileMatches[fileIndex];
 
   // Another thread on screen: its own draft comes in, and nothing of this one goes with it.
   useLayoutEffect(() => {
@@ -338,46 +432,60 @@ export function Composer({
     setDraftFor(draftKey);
     setText(draft.text);
     setChips(draft.skills);
+    setFiles(draft.files ?? []);
     setCaret(draft.text.length);
     setOpenAt(undefined);
+    setFileOpenAt(undefined);
     setError(undefined);
     pendingCaret.current = draft.text.length;
   }, [draftKey, draftFor]);
 
   useEffect(() => {
     if (draftKey === undefined || draftFor !== draftKey) return;
-    writeDraft(draftKey, { text, skills: chips });
-  }, [draftKey, draftFor, text, chips]);
+    writeDraft(draftKey, { text, skills: chips, files });
+  }, [draftKey, draftFor, text, chips, files]);
 
   useLayoutEffect(() => {
     const at = pendingCaret.current;
     if (at === undefined || !textarea.current) return;
     pendingCaret.current = undefined;
     textarea.current.setSelectionRange(at, at);
-  }, [text, chips]);
+  }, [text, chips, files]);
 
   // cmdk names its options itself; the text box points at the selected one.
-  const activeValue = activePick ? pickValue(activePick) : undefined;
+  const activeValue = fileQuery ? activeFile : activePick ? pickValue(activePick) : undefined;
+  const fileListOpen = fileQuery !== undefined;
   useLayoutEffect(() => {
-    if (!pickerOpen) return setActiveDescendant(undefined);
+    if (!pickerOpen && !fileListOpen) return setActiveDescendant(undefined);
     const selected = document
-      .getElementById(pickerId)
+      .getElementById(fileListOpen ? filePickerId : pickerId)
       ?.querySelector('[cmdk-item][aria-selected="true"]');
     setActiveDescendant(selected?.id || undefined);
-  }, [pickerOpen, pickerId, activeValue, picks.length]);
+  }, [
+    pickerOpen,
+    fileListOpen,
+    pickerId,
+    filePickerId,
+    activeValue,
+    picks.length,
+    fileMatches.length,
+  ]);
 
-  const update = (value: string, at: number, opened = openAt) => {
+  const update = (value: string, at: number, opened = openAt, fileOpened = fileOpenAt) => {
     setText(value);
     setCaret(at);
     setActive(0);
+    setFileActive(0);
     setError(undefined);
     // Leaving the word that opened the list closes it; coming back does not open it again.
     setOpenAt(skillQuery(value, at, opened, trigger) ? opened : undefined);
+    setFileOpenAt(skillQuery(value, at, fileOpened, fileTrigger) ? fileOpened : undefined);
   };
 
   const clear = () => {
-    update('', 0, undefined);
+    update('', 0, undefined, undefined);
     setChips([]);
+    setFiles([]);
   };
 
   const deliver = (message: Message) => {
@@ -385,7 +493,14 @@ export function Composer({
     setError(undefined);
     const refs = message.skills.map(skillRefOf);
     const sentFrom = draftFor;
-    (refs.length > 0 ? onSend(message.text, refs) : onSend(message.text)).then(
+    const outgoing = withMentions(message.text, message.files);
+    const sent =
+      message.files.length > 0
+        ? onSend(outgoing, refs.length > 0 ? refs : undefined, message.files)
+        : refs.length > 0
+          ? onSend(outgoing, refs)
+          : onSend(outgoing);
+    sent.then(
       () => {
         setSending(false);
         // Sent from a thread that is no longer on screen: only its stored draft goes.
@@ -404,6 +519,16 @@ export function Composer({
     setCaret(at);
     textarea.current?.focus();
     textarea.current?.setSelectionRange(at, at);
+  };
+
+  // A picked file is a chip; the typed `@word` goes (spec 56).
+  const pickFile = (path: string) => {
+    if (!fileQuery) return;
+    const next = withoutQuery(text, fileQuery, caret);
+    pendingCaret.current = next.caret;
+    update(next.text, next.caret, undefined, undefined);
+    setFiles((current) => (current.includes(path) ? current : [...current, path]));
+    textarea.current?.focus();
   };
 
   const pickSkill = (skill: Skill) => {
@@ -476,13 +601,15 @@ export function Composer({
   // While a turn runs the server queues the message (agent workbench spec 50).
   const send = (checked = true) => {
     const message = text.trim();
-    if ((message === '' && chips.length === 0) || disabled || sending) return;
+    if ((message === '' && chips.length === 0 && files.length === 0) || disabled || sending) {
+      return;
+    }
     if (blockedReason) {
       setError(blockedReason);
       return;
     }
     if (checked && beforeSend && !beforeSend(message)) return;
-    deliver({ text: message, skills: chips });
+    deliver({ text: message, skills: chips, files });
   };
 
   // Built on every render, so sendUnchecked sends the text and state of this render.
@@ -523,6 +650,30 @@ export function Composer({
   }, [takesSkills, disabled, composerId, chipNames]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (fileQuery) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const step = event.key === 'ArrowDown' ? 1 : -1;
+        const count = Math.max(1, fileMatches.length);
+        setFileActive((fileIndex + step + count) % count);
+        return;
+      }
+      if (
+        (event.key === 'Enter' || event.key === 'Tab') &&
+        !event.shiftKey &&
+        !event.nativeEvent.isComposing &&
+        activeFile !== undefined
+      ) {
+        event.preventDefault();
+        pickFile(activeFile);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setFileOpenAt(undefined);
+        return;
+      }
+    }
     if (pickerOpen) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -553,6 +704,11 @@ export function Composer({
     // the left arrow steps onto it (wow skills spec 17).
     const box = event.currentTarget;
     const atStart = box.selectionStart === 0 && box.selectionEnd === 0;
+    if (atStart && files.length > 0 && event.key === 'Backspace' && !event.shiftKey) {
+      event.preventDefault();
+      setFiles((current) => current.slice(0, -1));
+      return;
+    }
     if (atStart && chips.length > 0 && !event.shiftKey && !event.altKey) {
       if (event.key === 'Backspace') {
         event.preventDefault();
@@ -594,7 +750,7 @@ export function Composer({
     }
   };
 
-  const empty = text.trim() === '' && chips.length === 0;
+  const empty = text.trim() === '' && chips.length === 0 && files.length === 0;
   const sendBlocked = disabled || sending || empty || blockedReason !== undefined;
   const sendButton = (
     <Button
@@ -631,6 +787,34 @@ export function Composer({
             }
           />
         )}
+        {fileQuery && (
+          <FilePicker
+            id={filePickerId}
+            matches={fileMatches}
+            note={fileNote}
+            active={activeFile}
+            onPick={pickFile}
+            onHover={(path) => setFileActive(Math.max(0, fileMatches.indexOf(path)))}
+          />
+        )}
+        {files.length > 0 && (
+          <div
+            role="list"
+            aria-label="Mentioned files"
+            className="flex flex-wrap gap-1 px-3 pt-2.5"
+          >
+            {files.map((path) => (
+              <ComposerFileChip
+                key={path}
+                path={path}
+                onRemove={() => {
+                  setFiles((current) => current.filter((file) => file !== path));
+                  textarea.current?.focus();
+                }}
+              />
+            ))}
+          </div>
+        )}
         {takesSkills && chips.length > 0 && (
           <div role="list" aria-label="Picked skills" className="flex flex-wrap gap-1 px-3 pt-2.5">
             {chips.map((chip, index) => (
@@ -651,8 +835,8 @@ export function Composer({
           ref={textarea}
           aria-label="Message"
           role="combobox"
-          aria-expanded={pickerOpen}
-          aria-controls={pickerOpen ? pickerId : undefined}
+          aria-expanded={pickerOpen || fileListOpen}
+          aria-controls={fileListOpen ? filePickerId : pickerOpen ? pickerId : undefined}
           aria-autocomplete="list"
           aria-activedescendant={activeDescendant}
           rows={3}
@@ -662,18 +846,23 @@ export function Composer({
           onChange={(event) => {
             const value = event.target.value;
             const at = event.target.selectionStart ?? value.length;
-            const typed = typedTrigger(value, at, typedText(event.nativeEvent), trigger);
-            update(value, at, typed ?? openAt);
+            const inserted = typedText(event.nativeEvent);
+            const typed = typedTrigger(value, at, inserted, trigger);
+            const typedFile = takesFiles
+              ? typedTrigger(value, at, inserted, fileTrigger)
+              : undefined;
+            update(value, at, typed ?? openAt, typedFile ?? fileOpenAt);
           }}
           onSelect={(event) => {
             const at = event.currentTarget.selectionStart ?? 0;
             setCaret(at);
             if (!skillQuery(text, at, openAt, trigger)) setOpenAt(undefined);
+            if (!skillQuery(text, at, fileOpenAt, fileTrigger)) setFileOpenAt(undefined);
           }}
           onKeyDown={onKeyDown}
           className={cn(
             'block max-h-64 min-h-20 w-full resize-none bg-transparent px-3 pb-10 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50',
-            takesSkills && chips.length > 0 ? 'pt-1.5' : 'pt-2.5',
+            (takesSkills && chips.length > 0) || files.length > 0 ? 'pt-1.5' : 'pt-2.5',
           )}
         />
         {/* Only the bar's and the buttons' own boxes take the pointer; around them the text box

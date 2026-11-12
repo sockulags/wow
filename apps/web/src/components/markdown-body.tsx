@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CodeBlock } from './code-block';
+import { FileLink, isFilePath, useFileLinks } from './file-links';
 import { safeHref } from './markdown';
 import { MermaidDiagram } from './mermaid-diagram';
 
@@ -42,12 +43,20 @@ const components: Components = {
     </blockquote>
   ),
   hr: () => <hr className="border-border" />,
-  a: ({ href, children }) => {
+  a: function Anchor({ href, children }) {
+    const files = useFileLinks();
     const safe = safeHref(href);
-    return safe ? (
-      <a href={safe} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-        {children}
-      </a>
+    if (safe) {
+      return (
+        <a href={safe} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+          {children}
+        </a>
+      );
+    }
+    // A relative link in a chat message names a file of the thread (agent workbench spec 15).
+    const target = href === undefined ? undefined : safeDecode(href);
+    return files && target !== undefined && isFilePath(target) ? (
+      <FileLink path={target}>{children}</FileLink>
     ) : (
       <span>{children}</span>
     );
@@ -79,9 +88,15 @@ const components: Components = {
       {children}
     </td>
   ),
-  code: ({ children }) => (
-    <code className="rounded bg-muted px-1 font-mono text-[0.9em]">{children}</code>
-  ),
+  code: function InlineCode({ children }) {
+    const files = useFileLinks();
+    const code = <code className="rounded bg-muted px-1 font-mono text-[0.9em]">{children}</code>;
+    return files && typeof children === 'string' && isFilePath(children) ? (
+      <FileLink path={children}>{code}</FileLink>
+    ) : (
+      code
+    );
+  },
   pre: ({ node, children }) => {
     const code = node?.children[0];
     if (code?.type !== 'element' || code.tagName !== 'code') return <pre>{children}</pre>;
@@ -101,8 +116,19 @@ const components: Components = {
   },
 };
 
+// A link target as written: markdown encodes spaces and other characters in it.
+function safeDecode(href: string): string | undefined {
+  try {
+    return decodeURI(href);
+  } catch {
+    return undefined;
+  }
+}
+
 const plugins = [remarkGfm];
-const urlTransform = (url: string) => safeHref(url) ?? '';
+// Web and mail addresses stay; a relative path stays for the file link above; anything else
+// (javascript:, file:) is dropped.
+const urlTransform = (url: string) => safeHref(url) ?? (isFilePath(url) ? url : '');
 
 export default function MarkdownBody({ text }: { readonly text: string }) {
   return (

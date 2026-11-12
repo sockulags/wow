@@ -5,24 +5,27 @@ import {
   type Thread,
   type ThreadItem,
 } from '@wow/contracts';
-import { Link } from '@tanstack/react-router';
+import { Link, useRouter } from '@tanstack/react-router';
 import { CircleCheckIcon, PinIcon, RotateCcwIcon, SearchXIcon, Undo2Icon } from 'lucide-react';
 import {
   Fragment,
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   type ReactNode,
   type RefObject,
 } from 'react';
-import { useSetting } from '@/app/runtime';
+import { useRuntime, useSetting } from '@/app/runtime';
+import { FileLinkContext, type FileLinks } from '@/components/file-links';
 import { IconButton, WithTooltip } from '@/components/hint';
 import { EmptyState } from '@/components/states';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { fullPathOf, openFile } from '@/panel/viewer';
 import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
 import { Composer, type ComposerHandle } from './composer';
@@ -302,6 +305,29 @@ export function ThreadConversation({
   const bar = useRef<ModelBarHandle>(null);
   const barKeys = useModelBarKeys(bar);
   const barId = useId();
+  const { settings, layout } = useRuntime();
+  // Read when a file opens: the conversation is also drawn without a router (tests, previews).
+  const router: ReturnType<typeof useRouter> | undefined = useRouter({ warn: false });
+  // Paths in messages, Open on tool rows and file chips open in a panel tab of the view on screen
+  // (agent workbench spec 15 to 17, 56); the Assistant view has none.
+  const fileLinks = useMemo<FileLinks | undefined>(
+    () =>
+      extras || thread.kind === 'assistant'
+        ? undefined
+        : {
+            open: (path) =>
+              openFile(
+                { settings, layout },
+                {
+                  scope: { threadId: thread.id },
+                  path,
+                  fullPath: fullPathOf(thread.cwd, path),
+                  from: router?.state.location.pathname ?? '',
+                },
+              ),
+          },
+    [extras, thread.kind, thread.id, thread.cwd, settings, layout, router],
+  );
 
   useEffect(() => {
     if (autoFocus) composer.current?.focus();
@@ -311,12 +337,13 @@ export function ThreadConversation({
   const last = lastTurn(turns);
   const canResume = !running && (last?.state === 'failed' || last?.state === 'interrupted');
   const compactPrompt = instance ? providerChatOptions[instance.kind].compactPrompt : null;
-  const message = (text: string, skills?: readonly SkillRef[]) =>
+  const message = (text: string, skills?: readonly SkillRef[], files?: readonly string[]) =>
     send({
       type: 'thread.sendMessage',
       threadId,
       text,
       ...(skills ? { skills: [...skills] } : {}),
+      ...(files && files.length > 0 ? { files: [...files] } : {}),
     });
   const stop = () => void send({ type: 'thread.interrupt', threadId });
   const cancelQueued = () => send({ type: 'thread.cancelQueued', threadId });
@@ -416,7 +443,7 @@ export function ThreadConversation({
 
   const column = compact ? 'w-full px-3' : 'mx-auto w-full max-w-3xl px-4';
   return (
-    <>
+    <FileLinkContext value={fileLinks}>
       <div
         ref={container}
         onScroll={onScroll}
@@ -509,6 +536,7 @@ export function ThreadConversation({
               : { providerInstanceId: instance.id, cwd: thread.cwd, threadId }
           }
           {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
+          fileSource={fileLinks ? { threadId } : undefined}
           footer={
             (showMeter && context) || (canResume && !errorId) ? (
               <div className="flex min-h-6 flex-wrap items-center gap-3">
@@ -541,6 +569,6 @@ export function ThreadConversation({
           }
         />
       </div>
-    </>
+    </FileLinkContext>
   );
 }

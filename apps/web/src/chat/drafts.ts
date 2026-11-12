@@ -9,9 +9,15 @@ import { z } from 'zod';
 export interface ComposerDraft {
   readonly text: string;
   readonly skills: readonly Skill[];
+  // Files mentioned with `@` (spec 56); absent in drafts kept before them.
+  readonly files?: readonly string[] | undefined;
 }
 
-const StoredDraft = z.object({ text: z.string(), skills: z.array(Skill) });
+const StoredDraft = z.object({
+  text: z.string(),
+  skills: z.array(Skill),
+  files: z.array(z.string()).optional(),
+});
 
 const storageKey = (key: string) => `wow.composerDraft.${key}`;
 
@@ -40,11 +46,19 @@ export function readDraft(key: string): ComposerDraft {
 // An empty draft is removed, so sending clears it.
 export function writeDraft(key: string, draft: ComposerDraft): void {
   try {
-    if (draft.text === '' && draft.skills.length === 0) {
+    const files = draft.files ?? [];
+    if (draft.text === '' && draft.skills.length === 0 && files.length === 0) {
       storage()?.removeItem(storageKey(key));
       return;
     }
-    storage()?.setItem(storageKey(key), JSON.stringify({ text: draft.text, skills: draft.skills }));
+    storage()?.setItem(
+      storageKey(key),
+      JSON.stringify({
+        text: draft.text,
+        skills: draft.skills,
+        ...(files.length > 0 ? { files } : {}),
+      }),
+    );
   } catch {
     // Kept on screen only; see storage().
   }

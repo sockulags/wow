@@ -1,18 +1,24 @@
 import { runFolder, type PageRead, type Project, type WorkflowRun } from '@wow/contracts';
 import { safeHref } from '@/components/markdown';
 import type { AppCommand, CommandGroup } from '@/app/commands';
-import type { ViewerFile, ViewerPage } from '@/app/runtime';
+import { DETAILS_TAB, type LayoutState, type OpenFileDialog } from '@/app/runtime';
 import { artifactPath } from '@/workflows/model';
 import { pageTitle, runPageRead } from '@/workflows/pages-tab';
 import { hasSelection, type PanelSelection } from './model';
 import { showInContextPanel } from './panel-state';
 import {
+  backTab,
+  closeTab,
   closeViewer,
   copyFilePath,
+  cycleTab,
   openFile,
   openPage,
+  panelTabsOf,
+  selectedTab,
   shownFile,
   shownPage,
+  tabName,
   toggleFullSize,
 } from './viewer';
 
@@ -50,13 +56,13 @@ export function panelCommands(selection: PanelSelection): AppCommand[] {
 }
 
 export interface ViewerCommandData {
-  readonly viewer: ViewerFile | undefined;
+  // The open tabs of every view; the one on screen is `pathname`'s.
+  readonly panelTabs: LayoutState['panelTabs'];
   readonly pathname: string;
   // The run open in the run view, or the run waiting at a gate after the open thread's step.
   readonly openRun: WorkflowRun | undefined;
   readonly projects: readonly Project[];
-  // The linked page the panel shows, and what was last read about the pages of each run.
-  readonly page?: ViewerPage | undefined;
+  // What was last read about the pages of each run.
   readonly pageReads?: readonly PageRead[] | undefined;
 }
 
@@ -65,11 +71,10 @@ export interface ViewerCommandData {
 // one the server resolved, like the header's button), and, once it is read as a picture, shown
 // at full size.
 export function viewerCommands({
-  viewer,
+  panelTabs,
   pathname,
   openRun,
   projects,
-  page,
   pageReads = [],
 }: ViewerCommandData): AppCommand[] {
   const commands: AppCommand[] = [];
@@ -109,7 +114,7 @@ export function viewerCommands({
       run: (context) => openPage(context, { runId, ref: link.ref, from: pathname }),
     });
   }
-  const shown = shownPage(page, pathname);
+  const shown = shownPage({ panelTabs }, pathname);
   if (shown) {
     const link = runPageRead(pageReads, shown.runId)?.pages.find(
       (entry) => entry.ref === shown.ref,
@@ -120,7 +125,7 @@ export function viewerCommands({
       group: 'Workflows',
       keywords: ['close page', 'viewer', 'side panel'],
       detail: link ? pageTitle(link) : '',
-      run: ({ layout }) => closeViewer(layout),
+      run: ({ layout }) => closeViewer(layout, pathname),
     });
     const url = safeHref(link?.page?.url ?? link?.link);
     if (link && url !== undefined) {
@@ -134,7 +139,7 @@ export function viewerCommands({
       });
     }
   }
-  const file = shownFile(viewer, pathname);
+  const file = shownFile({ panelTabs }, pathname);
   if (file) {
     commands.push(
       {
@@ -143,7 +148,7 @@ export function viewerCommands({
         group: 'Workflows',
         keywords: ['close file', 'viewer', 'side panel'],
         detail: file.path,
-        run: ({ layout }) => closeViewer(layout),
+        run: ({ layout }) => closeViewer(layout, pathname),
       },
       {
         id: 'viewer.copyPath',
@@ -161,9 +166,73 @@ export function viewerCommands({
         group: 'Workflows',
         keywords: ['viewer', 'image', 'zoom', 'fit'],
         detail: file.path,
-        run: ({ layout }) => toggleFullSize(layout),
+        run: ({ layout }) => toggleFullSize(layout, file),
       });
     }
   }
-  return commands;
+  return [...commands, ...tabCommands(panelTabs, pathname)];
+}
+
+// The panel's tab keys from the palette (agent workbench spec 12). The keys themselves act only
+// while the focus is in the panel, so these carry no keybinding of their own.
+function tabCommands(panelTabs: LayoutState['panelTabs'], pathname: string): AppCommand[] {
+  const tabs = panelTabsOf({ panelTabs }, pathname);
+  if (tabs.tabs.length === 0) return [];
+  const selected = selectedTab(tabs);
+  const keywords = ['panel', 'tab', 'side panel'];
+  return [
+    ...(selected
+      ? [
+          {
+            id: 'panel.tab.close',
+            title: 'Close panel tab',
+            group: 'Actions' as const,
+            keywords,
+            detail: tabName(selected),
+            run: ({ layout }: Parameters<AppCommand['run']>[0]) => closeTab(layout, pathname),
+          },
+        ]
+      : []),
+    {
+      id: 'panel.tab.next',
+      title: 'Next panel tab',
+      group: 'Actions',
+      keywords,
+      run: ({ layout }) => cycleTab(layout, pathname, 1),
+    },
+    {
+      id: 'panel.tab.previous',
+      title: 'Previous panel tab',
+      group: 'Actions',
+      keywords,
+      run: ({ layout }) => cycleTab(layout, pathname, -1),
+    },
+    ...(tabs.history.length > 0 || tabs.selected !== DETAILS_TAB
+      ? [
+          {
+            id: 'panel.tab.back',
+            title: 'Back to the panel tab shown before',
+            group: 'Actions' as const,
+            keywords,
+            run: ({ layout }: Parameters<AppCommand['run']>[0]) => backTab(layout, pathname),
+          },
+        ]
+      : []),
+  ];
+}
+
+// "Open file…" (agent workbench spec 18): the open thread's or run's folder, listed by the server.
+export function openFileCommands(target: OpenFileDialog | undefined): AppCommand[] {
+  if (!target) return [];
+  return [
+    {
+      id: 'panel.openFile',
+      title: 'Open file…',
+      group: 'Actions',
+      keywords: ['file', 'find', 'go to file', 'side panel', 'tab'],
+      keybinding: 'keybindings.openFile',
+      detail: 'In a panel tab',
+      run: ({ layout }) => layout.setState({ openFileDialog: target }),
+    },
+  ];
 }

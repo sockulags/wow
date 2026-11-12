@@ -1,4 +1,4 @@
-import { FileReadResult, type FileRefusal } from '@wow/contracts';
+import { FileReadResult, type FileRefusal, type FileScope } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import {
   ArrowLeftIcon,
@@ -38,20 +38,21 @@ type FileState =
   | { readonly status: 'done'; readonly result: FileReadResult };
 
 interface FileRequest {
-  readonly runId: string;
-  readonly path: string;
+  readonly key: string;
   readonly state: FileState;
 }
 
-function useFile(runId: string, path: string): FileState | undefined {
+function useFile(scope: FileScope, path: string): FileState | undefined {
   const { connection } = useRuntime();
   const [request, setRequest] = useState<FileRequest>();
+  const key = JSON.stringify([scope, path]);
   useEffect(() => {
     if (!connection) return undefined;
     let current = true;
-    const answer = (state: FileState) => current && setRequest({ runId, path, state });
+    const answer = (state: FileState) => current && setRequest({ key, state });
     answer({ status: 'loading' });
-    connection.request('files.read', { runId, path }).then(
+    const [asked, named] = JSON.parse(key) as [FileScope, string];
+    connection.request('files.read', { ...asked, path: named }).then(
       (received) => {
         const result = FileReadResult.safeParse(received);
         answer(
@@ -68,10 +69,10 @@ function useFile(runId: string, path: string): FileState | undefined {
     return () => {
       current = false;
     };
-  }, [connection, runId, path]);
+  }, [connection, key]);
   if (!connection) return undefined;
   // An answer for the file shown before is not this file's.
-  return request?.runId === runId && request.path === path ? request.state : { status: 'loading' };
+  return request?.key === key ? request.state : { status: 'loading' };
 }
 
 // The page for the frame. With scripts on it is made from the file's parsed markup, which takes
@@ -116,8 +117,14 @@ const kindLabels: Readonly<Record<Exclude<FileReadResult['kind'], 'refused'>, st
   text: 'Text',
 };
 
-const refusalTitles: Readonly<Record<FileRefusal, string>> = {
-  outside: 'Outside the run’s folders',
+const outsideTitle = (scope: FileScope): string =>
+  'runId' in scope
+    ? 'Outside the run’s folders'
+    : 'threadId' in scope
+      ? 'Outside the thread’s folders'
+      : 'Outside the project folder';
+
+const refusalTitles: Readonly<Record<Exclude<FileRefusal, 'outside'>, string>> = {
   missing: 'File not found',
   not_a_file: 'Not a file',
   unreadable: 'File could not be opened',
@@ -186,7 +193,7 @@ function Body({ file, state }: { readonly file: ViewerFile; readonly state: File
     <EmptyState
       compact
       icon={FileXIcon}
-      title={refusalTitles[result.reason]}
+      title={result.reason === 'outside' ? outsideTitle(file.scope) : refusalTitles[result.reason]}
       description={<span data-testid="viewer-refusal">{result.message}</span>}
       action={
         result.reason === 'too_large' ? (
@@ -201,19 +208,22 @@ function Body({ file, state }: { readonly file: ViewerFile; readonly state: File
   );
 }
 
-export function FileViewer({ file }: { readonly file: ViewerFile }) {
+export function FileViewer({
+  file,
+  backLabel = 'Back to conversation',
+}: {
+  readonly file: ViewerFile;
+  // What the back button says: the panel's own body is a conversation or a thread's details.
+  readonly backLabel?: string;
+}) {
   const { layout } = useRuntime();
-  const state = useFile(file.runId, file.path);
+  const state = useFile(file.scope, file.path);
   const result = state?.status === 'done' ? state.result : undefined;
   const read = result && result.kind !== 'refused' ? result : undefined;
   const kind = read?.kind;
   const absolutePath = read?.absolutePath;
   useEffect(() => {
-    noteFileRead(
-      layout,
-      { runId: file.runId, path: file.path },
-      kind && absolutePath ? { kind, absolutePath } : undefined,
-    );
+    noteFileRead(layout, file, kind && absolutePath ? { kind, absolutePath } : undefined);
   }, [layout, file, kind, absolutePath]);
   return (
     <section
@@ -223,14 +233,14 @@ export function FileViewer({ file }: { readonly file: ViewerFile }) {
       onKeyDown={(event) => {
         if (event.key !== 'Escape' || event.defaultPrevented) return;
         event.preventDefault();
-        closeViewer(layout);
+        closeViewer(layout, file.from);
       }}
     >
       <div className="flex shrink-0 flex-col gap-1 border-b border-border px-2 py-2">
         <div className="flex items-center gap-1">
-          <Button size="xs" variant="ghost" onClick={() => closeViewer(layout)}>
+          <Button size="xs" variant="ghost" onClick={() => closeViewer(layout, file.from)}>
             <ArrowLeftIcon />
-            Back to conversation
+            {backLabel}
           </Button>
           <span className="flex-1" />
           {read?.kind === 'image' && (
@@ -238,7 +248,7 @@ export function FileViewer({ file }: { readonly file: ViewerFile }) {
               label={file.fullSize ? 'Fit to panel' : 'Full size'}
               size="icon-xs"
               aria-pressed={file.fullSize}
-              onClick={() => toggleFullSize(layout)}
+              onClick={() => toggleFullSize(layout, file)}
             >
               {file.fullSize ? <Minimize2Icon /> : <Maximize2Icon />}
             </IconButton>

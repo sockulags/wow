@@ -12,6 +12,7 @@ import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
 import { outbox } from '@/test/outbox';
+import { shownFile } from '@/panel/viewer';
 import { renderApp } from '@/test/render';
 import { workflowCommands } from './commands';
 import {
@@ -188,7 +189,7 @@ describe('working copy in the run view', () => {
     const { runtime } = fake(run(copy(), { state: 'running', endedAt: null }));
     await renderApp(route, runtime);
     await user.click(await screen.findByRole('button', { name: 'Open docs/bell.md' }));
-    expect(runtime.layout.getState().viewer).toMatchObject({
+    expect(shownFile(runtime.layout.getState(), route)).toMatchObject({
       path: 'docs/bell.md',
       fullPath: `${folder}/docs/bell.md`,
     });

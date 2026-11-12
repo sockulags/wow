@@ -4,6 +4,7 @@ import { useLayoutEffect, useState } from 'react';
 import { IconButton, ShortcutHint } from '@/components/hint';
 import { Button } from '@/components/ui/button';
 import { ContextPanel } from '@/panel/context-panel';
+import { OpenFileDialog } from '@/panel/file-list';
 import {
   CONTEXT_PANEL_ID,
   MAIN_VIEW_ID,
@@ -124,6 +125,7 @@ export function Shell() {
       </main>
       {panelShown && <ContextPanel />}
       <CommandPalette commands={commands} context={context} />
+      <OpenFileDialog />
       <ProviderDialogs />
       <ProjectDialogs />
       <AppToaster />

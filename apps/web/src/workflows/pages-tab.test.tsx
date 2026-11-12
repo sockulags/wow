@@ -12,7 +12,7 @@ import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
 import { viewerCommands } from '@/panel/commands';
-import { pageDocument } from '@/panel/viewer';
+import { pageDocument, pageTabId, shownPage } from '@/panel/viewer';
 import { renderApp } from '@/test/render';
 import { emptyPages } from './pages-tab';
 
@@ -220,19 +220,28 @@ describe('the Pages tab', () => {
 
     await user.click(viewer.getByRole('button', { name: 'Back to conversation' }));
     expect(screen.queryByRole('region', { name: 'Page viewer' })).toBeNull();
-    expect(runtime.layout.getState().page).toBeUndefined();
+    expect(shownPage(runtime.layout.getState(), route)).toBeUndefined();
   });
 
   it('opens each read page from the palette, and the open one on the host', () => {
     const titles = (page?: { runId: string; ref: string; from: string }) =>
       viewerCommands({
-        viewer: undefined,
+        panelTabs: page
+          ? {
+              [page.from]: {
+                tabs: [{ kind: 'page', id: pageTabId(page), page }],
+                selected: pageTabId(page),
+                history: [],
+              },
+            }
+          : {},
         pathname: route,
         openRun: run,
         projects: [project],
-        page,
         pageReads: [read([design, notes])],
-      }).map((command) => command.title);
+      })
+        .map((command) => command.title)
+        .filter((title) => !title.includes('panel tab'));
     expect(titles()).toEqual(['Open page: Kettle design']);
     expect(titles({ runId: 'run-1', ref: 'id:123', from: route })).toEqual([
       'Open page: Kettle design',

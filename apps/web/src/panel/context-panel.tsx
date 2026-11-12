@@ -1,8 +1,10 @@
 import { contextPanelWidthBounds } from '@wow/contracts';
+import { settingValue } from '@wow/client-runtime';
 import { useRouterState } from '@tanstack/react-router';
 import { PanelRightIcon, XIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useConnectionState, useLayout, useRuntime, useSetting } from '@/app/runtime';
+import { useTopic } from '@/chat/data';
 import { DisconnectedState, EmptyState } from '@/components/states';
 import { IconButton } from '@/components/hint';
 import { useBelow } from '@/lib/use-breakpoint';
@@ -14,7 +16,17 @@ import { PageViewer } from './page-viewer';
 import { clampPanelWidth, hasSelection, panelSelection, type PanelSelection } from './model';
 import { CONTEXT_PANEL_ID, closeContextPanel, takePanelFocusRequest } from './panel-state';
 import { ThreadPanel } from './thread-panel';
-import { shownFile, shownPage } from './viewer';
+import { PanelTabStrip } from './tabs';
+import {
+  backTab,
+  closeTab,
+  closeViewer,
+  cycleTab,
+  panelTabsOf,
+  selectedTab,
+  tabKeyOf,
+  tabOpener,
+} from './viewer';
 import { RunPanel, WorkflowPanel } from './workflow-panel';
 
 // What the empty panel says it would show, per view.
@@ -38,6 +50,18 @@ const titles: Readonly<Record<PanelSelection['view'], string>> = {
   backlog: 'Backlog item',
   other: 'Context',
 };
+
+// What the panel's own body is called in its tab strip (agent workbench spec 11, 14).
+export const baseTabLabel = (selection: PanelSelection): string =>
+  selection.view === 'run'
+    ? 'Conversation'
+    : selection.view === 'chat'
+      ? 'Details'
+      : titles[selection.view];
+
+const typing = (element: Element | null): boolean =>
+  element instanceof HTMLElement &&
+  (element.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName));
 
 // Keyboard resizing moves the edge this far per arrow press, and more with Shift.
 const KEY_STEP = 16;
@@ -155,17 +179,37 @@ export function ContextPanel() {
   const [preview, setPreview] = useState<number>();
   const ref = useRef<HTMLElement>(null);
   const selection = panelSelection(pathname, search);
-  // A file opened from this view takes the place of the conversation until "Back".
-  const file = shownFile(
-    useLayout((state) => state.viewer),
-    pathname,
-  );
-  // So does a linked page.
-  const page = shownPage(
-    useLayout((state) => state.page),
-    pathname,
-  );
+  // This view's tabs (spec 11, 13): a file or page tab, when selected, takes the place of the
+  // panel's own body.
+  const tabs = useLayout((state) => panelTabsOf(state, pathname));
+  const tab = selectedTab(tabs);
+  const file = tab?.kind === 'file' ? tab.file : undefined;
+  const page = tab?.kind === 'page' ? tab.page : undefined;
   const width = preview ?? storedWidth;
+  const baseLabel = baseTabLabel(selection);
+  const threads = useTopic('threads');
+  // A step thread's run view shows the conversation, not a thread's details.
+  const backLabel =
+    selection.view === 'chat' &&
+    threads?.some((thread) => thread.id === selection.threadId && thread.runId === null)
+      ? 'Back to details'
+      : 'Back to conversation';
+
+  // Escape closes a file or page opened from the main view also while the focus stayed on the
+  // link that opened it (spec 87); in the panel the viewers take it themselves.
+  useEffect(() => {
+    if (!tab) return undefined;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const active = document.activeElement;
+      if (typing(active) || active === null || active !== tabOpener()) return;
+      if (active.closest('[role="dialog"], [role="alertdialog"]')) return;
+      event.preventDefault();
+      closeViewer(layout, pathname);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [tab, layout, pathname]);
 
   // "Focus context panel" on a closed panel: take the focus once it is on screen.
   useEffect(() => {
@@ -193,8 +237,34 @@ export function ContextPanel() {
           'absolute inset-y-0 right-0 z-40 max-w-[calc(100%-3rem)] border-border-strong shadow-2xl',
       )}
       onKeyDown={(event) => {
+        if (event.defaultPrevented) return;
+        // The tab keys work while the focus is in the panel (spec 12).
+        const { values } = settings.getState();
+        const binding = (key: Parameters<typeof settingValue>[1]): string => {
+          const stored = settingValue(values, key);
+          return typeof stored === 'string' ? stored : '';
+        };
+        const key = tabKeyOf(event, {
+          close: binding('keybindings.panelCloseTab'),
+          next: binding('keybindings.panelNextTab'),
+          previous: binding('keybindings.panelPreviousTab'),
+          back: binding('keybindings.panelBackTab'),
+        });
+        if (key && tabs.tabs.length > 0) {
+          event.preventDefault();
+          if (key === 'close') closeTab(layout, pathname);
+          else if (key === 'back') backTab(layout, pathname);
+          else cycleTab(layout, pathname, key === 'next' ? 1 : -1);
+          return;
+        }
+        // Escape on the tab strip puts the shown file or page away, as it does in the viewer.
+        if (event.key === 'Escape' && tab && !typing(event.target as Element)) {
+          event.preventDefault();
+          closeViewer(layout, pathname);
+          return;
+        }
         // Over the view, Escape puts it away like a popover; docked, it stays.
-        if (narrow && event.key === 'Escape' && !event.defaultPrevented) {
+        if (narrow && event.key === 'Escape') {
           event.preventDefault();
           close();
         }
@@ -229,11 +299,16 @@ export function ContextPanel() {
           <XIcon />
         </IconButton>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col">
-        {file ? (
-          <FileViewer key={`${file.runId}\n${file.path}`} file={file} />
-        ) : page ? (
-          <PageViewer key={`${page.runId}\n${page.ref}`} page={page} />
+      {tabs.tabs.length > 0 && <PanelTabStrip route={pathname} tabs={tabs} baseLabel={baseLabel} />}
+      <div
+        className="flex min-h-0 flex-1 flex-col"
+        role={tabs.tabs.length > 0 ? 'tabpanel' : undefined}
+        aria-label={tabs.tabs.length > 0 ? 'Panel tab' : undefined}
+      >
+        {file && tab ? (
+          <FileViewer key={tab.id} file={file} backLabel={backLabel} />
+        ) : page && tab ? (
+          <PageViewer key={tab.id} page={page} />
         ) : (
           <PanelBody selection={selection} />
         )}

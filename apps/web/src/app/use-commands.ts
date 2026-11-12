@@ -22,7 +22,7 @@ import { connectStore } from '@/providers/connect-step';
 import { setupCommands } from '@/settings/setup';
 import { skillCommands } from '@/settings/skills';
 import { formatWhen } from '@/lib/format';
-import { panelCommands, viewerCommands } from '@/panel/commands';
+import { openFileCommands, panelCommands, viewerCommands } from '@/panel/commands';
 import { panelSelection } from '@/panel/model';
 import { planCommands } from '@/plans/commands';
 import { openPlan, runRead } from '@/plans/model';
@@ -91,8 +91,7 @@ export function useCommands(gated = false): {
     () => (pathname === '/calendar' ? validateCalendarSearch(locationSearch) : undefined),
     [pathname, locationSearch],
   );
-  const viewer = useLayout((state) => state.viewer);
-  const page = useLayout((state) => state.page);
+  const panelTabs = useLayout((state) => state.panelTabs);
   const changedFiles = useStore(changesStore, (state) =>
     state.runId === openRunId ? state.files : undefined,
   );
@@ -118,6 +117,18 @@ export function useCommands(gated = false): {
       runs?.find((run) => run.id === openRunId) ??
       (openThread ? gateRunForThread(openThread, runs ?? []) : undefined);
     const openRunProject = projects?.find((project) => project.id === openRun?.projectId);
+    // Whose files "Open file…" lists: the open chat or step thread's, else the run view's run's.
+    const viewRun = openRunId !== undefined && openRun?.id === openRunId ? openRun : undefined;
+    const fileTarget =
+      openThread && openThread.kind !== 'assistant'
+        ? { scope: { threadId: openThread.id }, folder: openThread.cwd, from: pathname }
+        : viewRun && openRunProject
+          ? {
+              scope: { runId: viewRun.id },
+              folder: runFolder(viewRun, openRunProject.cwd),
+              from: pathname,
+            }
+          : undefined;
     return [
       // Cards say when they are ("Card · Tomorrow 10:00").
       ...calendarCommands({
@@ -198,13 +209,13 @@ export function useCommands(gated = false): {
       ...skillCommands(skills ?? []),
       ...panelCommands(panelSelection(pathname, locationSearch)),
       ...viewerCommands({
-        viewer,
+        panelTabs,
         pathname,
         openRun,
         projects: projects ?? [],
-        page,
         pageReads: pageReads ?? [],
       }),
+      ...openFileCommands(fileTarget),
       ...connectCommands(connectShown),
       ...providerCommands(instances ?? []),
       ...projectCommands(projects ?? []),
@@ -240,8 +251,7 @@ export function useCommands(gated = false): {
     assistantProposals,
     setupApplications,
     skills,
-    viewer,
-    page,
+    panelTabs,
     pageReads,
     planIntents,
     planRuns,

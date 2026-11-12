@@ -1,4 +1,10 @@
-import type { ProviderKind, SettingKey, SettingValue, UpdateState } from '@wow/contracts';
+import type {
+  FileScope,
+  ProviderKind,
+  SettingKey,
+  SettingValue,
+  UpdateState,
+} from '@wow/contracts';
 import {
   settingValue,
   type Connection,
@@ -38,11 +44,13 @@ export type CardDialog =
       readonly deleting?: boolean;
     };
 
-// The file the context panel shows in place of the conversation (review loop spec 6). `from` is
-// the route it was opened on: the viewer belongs to that view and is gone on any other.
+// A file open in a tab of the context panel (review loop spec 6, agent workbench spec 11). `from`
+// is the route it was opened on: its tabs belong to that view (a thread, a run) and come back
+// with it.
 export interface ViewerFile {
-  readonly runId: string;
-  // As the run names it: relative to its folder, with forward slashes.
+  // Whose folders it is read from: a run's, a thread's or a project's.
+  readonly scope: FileScope;
+  // As it was named: relative to the scope's folder, with forward slashes, or a full path.
   readonly path: string;
   // The full path as the client names it, for "Copy path" until the server has answered.
   readonly fullPath: string;
@@ -55,11 +63,34 @@ export interface ViewerFile {
   readonly fullSize: boolean;
 }
 
-// The linked Confluence page the context panel shows in place of the conversation (review loop
-// spec 35), by the run and the link's `ref`. The page itself is the server's last read of it.
+// A linked Confluence page in a tab of the context panel (review loop spec 35), by the run and
+// the link's `ref`. The page itself is the server's last read of it.
 export interface ViewerPage {
   readonly runId: string;
   readonly ref: string;
+  readonly from: string;
+}
+
+export type PanelTab =
+  | { readonly kind: 'file'; readonly id: string; readonly file: ViewerFile }
+  | { readonly kind: 'page'; readonly id: string; readonly page: ViewerPage };
+
+// The tabs of one view's panel (agent workbench spec 11 to 14). The panel's own body (Details,
+// or a run's conversation) is the tab `DETAILS_TAB`, always first and never closed.
+export interface PanelTabs {
+  readonly tabs: readonly PanelTab[];
+  readonly selected: string;
+  // The tabs shown before, latest last, for "Back".
+  readonly history: readonly string[];
+}
+
+export const DETAILS_TAB = 'details';
+
+// "Open file…": the files of a thread's or run's folder to pick from (agent workbench spec 18).
+export interface OpenFileDialog {
+  readonly scope: FileScope;
+  // The folder the paths are relative to, for the full path of the pick.
+  readonly folder: string;
   readonly from: string;
 }
 
@@ -73,8 +104,9 @@ export interface LayoutState {
   // Set by "Focus context panel" when the panel still has to open; the panel takes the focus once
   // it is there and clears it.
   readonly contextPanelFocus: boolean;
-  readonly viewer: ViewerFile | undefined;
-  readonly page: ViewerPage | undefined;
+  // Panel tabs per route (agent workbench spec 13): a thread or a run keeps its own.
+  readonly panelTabs: Readonly<Record<string, PanelTabs>>;
+  readonly openFileDialog: OpenFileDialog | undefined;
   readonly paletteOpen: boolean;
   readonly providerDialog: ProviderDialog | undefined;
   readonly projectDialog: ProjectDialog | undefined;
@@ -88,8 +120,8 @@ export const createLayoutStore = (): LayoutStore =>
     sidebarOpen: true,
     contextPanelPeek: false,
     contextPanelFocus: false,
-    viewer: undefined,
-    page: undefined,
+    panelTabs: {},
+    openFileDialog: undefined,
     paletteOpen: false,
     providerDialog: undefined,
     projectDialog: undefined,

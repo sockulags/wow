@@ -27,12 +27,12 @@ export function PageViewer({ page }: { readonly page: ViewerPage }) {
       onKeyDown={(event) => {
         if (event.key !== 'Escape' || event.defaultPrevented) return;
         event.preventDefault();
-        closeViewer(layout);
+        closeViewer(layout, page.from);
       }}
     >
       <div className="flex shrink-0 flex-col gap-1 border-b border-border px-2 py-2">
         <div className="flex items-center gap-1">
-          <Button size="xs" variant="ghost" onClick={() => closeViewer(layout)}>
+          <Button size="xs" variant="ghost" onClick={() => closeViewer(layout, page.from)}>
             <ArrowLeftIcon />
             Back to conversation
           </Button>
