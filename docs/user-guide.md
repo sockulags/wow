@@ -692,6 +692,17 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   again for the next one. Oldest means the one that has waited longest: renaming a thread or
   changing its model does not move it. A gate that waits for the pull request's checks is not
   waiting for you and is skipped.
+- **Edit your last message**: press **Up** in an empty message box, **E** on your last message, or
+  its **Edit** button. The message comes back into the box; send it and it replaces that message
+  and its answer, and the agent goes on as if the old one had never been sent. The old exchange
+  stays under **Earlier version** on the new message. Files the agent changed stay as they are;
+  the box says so when that turn changed files. **Cancel** leaves it.
+- **Fork from here**: on any of your messages, **Fork from here** (or **F** on the message that
+  has the keyboard, or **/fork**) starts a new thread with the conversation up to that message
+  and its answer, on the same model, effort, mode and folder. The new thread says which one it
+  came from. Edit and Fork work on Claude Code, for messages sent since wow keeps the place in
+  the conversation; Codex cannot go back in its conversation, so it offers neither and the
+  palette says why.
 - **Skills in chat** are listed Yours, Project, Recently used, User, Plugins and wow last; wow's
   own four are marked "for workflow steps". On a new thread the list opens under the box, so the
   provider and project pickers stay in view.
