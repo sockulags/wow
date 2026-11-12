@@ -427,7 +427,7 @@ test.describe('files in chat', () => {
     await expect(tabNames(page)).toHaveText(['Details', 'timer.ts']);
     await expect(tabNames(page).nth(1)).toHaveAttribute('aria-selected', 'true');
     const viewer = panel(page).getByRole('region', { name: 'File viewer' });
-    await expect(viewer.getByTestId('viewer-path')).toHaveText('src/timer.ts');
+    await expect(viewer.getByTestId('viewer-path')).toHaveText(/^src[\\/]timer\.ts$/);
     await expect(viewer.getByTestId('viewer-text')).toContainText('export const ringTwice');
 
     await page.keyboard.press('Control+j');
