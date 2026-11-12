@@ -781,6 +781,25 @@ test.describe('the card form in a small window', () => {
   });
 });
 
+// Agent workbench spec 83: above 1200 px the workflow and the repeat sit side by side.
+test.describe('the card form in a wide window', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('puts the Repeat section beside the workflow at 1280 px @agent-workbench-83', async ({
+    page,
+  }) => {
+    await page.goto(`/calendar?view=week&date=${localDay(mondayAhead())}`);
+    await page.getByRole('button', { name: 'New card', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'New card' });
+    const workflow = await dialog.getByRole('group', { name: 'Run a workflow' }).boundingBox();
+    const repeat = await dialog.getByRole('group', { name: 'Repeat' }).boundingBox();
+    expect(workflow).not.toBeNull();
+    expect(repeat?.x ?? 0).toBeGreaterThanOrEqual((workflow?.x ?? 0) + (workflow?.width ?? 0));
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+  });
+});
+
 test.describe('sketch', () => {
   test.skip(!sketching, 'Set WOW_E2E_SKETCHES to write the screenshots');
   test.use(sketchUse);
