@@ -179,7 +179,8 @@ turns            id, threadId, index, state, startedAt, endedAt, usage(json),
                  fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
                  turn began, for "This turn only" (migration 0029_thread_changes)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
-                 'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
+                 'approval'|'question'|'task_list'|'usage'|'error'|'settings_change'|
+                 'compaction'), payload(json), streaming
 approvals        id, threadId, itemId, kind ('command'|'fileChange'|'tool'|'plan'), request(json),
                  decision? ('allowOnce'|'allowSession'|'allowAlways'|'deny'), decidedAt?   -- what
                  the card shows (facts, rule, plan, byRule, note) is in the approval item's payload
@@ -288,8 +289,10 @@ ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta |
                  toolCallStarted {itemId, name, input, ...ToolFacts?} | toolCallOutput |
                  toolCallCompleted {itemId, status, exitCode?, durationMs?, diff?} |
                  approvalRequested {approvalId, kind, summary, request, facts?} | questionAsked |
-                 taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
-                 | turnStartedByProvider | backgroundTasks {tasks [{id, description, agent?}]}
+                 taskListUpdated | usage {..., model?} | contextUsage |
+                 compacted {trigger manual|auto, preTokens?, postTokens?} | turnCompleted |
+                 turnFailed | turnInterrupted | turnStartedByProvider |
+                 backgroundTasks {tasks [{id, description, agent?}]}
 ```
 
 **Tool facts.** Each adapter normalizes a tool call into `ToolFacts` (`provider.ts`): `kind`
@@ -470,7 +473,8 @@ thread it maps to, since the app-server has no request that unloads one.
   `isDefault` and `inputModalities` (`imageInput` is whether it holds `image`; an older codex
   without the field leaves it out, marked as coped with in the protocol fingerprint), and hidden
   models are left out; Claude Code's `supportedModels()` gives none of them, so they stay absent.
-  Compact is Claude's `/compact` sent as a message; codex has none in the adapter yet.
+  Compact is Claude's `/compact` sent as a message; Codex's generated protocol has no compact
+  method or notice, so a Codex thread shows no Compact (see "Conversation reading").
 - **Instances.** A provider instance is one binary + one config directory + env. Several instances
   of the same kind are allowed (work and personal accounts). A thread remembers its instance and
   can only resume on an instance with the same config directory.
@@ -1476,7 +1480,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.toolOutputLines`,
   `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
   `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength`, `chat.editDiffMaxLines` (see "Chat
-  view"), `chat.fileTrigger` (see "Panel tabs and files in chat"), `chat.imageMaxBytes` (see
+  view"), `chat.contextWarnPercent`, `chat.reasoningOpen` (see "Conversation reading"), `chat.fileTrigger` (see "Panel tabs and files in chat"), `chat.imageMaxBytes` (see
   "Images in the composer")
 - approvals: `approvals.alwaysAllow` (project-scoped; the "Approvals" page, see "Edits, approvals
   and a thread's Changes")
@@ -2794,7 +2798,7 @@ in the browser build) replace a separate working-directory field. Starters under
 from `skills`, open `backlogItems` and the last active thread (`chat.starterCount`). The composer
 focuses on `/chat/new` and on opening a thread; its skill list is a cmdk `Command` with
 `shouldFilter={false}` whose selection the text box moves (focus stays in the text box), grouped by
-`skillGroupOf` (see "Skills in the composer"). A message written while a turn runs goes to the
+`skillGroupOf` (see "Skills in the composer"), in chat in the order of "Conversation reading". A message written while a turn runs goes to the
 server, which queues it (see "Providers", Queued messages); the conversation ends with the queued
 row (`QueuedMessageItem` in `items.tsx`: "Queued · sent when the turn ends", its text and skills,
 Edit and Cancel; palette "Edit queued message" and "Cancel queued message"; the palette's Edit
@@ -2992,6 +2996,68 @@ lands on something else in the conversation (`rowActionScope`), or the row unmou
 (`StoppedLine`, from the turn's `endedAt`), which carries Resume on the last turn. The line reads
 the turn's stored state, so a turn stopped before this change gets it too: it was stopped, and no
 item, divider or marker is added to it (spec 48 is about new items, not about reading old ones).
+
+### Conversation reading
+
+Agent workbench U10 (spec 9, 45 to 47, 57, 73 to 76, 88). What a long thread says about itself is
+stored by the server; the web app only draws it.
+
+- **Settings divider.** `turn.started` may carry `settingsItem`, a `settings_change` item
+  (`SettingsChangeItemPayload {model?, effort?, permissionMode?}`, each `{from, to}` as ids) with
+  the index just before the user item. The decider compares the thread's model, effort and mode
+  with the `start` of the thread's newest stored `turn.started` (`ReadModel.lastStart`, one read
+  of the event log), so a change taken back before the next message adds nothing, and a thread's
+  first turn has none. The row reads "Model: Opus → Sonnet · Effort: high → low · Mode: Accept
+  edits" with the provider's labels (`settingsChangeText` in `items.tsx`).
+- **Usage model.** `UsageItemPayload.model` is the provider's word for the model (Claude Code's
+  init message, which the adapter keeps per session and puts on `usage`), else the model of the
+  newest turn start, else the thread's. Rows stored before have none and show none.
+- **Compaction.** Claude Code's `system` message `compact_boundary` becomes ProviderEvent
+  `compacted {trigger, preTokens, postTokens?}`, stored as a `compaction` item
+  (`CompactionItemPayload`, plus `at`) and drawn as "Conversation compacted (auto) · 152k → 18k"
+  (`compactionText`; `shortTokens` in `chat/model.ts`). Codex has no compact method, so no
+  Compact button and no compaction there.
+- **Context meter.** From `chat.contextWarnPercent` (70) the meter is amber, reads "Context n %
+  full" and its button "Compact now", only where `providerChatOptions` has a compact message.
+- **Working line.** `WorkingIndicator` reads `workingFacts(items, turnId, cwd)` (view-model.ts):
+  the running tool call's command (or MCP `server › tool`, or the row's one-line summary), the
+  turn's tool call count, and the tokens of the turn's `usage` item, which only Codex sends during
+  a turn (its adapter now emits `usage` on each `thread/tokenUsage/updated` of a running turn);
+  then the `keybindings.stopTurn` key. Claude Code reports tokens at the turn's end, when the line
+  is gone.
+- **Reasoning.** The decider stamps a reasoning item's `startedAt` at its first part and
+  `endedAt` on each later part (`threadItem.appended.at`; `ReasoningItemPayload`). A reasoning row
+  is done once anything follows it in its turn or it stops streaming (`finishedReasoning`); then it
+  reads "Thought for n s", before that "Thinking…" with its last line muted. Reasoning stored
+  before reads "Reasoning". `chat.reasoningOpen` opens it by default; Ctrl+O
+  (`keybindings.toggleReasoning`, palette "Open all reasoning"/"Close all reasoning") flips it for
+  the open thread, kept in `conversationStore` (`chat/conversation-nav.ts`) with a count that
+  remounts every row so one opened by hand follows too.
+- **Times.** A user row shows its turn's start, the turn's last `assistant_text` its `endedAt`
+  (`turnEndRows`), always visible (`message-time`).
+- **Scroll and keys.** `useStickToBottom` in thread-view.tsx follows the stream; once the user
+  scrolled up, new items show the "New output" pill, which or End (`keybindings.conversationEnd`,
+  palette "Go to the newest output" while it shows) goes back down and follows again. User and
+  assistant rows are focusable (`li[data-message]`); Alt+Up/Alt+Down
+  (`keybindings.previousMessage`/`nextMessage`) move between them and C
+  (`keybindings.copyMessage`) copies the focused one's text. The conversation on screen (not a
+  step thread in the side panel) registers its handle with `showConversation`; the commands are
+  `conversationCommands`. These keys are settings in the Chat scope, since Alt+Up/Down may clash
+  with screen readers; the builder's rule keys get their own "Workflows" scope in the keybindings
+  table so the shared keys are not reported as conflicts. E and F on a focused message are U12's.
+- **Skill list in chat.** `chatSkillSections` orders Yours, Project, Recently used (the skills
+  this thread's messages carried, newest first, `recentSkillNames`), User, Plugins, Other and wow
+  last; wow's four built-in skills carry "for workflow steps" (`isStepSkill`). On `/chat/new` the
+  composer gets `listsBelow`, so the skill and file lists open under the box and leave the
+  provider and project pickers in view.
+- **Next that needs you.** `chat/needs-you.ts` `needsYouTargets` lists, from the subscribed rows,
+  threads in `needs_you` (approval, question, plan card; at `updatedAt`, which nothing else moves
+  while it waits; a step thread waiting for its run's gate counts as the gate), runs `waiting` at a
+  gate (at the reviewed step's `endedAt`) and pending assistant proposals, oldest first.
+  Ctrl+Shift+J (`keybindings.nextNeedsYou`, palette "Next that needs you") navigates to the next
+  after the one it went to last and sets a focus request; the approval card, question card, gate
+  bar's Approve and the proposal card call `useNeedsYouFocus(key, ref)` and take the focus once
+  they render, and `takeLanded` keeps the composer's autofocus from taking it back.
 
 ### Edits, approvals and a thread's Changes
 

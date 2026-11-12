@@ -12,6 +12,8 @@ export {
   imagesReceived,
   mockClaudeCommands,
   mockCodexModels,
+  mockCompaction,
+  mockTwoTools,
   prefersMockProviders,
   type MockScript,
   type ProviderAdapterFactory,

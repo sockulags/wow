@@ -275,6 +275,16 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     outputTokens: z.number().int().nonnegative(),
     cachedInputTokens: z.number().int().nonnegative(),
     costUsd: z.number().nonnegative().optional(),
+    // The model the provider says it ran on; without it the server names the model it sent.
+    model: z.string().min(1).optional(),
+  }),
+  // The provider compacted the conversation (agent workbench spec 46), with the counts it gives.
+  z.object({
+    type: z.literal('compacted'),
+    ...ThreadScoped,
+    trigger: z.enum(['manual', 'auto']),
+    preTokens: z.number().int().nonnegative().optional(),
+    postTokens: z.number().int().nonnegative().optional(),
   }),
   z.object({
     type: z.literal('contextUsage'),

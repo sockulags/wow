@@ -121,6 +121,8 @@ interface Session {
   readonly edits: Set<string>;
   // total_cost_usd is cumulative per query(); a turn's cost is the difference.
   costUsd: number;
+  // The model Claude Code says the session runs on (its init message), named on the usage row.
+  reportedModel?: string | undefined;
 }
 
 interface Pending<T> {
@@ -546,9 +548,26 @@ export class ClaudeAdapter implements ProviderAdapter {
     const threadId = session.threadId;
     switch (message.type) {
       case 'system':
+        if (message.subtype === 'init' && message.model) session.reportedModel = message.model;
         if (message.subtype === 'init' && message.session_id !== session.providerSessionId) {
           session.providerSessionId = message.session_id;
           this.#emit({ type: 'session', threadId, providerSessionId: message.session_id });
+        } else if (message.subtype === 'compact_boundary') {
+          // A compaction by /compact or by Claude Code itself (agent workbench spec 46).
+          const {
+            trigger,
+            pre_tokens: preTokens,
+            post_tokens: postTokens,
+          } = message.compact_metadata;
+          this.#emit({
+            type: 'compacted',
+            threadId,
+            trigger,
+            preTokens: Math.max(0, Math.round(preTokens)),
+            ...(postTokens === undefined
+              ? {}
+              : { postTokens: Math.max(0, Math.round(postTokens)) }),
+          });
         } else if (message.subtype === 'background_tasks_changed') {
           // Ambient tasks are Claude Code's own housekeeping, not work anyone waits for.
           this.#setBackground(
@@ -668,6 +687,7 @@ export class ClaudeAdapter implements ProviderAdapter {
           outputTokens: usage.output_tokens,
           cachedInputTokens: usage.cache_read_input_tokens,
           costUsd,
+          ...(session.reportedModel ? { model: session.reportedModel } : {}),
         });
         if (session.query) {
           try {

@@ -79,6 +79,13 @@ export interface ReadModel {
   lastSent(
     threadId: string,
   ): { text: string; prompt: string; skills: SentSkill[] | undefined } | undefined;
+  // The model, effort and mode the thread's newest turn wow started was sent with, for the
+  // divider before a message whose turn runs on others (agent workbench spec 9).
+  lastStart(
+    threadId: string,
+  ):
+    | { readonly model: string; readonly effort: string; readonly permissionMode: string }
+    | undefined;
   // Index the next item of the thread gets.
   nextItemIndex(threadId: string): number;
   itemExists(id: string): boolean;

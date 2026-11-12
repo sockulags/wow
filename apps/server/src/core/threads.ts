@@ -1,6 +1,8 @@
 import type {
+  CompactionItemPayload,
   DomainEvent,
   ProviderEvent,
+  SettingsChangeItemPayload,
   QueuedMessage,
   SentImage,
   SentSkill,
@@ -154,6 +156,8 @@ function turnStarted(
 ): DomainEvent {
   const index = read.turnCount(thread.id);
   const id = turnId(thread.id, index);
+  const itemIndex = read.nextItemIndex(thread.id);
+  const changes = settingsChanges(read.lastStart(thread.id), thread);
   return {
     kind: 'turn.started',
     aggregate: thread.id,
@@ -167,11 +171,24 @@ function turnStarted(
         endedAt: null,
         usage: null,
       },
+      ...(changes
+        ? {
+            settingsItem: {
+              id: `${id}:settings`,
+              threadId: thread.id,
+              turnId: id,
+              index: itemIndex,
+              kind: 'settings_change' as const,
+              payload: changes,
+              streaming: false,
+            },
+          }
+        : {}),
       item: {
         id: `${id}:user`,
         threadId: thread.id,
         turnId: id,
-        index: read.nextItemIndex(thread.id),
+        index: changes ? itemIndex + 1 : itemIndex,
         kind: 'user',
         payload: {
           text,
@@ -196,6 +213,23 @@ function turnStarted(
       },
     },
   };
+}
+
+// What differs between the settings the turn before was sent with and the thread's now (agent
+// workbench spec 9). A thread's first turn, and a thread whose turns all started by themselves,
+// has nothing to compare with and gets no divider.
+function settingsChanges(
+  before: ReturnType<ReadModel['lastStart']>,
+  thread: Pick<Thread, 'model' | 'effort' | 'permissionMode'>,
+): SettingsChangeItemPayload | undefined {
+  if (!before) return undefined;
+  const changes: SettingsChangeItemPayload = {};
+  if (before.model !== thread.model) changes.model = { from: before.model, to: thread.model };
+  if (before.effort !== thread.effort) changes.effort = { from: before.effort, to: thread.effort };
+  if (before.permissionMode !== thread.permissionMode) {
+    changes.permissionMode = { from: before.permissionMode, to: thread.permissionMode };
+  }
+  return Object.keys(changes).length > 0 ? changes : undefined;
 }
 
 // A turn starting or a request arriving brings an archived thread back to the list, so what it
@@ -1427,18 +1461,26 @@ function decideProviderEvents(
               ? { id, text: lastText.text + event.delta }
               : { id, text: (textOf(read.threadItem(id)) ?? '') + event.delta };
         }
+        // Reasoning keeps when its first and its latest part came, for "Thought for n s" (spec
+        // 88).
+        const reasoning = event.type === 'reasoningDelta';
         if (exists(id)) {
           out.push({
             kind: 'threadItem.appended',
             aggregate: threadId,
-            payload: { itemId: id, field: 'text', delta: event.delta },
+            payload: {
+              itemId: id,
+              field: 'text',
+              delta: event.delta,
+              ...(reasoning ? { at: now } : {}),
+            },
           });
         } else {
           add(
             current,
             id,
-            event.type === 'textDelta' ? 'assistant_text' : 'reasoning',
-            { text: event.delta },
+            reasoning ? 'reasoning' : 'assistant_text',
+            reasoning ? { text: event.delta, startedAt: now, endedAt: now } : { text: event.delta },
             true,
           );
         }
@@ -1638,7 +1680,23 @@ function decideProviderEvents(
           aggregate: threadId,
           payload: { turnId: current.id, usage },
         });
-        patch(current, itemId('usage'), 'usage', usage);
+        // The row names the model the turn ran on (spec 9): the provider's word for it, else the
+        // model wow last sent, which a turn the provider started by itself also runs on.
+        const model = event.model ?? read.lastStart(threadId)?.model ?? thread.model;
+        patch(current, itemId('usage'), 'usage', {
+          ...usage,
+          ...(model === '' ? {} : { model }),
+        });
+        break;
+      }
+      case 'compacted': {
+        const compaction: CompactionItemPayload = {
+          trigger: event.trigger,
+          ...(event.preTokens === undefined ? {} : { preTokens: event.preTokens }),
+          ...(event.postTokens === undefined ? {} : { postTokens: event.postTokens }),
+          at: now,
+        };
+        add(current, itemId(`compaction:${nextIndex}`), 'compaction', compaction, false);
         break;
       }
       case 'contextUsage':

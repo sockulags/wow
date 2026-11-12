@@ -289,7 +289,13 @@ describe('provider service', () => {
         payload: { text: 'What is in the readme?' },
         streaming: false,
       },
-      { id: 't1:turn:0:m1:0', kind: 'reasoning', payload: { text: 'Think.' }, streaming: false },
+      {
+        id: 't1:turn:0:m1:0',
+        kind: 'reasoning',
+        // When its first and latest part came (agent workbench spec 88).
+        payload: { text: 'Think.', startedAt: expect.any(String), endedAt: expect.any(String) },
+        streaming: false,
+      },
       {
         id: 't1:turn:0:m1:1',
         kind: 'assistant_text',
@@ -355,7 +361,7 @@ describe('provider service', () => {
       {
         id: 't1:turn:0:usage',
         kind: 'usage',
-        payload: { ...usage, context: { usedTokens: 1500, maxTokens: 200_000 } },
+        payload: { ...usage, context: { usedTokens: 1500, maxTokens: 200_000 }, model: 'sonnet' },
         streaming: false,
       },
     ]);

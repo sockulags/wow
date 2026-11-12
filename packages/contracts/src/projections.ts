@@ -157,6 +157,11 @@ export const ThreadItemKind = z.enum([
   'task_list',
   'usage',
   'error',
+  // A divider before a user message whose turn runs on another model, effort or mode than the
+  // turn before (agent workbench spec 9), and one where the provider compacted the conversation
+  // (spec 46). Threads stored before have neither.
+  'settings_change',
+  'compaction',
 ]);
 export type ThreadItemKind = z.infer<typeof ThreadItemKind>;
 
@@ -260,12 +265,44 @@ export const TaskListItemPayload = z.object({
 export type TaskListItemPayload = z.infer<typeof TaskListItemPayload>;
 
 // Token usage and the context report arrive separately and merge into one item per turn.
+// `model` is the model the turn ran on (agent workbench spec 9); absent on rows stored before.
 export const UsageItemPayload = Usage.partial().extend({
   context: z
     .object({ usedTokens: z.number().int().nonnegative(), maxTokens: z.number().int().positive() })
     .optional(),
+  model: z.string().min(1).optional(),
 });
 export type UsageItemPayload = z.infer<typeof UsageItemPayload>;
+
+// Reasoning as it streams. The server stamps when its first and its latest part arrived, so the
+// row can say "Thought for 12 s" (spec 88); reasoning stored before has neither.
+export const ReasoningItemPayload = z.object({
+  text: z.string(),
+  startedAt: Timestamp.optional(),
+  endedAt: Timestamp.optional(),
+});
+export type ReasoningItemPayload = z.infer<typeof ReasoningItemPayload>;
+
+// What changed between the turn before and this one, as ids; the row names them by label.
+const SettingChange = z.object({ from: z.string(), to: z.string() });
+export const SettingsChangeItemPayload = z.object({
+  model: SettingChange.optional(),
+  effort: SettingChange.optional(),
+  permissionMode: SettingChange.optional(),
+});
+export type SettingsChangeItemPayload = z.infer<typeof SettingsChangeItemPayload>;
+
+// The provider compacted the conversation, by request (`manual`) or by itself (`auto`), with the
+// token counts before and after where it gives them (spec 46).
+export const CompactionTrigger = z.enum(['manual', 'auto']);
+export type CompactionTrigger = z.infer<typeof CompactionTrigger>;
+export const CompactionItemPayload = z.object({
+  trigger: CompactionTrigger,
+  preTokens: z.number().int().nonnegative().optional(),
+  postTokens: z.number().int().nonnegative().optional(),
+  at: Timestamp,
+});
+export type CompactionItemPayload = z.infer<typeof CompactionItemPayload>;
 
 export const ErrorItemPayload = z.object({ message: z.string() });
 export type ErrorItemPayload = z.infer<typeof ErrorItemPayload>;

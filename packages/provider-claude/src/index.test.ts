@@ -209,6 +209,24 @@ function harness(turns: FakeStep[][], onEvent?: (event: ProviderEvent) => void):
   };
 }
 
+const boundary = (
+  trigger: 'manual' | 'auto',
+  preTokens: number,
+  postTokens?: number,
+): FakeStep => ({
+  message: {
+    type: 'system',
+    subtype: 'compact_boundary',
+    compact_metadata: {
+      trigger,
+      pre_tokens: preTokens,
+      ...(postTokens === undefined ? {} : { post_tokens: postTokens }),
+    },
+    uuid: '00000000-0000-4000-8000-0000000000c1',
+    session_id: 'sess-1',
+  } as unknown as SDKMessage,
+});
+
 describe('@wow/provider-claude', () => {
   it('is the claude provider', () => {
     expect(providerKind).toBe('claude');
@@ -313,6 +331,8 @@ describe('@wow/provider-claude', () => {
         outputTokens: 35,
         cachedInputTokens: 400,
         costUsd: 0.0123,
+        // The model of the init message (agent workbench spec 9).
+        model: 'claude-sonnet-4-5',
       },
       { type: 'contextUsage', threadId: 't1', usedTokens: 1500, maxTokens: 200_000 },
       { type: 'turnCompleted', threadId: 't1' },
@@ -613,6 +633,27 @@ describe('@wow/provider-claude', () => {
     expect(h.queries).toHaveLength(2);
     expect(h.queries[1]?.options.resume).toBeUndefined();
     expect(h.events.filter((event) => event.type === 'turnFailed')).toEqual([]);
+  });
+
+  // Agent workbench spec 46: a compact boundary becomes a compaction with trigger and counts;
+  // without post_tokens only the count before is given.
+  it("reports Claude Code's compact boundary as a compaction", async () => {
+    const h = harness([
+      [initStep(), boundary('auto', 152_000, 18_000), boundary('manual', 40_000), result(0)],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ prompt: '/compact' }));
+    await done;
+    expect(h.events.filter((event) => event.type === 'compacted')).toEqual([
+      {
+        type: 'compacted',
+        threadId: 't1',
+        trigger: 'auto',
+        preTokens: 152_000,
+        postTokens: 18_000,
+      },
+      { type: 'compacted', threadId: 't1', trigger: 'manual', preTokens: 40_000 },
+    ]);
   });
 
   it('sends an ordinary turn exactly the options it always had', async () => {

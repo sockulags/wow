@@ -1048,6 +1048,9 @@ export class CodexAdapter implements ProviderAdapter {
       case 'thread/tokenUsage/updated': {
         const { total, last, modelContextWindow } = message.params.tokenUsage;
         thread.usageTotal = total;
+        // Codex counts while the turn runs, so the working line shows live tokens (agent
+        // workbench spec 45); the turn's end sends the final count again.
+        if (thread.turnId !== null) this.#emitUsage(thread);
         if (modelContextWindow && modelContextWindow > 0)
           this.#emit({
             type: 'contextUsage',
@@ -1140,22 +1143,26 @@ export class CodexAdapter implements ProviderAdapter {
     });
   }
 
+  // The running turn's tokens so far: Codex's total less what the thread had used before it.
+  #emitUsage(thread: ThreadState): void {
+    if (!thread.usageTotal) return;
+    const usage = subtract(thread.usageTotal, thread.usageBaseline);
+    this.#emit({
+      type: 'usage',
+      threadId: thread.wowId,
+      inputTokens: Math.max(0, usage.inputTokens),
+      outputTokens: Math.max(0, usage.outputTokens),
+      cachedInputTokens: Math.max(0, usage.cachedInputTokens),
+    });
+  }
+
   #turnCompleted(
     thread: ThreadState,
     turn: Extract<ServerNotification, { method: 'turn/completed' }>['params']['turn'],
   ): void {
     const threadId = thread.wowId;
     if (turn.status === 'inProgress') return;
-    if (thread.usageTotal) {
-      const usage = subtract(thread.usageTotal, thread.usageBaseline);
-      this.#emit({
-        type: 'usage',
-        threadId,
-        inputTokens: Math.max(0, usage.inputTokens),
-        outputTokens: Math.max(0, usage.outputTokens),
-        cachedInputTokens: Math.max(0, usage.cachedInputTokens),
-      });
-    }
+    this.#emitUsage(thread);
     const error = turn.error?.message ?? thread.lastError ?? 'The codex turn failed';
     thread.turnId = null;
     thread.lastFinishedTurnId = turn.id;

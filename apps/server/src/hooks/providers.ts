@@ -29,11 +29,53 @@ const echoed = (command: Extract<ProviderCommand, { type: 'startTurn' }>): strin
   return count === 0 ? command.prompt : `${command.prompt}\n\n${imagesReceived(count)}`;
 };
 
+// A compaction as Claude Code reports one after `/compact` (agent workbench spec 46).
+export const mockCompaction = (threadId: string): ProviderEvent => ({
+  type: 'compacted',
+  threadId,
+  trigger: 'manual',
+  preTokens: 152_000,
+  postTokens: 18_000,
+});
+
+// A turn of two tool calls, a command and a read (agent workbench spec 45).
+export const mockTwoTools = (threadId: string, cwd: string): ProviderEvent[] => [
+  {
+    type: 'toolCallStarted',
+    threadId,
+    itemId: `${threadId}-tool-1`,
+    name: 'Bash',
+    input: { command: 'pnpm lint' },
+    kind: 'command',
+    command: 'pnpm lint',
+  },
+  { type: 'toolCallCompleted', threadId, itemId: `${threadId}-tool-1`, status: 'ok' },
+  {
+    type: 'toolCallStarted',
+    threadId,
+    itemId: `${threadId}-tool-2`,
+    name: 'Bash',
+    input: { command: 'pnpm test' },
+    kind: 'command',
+    command: 'pnpm test',
+    cwd,
+  },
+];
+
 const echo: MockScript = (command) => {
   if (command.type !== 'startTurn') return [];
   const { threadId } = command;
+  const extra: ProviderEvent[] = /compact/i.test(command.prompt)
+    ? [mockCompaction(threadId)]
+    : /two tools/i.test(command.prompt)
+      ? [
+          ...mockTwoTools(threadId, command.cwd),
+          { type: 'toolCallCompleted', threadId, itemId: `${threadId}-tool-2`, status: 'ok' },
+        ]
+      : [];
   return [
     { type: 'session', threadId, providerSessionId: `mock-${threadId}` },
+    ...extra,
     { type: 'textDelta', threadId, itemId: `${threadId}-text`, delta: echoed(command) },
     { type: 'usage', threadId, inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
     { type: 'turnCompleted', threadId },

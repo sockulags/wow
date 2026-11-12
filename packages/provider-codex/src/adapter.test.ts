@@ -364,6 +364,8 @@ describe('CodexAdapter with recorded sessions', () => {
         itemId: 'item-message',
         delta: 'I left the README as it was.',
       },
+      // Live tokens while the turn runs (agent workbench spec 45), then the final count.
+      { type: 'usage', threadId, inputTokens: 5200, outputTokens: 310, cachedInputTokens: 4000 },
       { type: 'contextUsage', threadId, usedTokens: 5510, maxTokens: 258400 },
       expect.objectContaining({ type: 'taskListUpdated' }),
       { type: 'usage', threadId, inputTokens: 5200, outputTokens: 310, cachedInputTokens: 4000 },

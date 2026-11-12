@@ -370,8 +370,9 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .run();
       return threadTopics;
     case 'turn.started': {
-      const { turn, item } = event.payload;
+      const { turn, item, settingsItem } = event.payload;
       tx.insert(turns).values(turn).run();
+      if (settingsItem) tx.insert(threadItems).values(settingsItem).run();
       tx.insert(threadItems).values(item).run();
       tx.update(threads)
         .set({ state: 'working', updatedAt: turn.startedAt })
@@ -419,7 +420,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       tx.insert(threadItems).values(event.payload).run();
       return ['threadItems'];
     case 'threadItem.appended': {
-      const { itemId, field, delta } = event.payload;
+      const { itemId, field, delta, at } = event.payload;
       const row = tx
         .select({ payload: threadItems.payload })
         .from(threadItems)
@@ -430,7 +431,11 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       const before = payload[field];
       tx.update(threadItems)
         .set({
-          payload: { ...payload, [field]: (typeof before === 'string' ? before : '') + delta },
+          payload: {
+            ...payload,
+            [field]: (typeof before === 'string' ? before : '') + delta,
+            ...(at === undefined ? {} : { endedAt: at }),
+          },
         })
         .where(eq(threadItems.id, itemId))
         .run();
@@ -874,6 +879,19 @@ export function readModel(tx: DbOrTx): ReadModel {
         }
       }
       return undefined;
+    },
+    lastStart: (threadId) => {
+      const row = tx
+        .select({ kind: events.kind, aggregate: events.aggregate, payload: events.payload })
+        .from(events)
+        .where(and(eq(events.kind, 'turn.started'), eq(events.aggregate, threadId)))
+        .orderBy(desc(events.seq))
+        .limit(1)
+        .get();
+      const event = row ? DomainEvent.safeParse(row) : undefined;
+      if (!event?.success || event.data.kind !== 'turn.started') return undefined;
+      const { model, effort, permissionMode } = event.data.payload.start;
+      return { model, effort, permissionMode };
     },
     nextItemIndex: (threadId) => {
       const last = tx

@@ -979,6 +979,9 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     payload: z.object({
       turn: Turn,
       item: ThreadItem,
+      // The divider before the message when the model, effort or mode changed since the turn
+      // before (agent workbench spec 9); its index is the one before the message's.
+      settingsItem: ThreadItem.optional(),
       providerInstanceId: Id,
       // What the provider gets, so the effect does not read the projection again.
       start: z.object({
@@ -1033,7 +1036,13 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('threadItem.appended'),
     aggregate: Id,
-    payload: z.object({ itemId: Id, field: z.enum(['text', 'output']), delta: z.string() }),
+    payload: z.object({
+      itemId: Id,
+      field: z.enum(['text', 'output']),
+      delta: z.string(),
+      // When the part arrived, kept as the item's `endedAt` (reasoning's "Thought for n s").
+      at: Timestamp.optional(),
+    }),
   }),
   // Shallow-merges into the item's payload.
   z.object({
