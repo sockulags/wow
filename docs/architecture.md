@@ -3942,7 +3942,10 @@ looked at once).
 Every thread view asks `hosts.lookup` for its rules. That answer reads no token: a site counts
 when a token is stored for it (`TrackerService.linkHosts(projectId, 'stored')`). Only the
 token of the host being asked is read, and only then, because on Windows each read of the secret
-store starts PowerShell.
+store starts PowerShell. The rules read the project's folder with Git (three commands, slow to
+start on Windows), so the server shares one in-flight rules answer per project, and the web app
+asks once per thread and per state of the settings and projects topics, whichever views show the
+thread.
 
 **Recognition** (`packages/contracts/src/host-links.ts`, shared by the server and the web app so
 a chip is exactly what the server will read). `HostLinkRules` are the thread's sites
@@ -3983,9 +3986,11 @@ adapters gained `readIssue(number)` (GitHub answers `changeRequest` when the num
 request); the mocks gained `issues`. The assistant's thread is refused, and nothing read is ever
 put into a prompt.
 
-**Web.** `chat/host-links.tsx`: `useHostLinkRules(threadId)` (asked again when the settings or
-projects topics change), `HostLinkContext` (provided by `ThreadConversation` next to
-`FileLinkContext`, not for the Assistant), `HostChip` (icon, key, and once read the state: "PR
+**Web.** `chat/host-links.tsx`: `useHostLinkRules(threadId)` (one question per thread shared by
+the conversation and the panel, once both topics have loaded; asked again when the settings or
+projects topics change in content, or when the thread is shown again after no view showed it),
+`HostLinkContext` (provided by `ThreadConversation` next to `FileLinkContext`, not for the
+Assistant), `HostChip` (icon, key, and once read the state: "PR
 #14 · Draft · 2 checks failed", "DEMO-42 · To Do", a page's title; Enter or click opens the tab,
 Shift+Enter or Shift+click the browser), `hostItemLabel`, `hostItemState`, `hostItemsIn`. The
 markdown body turns recognised links and inline code into chips (inline code only for an address

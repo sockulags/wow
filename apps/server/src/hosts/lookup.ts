@@ -58,6 +58,9 @@ export class HostLookup {
   readonly #clock: () => Date;
   // One read per item at a time, so a double press asks the host once.
   readonly #inFlight = new Map<string, Promise<HostItemRead | undefined>>();
+  // One rules answer per project at a time: every view of a thread asks for them, and each answer
+  // reads the project's folder with Git, which is slow to start on Windows.
+  readonly #rules = new Map<string, Promise<LinkHosts>>();
 
   constructor(deps: HostLookupDeps) {
     this.#deps = deps;
@@ -81,7 +84,7 @@ export class HostLookup {
       throw new RpcFault('rejected', "The assistant's thread reads nothing from a host");
     }
     // Every thread view asks for the rules; the tokens are read only when a host is asked.
-    const { rules } = await this.#deps.linkHosts(thread.projectId, 'stored');
+    const { rules } = await this.#storedRules(thread.projectId);
     const item = params.ref === undefined ? undefined : recogniseHostRef(params.ref, rules);
     if (!item) return { rules, item: null, read: null };
     const id = hostItemReadId(thread.id, item);
@@ -99,6 +102,16 @@ export class HostLookup {
       this.#inFlight.set(id, running);
     }
     return { rules, item, read: (await running) ?? null };
+  }
+
+  #storedRules(projectId: string | null): Promise<LinkHosts> {
+    const key = projectId === null ? '' : `project:${projectId}`;
+    let running = this.#rules.get(key);
+    if (!running) {
+      running = this.#deps.linkHosts(projectId, 'stored').finally(() => this.#rules.delete(key));
+      this.#rules.set(key, running);
+    }
+    return running;
   }
 
   #stored(id: string): HostItemRead | undefined {
