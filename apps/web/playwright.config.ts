@@ -82,9 +82,16 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `pnpm exec vite --port ${port} --strictPort`,
+      // In CI the built app is served: the dev server hands a page its modules one request each,
+      // some hundreds per page load, and over a whole run the Windows runner ran out of socket
+      // buffers (net::ERR_NO_BUFFER_SPACE) and a page stayed blank. Locally the dev server stays,
+      // so a change shows without a build.
+      command: process.env['CI']
+        ? `pnpm exec vite build && pnpm exec vite preview --host 127.0.0.1 --port ${port} --strictPort`
+        : `pnpm exec vite --port ${port} --strictPort`,
       url: `http://127.0.0.1:${port}`,
       reuseExistingServer: !process.env['CI'],
+      timeout: 180_000,
     },
     {
       // The wow server with a scripted mock provider and the mock Outlook (e2e/server.ts); the
