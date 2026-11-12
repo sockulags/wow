@@ -14,6 +14,7 @@ import {
   MockJira,
   MockProviderAdapter,
   createNpmRunner,
+  imagesReceived,
   mockCodexModels,
   snapshot,
   startOutlookService,
@@ -379,6 +380,13 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     providerSessionId: command.resumeId ?? `mock-session-${threadId.slice(0, 8)}`,
   };
   const resumed = command.resumeId === undefined ? '' : `Resumed ${command.resumeId}. `;
+  // Images pasted or dropped on the composer (agent workbench spec 53): the mock says how many
+  // it got and of which types, so the case sees what the adapter was handed.
+  const images = command.images ?? [];
+  if (images.length > 0) {
+    const types = images.map((image) => image.mediaType.slice('image/'.length)).join(', ');
+    return [session, ...finish(threadId, `${imagesReceived(images.length)} Types: ${types}.`)];
+  }
   // A step of a unit's run: the agent opens the unit's pull request, as deliver-work would, and
   // says which unit it was told about.
   const unit = /^Unit: (\S+) (.*)$/m.exec(prompt);

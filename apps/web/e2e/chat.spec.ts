@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { e2eHome, e2eOutlookControlPort } from './env';
 import { choose } from './controls';
@@ -82,6 +82,44 @@ async function resetBar(page: Page) {
     await page.getByRole('listbox', { name: part }).getByRole('option', { name: option }).click();
   }
   await expect(bar).toHaveText('Mock model·Default·Ask');
+}
+
+// An invented screenshot drawn in the page and pasted (Ctrl+V) or dropped on the composer, as the
+// browser hands a file to it (agent workbench spec 53). The code is a string, since the e2e files
+// are typed without the DOM.
+async function addImage(page: Page, how: 'paste' | 'drop', name: string, hue: number) {
+  await messageBox(page).waitFor();
+  const failed = await page.evaluate(`(async () => {
+    const box = document.querySelector('textarea[aria-label="Message"]');
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 200;
+    const draw = canvas.getContext('2d');
+    draw.fillStyle = 'hsl(${hue} 30% 92%)';
+    draw.fillRect(0, 0, 320, 200);
+    draw.fillStyle = 'hsl(${hue} 45% 40%)';
+    draw.fillRect(0, 0, 320, 28);
+    draw.fillStyle = 'hsl(${hue} 50% 60%)';
+    draw.fillRect(20, 48, 180, 16);
+    draw.fillRect(20, 76, 240, 16);
+    draw.fillStyle = 'hsl(0 70% 55%)';
+    draw.fillRect(20, 112, 120, 40);
+    draw.fillStyle = 'white';
+    draw.font = '16px sans-serif';
+    draw.fillText('Invented', 34, 138);
+    const blob = await new Promise((done) => canvas.toBlob(done, 'image/png'));
+    const file = new File([blob], ${JSON.stringify(name)}, { type: 'image/png' });
+    const data = new DataTransfer();
+    data.items.add(file);
+    if (${JSON.stringify(how)} === 'paste') {
+      box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    } else {
+      box.dispatchEvent(new DragEvent('dragover', { dataTransfer: data, bubbles: true, cancelable: true }));
+      box.dispatchEvent(new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }));
+    }
+    return blob === null ? 'The page drew no picture' : '';
+  })()`);
+  expect(failed).toBe('');
 }
 
 test.describe('chat', () => {
@@ -614,6 +652,50 @@ test.describe('chat', () => {
     await resetBar(page);
   });
 
+  test('sends a pasted image @agent-workbench-53 @agent-workbench-55', async ({ page }) => {
+    await startClaudeThread(page, 'Look at my screen');
+    const threadId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+    await expect(conversation(page).getByTestId('item-assistant_text')).toContainText(
+      'You said: Look at my screen',
+    );
+    const images = page.getByRole('list', { name: 'Images', exact: true });
+    await addImage(page, 'paste', 'image.png', 210);
+    await addImage(page, 'drop', 'kettle.png', 30);
+    await expect(images.getByTestId('composer-image-chip')).toHaveCount(2);
+    // Backspace at the start of the text takes the last one off whole.
+    await messageBox(page).focus();
+    await messageBox(page).press('Backspace');
+    await expect(images.getByTestId('composer-image-chip')).toHaveCount(1);
+    await addImage(page, 'drop', 'kettle.png', 30);
+    await images.getByRole('button', { name: 'Show kettle.png full size' }).click();
+    const viewer = page.getByRole('dialog', { name: 'kettle.png' });
+    await expect(viewer.getByTestId('image-full-size')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(viewer).toBeHidden();
+
+    await messageBox(page).fill('What is wrong here?');
+    await messageBox(page).press('Enter');
+    await expect(images).toBeHidden();
+    // The mock adapter says how many images it was handed, and of which type.
+    await expect(conversation(page).getByTestId('item-assistant_text').last()).toHaveText(
+      'Received 2 images. Types: png, png.',
+    );
+    const sent = conversation(page).getByRole('list', { name: 'Sent with images' });
+    await expect(sent.getByRole('img')).toHaveCount(2);
+
+    await page.reload();
+    await expect(sent.getByRole('img', { name: 'Image 1' })).toHaveAttribute(
+      'src',
+      /^data:image\/png;base64,/,
+    );
+    await expect(sent.getByRole('img', { name: 'kettle.png' })).toBeVisible();
+    // Stored under wow's home, in the thread's own folder (spec 55): the two sent and the one
+    // taken off before sending.
+    const stored = await readdir(path.join(e2eHome, 'images', threadId));
+    expect(stored).toHaveLength(3);
+    for (const file of stored) expect(file).toMatch(/^[0-9a-f-]{36}\.png$/);
+  });
+
   test('a new thread starts from the last one (owner decision F-5)', async ({ page }) => {
     await startThread(page, 'Remember my settings');
     await page.keyboard.press('Control+Alt+N');
@@ -795,6 +877,22 @@ test.describe('sketch', () => {
     await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'composer-queued') });
     await page.keyboard.press('Control+.');
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+  });
+
+  test('image-chip', async ({ page }) => {
+    await startClaudeThread(page, 'Hello there');
+    await addImage(page, 'paste', 'image.png', 210);
+    await messageBox(page).fill('Why does the timer stop here?');
+    await messageBox(page).press('Enter');
+    await expect(conversation(page).getByTestId('item-assistant_text').last()).toHaveText(
+      'Received 1 image. Types: png.',
+    );
+    await addImage(page, 'paste', 'image.png', 140);
+    await addImage(page, 'drop', 'kettle-settings.png', 30);
+    const images = page.getByRole('list', { name: 'Images', exact: true });
+    await expect(images.getByRole('img')).toHaveCount(2);
+    await messageBox(page).pressSequentially('And these two, the settings before and after');
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'image-chip') });
   });
 
   test('skill-chip', async ({ page }) => {
