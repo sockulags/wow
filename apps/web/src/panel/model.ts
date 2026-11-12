@@ -139,3 +139,18 @@ export function threadUsage(turns: readonly Turn[]): ThreadUsage {
 
 export const clampPanelWidth = (width: number): number =>
   Math.round(Math.min(contextPanelWidthBounds.max, Math.max(contextPanelWidthBounds.min, width)));
+
+// The run view's gate bar keeps this much room beside a panel laid over the view: its widest
+// button and its padding (agent workbench spec 78).
+export const gateRoom = '16rem';
+
+// What a panel laid over the view leaves of the window. The panel is measured against the whole
+// window, the run view against what is left of the sidebar (below the narrow breakpoint at most
+// its 3rem rail) and the workflows list (16rem), so over a run view the panel leaves those and
+// the gate's room.
+export const overlayRoom = (view: PanelSelection['view']): string =>
+  view === 'run' ? `3rem + 16rem + ${gateRoom}` : '3rem';
+
+// The width the panel takes: the drag preview while the edge moves, else the stored width.
+export const effectivePanelWidth = (stored: number, preview: number | undefined): number =>
+  clampPanelWidth(preview ?? stored);

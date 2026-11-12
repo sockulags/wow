@@ -180,6 +180,47 @@ test.describe('a narrow window', () => {
     await page.keyboard.press('Control+Enter');
     await expect(runGate(page)).toContainText('check-work finished');
   });
+
+  test('keeps the gate bar in view at 1024 px with the widest panel @agent-workbench-78', async ({
+    page,
+  }) => {
+    await startRun('gate-narrow-wide-run');
+    await page.goto('/workflows/runs/gate-narrow-wide-run?tab=changes');
+    await expect(runGate(page)).toContainText('deliver-work finished');
+    await page.keyboard.press('Control+j');
+    await expect(panel(page)).toHaveAttribute('data-overlay', '');
+    const handle = page.getByTestId('context-panel-resize');
+    const start = await handle.boundingBox();
+    expect(start).not.toBeNull();
+    const x = (start?.x ?? 0) + (start?.width ?? 0) / 2;
+    const y = (start?.y ?? 0) + (start?.height ?? 0) / 2;
+    const buttonsClearOfPanel = async (click: boolean) => {
+      const edge = await panel(page).boundingBox();
+      for (const name of ['Approve', 'Send back', 'Stop']) {
+        const button = runGate(page).getByRole('button', { name, exact: true });
+        const box = await button.boundingBox();
+        expect((box?.x ?? Infinity) + (box?.width ?? 0)).toBeLessThanOrEqual(edge?.x ?? 0);
+        if (click) await button.click({ trial: true, timeout: 2000 });
+      }
+    };
+    // From the default 380 px to the largest width, 720 px: while the edge is dragged and once
+    // it is stored, the bar keeps room for its buttons.
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x - 340, y);
+    await expect(handle).toHaveAttribute('aria-valuenow', '720');
+    await buttonsClearOfPanel(false);
+    await page.mouse.up();
+    await buttonsClearOfPanel(true);
+    // Back to the default for the tests after this one.
+    const moved = await handle.boundingBox();
+    const back = (moved?.x ?? 0) + (moved?.width ?? 0) / 2;
+    await page.mouse.move(back, y);
+    await page.mouse.down();
+    await page.mouse.move(back + 340, y);
+    await page.mouse.up();
+    await expect(handle).toHaveAttribute('aria-valuenow', '380');
+  });
 });
 
 test.describe('sketch', () => {

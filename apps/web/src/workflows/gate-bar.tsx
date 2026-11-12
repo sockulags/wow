@@ -135,7 +135,10 @@ export function GateBar({
         <span className={stacked ? 'w-full' : 'min-w-56 flex-1'}>
           {gate ? gateMessage(gate, workflow) : 'The run is working on its current step.'}
         </span>
-        <span data-testid="gate-buttons" className="flex flex-wrap items-center gap-2">
+        <span
+          data-testid="gate-buttons"
+          className={cn('flex flex-wrap items-center gap-2', stacked && 'w-full')}
+        >
           {gate && (
             <WithTooltip
               label={atLimit ? 'Let the step run once more' : 'Approve and continue'}
