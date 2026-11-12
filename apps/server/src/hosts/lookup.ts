@@ -36,7 +36,8 @@ export interface HostLookupDeps {
   readonly engine: Engine;
   readonly settings: SettingsService;
   readonly logger: Logger;
-  readonly linkHosts: (projectId: string | null) => Promise<LinkHosts>;
+  // 'stored' gives the rules without reading a token; 'read' is for asking a host.
+  readonly linkHosts: (projectId: string | null, tokens: 'read' | 'stored') => Promise<LinkHosts>;
   readonly clock?: () => Date;
   readonly fetch?: typeof fetch;
 }
@@ -75,8 +76,8 @@ export class HostLookup {
     if (thread.kind === 'assistant') {
       throw new RpcFault('rejected', "The assistant's thread reads nothing from a host");
     }
-    const hosts = await this.#deps.linkHosts(thread.projectId);
-    const { rules } = hosts;
+    // Every thread view asks for the rules; the tokens are read only when a host is asked.
+    const { rules } = await this.#deps.linkHosts(thread.projectId, 'stored');
     const item = params.ref === undefined ? undefined : recogniseHostRef(params.ref, rules);
     if (!item) return { rules, item: null, read: null };
     const id = hostItemReadId(thread.id, item);
@@ -87,7 +88,10 @@ export class HostLookup {
     }
     let running = this.#inFlight.get(id);
     if (!running) {
-      running = this.#read(thread.id, item, hosts).finally(() => this.#inFlight.delete(id));
+      running = this.#deps
+        .linkHosts(thread.projectId, 'read')
+        .then((hosts) => this.#read(thread.id, item, hosts))
+        .finally(() => this.#inFlight.delete(id));
       this.#inFlight.set(id, running);
     }
     return { rules, item, read: (await running) ?? null };
