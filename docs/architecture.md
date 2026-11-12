@@ -467,8 +467,8 @@ thread it maps to, since the app-server has no request that unloads one.
   of the thread's live session, or of a short-lived query opened in `cwd`. Codex answers
   `handOver` with `{taken: false}` and `listCommands` with `[]`; RPC `provider.listCommands
 {providerInstanceId, cwd, threadId?}` returns the list (`ProviderSlashCommand[]`). The provider
-service keeps an answer per instance and folder for `providers.commandListSeconds` (30 s; 0 keeps
-none), since a probe starts Claude Code in the folder and the list asks each time it opens.
+  service keeps an answer per instance and folder for `providers.commandListSeconds` (30 s; 0 keeps
+  none), since a probe starts Claude Code in the folder and the list asks each time it opens.
 - **Chat options.** What the composer bar offers per provider kind (permission modes with their
   short label and tone, the Shift+Tab cycle `modeCycle`, the effort that leaves the choice to the
   provider, the compact message) is `providerChatOptions` in `packages/contracts`, because the

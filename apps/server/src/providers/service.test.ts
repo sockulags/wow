@@ -92,6 +92,8 @@ const committed = (kind: DomainEventKind) =>
     });
   });
 
+const commandListsAsked = () => adapter.sent.filter((command) => command.type === 'listCommands');
+
 const rows = (topic: 'threads' | 'turns' | 'threadItems' | 'approvals' | 'questions') =>
   snapshot(database.db, { topic, threadId: 't1' }) as Array<Record<string, unknown>>;
 const thread = () =>
@@ -396,16 +398,15 @@ describe('provider service', () => {
   });
 
   it("keeps a folder's command list for providers.commandListSeconds, then asks again", async () => {
-    const asked = () => adapter.sent.filter((command) => command.type === 'listCommands');
     nowMs = 1_000_000;
     await service.listCommands('claude-work', '/work/demo');
     await service.listCommands('claude-work', '/work/demo', 't1');
-    expect(asked()).toHaveLength(1);
+    expect(commandListsAsked()).toHaveLength(1);
     await service.listCommands('claude-work', '/work/other');
-    expect(asked()).toHaveLength(2);
+    expect(commandListsAsked()).toHaveLength(2);
     nowMs += 30_000;
     await service.listCommands('claude-work', '/work/demo');
-    expect(asked()).toHaveLength(3);
+    expect(commandListsAsked()).toHaveLength(3);
     dispatch({
       type: 'setting.set',
       key: 'providers.commandListSeconds',
@@ -413,7 +414,7 @@ describe('provider service', () => {
       scope: 'provider:claude-work',
     });
     await service.listCommands('claude-work', '/work/demo');
-    expect(asked()).toHaveLength(4);
+    expect(commandListsAsked()).toHaveLength(4);
   });
 
   it('pins and unpins a thread without touching its activity time', () => {

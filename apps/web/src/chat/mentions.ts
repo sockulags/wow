@@ -24,7 +24,7 @@ export function withoutMentions(text: string, files: readonly string[]): string 
 // the files come back as chips and Send names them again.
 export function withoutMentionLines(text: string, files: readonly string[]): string {
   if (files.length === 0) return text;
-  const names = [...files].sort((a, b) => b.length - a.length);
+  const names = files.toSorted((a, b) => b.length - a.length);
   const onlyMentions = (paragraph: string): boolean => {
     let rest = paragraph;
     while (rest !== '') {

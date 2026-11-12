@@ -85,7 +85,7 @@ describe('listFolderFiles', () => {
       const stdout = new EventEmitter();
       const child = Object.assign(new EventEmitter(), {
         stdout: Object.assign(stdout, { setEncoding: () => stdout }),
-        kill: vi.fn(() => true),
+        kill: vi.fn<() => boolean>(() => true),
       });
       const listing = listFolderFiles({
         folder,
