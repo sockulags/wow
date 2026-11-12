@@ -1,3 +1,4 @@
+import { useNeedsYouFocus } from './needs-you';
 import {
   cardOrder,
   isEmptyReply,
@@ -61,6 +62,8 @@ export interface QuestionCardProps<H> {
   onSend(replies: ReadonlyMap<string, QuestionReply>): Promise<unknown>;
   check?(replies: ReadonlyMap<string, QuestionReply>): H | null;
   renderHold?(held: H, controls: HoldControls): ReactNode;
+  // "Next that needs you" lands here while a question is open (agent workbench spec 76).
+  readonly needsYouKey?: string | undefined;
 }
 
 interface Row {
@@ -92,6 +95,7 @@ export function QuestionCard<H>({
   onSend,
   check,
   renderHold,
+  needsYouKey,
 }: QuestionCardProps<H>) {
   const questions = given.map(withDistinctLabels);
   const open = questions.filter((question) => question.status.kind === 'open');
@@ -106,6 +110,12 @@ export function QuestionCard<H>({
   const [error, setError] = useState<string>();
   const [held, setHeld] = useState<{ readonly hold: H } | undefined>();
   const elements = useRef<(HTMLElement | null)[]>([]);
+  // Read when the effect runs: on the first render the rows are not mounted yet.
+  useNeedsYouFocus(open.length > 0 ? needsYouKey : undefined, {
+    get current() {
+      return elements.current[active] ?? null;
+    },
+  });
 
   const replyOf = (question: CardQuestion): QuestionReply => ({
     // In the order the asker gave them, which the provider expects.
@@ -281,7 +291,10 @@ export function QuestionCard<H>({
         return (
           <div key={question.key} data-testid="question" className="flex flex-col gap-2">
             <div className="flex items-start gap-2">
-              <HelpCircleIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-state-needs-you" />
+              <HelpCircleIcon
+                aria-hidden
+                className="mt-0.5 size-4 shrink-0 text-state-needs-you-text"
+              />
               <div className="flex min-w-0 flex-col gap-1">
                 {question.header && (
                   <Badge variant="secondary" data-testid="question-header">

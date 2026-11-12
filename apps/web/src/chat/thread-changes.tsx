@@ -16,13 +16,17 @@ import { cn } from '@/lib/utils';
 import { routerPanelRoute } from '@/panel/model';
 import { changesTabId, closeTab, closeViewer, openChanges, panelTabsOf } from '@/panel/viewer';
 import type { SettingsStore } from '@wow/client-runtime';
+import { notify } from '@/lib/feedback';
+import { useOpenInEditor } from '@/panel/editor';
 import { DiffLines } from '@/workflows/changes-tab';
+import { lineComment } from '@/workflows/gate';
 import {
   fileStatusLabels,
   fileStatusLetters,
   lineChanges,
   unshownReason,
 } from '@/workflows/changes';
+import { skillComposerStore, threadSkillComposer } from './composer-store';
 import { errorMessage, useTopic } from './data';
 
 // A chat thread's Changes (agent workbench spec 34, 35): what changed in its folder since its
@@ -185,8 +189,22 @@ function emptyText(status: Exclude<RunDiffStatus, 'ok'>, message: string | null)
   }
 }
 
+// A comment on a line of a thread's Changes goes into the thread's composer as a line of the
+// reply (spec 80), where the user sends it like any message.
+export function commentInComposer(threadId: string, path: string, line: number, text: string) {
+  const composer = threadSkillComposer(skillComposerStore.getState(), threadId);
+  if (!composer) {
+    notify.error('The comment was not added', {
+      description: 'Open the thread to write in its composer, then add the comment again.',
+    });
+    return;
+  }
+  composer.addText(lineComment(path, line, text));
+}
+
 function FilePatch({ threadId, file }: { readonly threadId: string; readonly file: RunDiffFile }) {
   const { diff, error } = useThreadDiff(threadId, file.path);
+  const editor = useOpenInEditor();
   const shown = diff?.files[0] ?? file;
   const reason = unshownReason(shown);
   if (reason !== undefined) {
@@ -212,12 +230,22 @@ function FilePatch({ threadId, file }: { readonly threadId: string; readonly fil
   if (!diff.patch) {
     return <p className="px-3 py-4 text-xs text-muted-foreground">No line differs.</p>;
   }
-  return <DiffLines path={file.path} patch={diff.patch} />;
+  return (
+    <DiffLines
+      path={file.path}
+      patch={diff.patch}
+      actions={{
+        comment: (line, text) => commentInComposer(threadId, file.path, line, text),
+        openAt: (line) => editor.open({ scope: { threadId }, path: file.path, line }),
+      }}
+    />
+  );
 }
 
 export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) {
   const { threadId, from } = changes;
   const { layout } = useRuntime();
+  const editor = useOpenInEditor();
   const { diff, error } = useThreadDiff(threadId);
   const turnOnly = useStore(threadChangesStore, (state) => state.turnOnly);
   const selected = useStore(threadChangesStore, (state) => state.path);
@@ -301,6 +329,10 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
                     file.path === open?.path && 'bg-muted',
                   )}
                   onClick={() => threadChangesStore.setState({ path: file.path })}
+                  onKeyDown={(event) =>
+                    file.status !== 'deleted' &&
+                    editor.onKey(event, { scope: { threadId }, path: file.path })
+                  }
                 >
                   <span
                     aria-label={fileStatusLabels[file.status]}

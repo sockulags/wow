@@ -6,6 +6,7 @@ import { DETAILS_TAB, type LayoutState, type OpenFileDialog } from '@/app/runtim
 import { artifactPath } from '@/workflows/model';
 import { pageTitle, runPageRead } from '@/workflows/pages-tab';
 import { hasSelection, type PanelSelection } from './model';
+import { openInEditor } from './editor';
 import { askHostItem } from './host-tab';
 import { showInContextPanel } from './panel-state';
 import {
@@ -151,6 +152,15 @@ export function viewerCommands({
         keywords: ['close file', 'viewer', 'side panel'],
         detail: file.path,
         run: ({ layout }) => closeViewer(layout, pathname),
+      },
+      {
+        id: 'viewer.openInEditor',
+        title: 'Open file in editor',
+        group: 'Workflows',
+        keywords: ['viewer', 'editor', 'code', 'ide', 'shift+enter'],
+        detail: file.path,
+        run: ({ connection }) =>
+          void openInEditor(connection, { scope: file.scope, path: file.path }),
       },
       {
         id: 'viewer.copyPath',

@@ -1,11 +1,14 @@
 import type { HostItemRead, HostItemRef, HostLinkRules, ThreadItem } from '@wow/contracts';
 import { hostItemKey, hostItemReadId, sameHostItem } from '@wow/contracts';
-import { render, screen } from '@testing-library/react';
+import type { Connection, ConnectionState } from '@wow/client-runtime';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Markdown } from '@/components/markdown';
 import { threadMentions } from '@/panel/thread-panel';
 import { loadMarkdown } from '../test/markdown';
+import { createTestRuntime, renderWithRuntime } from '../test/render';
+import { createStore } from 'zustand';
 import {
   BookOpenIcon,
   CircleDotIcon,
@@ -21,6 +24,7 @@ import {
   hostItemsIn,
   recogniseHostLink,
   recogniseHostRef,
+  useHostLinkRules,
   type HostLinks,
 } from './host-links';
 
@@ -124,6 +128,19 @@ describe('link recognition @agent-workbench-20 @agent-workbench-23', () => {
     ).toBeUndefined();
   });
 
+  it.each([
+    'https://ghe.example.invalid/acme/te%2561/pull/14',
+    'https://ghe.example.invalid/acme/te%3Fa/issues/3',
+    'https://lab.example.invalid/gitlab/te%23a/field/-/merge_requests/7',
+  ])('gives %s an address that is read again as the same item', (link) => {
+    const item = recogniseHostLink(link, rules);
+    if (!item) throw new Error('not recognised');
+    const again = recogniseHostLink(item.url, rules);
+    if (!again) throw new Error('its address is not recognised');
+    expect(hostItemKey(again)).toBe(hostItemKey(item));
+    expect(again.url).toBe(item.url);
+  });
+
   it('knows no link without a site, as for a host without a token', () => {
     expect(
       recogniseHostLink('https://ghe.example.invalid/acme/tea/pull/14', {
@@ -146,6 +163,11 @@ describe('key recognition @agent-workbench-24', () => {
         (match) => match.text,
       ),
     ).toEqual(['#123', '#1020']);
+    expect(
+      bareHostRefs('Fixes: #123. Closes: #456, see #124; then background-color: #789', rules).map(
+        (match) => match.text,
+      ),
+    ).toEqual(['#123', '#456', '#124']);
   });
 
   it('reads `!7` and `#4` on a GitLab repository', () => {
@@ -463,5 +485,94 @@ describe('Mentioned @agent-workbench-19', () => {
       'ticket:DEMO-42',
       'changeRequest:14',
     ]);
+  });
+});
+
+function fakeServer() {
+  const lookups: unknown[] = [];
+  const held: (() => void)[] = [];
+  let hold = false;
+  const listeners: Record<string, ((rows: unknown[]) => void)[]> = {};
+  const connection: Connection = {
+    state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
+    request(method, params) {
+      if (method === 'hosts.lookup') {
+        lookups.push(params);
+        const answer = { rules, item: null, read: null };
+        if (!hold) return Promise.resolve(answer);
+        return new Promise((resolve) => held.push(() => resolve(answer)));
+      }
+      return Promise.resolve([]);
+    },
+    subscribe(topic, _params, onData) {
+      (listeners[topic] ??= []).push(onData as (rows: unknown[]) => void);
+      onData([]);
+      return () => undefined;
+    },
+    retry: () => undefined,
+    close: () => undefined,
+  };
+  const push = (topic: string, rows: unknown[]) => {
+    for (const listener of listeners[topic] ?? []) listener(rows);
+  };
+  const holdAnswers = () => {
+    hold = true;
+  };
+  const answerHeld = () => {
+    for (const answer of held.splice(0)) answer();
+  };
+  return {
+    runtime: { ...createTestRuntime(), connection },
+    lookups,
+    push,
+    holdAnswers,
+    answerHeld,
+  };
+}
+
+function Probe({ name, threadId = 'tea' }: { readonly name: string; readonly threadId?: string }) {
+  const shown = useHostLinkRules(threadId);
+  return <p>{`${name}: ${shown.jiraKey ?? 'none'}`}</p>;
+}
+
+describe('the rules of a thread', () => {
+  it('asks once for two views showing one thread, and once more when the settings change', async () => {
+    const server = fakeServer();
+    renderWithRuntime(
+      <>
+        <Probe name="conversation" />
+        <Probe name="panel" />
+      </>,
+      server.runtime,
+    );
+    expect(await screen.findByText('conversation: DEMO')).toBeTruthy();
+    expect(await screen.findByText('panel: DEMO')).toBeTruthy();
+    expect(server.lookups).toEqual([{ threadId: 'tea' }]);
+    act(() =>
+      server.push('settings', [
+        { key: 'trackers.jira.projectKey', scope: 'global', value: 'DEMO' },
+      ]),
+    );
+    await act(() => Promise.resolve());
+    expect(server.lookups).toEqual([{ threadId: 'tea' }, { threadId: 'tea' }]);
+  });
+
+  it('asks again when a thread is shown after its last view left while the question was out', async () => {
+    const server = fakeServer();
+    server.holdAnswers();
+    const shown = renderWithRuntime(
+      <Probe name="conversation" threadId="kettle" />,
+      server.runtime,
+    );
+    await act(() => Promise.resolve());
+    expect(server.lookups).toEqual([{ threadId: 'kettle' }]);
+    shown.unmount();
+    await act(async () => {
+      server.answerHeld();
+      await Promise.resolve();
+    });
+    renderWithRuntime(<Probe name="again" threadId="kettle" />, server.runtime);
+    await act(() => Promise.resolve());
+    expect(server.lookups).toEqual([{ threadId: 'kettle' }, { threadId: 'kettle' }]);
   });
 });

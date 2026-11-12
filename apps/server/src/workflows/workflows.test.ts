@@ -437,7 +437,12 @@ describe('workflow runs', () => {
     await server.workflows.settled();
     expect(run().steps[0]).toMatchObject({ state: 'running' });
     expect(thread('r1.s1')?.backgroundTasks).toEqual([
-      { id: 'bg-1', description: 'Count the tea leaves', agent: true },
+      {
+        id: 'bg-1',
+        description: 'Count the tea leaves',
+        agent: true,
+        startedAt: expect.any(String),
+      },
     ]);
 
     adapters[0]?.emit([

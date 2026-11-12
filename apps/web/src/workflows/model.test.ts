@@ -348,6 +348,7 @@ describe('workflowCommands', () => {
       'New workflow from template: Feature',
       'New workflow from template: Initiative',
       'Go to event triggers',
+      'Go to runs',
       'New event trigger',
       'Feature',
       'Feature: run in an own working copy',

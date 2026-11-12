@@ -153,7 +153,7 @@ const stateBorder: Readonly<Record<OccurrenceState, string>> = {
 const stateText: Readonly<Record<OccurrenceState, string>> = {
   scheduled: 'text-muted-foreground',
   running: 'text-state-working',
-  waiting: 'text-state-needs-you',
+  waiting: 'text-state-needs-you-text',
   done: 'text-state-done',
   failed: 'text-state-failed',
   stopped: 'text-muted-foreground',

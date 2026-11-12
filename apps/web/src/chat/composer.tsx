@@ -1,7 +1,6 @@
 import {
   ambiguousOwnSkill,
   ownSkillFolder,
-  skillGroupLabels,
   type FileScope,
   type ProviderKind,
   type SentImage,
@@ -47,7 +46,7 @@ import {
   type ImageTarget,
 } from './image-chip';
 import { showImageComposer } from './image-commands';
-import { withMentions } from './mentions';
+import { withMentions, withoutMentionLines } from './mentions';
 import { ComposerSkillChip, SkillMark } from './skill-chip';
 import {
   paletteCommandsStore,
@@ -59,7 +58,14 @@ import {
   type CommandPick,
   type CommandSource,
 } from './slash-commands';
-import { skillGroup, skillGroups, skillSourceLabel } from './view-model';
+import {
+  chatSkillSection,
+  chatSkillSectionLabels,
+  chatSkillSections,
+  isStepSkill,
+  skillGroup,
+  skillSourceLabel,
+} from './view-model';
 
 export interface ComposerHandle {
   focus(): void;
@@ -75,7 +81,12 @@ export interface ComposerHandle {
   text(): string;
   // A message taken back off the queue (Edit, agent workbench spec 52): its text before what the
   // box holds, its skills and images as chips.
-  putBack(text: string, skills: readonly SkillRef[], images?: readonly SentImage[]): void;
+  putBack(
+    text: string,
+    skills: readonly SkillRef[],
+    images?: readonly SentImage[],
+    files?: readonly string[],
+  ): void;
 }
 
 export interface ComposerProps {
@@ -119,7 +130,16 @@ export interface ComposerProps {
   // Where pasted and dropped images are stored (spec 53). Without it the composer takes no
   // images (the Assistant view, spec 61).
   readonly imageTarget?: ImageTarget | undefined;
+  // Skills the thread was sent with lately, newest first: their own group in the list (spec 57).
+  readonly recentSkills?: readonly string[] | undefined;
+  // The skill and file lists open under the box, so they leave what sits above it in view (the
+  // new thread's provider and project pickers, spec 57).
+  readonly listsBelow?: boolean | undefined;
 }
+
+const noSkills: readonly string[] = [];
+
+const listPlacement = (below: boolean) => (below ? 'top-full mt-1' : 'bottom-full mb-1');
 
 // The `@` list: the thread folder's files as the user types (spec 56). The focus stays in the
 // text box, like the skill list's.
@@ -128,10 +148,12 @@ function FilePicker({
   matches,
   note,
   active,
+  below,
   onPick,
   onHover,
 }: {
   id: string;
+  below: boolean;
   matches: readonly string[];
   note: string | undefined;
   active: string | undefined;
@@ -139,7 +161,12 @@ function FilePicker({
   onHover(path: string): void;
 }) {
   return (
-    <div className="absolute bottom-full left-0 z-10 mb-1 w-full overflow-hidden rounded-md border border-border shadow-md">
+    <div
+      className={cn(
+        'absolute left-0 z-10 w-full overflow-hidden rounded-md border border-border shadow-md',
+        listPlacement(below),
+      )}
+    >
       <Command shouldFilter={false} value={active ?? ''} className={groupClass}>
         <CommandList id={id} label="Files" className="max-h-72">
           {matches.length > 0 && (
@@ -219,10 +246,14 @@ function SkillPicker({
   all,
   active,
   kind,
+  recent,
+  below,
   onPick,
   onHover,
 }: {
   id: string;
+  recent: readonly string[];
+  below: boolean;
   picks: readonly ListPick[];
   // Every skill, to tell which own skills share a name.
   all: readonly Skill[];
@@ -248,7 +279,12 @@ function SkillPicker({
     </CommandItem>
   );
   return (
-    <div className="absolute bottom-full left-0 z-10 mb-1 w-full overflow-hidden rounded-md border border-border shadow-md">
+    <div
+      className={cn(
+        'absolute left-0 z-10 w-full overflow-hidden rounded-md border border-border shadow-md',
+        listPlacement(below),
+      )}
+    >
       <Command shouldFilter={false} value={active ? pickValue(active) : ''} className={groupClass}>
         <CommandList id={id} label="Skills" className="max-h-72">
           {picks.length === 0 && (
@@ -281,17 +317,17 @@ function SkillPicker({
               )}
             </CommandGroup>
           )}
-          {skillGroups.map((group) => {
-            const members = skills.filter((skill) => skillGroup(skill) === group);
+          {chatSkillSections.map((section) => {
+            const members = skills.filter((skill) => chatSkillSection(skill, recent) === section);
             if (members.length === 0) return null;
             return (
-              <CommandGroup key={group} heading={skillGroupLabels[group]}>
+              <CommandGroup key={section} heading={chatSkillSectionLabels[section]}>
                 {members.map((skill) =>
                   item(
                     { kind: 'skill', skill },
                     <>
                       <span className="flex w-full items-baseline gap-2 [&>svg]:size-3 [&>svg]:self-center">
-                        <SkillMark group={group} />
+                        <SkillMark group={skillGroup(skill)} />
                         <span className="font-medium">{skill.name}</span>
                         {skill.source === 'yours' &&
                           ambiguousOwnSkill(all, skill.name) !== undefined && (
@@ -303,6 +339,14 @@ function SkillPicker({
                         {skill.text === undefined && (
                           <span className="font-mono text-2xs text-muted-foreground">
                             {skill.invocations[kind]}
+                          </span>
+                        )}
+                        {isStepSkill(skill) && (
+                          <span
+                            data-testid="step-skill-mark"
+                            className="shrink-0 rounded-sm border border-border px-1 text-2xs text-muted-foreground"
+                          >
+                            for workflow steps
                           </span>
                         )}
                         <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
@@ -326,9 +370,15 @@ function SkillPicker({
   );
 }
 
-// List order: grouped like the list shows them, each group ranked by the filter.
-const inPickerOrder = (skills: readonly Skill[]): Skill[] =>
-  skillGroups.flatMap((group) => skills.filter((skill) => skillGroup(skill) === group));
+// List order: grouped like the list shows them, each group ranked by the filter; the recently
+// used newest first.
+const inPickerOrder = (skills: readonly Skill[], recent: readonly string[]): Skill[] =>
+  chatSkillSections.flatMap((section) => {
+    const members = skills.filter((skill) => chatSkillSection(skill, recent) === section);
+    return section === 'recent'
+      ? members.toSorted((a, b) => recent.indexOf(a.name) - recent.indexOf(b.name))
+      : members;
+  });
 
 const withSkill = (chips: readonly Skill[], skill: Skill): Skill[] =>
   chips.some((chip) => chip.id === skill.id) ? [...chips] : [...chips, skill];
@@ -377,6 +427,8 @@ export function Composer({
   commandSource,
   fileSource,
   imageTarget,
+  recentSkills = noSkills,
+  listsBelow = false,
 }: ComposerProps) {
   const pickerId = useId();
   const filePickerId = useId();
@@ -440,10 +492,12 @@ export function Composer({
         ...(offersCommands
           ? providerCommandPicks(providerCommands, wowPicks, skills ?? [], query.query)
           : []),
-        ...inPickerOrder(filterSkills(skills ?? [], query.query)).map((skill): ListPick => ({
-          kind: 'skill',
-          skill,
-        })),
+        ...inPickerOrder(filterSkills(skills ?? [], query.query), recentSkills).map(
+          (skill): ListPick => ({
+            kind: 'skill',
+            skill,
+          }),
+        ),
       ]
     : [];
   const activeIndex = Math.min(active, Math.max(0, picks.length - 1));
@@ -549,9 +603,19 @@ export function Composer({
     sent.then(
       () => {
         setSending(false);
-        // Sent from a thread that is no longer on screen: only its stored draft goes.
+        // Sent from a thread that is no longer on screen: its stored draft goes, but images
+        // added there while the message was on its way stay.
         if (sentFrom === onScreen.current) clear(message.images);
-        else if (sentFrom !== undefined) writeDraft(sentFrom, { text: '', skills: [] });
+        else if (sentFrom !== undefined) {
+          const kept = (readDraft(sentFrom).images ?? []).filter(
+            (image) => !message.images.some((gone) => gone.id === image.id),
+          );
+          writeDraft(sentFrom, {
+            text: '',
+            skills: [],
+            ...(kept.length > 0 ? { images: kept } : {}),
+          });
+        }
       },
       (reason: unknown) => {
         setSending(false);
@@ -676,12 +740,17 @@ export function Composer({
   };
 
   // A queued message back in the box: its text first, then what was typed since; its skills as
-  // chips where they are still listed, its images as they were.
+  // chips where they are still listed, its images and mentioned files as they were.
   const putBack = (
-    value: string,
+    queuedText: string,
     refs: readonly SkillRef[],
     returned: readonly SentImage[] = [],
+    mentioned: readonly string[] = [],
   ) => {
+    if (mentioned.length > 0) {
+      setFiles((current) => [...mentioned, ...current.filter((file) => !mentioned.includes(file))]);
+    }
+    const value = withoutMentionLines(queuedText, mentioned);
     if (returned.length > 0 && takesImages) {
       setImages((current) => [
         ...returned,
@@ -698,6 +767,13 @@ export function Composer({
       setChips((current) => found.reduce(withSkill, [...current]));
     }
     textarea.current?.focus();
+  };
+
+  // A comment from the thread's Changes goes on its own line after what is typed (spec 80).
+  const addText = (added: string) => {
+    const kept = text.replace(/\s+$/u, '');
+    const joined = kept === '' ? added : `${kept}\n${added}`;
+    update(joined, joined.length, undefined);
   };
 
   // While a turn runs the server queues the message (agent workbench spec 50).
@@ -740,9 +816,9 @@ export function Composer({
   // The palette reaches the composer on screen that takes skills. It registers once per chip
   // list, not per keystroke, so the palette's commands are not rebuilt while the writer types;
   // the registered actions reach this render's text and caret through a ref.
-  const actions = useRef({ openSkills, removeChip, putBack, removeImage });
+  const actions = useRef({ openSkills, removeChip, putBack, removeImage, addText });
   useLayoutEffect(() => {
-    actions.current = { openSkills, removeChip, putBack, removeImage };
+    actions.current = { openSkills, removeChip, putBack, removeImage, addText };
   });
   const chipNames = chips.map((chip) => chip.name).join('\n');
   useEffect(() => {
@@ -753,7 +829,9 @@ export function Composer({
       chips: chipNames === '' ? [] : chipNames.split('\n'),
       openSkills: () => actions.current.openSkills(),
       removeSkill: (index: number) => actions.current.removeChip(index),
-      putBack: (value, refs, returned) => actions.current.putBack(value, refs, returned),
+      putBack: (value, refs, returned, mentioned) =>
+        actions.current.putBack(value, refs, returned, mentioned),
+      addText: (added) => actions.current.addText(added),
     });
   }, [takesSkills, disabled, composerId, chipNames, draftKey]);
 
@@ -942,6 +1020,8 @@ export function Composer({
             all={skills ?? []}
             active={activePick}
             kind={providerKind}
+            recent={recentSkills}
+            below={listsBelow}
             onPick={choose}
             onHover={(pick) =>
               setActive(
@@ -956,6 +1036,7 @@ export function Composer({
         {fileQuery && (
           <FilePicker
             id={filePickerId}
+            below={listsBelow}
             matches={fileMatches}
             note={fileNote}
             active={activeFile}

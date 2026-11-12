@@ -15,7 +15,9 @@ import {
   Undo2Icon,
   XIcon,
 } from 'lucide-react';
-import { useId, useState } from 'react';
+import { useRouter } from '@tanstack/react-router';
+import { useId, useRef, useState } from 'react';
+import { runNeedsYou, useNeedsYouFocus } from '@/chat/needs-you';
 import { useStore } from 'zustand';
 import { useSetting } from '@/app/runtime';
 import { errorMessage, useDispatch } from '@/chat/data';
@@ -58,11 +60,19 @@ const partStates: Readonly<Record<GatePartResult['state'], string>> = {
 // review. A gate with a condition that did not pass by itself says which part failed, or that
 // it waits for the pull request's checks (spec 55, 56). At the limit of a loop the bar says the
 // limit sentence, and the answers are "Run once more" and Stop (workflow branches spec 9).
+//
+// The run view keeps its bar at its top whatever the side panel shows (agent workbench spec 77);
+// the panel's conversation shows a copy. While the run view is on screen the send-back note is
+// written in the run view's bar only, where line comments from the Changes tab gather (spec 80),
+// so there is one note field. `stacked` puts the buttons under the text, for a run view with the
+// panel laid over it (spec 78).
 export function GateBar({
   run,
   workflow,
   project,
   review = true,
+  inRunView = false,
+  stacked = false,
   onError,
 }: {
   run: WorkflowRun;
@@ -70,8 +80,15 @@ export function GateBar({
   project?: Project | undefined;
   // Show the reviewed step's final message and artifacts inside the bar.
   review?: boolean;
+  // This is the run view's own bar.
+  inRunView?: boolean;
+  stacked?: boolean;
   onError?(message: string | undefined): void;
 }) {
+  // Read, not followed: the bar is drawn again with the view around it. Absent in tests.
+  const router: ReturnType<typeof useRouter> | undefined = useRouter({ warn: false });
+  const runViewShown = router?.state.location.pathname === `/workflows/runs/${run.id}`;
+  const noteHere = inRunView || !runViewShown;
   const send = useDispatch();
   const approveBinding = useSetting('keybindings.gateApprove');
   const sendBackBinding = useSetting('keybindings.gateSendBack');
@@ -82,6 +99,13 @@ export function GateBar({
   const noteId = useId();
   const draft = useStore(gateStore, (state) => sendBackDraft(state, run));
   const gate = gateOf(run);
+  const approveButton = useRef<HTMLButtonElement>(null);
+  // "Next that needs you" lands on one bar: the run view's own while it is on screen, where the
+  // note is written too, so the copy in the side panel does not take the focus from it.
+  useNeedsYouFocus(
+    gate && noteHere && runNeedsYou(run) ? `run:${run.id}` : undefined,
+    approveButton,
+  );
   if (!isLive(run)) return null;
   const reviewed = reviewedStep(run);
   const atLimit = gate?.limit !== undefined;
@@ -112,46 +136,60 @@ export function GateBar({
         gate ? 'border-state-needs-you/60 bg-state-needs-you/10' : 'border-border',
       )}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="min-w-56 flex-1">
+      <div
+        data-testid="gate-row"
+        className={cn('flex flex-wrap items-center gap-2', stacked && 'flex-col items-start')}
+      >
+        <span className={stacked ? 'w-full' : 'min-w-56 flex-1'}>
           {gate ? gateMessage(gate, workflow) : 'The run is working on its current step.'}
         </span>
-        {gate && (
-          <WithTooltip
-            label={atLimit ? 'Let the step run once more' : 'Approve and continue'}
-            binding={draft ? '' : approveBinding}
-          >
-            <Button
-              size="sm"
-              disabled={busy || draft !== undefined}
-              onClick={() => void act('workflowRun.continue')}
+        <span
+          data-testid="gate-buttons"
+          className={cn('flex flex-wrap items-center gap-2', stacked && 'w-full')}
+        >
+          {gate && (
+            <WithTooltip
+              label={atLimit ? 'Let the step run once more' : 'Approve and continue'}
+              binding={draft ? '' : approveBinding}
             >
-              {atLimit ? <RepeatIcon /> : <CheckIcon />}
-              {atLimit ? 'Run once more' : 'Approve'}
-            </Button>
-          </WithTooltip>
-        )}
-        {canSendBack(run) && (
-          <WithTooltip label="Send back with a note" binding={draft ? '' : sendBackBinding}>
+              <Button
+                ref={approveButton}
+                size="sm"
+                disabled={busy || draft !== undefined}
+                onClick={() => void act('workflowRun.continue')}
+              >
+                {atLimit ? <RepeatIcon /> : <CheckIcon />}
+                {atLimit ? 'Run once more' : 'Approve'}
+              </Button>
+            </WithTooltip>
+          )}
+          {canSendBack(run) && (
+            <WithTooltip label="Send back with a note" binding={draft ? '' : sendBackBinding}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                aria-expanded={draft !== undefined}
+                aria-controls={draft && noteHere ? noteId : undefined}
+                onClick={() => (draft ? cancelSendBack() : openSendBack(run))}
+              >
+                <Undo2Icon />
+                Send back
+              </Button>
+            </WithTooltip>
+          )}
+          <WithTooltip label="Stop run" binding={stopBinding}>
             <Button
               size="sm"
               variant="outline"
               disabled={busy}
-              aria-expanded={draft !== undefined}
-              aria-controls={draft ? noteId : undefined}
-              onClick={() => (draft ? cancelSendBack() : openSendBack(run))}
+              onClick={() => setConfirmStop(true)}
             >
-              <Undo2Icon />
-              Send back
+              <SquareIcon className="size-3 fill-current" />
+              Stop
             </Button>
           </WithTooltip>
-        )}
-        <WithTooltip label="Stop run" binding={stopBinding}>
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => setConfirmStop(true)}>
-            <SquareIcon className="size-3 fill-current" />
-            Stop
-          </Button>
-        </WithTooltip>
+        </span>
       </div>
       {standing && (
         <div data-testid="gate-condition" className="flex flex-col gap-1 text-xs">
@@ -174,7 +212,7 @@ export function GateBar({
           </ul>
         </div>
       )}
-      {draft && (
+      {draft && noteHere && (
         <form
           aria-label="Send back"
           className="flex flex-col gap-1.5"

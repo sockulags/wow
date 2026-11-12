@@ -1,6 +1,9 @@
 import {
   SecretRef,
+  ToolCallItemPayload,
   askedQuestionsOf,
+  assistantToolOf,
+  assistantToolText,
   assistantThreadId,
   heldSecretSentence,
   providerChatOptions,
@@ -38,12 +41,15 @@ import {
   holdMessage,
   isVariable,
   placeRows,
+  proposalFocus,
+  waitingProposals,
+  waitingText,
   withoutSecret,
   type Held,
   type Placed,
 } from './model';
 import { AssistantQuestions, askState } from './questions';
-import { ChangeRow, ProposalCard } from './rows';
+import { ChangeRow, ProposalCard, WaitingLine } from './rows';
 
 // The Assistant section (app assistant spec 1, 3, 7 to 18): the one assistant conversation,
 // reusing the chat view's conversation and composer, with change rows, proposals and the cards
@@ -202,6 +208,7 @@ export function HeldLine({
 
 export function AssistantView() {
   const runtime = useRuntime();
+  const send = useDispatch();
   const { connection } = runtime;
   const { rows: threads, status } = useTopicState('assistantThread');
   const thread = threads?.[0];
@@ -303,6 +310,17 @@ export function AssistantView() {
     ),
   };
 
+  // One of wow's tools reads in words, and has no row of its own where a change row, proposal,
+  // secret field or question card below it shows the call (spec 82).
+  const toolWords = (item: ThreadItem): string | null | undefined => {
+    const payload = ToolCallItemPayload.safeParse(item.payload);
+    if (!payload.success) return undefined;
+    const tool = assistantToolOf(payload.data.name);
+    if (tool === null) return undefined;
+    if (after.has(item.id) || askOf(item) !== null || askedQuestionsOf(item) !== null) return null;
+    return assistantToolText(tool);
+  };
+
   const extraAfter = (item: ThreadItem): ReactNode => {
     const ask = askOf(item);
     const questions = askedQuestionsOf(item);
@@ -361,7 +379,20 @@ export function AssistantView() {
     composer.current?.setText(withoutSecret(current, composer.current.text()));
   };
 
-  const notice = held ? (
+  const waiting = waitingProposals(proposals);
+  const [oldest] = waiting;
+  const waitingLine =
+    oldest !== undefined ? (
+      <WaitingLine
+        key={oldest.id}
+        text={waitingText(waiting) ?? oldest.title}
+        onYes={() => send({ type: 'assistant.proposal.accept', proposalId: oldest.id })}
+        onNo={() => send({ type: 'assistant.proposal.decline', proposalId: oldest.id })}
+        onShow={() => proposalFocus.setState({ id: oldest.id })}
+      />
+    ) : undefined;
+
+  const heldNotice = held ? (
     <HeldLine
       held={held}
       onPut={held.field ? putInField(held) : undefined}
@@ -373,6 +404,15 @@ export function AssistantView() {
       {saved}
     </p>
   ) : undefined;
+  const notice =
+    waitingLine && heldNotice ? (
+      <div className="flex flex-col gap-2">
+        {waitingLine}
+        {heldNotice}
+      </div>
+    ) : (
+      (waitingLine ?? heldNotice)
+    );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -407,6 +447,7 @@ export function AssistantView() {
           },
           questionHold,
           notice,
+          toolWords,
           modelBar: modelBar ?? null,
         }}
       />

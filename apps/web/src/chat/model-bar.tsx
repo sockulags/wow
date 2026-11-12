@@ -490,8 +490,14 @@ export function useModelBarKeys(
     const handle = bar.current;
     if (!key) return false;
     if (key === 'leave') {
-      // Over the view the panel is put away by Escape, as before the bar had this key.
-      if (event.currentTarget.closest(`#${CONTEXT_PANEL_ID}[data-overlay]`)) return false;
+      // Over the view the panel is put away by Escape, as before the bar had this key. The
+      // panel knows only Escape, so another leave key still leaves.
+      if (
+        event.key === 'Escape' &&
+        event.currentTarget.closest(`#${CONTEXT_PANEL_ID}[data-overlay]`)
+      ) {
+        return false;
+      }
       if (!focusBefore(event.currentTarget)) return false;
     } else if (!handle) {
       return false;

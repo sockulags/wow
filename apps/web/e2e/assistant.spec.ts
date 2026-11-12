@@ -34,11 +34,14 @@ const conversation = (page: Page) => page.getByRole('list', { name: 'Conversatio
 const composer = (page: Page) => page.getByRole('combobox', { name: 'Message' });
 
 // Sends a message and waits for the turn's answer, the last row after the message. Every
-// message of the file is different, so it is found by its text.
+// message of the file is different, so it is found by its text; another file of this project
+// may have sent a longer message that holds the same words, so the newest match is the one.
 async function say(page: Page, text: string): Promise<void> {
   await composer(page).fill(text);
   await composer(page).press('Enter');
-  await expect(conversation(page).getByTestId('item-user').filter({ hasText: text })).toBeVisible();
+  await expect(
+    conversation(page).getByTestId('item-user').filter({ hasText: text }).last(),
+  ).toBeVisible();
   await expect(conversation(page).locator(':scope > li').last()).toHaveAttribute(
     'data-testid',
     'item-assistant_text',
@@ -69,7 +72,7 @@ test.describe('assistant', () => {
     await expect(composer(page)).toBeFocused();
 
     await say(page, 'Make my work hours end at four');
-    const row = page.getByRole('region', { name: 'Change: Work hours' });
+    const row = page.getByRole('region', { name: 'Change: Work hours' }).last();
     await expect(row).toContainText(/Work hours: .+ → 08:00–16:00/);
     await expect(row.getByRole('link', { name: 'Settings → Calendar' })).toBeVisible();
     if (sketching) await row.screenshot({ path: sketchPath(intent, 'change-row') });
@@ -238,7 +241,7 @@ test.describe('assistant', () => {
     await page.goto('/assistant');
     await say(page, 'Why does this not work?');
     const tool = conversation(page).getByTestId('item-tool_call').last();
-    await expect(tool).toContainText('diagnose_setup');
+    await expect(tool).toContainText('Checked what does not work');
     const reply = conversation(page).getByTestId('item-assistant_text').last();
     await expect(reply).toContainText(/\d+ things? (is|are) failing\./);
     // The seeded workflow names a skill that is not installed; the reply says so and where.
@@ -281,7 +284,7 @@ test.describe('assistant', () => {
     );
     // The run still waits at its gate for the user.
     await page.goto(`/workflows/runs/${runId}`);
-    const gate = page.getByRole('region', { name: 'Gate' });
+    const gate = page.getByTestId('run-gate').getByRole('region', { name: 'Gate' });
     await expect(gate).toHaveCount(1);
     await expect(gate.getByRole('button', { name: 'Approve' })).toBeVisible();
   });
@@ -297,9 +300,9 @@ test.describe('assistant', () => {
     await row.focus();
     await page.keyboard.press('Enter');
     await expect(group.getByTestId('item-tool_call')).toHaveText([
-      /read_projects/,
-      /read_workflows/,
-      /read_skills/,
+      /Read your projects/,
+      /Read your workflows/,
+      /Read your skills/,
     ]);
   });
 });

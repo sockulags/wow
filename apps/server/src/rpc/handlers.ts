@@ -23,6 +23,13 @@ import type { Db } from '../db/database.js';
 import { projects, threads, turns, workflowRuns } from '../db/schema.js';
 import { ImageRefused, type ImageStore } from '../files/images.js';
 import { listFolderFiles } from '../files/list.js';
+import {
+  EditorRefused,
+  findEditorPath,
+  planEditor,
+  startEditor,
+  type Spawn,
+} from '../files/editor.js';
 import { readViewerFile } from '../files/read.js';
 import type { HostLookup } from '../hosts/lookup.js';
 import type { HostPoller } from '../hosts/poller.js';
@@ -70,6 +77,12 @@ export interface HandlerDeps {
   readonly outlook: () => OutlookService | undefined;
   readonly info: { readonly version: string; readonly home: string };
   readonly clock: () => Date;
+  // How "Open in editor" starts its program; tests pass a stand-in and another platform.
+  readonly editor?: {
+    readonly spawn?: Spawn;
+    readonly platform?: NodeJS.Platform;
+    readonly env?: Record<string, string | undefined>;
+  };
 }
 
 // The folders a file of a run, thread or project may come from, first folder first, and how a
@@ -263,6 +276,29 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         limit: deps.settings.get('viewer.fileListLimit'),
         git: { timeoutMs: deps.settings.get('trackers.gitTimeoutMs') },
       });
+    },
+    'files.openInEditor': async (params) => {
+      const scope = fileScope(deps, params);
+      const found = await findEditorPath(scope.roots, params.path, scope.place);
+      if ('refused' in found) throw new RpcFault('rejected', found.message);
+      try {
+        const launch = await planEditor({
+          command: deps.settings.get('viewer.editorCommand'),
+          shell: deps.settings.get('viewer.editorShell'),
+          target: { path: found.found, line: params.line ?? 1 },
+          platform: deps.editor?.platform ?? process.platform,
+          env: deps.editor?.env ?? process.env,
+        });
+        await startEditor(launch, deps.editor?.spawn);
+      } catch (failure) {
+        if (failure instanceof EditorRefused) throw new RpcFault('rejected', failure.message);
+        const reason = failure instanceof Error ? failure.message : String(failure);
+        throw new RpcFault(
+          'rejected',
+          `The editor command did not start (${reason}). Check the "Editor command" setting.`,
+        );
+      }
+      return { path: found.found };
     },
     'workflowRuns.diff': async ({ runId, path: asked }) => {
       const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();

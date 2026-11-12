@@ -10,7 +10,9 @@ import { Link, Outlet, useNavigate } from '@tanstack/react-router';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
+  FileTextIcon,
   MapIcon,
+  MessageSquarePlusIcon,
   RefreshCwIcon,
   SearchXIcon,
 } from 'lucide-react';
@@ -26,6 +28,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
 import { cn } from '@/lib/utils';
+import { usePanelRoute } from '@/panel/model';
+import { fullPathOf, openFile } from '@/panel/viewer';
 import {
   ChangeRequestState,
   ChecksBadge,
@@ -35,13 +39,16 @@ import {
 } from './host-read';
 import {
   fileNames,
+  intentsDirectoryOf,
   livePlanRun,
+  planFilePath,
   planRead,
   plansByProject,
   problemLabel,
   revisionLabel,
   staleLabel,
   unitStatusLabels,
+  unitThreadText,
   unitStatusVariants,
 } from './model';
 import { PlanRunSection } from './plan-run-section';
@@ -194,6 +201,7 @@ function FileRow({
   rev,
   stale,
   extra,
+  onOpen,
 }: {
   name: string;
   present: boolean;
@@ -201,10 +209,26 @@ function FileRow({
   rev: number | null;
   stale?: string | undefined;
   extra?: string | undefined;
+  // Opens the file rendered in the side panel (agent workbench spec 84).
+  onOpen?: (() => void) | undefined;
 }) {
   return (
     <div data-testid={`plan-file-${name}`} className="flex flex-wrap items-center gap-2 py-1">
-      <dt className="w-20 shrink-0 font-mono text-xs">{name}</dt>
+      <dt className="w-20 shrink-0 font-mono text-xs">
+        {present && onOpen ? (
+          <button
+            type="button"
+            aria-label={`Open ${name}`}
+            onClick={onOpen}
+            className="inline-flex items-center gap-1 rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <FileTextIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+            {name}
+          </button>
+        ) : (
+          name
+        )}
+      </dt>
       <dd className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs">
         {present ? (
           <span>{revisionLabel(status, rev)}</span>
@@ -218,7 +242,12 @@ function FileRow({
   );
 }
 
-const derivedRow = (kind: 'spec' | 'plan', file: PlanFile | null, extra?: string) => (
+const derivedRow = (
+  kind: 'spec' | 'plan',
+  file: PlanFile | null,
+  onOpen: (name: string) => void,
+  extra?: string,
+) => (
   <FileRow
     name={fileNames[kind]}
     present={file !== null}
@@ -226,6 +255,7 @@ const derivedRow = (kind: 'spec' | 'plan', file: PlanFile | null, extra?: string
     rev={file?.rev ?? null}
     stale={file ? staleLabel(kind, file) : undefined}
     extra={extra}
+    onOpen={() => onOpen(fileNames[kind])}
   />
 );
 
@@ -234,12 +264,14 @@ function UnitRow({
   request,
   open,
   onToggle,
+  onStartThread,
 }: {
   unit: PlanUnit;
   // The pull request that delivered or claims the unit.
   request: ChangeRequest | undefined;
   open: boolean;
   onToggle: () => void;
+  onStartThread: () => void;
 }) {
   // The line keeps the id apart for a key a plan lists twice.
   const contractId = `unit-contract-${unit.key}-${unit.line}`;
@@ -297,6 +329,16 @@ function UnitRow({
             </p>
           )}
         </div>
+        <Button
+          size="xs"
+          variant="ghost"
+          className="mt-0.5"
+          aria-label={`Start a thread for ${unit.key}`}
+          onClick={onStartThread}
+        >
+          <MessageSquarePlusIcon />
+          Start a thread for this unit
+        </Button>
         <Badge
           data-testid="unit-status"
           variant={unitStatusVariants[unit.status]}
@@ -341,7 +383,10 @@ export function PlanView({
   const requests = useTopic('changeRequests');
   const planRuns = useTopic('planRuns');
   const navigate = useNavigate();
-  const { connection } = useRuntime();
+  const { connection, settings, layout, draft } = useRuntime();
+  const settingRows = useTopic('settings');
+  const globalDirectory = useSetting('plans.intentsDirectory');
+  const panelRoute = usePanelRoute();
   const planId = `${projectId}:${intentId}`;
   const refresh = useHostRefresh({ planId });
   const [followError, setFollowError] = useState<string>();
@@ -364,6 +409,28 @@ export function PlanView({
     );
   }
   const project = projects?.find((candidate) => candidate.id === projectId);
+  const directory = intentsDirectoryOf(settingRows ?? [], projectId, globalDirectory);
+  const pathOf = (name: string) => planFilePath(directory, intent.intentId, name);
+  // A plan file opens rendered in a panel tab beside the plan (spec 84), read for the project.
+  const openPlanFile = (name: string) =>
+    openFile(
+      { settings, layout },
+      {
+        scope: { projectId },
+        path: pathOf(name),
+        fullPath: project ? fullPathOf(project.cwd, pathOf(name)) : pathOf(name),
+        from: panelRoute,
+      },
+    );
+  // A new thread draft in the project with the unit's contract as its first message, unsent.
+  const startThread = (unit: PlanUnit) => {
+    draft.setState({
+      projectId,
+      cwd: undefined,
+      text: unitThreadText(intent, unit, pathOf(fileNames.plan)),
+    });
+    void navigate({ to: '/chat/new' });
+  };
   const read = planRead(reads ?? [], intent);
   // A plan run keeps its plan read from the host until it ends, followed or not.
   const running = livePlanRun(planRuns ?? [], intent.id) !== undefined;
@@ -428,11 +495,13 @@ export function PlanView({
               present={intent.hasIntent}
               status={intent.status}
               rev={intent.rev}
+              onOpen={() => openPlanFile(fileNames.intent)}
             />
-            {derivedRow('spec', intent.spec)}
+            {derivedRow('spec', intent.spec, openPlanFile)}
             {derivedRow(
               'plan',
               intent.plan,
+              openPlanFile,
               intent.source ? `units in ${intent.source}` : undefined,
             )}
           </dl>
@@ -487,6 +556,7 @@ export function PlanView({
                     request={requests?.find((request) => request.id === unit.changeRequestId)}
                     open={openUnit === unit.key}
                     onToggle={() => toggle(unit.key)}
+                    onStartThread={() => startThread(unit)}
                   />
                 ))}
               </ol>

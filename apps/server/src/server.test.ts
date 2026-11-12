@@ -5,7 +5,18 @@ import {
   type SubscriptionPush,
 } from '@wow/contracts';
 import { SecretStore, defaultProtector, plainProtector } from '@wow/secrets';
-import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -18,6 +29,8 @@ let home: string;
 let server: RunningServer;
 let outlookModes: OutlookMode[];
 let stoppedServices: string[];
+// What "Open in editor" was asked to start; a node that does nothing stands in for the editor.
+let editorCalls: { file: string; args: readonly string[]; shell: unknown }[];
 
 interface Client {
   request(method: string, params?: unknown): Promise<RpcResponse>;
@@ -80,6 +93,7 @@ beforeEach(async () => {
   home = await mkdtemp(path.join(tmpdir(), 'wow-server-'));
   outlookModes = [];
   stoppedServices = [];
+  editorCalls = [];
   server = await startServer({
     home: path.join(home, '.wow'),
     env: { WOW_PROVIDERS: 'mock' },
@@ -89,6 +103,10 @@ beforeEach(async () => {
     logSink: () => undefined,
     userHome: home,
     watchSkills: () => ({ close: () => Promise.resolve() }),
+    spawnEditor: (file, args, options) => {
+      editorCalls.push({ file, args, shell: options.shell });
+      return spawn(process.execPath, ['-e', ''], options);
+    },
     hooks: {
       outlook: (mode) => {
         outlookModes.push(mode);
@@ -419,6 +437,72 @@ describe('rpc', () => {
     expect(
       await client.request('files.read', { runId: 'r1', path: 'review/long.log' }),
     ).toMatchObject({ result: { kind: 'refused', reason: 'too_large' } });
+  });
+
+  it('opens a file of a thread in the editor the setting names, without a shell @agent-workbench-81', async () => {
+    const thread = await threadFiles();
+    const opened = await client.request('files.openInEditor', {
+      threadId: 't1',
+      path: 'src/timer.ts',
+      line: 12,
+    });
+    // The editor gets real paths; a Windows runner's temp folder is an 8.3 short name.
+    const file = path.join(await realpath(thread), 'src', 'timer.ts');
+    expect(opened).toMatchObject({ result: { path: file } });
+    expect(editorCalls).toEqual([
+      { file: 'code', args: ['--goto', `${file}:12`], shell: undefined },
+    ]);
+
+    // The project's folder is a thread folder too; the line defaults to the first.
+    await send('c3', {
+      type: 'setting.set',
+      key: 'viewer.editorCommand',
+      scope: 'global',
+      value: '"/opt/My Editor/edit" --line {line}',
+    });
+    await client.request('files.openInEditor', { threadId: 't1', path: 'docs/spec.md' });
+    expect(editorCalls.at(-1)).toEqual({
+      file: '/opt/My Editor/edit',
+      args: [
+        '--line',
+        '1',
+        path.join(await realpath(path.join(home, 'project')), 'docs', 'spec.md'),
+      ],
+      shell: undefined,
+    });
+
+    // Only with the shell setting on does a shell run it, with the path quoted.
+    await send('c4', {
+      type: 'setting.set',
+      key: 'viewer.editorShell',
+      scope: 'global',
+      value: true,
+    });
+    await send('c5', {
+      type: 'setting.set',
+      key: 'viewer.editorCommand',
+      scope: 'global',
+      value: 'edit {path} +{line} && true',
+    });
+    await client.request('files.openInEditor', { threadId: 't1', path: 'src/timer.ts', line: 3 });
+    // The stand-in editor runs as on Linux, so a path with backslashes (the temp folder of a
+    // Windows machine) is put in single quotes and a plain one is left as it is.
+    const quoted = /^[\w@./:=+-]+$/.test(file) ? file : `'${file}'`;
+    expect(editorCalls.at(-1)).toEqual({
+      file: `edit ${quoted} +3 && true`,
+      args: [],
+      shell: true,
+    });
+
+    // Nothing outside the thread's folders, and nothing that is not there, starts the editor.
+    const count = editorCalls.length;
+    expect(
+      await client.request('files.openInEditor', { threadId: 't1', path: '../../outside.txt' }),
+    ).toMatchObject({ error: { code: 'rejected', message: expect.stringMatching(/outside/) } });
+    expect(
+      await client.request('files.openInEditor', { threadId: 't1', path: 'src/gone.ts' }),
+    ).toMatchObject({ error: { code: 'rejected', message: 'There is no file src/gone.ts.' } });
+    expect(editorCalls).toHaveLength(count);
   });
 
   it('reads a file of a thread or a project only inside their folders @agent-workbench-16', async () => {

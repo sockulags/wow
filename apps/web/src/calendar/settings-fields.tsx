@@ -1,8 +1,11 @@
 import {
   FROM_OUTLOOK,
+  formatDays,
+  formatWorkHours,
+  weekdayLabel,
   systemFirstDayOfWeek,
   systemWorkHours,
-  Weekday,
+  type Weekday,
   type WorkHours,
 } from '@wow/contracts';
 import { useMemo, type ReactNode } from 'react';
@@ -15,37 +18,11 @@ import { formatOffset, systemZone } from './time';
 // Settings editors for the calendar preferences Outlook also knows (F-8, audit B-08, B-09, B-20).
 // The settings page picks them from the schemas' `widget` meta.
 
-const weekdayLabels: Readonly<Record<Weekday, string>> = {
-  monday: 'Monday',
-  tuesday: 'Tuesday',
-  wednesday: 'Wednesday',
-  thursday: 'Thursday',
-  friday: 'Friday',
-  saturday: 'Saturday',
-  sunday: 'Sunday',
-};
-
-const short = (day: Weekday) => weekdayLabels[day].slice(0, 3);
-
-// "Mon–Fri", "Mon, Wed, Fri", "Every day".
-export function formatDays(days: readonly Weekday[]): string {
-  const ordered = Weekday.options.filter((day) => days.includes(day));
-  if (ordered.length === 7) return 'Every day';
-  const indexes = ordered.map((day) => Weekday.options.indexOf(day));
-  const consecutive = indexes.every(
-    (at, position) => position === 0 || at === (indexes[position - 1] ?? -2) + 1,
-  );
-  const first = ordered[0];
-  const last = ordered.at(-1);
-  if (consecutive && ordered.length > 2 && first && last) return `${short(first)}–${short(last)}`;
-  return ordered.map(short).join(', ');
-}
-
-export const formatWorkHours = (hours: WorkHours): string =>
-  `${hours.start}–${hours.end}, ${formatDays(hours.days)}`;
+// The words live in contracts, so the assistant's change rows say a value as this page does.
+export { formatDays, formatWorkHours };
 
 const describe = (shown: WorkHours | Weekday): string =>
-  typeof shown === 'string' ? weekdayLabels[shown] : formatWorkHours(shown);
+  typeof shown === 'string' ? weekdayLabel(shown) : formatWorkHours(shown);
 
 const zoneLabel = (zone: string, now: Date) =>
   `${zone.replaceAll('_', ' ')} (${formatOffset(zone, now)})`;

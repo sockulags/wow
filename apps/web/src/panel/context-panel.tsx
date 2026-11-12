@@ -2,7 +2,7 @@ import { contextPanelWidthBounds } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { useRouterState } from '@tanstack/react-router';
 import { PanelRightIcon, XIcon } from 'lucide-react';
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, type KeyboardEvent, type PointerEvent } from 'react';
 import { useConnectionState, useLayout, useRuntime, useSetting } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
 import { DisconnectedState, EmptyState } from '@/components/states';
@@ -17,7 +17,9 @@ import { HostTab } from './host-tab';
 import { PageViewer } from './page-viewer';
 import {
   clampPanelWidth,
+  effectivePanelWidth,
   hasSelection,
+  overlayRoom,
   panelRoute,
   panelSelection,
   type PanelSelection,
@@ -184,7 +186,8 @@ export function ContextPanel() {
   const storedWidth = useSetting('appearance.contextPanelWidth');
   const focusRequested = useLayout((state) => state.contextPanelFocus);
   const narrow = useBelow('narrow');
-  const [preview, setPreview] = useState<number>();
+  const preview = useLayout((state) => state.contextPanelPreview);
+  const setPreview = (next: number | undefined) => layout.setState({ contextPanelPreview: next });
   const ref = useRef<HTMLElement>(null);
   const selection = panelSelection(pathname, search);
   // This view's tabs (spec 11, 13): a file or page tab, when selected, takes the place of the
@@ -197,7 +200,7 @@ export function ContextPanel() {
   const hostItem = tab?.kind === 'host' ? tab.host : undefined;
   // A chat thread's Changes (agent workbench spec 34) are one of its tabs.
   const changes = tab?.kind === 'changes' ? tab.changes : undefined;
-  const width = preview ?? storedWidth;
+  const width = effectivePanelWidth(storedWidth, preview);
   const baseLabel = baseTabLabel(selection);
   const threads = useTopic('threads');
   // A step thread's run view shows the conversation, not a thread's details.
@@ -230,8 +233,9 @@ export function ContextPanel() {
 
   // The preview stays until the stored width matches it, so the edge does not jump back.
   useEffect(() => {
-    if (preview !== undefined && preview === storedWidth) setPreview(undefined);
-  }, [preview, storedWidth]);
+    if (preview !== undefined && preview === storedWidth)
+      layout.setState({ contextPanelPreview: undefined });
+  }, [layout, preview, storedWidth]);
 
   const close = () => closeContextPanel({ settings, layout });
 
@@ -242,11 +246,13 @@ export function ContextPanel() {
       aria-label="Context panel"
       tabIndex={-1}
       data-overlay={narrow ? '' : undefined}
-      style={{ width: `min(${width}px, 100%)` }}
+      style={{
+        width: `min(${width}px, 100%)`,
+        maxWidth: narrow ? `calc(100% - (${overlayRoom(selection.view)}))` : undefined,
+      }}
       className={cn(
         'relative flex shrink-0 flex-col border-l border-border bg-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-        narrow &&
-          'absolute inset-y-0 right-0 z-40 max-w-[calc(100%-3rem)] border-border-strong shadow-2xl',
+        narrow && 'absolute inset-y-0 right-0 z-40 border-border-strong shadow-2xl',
       )}
       onKeyDown={(event) => {
         if (event.defaultPrevented) return;

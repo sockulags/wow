@@ -123,27 +123,28 @@ function setup({
     retry: () => undefined,
     close: () => undefined,
   };
-  render(
-    <RuntimeProvider
-      runtime={{
-        connection,
-        layout: createLayoutStore(),
-        draft: createDraftStore(),
-        settings: createSettingsStore(createMemorySettingsSource(undefined, settings)),
-      }}
-    >
+  const runtime = {
+    connection,
+    layout: createLayoutStore(),
+    draft: createDraftStore(),
+    settings: createSettingsStore(createMemorySettingsSource(undefined, settings)),
+  };
+  const view = (on: Thread) => (
+    <RuntimeProvider runtime={runtime}>
       <ThreadConversation
-        thread={shown}
+        thread={on}
         instance={instance}
         {...(assistant ? { extras: { placeholder: 'Message' } } : {})}
       />
-    </RuntimeProvider>,
+    </RuntimeProvider>
   );
+  const { rerender } = render(view(shown));
+  const show = (on: Thread) => rerender(view(on));
   const box = screen.getByRole('combobox', { name: /message/i }) as HTMLTextAreaElement;
   const calls = (method: string) =>
     request.mock.calls.filter(([called]) => called === method).map(([, params]) => params);
   const sent = () => calls('dispatch').map((params) => (params as { command: unknown }).command);
-  return { box, calls, sent, user: userEvent.setup() };
+  return { box, calls, sent, show, user: userEvent.setup() };
 }
 
 const chips = () => screen.queryAllByTestId('composer-image-chip');
@@ -282,6 +283,29 @@ describe('images in the composer (agent workbench spec 53)', () => {
     expect(readDraft('thread-1').images).toEqual([
       { id: ids[1], mediaType: 'image/png', name: 'kettle.png' },
     ]);
+  });
+
+  it('keeps an image pasted during the send in its thread when the thread was switched before the send answered', async () => {
+    const heldSends: (() => void)[] = [];
+    const { box, sent, show, user } = setup({ heldSends });
+    await paste(box, [pngFile('image.png')]);
+    await user.type(box, 'First{Enter}');
+    await paste(box, [pngFile('kettle.png')]);
+    show({ ...thread, id: 'thread-2', title: 'Toaster' });
+    await act(async () => heldSends[0]?.());
+    expect(sent()).toEqual([
+      {
+        type: 'thread.sendMessage',
+        threadId: 'thread-1',
+        text: 'First',
+        attachments: [{ id: ids[0] }],
+      },
+    ]);
+    expect(readDraft('thread-1')).toEqual({
+      text: '',
+      skills: [],
+      images: [{ id: ids[1], mediaType: 'image/png', name: 'kettle.png' }],
+    });
   });
 
   it("shows a sent message's images from the stored item, after a reload too @agent-workbench-53", async () => {

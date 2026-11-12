@@ -119,6 +119,18 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       leave plan mode. Write down whether the card says "The plan as written in the conversation"
       (the request carried no `plan`) or shows the plan without that line (it did). Press Enter:
       the bar shows Accept edits and Claude edits without asking.
+- [ ] **Subagent (Claude Code).** Ask Claude to "use an Explore agent to find where the README
+      is read, then tell me". Expected: one row "Agent: <description> · n tool calls · <time>"
+      with the agent's calls and notes listed under it while it works, then its answer under the
+      row once it is done, n being Claude Code's own count. Write down whether the nested rows
+      showed (Claude Code marks them with `parent_tool_use_id`) and whether the tool is named
+      Agent or Task.
+- [ ] **Background work (Claude Code).** Ask Claude to run `ping -n 120 127.0.0.1` and press
+      Ctrl+B while it runs: the row ends, a chip "ping … 0:0n" counts up and the turn goes on.
+      Ask for a background agent too: two chips. Open the agent's chip: write down what "Latest
+      output" shows (its progress line, or "Nothing reported yet."). Press Stop on the ping chip:
+      the chip goes. Write down whether Ctrl+B also toggled the sidebar (it must not while a
+      command runs).
 - [ ] Images on Claude. Take a screenshot with Win+Shift+S, paste it into the composer with
       Ctrl+V and drop a PNG file from Explorer on it: two pictures show; Backspace at the start of
       the text takes the dropped one off. Drop it again, ask "What do these two pictures show?"
@@ -166,6 +178,11 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       folder exactly as shown (plain `C:\…` or `\\?\C:\…`), since that is the `cwd` Codex sent.
       Ask it to read `README.md`: write down whether that is a command row
       (`$ Get-Content …` or similar) or something else.
+- [ ] **Collab agent (Codex).** Ask Codex to spawn an agent that counts the files in the folder
+      and to wait for it (this may need Codex's multi-agent feature on; write down how). Expected:
+      one row "Agent: <prompt's first line>" with its state (starting, running, done) and the
+      agent's final message once done. Write down whether calls of the agent itself showed under
+      the row (they do only if Codex sends the agent's own items on wow's connection).
 - [ ] **Edits and a denial's note (Codex).** In Auto, ask Codex to add a line to `README.md` and
       to create `notes.txt`. Expected: the approval (if Codex asks) shows the diff, and the rows
       read "Edit README.md +1 −0" and "Edit notes.txt +n −0". Write down how a new file's diff
@@ -259,6 +276,15 @@ Further checks against the same hosts:
 - [ ] If a GitLab site is available: with `trackers.gitlab.baseUrl` and a token, a plan of a
       project on it shows unit status from merge requests, and Test connection shows the
       version.
+- [ ] **Open in editor with the default command.** With VS Code installed (`code` on the PATH
+      is `code.cmd`), open a run's Changes tab, focus a changed file and press Shift+Enter:
+      VS Code opens the file at its first changed line, no console window flashes, and a path
+      with spaces opens too. Also try a file in the side panel's viewer and `/open` in a chat
+      thread (its folder). Then set `viewer.editorCommand` to a program that is not there: a
+      toast says the editor command did not start. A file named `100%PATH%.txt` in the
+      folder is not opened: a toast says the % would be read as a variable.
+- [ ] At 1024 px wide, open a run that waits at a gate and open the side panel: Approve, Send
+      back and Stop stay visible beside the panel, under the gate's text.
 - [ ] Optional: create an event trigger (Workflows → Triggers → New trigger, "Pull request
       merged") and merge a followed pull request on the host: one run starts within
       `hosts.pollSeconds`, and polling again starts no second one.

@@ -44,11 +44,16 @@ import {
   turns,
   workflowRuns,
   workflows,
+  ownText,
 } from '../db/schema.js';
 import type { ReadModel } from './orchestrator.js';
 
 // The assistant thread is a row of the same table, shown through a topic of its own.
 const threadTopics: SubscriptionTopic[] = ['threads', 'assistantThread'];
+
+// A second approval in a thread that already needs the user does not restart its wait.
+const stateSince = (state: string, at: string) =>
+  sql`case when ${threads.state} = ${state} and ${threads.stateSince} is not null then ${threads.stateSince} else ${at} end`;
 
 // Applies one event to the projection tables inside the caller's transaction and says which
 // subscription topics changed.
@@ -296,7 +301,12 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       return ['providerInstances'];
     }
     case 'thread.created':
-      tx.insert(threads).values(event.payload).run();
+      tx.insert(threads)
+        .values({
+          ...event.payload,
+          stateSince: event.payload.stateSince ?? event.payload.createdAt,
+        })
+        .run();
       return threadTopics;
     case 'thread.configured':
       tx.update(threads)
@@ -365,16 +375,25 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       return threadTopics;
     case 'thread.stateChanged':
       tx.update(threads)
-        .set({ state: event.payload.state, updatedAt: event.payload.updatedAt })
+        .set({
+          state: event.payload.state,
+          stateSince: stateSince(event.payload.state, event.payload.updatedAt),
+          updatedAt: event.payload.updatedAt,
+        })
         .where(eq(threads.id, event.payload.threadId))
         .run();
       return threadTopics;
     case 'turn.started': {
-      const { turn, item } = event.payload;
+      const { turn, item, settingsItem } = event.payload;
       tx.insert(turns).values(turn).run();
+      if (settingsItem) tx.insert(threadItems).values(settingsItem).run();
       tx.insert(threadItems).values(item).run();
       tx.update(threads)
-        .set({ state: 'working', updatedAt: turn.startedAt })
+        .set({
+          state: 'working',
+          stateSince: stateSince('working', turn.startedAt),
+          updatedAt: turn.startedAt,
+        })
         .where(eq(threads.id, turn.threadId))
         .run();
       return ['turns', 'threadItems', ...threadTopics];
@@ -383,7 +402,11 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       const { turn } = event.payload;
       tx.insert(turns).values(turn).run();
       tx.update(threads)
-        .set({ state: 'working', updatedAt: turn.startedAt })
+        .set({
+          state: 'working',
+          stateSince: stateSince('working', turn.startedAt),
+          updatedAt: turn.startedAt,
+        })
         .where(eq(threads.id, turn.threadId))
         .run();
       return ['turns', ...threadTopics];
@@ -395,6 +418,8 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .run();
       return threadTopics;
     case 'turn.interruptRequested':
+    case 'thread.taskStopRequested':
+    case 'thread.backgroundRequested':
       return [];
     case 'turn.usageRecorded':
       tx.update(turns)
@@ -410,7 +435,11 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(and(eq(threadItems.turnId, turnId), eq(threadItems.streaming, true)))
         .run();
       tx.update(threads)
-        .set({ state: threadState, updatedAt: endedAt })
+        .set({
+          state: threadState,
+          stateSince: stateSince(threadState, endedAt),
+          updatedAt: endedAt,
+        })
         .where(eq(threads.id, threadId))
         .run();
       return ['turns', 'threadItems', ...threadTopics];
@@ -419,7 +448,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       tx.insert(threadItems).values(event.payload).run();
       return ['threadItems'];
     case 'threadItem.appended': {
-      const { itemId, field, delta } = event.payload;
+      const { itemId, field, delta, at } = event.payload;
       const row = tx
         .select({ payload: threadItems.payload })
         .from(threadItems)
@@ -430,7 +459,11 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       const before = payload[field];
       tx.update(threadItems)
         .set({
-          payload: { ...payload, [field]: (typeof before === 'string' ? before : '') + delta },
+          payload: {
+            ...payload,
+            [field]: (typeof before === 'string' ? before : '') + delta,
+            ...(at === undefined ? {} : { endedAt: at }),
+          },
         })
         .where(eq(threadItems.id, itemId))
         .run();
@@ -875,6 +908,19 @@ export function readModel(tx: DbOrTx): ReadModel {
       }
       return undefined;
     },
+    lastStart: (threadId) => {
+      const row = tx
+        .select({ kind: events.kind, aggregate: events.aggregate, payload: events.payload })
+        .from(events)
+        .where(and(eq(events.kind, 'turn.started'), eq(events.aggregate, threadId)))
+        .orderBy(desc(events.seq))
+        .limit(1)
+        .get();
+      const event = row ? DomainEvent.safeParse(row) : undefined;
+      if (!event?.success || event.data.kind !== 'turn.started') return undefined;
+      const { model, effort, permissionMode } = event.data.payload.start;
+      return { model, effort, permissionMode };
+    },
     nextItemIndex: (threadId) => {
       const last = tx
         .select({ index: max(threadItems.index) })
@@ -887,6 +933,19 @@ export function readModel(tx: DbOrTx): ReadModel {
     itemExists: (id) =>
       tx.select({ id: threadItems.id }).from(threadItems).where(eq(threadItems.id, id)).get() !==
       undefined,
+    toolCallRow: (threadId, providerItemId) =>
+      tx
+        .select({ id: threadItems.id })
+        .from(threadItems)
+        .where(
+          and(
+            eq(threadItems.threadId, threadId),
+            eq(threadItems.kind, 'tool_call'),
+            sql`${threadItems.id} = ${threadItems.turnId} || ':' || ${providerItemId}`,
+          ),
+        )
+        .orderBy(desc(threadItems.index))
+        .get()?.id,
     turnTaskLists: (turnId) => {
       const lists = and(eq(threadItems.turnId, turnId), eq(threadItems.kind, 'task_list'));
       const total = tx.select({ n: count() }).from(threadItems).where(lists).get()?.n ?? 0;
@@ -903,7 +962,7 @@ export function readModel(tx: DbOrTx): ReadModel {
       tx
         .select()
         .from(threadItems)
-        .where(and(eq(threadItems.turnId, turnId), eq(threadItems.kind, 'assistant_text')))
+        .where(and(eq(threadItems.turnId, turnId), eq(threadItems.kind, 'assistant_text'), ownText))
         .orderBy(desc(threadItems.index))
         .get(),
     approval: (id) => tx.select().from(approvals).where(eq(approvals.id, id)).get(),

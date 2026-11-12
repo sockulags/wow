@@ -188,7 +188,7 @@ function GateDivider({
           onClick={onToggle}
           className={cn(
             on
-              ? 'text-foreground [&_svg]:text-state-needs-you'
+              ? 'text-foreground [&_svg]:text-state-needs-you-text'
               : 'text-muted-foreground opacity-40 group-hover/gate:opacity-100 focus-visible:opacity-100',
           )}
         >

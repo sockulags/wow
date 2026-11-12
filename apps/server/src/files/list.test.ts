@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { listFolderFiles } from './list.js';
 
 // The thread folder's files for "Open file…" and `@` (agent workbench spec 18).
@@ -74,24 +75,32 @@ describe('listFolderFiles', () => {
     expect(listed).toEqual({ source: 'git', truncated: false, files: ['kept.txt'] });
   });
 
-  // A script stands in for a git that lists two files and then hangs.
-  it.skipIf(process.platform === 'win32')(
-    'keeps what git listed when it runs out of time, without walking',
-    async () => {
-      await write('a.txt');
-      await write('b.txt');
-      await write('ignored/walked.txt');
-      const slowGit = path.join(folder, 'slow-git');
-      await writeFile(slowGit, "#!/bin/sh\nprintf 'a.txt\\0b.txt\\0'\nexec sleep 30\n");
-      await chmod(slowGit, 0o755);
-      const listed = await listFolderFiles({
+  // A process the test drives stands in for a git that lists two files and then hangs.
+  it('keeps what git listed when it runs out of time, without walking', async () => {
+    await write('a.txt');
+    await write('b.txt');
+    await write('ignored/walked.txt');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const stdout = new EventEmitter();
+      const child = Object.assign(new EventEmitter(), {
+        stdout: Object.assign(stdout, { setEncoding: () => stdout }),
+        kill: vi.fn<() => boolean>(() => true),
+      });
+      const listing = listFolderFiles({
         folder,
         limit: 100,
-        git: { timeoutMs: 500, git: slowGit },
+        git: { timeoutMs: 500 },
+        start: () => child,
       });
-      expect(listed).toEqual({ source: 'git', truncated: true, files: ['a.txt', 'b.txt'] });
-    },
-  );
+      stdout.emit('data', 'a.txt\0b.txt\0');
+      vi.advanceTimersByTime(500);
+      expect(child.kill).toHaveBeenCalled();
+      expect(await listing).toEqual({ source: 'git', truncated: true, files: ['a.txt', 'b.txt'] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it('stops at the limit inside Git', async () => {
     runGit('init', '-q');

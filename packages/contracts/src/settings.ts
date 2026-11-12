@@ -133,6 +133,8 @@ const defineSetting = <S extends z.ZodType>(definition: SettingDefinition<S>) =>
 
 // The context panel's width range; the web app's resize handle stops at the same bounds.
 export const contextPanelWidthBounds = { min: 280, max: 720 } as const;
+// The list of changed files beside a run's diff (agent workbench spec 94).
+export const changesListWidthBounds = { min: 120, max: 800 } as const;
 
 export const Weekday = z.enum([
   'monday',
@@ -434,6 +436,16 @@ export const settingsRegistry = {
     scope: 'provider',
     unit: 'ms',
   }),
+  'providers.commandListSeconds': defineSetting({
+    schema: z.number().int().min(0).max(3600),
+    group: 'providers',
+    label: 'Command list kept for',
+    description:
+      "How long the provider's own commands for a folder, as the composer's / list shows them, are kept before the provider is asked again. Asking may start Claude Code in the folder. 0 asks every time the list opens.",
+    default: 30,
+    scope: 'provider',
+    unit: 'seconds',
+  }),
   'providers.offerSetup': defineSetting({
     personal: 'machine',
     schema: z.boolean(),
@@ -478,6 +490,25 @@ export const settingsRegistry = {
     description:
       'How many of the last lines of a command or tool output an opened row shows; "Show all" shows the rest.',
     default: 20,
+    scope: 'global',
+  }),
+  'chat.contextWarnPercent': defineSetting({
+    schema: z.number().int().min(1).max(100),
+    group: 'chat',
+    label: 'Context warning',
+    description:
+      'From this share of the context window the meter turns amber and reads "Context n % full", with "Compact now" where the provider can compact.',
+    default: 70,
+    scope: 'global',
+    unit: 'percent',
+  }),
+  'chat.reasoningOpen': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Show reasoning',
+    description:
+      "Open the agent's reasoning in the conversation by default. Ctrl+O opens or closes all of it in the open thread either way.",
+    default: false,
     scope: 'global',
   }),
   'chat.editDiffMaxLines': defineSetting({
@@ -1320,6 +1351,27 @@ export const settingsRegistry = {
     default: false,
     scope: 'global',
   }),
+  'viewer.editorCommand': defineSetting({
+    schema: z
+      .string()
+      .min(1)
+      .refine((value) => value.trim() !== '', 'Name the command that opens your editor'),
+    group: 'viewer',
+    label: 'Editor command',
+    description:
+      'The command "Open in editor" runs, with {path} for the full path of the file and {line} for its line. Without {path} the path goes last. It runs as a program with these words as its arguments, not through a shell.',
+    default: 'code --goto {path}:{line}',
+    scope: 'global',
+  }),
+  'viewer.editorShell': defineSetting({
+    schema: z.boolean(),
+    group: 'viewer',
+    label: 'Run the editor command in a shell',
+    description:
+      'Give the editor command to the system shell (cmd.exe on Windows, sh elsewhere) as one line, so it can use shell syntax. The path and line are quoted for it, so write {path} without quotes around it: a command with {path} in quotes or next to one is refused.',
+    default: false,
+    scope: 'global',
+  }),
   'viewer.fileListLimit': defineSetting({
     schema: z.number().int().min(10).max(200_000),
     group: 'viewer',
@@ -1579,6 +1631,16 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'pixels',
   }),
+  'appearance.changesListWidth': defineSetting({
+    schema: z.number().int().min(changesListWidthBounds.min).max(changesListWidthBounds.max),
+    group: 'appearance',
+    label: 'Changed files list width',
+    description:
+      "Width of the list of changed files beside the diff in a run's Changes tab. Dragging the edge between them changes it.",
+    default: 288,
+    scope: 'global',
+    unit: 'pixels',
+  }),
   'keybindings.palette': keybinding('Command palette', 'Open the command palette.', 'Mod+K'),
   'keybindings.toggleSidebar': keybinding(
     'Toggle sidebar',
@@ -1644,6 +1706,11 @@ export const settingsRegistry = {
     'Open the form for a new card on the day the calendar shows (while the calendar is open).',
     'C',
   ),
+  'keybindings.calendarSaveCard': keybinding(
+    'Calendar: save the card',
+    'Create or save the card while its form is open, from any field of it.',
+    'Mod+Enter',
+  ),
   'keybindings.calendarDeleteCard': keybinding(
     'Delete card',
     'Ask how to delete the card that has the focus in the calendar: a single card, or for a repeating card this occurrence or the whole series.',
@@ -1674,6 +1741,16 @@ export const settingsRegistry = {
     'Run: show path',
     'Switch the open workflow run between its steps and its Path tab.',
     'Mod+Shift+Y',
+  ),
+  'keybindings.openInEditor': keybinding(
+    'Open in editor',
+    'Open the focused changed file, diff line, artifact or file link, or the file shown in the side panel, in your editor at its line (the "Editor command" setting).',
+    'Shift+Enter',
+  ),
+  'keybindings.diffComment': keybinding(
+    'Diff: comment on line',
+    "Write a comment on the focused diff line. In a run's Changes it goes into the send-back note, in a thread's Changes into the composer.",
+    'C',
   ),
   'keybindings.changesStepOnly': keybinding(
     'Changes: this step only',
@@ -1805,10 +1882,45 @@ export const settingsRegistry = {
     'Open or close the task list pinned above the composer of the open thread.',
     'Mod+T',
   ),
+  'keybindings.toBackground': keybinding(
+    'Chat: send to the background',
+    "Send the open thread's running command or subagent to the background, where the provider can (Claude Code), so the turn goes on. While nothing can go there, the key does what it otherwise does.",
+    'Ctrl+B',
+  ),
   'keybindings.renameThread': keybinding(
     'Chat: rename thread',
     'Edit the title of the open thread.',
     'F2',
+  ),
+  'keybindings.nextNeedsYou': keybinding(
+    'Next that needs you',
+    'Go to the oldest approval, question, plan, gate or assistant proposal that waits for you, wherever it is, and put the keyboard on it. Pressed again, it goes to the next one.',
+    'Mod+Shift+J',
+  ),
+  'keybindings.toggleReasoning': keybinding(
+    'Chat: open or close all reasoning',
+    "Open or close every reasoning row of the open thread's conversation.",
+    'Mod+O',
+  ),
+  'keybindings.previousMessage': keybinding(
+    'Chat: previous message',
+    "Move the keyboard to the message above in the open thread's conversation.",
+    'Alt+ArrowUp',
+  ),
+  'keybindings.nextMessage': keybinding(
+    'Chat: next message',
+    "Move the keyboard to the message below in the open thread's conversation.",
+    'Alt+ArrowDown',
+  ),
+  'keybindings.copyMessage': keybinding(
+    'Chat: copy the focused message',
+    'Copy the message that has the keyboard, as markdown for an answer and as written for your own.',
+    'C',
+  ),
+  'keybindings.conversationEnd': keybinding(
+    'Chat: back to the newest output',
+    'Scroll the conversation back to the bottom after you scrolled up, so it follows new output again.',
+    'End',
   ),
   'keybindings.nextBoldThread': keybinding(
     'Chat: next bold thread',

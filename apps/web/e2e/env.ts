@@ -154,6 +154,8 @@ export const e2eBinary = (home: string, name: string) =>
 export const e2eTrackerPort = 4521;
 export const e2eSettingsTrackerPort = 4522;
 export const e2eWorkflowId = 'backlog-e2e';
+// A one-step workflow of the chat server whose run waits at a gate (agent workbench spec 76).
+export const e2eNeedsYouWorkflowId = 'needs-you-e2e';
 
 // A seventh server for the assistant tests (e2e/assistant.spec.ts). The assistant changes global
 // settings (work hours, the GitLab address and token) that other tests read, and has one

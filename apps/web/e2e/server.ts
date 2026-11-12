@@ -1,4 +1,5 @@
 import type {
+  BackgroundTask,
   CalendarItem,
   ProviderCommand,
   ProviderEvent,
@@ -16,6 +17,9 @@ import {
   createNpmRunner,
   imagesReceived,
   mockCodexModels,
+  mockCompaction,
+  mockSubagent,
+  mockTwoTools,
   snapshot,
   startOutlookService,
   startServer,
@@ -23,7 +27,7 @@ import {
 } from '@wow/server';
 import { execFileSync } from 'node:child_process';
 import { createSocket } from 'node:dgram';
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage } from 'node:http';
 import path from 'node:path';
@@ -56,6 +60,7 @@ import {
   e2eCodexHome,
   e2eCodexInstanceId,
   e2eHome,
+  e2eNeedsYouWorkflowId,
   e2eEventBranch,
   e2eEventIntentId,
   e2eEventProjectId,
@@ -295,8 +300,19 @@ const guide = Array.from(
 ).join('\n');
 
 function seedTeaRepo(repo: string): void {
-  rmSync(repo, { recursive: true, force: true });
+  // The folder is emptied, not removed: on Windows something of the server's can still hold the
+  // folder itself (a watcher on a project folder, a git still starting there), and removing it
+  // then fails with EBUSY and takes this server down. What is inside can always go; a file git
+  // has open for a moment is tried again.
   mkdirSync(repo, { recursive: true });
+  for (const name of readdirSync(repo)) {
+    rmSync(path.join(repo, name), {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
+  }
   git(repo, 'init', '-q', '-b', 'main');
   writeInRepo(repo, '.gitignore', '*.log\n');
   writeInRepo(repo, 'README.md', '# Tea timer\n\nRings when the tea is ready.\n');
@@ -390,6 +406,8 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     const types = images.map((image) => image.mediaType.slice('image/'.length)).join(', ');
     return [session, ...finish(threadId, `${imagesReceived(images.length)} Types: ${types}.`)];
   }
+  // The step of the "Needs you e2e" workflow ends at once, so its run waits at the gate.
+  if (/sum-up/i.test(prompt)) return [session, ...finish(threadId, 'Summed up.')];
   // A step of a unit's run: the agent opens the unit's pull request, as deliver-work would, and
   // says which unit it was told about.
   const unit = /^Unit: (\S+) (.*)$/m.exec(prompt);
@@ -787,6 +805,40 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   if (/reaches out/i.test(prompt)) {
     return [session, ...finish(threadId, reachingAnswer)];
   }
+  // A subagent's work under its call (agent workbench spec 44): it works until the control
+  // port's /agent-done ends it with its count, time and answer.
+  if (/explore with an agent/i.test(prompt)) {
+    agentThreads.push({ threadId, cwd: command.cwd });
+    return [session, ...mockSubagent(threadId, command.cwd).running];
+  }
+  // Background work (spec 90): a dev server that runs until Ctrl+B sends it to the background,
+  // beside a subagent already working there that has said how far it got.
+  if (/serve the kettle app/i.test(prompt)) {
+    const tasks: BackgroundTask[] = [
+      {
+        id: 'bg-leaves',
+        description: 'Count the tea leaves',
+        agent: true,
+        kind: 'agent',
+        lastOutput: 'Counted 30 leaves so far',
+      },
+    ];
+    servedThreads.set(threadId, tasks);
+    return [
+      session,
+      { type: 'backgroundTasks', threadId, tasks },
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'cmd-serve',
+        name: 'Bash',
+        input: { command: 'pnpm dev' },
+        kind: 'command',
+        command: 'pnpm dev',
+      },
+      { type: 'toolCallOutput', threadId, itemId: 'cmd-serve', output: 'Listening on :5173\n' },
+    ];
+  }
   if (/in the background/i.test(prompt)) {
     // Claude Code ends the turn with an agent still running; the control port's
     // /background-done ends it, and the agent goes on by itself in a turn wow did not start.
@@ -800,6 +852,15 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       },
       ...finish(threadId, 'I asked a background agent to count them.'),
     ];
+  }
+  // Conversation reading (agent workbench U10): `/compact` compacts as Claude Code reports it,
+  // and "two tools" runs a command, then a second one that keeps running until stopped.
+  if (/compact/i.test(prompt)) {
+    return [session, mockCompaction(threadId), ...finish(threadId, 'The conversation is shorter.')];
+  }
+  if (/two tools/i.test(prompt)) {
+    waitingThreads.push(threadId);
+    return [session, ...mockTwoTools(threadId, command.cwd)];
   }
   if (/wait/i.test(prompt)) {
     // Runs until stopped or until the control port's /turn-done ends it, so a message written
@@ -850,6 +911,10 @@ const kindOf = (id: string) => id.split(separator)[1];
 // Threads whose turn left background work running, oldest first, and a Claude mock adapter to
 // send what follows through (the provider service takes a thread's events from any adapter).
 const backgroundThreads: string[] = [];
+// Threads whose subagent still works (with their folder), and the background tasks of each
+// thread that served the kettle app, which Ctrl+B and Stop change.
+const agentThreads: Array<{ threadId: string; cwd: string }> = [];
+const servedThreads = new Map<string, BackgroundTask[]>();
 let claudeMock: MockProviderAdapter | undefined;
 // Threads whose "wait" turn still runs, oldest first, and the chat copy's mock adapters, any of
 // which can send what ends them.
@@ -931,6 +996,45 @@ const chatScript: MockScript = (command) => {
       answered.delete(threadId);
       return finish(threadId, `You chose ${given.join(' and ')}.`, 'after');
     }
+    // Claude Code answers Ctrl+B with the command's result saying it went to the background,
+    // and the turn goes on (spec 90).
+    case 'toBackground': {
+      const tasks = servedThreads.get(command.threadId);
+      if (!tasks || command.itemId !== 'cmd-serve') return [];
+      const next: BackgroundTask[] = [
+        ...tasks,
+        {
+          id: 'bg-serve',
+          description: 'pnpm dev',
+          kind: 'command',
+          lastOutput: 'Listening on :5173',
+        },
+      ];
+      servedThreads.set(command.threadId, next);
+      return [
+        {
+          type: 'toolCallOutput',
+          threadId: command.threadId,
+          itemId: 'cmd-serve',
+          output: 'Command running in the background with ID: bg-serve\n',
+        },
+        {
+          type: 'toolCallCompleted',
+          threadId: command.threadId,
+          itemId: 'cmd-serve',
+          status: 'ok',
+        },
+        { type: 'backgroundTasks', threadId: command.threadId, tasks: next },
+        ...finish(command.threadId, 'The kettle app runs in the background.', 'served'),
+      ];
+    }
+    case 'stopTask': {
+      const tasks = servedThreads.get(command.threadId);
+      if (!tasks) return [];
+      const next = tasks.filter((task) => task.id !== command.taskId);
+      servedThreads.set(command.threadId, next);
+      return [{ type: 'backgroundTasks', threadId: command.threadId, tasks: next }];
+    }
     case 'interrupt': {
       const waiting = waitingThreads.indexOf(command.threadId);
       if (waiting !== -1) waitingThreads.splice(waiting, 1);
@@ -946,16 +1050,28 @@ const chatClaude = () => (claudeMock = chatMock(new MockProviderAdapter('claude'
 // Codex takes no message with a decline and goes on with its turn (agent workbench spec 37):
 // the turn runs until wow stops it and sends the note as the next message.
 const codexScript: MockScript = (command) =>
-  command.type === 'answerApproval' && command.decision === 'deny' && command.note
+  // Codex counts tokens while its turn runs (agent workbench spec 45).
+  command.type === 'startTurn' && /two tools/i.test(command.prompt)
     ? [
+        ...chatScript(command),
         {
-          type: 'toolCallCompleted',
-          threadId: threadOf(command.approvalId),
-          itemId: 'tool-1',
-          status: 'error',
+          type: 'usage',
+          threadId: command.threadId,
+          inputTokens: 12_000,
+          outputTokens: 1_300,
+          cachedInputTokens: 0,
         },
       ]
-    : chatScript(command);
+    : command.type === 'answerApproval' && command.decision === 'deny' && command.note
+      ? [
+          {
+            type: 'toolCallCompleted',
+            threadId: threadOf(command.approvalId),
+            itemId: 'tool-1',
+            status: 'error',
+          },
+        ]
+      : chatScript(command);
 
 // "Update Codex" (settings tests): a Codex instance named "... differs" tests as a compatible
 // other version, one named "... incompatible" as incompatible with an npm update until the fake
@@ -1277,6 +1393,17 @@ const control = createServer((request, response) => {
         ...finish(threadId, 'The background agent counted 42 leaves.', 'counted'),
       ]);
     }
+  } else if (url.pathname === '/agent-done' && request.method === 'PUT') {
+    // Ends the oldest working subagent and its turn.
+    const agentThread = agentThreads.shift();
+    if (!agentThread || !claudeMock) {
+      response.statusCode = 409;
+    } else {
+      claudeMock.emit([
+        ...mockSubagent(agentThread.threadId, agentThread.cwd).done,
+        ...finish(agentThread.threadId, 'That is where the kettle checks it.', 'explored'),
+      ]);
+    }
   } else if (url.pathname === '/turn-done' && request.method === 'PUT') {
     // Ends the "wait" turn of ?threadId=, else the oldest, so what was queued during it is sent.
     const wanted = url.searchParams.get('threadId');
@@ -1324,6 +1451,26 @@ if (!firstStart) {
 if (home === e2eAssistantHome) await server.providerService.test(e2eProviderInstanceId);
 // Only the chat server gets a Codex instance; the settings tests count and add instances themselves.
 if (home === e2eHome) {
+  // "Next that needs you" (agent workbench spec 76): a run of this waits at the gate after its
+  // only step, started through POST /run.
+  server.engine.dispatch('seed-needs-you-workflow', {
+    type: 'workflow.create',
+    workflowId: e2eNeedsYouWorkflowId,
+    name: 'Needs you e2e',
+    steps: [
+      {
+        id: 'sum-up',
+        skillName: 'sum-up',
+        providerInstanceId: e2eProviderInstanceId,
+        model: 'mock-model',
+        effort: 'default',
+        permissionMode: 'default',
+        gateBefore: false,
+        gateAfter: true,
+        expectedArtifacts: [],
+      },
+    ],
+  });
   server.engine.dispatch('seed-codex-instance', {
     type: 'providerInstance.create',
     providerInstanceId: e2eCodexInstanceId,

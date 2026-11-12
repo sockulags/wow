@@ -223,3 +223,31 @@ export function planRunUnitLabel(unit: PlanRunUnit, run: WorkflowRun | undefined
   }
   return { done: 'Done', failed: 'Failed', stopped: 'Stopped' }[unit.outcome];
 }
+
+// A plan file's path inside its project's folder: the intents folder, the intent, the file.
+export const planFilePath = (directory: string, intentId: string, name: string): string =>
+  `${directory.replace(/[\\/]+$/, '')}/${intentId}/${name}`;
+
+// The first message of a thread for one unit (agent workbench spec 84): which unit of which
+// plan, then its contract field by field, as the plan's own words.
+export function unitThreadText(intent: PlanIntent, unit: PlanUnit, planPath: string): string {
+  const fields = (unit.contract ?? []).flatMap((field) =>
+    field.value === null ? [] : [`${field.name}: ${field.value}`],
+  );
+  return [
+    `Work on unit ${unit.key} "${unit.title}" of "${intent.title}" (${planPath}).`,
+    ...(fields.length > 0 ? ['', 'Its contract:', '', ...fields] : []),
+  ].join('\n');
+}
+
+// The intents folder a project's plans are read from: its own setting, else the global one.
+export function intentsDirectoryOf(
+  rows: readonly { readonly key: string; readonly scope: string; readonly value: unknown }[],
+  projectId: string,
+  fallback: string,
+): string {
+  const own = rows.find(
+    (row) => row.key === 'plans.intentsDirectory' && row.scope === `project:${projectId}`,
+  )?.value;
+  return typeof own === 'string' && own.trim() !== '' ? own.trim() : fallback;
+}

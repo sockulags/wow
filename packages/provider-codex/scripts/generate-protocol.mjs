@@ -74,6 +74,11 @@ const toolItem = [
   'item<dynamicToolCall>.arguments',
   'item<webSearch>.query',
   'item<imageView>.path',
+  'item<collabAgentToolCall>.tool?',
+  'item<collabAgentToolCall>.status?',
+  'item<collabAgentToolCall>.prompt?',
+  'item<collabAgentToolCall>.receiverThreadIds?',
+  'item<collabAgentToolCall>.agentsStates?',
 ];
 const delta = ['threadId', 'itemId', 'delta'];
 const approvalPolicy = 'approvalPolicy=on-request|untrusted|never';

@@ -43,6 +43,8 @@ export interface ProviderServiceDeps {
   // Reads a chat thread's folder through git for its Changes (agent workbench spec 34); without
   // it, threads get no base and no marks.
   readonly changes?: RunChanges | undefined;
+  // Milliseconds since the epoch; tests pass their own.
+  readonly now?: (() => number) | undefined;
 }
 
 type StartTurn = Extract<ProviderCommand, { type: 'startTurn' }>;
@@ -60,10 +62,24 @@ export class ProviderService {
   readonly #unsubscribe: () => void;
   #flushScheduled = false;
   #stopped = false;
-  // Threads whose queued message the provider has been offered and not yet answered.
-  readonly #handingOver = new Set<string>();
+  // Threads whose queued message the provider has been offered and not yet answered, by offer;
+  // the turn's end lets go of an offer that is never answered.
+  readonly #handingOver = new Map<string, symbol>();
+  // A join made while an offer was out, offered once more should that offer not be taken.
+  readonly #joined = new Map<
+    string,
+    { readonly providerInstanceId: string; readonly queued: QueuedMessage; readonly prompt: string }
+  >();
+  readonly #commandLists = new Map<
+    string,
+    { readonly at: number; readonly commands: ProviderSlashCommand[] }
+  >();
+  // A list being asked for, so calls that overlap share one probe.
+  readonly #commandProbes = new Map<string, Promise<ProviderSlashCommand[]>>();
   // Turns being prepared before they go out (the assistant's tools, a chat thread's marks).
   readonly #preparing = new Set<Promise<unknown>>();
+  // The last model list each instance answered, for model labels in change rows.
+  readonly #models = new Map<string, readonly ProviderModel[]>();
 
   constructor(deps: ProviderServiceDeps) {
     this.#deps = deps;
@@ -157,18 +173,60 @@ export class ProviderService {
 
   async listModels(providerInstanceId: string): Promise<ProviderModel[]> {
     const adapter = this.#adapter(providerInstanceId);
-    return ProviderModel.array().parse(await adapter.send({ type: 'listModels' }));
+    const models = ProviderModel.array().parse(await adapter.send({ type: 'listModels' }));
+    this.#models.set(providerInstanceId, models);
+    return models;
   }
 
+  // A model's label from the lists answered so far: the named instance's, else any instance's
+  // that lists the id. Undefined while none does; nothing is asked for it.
+  modelLabel(model: string, providerInstanceId?: string): string | undefined {
+    const lists =
+      providerInstanceId === undefined
+        ? [...this.#models.values()]
+        : [this.#models.get(providerInstanceId) ?? []];
+    for (const list of lists) {
+      const found = list.find((entry) => entry.id === model);
+      if (found) return found.label === '' ? undefined : found.label;
+    }
+    return undefined;
+  }
+
+  // The / list asks each time it opens; for a thread without a live session Claude Code is
+  // started in the folder to answer, so an answer is kept a short while per instance and folder.
   async listCommands(
     providerInstanceId: string,
     cwd: string,
     threadId?: string,
   ): Promise<ProviderSlashCommand[]> {
+    const key = `${providerInstanceId}\0${cwd}`;
+    const keepMs =
+      this.#deps.settings.get('providers.commandListSeconds', { providerInstanceId }) * 1000;
+    const now = (this.#deps.now ?? Date.now)();
+    const kept = this.#commandLists.get(key);
+    if (kept && now - kept.at < keepMs) return kept.commands;
+    // Lists for folders no longer asked about go once they are stale.
+    for (const [other, list] of this.#commandLists) {
+      if (now - list.at >= keepMs) this.#commandLists.delete(other);
+    }
+    const pending = this.#commandProbes.get(key);
+    if (pending) return pending;
     const adapter = this.#adapter(providerInstanceId);
-    return ProviderSlashCommand.array().parse(
-      await adapter.send({ type: 'listCommands', cwd, ...(threadId ? { threadId } : {}) }),
-    );
+    const probe = adapter
+      .send({ type: 'listCommands', cwd, ...(threadId ? { threadId } : {}) })
+      .then((answer) => {
+        const commands = ProviderSlashCommand.array().parse(answer);
+        // A release while it was asked drops the probe, and the old installation's answer.
+        if (keepMs > 0 && this.#commandProbes.get(key) === probe) {
+          this.#commandLists.set(key, { at: now, commands });
+        }
+        return commands;
+      })
+      .finally(() => {
+        if (this.#commandProbes.get(key) === probe) this.#commandProbes.delete(key);
+      });
+    this.#commandProbes.set(key, probe);
+    return probe;
   }
 
   // Stops the instance's adapter (and its app-server process); the next use starts a new one.
@@ -178,6 +236,8 @@ export class ProviderService {
 
   async stop(): Promise<void> {
     this.#stopped = true;
+    this.#handingOver.clear();
+    this.#joined.clear();
     this.#unsubscribe();
     this.#flush();
     const adapters = [...this.#adapters.values()];
@@ -270,14 +330,25 @@ export class ProviderService {
           const { threadId, queued, handOver } = event.payload;
           // One offer at a time: a join offered while the provider still decides on the first
           // would give it the first text twice; its answer offers what is left.
-          if (queued && handOver && !this.#handingOver.has(threadId))
+          if (!queued || !handOver) {
+            this.#joined.delete(threadId);
+          } else if (this.#handingOver.has(threadId)) {
+            this.#joined.set(threadId, {
+              providerInstanceId: handOver.providerInstanceId,
+              queued,
+              prompt: handOver.prompt,
+            });
+          } else {
             this.#handOver(handOver.providerInstanceId, threadId, queued, handOver.prompt);
+          }
           break;
         }
         // Dispatched after this commit's listeners have all heard of the turn's end, so none of
         // them sees the next turn start first.
         case 'turn.ended': {
           const { threadId } = event.payload;
+          this.#handingOver.delete(threadId);
+          this.#joined.delete(threadId);
           const queued = this.#deps.db
             .select({ queued: threads.queued })
             .from(threads)
@@ -292,6 +363,23 @@ export class ProviderService {
             threadId: event.payload.threadId,
           });
           break;
+        // Neither stops the turn when the provider refuses; the thread is told why.
+        case 'thread.taskStopRequested':
+          this.#send(event.payload.providerInstanceId, event.payload.threadId, false, {
+            type: 'stopTask',
+            threadId: event.payload.threadId,
+            taskId: event.payload.taskId,
+          });
+          break;
+        case 'thread.backgroundRequested': {
+          const { providerInstanceId, threadId, toolUseId } = event.payload;
+          this.#send(providerInstanceId, threadId, false, {
+            type: 'toBackground',
+            threadId,
+            ...(toolUseId === undefined ? {} : { itemId: toolUseId }),
+          });
+          break;
+        }
         case 'thread.configured': {
           const { threadId, providerInstanceId, changes } = event.payload;
           if (changes.model !== undefined) {
@@ -359,6 +447,11 @@ export class ProviderService {
   #release(providerInstanceId: string, secrets: readonly string[]): void {
     const adapter = this.#adapters.get(providerInstanceId);
     this.#adapters.delete(providerInstanceId);
+    for (const map of [this.#commandLists, this.#commandProbes]) {
+      for (const key of map.keys()) {
+        if (key.startsWith(`${providerInstanceId}\0`)) map.delete(key);
+      }
+    }
     adapter
       ?.dispose()
       .catch((error: unknown) => this.#deps.logger.error('provider adapter failed to stop', error));
@@ -414,12 +507,27 @@ export class ProviderService {
       this.#deps.logger.warn('provider handOver failed', describeError(error));
       return;
     }
-    this.#handingOver.add(threadId);
+    const offer = Symbol(queued.id);
+    this.#handingOver.set(threadId, offer);
+    this.#joined.delete(threadId);
+    const answered = () => {
+      if (this.#handingOver.get(threadId) !== offer) return undefined;
+      this.#handingOver.delete(threadId);
+      const joined = this.#joined.get(threadId);
+      this.#joined.delete(threadId);
+      return joined;
+    };
     answer
       .then(
         (result) => {
-          this.#handingOver.delete(threadId);
-          if (this.#stopped || !HandOverResult.safeParse(result).data?.taken) return;
+          const joined = answered();
+          if (this.#stopped) return;
+          if (!HandOverResult.safeParse(result).data?.taken) {
+            if (joined) {
+              this.#handOver(joined.providerInstanceId, threadId, joined.queued, joined.prompt);
+            }
+            return;
+          }
           this.#deps.engine.dispatch(`handed-over:${queued.id}`, {
             type: 'thread.handedOver',
             threadId,
@@ -432,7 +540,7 @@ export class ProviderService {
           });
         },
         (error: unknown) => {
-          this.#handingOver.delete(threadId);
+          answered();
           this.#deps.logger.warn('provider handOver failed', describeError(error));
         },
       )
@@ -517,6 +625,13 @@ export class ProviderService {
     const fail = (error: unknown) => {
       this.#deps.logger.warn(`provider ${type} failed`, describeError(error));
       if (failsTurn) this.#enqueue({ type: 'turnFailed', threadId, error: describeError(error) });
+      else if (type === 'stopTask' || type === 'toBackground')
+        this.#enqueue({
+          type: 'commandRefused',
+          threadId,
+          command: type,
+          error: describeError(error),
+        });
     };
     const send = (ready: ProviderCommand) => this.#adapter(providerInstanceId).send(ready);
     try {

@@ -100,6 +100,8 @@ Default keys (all changeable in Settings → Keybindings):
 | Ctrl+Shift+D     | Run: Steps or Changes tab                |
 | Ctrl+Shift+Y     | Run: Steps or Path tab                   |
 | O                | Changes tab: this step only, and back    |
+| C                | Diff line: comment on it                 |
+| Shift+Enter      | Focused file or line: open in editor     |
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
@@ -309,6 +311,9 @@ Cards are your own blocks of time. They never leave the app.
   With the context panel open, a click shows the card there and **Edit card** opens the dialog.
 - **Delete**: "Delete card" in the form deletes it at once; **Undo** in the message that follows
   puts it back. A card whose workflow run is still going asks first whether to stop the run.
+- **Save from the keyboard**: **Ctrl+Enter** (`keybindings.calendarSaveCard`) creates or saves the
+  card from any field of the form. Delete, Cancel and Create card stay at the bottom of the form
+  while its fields scroll, also in a small window.
 
 A card with a workflow and a project is a **trigger**: at the card's start time the workflow's
 first step starts (see "Triggers" below). Moving the card moves the trigger with it. Triggers carry
@@ -383,7 +388,8 @@ can type in to filter. While the composer has the cursor:
   back. Bypass permissions and Full access are never in that cycle; pick them from the list.
 - **Escape** (`keybindings.composerLeave`) takes the cursor out of the composer to what comes
   before it, which is what Shift+Tab does everywhere else. In a context panel laid over the view
-  (a narrow window) Escape closes the panel instead.
+  (a narrow window) Escape closes the panel instead; a different key set for leaving the composer
+  still leaves it there.
 
 The mode is coloured by what it allows: Plan only blue, Accept edits (and Codex's Auto) green,
 Bypass permissions and Full access red with a warning sign. A pick applies to the next turn and
@@ -427,7 +433,7 @@ Every tool call is one line, drawn by what the call does:
   src/timer.ts +4 −1"; opened, it shows the change in colour, removed lines red and added lines
   green, with **Open file**, which opens the file in a tab of the side panel (not offered for a
   file outside the thread's folder, and not while the edit is still running or its request waits
-  for your answer, since the file has not changed yet). A new file shows as
+  for your answer, nor when it was denied or failed, since the file has not changed). A new file shows as
   added lines. Before Claude Code writes a whole file (its Write), the request and the row show
   only the new content, as added lines, with "The new content only; the file's current content
   is not shown": it may replace a file that exists. Once written, the row shows the real change. A very long diff is cut at `chat.editDiffMaxLines` lines; the thread's Changes
@@ -444,6 +450,14 @@ It opens to list every call. Anything else in the turn, such as text, an approva
 Assistant's change rows and cards, starts a new row. `chat.groupToolCalls` off shows every call
 on its own row.
 
+**Subagents**: when the agent hands work to a subagent (Claude Code's Agent tool, a Codex
+collab agent), the call is one row, such as "Agent: explore the auth code · 3 tool calls · 1:32".
+While the subagent works, its own tool calls and notes are listed under the row, drawn like the
+thread's own; once it is done the row shows its answer, and clicking the row opens the list and
+the prompt again. Codex does not send a subagent's own work to wow so far, so there the row shows
+the prompt, how the agent stands (starting, running, done, failed) and its final message. Agent
+calls stored before this version look as they did.
+
 When the agent keeps a task list (Claude Code's todo and task tools, Codex's plan), the latest
 list of the running turn, or else of the last turn, is pinned above the composer as one line,
 "3/7 · <the task in progress>". **Ctrl+T** (`keybindings.toggleTasks`, or "Show task list" /
@@ -453,10 +467,11 @@ list sent again adds nothing. The thread's Details in the context panel has a Ta
 the latest list. Tasks a finished turn left open read "not finished".
 
 **Copying**: an assistant message has **Copy** (its markdown) and **Copy text** (what it reads on
-screen) under it on hover or when you tab to it; a code block has **Copy code** in its corner;
-tool output has **Copy output**. The palette has the same commands for the message or row the
-keyboard was last on: "Copy message", "Copy message text", "Copy code", "Copy output" and "Show
-all N lines". When nothing could be copied (the browser has no clipboard or refused it), a notice
+screen) under it on hover or when you tab to it; a code block has **Copy code** in its corner,
+and one labelled with a path (such as ` ```ts src/timer.ts `) shows the path above it with
+**Open file**, which opens the file in a side panel tab; tool output has **Copy output**. The
+palette has the same commands for the message or row the keyboard was last on: "Copy message",
+"Copy message text", "Copy code", "Copy output", "Open file <path>" and "Show all N lines". When nothing could be copied (the browser has no clipboard or refused it), a notice
 "Nothing was copied" says so.
 
 **Changes**: a chat thread in a Git folder shows a chip in its header, such as "+42 −7 in 5
@@ -534,8 +549,18 @@ failed turn shows **Retry** (sends your last
 message again; in a workflow step's thread it sends the last message exactly as it went, the
 step's skills and their texts included) and **Resume** (sends `chat.resumePrompt`) in the error row.
 
-When Claude starts work in the background (a background agent or command) and ends its turn to
-wait for it, the thread says "Waiting for background work" and names it. When that work ends,
+When Claude starts work in the background (a background agent or command), each piece of work is
+a chip under the conversation with how long it has been running, such as "pnpm dev 2:05". A chip
+opens to the latest output Claude reported for it (a subagent's progress line; Claude Code does
+not hand wow a command's output after it went to the background) and has **Stop**. The palette
+has "Show background task: …" and "Stop background task: …" for each. **Ctrl+B**
+(`keybindings.toBackground`, "Send to the background" in the palette) sends the running command
+or subagent of the turn to the background, as in Claude Code, and the turn goes on; on Windows
+and Linux the key is also Toggle sidebar, which it does whenever nothing can go to the
+background. A command that still waits for your approval cannot go to the background; answer it
+first. When Claude refuses a Stop or a Ctrl+B, the conversation says so and why. Codex has no
+background work, so its threads show no chips and Ctrl+B does nothing there. When Claude ends its turn to wait for background work, the line reads "Waiting for
+background work". When that work ends,
 Claude goes on by itself: the new turn appears in the thread as it runs, without a message from
 you, its usage is counted, **Stop** stops it, and the thread is marked as after any turn. Should
 the server stop while Claude waits, the waiting line goes away; only a workflow step that waited
@@ -570,7 +595,9 @@ set it to `$` if you prefer the old key. In a thread, the list starts with "Comm
 `/effort`, `/plan`, `/compact`, `/clear`, `/done`, `/stop` and the others that apply to the
 thread, each running the palette command of that name. `/clear` starts a new thread with the same
 provider, model, effort, mode and folder. Below them come Claude Code's own commands; picking one
-puts `/name` in the message, sent as typed. Codex reports none. A slash anywhere else (a path such as `src/app`, a date
+puts `/name` in the message, sent as typed. A folder's list is kept for 30 seconds (Settings →
+Providers, "Command list kept for"), so a command added meanwhile shows after that. Codex reports
+none. A slash anywhere else (a path such as `src/app`, a date
 such as `2026/11/12`) or in pasted text opens nothing.
 
 A picked skill becomes a chip in front of the text: its name with the mark of its group. Backspace
@@ -647,6 +674,36 @@ Change model, effort or permission mode in the composer bar; the next turn uses 
 or the stop button interrupts a running turn and keeps what it produced; the turn ends with
 "Stopped by you · <time>", which carries **Resume** on the last turn. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
+
+### Reading a long thread
+
+- **What changed**: after you change the model, effort or mode, the next message starts with one
+  line such as "Model: Opus → Sonnet · Mode: Accept edits", and each turn's usage row names the
+  model it ran on.
+- **What runs now**: while a turn runs, the line under the conversation reads "Running pnpm test ·
+  0:42 · 6 tool calls · Ctrl+. to stop". Codex adds the tokens so far (↑12k ↓1.3k); Claude Code
+  reports them only when the turn ends.
+- **Compaction**: when Claude Code compacts the conversation (with `/compact` or by itself) a line
+  says "Conversation compacted (auto) · 152k → 18k". From `chat.contextWarnPercent` (70 %) the
+  context meter turns amber and offers **Compact now**. Codex has no compact action, so it shows
+  no Compact.
+- **Reasoning** reads "Thinking…" with its last line while it streams and "Thought for 12 s"
+  after. **Ctrl+O** opens or closes all reasoning in the thread; `chat.reasoningOpen` opens it by
+  default.
+- **Times**: each message shows when its turn started, each answer when its turn ended.
+- **Moving around**: scrolled up while output arrives, a **New output** pill shows; it or **End**
+  goes back down and follows again. End works from the message box too once the cursor is at the
+  end of what you typed (before that, it moves the cursor there). **Alt+Up** and **Alt+Down** move from message to message, and
+  **C** copies the message that has the keyboard. All these keys are settings under Keybindings,
+  for example if Alt+Up clashes with your screen reader.
+- **Next that needs you**: **Ctrl+Shift+J** goes to the oldest approval, question, plan, gate or
+  assistant proposal that waits for you, wherever it is, and puts the keyboard on it; press it
+  again for the next one. Oldest means the one that has waited longest: renaming a thread or
+  changing its model does not move it. A gate that waits for the pull request's checks is not
+  waiting for you and is skipped.
+- **Skills in chat** are listed Yours, Project, Recently used, User, Plugins and wow last; wow's
+  own four are marked "for workflow steps". On a new thread the list opens under the box, so the
+  provider and project pickers stay in view.
 
 ### The palette
 
@@ -783,14 +840,29 @@ the step ends with the first turn.
 
 ### Reviewing at a gate
 
-When a run waits at a gate, its run view shows the review tabs and the side panel shows the step's
-conversation with the gate bar (**Approve**, **Send back**, **Stop**). Each tab is also in the
-palette ("Run: show changes" and so on) and in the address, so a reload shows the same tab.
+When a run waits at a gate, its run view shows the gate bar (**Approve**, **Send back**, **Stop**)
+at its top, whatever the side panel shows, and the review tabs under it; the side panel shows the
+step's conversation with a copy of the gate bar. The note of **Send back** is written in the run
+view's bar. In a window narrower than 1200 px the side panel lies over the view when you open it;
+the gate bar then ends where the panel begins and puts its buttons under its text, so they stay
+in reach. Each tab is also in the palette ("Run: show changes" and so on) and in the address, so
+a reload shows the same tab. Workflows → **Runs** lists every run, the ones waiting for you
+first, then the running ones ("Go to runs" in the palette).
 
 - **Changes** (**Ctrl+Shift+D**, `keybindings.runChanges`; the same key goes back to Steps) lists
   every file added, changed, renamed or deleted since the run started, committed or not, including
   new files Git does not ignore, each with its added and removed lines. Pick a file for its diff
-  on the right. A file the step under review changed is marked; **This step only** (**O**,
+  on the right; drag the edge between the list and the diff (or focus it and use the arrow keys)
+  to make the list wider (`appearance.changesListWidth`). Focus a line of the diff and press **C**
+  (`keybindings.diffComment`), or click beside its line number, to write a comment on it; Enter
+  adds `src/bell.ts:12 – your words` to the send-back note, and **Ctrl+Shift+Enter** sends the note
+  back. In a chat thread's Changes the same comment goes into the thread's composer as a reply.
+  **Shift+Enter** (`keybindings.openInEditor`) on a changed file, a diff line, an artifact, a file
+  link in chat or in the file viewer opens the file in your editor at its line; the command is the
+  `viewer.editorCommand` setting (by default `code --goto {path}:{line}`, run by the wow server,
+  not through a shell unless `viewer.editorShell` is on; in a shell line write `{path}` without
+  quotes, since wow quotes it). A file the step under review changed
+  carries a small mark ("This step changed it" on hover); **This step only** (**O**,
   `keybindings.changesStepOnly`) narrows the list to those. When the first step starts, wow
   records the commit the folder was on (the run's base); everything is compared with it. A binary
   file, or one larger than `diff.maxFileBytes`, shows its status and size without lines; past
@@ -1011,6 +1083,11 @@ to see its units on the right: key, title, dependencies, the `blocked:` note and
 line, and the other intents still show. The palette finds every intent by its title and each unit
 of the open plan as "Unit <key>: <title>".
 
+Press Enter on `intent.md`, `spec.md` or `plan.md` (or click it) to read it, rendered, in the side
+panel. **Start a thread for this unit** on a unit opens a new chat thread in the project with the
+unit's contract as its first message; nothing is sent until you send it. The palette has "Plan:
+open spec.md" and the like, and "Start a thread for <key>: <title>".
+
 ### Unit status
 
 Turn **Follow** on for a plan ("Plan: follow" in the palette) and wow reads its pull requests from the project's host (see
@@ -1228,6 +1305,17 @@ starting a run ("Start <workflow> in <project>"). A card with a workflow that st
 `assistant.startSoonMinutes` (15) from now is a proposal too. A value longer than `assistant.valueLength` (160) characters is cut
 short on its line; "show all of it" under the line opens the whole of it. The palette has Yes and No for every
 waiting proposal and Undo for every change.
+
+Rows say values as the settings page does ("Work hours: From Outlook → 08:00–16:00, Mon–Fri") and
+name models by their label. A tool call that a row or card already shows has no row of its own;
+any other reads in words, such as "Read your workflows". While a proposal waits, a line above the
+composer names it ("1 proposal waits: …") with **Yes**, **No** and **Show**, which brings the card
+into view.
+
+Ask it to always allow a command or a tool in a project ("always allow `pnpm test` in Tea") and it
+proposes the rule; the rule is stored, under Settings → Approvals, only when you press Yes. It
+never stores one itself, and it cannot propose a rule for a command that runs other commands,
+such as `bash` or `npx`, nor a rule outside a project, whichever way it asks.
 
 It never answers a gate: approving, sending back or stopping a run is yours, and wow refuses those
 commands from the assistant. It can read the list of skills and the text of a wow skill, and can

@@ -115,7 +115,7 @@ test('a merged pull request starts a run @review-loop-48', async ({ page }) => {
   await page.goto(planPath);
   await refresh(page);
   await expect(status(page)).toHaveText('Delivered');
-  await page.goto('/workflows/triggers');
+  await page.goto('/workflows/runs');
   await expect(
     page
       .getByRole('navigation', { name: 'Workflows' })

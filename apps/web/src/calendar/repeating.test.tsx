@@ -140,7 +140,7 @@ const single: CalendarItem = {
 // What the server pushes on a topic; a test sends the same rows again to ask for a new read.
 const pushes = new Map<string, Set<(rows: unknown[]) => void>>();
 
-function runtimeWith(answer: Answer, box: Outbox<Sent>): Runtime {
+function runtimeWith(answer: Answer, box: Outbox<Sent>, refuseSave?: string): Runtime {
   const topics: Readonly<Record<string, unknown[]>> = {
     calendarItems: [card, single],
     workflowRuns: [run],
@@ -152,6 +152,9 @@ function runtimeWith(answer: Answer, box: Outbox<Sent>): Runtime {
       box.record({ method, params });
       if (method === 'calendar.occurrences') {
         return typeof answer === 'function' ? answer() : Promise.resolve(answer);
+      }
+      if (refuseSave !== undefined && method === 'dispatch') {
+        return Promise.reject(new Error(refuseSave));
       }
       return Promise.resolve({ commandId: 'c', seqs: [], duplicate: false });
     },
@@ -185,9 +188,12 @@ const commandsSent = (box: Outbox<Sent>): Command[] =>
     .filter((entry) => entry.method === 'dispatch')
     .map((entry) => (entry.params as { command: Command }).command);
 
-async function showWeek(answer: Answer = range()) {
+async function showWeek(answer: Answer = range(), refuseSave?: string) {
   const box = outbox<Sent>();
-  const shown = await renderApp('/calendar?view=week&date=2026-11-18', runtimeWith(answer, box));
+  const shown = await renderApp(
+    '/calendar?view=week&date=2026-11-18',
+    runtimeWith(answer, box, refuseSave),
+  );
   await act(() =>
     box.until((sent) => sent.some((entry) => entry.method === 'calendar.occurrences')),
   );
@@ -523,5 +529,45 @@ describe('the new actions', () => {
     });
     // A single card is drawn from its own row, not from the range.
     expect(occurrenceBlocks([{ ...card, repeat: null }], range(), [run]).items).toEqual([]);
+  });
+});
+
+// Agent workbench spec 83: the form's footer stays in view while its fields scroll, and the
+// save key (`keybindings.calendarSaveCard`, Ctrl+Enter by default) saves from any field.
+describe('the card form', () => {
+  it('keeps Delete, Cancel and Save in a footer outside the scrolling fields, and Ctrl+Enter saves', async () => {
+    const { grid, box } = await showWeek();
+    fireEvent.keyDown(block(grid, /^Write report, /), { key: 'Enter' });
+    const dialog = await screen.findByRole('dialog', { name: 'Edit card' });
+    const fields = within(dialog).getByTestId('card-form-fields');
+    const footer = within(dialog).getByTestId('card-form-footer');
+    expect(fields.contains(footer)).toBe(false);
+    expect(fields.className).toContain('overflow-y-auto');
+    expect(within(footer).getByRole('button', { name: 'Delete card' })).toBeTruthy();
+    expect(within(footer).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    expect(within(footer).getByRole('button', { name: 'Save card' })).toBeTruthy();
+    expect(settingsRegistry['keybindings.calendarSaveCard'].default).toBe('Mod+Enter');
+
+    const title = within(dialog).getByRole('textbox', { name: 'Title' });
+    fireEvent.change(title, { target: { value: 'Write the report' } });
+    fireEvent.keyDown(title, { key: 'Enter', ctrlKey: true });
+    await act(() => box.until(() => commandsSent(box).some((sent) => sent.type === 'card.update')));
+    expect(commandsSent(box).find((sent) => sent.type === 'card.update')).toMatchObject({
+      cardId: 'write-report',
+      title: 'Write the report',
+    });
+  });
+
+  it("shows a refused save's reason outside the scrolling fields, beside the footer", async () => {
+    const { grid, box } = await showWeek(range(), 'The card overlaps a meeting.');
+    fireEvent.keyDown(block(grid, /^Write report, /), { key: 'Enter' });
+    const dialog = await screen.findByRole('dialog', { name: 'Edit card' });
+    const title = within(dialog).getByRole('textbox', { name: 'Title' });
+    fireEvent.keyDown(title, { key: 'Enter', ctrlKey: true });
+    await act(() => box.until(() => commandsSent(box).some((sent) => sent.type === 'card.update')));
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert.textContent).toBe('The card overlaps a meeting.');
+    expect(within(dialog).getByTestId('card-form-fields').contains(alert)).toBe(false);
+    expect(alert.nextElementSibling).toBe(within(dialog).getByTestId('card-form-footer'));
   });
 });

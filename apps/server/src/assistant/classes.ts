@@ -1,5 +1,8 @@
 import {
   AlwaysAllowRule,
+  assistantRuleTool,
+  prefixRuleable,
+  ruleText,
   sameRule,
   type CalendarItem,
   type ServerCommand,
@@ -92,14 +95,40 @@ const moreOnItsOwn: Readonly<Record<string, (next: unknown, current: unknown) =>
   },
 };
 
+// The sentence for a command rule that would allow more than its command (spec 41), for the
+// rule tool and for `set_setting` alike.
+export const unruleable = (rule: AlwaysAllowRule | { kind: 'command'; prefix: string }): string =>
+  `${ruleText(rule)} would allow more than that command, so wow offers no rule for it.`;
+
+// Rules are read only from a project's own row (`projectRules`), so a list anywhere else would
+// be a card that names no project for a rule nothing reads; and a rule added by any tool passes
+// the same prefix check as the rule tool's.
+function rulesRefusal(scope: string, next: unknown, read: ReadModel): string | undefined {
+  const projectId = scope.startsWith('project:') ? scope.slice('project:'.length) : undefined;
+  if (projectId === undefined || !read.project(projectId)) {
+    return `"Always allow" rules belong to one project and are read only from its own list. Use ${assistantRuleTool} with the project's id.`;
+  }
+  const kept = storedRules(read.setting('approvals.alwaysAllow', scope)?.value);
+  const added = storedRules(next).find(
+    (rule) =>
+      rule.kind === 'command' &&
+      !prefixRuleable(rule.prefix) &&
+      !kept.some((stored) => sameRule(stored, rule)),
+  );
+  return added ? unruleable(added) : undefined;
+}
+
 // Guards the assistant does not change without a yes either way: the net that hides
-// secret-looking text, whether it may run on Codex, where it could read files, and whether a
-// fork's pull request may start a run whose agent the fork's files steer.
+// secret-looking text, whether it may run on Codex, where it could read files, whether a
+// fork's pull request may start a run whose agent the fork's files steer, and the program the
+// server runs for "Open in editor" and whether a shell reads it.
 const guardSettings: ReadonlySet<string> = new Set([
   'assistant.secretPatterns',
   'assistant.askRefusedWords',
   'assistant.allowCodex',
   'triggers.forkPullRequests',
+  'viewer.editorCommand',
+  'viewer.editorShell',
 ]);
 
 // Where a tracker's token is sent. Spec 7 calls tracker host settings ordinary, but with the
@@ -176,6 +205,10 @@ function settingClass(
       class: 'refused',
       reason: `${definition.label} is a secret. The user types it into its own field; the assistant never sets, clears or sees one.`,
     };
+  }
+  if (key === 'approvals.alwaysAllow') {
+    const reason = rulesRefusal(scope, next(definition), read);
+    if (reason !== undefined) return { class: 'refused', reason };
   }
   if (guardSettings.has(key) || sendsStoredToken(key, read)) return proposal;
   const more = moreOnItsOwn[key];
@@ -289,6 +322,8 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   ),
   'thread.retry': chatOnly,
   'thread.interrupt': chatOnly,
+  'thread.stopTask': chatOnly,
+  'thread.toBackground': chatOnly,
   'thread.configure': chatOnly,
   'thread.setPinned': chatOnly,
   'thread.setDone': chatOnly,

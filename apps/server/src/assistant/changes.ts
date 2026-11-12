@@ -6,8 +6,12 @@ import {
   hideSecretsDeep,
   repeatRuleWords,
   ruleConditionText,
+  ruleText,
+  toolName,
+  AlwaysAllowRule,
   secretPatterns,
   settingGroupTitles,
+  settingValueWords,
   settingsRegistry,
   TriggerEvent,
   triggerEventLabel,
@@ -196,17 +200,29 @@ const stepNames = (steps: readonly WorkflowStep[]): string =>
 // says its values the same way.
 // A step list is not cut short: the row says every step's instance, model and effort
 // (questions and models spec 15).
-export const show = (key: string, value: unknown, read: ReadModel): string =>
-  key === 'steps' ? showWhole(key, value, read) : clip(showWhole(key, value, read), read);
+export const show = (
+  key: string,
+  value: unknown,
+  read: ReadModel,
+  context?: DecideContext,
+): string =>
+  key === 'steps'
+    ? showWhole(key, value, read, context)
+    : clip(showWhole(key, value, read, context), read);
 
-// "deliver-work (Codex at work, gpt-x, high)": what a step runs on.
-function stepWords(step: WorkflowStep, read: ReadModel): string {
+// A model by the label its provider gives it (agent workbench spec 86, 95), else its id.
+const modelWords = (model: string, instanceId: string | undefined, context?: DecideContext) =>
+  context?.modelLabel?.(model, instanceId) ?? model;
+
+// "deliver-work (Codex at work, Mock model, high)": what a step runs on.
+function stepWords(step: WorkflowStep, read: ReadModel, context?: DecideContext): string {
   const instance = read.providerInstance(step.providerInstanceId)?.name ?? step.providerInstanceId;
-  return `${step.skillName} (${instance}, ${step.model ?? 'no model'}, ${step.effort ?? 'default effort'})`;
+  const model = step.model ? modelWords(step.model, step.providerInstanceId, context) : 'no model';
+  return `${step.skillName} (${instance}, ${model}, ${step.effort ?? 'default effort'})`;
 }
 
 // The same words as `show`, not shortened: for a proposal, which keeps the whole value.
-function showWhole(key: string, value: unknown, read: ReadModel): string {
+function showWhole(key: string, value: unknown, read: ReadModel, context?: DecideContext): string {
   if (value === null || value === undefined || value === '') return 'none';
   if (typeof value === 'boolean') return value ? 'on' : 'off';
   if (typeof value === 'number') return String(value);
@@ -214,13 +230,15 @@ function showWhole(key: string, value: unknown, read: ReadModel): string {
     if (key === 'projectId') return read.project(value)?.name ?? value;
     if (key === 'workflowId') return read.workflow(value)?.name ?? value;
     if (key === 'backlogItemId') return read.backlogItem(value)?.title ?? value;
+    if (key === 'defaultProviderInstanceId') return read.providerInstance(value)?.name ?? value;
+    if (key === 'defaultModel') return modelWords(value, undefined, context);
     return value;
   }
   if (Array.isArray(value)) {
     if (value.length === 0) return 'none';
     if (key === 'steps') {
       const steps = value as WorkflowStep[];
-      return `${steps.length} ${steps.length === 1 ? 'step' : 'steps'}: ${steps.map((step) => stepWords(step, read)).join(', ')}`;
+      return `${steps.length} ${steps.length === 1 ? 'step' : 'steps'}: ${steps.map((step) => stepWords(step, read, context)).join(', ')}`;
     }
     if (value.every((item) => typeof item === 'string')) return value.join(', ');
   }
@@ -233,9 +251,43 @@ function showWhole(key: string, value: unknown, read: ReadModel): string {
   return JSON.stringify(value);
 }
 
+// A setting's value as the settings page says it (agent workbench spec 95): "From Outlook",
+// "08:00–16:00, Mon–Fri", a model by its label, an instance by its name. A shape the page has
+// no words for is said as `show` says it.
+function showSettingWhole(
+  key: string,
+  value: unknown,
+  read: ReadModel,
+  context: DecideContext,
+): string {
+  if (typeof value === 'string' && value !== '') {
+    if (key === 'assistant.model') {
+      const instanceId = read.setting('assistant.providerInstanceId', 'global')?.value;
+      return modelWords(
+        value,
+        typeof instanceId === 'string' && instanceId !== '' ? instanceId : undefined,
+        context,
+      );
+    }
+    if (key === 'assistant.providerInstanceId') return read.providerInstance(value)?.name ?? value;
+  }
+  const definition = context.registry[key];
+  return (
+    (definition ? settingValueWords(definition, value) : undefined) ??
+    showWhole('value', value, read, context)
+  );
+}
+
+export const showSetting = (
+  key: string,
+  value: unknown,
+  read: ReadModel,
+  context: DecideContext,
+): string => clip(showSettingWhole(key, value, read, context), read);
+
 // A card's rule is said in words with its time (recurring cards spec 18); the other fields as
 // `show` says them.
-function showField(row: Row, key: string, read: ReadModel): string {
+function showField(row: Row, key: string, read: ReadModel, context?: DecideContext): string {
   if (key === 'repeat') {
     const rule = RepeatRule.safeParse(row['repeat']);
     if (!rule.success) return 'does not repeat';
@@ -250,13 +302,18 @@ function showField(row: Row, key: string, read: ReadModel): string {
     );
   }
   if (key === 'skippedDates' && Array.isArray(row[key]) && row[key].length === 0) return 'none';
-  return show(key, row[key], read);
+  return show(key, row[key], read, context);
 }
 
-function fields(row: Row, keys: readonly string[], read: ReadModel): string {
+function fields(
+  row: Row,
+  keys: readonly string[],
+  read: ReadModel,
+  context?: DecideContext,
+): string {
   const [only] = keys;
-  if (keys.length === 1 && only !== undefined) return showField(row, only, read);
-  return keys.map((key) => `${key}: ${showField(row, key, read)}`).join('; ');
+  if (keys.length === 1 && only !== undefined) return showField(row, only, read, context);
+  return keys.map((key) => `${key}: ${showField(row, key, read, context)}`).join('; ');
 }
 
 // The fields that say what a new or removed thing is.
@@ -309,6 +366,10 @@ function nameOf(
 }
 
 export function settingPlace(key: string, scope: string, context: DecideContext): AssistantPlace {
+  // A project's rules are listed on their own page, by project (agent workbench spec 40).
+  if (key === 'approvals.alwaysAllow') {
+    return { label: `Settings → ${settingGroupTitles.approvals}`, path: '/settings/approvals' };
+  }
   if (scope.startsWith('project:'))
     return { label: 'Settings → Projects', path: '/settings/projects' };
   if (scope.startsWith('provider:')) {
@@ -579,9 +640,12 @@ export function changeOf(
   const one = changed.length === 1 && target.kind !== 'setting' && target.kind !== 'plan';
   const followed = (row: Row) => (row['followed'] ? 'followed' : 'not followed');
   const settingValue = (row: Row | null): string => {
-    if (row) return show('value', row['value'], read);
     const { key } = settingOf(target.id);
-    return `${show('value', context.registry[key]?.default, read)} (default)`;
+    if (row) return showSetting(key, row['value'], read, context);
+    const fallback = context.registry[key]?.default;
+    const words = showSetting(key, fallback, read, context);
+    // "From Outlook" already says where the value comes from.
+    return words === 'From Outlook' ? words : `${words} (default)`;
   };
   const words = ((): { from: string | null; to: string | null } => {
     if (target.kind === 'setting') return { from: settingValue(before), to: settingValue(after) };
@@ -589,12 +653,15 @@ export function changeOf(
       return { from: before && followed(before), to: after && followed(after) };
     }
     if (before && after) {
-      return { from: fields(before, changed, read), to: fields(after, changed, read) };
+      return {
+        from: fields(before, changed, read, context),
+        to: fields(after, changed, read, context),
+      };
     }
     const keys = identity[target.kind].filter((key) => ((after ?? before)?.[key] ?? null) !== null);
     return {
-      from: before && fields(before, keys, read),
-      to: after && fields(after, keys, read),
+      from: before && fields(before, keys, read, context),
+      to: after && fields(after, keys, read, context),
     };
   })();
   const shown = hideSecretsDeep(
@@ -647,7 +714,7 @@ export function undoRefusal(
     if (moved.length === 0) return undefined;
     const now = moved.map((key) =>
       key === 'value'
-        ? `it is now ${show(key, current[key], read)}`
+        ? `it is now ${change.target.kind === 'setting' ? showSetting(settingOf(change.target.id).key, current[key], read, context) : show(key, current[key], read)}`
         : key === 'skillFile'
           ? 'its SKILL.md is not the file this change left'
           : `${key} is now ${show(key, current[key], read)}`,
@@ -682,6 +749,7 @@ function showStepField(
   value: unknown,
   steps: readonly WorkflowStep[],
   read: ReadModel,
+  context?: DecideContext,
 ): string {
   const step = { [key]: value } as Partial<WorkflowStep>;
   if (key === 'gateBefore' || key === 'gateAfter') return value ? 'stops' : 'does not stop';
@@ -714,7 +782,8 @@ function showStepField(
   if (key === 'providerInstanceId' && typeof value === 'string') {
     return read.providerInstance(value)?.name ?? value;
   }
-  return showWhole(key, value, read);
+  if (key === 'model' && typeof value === 'string') return modelWords(value, undefined, context);
+  return showWhole(key, value, read, context);
 }
 
 const order = (steps: readonly WorkflowStep[], ids: ReadonlySet<string>) =>
@@ -726,6 +795,7 @@ function stepLines(
   before: readonly WorkflowStep[],
   after: readonly WorkflowStep[],
   read: ReadModel,
+  context?: DecideContext,
 ): AssistantProposalLine[] {
   const old = new Map(before.map((step) => [step.id, step]));
   const kept = new Set(after.map((step) => step.id));
@@ -742,8 +812,8 @@ function stepLines(
       if (was && isDeepStrictEqual(stale[key] ?? null, fresh[key] ?? null)) continue;
       lines.push({
         what: `${label} ${stepFieldLabels[key]}`,
-        from: was ? showStepField(key, stale[key], before, read) : null,
-        to: showStepField(key, fresh[key], after, read),
+        from: was ? showStepField(key, stale[key], before, read, context) : null,
+        to: showStepField(key, fresh[key], after, read, context),
       });
     }
   });
@@ -883,6 +953,49 @@ export function acceptRefusal(
 
 const onOff = (value: boolean | undefined): string => (value ? 'on' : 'off');
 
+const rulesOf = (value: unknown): AlwaysAllowRule[] =>
+  Array.isArray(value)
+    ? value.flatMap((entry) => {
+        const parsed = AlwaysAllowRule.safeParse(entry);
+        return parsed.success ? [parsed.data] : [];
+      })
+    : [];
+
+const sameStored = (a: AlwaysAllowRule, b: AlwaysAllowRule) => ruleText(a) === ruleText(b);
+
+// A rule as the card's title names it.
+const ruleTitle = (rule: AlwaysAllowRule) =>
+  rule.kind === 'command' ? `\`${rule.prefix}\`` : `the tool \`${toolName(rule)}\``;
+
+// A project's "always allow" rules as the card shows them (agent workbench spec 41): each rule
+// added in words, each one taken away, and the project they answer for.
+function rulesCard(
+  scope: string,
+  stored: unknown,
+  next: unknown,
+  read: ReadModel,
+  context: DecideContext,
+): Pick<AssistantProposalRecord, 'title' | 'lines' | 'place'> {
+  const projectId = scope.startsWith('project:') ? scope.slice('project:'.length) : '';
+  const project = read.project(projectId)?.name ?? projectId;
+  const was = rulesOf(stored);
+  const will = rulesOf(next);
+  const added = will.filter((rule) => !was.some((other) => sameStored(rule, other)));
+  const removed = was.filter((rule) => !will.some((other) => sameStored(rule, other)));
+  const [only] = added;
+  return {
+    title:
+      added.length === 1 && removed.length === 0 && only
+        ? `Always allow ${ruleTitle(only)} in ${project}`
+        : `Change what is always allowed in ${project}`,
+    lines: [
+      ...added.map((rule) => ({ what: 'Always allow', from: null, to: ruleText(rule) })),
+      ...removed.map((rule) => ({ what: 'Always allow', from: ruleText(rule), to: null })),
+    ],
+    place: settingPlace('approvals.alwaysAllow', scope, context),
+  };
+}
+
 // The rule of a card a held update would leave, in words, when the update touches it or the
 // card repeats.
 function repeatLines(
@@ -921,13 +1034,21 @@ export function proposalOf(
         const stored = read.setting(command.key, command.scope);
         const next = command.type === 'setting.set' ? command.value : definition?.default;
         const label = definition?.label ?? command.key;
+        if (command.key === 'approvals.alwaysAllow') {
+          return rulesCard(command.scope, stored?.value, next, read, context);
+        }
         return {
           title: `Change ${label}`,
           lines: [
             {
               what: label,
-              from: showWhole('value', stored ? stored.value : definition?.default, read),
-              to: showWhole('value', next, read),
+              from: showSettingWhole(
+                command.key,
+                stored ? stored.value : definition?.default,
+                read,
+                context,
+              ),
+              to: showSettingWhole(command.key, next, read, context),
             },
           ],
           place: settingPlace(command.key, command.scope, context),
@@ -937,7 +1058,7 @@ export function proposalOf(
         return {
           title: `Create workflow "${command.name}"`,
           lines: [
-            ...stepLines([], command.steps, read),
+            ...stepLines([], command.steps, read, context),
             ...(command.forUnits ? [{ what: 'For units', from: null, to: 'on' }] : []),
             ...(command.ownWorkingCopy ? [{ what: 'Own working copy', from: null, to: 'on' }] : []),
           ],
@@ -949,7 +1070,8 @@ export function proposalOf(
         if (command.name !== undefined && command.name !== workflow?.name) {
           lines.push({ what: 'Name', from: workflow?.name ?? null, to: command.name });
         }
-        if (command.steps) lines.push(...stepLines(workflow?.steps ?? [], command.steps, read));
+        if (command.steps)
+          lines.push(...stepLines(workflow?.steps ?? [], command.steps, read, context));
         const switches = [
           ['For units', workflow?.forUnits, command.forUnits],
           ['Own working copy', workflow?.ownWorkingCopy, command.ownWorkingCopy],

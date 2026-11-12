@@ -28,7 +28,7 @@ import { snapshot } from '../core/subscriptions.js';
 import { commandReceipts, events, hostReads } from '../db/schema.js';
 import { startServer, type RunningServer } from '../server.js';
 import { commandClasses } from './classes.js';
-import { changeTools } from './tools.js';
+import { builtTools, changeTools } from './tools.js';
 import { readers } from './readers.js';
 import { asks } from './asks.js';
 import { diagnosisReaders } from './diagnosis.js';
@@ -243,6 +243,7 @@ describe('the assistant endpoint', () => {
           ...Object.keys(modelReaders),
           ...Object.keys(asks),
           ...Object.keys(changeTools),
+          ...Object.keys(builtTools),
         ].toSorted(),
       );
       expect(tools.every((tool) => tool.inputSchema.type === 'object')).toBe(true);
@@ -663,8 +664,8 @@ describe('ordinary changes', () => {
       {
         commandType: 'setting.set',
         what: 'Work hours',
-        from: 'outlook (default)',
-        to: '08:00–16:00 (monday, tuesday)',
+        from: 'From Outlook',
+        to: '08:00–16:00, Mon, Tue',
         place: { label: 'Settings → Calendar', path: '/settings/calendar' },
         state: 'applied',
       },
@@ -703,7 +704,7 @@ describe('ordinary changes', () => {
       {
         commandType: 'setting.set',
         what: 'GitLab URL (Tea)',
-        from: 'none (default)',
+        from: 'None (default)',
         to: 'https://gitlab.example',
         place: { label: 'Settings → Projects', path: '/settings/projects' },
         state: 'applied',
@@ -713,8 +714,8 @@ describe('ordinary changes', () => {
     expect(first.content.change).toEqual({
       id: changes()[0]?.id,
       what: 'Work hours',
-      from: 'outlook (default)',
-      to: '08:00–16:00 (monday, tuesday)',
+      from: 'From Outlook',
+      to: '08:00–16:00, Mon, Tue',
       place: { label: 'Settings → Calendar', path: '/settings/calendar' },
     });
     // The events are the ones a view's command leaves, plus the record.
@@ -908,7 +909,7 @@ describe('undo', () => {
 
     asUser({ type: 'setting.set', key: 'calendar.snapMinutes', scope: 'global', value: 10 });
     expect(refusal(() => asUser({ type: 'assistant.undo', changeId: snap?.id ?? '' }))).toBe(
-      'Snap to cannot be undone: it changed again since (it is now 10).',
+      'Snap to cannot be undone: it changed again since (it is now 10 min).',
     );
     expect(setting('calendar.snapMinutes')).toBe(10);
 
@@ -1087,7 +1088,7 @@ describe('proposals', () => {
     ]);
     expect(proposals().at(9)).toMatchObject({
       title: 'Change Paused',
-      lines: [{ what: 'Paused', from: 'on', to: 'off' }],
+      lines: [{ what: 'Paused', from: 'On', to: 'Off' }],
       place: { label: 'Settings → Scheduler', path: '/settings/scheduler' },
     });
 
@@ -1223,6 +1224,23 @@ describe('proposals', () => {
       scope: 'global',
     });
     expect(reset.content.outcome).toBe('proposed');
+    expect(before()).toBe(untouched);
+    expect(changes()).toEqual([]);
+  });
+
+  it('ask before the program "Open in editor" runs or its shell changes, either way', async () => {
+    asUser({ type: 'setting.set', key: 'viewer.editorShell', scope: 'global', value: true });
+    asUser({ type: 'setting.set', key: 'viewer.editorCommand', scope: 'global', value: 'subl' });
+    const untouched = before();
+    for (const [name, args] of [
+      ['set_setting', { key: 'viewer.editorCommand', scope: 'global', value: 'notepad {path}' }],
+      ['reset_setting', { key: 'viewer.editorCommand', scope: 'global' }],
+      ['set_setting', { key: 'viewer.editorShell', scope: 'global', value: false }],
+      ['reset_setting', { key: 'viewer.editorShell', scope: 'global' }],
+    ] as const) {
+      const result = await call(name, args);
+      expect([name, args.key, result.content.outcome]).toEqual([name, args.key, 'proposed']);
+    }
     expect(before()).toBe(untouched);
     expect(changes()).toEqual([]);
   });

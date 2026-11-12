@@ -42,6 +42,9 @@ const toolTexts = [
   'server',
   'tool',
   'diff',
+  'description',
+  'prompt',
+  'agentType',
 ] as const;
 
 // The facts an adapter read from a tool's input repeat parts of it, so they get the same net.
@@ -85,11 +88,11 @@ export class AssistantRedactor {
           break;
         case 'toolCallCompleted':
           this.#end(out, compiled, (stream) => stream.event.itemId === event.itemId);
-          out.push(
-            event.diff === undefined
-              ? event
-              : { ...event, diff: hideSecrets(event.diff, compiled) },
-          );
+          out.push({
+            ...event,
+            ...(event.diff === undefined ? {} : { diff: hideSecrets(event.diff, compiled) }),
+            ...(event.answer === undefined ? {} : { answer: hideSecrets(event.answer, compiled) }),
+          });
           break;
         case 'toolCallStarted':
           this.#end(out, compiled, (stream) => stream.event.type !== 'toolCallOutput');
@@ -141,6 +144,9 @@ export class AssistantRedactor {
             tasks: event.tasks.map((task) => ({
               ...task,
               description: hideSecrets(task.description, compiled),
+              ...(task.lastOutput === undefined
+                ? {}
+                : { lastOutput: hideSecrets(task.lastOutput, compiled) }),
             })),
           });
           break;

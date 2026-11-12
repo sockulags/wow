@@ -1,4 +1,11 @@
-import type { SettingOption, SettingUnit, Weekday } from '@wow/contracts';
+import {
+  WorkHours,
+  formatWorkHours,
+  settingUnitDisplay,
+  type SettingOption,
+  type SettingUnit,
+  type Weekday,
+} from '@wow/contracts';
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { PlusIcon, XIcon } from 'lucide-react';
 import { ChoiceSelect } from '@/components/choice-select';
@@ -52,15 +59,8 @@ export const optionLabel = (
 ): string => options?.[value]?.label ?? value;
 
 // The suffix shown after a number, and the factor between the stored and the shown value.
-export const unitDisplay: Readonly<Record<SettingUnit, { suffix: string; factor: number }>> = {
-  ms: { suffix: 's', factor: 1000 },
-  seconds: { suffix: 's', factor: 1 },
-  minutes: { suffix: 'min', factor: 1 },
-  days: { suffix: 'days', factor: 1 },
-  pixels: { suffix: 'px', factor: 1 },
-  percent: { suffix: '%', factor: 1 },
-  bytes: { suffix: 'KB', factor: 1000 },
-};
+export const unitDisplay: Readonly<Record<SettingUnit, { suffix: string; factor: number }>> =
+  settingUnitDisplay;
 
 // A value as a person reads it, for "Default: …" and the like.
 export function readableValue(
@@ -92,9 +92,11 @@ export function readableValue(
     return `${value.length} entries`;
   }
   if (kind.kind === 'workHours') {
-    const hours = asRecord(value);
-    const days = asArray(hours['days']).map((day) => shortDay[day as Weekday] ?? String(day));
-    return `${asString(hours['start'])}–${asString(hours['end'])}, ${days.join(' ')}`;
+    const hours = WorkHours.safeParse(value);
+    if (hours.success) return formatWorkHours(hours.data);
+    const loose = asRecord(value);
+    const days = asArray(loose['days']).map((day) => shortDay[day as Weekday] ?? String(day));
+    return `${asString(loose['start'])}–${asString(loose['end'])}, ${days.join(' ')}`;
   }
   return 'Custom';
 }

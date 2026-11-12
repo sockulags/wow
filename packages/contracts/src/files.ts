@@ -24,6 +24,24 @@ export const FileReadParams = z.union([
 ]);
 export type FileReadParams = z.infer<typeof FileReadParams>;
 
+// "Open in editor" (agent workbench spec 81): the server runs the command the
+// `viewer.editorCommand` setting names with the file's full path and line. Only a file or folder
+// inside the scope's folders is opened, by the same rules as `files.read`.
+const EditorPlace = {
+  path: FilePath,
+  line: z.number().int().min(1).optional(),
+};
+export const FileOpenInEditorParams = z.union([
+  RunScope.extend(EditorPlace),
+  ThreadScope.extend(EditorPlace),
+  ProjectScope.extend(EditorPlace),
+]);
+export type FileOpenInEditorParams = z.infer<typeof FileOpenInEditorParams>;
+
+// The full path the editor was given.
+export const FileOpenInEditorResult = z.object({ path: z.string().min(1) });
+export type FileOpenInEditorResult = z.infer<typeof FileOpenInEditorResult>;
+
 // The files of the scope's first folder for "Open file…" and `@` (agent workbench spec 18, 56):
 // what Git tracks plus the untracked files it does not ignore, or a bounded walk where the folder
 // is not in Git. Paths are relative with forward slashes; at most `viewer.fileListLimit` of them.

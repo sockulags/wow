@@ -13,7 +13,15 @@ export interface ActiveSkillComposer {
   readonly chips: readonly string[];
   openSkills(): void;
   removeSkill(index: number): void;
-  putBack(text: string, skills: readonly SkillRef[], images?: readonly SentImage[]): void;
+  putBack(
+    text: string,
+    skills: readonly SkillRef[],
+    images?: readonly SentImage[],
+    files?: readonly string[],
+  ): void;
+  // Adds a line after what is typed, without taking the focus: a diff line's comment in a thread's
+  // Changes (agent workbench spec 80).
+  addText(text: string): void;
 }
 
 interface SkillComposersState {

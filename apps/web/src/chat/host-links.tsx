@@ -11,6 +11,7 @@ import {
   type HostItemRef,
   type HostLinkRules,
 } from '@wow/contracts';
+import type { Connection } from '@wow/client-runtime';
 import {
   BookOpenIcon,
   CircleDotIcon,
@@ -19,7 +20,14 @@ import {
   TicketIcon,
   type LucideIcon,
 } from 'lucide-react';
-import { createContext, useContext, useEffect, type KeyboardEvent, type MouseEvent } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  type KeyboardEvent,
+  type MouseEvent,
+} from 'react';
 import { createStore, useStore } from 'zustand';
 import { useRuntime } from '@/app/runtime';
 import { safeHref } from '@/components/markdown';
@@ -51,6 +59,17 @@ const rulesStore = createStore<{ readonly byThread: Readonly<Record<string, Host
   () => ({ byThread: {} }),
 );
 
+// Every view of a thread (the conversation and the panel) wants the rules, and each answer costs
+// the server Git runs: one question per thread and per state of the settings and projects, shared
+// by the views showing it. A thread no view shows is asked afresh when it is shown again.
+interface Asked {
+  readonly connection: Connection;
+  readonly key: string;
+  settled: boolean;
+}
+const asked = new Map<string, Asked>();
+const views = new Map<string, number>();
+
 export function useHostLinkRules(threadId: string | undefined): HostLinkRules {
   const { connection } = useRuntime();
   const settings = useTopic('settings');
@@ -58,24 +77,51 @@ export function useHostLinkRules(threadId: string | undefined): HostLinkRules {
   const rules = useStore(rulesStore, (state) =>
     threadId === undefined ? undefined : state.byThread[threadId],
   );
+  // The views' subscriptions are their own, so they are compared by what they hold.
+  const key = useMemo(
+    () =>
+      settings === undefined || projects === undefined
+        ? undefined
+        : JSON.stringify([settings, projects]),
+    [settings, projects],
+  );
   useEffect(() => {
-    if (!connection || threadId === undefined) return undefined;
-    let current = true;
+    if (threadId === undefined) return undefined;
+    views.set(threadId, (views.get(threadId) ?? 0) + 1);
+    return () => {
+      const left = (views.get(threadId) ?? 1) - 1;
+      if (left > 0) {
+        views.set(threadId, left);
+        return;
+      }
+      views.delete(threadId);
+      if (asked.get(threadId)?.settled) asked.delete(threadId);
+    };
+  }, [threadId]);
+  useEffect(() => {
+    if (!connection || threadId === undefined || key === undefined) return;
+    const last = asked.get(threadId);
+    if (last && last.connection === connection && last.key === key) return;
+    const mine: Asked = { connection, key, settled: false };
+    asked.set(threadId, mine);
     connection
       .request('hosts.lookup', { threadId })
       .then((answer) => {
-        if (!current) return;
+        mine.settled = true;
+        if (asked.get(threadId) !== mine) return;
         const { rules: answered } = HostLookupResult.parse(answer);
         rulesStore.setState((state) => ({
           byThread: { ...state.byThread, [threadId]: answered },
         }));
+        // The last view left while the question was out.
+        if (!views.has(threadId)) asked.delete(threadId);
       })
-      // Without an answer no link is a chip; links stay plain, as without a token.
-      .catch(() => undefined);
-    return () => {
-      current = false;
-    };
-  }, [connection, threadId, settings, projects]);
+      // Without an answer no link is a chip; links stay plain, as without a token. The next view
+      // asks again.
+      .catch(() => {
+        if (asked.get(threadId) === mine) asked.delete(threadId);
+      });
+  }, [connection, threadId, key]);
   return rules ?? noHostLinkRules;
 }
 

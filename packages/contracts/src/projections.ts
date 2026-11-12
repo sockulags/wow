@@ -117,6 +117,10 @@ export const Thread = z.object({
   seen: z.boolean().optional(),
   // The message waiting for the running turn to end; null or absent when none waits.
   queued: QueuedMessage.nullable().optional(),
+  // When the thread came to its current state, so a thread that waits is ordered by when the wait
+  // began (agent workbench spec 76); a rename or a change of model does not move it. Null or
+  // absent in rows from before.
+  stateSince: Timestamp.nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -157,6 +161,11 @@ export const ThreadItemKind = z.enum([
   'task_list',
   'usage',
   'error',
+  // A divider before a user message whose turn runs on another model, effort or mode than the
+  // turn before (agent workbench spec 9), and one where the provider compacted the conversation
+  // (spec 46). Threads stored before have neither.
+  'settings_change',
+  'compaction',
 ]);
 export type ThreadItemKind = z.infer<typeof ThreadItemKind>;
 
@@ -191,6 +200,9 @@ export const TextItemPayload = z.object({
   // Images pasted or dropped on the composer (agent workbench spec 53), stored by the server for
   // the thread and read back for display with `attachments.read`. Absent for older messages.
   images: z.array(SentImage).optional(),
+  // An agent's text written by a subagent: the row id of the subagent call it belongs under
+  // (agent workbench spec 44). Absent for the thread's own agent and for older items.
+  parentItemId: Id.optional(),
 });
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 
@@ -212,6 +224,12 @@ export const ToolCallItemPayload = ToolFacts.partial().extend({
   diffCounts: z
     .object({ added: z.number().int().nonnegative(), removed: z.number().int().nonnegative() })
     .optional(),
+  // A call a subagent made: the row id of the subagent call it is drawn under (spec 44).
+  parentItemId: Id.optional(),
+  // A subagent call that ended: how many tool calls it made and its final answer, where the
+  // provider reported them.
+  toolCount: z.number().int().nonnegative().optional(),
+  answer: z.string().optional(),
 });
 export type ToolCallItemPayload = z.infer<typeof ToolCallItemPayload>;
 
@@ -260,12 +278,44 @@ export const TaskListItemPayload = z.object({
 export type TaskListItemPayload = z.infer<typeof TaskListItemPayload>;
 
 // Token usage and the context report arrive separately and merge into one item per turn.
+// `model` is the model the turn ran on (agent workbench spec 9); absent on rows stored before.
 export const UsageItemPayload = Usage.partial().extend({
   context: z
     .object({ usedTokens: z.number().int().nonnegative(), maxTokens: z.number().int().positive() })
     .optional(),
+  model: z.string().min(1).optional(),
 });
 export type UsageItemPayload = z.infer<typeof UsageItemPayload>;
+
+// Reasoning as it streams. The server stamps when its first and its latest part arrived, so the
+// row can say "Thought for 12 s" (spec 88); reasoning stored before has neither.
+export const ReasoningItemPayload = z.object({
+  text: z.string(),
+  startedAt: Timestamp.optional(),
+  endedAt: Timestamp.optional(),
+});
+export type ReasoningItemPayload = z.infer<typeof ReasoningItemPayload>;
+
+// What changed between the turn before and this one, as ids; the row names them by label.
+const SettingChange = z.object({ from: z.string(), to: z.string() });
+export const SettingsChangeItemPayload = z.object({
+  model: SettingChange.optional(),
+  effort: SettingChange.optional(),
+  permissionMode: SettingChange.optional(),
+});
+export type SettingsChangeItemPayload = z.infer<typeof SettingsChangeItemPayload>;
+
+// The provider compacted the conversation, by request (`manual`) or by itself (`auto`), with the
+// token counts before and after where it gives them (spec 46).
+export const CompactionTrigger = z.enum(['manual', 'auto']);
+export type CompactionTrigger = z.infer<typeof CompactionTrigger>;
+export const CompactionItemPayload = z.object({
+  trigger: CompactionTrigger,
+  preTokens: z.number().int().nonnegative().optional(),
+  postTokens: z.number().int().nonnegative().optional(),
+  at: Timestamp,
+});
+export type CompactionItemPayload = z.infer<typeof CompactionItemPayload>;
 
 export const ErrorItemPayload = z.object({ message: z.string() });
 export type ErrorItemPayload = z.infer<typeof ErrorItemPayload>;

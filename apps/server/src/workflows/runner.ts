@@ -14,7 +14,15 @@ import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import { stepMessage } from '../core/workflows.js';
 import type { Db } from '../db/database.js';
-import { projects, threadItems, threads, turns, workflowRuns, workflows } from '../db/schema.js';
+import {
+  ownText,
+  projects,
+  threadItems,
+  threads,
+  turns,
+  workflowRuns,
+  workflows,
+} from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import type { ArtifactDetector } from './artifacts.js';
 import type { RunBase } from './changes.js';
@@ -382,7 +390,7 @@ export class WorkflowRunner {
     const row = this.#deps.db
       .select({ payload: threadItems.payload })
       .from(threadItems)
-      .where(and(eq(threadItems.turnId, turnId), eq(threadItems.kind, kind)))
+      .where(and(eq(threadItems.turnId, turnId), eq(threadItems.kind, kind), ownText))
       .orderBy(desc(threadItems.index))
       .get();
     const payload: unknown = row?.payload;

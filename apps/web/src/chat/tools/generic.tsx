@@ -21,7 +21,7 @@ const oldStatus = {
 } as const;
 
 // The status words this row always had, and since the server stores times, its time.
-function Status({ payload, context }: { payload: ToolPayload; context: ItemContext }) {
+export function Status({ payload, context }: { payload: ToolPayload; context: ItemContext }) {
   const running = runningLabel(payload, context);
   const now = useNow(
     (running === 'running' || running === 'waiting for approval') &&
@@ -30,7 +30,7 @@ function Status({ payload, context }: { payload: ToolPayload; context: ItemConte
   const duration = running === 'not finished' ? undefined : toolDuration(payload, now);
   const status =
     running === 'waiting for approval'
-      ? { label: running, className: 'text-state-needs-you' }
+      ? { label: running, className: 'text-state-needs-you-text' }
       : running === 'not finished'
         ? { label: running, className: 'text-muted-foreground' }
         : oldStatus[payload.status];
