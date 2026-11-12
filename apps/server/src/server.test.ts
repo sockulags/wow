@@ -485,8 +485,11 @@ describe('rpc', () => {
       value: 'edit {path} +{line} && true',
     });
     await client.request('files.openInEditor', { threadId: 't1', path: 'src/timer.ts', line: 3 });
+    // The stand-in editor runs as on Linux, so a path with backslashes (the temp folder of a
+    // Windows machine) is put in single quotes and a plain one is left as it is.
+    const quoted = /^[\w@./:=+-]+$/.test(file) ? file : `'${file}'`;
     expect(editorCalls.at(-1)).toEqual({
-      file: `edit ${file} +3 && true`,
+      file: `edit ${quoted} +3 && true`,
       args: [],
       shell: true,
     });
