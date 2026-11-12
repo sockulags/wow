@@ -34,6 +34,7 @@ import { readCurrentBranch, readHeadCommit } from './projects/git.js';
 import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
 import { ProviderUpdates, createNpmRunner, type RunNpm } from './providers/update.js';
+import type { Spawn } from './files/editor.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
 import { route } from './rpc/router.js';
 import { Scheduler, type SchedulerTimers } from './scheduler/service.js';
@@ -94,6 +95,8 @@ export interface StartOptions {
   readonly fetch?: typeof fetch;
   // Runs npm for "Update Codex" (`provider.update`); tests and the e2e server pass a fake one.
   readonly runNpm?: RunNpm;
+  // Starts the program of "Open in editor"; tests pass a stand-in that records the call.
+  readonly spawnEditor?: Spawn;
 }
 
 export interface RunningServer {
@@ -315,6 +318,11 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     outlook: () => outlook,
     info: { version, home },
     clock: options.clock ?? (() => new Date()),
+    editor: {
+      ...(options.spawnEditor ? { spawn: options.spawnEditor } : {}),
+      platform: options.platform ?? process.platform,
+      env,
+    },
   });
 
   const token = randomBytes(32).toString('base64url');

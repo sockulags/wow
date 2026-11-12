@@ -133,6 +133,8 @@ const defineSetting = <S extends z.ZodType>(definition: SettingDefinition<S>) =>
 
 // The context panel's width range; the web app's resize handle stops at the same bounds.
 export const contextPanelWidthBounds = { min: 280, max: 720 } as const;
+// The list of changed files beside a run's diff (agent workbench spec 94).
+export const changesListWidthBounds = { min: 120, max: 800 } as const;
 
 export const Weekday = z.enum([
   'monday',
@@ -1330,6 +1332,27 @@ export const settingsRegistry = {
     default: false,
     scope: 'global',
   }),
+  'viewer.editorCommand': defineSetting({
+    schema: z
+      .string()
+      .min(1)
+      .refine((value) => value.trim() !== '', 'Name the command that opens your editor'),
+    group: 'viewer',
+    label: 'Editor command',
+    description:
+      'The command "Open in editor" runs, with {path} for the full path of the file and {line} for its line. Without {path} the path goes last. It runs as a program with these words as its arguments, not through a shell.',
+    default: 'code --goto {path}:{line}',
+    scope: 'global',
+  }),
+  'viewer.editorShell': defineSetting({
+    schema: z.boolean(),
+    group: 'viewer',
+    label: 'Run the editor command in a shell',
+    description:
+      'Give the editor command to the system shell (cmd.exe on Windows, sh elsewhere) as one line, so it can use shell syntax. The path and line are quoted for it.',
+    default: false,
+    scope: 'global',
+  }),
   'viewer.fileListLimit': defineSetting({
     schema: z.number().int().min(10).max(200_000),
     group: 'viewer',
@@ -1589,6 +1612,16 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'pixels',
   }),
+  'appearance.changesListWidth': defineSetting({
+    schema: z.number().int().min(changesListWidthBounds.min).max(changesListWidthBounds.max),
+    group: 'appearance',
+    label: 'Changed files list width',
+    description:
+      "Width of the list of changed files beside the diff in a run's Changes tab. Dragging the edge between them changes it.",
+    default: 288,
+    scope: 'global',
+    unit: 'pixels',
+  }),
   'keybindings.palette': keybinding('Command palette', 'Open the command palette.', 'Mod+K'),
   'keybindings.toggleSidebar': keybinding(
     'Toggle sidebar',
@@ -1684,6 +1717,16 @@ export const settingsRegistry = {
     'Run: show path',
     'Switch the open workflow run between its steps and its Path tab.',
     'Mod+Shift+Y',
+  ),
+  'keybindings.openInEditor': keybinding(
+    'Open in editor',
+    'Open the focused changed file, diff line, artifact or file link, or the file shown in the side panel, in your editor at its line (the "Editor command" setting).',
+    'Shift+Enter',
+  ),
+  'keybindings.diffComment': keybinding(
+    'Diff: comment on line',
+    "Write a comment on the focused diff line. In a run's Changes it goes into the send-back note, in a thread's Changes into the composer.",
+    'C',
   ),
   'keybindings.changesStepOnly': keybinding(
     'Changes: this step only',

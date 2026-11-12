@@ -9,7 +9,14 @@ import {
 } from './attachments.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RunDiff, RunDiffParams, ThreadDiff, ThreadDiffParams } from './diff.js';
-import { FileListParams, FileListResult, FileReadParams, FileReadResult } from './files.js';
+import {
+  FileListParams,
+  FileListResult,
+  FileOpenInEditorParams,
+  FileOpenInEditorResult,
+  FileReadParams,
+  FileReadResult,
+} from './files.js';
 import { HostItemRead, HostLookupParams, HostLookupResult } from './host-links.js';
 import { ChangeRequest, HostRead, HostRefreshParams, PageRead, TicketRead } from './hosts.js';
 import {
@@ -342,6 +349,14 @@ export const rpcMethods = {
   'files.list': {
     params: FileListParams,
     result: FileListResult,
+  },
+  // Opens a file of a thread, run or project, or the folder itself, in the user's editor with
+  // the command the `viewer.editorCommand` setting names. Refused, as `rejected` with the reason,
+  // for a path outside the scope's folders, one that is not there, or a command that does not
+  // start.
+  'files.openInEditor': {
+    params: FileOpenInEditorParams,
+    result: FileOpenInEditorResult,
   },
   // Stores one image for a thread's next message (agent workbench spec 53 to 55). Refused, as
   // `rejected` with the reason, when it is too large, not a PNG, JPEG, GIF or WebP, or for a
