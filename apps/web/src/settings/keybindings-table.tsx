@@ -26,7 +26,12 @@ const conversationKeys = new Set([
 export function keyScope(settingKey: string): KeyScope {
   const name = settingKey.replace(/^keybindings\./, '');
   if (name.startsWith('calendar') || name === 'newCard') return 'Calendar';
-  if (name === 'stopTurn' || name.startsWith('composer') || conversationKeys.has(name)) {
+  if (
+    name === 'stopTurn' ||
+    name === 'toBackground' ||
+    name.startsWith('composer') ||
+    conversationKeys.has(name)
+  ) {
     return 'Chat';
   }
   if (name.startsWith('panel')) return 'Panel';

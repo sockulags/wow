@@ -50,8 +50,8 @@ import { conversationStore, showConversation } from './conversation-nav';
 import { takeLanded } from './needs-you';
 import { HostLinkContext, useHostLinkRules, type HostLinks } from './host-links';
 import { PastedLinks } from './pasted-links';
+import { BackgroundTasks, backgroundTarget, useBackgroundShown } from './background';
 import {
-  BackgroundIndicator,
   ChatQuestions,
   ConversationItem,
   QueuedMessageItem,
@@ -81,6 +81,7 @@ import {
   groupQuestions,
   groupToolCalls,
   lastErrorId,
+  nestSubagentWork,
   turnEndRows,
   workingFacts,
   lastUserSent,
@@ -503,7 +504,9 @@ export function ThreadConversation({
       )?.label ?? thread.permissionMode)
     : thread.permissionMode;
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
-  const endRows = turnEndRows(items ?? [], turns);
+  // A subagent's work is drawn under its call (spec 44), not in the conversation itself.
+  const { top, children } = nestSubagentWork(items ?? []);
+  const endRows = turnEndRows(top, turns);
   const reasoningDone = finishedReasoning(items ?? []);
   const modelLabel = (id: string) => models.find((model) => model.id === id)?.label ?? id;
   const modeLabel = (id: string) =>
@@ -520,6 +523,8 @@ export function ThreadConversation({
       reasoningDone: reasoningDone.has(itemId),
       ...(reasoningToggle || reasoningByDefault ? { reasoningOpen } : {}),
       reasoningKey: reasoningToggle?.count ?? 0,
+      children: children.get(itemId),
+      childContext: (child) => itemContext(child.turnId, child.id),
       cwd: thread.cwd,
       permissionLabel,
       turnEnded: turn !== undefined && turn.state !== 'running',
@@ -557,11 +562,19 @@ export function ThreadConversation({
     };
   };
 
-  const afters = new Map((items ?? []).map((item) => [item.id, extras?.after?.(item)]));
+  const afters = new Map(top.map((item) => [item.id, extras?.after?.(item)]));
   const entries: ConversationEntry[] = groupQuestions(
     groupTools
-      ? groupToolCalls(items ?? [], (item) => Boolean(afters.get(item.id)))
-      : (items ?? []).map((item) => ({ kind: 'item', item })),
+      ? groupToolCalls(top, (item) => Boolean(afters.get(item.id)))
+      : top.map((item) => ({ kind: 'item', item })),
+  );
+  const backgroundTasks = thread.backgroundTasks ?? [];
+  useBackgroundShown(
+    threadId,
+    !compact && !extras,
+    backgroundTasks,
+    backgroundTarget(top, running?.id),
+    instance?.kind,
   );
 
   // While a question waits, the composer answers it with typed text, as its card's "Other" does;
@@ -698,9 +711,14 @@ export function ThreadConversation({
                 />
               </div>
             )}
-            {!running && thread.backgroundTasks && thread.backgroundTasks.length > 0 && (
+            {backgroundTasks.length > 0 && (
               <div className="mt-3">
-                <BackgroundIndicator tasks={thread.backgroundTasks} />
+                <BackgroundTasks
+                  tasks={backgroundTasks}
+                  threadId={threadId}
+                  kind={instance?.kind}
+                  waiting={!running}
+                />
               </div>
             )}
           </div>

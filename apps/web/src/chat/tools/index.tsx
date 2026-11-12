@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { ItemContext } from '../items';
+import { AgentCall } from './agent';
 import { commandParts } from './command';
 import { editParts } from './edit';
 import type { ToolPayload } from './facts';
@@ -38,6 +39,7 @@ export function toolParts(
 }
 
 export function ToolCall({ payload, context }: { payload: ToolPayload; context: ItemContext }) {
+  if (payload.kind === 'subagent') return <AgentCall payload={payload} context={context} />;
   return (
     <ToolRowFrame
       parts={toolParts(payload, context)}

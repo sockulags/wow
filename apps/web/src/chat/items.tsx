@@ -10,7 +10,6 @@ import {
   ToolCallItemPayload,
   UsageItemPayload,
   type Approval,
-  type BackgroundTask,
   type Question,
   type QueuedMessage,
   type ThreadItem,
@@ -23,7 +22,6 @@ import {
   CircleAlertIcon,
   CircleDashedIcon,
   ClockIcon,
-  HourglassIcon,
   RotateCcwIcon,
 } from 'lucide-react';
 import { useRef, useState, type ReactNode } from 'react';
@@ -93,6 +91,9 @@ export interface ItemContext {
   readonly reasoningDone?: boolean | undefined;
   readonly reasoningOpen?: boolean | undefined;
   readonly reasoningKey?: number | undefined;
+  // A subagent call's own calls and notes, drawn under it, and their context (spec 44).
+  readonly children?: readonly ThreadItem[] | undefined;
+  readonly childContext?: ((item: ThreadItem) => ItemContext) | undefined;
 }
 
 // One row per thread item. Rows skip layout and paint while off screen, so a long conversation
@@ -658,22 +659,6 @@ export function ConversationItem(props: {
 }
 
 // "Working · 0:42": how long the running turn has taken, from the turn's own start time.
-// Between turns: the agent's background work still runs, and it goes on by itself when it ends.
-export function BackgroundIndicator({ tasks }: { tasks: readonly BackgroundTask[] }) {
-  return (
-    <p
-      className="flex items-center gap-2 text-xs text-muted-foreground"
-      aria-live="polite"
-      data-testid="background-work"
-    >
-      <HourglassIcon className="size-3.5 shrink-0" aria-hidden />
-      <span>
-        Waiting for background work: {tasks.map((task) => task.description || task.id).join(', ')}
-      </span>
-    </p>
-  );
-}
-
 // "Running pnpm test · 0:42 · 6 tool calls · ↑12k ↓1.3k · Ctrl+. to stop" (spec 45): the
 // call that runs now, the turn's time from its stored start, its calls, its tokens where the
 // provider counts them during the turn, and the stop key.

@@ -320,7 +320,8 @@ export function groupToolCalls(
     run = [];
   };
   for (const item of items) {
-    if (item.kind !== 'tool_call') {
+    // A subagent call has its own work under it, so it stays a row of its own (spec 44).
+    if (item.kind !== 'tool_call' || isSubagentCall(item)) {
       close();
       entries.push({ kind: 'item', item });
       continue;
@@ -331,6 +332,40 @@ export function groupToolCalls(
   }
   close();
   return entries;
+}
+
+const isSubagentCall = (item: ThreadItem): boolean =>
+  ToolCallItemPayload.safeParse(item.payload).data?.kind === 'subagent';
+
+const parentOf = (item: ThreadItem): string | undefined => {
+  if (item.kind === 'tool_call')
+    return ToolCallItemPayload.safeParse(item.payload).data?.parentItemId;
+  if (item.kind === 'assistant_text')
+    return TextItemPayload.safeParse(item.payload).data?.parentItemId;
+  return undefined;
+};
+
+// What a subagent did goes under its call (spec 44): the conversation lists the thread's own
+// items, and each subagent call's calls and notes in order. An item whose call is not among the
+// items stays in the conversation, so nothing is lost.
+export function nestSubagentWork(items: readonly ThreadItem[]): {
+  readonly top: readonly ThreadItem[];
+  readonly children: ReadonlyMap<string, readonly ThreadItem[]>;
+} {
+  const ids = new Set(items.map((item) => item.id));
+  const top: ThreadItem[] = [];
+  const children = new Map<string, ThreadItem[]>();
+  for (const item of items) {
+    const parent = parentOf(item);
+    if (parent === undefined || !ids.has(parent)) {
+      top.push(item);
+      continue;
+    }
+    const list = children.get(parent);
+    if (list) list.push(item);
+    else children.set(parent, [item]);
+  }
+  return { top, children };
 }
 
 // How many calls of a run failed or were refused, so the collapsed row still says so.

@@ -80,6 +80,13 @@ const lineRange = (lines: ToolPayload['lines']): string =>
 export const shownAddress = (url: string): string =>
   url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/\/$/, '');
 
+// What a subagent was asked to do: its short description, else its prompt's first line (Codex
+// gives no description), else the tool's name (spec 44).
+export function agentTask(payload: ToolPayload): string {
+  const firstLine = payload.prompt?.trim().split('\n')[0];
+  return payload.description ?? (firstLine || payload.name);
+}
+
 // The one line of a read, search or web call: "Read README.md lines 1-80", "Search kettle in
 // src", "Fetch example.org".
 export function oneLine(payload: ToolPayload, cwd: string): string {
@@ -96,6 +103,8 @@ export function oneLine(payload: ToolPayload, cwd: string): string {
         : `Search the web for ${payload.query ?? ''}`.trimEnd();
     case 'edit':
       return `Edit ${payload.path === undefined ? '' : shownPath(payload.path, cwd)}`.trimEnd();
+    case 'subagent':
+      return `Agent: ${agentTask(payload)}`;
     default:
       return payload.name;
   }

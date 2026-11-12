@@ -444,6 +444,14 @@ It opens to list every call. Anything else in the turn, such as text, an approva
 Assistant's change rows and cards, starts a new row. `chat.groupToolCalls` off shows every call
 on its own row.
 
+**Subagents**: when the agent hands work to a subagent (Claude Code's Agent tool, a Codex
+collab agent), the call is one row, such as "Agent: explore the auth code · 3 tool calls · 1:32".
+While the subagent works, its own tool calls and notes are listed under the row, drawn like the
+thread's own; once it is done the row shows its answer, and clicking the row opens the list and
+the prompt again. Codex does not send a subagent's own work to wow so far, so there the row shows
+the prompt, how the agent stands (starting, running, done, failed) and its final message. Agent
+calls stored before this version look as they did.
+
 When the agent keeps a task list (Claude Code's todo and task tools, Codex's plan), the latest
 list of the running turn, or else of the last turn, is pinned above the composer as one line,
 "3/7 · <the task in progress>". **Ctrl+T** (`keybindings.toggleTasks`, or "Show task list" /
@@ -534,8 +542,17 @@ failed turn shows **Retry** (sends your last
 message again; in a workflow step's thread it sends the last message exactly as it went, the
 step's skills and their texts included) and **Resume** (sends `chat.resumePrompt`) in the error row.
 
-When Claude starts work in the background (a background agent or command) and ends its turn to
-wait for it, the thread says "Waiting for background work" and names it. When that work ends,
+When Claude starts work in the background (a background agent or command), each piece of work is
+a chip under the conversation with how long it has been running, such as "pnpm dev 2:05". A chip
+opens to the latest output Claude reported for it (a subagent's progress line; Claude Code does
+not hand wow a command's output after it went to the background) and has **Stop**. The palette
+has "Show background task: …" and "Stop background task: …" for each. **Ctrl+B**
+(`keybindings.toBackground`, "Send to the background" in the palette) sends the running command
+or subagent of the turn to the background, as in Claude Code, and the turn goes on; on Windows
+and Linux the key is also Toggle sidebar, which it does whenever nothing can go to the
+background. Codex has no background work, so its threads show no chips and Ctrl+B does nothing
+there. When Claude ends its turn to wait for background work, the line reads "Waiting for
+background work". When that work ends,
 Claude goes on by itself: the new turn appears in the thread as it runs, without a message from
 you, its usage is counted, **Stop** stops it, and the thread is marked as after any turn. Should
 the server stop while Claude waits, the waiting line goes away; only a workflow step that waited

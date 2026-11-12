@@ -20,6 +20,7 @@ import {
 import { skillComposerCommands } from '@/chat/skill-commands';
 import { rowActionCommands } from '@/chat/row-commands';
 import { activeTaskPin, taskPinCommands, taskPinStore } from '@/chat/task-pin';
+import { backgroundCommands, backgroundStore } from '@/chat/background';
 import { focusedRowActions, rowActionStore } from '@/lib/row-actions';
 import { paletteThreadHits, threadListStore } from '@/chat/thread-commands';
 import {
@@ -137,6 +138,7 @@ export function useCommands(gated = false): {
     threadSkillComposer(state, openThreadId),
   );
   const taskPin = useStore(taskPinStore, activeTaskPin);
+  const background = useStore(backgroundStore);
   const rowAreas = useStore(rowActionStore, (state) => state.areas);
   const taskPinOpen = useStore(taskPinStore, (state) =>
     taskPin === undefined ? false : (state.open[taskPin] ?? false),
@@ -249,6 +251,9 @@ export function useCommands(gated = false): {
       ...questionCommands(questionCard),
       ...skillComposerCommands(skillComposer),
       ...taskPinCommands(taskPin, taskPinOpen),
+      // Before the layout's commands: on Windows and Linux Ctrl+B is also Toggle sidebar, and
+      // while something can go to the background the key sends it there, as in Claude Code.
+      ...backgroundCommands(background),
       ...rowActionCommands(focusedRowActions({ areas: rowAreas })),
       ...imageComposerCommands(imageComposer),
       ...modelBarCommands(modelBar),
@@ -301,6 +306,7 @@ export function useCommands(gated = false): {
     ];
   }, [
     rowAreas,
+    background,
     calendarZone,
     outlookProfile,
     showWeekends,
