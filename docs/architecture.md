@@ -709,7 +709,10 @@ skills are still offered because the app invokes them explicitly. Plugin skills 
 from the newest version folder in `~/.claude/plugins/cache/<marketplace>/<plugin>/`; the plugin
 name comes from `.claude-plugin/plugin.json`. A `SKILL.md` that does not parse is logged and
 skipped. The server's `SkillsService` scans at startup, when a watched folder changes, when the
-skills settings or the project list change, and on `skills.refresh`; scans run one at a time and a
+skills settings or the project list change, and on `skills.refresh`, and while a skill folder is
+missing also after every `turn.ended`. Only skill folders that exist are watched, for the same
+reason as the plans watcher (see "Plans"): waiting for a missing `<project>/.claude/skills` would
+watch the project folder and hold it on Windows; scans run one at a time and a
 burst of changes shares one queued scan. It sends the result as a `skills.sync` command, which
 stores only the differences.
 
@@ -1922,19 +1925,25 @@ because a row the contract rejects would fail the topic's snapshot for every pro
 goes through the engine as the internal `plans.sync` command; the orchestrator compares it with
 the stored rows, so `plans.synced` carries only what changed and an unchanged read stores nothing.
 It reads at start, when the project list or a plans setting changes, when the watcher reports a
-change, and on `plans.refresh`. Reads that arrive while one is waiting share it.
+change, and on `plans.refresh` (which the Plans view also sends when it opens). While the last
+read found a project without its intents folder it also reads after every `turn.ended` and
+`workflowRun.changed`, since an agent's turn or a run step is how such a folder usually appears.
+Reads that arrive while one is waiting share it.
 
 **Watcher** (`apps/server/src/plans/watch.ts`, chokidar, the plans service's own). The intents
 folders are watched one level deep, which covers `<id>/{intent,spec,plan}.md`. A save in place
 empties a file before writing it, and a read in between would store an empty plan with no later
 event to correct it, so a change is reported only once the file has kept its size for
-`plans.writeSettleMs` (default 200 ms, chokidar's `awaitWriteFinish`; 0 turns the wait off). An
-intents folder that does not exist yet is waited for: the nearest existing folder above it, never
-above the project folder, is watched for the next part of the path only, and each time that
-appears or goes the read works out again what to watch, so a folder created or removed later is
-followed without a restart. The watcher is ready before the files are read, so a change made
-during a read is reported after it. Not followed: a project folder that does not exist when the
-plans are read, and an intents folder refused as a link; both are looked at again on the next read
+`plans.writeSettleMs` (default 200 ms, chokidar's `awaitWriteFinish`; 0 turns the wait off).
+Only an intents folder that exists is watched, never a project's own folder or the folders on
+the way to the intents folder: on Windows a watched folder cannot be renamed or removed until
+the watch is closed, and chokidar waits for a missing path by watching the folder above it, so
+waiting for `intents` held the whole project folder (finding 148). A missing intents folder is
+looked for again on the reads listed above. When the watched folder goes away the watcher
+reports it and the next read watches nothing for that project. The watcher is ready before the
+files are read, so a change made during a read is reported after it. Not followed: a project
+folder that does not exist when the plans are read, and an intents folder refused as a link; both
+are looked at again on the next read
 ("Refresh now", a project or setting change, a restart).
 
 **Rows.** `PlanIntent` (topic `planIntents`) is one intent folder: `hasIntent`, `status` and

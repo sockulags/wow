@@ -253,9 +253,7 @@ describe('plans service', () => {
     });
     addProject('tea');
     await server.plans.refresh();
-    expect(watched.at(-1)?.targets).toEqual([
-      { dir: path.join(projectDir('tea'), 'intents'), only: null },
-    ]);
+    expect(watched.at(-1)?.targets).toEqual([{ dir: path.join(projectDir('tea'), 'intents') }]);
     expect(row(`tea:${id}`)?.units.map((unit) => unit.key)).toEqual(['U1', 'U2']);
 
     await writeIntent('tea', id, {
@@ -309,8 +307,8 @@ describe('plans service', () => {
       'tea:2026-01-tea-timer',
     ]);
     expect(watched.at(-1)?.targets).toEqual([
-      { dir: path.join(projectDir('tea'), 'intents'), only: null },
-      { dir: path.join(projectDir('garden'), 'docs', 'intents'), only: null },
+      { dir: path.join(projectDir('tea'), 'intents') },
+      { dir: path.join(projectDir('garden'), 'docs', 'intents') },
     ]);
 
     server.engine.dispatch('delete-tea', { type: 'project.delete', projectId: 'tea' });
@@ -370,7 +368,9 @@ describe('plans service', () => {
     expect(rows().map((intent) => intent.id)).toEqual(['tea:2026-01-tea-timer']);
   });
 
-  it('waits for an intents folder that does not exist yet and reads it once it appears', async () => {
+  // On Windows a watched folder cannot be renamed or removed, so a project without its intents
+  // folder has nothing of it watched; the folder is looked for again on the next read.
+  it('watches nothing of a project without an intents folder and reads it after a turn ends', async () => {
     const garden = projectDir('garden');
     addProject('garden');
     server.engine.dispatch('set-dir', {
@@ -380,12 +380,11 @@ describe('plans service', () => {
       value: 'docs/intents',
     });
     await server.plans.refresh();
-    expect(watched.at(-1)?.targets).toEqual([{ dir: garden, only: 'docs' }]);
+    expect(watched.at(-1)?.targets ?? []).toEqual([]);
 
     await mkdir(path.join(garden, 'docs'));
-    await fileChanged();
-    expect(watched.at(-1)?.targets).toEqual([{ dir: path.join(garden, 'docs'), only: 'intents' }]);
-    expect(rows()).toEqual([]);
+    await server.plans.refresh();
+    expect(watched.at(-1)?.targets ?? []).toEqual([]);
 
     await writeIntent(
       'garden',
@@ -393,15 +392,42 @@ describe('plans service', () => {
       { intent: intentMd('2026-04-beds', 1, 'Raised beds') },
       path.join('docs', 'intents'),
     );
-    await fileChanged();
-    expect(watched.at(-1)?.targets).toEqual([
-      { dir: path.join(garden, 'docs', 'intents'), only: null },
-    ]);
+    server.engine.dispatch('instance', {
+      type: 'providerInstance.create',
+      providerInstanceId: 'claude-work',
+      kind: 'claude',
+      name: 'Work',
+      binaryPath: 'claude',
+      configDir: '',
+      env: {},
+      launchArgs: [],
+    });
+    server.engine.dispatch('thread', {
+      type: 'thread.create',
+      threadId: 't1',
+      providerInstanceId: 'claude-work',
+      projectId: 'garden',
+      cwd: garden,
+      model: 'mock-model',
+      effort: 'high',
+      permissionMode: 'default',
+    });
+    const read = new Promise<void>((resolve) => {
+      const off = server.engine.onCommit((commit) => {
+        if (commit.events.some(({ event }) => event.kind === 'plans.synced')) {
+          off();
+          resolve();
+        }
+      });
+    });
+    server.engine.dispatch('send', { type: 'thread.sendMessage', threadId: 't1', text: 'hello' });
+    await read;
     expect(rows().map((intent) => intent.id)).toEqual(['garden:2026-04-beds']);
+    expect(watched.at(-1)?.targets).toEqual([{ dir: path.join(garden, 'docs', 'intents') }]);
 
     await rm(path.join(garden, 'docs'), { recursive: true });
     await fileChanged();
-    expect(watched.at(-1)?.targets).toEqual([{ dir: garden, only: 'docs' }]);
+    expect(watched.at(-1)?.targets).toEqual([]);
     expect(rows()).toEqual([]);
   });
 

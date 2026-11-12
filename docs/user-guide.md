@@ -1120,7 +1120,9 @@ The **Plans** view (**Ctrl+4**, `keybindings.goPlans`) reads the intent, spec an
 your projects, the format agent-os writes. Each project's `plans.intentsDirectory` (`intents` by
 default) holds one folder per intent with `intent.md`, `spec.md` and `plan.md`. wow only reads
 these files, and reads them again when they change (once a file has stayed the same for
-`plans.writeSettleMs`).
+`plans.writeSettleMs`). A project whose intents folder does not exist yet is not watched, so its
+folder can still be renamed or removed on Windows; wow looks for the folder again when you open
+Plans or press **Refresh now**, when a project changes and after each agent turn or run step.
 
 On the left are the projects and their intents with title, status and revision, which files exist,
 and a "stale" mark on a spec or plan whose `built_on` revision is older than its source. Pick one

@@ -16,7 +16,7 @@ import {
   RefreshCwIcon,
   SearchXIcon,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useConnectionState, useRuntime, useSetting } from '@/app/runtime';
 import { useTopicState } from '@/app/topic-state';
 import { errorMessage, useTopic } from '@/chat/data';
@@ -55,7 +55,7 @@ import { PlanRunSection } from './plan-run-section';
 
 // Reads the plan files again (`plans.refresh`) and asks the hosts once about everything wow
 // follows (`hosts.refresh`). The watcher and the poller normally keep the view current; this is
-// for what they cannot see, such as a project folder that did not exist when the plans were
+// for what they cannot see, such as an intents folder that did not exist when the plans were
 // read, and for when polling is off.
 function RefreshButton() {
   const { connection } = useRuntime();
@@ -171,6 +171,11 @@ function IntentList() {
 
 export function PlansLayout() {
   const { configured } = useConnectionState();
+  const { connection } = useRuntime();
+  // The server watches no project that lacks its intents folder, so opening the view looks again.
+  useEffect(() => {
+    connection?.request('plans.refresh', {}).catch(() => undefined);
+  }, [connection]);
   if (!configured) return <DisconnectedState offline />;
   return (
     <div className="flex h-full min-h-0">

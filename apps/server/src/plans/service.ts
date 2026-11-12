@@ -53,8 +53,7 @@ function isInside(root: string, target: string): boolean {
 export interface ProjectIntentsFolder {
   // The folder to read, when it exists and is inside the project.
   readonly dir?: string;
-  // What to watch: the folder itself, or while it does not exist the nearest folder above it
-  // that does, for the next part of the path appearing.
+  // What to watch: the folder itself, only while it exists.
   readonly watch?: PlansWatchTarget;
   // Why nothing is read although the setting is fine.
   readonly refused?: string;
@@ -75,15 +74,9 @@ export async function locateIntents(
   if (real !== undefined) {
     if (!isInside(root, real)) return { refused: `${dir} is a link out of the project folder` };
     const found = await stat(real).catch(() => undefined);
-    if (found?.isDirectory()) return { dir, watch: { dir, only: null } };
+    if (found?.isDirectory()) return { dir, watch: { dir } };
   }
-  let missing = dir;
-  let parent = path.dirname(missing);
-  while (parent !== project.cwd && !(await stat(parent).catch(() => undefined))?.isDirectory()) {
-    missing = parent;
-    parent = path.dirname(missing);
-  }
-  return { watch: { dir: parent, only: path.basename(missing) } };
+  return {};
 }
 
 // An intent as the contract allows it. One that does not fit would make every snapshot of the
@@ -179,7 +172,8 @@ export async function readProjectIntents(
 
 // Keeps the plans projection in step with the intent files on disk: a read at start, another
 // whenever a watched folder changes, when the project list or a plans setting changes, and one
-// on request. It only reads; wow never writes these files.
+// on request. While a project has no intents folder, also after each turn
+// and run change. It only reads; wow never writes these files.
 export class PlansService {
   readonly #deps: PlansServiceDeps;
   readonly #unsubscribe: (() => void)[] = [];
@@ -188,6 +182,8 @@ export class PlansService {
   #tail: Promise<unknown> = Promise.resolve();
   #queued: Promise<PlanIntent[]> | undefined;
   #stopped = false;
+  // Whether the last read found a project without its intents folder.
+  #waiting = false;
 
   constructor(deps: PlansServiceDeps) {
     this.#deps = deps;
@@ -200,6 +196,16 @@ export class PlansService {
       }),
       this.#deps.engine.onCommit((commit) => {
         if (commit.topics.has('projects')) this.#changed();
+        // A missing intents folder is not watched, and an agent's turn or a run step is how one
+        // usually appears.
+        else if (
+          this.#waiting &&
+          commit.events.some(
+            ({ event }) => event.kind === 'turn.ended' || event.kind === 'workflowRun.changed',
+          )
+        ) {
+          this.#changed();
+        }
       }),
     );
     await this.refresh();
@@ -241,6 +247,7 @@ export class PlansService {
     while (await this.#watch(folders.flatMap(({ folder }) => folder.watch ?? []))) {
       folders = await this.#locate(all);
     }
+    this.#waiting = folders.some(({ folder }) => !folder.dir && !folder.refused);
     const intents: PlanIntent[] = [];
     for (const { project, folder } of folders) {
       if (folder.dir) intents.push(...(await readProjectIntents(project, folder.dir)));

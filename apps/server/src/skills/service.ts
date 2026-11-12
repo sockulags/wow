@@ -16,7 +16,7 @@ import {
   writeOwnSkillFile,
 } from '@wow/skills';
 import { existsSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Commit, Engine } from '../core/engine.js';
@@ -56,6 +56,8 @@ export class SkillsService {
   // Counts own-skill commits, so a scan that read the folder before one does not undo it.
   #ownGeneration = 0;
   #lastWriteFailure: { readonly commandId: string; readonly message: string } | undefined;
+  // Whether the last scan found a skill folder missing.
+  #waiting = false;
 
   constructor(deps: SkillsServiceDeps) {
     this.#deps = deps;
@@ -69,6 +71,10 @@ export class SkillsService {
       this.#deps.engine.onCommit((commit) => {
         if (this.#writeOwnSkills(commit.commandId, commit.events)) this.#rootsMayHaveChanged();
         else if (commit.topics.has('projects')) this.#rootsMayHaveChanged();
+        // A missing skill folder is not watched, and an agent's turn is how one usually appears.
+        else if (this.#waiting && commit.events.some(({ event }) => event.kind === 'turn.ended')) {
+          this.#rootsMayHaveChanged();
+        }
       }),
     );
     await this.refresh();
@@ -199,7 +205,15 @@ export class SkillsService {
     return { skills, overtaken: false };
   }
 
-  async #watch(roots: readonly SkillRoot[]): Promise<void> {
+  // Only folders that exist: chokidar waits for a missing one by watching the folder above it,
+  // and on Windows a watched folder cannot be renamed or removed, so a project without
+  // .claude/skills would have its own folder held.
+  async #watch(all: readonly SkillRoot[]): Promise<void> {
+    const roots: SkillRoot[] = [];
+    for (const root of all) {
+      if ((await stat(root.dir).catch(() => undefined))?.isDirectory()) roots.push(root);
+    }
+    this.#waiting = roots.length < all.length;
     const key = roots.map((root) => root.dir).join('\n');
     if (this.#watcher && key === this.#watchedKey) return;
     await this.#watcher?.close();

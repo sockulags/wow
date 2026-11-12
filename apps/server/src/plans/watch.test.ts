@@ -104,24 +104,23 @@ describe('plans watcher', () => {
     expect(seen).toEqual([]);
   });
 
-  it('follows an intents folder that is created after the start', async () => {
+  it('reads an intents folder created after the start on the next read and follows its removal', async () => {
     await server.plans.refresh();
     expect(rows()).toEqual([]);
 
-    const followed = stored(() => rows().length === 1);
     const folder = path.join(root, 'garden', 'intents', id);
     await mkdir(folder, { recursive: true });
     await writeFile(path.join(folder, 'intent.md'), intentMd);
-    await followed;
+    await server.plans.refresh();
     expect(rows()[0]).toMatchObject({ intentId: id, title: 'A compost log' });
 
     const removed = stored(() => rows().length === 0);
     await rm(path.join(root, 'garden', 'intents'), { recursive: true });
     await removed;
 
-    const back = stored(() => rows().length === 1);
     await mkdir(folder, { recursive: true });
     await writeFile(path.join(folder, 'intent.md'), intentMd);
-    await back;
+    await server.plans.refresh();
+    expect(rows()).toHaveLength(1);
   });
 });
