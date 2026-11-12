@@ -444,6 +444,14 @@ It opens to list every call. Anything else in the turn, such as text, an approva
 Assistant's change rows and cards, starts a new row. `chat.groupToolCalls` off shows every call
 on its own row.
 
+**Subagents**: when the agent hands work to a subagent (Claude Code's Agent tool, a Codex
+collab agent), the call is one row, such as "Agent: explore the auth code · 3 tool calls · 1:32".
+While the subagent works, its own tool calls and notes are listed under the row, drawn like the
+thread's own; once it is done the row shows its answer, and clicking the row opens the list and
+the prompt again. Codex does not send a subagent's own work to wow so far, so there the row shows
+the prompt, how the agent stands (starting, running, done, failed) and its final message. Agent
+calls stored before this version look as they did.
+
 When the agent keeps a task list (Claude Code's todo and task tools, Codex's plan), the latest
 list of the running turn, or else of the last turn, is pinned above the composer as one line,
 "3/7 · <the task in progress>". **Ctrl+T** (`keybindings.toggleTasks`, or "Show task list" /
@@ -534,8 +542,18 @@ failed turn shows **Retry** (sends your last
 message again; in a workflow step's thread it sends the last message exactly as it went, the
 step's skills and their texts included) and **Resume** (sends `chat.resumePrompt`) in the error row.
 
-When Claude starts work in the background (a background agent or command) and ends its turn to
-wait for it, the thread says "Waiting for background work" and names it. When that work ends,
+When Claude starts work in the background (a background agent or command), each piece of work is
+a chip under the conversation with how long it has been running, such as "pnpm dev 2:05". A chip
+opens to the latest output Claude reported for it (a subagent's progress line; Claude Code does
+not hand wow a command's output after it went to the background) and has **Stop**. The palette
+has "Show background task: …" and "Stop background task: …" for each. **Ctrl+B**
+(`keybindings.toBackground`, "Send to the background" in the palette) sends the running command
+or subagent of the turn to the background, as in Claude Code, and the turn goes on; on Windows
+and Linux the key is also Toggle sidebar, which it does whenever nothing can go to the
+background. A command that still waits for your approval cannot go to the background; answer it
+first. When Claude refuses a Stop or a Ctrl+B, the conversation says so and why. Codex has no
+background work, so its threads show no chips and Ctrl+B does nothing there. When Claude ends its turn to wait for background work, the line reads "Waiting for
+background work". When that work ends,
 Claude goes on by itself: the new turn appears in the thread as it runs, without a message from
 you, its usage is counted, **Stop** stops it, and the thread is marked as after any turn. Should
 the server stop while Claude waits, the waiting line goes away; only a workflow step that waited
@@ -647,6 +665,36 @@ Change model, effort or permission mode in the composer bar; the next turn uses 
 or the stop button interrupts a running turn and keeps what it produced; the turn ends with
 "Stopped by you · <time>", which carries **Resume** on the last turn. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
+
+### Reading a long thread
+
+- **What changed**: after you change the model, effort or mode, the next message starts with one
+  line such as "Model: Opus → Sonnet · Mode: Accept edits", and each turn's usage row names the
+  model it ran on.
+- **What runs now**: while a turn runs, the line under the conversation reads "Running pnpm test ·
+  0:42 · 6 tool calls · Ctrl+. to stop". Codex adds the tokens so far (↑12k ↓1.3k); Claude Code
+  reports them only when the turn ends.
+- **Compaction**: when Claude Code compacts the conversation (with `/compact` or by itself) a line
+  says "Conversation compacted (auto) · 152k → 18k". From `chat.contextWarnPercent` (70 %) the
+  context meter turns amber and offers **Compact now**. Codex has no compact action, so it shows
+  no Compact.
+- **Reasoning** reads "Thinking…" with its last line while it streams and "Thought for 12 s"
+  after. **Ctrl+O** opens or closes all reasoning in the thread; `chat.reasoningOpen` opens it by
+  default.
+- **Times**: each message shows when its turn started, each answer when its turn ended.
+- **Moving around**: scrolled up while output arrives, a **New output** pill shows; it or **End**
+  goes back down and follows again. End works from the message box too once the cursor is at the
+  end of what you typed (before that, it moves the cursor there). **Alt+Up** and **Alt+Down** move from message to message, and
+  **C** copies the message that has the keyboard. All these keys are settings under Keybindings,
+  for example if Alt+Up clashes with your screen reader.
+- **Next that needs you**: **Ctrl+Shift+J** goes to the oldest approval, question, plan, gate or
+  assistant proposal that waits for you, wherever it is, and puts the keyboard on it; press it
+  again for the next one. Oldest means the one that has waited longest: renaming a thread or
+  changing its model does not move it. A gate that waits for the pull request's checks is not
+  waiting for you and is skipped.
+- **Skills in chat** are listed Yours, Project, Recently used, User, Plugins and wow last; wow's
+  own four are marked "for workflow steps". On a new thread the list opens under the box, so the
+  provider and project pickers stay in view.
 
 ### The palette
 

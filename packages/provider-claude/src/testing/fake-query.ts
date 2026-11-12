@@ -175,6 +175,17 @@ export class FakeQuery implements ClaudeQuery {
     return Promise.resolve({ email: 'someone@example.com', organization: 'Example' });
   }
 
+  stopTask(taskId: string): Promise<void> {
+    this.calls.push(`stopTask:${taskId}`);
+    return Promise.resolve();
+  }
+
+  // Answers false for a tool use id that names no foreground task, as the SDK does.
+  backgroundTasks(toolUseId?: string): Promise<boolean> {
+    this.calls.push(`backgroundTasks:${toolUseId ?? ''}`);
+    return Promise.resolve(toolUseId !== 'none-running');
+  }
+
   close(): void {
     this.closed = true;
   }

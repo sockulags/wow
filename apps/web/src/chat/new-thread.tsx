@@ -338,6 +338,8 @@ export function NewThreadView() {
           blockedReason={blockedReason}
           placeholder={`What should the agent do? Type ${skillTrigger} to pick a skill.`}
           onSend={start}
+          // The lists open under the box, so the provider and project pickers stay in view.
+          listsBelow
           // The new thread's id is picked now, so its images are stored where it will be.
           imageTarget={
             instance && settings

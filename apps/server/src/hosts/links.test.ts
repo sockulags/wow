@@ -297,6 +297,31 @@ describe('host links in chat (agent workbench spec 20 to 26)', () => {
     expect(resolved).toHaveBeenCalled();
   });
 
+  it('shares one rules answer per project between views asking at once, and reads no token for it', async () => {
+    const linkHosts = vi.spyOn(server.trackers, 'linkHosts');
+    const resolved = vi.spyOn(server.secrets, 'resolve');
+    const answers = await Promise.all([
+      lookup({ threadId: 't-tea' }),
+      lookup({ threadId: 't-tea' }),
+      lookup({ threadId: 't-tea', ref: '#14' }),
+      lookup({ threadId: 't-field' }),
+    ]);
+    expect(answers.map((answer) => answer.rules.repository?.path)).toEqual([
+      'acme/tea',
+      'acme/tea',
+      'acme/tea',
+      'tea/field',
+    ]);
+    expect(linkHosts.mock.calls).toEqual([
+      ['tea', 'stored'],
+      ['field', 'stored'],
+    ]);
+    expect(resolved).not.toHaveBeenCalled();
+    // Once answered, the next view asks again: a stored token or a remote may have changed.
+    await lookup({ threadId: 't-tea' });
+    expect(linkHosts).toHaveBeenCalledTimes(3);
+  });
+
   it('reads a pull request when its tab opens, once, and again only on Refresh now; nothing polls it (spec 21, 22)', async () => {
     const ref = `${web}/acme/tea/pull/14`;
     const first = await lookup({ threadId: 't-tea', ref, read: 'open' });

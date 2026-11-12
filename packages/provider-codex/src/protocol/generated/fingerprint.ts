@@ -467,6 +467,51 @@ export const codexProtocolFingerprint: ProtocolFingerprint = {
           path: 'item<imageView>.path',
           shape: { type: 'string', required: true, nullable: false },
         },
+        {
+          path: 'item<collabAgentToolCall>.tool',
+          copes: true,
+          shape: {
+            type: 'enum',
+            required: true,
+            nullable: false,
+            values: [
+              'closeAgent',
+              'followupTask',
+              'interruptAgent',
+              'listAgents',
+              'resumeAgent',
+              'sendInput',
+              'sendMessage',
+              'spawnAgent',
+              'wait',
+            ],
+          },
+        },
+        {
+          path: 'item<collabAgentToolCall>.status',
+          copes: true,
+          shape: {
+            type: 'enum',
+            required: true,
+            nullable: false,
+            values: ['completed', 'failed', 'inProgress', 'interrupted'],
+          },
+        },
+        {
+          path: 'item<collabAgentToolCall>.prompt',
+          copes: true,
+          shape: { type: 'string', required: true, nullable: true },
+        },
+        {
+          path: 'item<collabAgentToolCall>.receiverThreadIds',
+          copes: true,
+          shape: { type: 'array', required: true, nullable: false },
+        },
+        {
+          path: 'item<collabAgentToolCall>.agentsStates',
+          copes: true,
+          shape: { type: 'object', required: true, nullable: false },
+        },
       ],
       result: [],
     },
@@ -562,6 +607,51 @@ export const codexProtocolFingerprint: ProtocolFingerprint = {
         {
           path: 'item<imageView>.path',
           shape: { type: 'string', required: true, nullable: false },
+        },
+        {
+          path: 'item<collabAgentToolCall>.tool',
+          copes: true,
+          shape: {
+            type: 'enum',
+            required: true,
+            nullable: false,
+            values: [
+              'closeAgent',
+              'followupTask',
+              'interruptAgent',
+              'listAgents',
+              'resumeAgent',
+              'sendInput',
+              'sendMessage',
+              'spawnAgent',
+              'wait',
+            ],
+          },
+        },
+        {
+          path: 'item<collabAgentToolCall>.status',
+          copes: true,
+          shape: {
+            type: 'enum',
+            required: true,
+            nullable: false,
+            values: ['completed', 'failed', 'inProgress', 'interrupted'],
+          },
+        },
+        {
+          path: 'item<collabAgentToolCall>.prompt',
+          copes: true,
+          shape: { type: 'string', required: true, nullable: true },
+        },
+        {
+          path: 'item<collabAgentToolCall>.receiverThreadIds',
+          copes: true,
+          shape: { type: 'array', required: true, nullable: false },
+        },
+        {
+          path: 'item<collabAgentToolCall>.agentsStates',
+          copes: true,
+          shape: { type: 'object', required: true, nullable: false },
         },
         {
           path: 'item<agentMessage>.text',

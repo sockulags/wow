@@ -1,5 +1,6 @@
 import {
   providerChatOptions,
+  TextItemPayload,
   type ProviderInstance,
   type SentImage,
   type SkillRef,
@@ -7,17 +8,27 @@ import {
   type ThreadItem,
 } from '@wow/contracts';
 import { Link, useRouter } from '@tanstack/react-router';
-import { CircleCheckIcon, PinIcon, RotateCcwIcon, SearchXIcon, Undo2Icon } from 'lucide-react';
+import {
+  ArrowDownIcon,
+  CircleCheckIcon,
+  PinIcon,
+  RotateCcwIcon,
+  SearchXIcon,
+  Undo2Icon,
+} from 'lucide-react';
 import {
   Fragment,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
   type RefObject,
 } from 'react';
+import { useStore } from 'zustand';
 import { useRuntime, useSetting } from '@/app/runtime';
 import { FileLinkContext, type FileLinks } from '@/components/file-links';
 import { IconButton, WithTooltip } from '@/components/hint';
@@ -33,11 +44,14 @@ import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
 import { Composer, type ComposerHandle } from './composer';
 import type { QuestionHold } from './question-card';
-import { useDispatch, useTopic } from './data';
+import { useDispatch, useModels, useTopic } from './data';
+import { copyText } from '@/components/copy-button';
+import { conversationStore, showConversation } from './conversation-nav';
+import { takeLanded } from './needs-you';
 import { HostLinkContext, useHostLinkRules, type HostLinks } from './host-links';
 import { PastedLinks } from './pasted-links';
+import { BackgroundTasks, backgroundTarget, useBackgroundShown } from './background';
 import {
-  BackgroundIndicator,
   ChatQuestions,
   ConversationItem,
   QueuedMessageItem,
@@ -63,13 +77,18 @@ import { frontModelBar } from './model-commands';
 import { ThreadChangesChip } from './thread-changes';
 import { ThreadTitle } from './thread-title';
 import {
+  finishedReasoning,
   groupQuestions,
   groupToolCalls,
   lastErrorId,
+  nestSubagentWork,
+  turnEndRows,
+  workingFacts,
   lastUserSent,
   pendingApproval,
   pendingQuestion,
   providerLabel,
+  recentSkillNames,
   type ConversationEntry,
 } from './view-model';
 
@@ -181,16 +200,27 @@ function ThreadHeader({
   );
 }
 
+// From the warning share on (a setting, spec 47) the meter is amber and reads "Context 82 %
+// full", with "Compact now" where the provider can compact.
 function ContextMeter({
   context,
+  warnAt,
   onCompact,
 }: {
   context: ContextUsage;
+  warnAt: number;
   onCompact: (() => void) | undefined;
 }) {
   const percent = contextPercent(context);
+  const full = percent >= warnAt;
   return (
-    <div className="flex items-center gap-2 text-2xs text-muted-foreground tabular-nums">
+    <div
+      data-full={full || undefined}
+      className={cn(
+        'flex items-center gap-2 text-2xs tabular-nums',
+        full ? 'text-state-needs-you' : 'text-muted-foreground',
+      )}
+    >
       <div
         role="meter"
         aria-label="Context used"
@@ -200,39 +230,49 @@ function ContextMeter({
         className="h-1 w-24 overflow-hidden rounded-full bg-muted"
       >
         <div
-          className={cn(
-            'h-full rounded-full',
-            percent >= 90 ? 'bg-state-failed' : percent >= 70 ? 'bg-state-needs-you' : 'bg-ring',
-          )}
+          className={cn('h-full rounded-full', full ? 'bg-state-needs-you' : 'bg-ring')}
           style={{ width: `${percent}%` }}
         />
       </div>
       <span data-testid="context-meter">
-        {`${formatTokens(context.usedTokens)} / ${formatTokens(context.maxTokens)} context (${percent}%)`}
+        {full
+          ? `Context ${percent} % full`
+          : `${formatTokens(context.usedTokens)} / ${formatTokens(context.maxTokens)} context (${percent}%)`}
       </span>
       {onCompact && (
-        <Button size="xs" variant="ghost" onClick={onCompact}>
-          Compact
+        <Button size="xs" variant={full ? 'outline' : 'ghost'} onClick={onCompact}>
+          {full ? 'Compact now' : 'Compact'}
         </Button>
       )}
     </div>
   );
 }
 
+// Follows the stream until the user scrolls up to read; output that arrives meanwhile shows
+// "New output", which (or End) goes back down and follows again (spec 73).
 function useStickToBottom(dependency: unknown) {
   const container = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const [newOutput, setNewOutput] = useState(false);
   useLayoutEffect(() => {
     const element = container.current;
-    if (element && pinned.current) element.scrollTop = element.scrollHeight;
+    if (!element) return;
+    if (pinned.current) element.scrollTop = element.scrollHeight;
+    else setNewOutput(true);
   }, [dependency]);
   const onScroll = () => {
     const element = container.current;
     if (!element) return;
-    // Following the stream until the user scrolls up to read.
     pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+    if (pinned.current) setNewOutput(false);
   };
-  return { container, onScroll };
+  const toEnd = useCallback(() => {
+    const element = container.current;
+    pinned.current = true;
+    setNewOutput(false);
+    if (element) element.scrollTop = element.scrollHeight;
+  }, []);
+  return { container, onScroll, newOutput, toEnd };
 }
 
 export function ThreadView({ threadId }: { threadId: string }) {
@@ -308,8 +348,14 @@ export function ThreadConversation({
   const groupTools = useSetting('chat.groupToolCalls');
   const outputLines = useSetting('chat.toolOutputLines');
   const skillTrigger = useSetting('chat.skillTrigger');
+  const warnAt = useSetting('chat.contextWarnPercent');
+  const reasoningByDefault = useSetting('chat.reasoningOpen');
+  const stopKey = useSetting('keybindings.stopTurn');
+  const reasoningToggle = useStore(conversationStore, (state) => state.reasoning[thread.id]);
+  const { models } = useModels(instance?.id);
   const { when } = useDateFormat();
-  const { container, onScroll } = useStickToBottom(items);
+  const { container, onScroll, newOutput, toEnd } = useStickToBottom(items);
+  const list = useRef<HTMLOListElement>(null);
   const ownComposer = useRef<ComposerHandle>(null);
   const composer = extras?.composerRef ?? ownComposer;
   const bar = useRef<ModelBarHandle>(null);
@@ -362,8 +408,57 @@ export function ThreadConversation({
   );
 
   useEffect(() => {
+    // "Next that needs you" put the keyboard on a card here; the composer leaves it there.
+    if (takeLanded(`thread:${threadId}`)) return;
     if (autoFocus) composer.current?.focus();
   }, [autoFocus, threadId, composer]);
+
+  // The conversation on screen answers Alt+Up/Down, C and End (spec 73, 74); a step's thread in
+  // the side panel leaves them to the view.
+  const messageRows = () => [
+    ...(list.current?.querySelectorAll<HTMLElement>(':scope > li[data-message]') ?? []),
+  ];
+  const moveMessage = (step: -1 | 1) => {
+    const rows = messageRows();
+    const at = rows.findIndex((row) => row.contains(document.activeElement));
+    const next = at === -1 ? rows.at(-1) : rows[Math.min(rows.length - 1, Math.max(0, at + step))];
+    next?.focus();
+    next?.scrollIntoView({ block: 'nearest' });
+  };
+  const latestItems = useRef(items);
+  latestItems.current = items;
+  const nav = useRef({ moveMessage, toEnd });
+  nav.current = { moveMessage, toEnd };
+  useEffect(() => {
+    if (compact) return undefined;
+    return showConversation(threadId, {
+      previousMessage: () => nav.current.moveMessage(-1),
+      nextMessage: () => nav.current.moveMessage(1),
+      toEnd: () => nav.current.toEnd(),
+      copyFocused: () => {
+        const id = conversationStore.getState().focusedMessage;
+        const focused = latestItems.current?.find((item) => item.id === id);
+        const parsed = focused ? TextItemPayload.safeParse(focused.payload) : undefined;
+        return parsed?.success ? copyText(parsed.data.text) : undefined;
+      },
+    });
+  }, [compact, threadId]);
+  useEffect(() => {
+    if (compact) return;
+    conversationStore.setState((state) =>
+      state.threadId === threadId ? { scrolledUp: newOutput } : state,
+    );
+  }, [compact, threadId, newOutput]);
+  const trackFocus = (event: React.FocusEvent<HTMLOListElement>) => {
+    rowActionScope(event);
+    if (compact) return;
+    const row = (event.target as HTMLElement).closest<HTMLElement>('li[data-message]');
+    conversationStore.setState({ focusedMessage: row?.dataset['itemId'] });
+  };
+  const leaveFocus = (event: React.FocusEvent<HTMLOListElement>) => {
+    if (compact || list.current?.contains(event.relatedTarget as Node | null)) return;
+    conversationStore.setState({ focusedMessage: undefined });
+  };
 
   const running = runningTurn(turns);
   const last = lastTurn(turns);
@@ -409,9 +504,27 @@ export function ThreadConversation({
       )?.label ?? thread.permissionMode)
     : thread.permissionMode;
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
+  // A subagent's work is drawn under its call (spec 44), not in the conversation itself.
+  const { top, children } = nestSubagentWork(items ?? []);
+  const endRows = turnEndRows(top, turns);
+  const reasoningDone = finishedReasoning(items ?? []);
+  const modelLabel = (id: string) => models.find((model) => model.id === id)?.label ?? id;
+  const modeLabel = (id: string) =>
+    instance
+      ? (permissionOptions(instance.kind, id).find((option) => option.id === id)?.label ?? id)
+      : id;
+  const reasoningOpen = reasoningToggle?.open ?? reasoningByDefault;
   const itemContext = (turnId: string, itemId: string): ItemContext => {
     const turn = turnById.get(turnId);
     return {
+      modelLabel,
+      modeLabel,
+      ...(endRows.has(itemId) && turn?.endedAt ? { endedAt: turn.endedAt } : {}),
+      reasoningDone: reasoningDone.has(itemId),
+      ...(reasoningToggle || reasoningByDefault ? { reasoningOpen } : {}),
+      reasoningKey: reasoningToggle?.count ?? 0,
+      children: children.get(itemId),
+      childContext: (child) => itemContext(child.turnId, child.id),
       cwd: thread.cwd,
       permissionLabel,
       turnEnded: turn !== undefined && turn.state !== 'running',
@@ -449,11 +562,19 @@ export function ThreadConversation({
     };
   };
 
-  const afters = new Map((items ?? []).map((item) => [item.id, extras?.after?.(item)]));
+  const afters = new Map(top.map((item) => [item.id, extras?.after?.(item)]));
   const entries: ConversationEntry[] = groupQuestions(
     groupTools
-      ? groupToolCalls(items ?? [], (item) => Boolean(afters.get(item.id)))
-      : (items ?? []).map((item) => ({ kind: 'item', item })),
+      ? groupToolCalls(top, (item) => Boolean(afters.get(item.id)))
+      : top.map((item) => ({ kind: 'item', item })),
+  );
+  const backgroundTasks = thread.backgroundTasks ?? [];
+  useBackgroundShown(
+    threadId,
+    !compact && !extras,
+    backgroundTasks,
+    backgroundTarget(top, running?.id, approvals),
+    instance?.kind,
   );
 
   // While a question waits, the composer answers it with typed text, as its card's "Other" does;
@@ -514,7 +635,13 @@ export function ThreadConversation({
           data-testid="conversation"
         >
           <div className={column}>
-            <ol aria-label="Conversation" className="flex flex-col gap-3" onFocus={rowActionScope}>
+            <ol
+              ref={list}
+              aria-label="Conversation"
+              className="flex flex-col gap-3"
+              onFocus={trackFocus}
+              onBlur={leaveFocus}
+            >
               {entries.map((entry, index) => {
                 const tail = entry.kind === 'item' ? entry.item : entry.items.at(-1);
                 const after = tail && afters.get(tail.id);
@@ -577,16 +704,38 @@ export function ThreadConversation({
             </ol>
             {running && thread.state === 'working' && (
               <div className="mt-3">
-                <WorkingIndicator startedAt={running.startedAt} />
+                <WorkingIndicator
+                  startedAt={running.startedAt}
+                  facts={workingFacts(items ?? [], running.id, thread.cwd)}
+                  stopKey={stopKey}
+                />
               </div>
             )}
-            {!running && thread.backgroundTasks && thread.backgroundTasks.length > 0 && (
+            {backgroundTasks.length > 0 && (
               <div className="mt-3">
-                <BackgroundIndicator tasks={thread.backgroundTasks} />
+                <BackgroundTasks
+                  tasks={backgroundTasks}
+                  threadId={threadId}
+                  kind={instance?.kind}
+                  waiting={!running}
+                />
               </div>
             )}
           </div>
         </div>
+        {newOutput && (
+          <div className="relative">
+            <Button
+              size="xs"
+              variant="secondary"
+              className="absolute -top-9 left-1/2 -translate-x-1/2 shadow-md"
+              onClick={toEnd}
+            >
+              <ArrowDownIcon />
+              New output
+            </Button>
+          </div>
+        )}
         <div
           className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}
           // The palette's model commands go to the bar whose composer had the focus last.
@@ -622,6 +771,7 @@ export function ThreadConversation({
             }
             {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
             fileSource={fileLinks ? { threadId } : undefined}
+            recentSkills={recentSkillNames(items ?? [])}
             // Images go only with chat threads: the Assistant view (spec 61) and a workflow step,
             // wherever it is shown, take none.
             imageTarget={fileLinks && thread.stepId === null ? { threadId } : undefined}
@@ -631,6 +781,7 @@ export function ThreadConversation({
                   {showMeter && context && (
                     <ContextMeter
                       context={context}
+                      warnAt={warnAt}
                       onCompact={
                         compactPrompt !== null && !running
                           ? () => void message(compactPrompt)

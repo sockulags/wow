@@ -29,11 +29,151 @@ const echoed = (command: Extract<ProviderCommand, { type: 'startTurn' }>): strin
   return count === 0 ? command.prompt : `${command.prompt}\n\n${imagesReceived(count)}`;
 };
 
+// A compaction as Claude Code reports one after `/compact` (agent workbench spec 46).
+export const mockCompaction = (threadId: string): ProviderEvent => ({
+  type: 'compacted',
+  threadId,
+  trigger: 'manual',
+  preTokens: 152_000,
+  postTokens: 18_000,
+});
+
+// A turn of two tool calls, a command and a read (agent workbench spec 45).
+export const mockTwoTools = (threadId: string, cwd: string): ProviderEvent[] => [
+  {
+    type: 'toolCallStarted',
+    threadId,
+    itemId: `${threadId}-tool-1`,
+    name: 'Bash',
+    input: { command: 'pnpm lint' },
+    kind: 'command',
+    command: 'pnpm lint',
+  },
+  { type: 'toolCallCompleted', threadId, itemId: `${threadId}-tool-1`, status: 'ok' },
+  {
+    type: 'toolCallStarted',
+    threadId,
+    itemId: `${threadId}-tool-2`,
+    name: 'Bash',
+    input: { command: 'pnpm test' },
+    kind: 'command',
+    command: 'pnpm test',
+    cwd,
+  },
+];
+
+// A subagent as Claude Code's adapter reports one (agent workbench spec 44): the Agent call,
+// three calls and a note of the subagent under it while it runs, then its count, time and
+// answer. `running` leaves it running; `done` finishes it and the turn's own answer follows.
+export const mockSubagent = (
+  threadId: string,
+  cwd: string,
+): { running: ProviderEvent[]; done: ProviderEvent[] } => {
+  const agent = `${threadId}-agent`;
+  const nested = (id: string, event: Partial<ProviderEvent>): ProviderEvent =>
+    ({
+      type: 'toolCallStarted',
+      threadId,
+      itemId: `${agent}-${id}`,
+      parentItemId: agent,
+      ...event,
+    }) as ProviderEvent;
+  const finished = (id: string): ProviderEvent => ({
+    type: 'toolCallCompleted',
+    threadId,
+    itemId: `${agent}-${id}`,
+    status: 'ok',
+  });
+  return {
+    running: [
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: agent,
+        name: 'Agent',
+        input: { description: 'explore the auth code', subagent_type: 'Explore' },
+        kind: 'subagent',
+        description: 'explore the auth code',
+        prompt: 'Find where the kettle checks who may start it, and say which file holds it.',
+        agentType: 'Explore',
+      },
+      nested('grep', {
+        name: 'Grep',
+        input: { pattern: 'mayStart', path: 'src' },
+        kind: 'search',
+        pattern: 'mayStart',
+        path: 'src',
+      }),
+      { type: 'toolCallOutput', threadId, itemId: `${agent}-grep`, output: 'src/auth.ts\n' },
+      finished('grep'),
+      nested('read', {
+        name: 'Read',
+        input: { file_path: `${cwd}/src/auth.ts` },
+        kind: 'read',
+        path: `${cwd}/src/auth.ts`,
+      }),
+      {
+        type: 'toolCallOutput',
+        threadId,
+        itemId: `${agent}-read`,
+        output: 'export const mayStart\n',
+      },
+      finished('read'),
+      {
+        type: 'textDelta',
+        threadId,
+        itemId: `${agent}-note`,
+        delta: 'The check is in src/auth.ts; running its test.',
+        parentItemId: agent,
+      },
+      nested('test', {
+        name: 'Bash',
+        input: { command: 'pnpm test auth' },
+        kind: 'command',
+        command: 'pnpm test auth',
+      }),
+    ],
+    done: [
+      finished('test'),
+      {
+        type: 'toolCallCompleted',
+        threadId,
+        itemId: agent,
+        status: 'ok',
+        toolCount: 3,
+        // 1:32, as the spec's example reads.
+        durationMs: (60 + 32) * 1000,
+        answer: 'The kettle checks `mayStart` in `src/auth.ts`; its test passes.',
+      },
+      {
+        type: 'textDelta',
+        threadId,
+        itemId: `${threadId}-after-agent`,
+        delta: 'The subagent found the check in src/auth.ts.',
+      },
+    ],
+  };
+};
+
 const echo: MockScript = (command) => {
   if (command.type !== 'startTurn') return [];
   const { threadId } = command;
+  const subagent = /with an agent/i.test(command.prompt)
+    ? mockSubagent(threadId, command.cwd)
+    : undefined;
+  const extra: ProviderEvent[] = subagent
+    ? [...subagent.running, ...subagent.done]
+    : /compact/i.test(command.prompt)
+      ? [mockCompaction(threadId)]
+      : /two tools/i.test(command.prompt)
+        ? [
+            ...mockTwoTools(threadId, command.cwd),
+            { type: 'toolCallCompleted', threadId, itemId: `${threadId}-tool-2`, status: 'ok' },
+          ]
+        : [];
   return [
     { type: 'session', threadId, providerSessionId: `mock-${threadId}` },
+    ...extra,
     { type: 'textDelta', threadId, itemId: `${threadId}-text`, delta: echoed(command) },
     { type: 'usage', threadId, inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
     { type: 'turnCompleted', threadId },

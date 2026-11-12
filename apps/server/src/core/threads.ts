@@ -1,6 +1,8 @@
 import type {
+  CompactionItemPayload,
   DomainEvent,
   ProviderEvent,
+  SettingsChangeItemPayload,
   QueuedMessage,
   SentImage,
   SentSkill,
@@ -36,7 +38,10 @@ import {
   replyProblem,
   replyText,
   TaskListItemPayload,
+  ToolCallItemPayload,
+  providerChatOptions,
   toolFactsOf,
+  type BackgroundTask,
   type QuestionReply,
 } from '@wow/contracts';
 import { z } from 'zod';
@@ -79,6 +84,8 @@ type ThreadCommand = Extract<
       | 'thread.retry'
       | 'thread.answerQuestions'
       | 'thread.interrupt'
+      | 'thread.stopTask'
+      | 'thread.toBackground'
       | 'thread.configure'
       | 'thread.setPinned'
       | 'thread.setDone'
@@ -154,6 +161,8 @@ function turnStarted(
 ): DomainEvent {
   const index = read.turnCount(thread.id);
   const id = turnId(thread.id, index);
+  const itemIndex = read.nextItemIndex(thread.id);
+  const changes = settingsChanges(read.lastStart(thread.id), thread);
   return {
     kind: 'turn.started',
     aggregate: thread.id,
@@ -167,11 +176,24 @@ function turnStarted(
         endedAt: null,
         usage: null,
       },
+      ...(changes
+        ? {
+            settingsItem: {
+              id: `${id}:settings`,
+              threadId: thread.id,
+              turnId: id,
+              index: itemIndex,
+              kind: 'settings_change' as const,
+              payload: changes,
+              streaming: false,
+            },
+          }
+        : {}),
       item: {
         id: `${id}:user`,
         threadId: thread.id,
         turnId: id,
-        index: read.nextItemIndex(thread.id),
+        index: changes ? itemIndex + 1 : itemIndex,
         kind: 'user',
         payload: {
           text,
@@ -196,6 +218,23 @@ function turnStarted(
       },
     },
   };
+}
+
+// What differs between the settings the turn before was sent with and the thread's now (agent
+// workbench spec 9). A thread's first turn, and a thread whose turns all started by themselves,
+// has nothing to compare with and gets no divider.
+function settingsChanges(
+  before: ReturnType<ReadModel['lastStart']>,
+  thread: Pick<Thread, 'model' | 'effort' | 'permissionMode'>,
+): SettingsChangeItemPayload | undefined {
+  if (!before) return undefined;
+  const changes: SettingsChangeItemPayload = {};
+  if (before.model !== thread.model) changes.model = { from: before.model, to: thread.model };
+  if (before.effort !== thread.effort) changes.effort = { from: before.effort, to: thread.effort };
+  if (before.permissionMode !== thread.permissionMode) {
+    changes.permissionMode = { from: before.permissionMode, to: thread.permissionMode };
+  }
+  return Object.keys(changes).length > 0 ? changes : undefined;
 }
 
 // A turn starting or a request arriving brings an archived thread back to the list, so what it
@@ -429,6 +468,23 @@ function messageTurn(
     }),
     ...(thread.archived ? [unarchived(thread.id)] : []),
   ];
+}
+
+// What the thread's provider can do with background work; an instance gone can do nothing.
+function providerAbility(read: ReadModel, providerInstanceId: string) {
+  const kind = read.providerInstance(providerInstanceId)?.kind;
+  return kind ? providerChatOptions[kind] : { stopsTasks: false, sendsToBackground: false };
+}
+
+// The server's clock says when a background task began (spec 90): when it was first listed, so
+// a later list keeps the time.
+function stampedTasks(
+  tasks: readonly BackgroundTask[],
+  before: readonly BackgroundTask[],
+  now: string,
+): BackgroundTask[] {
+  const known = new Map(before.map((task) => [task.id, task.startedAt]));
+  return tasks.map((task) => ({ ...task, startedAt: known.get(task.id) ?? task.startedAt ?? now }));
 }
 
 function requireThread(read: ReadModel, threadId: string) {
@@ -787,6 +843,73 @@ export function decideThread(
             threadId: thread.id,
             turnId: turn.id,
             providerInstanceId: thread.providerInstanceId,
+          },
+        },
+      ];
+    }
+    // Background work (agent workbench spec 90): the provider does the stopping and moving, and
+    // what it reports afterwards is what the thread shows.
+    case 'thread.stopTask': {
+      const thread = requireThread(read, command.threadId);
+      if (!providerAbility(read, thread.providerInstanceId).stopsTasks) {
+        throw new CommandRejected('rejected', 'This provider cannot stop a background task.');
+      }
+      if (!(thread.backgroundTasks ?? []).some((task) => task.id === command.taskId)) {
+        throw new CommandRejected(
+          'conflict',
+          `Thread ${thread.id} has no background task ${command.taskId}`,
+        );
+      }
+      return [
+        {
+          kind: 'thread.taskStopRequested',
+          aggregate: thread.id,
+          payload: {
+            threadId: thread.id,
+            taskId: command.taskId,
+            providerInstanceId: thread.providerInstanceId,
+          },
+        },
+      ];
+    }
+    case 'thread.toBackground': {
+      const thread = requireThread(read, command.threadId);
+      if (!providerAbility(read, thread.providerInstanceId).sendsToBackground) {
+        throw new CommandRejected('rejected', 'This provider cannot send work to the background.');
+      }
+      const turn = read.runningTurn(thread.id);
+      if (!turn) throw new CommandRejected('rejected', `Thread ${thread.id} has no running turn`);
+      let toolUseId: string | undefined;
+      if (command.itemId !== undefined) {
+        const call = read.threadItem(command.itemId);
+        const payload = ToolCallItemPayload.safeParse(call?.payload);
+        if (
+          call?.turnId !== turn.id ||
+          !payload.success ||
+          payload.data.status !== 'running' ||
+          (payload.data.kind !== 'command' && payload.data.kind !== 'subagent')
+        ) {
+          throw new CommandRejected(
+            'conflict',
+            'Only a running command or subagent of the running turn can go to the background.',
+          );
+        }
+        toolUseId = command.itemId.slice(turn.id.length + 1);
+        // Claude Code holds a call that waits for its approval until it is answered, and does
+        // not send it anywhere before.
+        if (read.approval(approvalRowId(thread.id, toolUseId))?.decision === null) {
+          throw new CommandRejected('conflict', 'This call waits for its approval first.');
+        }
+      }
+      return [
+        {
+          kind: 'thread.backgroundRequested',
+          aggregate: thread.id,
+          payload: {
+            threadId: thread.id,
+            turnId: turn.id,
+            providerInstanceId: thread.providerInstanceId,
+            ...(toolUseId === undefined ? {} : { toolUseId }),
           },
         },
       ];
@@ -1385,12 +1508,13 @@ function decideProviderEvents(
       continue;
     }
     if (event.type === 'backgroundTasks') {
-      if (JSON.stringify(event.tasks) !== JSON.stringify(background)) {
-        background = event.tasks;
+      const tasks = stampedTasks(event.tasks, background, now);
+      if (JSON.stringify(tasks) !== JSON.stringify(background)) {
+        background = tasks;
         out.push({
           kind: 'thread.backgroundChanged',
           aggregate: threadId,
-          payload: { threadId, tasks: event.tasks, updatedAt: now },
+          payload: { threadId, tasks, updatedAt: now },
         });
       }
       continue;
@@ -1413,39 +1537,93 @@ function decideProviderEvents(
       state = 'working';
       continue;
     }
+    if (event.type === 'commandRefused') {
+      // A background task can be stopped after its turn ended; the notice goes to the last one.
+      const last = turn ?? read.lastTurn(threadId);
+      if (!last) continue;
+      const what =
+        event.command === 'stopTask'
+          ? 'Could not stop the task'
+          : 'Could not send it to the background';
+      add(
+        last,
+        `${last.id}:refused:${nextIndex}`,
+        'error',
+        { message: `${what}: ${event.error}` },
+        false,
+      );
+      continue;
+    }
     // Events after the turn ended (late output of an interrupted turn) are dropped.
     if (!turn) continue;
     const current = turn;
     const itemId = (providerItemId: string) => `${current.id}:${providerItemId}`;
+    // A call can outlive its turn (a subagent sent to the background, a Codex wait in a later
+    // turn): what belongs to it later goes to the row it started in.
+    const callRow = (providerItemId: string): string | undefined => {
+      const here = itemId(providerItemId);
+      if (exists(here)) return here;
+      const turnPrefix = `${threadId}:turn:`;
+      const suffix = `:${providerItemId}`;
+      const earlier = [...created].findLast(
+        (id) =>
+          id.startsWith(turnPrefix) &&
+          id.endsWith(suffix) &&
+          /^\d+$/.test(id.slice(turnPrefix.length, -suffix.length)),
+      );
+      return earlier ?? read.toolCallRow(threadId, providerItemId);
+    };
     switch (event.type) {
       case 'textDelta':
       case 'reasoningDelta': {
         const id = itemId(event.itemId);
-        if (event.type === 'textDelta') {
+        const parent =
+          event.type === 'textDelta' && event.parentItemId !== undefined
+            ? callRow(event.parentItemId)
+            : undefined;
+        // Work of a subagent wow has no call for would read as the agent's own.
+        if (event.type === 'textDelta' && event.parentItemId !== undefined && !parent) break;
+        if (event.type === 'textDelta' && event.parentItemId === undefined) {
           lastText =
             lastText?.id === id
               ? { id, text: lastText.text + event.delta }
               : { id, text: (textOf(read.threadItem(id)) ?? '') + event.delta };
         }
+        // Reasoning keeps when its first and its latest part came, for "Thought for n s" (spec
+        // 88).
+        const reasoning = event.type === 'reasoningDelta';
         if (exists(id)) {
           out.push({
             kind: 'threadItem.appended',
             aggregate: threadId,
-            payload: { itemId: id, field: 'text', delta: event.delta },
+            payload: {
+              itemId: id,
+              field: 'text',
+              delta: event.delta,
+              ...(reasoning ? { at: now } : {}),
+            },
           });
         } else {
           add(
             current,
             id,
-            event.type === 'textDelta' ? 'assistant_text' : 'reasoning',
-            { text: event.delta },
-            true,
+            reasoning ? 'reasoning' : 'assistant_text',
+            reasoning
+              ? { text: event.delta, startedAt: now, endedAt: now }
+              : {
+                  text: event.delta,
+                  ...(parent === undefined ? {} : { parentItemId: parent }),
+                },
+            // A subagent's note comes whole (spec 44), so it is not drawn as still being written.
+            !(event.type === 'textDelta' && event.parentItemId !== undefined),
           );
         }
         break;
       }
       case 'toolCallStarted': {
         const id = itemId(event.itemId);
+        const parent = event.parentItemId === undefined ? undefined : callRow(event.parentItemId);
+        if (event.parentItemId !== undefined && !parent) break;
         if (!exists(id)) {
           // The server's clock stamps the start, so a reload shows the same time (spec 30).
           add(
@@ -1460,6 +1638,7 @@ function decideProviderEvents(
               output: '',
               status: 'running',
               startedAt: now,
+              ...(parent === undefined ? {} : { parentItemId: parent }),
             },
             true,
           );
@@ -1467,8 +1646,8 @@ function decideProviderEvents(
         break;
       }
       case 'toolCallOutput': {
-        const id = itemId(event.itemId);
-        if (exists(id)) {
+        const id = callRow(event.itemId);
+        if (id !== undefined) {
           out.push({
             kind: 'threadItem.appended',
             aggregate: threadId,
@@ -1478,8 +1657,8 @@ function decideProviderEvents(
         break;
       }
       case 'toolCallCompleted': {
-        const id = itemId(event.itemId);
-        if (exists(id)) {
+        const id = callRow(event.itemId);
+        if (id !== undefined) {
           patch(
             current,
             id,
@@ -1489,6 +1668,9 @@ function decideProviderEvents(
               endedAt: now,
               ...(event.exitCode === undefined ? {} : { exitCode: event.exitCode }),
               ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+              ...(event.toolCount === undefined ? {} : { toolCount: event.toolCount }),
+              ...(event.answer === undefined ? {} : { answer: event.answer }),
+              ...(event.agentState === undefined ? {} : { agentState: event.agentState }),
               ...(event.diff === undefined
                 ? {}
                 : {
@@ -1638,7 +1820,23 @@ function decideProviderEvents(
           aggregate: threadId,
           payload: { turnId: current.id, usage },
         });
-        patch(current, itemId('usage'), 'usage', usage);
+        // The row names the model the turn ran on (spec 9): the provider's word for it, else the
+        // model wow last sent, which a turn the provider started by itself also runs on.
+        const model = event.model ?? read.lastStart(threadId)?.model ?? thread.model;
+        patch(current, itemId('usage'), 'usage', {
+          ...usage,
+          ...(model === '' ? {} : { model }),
+        });
+        break;
+      }
+      case 'compacted': {
+        const compaction: CompactionItemPayload = {
+          trigger: event.trigger,
+          ...(event.preTokens === undefined ? {} : { preTokens: event.preTokens }),
+          ...(event.postTokens === undefined ? {} : { postTokens: event.postTokens }),
+          at: now,
+        };
+        add(current, itemId(`compaction:${nextIndex}`), 'compaction', compaction, false);
         break;
       }
       case 'contextUsage':

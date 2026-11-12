@@ -20,6 +20,7 @@ import {
 import { skillComposerCommands } from '@/chat/skill-commands';
 import { rowActionCommands } from '@/chat/row-commands';
 import { activeTaskPin, taskPinCommands, taskPinStore } from '@/chat/task-pin';
+import { backgroundCommands, backgroundStore } from '@/chat/background';
 import { focusedRowActions, rowActionStore } from '@/lib/row-actions';
 import { paletteThreadHits, threadListStore } from '@/chat/thread-commands';
 import {
@@ -29,6 +30,8 @@ import {
 } from '@/chat/image-commands';
 import { activeModelBar, modelBarCommands, modelBarStore } from '@/chat/model-commands';
 import { useTopic } from '@/chat/data';
+import { conversationCommands, conversationStore } from '@/chat/conversation-nav';
+import { needsYouCommands, needsYouTargets } from '@/chat/needs-you';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
 import { useProjectsGit } from '@/projects/project-git';
@@ -135,12 +138,15 @@ export function useCommands(gated = false): {
     threadSkillComposer(state, openThreadId),
   );
   const taskPin = useStore(taskPinStore, activeTaskPin);
+  const background = useStore(backgroundStore);
   const rowAreas = useStore(rowActionStore, (state) => state.areas);
   const taskPinOpen = useStore(taskPinStore, (state) =>
     taskPin === undefined ? false : (state.open[taskPin] ?? false),
   );
   const imageComposer = useStore(imageComposerStore, activeImageComposer);
   const modelBar = useStore(modelBarStore, activeModelBar);
+  const conversation = useStore(conversationStore);
+  const reasoningByDefault = useSetting('chat.reasoningOpen');
   const all = useMemo(() => {
     const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
@@ -245,9 +251,30 @@ export function useCommands(gated = false): {
       ...questionCommands(questionCard),
       ...skillComposerCommands(skillComposer),
       ...taskPinCommands(taskPin, taskPinOpen),
+      // Before the layout's commands: on Windows and Linux Ctrl+B is also Toggle sidebar, and
+      // while something can go to the background the key sends it there, as in Claude Code.
+      ...backgroundCommands(background),
       ...rowActionCommands(focusedRowActions({ areas: rowAreas })),
       ...imageComposerCommands(imageComposer),
       ...modelBarCommands(modelBar),
+      ...conversationCommands(
+        {
+          ...conversation,
+          reasoningOpen:
+            conversation.threadId === undefined
+              ? reasoningByDefault
+              : (conversation.reasoning[conversation.threadId]?.open ?? reasoningByDefault),
+        },
+        reasoningByDefault,
+      ),
+      ...needsYouCommands(
+        needsYouTargets({
+          threads: threads ?? [],
+          runs: runs ?? [],
+          proposals: assistantProposals ?? [],
+        }),
+        pathname,
+      ),
       ...assistantCommands({
         changes: assistantChanges ?? [],
         proposals: assistantProposals ?? [],
@@ -279,6 +306,7 @@ export function useCommands(gated = false): {
     ];
   }, [
     rowAreas,
+    background,
     calendarZone,
     outlookProfile,
     showWeekends,
@@ -332,6 +360,8 @@ export function useCommands(gated = false): {
     paletteHits,
     imageComposer,
     modelBar,
+    conversation,
+    reasoningByDefault,
   ]);
   const commands = useMemo(
     () => (gated ? all.filter((command) => gateCommand(command.id)) : all),
@@ -347,6 +377,11 @@ export function useCommands(gated = false): {
 const isEditable = (target: EventTarget | null): boolean =>
   target instanceof HTMLElement &&
   (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+
+const caretAtTextEnd = (target: EventTarget | null): boolean =>
+  (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) &&
+  target.selectionStart === target.value.length &&
+  target.selectionEnd === target.value.length;
 
 // Applies the keybindings settings. Bindings are read at key time, so a change on the settings page
 // takes effect on the next key press.
@@ -376,7 +411,12 @@ export function useGlobalKeybindings(
       if (!command) return;
       // Plain keys stay with text fields; shortcuts with Ctrl, Alt or Cmd, and F-keys, which type
       // nothing, work everywhere.
-      if (isEditable(event.target) && !worksInTextFields(pressed)) return;
+      if (
+        isEditable(event.target) &&
+        !worksInTextFields(pressed) &&
+        !(command.atTextEnd && caretAtTextEnd(event.target))
+      )
+        return;
       // A held key is still claimed (Ctrl+= must not fall through to the browser's page zoom),
       // but only repeatable commands run again.
       event.preventDefault();

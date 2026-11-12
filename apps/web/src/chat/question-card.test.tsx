@@ -3,6 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithRuntime } from '@/test/render';
+import { needsYouStore, requestNeedsYouFocus } from './needs-you';
 import { ConversationItem, type ItemContext } from './items';
 import { QuestionCard, type CardQuestion } from './question-card';
 import { questionCommands } from './question-commands';
@@ -11,7 +12,10 @@ import { groupQuestions, type ConversationEntry } from './view-model';
 
 // The question card (questions-and-models plan U1, spec 1 to 5 and 8). Invented questions.
 
-afterEach(() => questionStore.setState({ cards: [] }));
+afterEach(() => {
+  questionStore.setState({ cards: [] });
+  needsYouStore.setState({ request: undefined, last: undefined, landed: undefined });
+});
 
 const kettle: CardQuestion = {
   key: 'kettle',
@@ -51,6 +55,23 @@ function card(questions: readonly CardQuestion[], extra: { waitReason?: string }
   const sent = () => onSend.mock.calls.map(([replies]) => Object.fromEntries(replies));
   return { onSend, sent, region: () => screen.getByTestId('question-card') };
 }
+
+describe('the card as what needs you (agent workbench spec 76)', () => {
+  it('takes the keyboard on its first render when it is the one asked for', () => {
+    requestNeedsYouFocus('thread:t1');
+    render(
+      <QuestionCard
+        id="card-1"
+        questions={[kettle]}
+        closedReason="the turn ended before an answer was sent."
+        onSend={() => Promise.resolve()}
+        needsYouKey="thread:t1"
+      />,
+    );
+    expect(document.activeElement?.textContent).toBe('1Steel kettleRecommendedBoils faster');
+    expect(needsYouStore.getState().request).toMatchObject({ landed: true });
+  });
+});
 
 describe('the card (spec 1, 2)', () => {
   it('shows a choice a provider gave twice once, and sends its label once', async () => {

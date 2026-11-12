@@ -79,9 +79,18 @@ export interface ReadModel {
   lastSent(
     threadId: string,
   ): { text: string; prompt: string; skills: SentSkill[] | undefined } | undefined;
+  // The model, effort and mode the thread's newest turn wow started was sent with, for the
+  // divider before a message whose turn runs on others (agent workbench spec 9).
+  lastStart(
+    threadId: string,
+  ):
+    | { readonly model: string; readonly effort: string; readonly permissionMode: string }
+    | undefined;
   // Index the next item of the thread gets.
   nextItemIndex(threadId: string): number;
   itemExists(id: string): boolean;
+  // The newest tool call row of the thread for this provider item, in whichever turn it started.
+  toolCallRow(threadId: string, providerItemId: string): string | undefined;
   // How many task lists the turn has and the payload of its newest one.
   turnTaskLists(turnId: string): { readonly count: number; readonly last: unknown };
   threadItem(id: string): ThreadItem | undefined;

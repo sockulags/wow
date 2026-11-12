@@ -179,7 +179,9 @@ turns            id, threadId, index, state, startedAt, endedAt, usage(json),
                  fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
                  turn began, for "This turn only" (migration 0029_thread_changes)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
-                 'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
+                 'approval'|'question'|'task_list'|'usage'|'error'|'settings_change'|
+                 'compaction'), payload(json), streaming   -- a subagent's tool_call and
+                 assistant_text carry its call's row id as payload.parentItemId
 approvals        id, threadId, itemId, kind ('command'|'fileChange'|'tool'|'plan'), request(json),
                  decision? ('allowOnce'|'allowSession'|'allowAlways'|'deny'), decidedAt?   -- what
                  the card shows (facts, rule, plan, byRule, note) is in the approval item's payload
@@ -283,13 +285,20 @@ ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode
                  answerApproval {approvalId, decision, note?, permissionMode?} |
                  answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
                  listModels | handOver {threadId, prompt} -> {taken} |
-                 listCommands {cwd, threadId?} -> [{name, description, argumentHint?}] | test
-ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta |
-                 toolCallStarted {itemId, name, input, ...ToolFacts?} | toolCallOutput |
-                 toolCallCompleted {itemId, status, exitCode?, durationMs?, diff?} |
+                 listCommands {cwd, threadId?} -> [{name, description, argumentHint?}] |
+                 stopTask {threadId, taskId} | toBackground {threadId, itemId?} | test
+ProviderEvent:   session {providerSessionId} | textDelta {itemId, delta, parentItemId?} |
+                 reasoningDelta |
+                 toolCallStarted {itemId, name, input, ...ToolFacts?, parentItemId?} |
+                 toolCallOutput |
+                 toolCallCompleted {itemId, status, exitCode?, durationMs?, diff?, toolCount?,
+                                    answer?, agentState?} |
                  approvalRequested {approvalId, kind, summary, request, facts?} | questionAsked |
-                 taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
-                 | turnStartedByProvider | backgroundTasks {tasks [{id, description, agent?}]}
+                 taskListUpdated | usage {..., model?} | contextUsage |
+                 compacted {trigger manual|auto, preTokens?, postTokens?} | turnCompleted |
+                 turnFailed | turnInterrupted | turnStartedByProvider |
+                 backgroundTasks {tasks [{id, description, agent?, kind?, lastOutput?}]} |
+                 commandRefused {command stopTask|toBackground, error} (made by the server)
 ```
 
 **Tool facts.** Each adapter normalizes a tool call into `ToolFacts` (`provider.ts`): `kind`
@@ -302,10 +311,39 @@ duration, so a failed one is only `error`), Read and NotebookRead reads (offset 
 MultiEdit, Write and NotebookEdit edits, anything else `other`. Codex: a `commandExecution` is a
 command with its `cwd`, and its completion carries `exitCode` and `durationMs`; `mcpToolCall` is
 MCP (with `durationMs`), `fileChange` an edit (with `path` when it changes one file), `webSearch`
-web, `imageView` a read, `dynamicToolCall` other. The server stamps `startedAt` on
+web, `imageView` a read, `dynamicToolCall` other, a `collabAgentToolCall` that spawns an agent a
+subagent (below). The server stamps `startedAt` on
 `toolCallStarted` and `endedAt` on `toolCallCompleted` with its own clock and keeps the facts,
 exit code and provider duration in the item's payload, so a reload shows the same times. A call
 stored before has none of these fields and is drawn as it was.
+
+**Subagents** (agent workbench spec 44). A call that hands work to another agent has kind
+`subagent`, with `description`, `prompt`, `agentType` and `agentState` (`starting`, `running`,
+`done`, `failed`, `stopped`, `missing`) where the provider gives them. What the subagent itself
+does arrives as ordinary `toolCallStarted` and `textDelta` events with `parentItemId`, the
+provider id of the subagent call; the server stores it as `parentItemId` (the call's row id) on
+the `tool_call` or `assistant_text` payload, so no migration was needed. When the call ends,
+`toolCallCompleted` may carry `toolCount`, `answer` and `agentState`, kept on the call's payload.
+A call can outlive its turn (a subagent sent to the background, a Codex `wait` in a later turn):
+the parent, and the row a later `toolCallOutput` or `toolCallCompleted` goes to, is the call's row
+in the current turn, else the newest of the thread (`ReadModel.toolCallRow`); nested work whose
+call the thread has no row for is dropped, so it never reads as the agent's own.
+A turn's last text (a step's final message, the plan fallback) is the thread's own agent's: items
+with a `parentItemId` are left out (`ownText` in `db/schema.ts`). Claude Code: `Agent` (`Task` in
+older versions) is the subagent call; its messages marked with `parent_tool_use_id` become the
+nested events (only their complete assistant messages: their stream deltas and thinking are
+dropped, and a subagent's task list stays its own), and the Agent result's `totalToolUseCount`,
+`totalDurationMs` and text content give the count, the time and the answer; a subagent launched
+into the background answers without them. Its messages while no turn runs (a background
+subagent after the turn) are dropped and start no turn. Codex: a `collabAgentToolCall` with tool
+`spawnAgent` is the call, with its prompt; the other collab calls (wait, send input, close) add
+no row but report the agents they name in `agentsStates`, and each change of a spawned agent's
+state is sent as another `toolCallCompleted` of the spawn call, with the agent's last message as
+the answer once it is done or failed (a closed agent that had finished stays finished). Whether
+the spawned agent's own codex thread reaches wow's connection is not verified; when it does,
+its items and messages (ids prefixed with that thread's id) are nested the same way, and when
+it does not, the row shows prompt, state and final message only. The protocol fingerprint has
+the collab fields the adapter reads, all marked as coped with (hand-added).
 
 **Turns the provider starts.** Claude Code goes on with a thread by itself when background work
 it started (a background subagent or shell command) ends: the open `query()` stream carries more
@@ -322,8 +360,13 @@ turn wow started runs, `turnStartedByProvider` is ignored and the output stays i
 message sent while Claude Code's own turn runs goes into its input queue; Claude Code answers it
 after (or within) that turn. `backgroundTasks` is the SDK's level signal
 (`system/background_tasks_changed`, Claude Code's own `ambient` tasks left out; `agent: true`
-marks a `local_agent` task), stored as the thread's `backgroundTasks` (`thread.backgroundChanged`); the chat shows "Waiting for background
-work" while it is not empty and no turn runs. When Claude Code exits with background work and no
+marks a `local_agent` task; `kind` is `agent`, `command` for `local_bash`, else `other`), stored
+as the thread's `backgroundTasks` (`thread.backgroundChanged`). A task's `lastOutput` is the
+latest `system/task_progress` of it: its `summary`, else "<last tool> · n tool calls"; the next
+list keeps it. Reading a task's own output is not a query method of the SDK, so that is all wow
+has. The server stamps each task's `startedAt` with its clock when it is first listed and keeps
+it in later lists. The chat shows the tasks as chips (see "Subagents and background work" under
+"Chat view"). When Claude Code exits with background work and no
 turn running, the adapter reports a started and failed turn. At startup `recover()` fails such a
 turn only for a thread of a running workflow step that still lists a background agent; every other
 thread only gets its list cleared and keeps its state. When `ProviderService` releases an adapter
@@ -434,6 +477,17 @@ thread it maps to, since the app-server has no request that unloads one.
   the text back in the composer) never puts back a message the server already sent. A queued
   message the server cannot send when the turn ends (a skill gone, the assistant unable to run)
   stays queued with Edit and Cancel; the next turn end tries again.
+- **Background work** (agent workbench spec 90). `thread.stopTask {threadId, taskId}` (a task the
+  thread lists) and `thread.toBackground {threadId, itemId?}` (a running `command` or `subagent`
+  call of the running turn, or every one when absent) are refused where the provider cannot:
+  `providerChatOptions[kind].stopsTasks` and `.sendsToBackground`, true for Claude Code and false
+  for Codex, which has no such request. They become `thread.taskStopRequested` and
+  `thread.backgroundRequested` (no projection), and the provider service sends `stopTask` and
+  `toBackground` (with the provider's call id). Claude Code runs them as the query's
+  `stopTask(taskId)` and `backgroundTasks(toolUseId)`; a `false` answer (nothing of that id runs
+  in the foreground any more) fails the command. A provider that refuses changes nothing; the
+  refusal is logged and the turn goes on. What follows (the call's result, a new task list) comes
+  as the provider's own events.
 - **Claude details.** The SDK version is pinned exactly in `packages/provider-claude/package.json`.
   `launchArgs` (`--flag value`, `--flag=value`, `--flag`) become the SDK's `extraArgs`. Effort
   `default` leaves the effort to Claude Code; other values must be an SDK `EffortLevel`. A thread
@@ -470,7 +524,8 @@ thread it maps to, since the app-server has no request that unloads one.
   `isDefault` and `inputModalities` (`imageInput` is whether it holds `image`; an older codex
   without the field leaves it out, marked as coped with in the protocol fingerprint), and hidden
   models are left out; Claude Code's `supportedModels()` gives none of them, so they stay absent.
-  Compact is Claude's `/compact` sent as a message; codex has none in the adapter yet.
+  Compact is Claude's `/compact` sent as a message; Codex's generated protocol has no compact
+  method or notice, so a Codex thread shows no Compact (see "Conversation reading").
 - **Instances.** A provider instance is one binary + one config directory + env. Several instances
   of the same kind are allowed (work and personal accounts). A thread remembers its instance and
   can only resume on an instance with the same config directory.
@@ -1476,7 +1531,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.toolOutputLines`,
   `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
   `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength`, `chat.editDiffMaxLines` (see "Chat
-  view"), `chat.fileTrigger` (see "Panel tabs and files in chat"), `chat.imageMaxBytes` (see
+  view"), `chat.contextWarnPercent`, `chat.reasoningOpen` (see "Conversation reading"), `chat.fileTrigger` (see "Panel tabs and files in chat"), `chat.imageMaxBytes` (see
   "Images in the composer")
 - approvals: `approvals.alwaysAllow` (project-scoped; the "Approvals" page, see "Edits, approvals
   and a thread's Changes")
@@ -2794,7 +2849,7 @@ in the browser build) replace a separate working-directory field. Starters under
 from `skills`, open `backlogItems` and the last active thread (`chat.starterCount`). The composer
 focuses on `/chat/new` and on opening a thread; its skill list is a cmdk `Command` with
 `shouldFilter={false}` whose selection the text box moves (focus stays in the text box), grouped by
-`skillGroupOf` (see "Skills in the composer"). A message written while a turn runs goes to the
+`skillGroupOf` (see "Skills in the composer"), in chat in the order of "Conversation reading". A message written while a turn runs goes to the
 server, which queues it (see "Providers", Queued messages); the conversation ends with the queued
 row (`QueuedMessageItem` in `items.tsx`: "Queued · sent when the turn ends", its text and skills,
 Edit and Cancel; palette "Edit queued message" and "Cancel queued message"; the palette's Edit
@@ -2992,6 +3047,110 @@ lands on something else in the conversation (`rowActionScope`), or the row unmou
 (`StoppedLine`, from the turn's `endedAt`), which carries Resume on the last turn. The line reads
 the turn's stored state, so a turn stopped before this change gets it too: it was stopped, and no
 item, divider or marker is added to it (spec 48 is about new items, not about reading old ones).
+
+### Subagents and background work
+
+Agent workbench U11 (spec 44, 48, 90). `chat/tools/agent.tsx` draws a `subagent` call:
+"Agent: explore the auth code" (`agentTask`: the description, else the prompt's first line), the
+tool calls (`toolCount`, else the calls nested under it) and the time (`formatDuration`, the
+provider's duration where it gave one), and Codex's state in words. While the agent works (its
+call runs, or Codex says `starting` or `running`) the row is open: the prompt and the nested
+items, drawn as the thread's own rows by `ConversationItem` with their own context. Once done the
+answer shows as markdown under the row (or, without an answer, the call's output) and the nested
+list folds behind the row's line. `nestSubagentWork` (view-model.ts) takes items with a
+`parentItemId` whose call is in the thread out of the conversation and hands them to the call
+through `ItemContext.children` and `childContext`; an item whose call is missing stays in the
+conversation. A subagent call is never folded into a group of tool calls. Calls stored before
+kinds have no `subagent` kind and are drawn as the generic row they were.
+
+`chat/background.tsx`: the thread's `backgroundTasks` are chips under the conversation
+(`BackgroundTasks`), each with its kind's icon, its description and the time since the server's
+`startedAt` (display only, once a second); a task stored before has no time. A chip opens
+(Radix popover) to `lastOutput` ("Nothing reported yet." without one) and, where the provider
+`stopsTasks`, Stop (`thread.stopTask`). The line reads "Waiting for background work" between
+turns and "In the background" during one. The open conversation (not a step's thread in the
+panel, not the Assistant) registers its tasks and its `backgroundTarget` (the newest running
+`command` or `subagent` call of the running turn that is the thread's own and has no undecided
+approval; `thread.toBackground` refuses such a call too) in `backgroundStore`;
+`backgroundCommands` offers "Send to the background" (`keybindings.toBackground`, Ctrl+B, only
+where the provider `sendsToBackground`), "Show background task: …" and "Stop background task: …".
+Ctrl+B is Toggle sidebar's key too on Windows and Linux (Mod+B): the palette's command list puts
+the chat's commands first, so the key sends work to the background while there is some and
+toggles the sidebar otherwise; the keybindings table shows the two as sharing the key.
+When the adapter refuses `stopTask` or `toBackground` (Claude Code no longer running, the call
+not sent), the provider service hands the thread a `commandRefused` event, stored as an `error`
+item on the running or the last turn ("Could not stop the task: …", "Could not send it to the
+background: …"), so the refusal is not only in the log.
+
+### Conversation reading
+
+Agent workbench U10 (spec 9, 45 to 47, 57, 73 to 76, 88). What a long thread says about itself is
+stored by the server; the web app only draws it.
+
+- **Settings divider.** `turn.started` may carry `settingsItem`, a `settings_change` item
+  (`SettingsChangeItemPayload {model?, effort?, permissionMode?}`, each `{from, to}` as ids) with
+  the index just before the user item. The decider compares the thread's model, effort and mode
+  with the `start` of the thread's newest stored `turn.started` (`ReadModel.lastStart`, one read
+  of the event log), so a change taken back before the next message adds nothing, and a thread's
+  first turn has none. The row reads "Model: Opus → Sonnet · Effort: high → low · Mode: Accept
+  edits" with the provider's labels (`settingsChangeText` in `items.tsx`).
+- **Usage model.** `UsageItemPayload.model` is the provider's word for the model (Claude Code's
+  init message, which the adapter keeps per session and puts on `usage`, and forgets when wow
+  changes the model of the live session until the next init names one), else the model of the
+  newest turn start, else the thread's. Rows stored before have none and show none.
+- **Compaction.** Claude Code's `system` message `compact_boundary` becomes ProviderEvent
+  `compacted {trigger, preTokens, postTokens?}`, stored as a `compaction` item
+  (`CompactionItemPayload`, plus `at`) and drawn as "Conversation compacted (auto) · 152k → 18k"
+  (`compactionText`; `shortTokens` in `chat/model.ts`). Codex has no compact method, so no
+  Compact button and no compaction there.
+- **Context meter.** From `chat.contextWarnPercent` (70) the meter is amber, reads "Context n %
+  full" and its button "Compact now", only where `providerChatOptions` has a compact message.
+- **Working line.** `WorkingIndicator` reads `workingFacts(items, turnId, cwd)` (view-model.ts):
+  the running tool call's command (or MCP `server › tool`, or the row's one-line summary), the
+  turn's tool call count, and the tokens of the turn's `usage` item, which only Codex sends during
+  a turn (its adapter now emits `usage` on each `thread/tokenUsage/updated` of a running turn);
+  then the `keybindings.stopTurn` key. Claude Code reports tokens at the turn's end, when the line
+  is gone.
+- **Reasoning.** The decider stamps a reasoning item's `startedAt` at its first part and
+  `endedAt` on each later part (`threadItem.appended.at`; `ReasoningItemPayload`). A reasoning row
+  is done once anything follows it in its turn or it stops streaming (`finishedReasoning`); then it
+  reads "Thought for n s", before that "Thinking…" with its last line muted. Reasoning stored
+  before reads "Reasoning". `chat.reasoningOpen` opens it by default; Ctrl+O
+  (`keybindings.toggleReasoning`, palette "Open all reasoning"/"Close all reasoning") flips it for
+  the open thread, kept in `conversationStore` (`chat/conversation-nav.ts`) with a count that
+  remounts every row so one opened by hand follows too.
+- **Times.** A user row shows its turn's start, the turn's last `assistant_text` its `endedAt`
+  (`turnEndRows`), always visible (`message-time`).
+- **Scroll and keys.** `useStickToBottom` in thread-view.tsx follows the stream; once the user
+  scrolled up, new items show the "New output" pill, which or End (`keybindings.conversationEnd`,
+  palette "Go to the newest output" while it shows) goes back down and follows again. End is a
+  plain key, which the key listener leaves to text fields; the command sets `AppCommand.atTextEnd`,
+  so it also runs from the composer once the caret is at the end of the text with nothing
+  selected, where End would do nothing. User and
+  assistant rows are focusable (`li[data-message]`); Alt+Up/Alt+Down
+  (`keybindings.previousMessage`/`nextMessage`) move between them and C
+  (`keybindings.copyMessage`) copies the focused one's text. The conversation on screen (not a
+  step thread in the side panel) registers its handle with `showConversation`; the commands are
+  `conversationCommands`. These keys are settings in the Chat scope, since Alt+Up/Down may clash
+  with screen readers; the builder's rule keys get their own "Workflows" scope in the keybindings
+  table so the shared keys are not reported as conflicts. E and F on a focused message are U12's.
+- **Skill list in chat.** `chatSkillSections` orders Yours, Project, Recently used (the skills
+  this thread's messages carried, newest first, `recentSkillNames`), User, Plugins, Other and wow
+  last; wow's four built-in skills carry "for workflow steps" (`isStepSkill`). On `/chat/new` the
+  composer gets `listsBelow`, so the skill and file lists open under the box and leave the
+  provider and project pickers in view.
+- **Next that needs you.** `chat/needs-you.ts` `needsYouTargets` lists, from the subscribed rows,
+  threads in `needs_you` (approval, question, plan card; at `Thread.stateSince`, which the
+  projector sets when the thread's state changes and keeps through a rename, a change of model or
+  mode, background work or a second approval; rows from before migration 0031 take their
+  `updatedAt`; a step thread waiting for its run's gate counts as the gate), runs `waiting` at a
+  gate for the user (at the reviewed step's `endedAt`; a gate waiting for checks, `runNeedsYou`,
+  is left out, and its gate bar does not take the focus) and pending assistant proposals, oldest
+  first.
+  Ctrl+Shift+J (`keybindings.nextNeedsYou`, palette "Next that needs you") navigates to the next
+  after the one it went to last and sets a focus request; the approval card, question card, gate
+  bar's Approve and the proposal card call `useNeedsYouFocus(key, ref)` and take the focus once
+  they render, and `takeLanded` keeps the composer's autofocus from taking it back.
 
 ### Edits, approvals and a thread's Changes
 
@@ -3783,7 +3942,10 @@ looked at once).
 Every thread view asks `hosts.lookup` for its rules. That answer reads no token: a site counts
 when a token is stored for it (`TrackerService.linkHosts(projectId, 'stored')`). Only the
 token of the host being asked is read, and only then, because on Windows each read of the secret
-store starts PowerShell.
+store starts PowerShell. The rules read the project's folder with Git (three commands, slow to
+start on Windows), so the server shares one in-flight rules answer per project, and the web app
+asks once per thread and per state of the settings and projects topics, whichever views show the
+thread.
 
 **Recognition** (`packages/contracts/src/host-links.ts`, shared by the server and the web app so
 a chip is exactly what the server will read). `HostLinkRules` are the thread's sites
@@ -3824,9 +3986,11 @@ adapters gained `readIssue(number)` (GitHub answers `changeRequest` when the num
 request); the mocks gained `issues`. The assistant's thread is refused, and nothing read is ever
 put into a prompt.
 
-**Web.** `chat/host-links.tsx`: `useHostLinkRules(threadId)` (asked again when the settings or
-projects topics change), `HostLinkContext` (provided by `ThreadConversation` next to
-`FileLinkContext`, not for the Assistant), `HostChip` (icon, key, and once read the state: "PR
+**Web.** `chat/host-links.tsx`: `useHostLinkRules(threadId)` (one question per thread shared by
+the conversation and the panel, once both topics have loaded; asked again when the settings or
+projects topics change in content, or when the thread is shown again after no view showed it),
+`HostLinkContext` (provided by `ThreadConversation` next to `FileLinkContext`, not for the
+Assistant), `HostChip` (icon, key, and once read the state: "PR
 #14 · Draft · 2 checks failed", "DEMO-42 · To Do", a page's title; Enter or click opens the tab,
 Shift+Enter or Shift+click the browser), `hostItemLabel`, `hostItemState`, `hostItemsIn`. The
 markdown body turns recognised links and inline code into chips (inline code only for an address

@@ -15,7 +15,8 @@ import {
   Undo2Icon,
   XIcon,
 } from 'lucide-react';
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
+import { runNeedsYou, useNeedsYouFocus } from '@/chat/needs-you';
 import { useStore } from 'zustand';
 import { useSetting } from '@/app/runtime';
 import { errorMessage, useDispatch } from '@/chat/data';
@@ -82,6 +83,8 @@ export function GateBar({
   const noteId = useId();
   const draft = useStore(gateStore, (state) => sendBackDraft(state, run));
   const gate = gateOf(run);
+  const approveButton = useRef<HTMLButtonElement>(null);
+  useNeedsYouFocus(gate && runNeedsYou(run) ? `run:${run.id}` : undefined, approveButton);
   if (!isLive(run)) return null;
   const reviewed = reviewedStep(run);
   const atLimit = gate?.limit !== undefined;
@@ -122,6 +125,7 @@ export function GateBar({
             binding={draft ? '' : approveBinding}
           >
             <Button
+              ref={approveButton}
               size="sm"
               disabled={busy || draft !== undefined}
               onClick={() => void act('workflowRun.continue')}

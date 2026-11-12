@@ -480,6 +480,25 @@ export const settingsRegistry = {
     default: 20,
     scope: 'global',
   }),
+  'chat.contextWarnPercent': defineSetting({
+    schema: z.number().int().min(1).max(100),
+    group: 'chat',
+    label: 'Context warning',
+    description:
+      'From this share of the context window the meter turns amber and reads "Context n % full", with "Compact now" where the provider can compact.',
+    default: 70,
+    scope: 'global',
+    unit: 'percent',
+  }),
+  'chat.reasoningOpen': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Show reasoning',
+    description:
+      "Open the agent's reasoning in the conversation by default. Ctrl+O opens or closes all of it in the open thread either way.",
+    default: false,
+    scope: 'global',
+  }),
   'chat.editDiffMaxLines': defineSetting({
     schema: z.number().int().min(20).max(20000),
     group: 'chat',
@@ -1805,10 +1824,45 @@ export const settingsRegistry = {
     'Open or close the task list pinned above the composer of the open thread.',
     'Mod+T',
   ),
+  'keybindings.toBackground': keybinding(
+    'Chat: send to the background',
+    "Send the open thread's running command or subagent to the background, where the provider can (Claude Code), so the turn goes on. While nothing can go there, the key does what it otherwise does.",
+    'Ctrl+B',
+  ),
   'keybindings.renameThread': keybinding(
     'Chat: rename thread',
     'Edit the title of the open thread.',
     'F2',
+  ),
+  'keybindings.nextNeedsYou': keybinding(
+    'Next that needs you',
+    'Go to the oldest approval, question, plan, gate or assistant proposal that waits for you, wherever it is, and put the keyboard on it. Pressed again, it goes to the next one.',
+    'Mod+Shift+J',
+  ),
+  'keybindings.toggleReasoning': keybinding(
+    'Chat: open or close all reasoning',
+    "Open or close every reasoning row of the open thread's conversation.",
+    'Mod+O',
+  ),
+  'keybindings.previousMessage': keybinding(
+    'Chat: previous message',
+    "Move the keyboard to the message above in the open thread's conversation.",
+    'Alt+ArrowUp',
+  ),
+  'keybindings.nextMessage': keybinding(
+    'Chat: next message',
+    "Move the keyboard to the message below in the open thread's conversation.",
+    'Alt+ArrowDown',
+  ),
+  'keybindings.copyMessage': keybinding(
+    'Chat: copy the focused message',
+    'Copy the message that has the keyboard, as markdown for an answer and as written for your own.',
+    'C',
+  ),
+  'keybindings.conversationEnd': keybinding(
+    'Chat: back to the newest output',
+    'Scroll the conversation back to the bottom after you scrolled up, so it follows new output again.',
+    'End',
   ),
   'keybindings.nextBoldThread': keybinding(
     'Chat: next bold thread',

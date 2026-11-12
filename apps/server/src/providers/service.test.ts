@@ -289,7 +289,13 @@ describe('provider service', () => {
         payload: { text: 'What is in the readme?' },
         streaming: false,
       },
-      { id: 't1:turn:0:m1:0', kind: 'reasoning', payload: { text: 'Think.' }, streaming: false },
+      {
+        id: 't1:turn:0:m1:0',
+        kind: 'reasoning',
+        // When its first and latest part came (agent workbench spec 88).
+        payload: { text: 'Think.', startedAt: expect.any(String), endedAt: expect.any(String) },
+        streaming: false,
+      },
       {
         id: 't1:turn:0:m1:1',
         kind: 'assistant_text',
@@ -355,7 +361,7 @@ describe('provider service', () => {
       {
         id: 't1:turn:0:usage',
         kind: 'usage',
-        payload: { ...usage, context: { usedTokens: 1500, maxTokens: 200_000 } },
+        payload: { ...usage, context: { usedTokens: 1500, maxTokens: 200_000 }, model: 'sonnet' },
         streaming: false,
       },
     ]);
@@ -448,6 +454,46 @@ describe('provider service', () => {
     expect(thread()).toMatchObject({ state: 'done' });
     dispatch({ type: 'thread.setDone', threadId: 't1', done: false });
     expect(thread()).toMatchObject({ state: 'failed' });
+  });
+
+  // Agent workbench spec 90: Stop on a background chip and Ctrl+B on a running command reach
+  // Claude Code as its own stopTask and backgroundTasks, by the provider's ids.
+  it('sends Stop for a background task and Ctrl+B for a running command to the adapter', async () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Start the dev server' });
+    const listed = committed('thread.backgroundChanged');
+    adapter.emit(
+      {
+        type: 'toolCallStarted',
+        threadId: 't1',
+        itemId: 'bash-7',
+        name: 'Bash',
+        input: { command: 'pnpm dev' },
+        kind: 'command',
+        command: 'pnpm dev',
+      },
+      {
+        type: 'backgroundTasks',
+        threadId: 't1',
+        tasks: [{ id: 'bg-1', description: 'Count the tea leaves', agent: true, kind: 'agent' }],
+      },
+    );
+    await listed;
+    dispatch({ type: 'thread.toBackground', threadId: 't1', itemId: 't1:turn:0:bash-7' });
+    expect(adapter.sent.at(-1)).toEqual({ type: 'toBackground', threadId: 't1', itemId: 'bash-7' });
+    dispatch({ type: 'thread.toBackground', threadId: 't1' });
+    expect(adapter.sent.at(-1)).toEqual({ type: 'toBackground', threadId: 't1' });
+    dispatch({ type: 'thread.stopTask', threadId: 't1', taskId: 'bg-1' });
+    expect(adapter.sent.at(-1)).toEqual({ type: 'stopTask', threadId: 't1', taskId: 'bg-1' });
+    // A provider that refuses does not end the turn; the thread says why.
+    adapter.failNext = 'Background tasks are disabled';
+    const told = committed('threadItem.added');
+    dispatch({ type: 'thread.stopTask', threadId: 't1', taskId: 'bg-1' });
+    await told;
+    expect(thread()).toMatchObject({ state: 'working' });
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      kind: 'error',
+      payload: { message: 'Could not stop the task: Background tasks are disabled' },
+    });
   });
 
   it('stops a running turn and keeps its partial output', async () => {

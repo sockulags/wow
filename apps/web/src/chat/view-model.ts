@@ -1,5 +1,7 @@
 import {
+  isBuiltInSkillName,
   QuestionItemPayload,
+  UsageItemPayload,
   SkillGroup,
   skillGroupOf,
   TextItemPayload,
@@ -18,6 +20,7 @@ import {
   type Turn,
 } from '@wow/contracts';
 import { threadTitle } from './model';
+import { oneLine } from './tools/facts';
 
 // Pure helpers for how chat, workflows and backlog present server rows: labels, times, groups.
 // Nothing here keeps state; `now` is passed in where a label depends on the day.
@@ -96,6 +99,54 @@ export const effortLabel = (effort: string): string =>
 export const skillGroups: readonly SkillGroup[] = SkillGroup.options;
 export const skillGroup = (skill: Pick<Skill, 'source' | 'invocations'>): SkillGroup =>
   skillGroupOf(skill);
+
+// The chat's skill list (agent workbench spec 57): your own skills and the project's lead,
+// then the ones this thread used lately, the user's and the plugins', and wow's last: wow's own
+// are mostly for workflow steps.
+export type ChatSkillSection = SkillGroup | 'recent';
+export const chatSkillSections: readonly ChatSkillSection[] = [
+  'yours',
+  'project',
+  'recent',
+  'user',
+  'plugins',
+  'other',
+  'wow',
+];
+export const chatSkillSectionLabels: Readonly<Record<ChatSkillSection, string>> = {
+  yours: 'Yours',
+  project: 'Project',
+  recent: 'Recently used',
+  user: 'User',
+  plugins: 'Plugins',
+  other: 'Other',
+  wow: 'wow',
+};
+export function chatSkillSection(
+  skill: Pick<Skill, 'source' | 'invocations' | 'name'>,
+  recent: readonly string[],
+): ChatSkillSection {
+  const group = skillGroupOf(skill);
+  return group !== 'yours' && group !== 'project' && recent.includes(skill.name) ? 'recent' : group;
+}
+
+// wow's four built-in skills are written for workflow steps (wow skills spec 1).
+export const isStepSkill = (skill: Pick<Skill, 'source' | 'name'>): boolean =>
+  skill.source === 'wow' && isBuiltInSkillName(skill.name);
+
+// The skills this thread's messages were sent with, newest first, once each.
+export function recentSkillNames(items: readonly ThreadItem[]): string[] {
+  const names: string[] = [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item?.kind !== 'user') continue;
+    const parsed = TextItemPayload.safeParse(item.payload);
+    for (const skill of parsed.success ? (parsed.data.skills ?? []) : []) {
+      if (!names.includes(skill.name)) names.push(skill.name);
+    }
+  }
+  return names;
+}
 
 // The group of a skill a message was sent with: a folder skill's group follows its invocation.
 export const sentSkillGroup = (skill: SentSkill): SkillGroup =>
@@ -269,7 +320,8 @@ export function groupToolCalls(
     run = [];
   };
   for (const item of items) {
-    if (item.kind !== 'tool_call') {
+    // A subagent call has its own work under it, so it stays a row of its own (spec 44).
+    if (item.kind !== 'tool_call' || isSubagentCall(item)) {
       close();
       entries.push({ kind: 'item', item });
       continue;
@@ -282,9 +334,113 @@ export function groupToolCalls(
   return entries;
 }
 
+const isSubagentCall = (item: ThreadItem): boolean =>
+  ToolCallItemPayload.safeParse(item.payload).data?.kind === 'subagent';
+
+const parentOf = (item: ThreadItem): string | undefined => {
+  if (item.kind === 'tool_call')
+    return ToolCallItemPayload.safeParse(item.payload).data?.parentItemId;
+  if (item.kind === 'assistant_text')
+    return TextItemPayload.safeParse(item.payload).data?.parentItemId;
+  return undefined;
+};
+
+// What a subagent did goes under its call (spec 44): the conversation lists the thread's own
+// items, and each subagent call's calls and notes in order. An item whose call is not among the
+// items stays in the conversation, so nothing is lost.
+export function nestSubagentWork(items: readonly ThreadItem[]): {
+  readonly top: readonly ThreadItem[];
+  readonly children: ReadonlyMap<string, readonly ThreadItem[]>;
+} {
+  const ids = new Set(items.map((item) => item.id));
+  const top: ThreadItem[] = [];
+  const children = new Map<string, ThreadItem[]>();
+  for (const item of items) {
+    const parent = parentOf(item);
+    if (parent === undefined || !ids.has(parent)) {
+      top.push(item);
+      continue;
+    }
+    const list = children.get(parent);
+    if (list) list.push(item);
+    else children.set(parent, [item]);
+  }
+  return { top, children };
+}
+
 // How many calls of a run failed or were refused, so the collapsed row still says so.
 export const failedToolCalls = (items: readonly ThreadItem[]): number =>
   items.filter((item) => {
     const parsed = ToolCallItemPayload.safeParse(item.payload);
     return parsed.success && parsed.data.status === 'error';
   }).length;
+
+// What the working line says about the running turn (agent workbench spec 45): the tool call
+// that runs now, how many calls the turn made, and its tokens where the provider counts them
+// while the turn runs (Codex does; Claude Code reports them only at the end).
+export interface WorkingFacts {
+  readonly tool: string | undefined;
+  readonly toolCalls: number;
+  readonly tokens: { readonly input: number; readonly output: number } | undefined;
+}
+
+export function workingFacts(
+  items: readonly ThreadItem[],
+  turnId: string,
+  cwd: string,
+): WorkingFacts {
+  const ofTurn = items.filter((item) => item.turnId === turnId);
+  const calls = ofTurn.flatMap((item) => {
+    if (item.kind !== 'tool_call') return [];
+    const parsed = ToolCallItemPayload.safeParse(item.payload);
+    return parsed.success ? [parsed.data] : [];
+  });
+  const runningCall = calls.findLast((call) => call.status === 'running');
+  const usageItem = ofTurn.findLast((item) => item.kind === 'usage');
+  const usage = usageItem ? UsageItemPayload.safeParse(usageItem.payload) : undefined;
+  const counted =
+    usage?.success &&
+    (usage.data.inputTokens !== undefined || usage.data.outputTokens !== undefined)
+      ? { input: usage.data.inputTokens ?? 0, output: usage.data.outputTokens ?? 0 }
+      : undefined;
+  return {
+    tool:
+      runningCall === undefined
+        ? undefined
+        : (runningCall.command ??
+          (runningCall.server !== undefined && runningCall.tool !== undefined
+            ? `${runningCall.server} › ${runningCall.tool}`
+            : oneLine(runningCall, cwd))),
+    toolCalls: calls.length,
+    tokens: counted,
+  };
+}
+
+// The messages Alt+Up and Alt+Down move between (spec 74): the user's and the agent's text.
+export const isMessage = (item: Pick<ThreadItem, 'kind'>): boolean =>
+  item.kind === 'user' || item.kind === 'assistant_text';
+
+// The item ids whose row shows when their turn ended (spec 75): each ended turn's last answer.
+export function turnEndRows(items: readonly ThreadItem[], turns: readonly Turn[]): Set<string> {
+  const ended = new Set(turns.filter((turn) => turn.endedAt !== null).map((turn) => turn.id));
+  const last = new Map<string, string>();
+  for (const item of items) {
+    if (item.kind === 'assistant_text' && ended.has(item.turnId)) last.set(item.turnId, item.id);
+  }
+  return new Set(last.values());
+}
+
+// Reasoning is done once its turn ended or anything came after it in the turn (spec 88).
+export function finishedReasoning(items: readonly ThreadItem[]): Set<string> {
+  const done = new Set<string>();
+  const turnsWithLater = new Set<string>();
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (!item) continue;
+    if (item.kind === 'reasoning' && (!item.streaming || turnsWithLater.has(item.turnId))) {
+      done.add(item.id);
+    }
+    turnsWithLater.add(item.turnId);
+  }
+  return done;
+}

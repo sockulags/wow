@@ -289,6 +289,8 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   ),
   'thread.retry': chatOnly,
   'thread.interrupt': chatOnly,
+  'thread.stopTask': chatOnly,
+  'thread.toBackground': chatOnly,
   'thread.configure': chatOnly,
   'thread.setPinned': chatOnly,
   'thread.setDone': chatOnly,
