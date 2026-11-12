@@ -94,6 +94,7 @@ import {
   e2eWorkspace,
 } from './env';
 import { AssistantMockAgent } from './assistant-agent';
+import { reportFolderHolders } from './folder-holders';
 import { e2eIntentMd, e2ePlanMd, e2ePlansDirectory, e2eSpecMd, seedPlanFiles } from './plans-seed';
 
 // WOW_E2E_HOME and WOW_E2E_PORT start a second copy for the settings tests (playwright.config.ts).
@@ -300,10 +301,9 @@ const guide = Array.from(
 ).join('\n');
 
 function seedTeaRepo(repo: string): void {
-  // The folder is emptied, not removed: on Windows something of the server's can still hold the
-  // folder itself (a watcher on a project folder, a git still starting there), and removing it
-  // then fails with EBUSY and takes this server down. What is inside can always go; a file git
-  // has open for a moment is tried again.
+  // The folder is emptied, not removed: on Windows something can still hold the folder itself,
+  // and removing it then fails with EBUSY and takes this server down. What is inside can always
+  // go; a file git has open for a moment is tried again. What holds the folder is written out.
   mkdirSync(repo, { recursive: true });
   for (const name of readdirSync(repo)) {
     rmSync(path.join(repo, name), {
@@ -313,6 +313,7 @@ function seedTeaRepo(repo: string): void {
       retryDelay: 100,
     });
   }
+  reportFolderHolders(repo);
   git(repo, 'init', '-q', '-b', 'main');
   writeInRepo(repo, '.gitignore', '*.log\n');
   writeInRepo(repo, 'README.md', '# Tea timer\n\nRings when the tea is ready.\n');
