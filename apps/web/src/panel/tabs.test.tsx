@@ -1,6 +1,8 @@
+import { recogniseHostRef } from '@wow/contracts';
 import type {
   CalendarItem,
   FileReadResult,
+  HostLinkRules,
   ProviderInstance,
   Thread,
   ThreadItem,
@@ -88,7 +90,16 @@ const items: ThreadItem[] = [
   item('item-3', 'assistant_text', {
     text: 'The timer is in `src/timer.ts`, as the [spec](docs/spec.md) says. Outside: `../outside.txt`.',
   }),
+  item('item-4', 'assistant_text', {
+    text: 'Pushed as https://ghe.example.invalid/acme/tea/pull/14.',
+  }),
 ];
+
+const hostRules: HostLinkRules = {
+  sites: [{ host: 'github', base: 'https://ghe.example.invalid', name: 'ghe.example.invalid' }],
+  repository: null,
+  jiraKey: null,
+};
 
 const text = (value: string): FileReadResult => ({
   kind: value.startsWith('#') ? 'markdown' : 'text',
@@ -187,6 +198,11 @@ function fake() {
           source: 'git',
           truncated: false,
         });
+      }
+      if (method === 'hosts.lookup') {
+        const { ref } = params as { ref?: string };
+        const found = ref === undefined ? undefined : recogniseHostRef(ref, hostRules);
+        return Promise.resolve({ rules: hostRules, item: found ?? null, read: null });
       }
       if (method === 'dispatch') {
         sent.push((params as { command: unknown }).command);
@@ -338,6 +354,25 @@ describe('panel tabs in chat', () => {
     expect(within(conversation()).queryByText(/@src\/timer\.ts/, { selector: 'div' })).toBeNull();
     await user.click(within(sent).getByRole('button', { name: '@timer.ts' }));
     expect(await within(panel()).findByText('export const ring = 2;')).toBeTruthy();
+  });
+
+  it('opens a file and a host link from Details → Mentioned with Enter @agent-workbench-19', async () => {
+    const { user } = await openThread();
+    const mentioned = await within(panel()).findByRole('list', { name: 'Mentioned' });
+    const file = within(mentioned)
+      .getAllByTestId('mentioned-file')
+      .find((entry) => entry.textContent === 'src/timer.ts');
+    file?.focus();
+    await user.keyboard('{Enter}');
+    expect(await within(panel()).findByText('export const ring = 2;')).toBeTruthy();
+    expect(tabs()).toEqual(['Details', 'timer.ts *']);
+
+    await user.click(within(panel()).getByRole('tab', { name: 'Details' }));
+    const link = await within(panel()).findByTestId('mentioned-link');
+    expect(link.textContent).toBe('PR #14');
+    link.focus();
+    await user.keyboard('{Enter}');
+    expect(tabs()).toEqual(['Details', 'timer.ts', 'PR #14 *']);
   });
 
   it('closes a file opened from the main view with Escape while the focus stayed on its link @agent-workbench-87', async () => {
