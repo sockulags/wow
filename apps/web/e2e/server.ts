@@ -551,6 +551,18 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       ),
     ];
   }
+  // Links to the user's hosts in an answer (agent workbench spec 20, 23, 24): a pull request and
+  // a Jira issue on the hosts the tea garden project has tokens for, a bare key of its Jira
+  // project, and a link to a host wow has no token for.
+  if (/link the work/i.test(prompt)) {
+    return [
+      session,
+      ...finish(
+        threadId,
+        `The work is in ${trackerUrl}/github/acme/tea-garden/pull/14 for [the ticket](${trackerUrl}/jira/browse/DEMO-41). DEMO-42 comes next. Background: [elsewhere](https://elsewhere.example.invalid/acme/tea/pull/3).`,
+      ),
+    ];
+  }
   if (/table and a diagram/i.test(prompt)) {
     return [session, ...finish(threadId, markdownAnswer)];
   }
