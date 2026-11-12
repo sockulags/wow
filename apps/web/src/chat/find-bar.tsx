@@ -9,6 +9,7 @@ import {
   findMatches,
   foldCase,
   keepCurrent,
+  softBreaks,
   type FindMatch,
   type FindSource,
   type MarkdownCache,
@@ -60,7 +61,12 @@ function rangesIn(row: HTMLElement, needle: string): Range[] {
   const starts: number[] = [];
   for (const node of nodes) {
     starts.push(text.length);
-    text += foldCase(node.data);
+    // In rendered Markdown, outside a <pre>, a line break shows as a space, as find reads a
+    // message (find.ts); text written as is (a user's message, an output) keeps its lines.
+    const parent = node.parentElement;
+    const soft = parent?.closest('[data-testid="markdown"]') && !parent.closest('pre');
+    const shown = soft ? softBreaks(node.data) : node.data;
+    text += foldCase(shown);
   }
   const at = (offset: number, end: boolean): [Text, number] | undefined => {
     for (let index = nodes.length - 1; index >= 0; index -= 1) {
@@ -160,12 +166,18 @@ export default function FindBar({
     const api = highlightApi();
     const all: Range[] = [];
     let currentRange: Range | undefined;
-    for (const itemId of new Set(result.matches.map((found) => found.itemId))) {
+    const perRow = new Map<string, number>();
+    for (const found of result.matches)
+      perRow.set(found.itemId, (perRow.get(found.itemId) ?? 0) + 1);
+    for (const [itemId, counted] of perRow) {
       const row = rowOf(list, itemId);
       if (!row) continue;
       const ranges = rangesIn(row, needle);
       all.push(...ranges);
-      if (match?.itemId === itemId) currentRange = ranges[match.nth] ?? ranges.at(-1);
+      // The marks come from the row's text on screen, the count from the rows' words; where the
+      // two disagree, a mark could stand on another occurrence than the one counted, so the
+      // row is outlined instead.
+      if (match?.itemId === itemId && ranges.length === counted) currentRange = ranges[match.nth];
     }
     const currentRow = match ? rowOf(list, match.itemId) : undefined;
     for (const marked of list.querySelectorAll<HTMLElement>('[data-find-current]')) {
@@ -238,6 +250,12 @@ export default function FindBar({
       role="search"
       aria-label="Find in conversation"
       data-testid="find-bar"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }}
       className="flex shrink-0 items-center gap-1.5 border-b border-border px-4 py-1.5"
     >
       <SearchIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
@@ -258,10 +276,6 @@ export default function FindBar({
           if (event.key === 'Enter') {
             event.preventDefault();
             move(event.shiftKey ? -1 : 1);
-          } else if (event.key === 'Escape') {
-            event.preventDefault();
-            event.stopPropagation();
-            onClose();
           }
         }}
       />

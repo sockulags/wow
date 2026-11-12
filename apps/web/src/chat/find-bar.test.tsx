@@ -297,6 +297,73 @@ describe('find in the conversation (spec 1 to 4)', () => {
     expect(current()).toEqual([]);
   });
 
+  it('closes with Escape after a click on one of its buttons (spec 1)', async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(composer());
+    await user.keyboard('{Control>}f{/Control}');
+    await field();
+    await user.keyboard('kettle');
+    await user.click(screen.getByRole('button', { name: 'Next match' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Next match' }));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByTestId('find-bar')).toBeNull();
+  });
+
+  it('marks the counted match, and outlines the row where its text on screen holds more (spec 2)', async () => {
+    const registry = new Map<string, { ranges: Range[] }>();
+    vi.stubGlobal('CSS', { highlights: registry });
+    vi.stubGlobal(
+      'Highlight',
+      class {
+        readonly ranges: Range[];
+        constructor(...ranges: Range[]) {
+          this.ranges = ranges;
+        }
+      },
+    );
+    try {
+      const user = userEvent.setup();
+      setup({
+        items: [
+          item('turn-0:user', 'user', { text: 'Make tea' }),
+          item('turn-0:reply', 'assistant_text', { text: 'Put the\nkettle on.' }),
+          item('turn-0:wait', 'tool_call', {
+            name: 'Bash',
+            input: { command: 'sleep 4.2' },
+            output: '',
+            status: 'ok',
+            kind: 'command',
+            command: 'sleep 4.2',
+            exitCode: 0,
+            durationMs: 4200,
+          }),
+        ],
+      });
+      await user.click(composer());
+      await user.keyboard('{Control>}f{/Control}');
+      await field();
+      // Across the line break the message shows as a space.
+      await user.keyboard('the kettle');
+      expect(count()).toBe('1 of 1');
+      expect(registry.get('wow-find-current')?.ranges.map((range) => range.toString())).toEqual([
+        'the\nkettle',
+      ]);
+      expect(current()).toEqual(['turn-0:reply']);
+      expect(row('turn-0:reply')?.dataset['findOutline']).toBeUndefined();
+
+      // The call's line counts "4.2" once; its row on screen also shows the time "4.2 s".
+      await user.clear(await field());
+      await user.keyboard('4.2');
+      expect(count()).toBe('1 of 1');
+      expect(current()).toEqual(['turn-0:wait']);
+      expect(registry.get('wow-find-current')?.ranges).toEqual([]);
+      expect(row('turn-0:wait')?.dataset['findOutline']).toBe('true');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('does not count the JSON behind Show JSON or an earlier version, and stops at the limit (spec 2, 3)', async () => {
     const user = userEvent.setup();
     setup({

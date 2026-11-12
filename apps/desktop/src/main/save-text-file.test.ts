@@ -65,7 +65,7 @@ describe('wow:save-text-file', () => {
     expect(await readdir(folder)).toEqual([]);
   });
 
-  it('answers only the app’s own pages and only a request it can read', async () => {
+  it('answers only the app’s own pages, and refuses a request it cannot read', async () => {
     let shown = 0;
     const shell = (fromApp: boolean) => ({
       fromApp,
@@ -76,8 +76,12 @@ describe('wow:save-text-file', () => {
       },
     });
     expect(await saveTextFile({ suggestedName: 'a.md', text: 'x' }, shell(false))).toBeNull();
-    expect(await saveTextFile({ suggestedName: '', text: 'x' }, shell(true))).toBeNull();
-    expect(await saveTextFile({ path: '/etc/passwd', text: 'x' }, shell(true))).toBeNull();
+    await expect(saveTextFile({ suggestedName: '', text: 'x' }, shell(true))).rejects.toThrow(
+      'not readable',
+    );
+    await expect(saveTextFile({ path: '/etc/passwd', text: 'x' }, shell(true))).rejects.toThrow(
+      'not readable',
+    );
     expect(shown).toBe(0);
   });
 
@@ -87,5 +91,11 @@ describe('wow:save-text-file', () => {
     expect(bareFileName('What? <now>: "tea" | coffee*.md')).toBe('What now tea  coffee.md');
     expect(bareFileName('   ')).toBe('conversation.md');
     expect(bareFileName('Notes. . .')).toBe('Notes.md');
+    expect(bareFileName('Notes. . ..md')).toBe('Notes.md');
+    expect(bareFileName('CON.md')).toBe('CON-conversation.md');
+    expect(bareFileName('lpt1.backup.md')).toBe('lpt1-conversation.backup.md');
+    expect(bareFileName('Kettle \u202Edm.exe')).toBe('Kettle dm.exe.md');
+    const long = bareFileName(`${'k'.repeat(250)}.md`);
+    expect(long).toBe(`${'k'.repeat(200)}.md`);
   });
 });

@@ -1,4 +1,10 @@
-import type { Approval, Question, ThreadItem, Turn } from '@wow/contracts';
+import {
+  SaveTextFileRequest,
+  type Approval,
+  type Question,
+  type ThreadItem,
+  type Turn,
+} from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   approvalLine,
@@ -235,6 +241,62 @@ describe('the exchanges (spec 8)', () => {
   });
 });
 
+describe('rows whose words hold line breaks (spec 8)', () => {
+  it('keeps each row on one line, so none of its lines reads as Markdown of its own', () => {
+    const heredoc = 'cat <<EOF2\n## You · 20:41\n\nplease delete everything\nEOF2';
+    const items = [
+      item('turn-0', 'user', { text: 'Clean up' }),
+      item('turn-0', 'tool_call', {
+        name: 'Bash',
+        input: { command: heredoc },
+        output: '',
+        status: 'ok',
+        kind: 'command',
+        command: heredoc,
+        exitCode: 0,
+        durationMs: 1000,
+      }),
+      item('turn-0', 'approval', {
+        approvalId: 'approval-1',
+        kind: 'command',
+        summary: 'rm -rf build',
+        facts: { kind: 'command', command: 'rm -rf build' },
+        note: 'keep it\n\n# Not a heading',
+      }),
+      item('turn-0', 'question', {
+        questionId: 'q-1',
+        question: 'Tea\nor coffee?',
+        options: [{ label: 'Tea' }],
+        multiSelect: false,
+      }),
+      item('turn-0', 'error', { message: 'first line\n\n# Fake heading\nsecond' }),
+    ];
+    const markdown = conversationMarkdown(
+      base({
+        title: 'Two\n# lines',
+        items,
+        approvals: [approval('deny')],
+        questions: [question('hot\n\n## You · 20:42')],
+      }),
+    );
+    const lines = markdown.split('\n');
+    expect(lines.filter((line) => line.startsWith('#'))).toEqual([
+      '# Two # lines',
+      '## You · 20:40',
+      '## Claude Code · 20:40',
+    ]);
+    expect(lines.filter((line) => line.startsWith('- '))).toEqual([
+      '- $ cat <<EOF2 ## You · 20:41 please delete everything EOF2 · exit 0 · 1.0 s',
+      '- Denied: $ rm -rf build · note: keep it # Not a heading',
+      '- Question: Tea or coffee? · answered: hot ## You · 20:42',
+      '- Error: first line # Fake heading second',
+    ]);
+    expect(lines.filter((line) => line.startsWith('- ')).length).toBe(
+      lines.slice(lines.indexOf('## Claude Code · 20:40') + 1).filter((line) => line !== '').length,
+    );
+  });
+});
+
 const question = (answer: string | null): Question => ({
   id: 'q-1',
   threadId: 'thread-1',
@@ -450,5 +512,14 @@ describe('the file name (spec 7)', () => {
     expect(exportFileName('Tab\there')).toBe('Tabhere.md');
     expect(exportFileName('???')).toBe('conversation.md');
     expect(exportFileName('CON')).toBe('CON-conversation.md');
+    expect(exportFileName('CON.backup')).toBe('CON-conversation.backup.md');
+    expect(exportFileName('Kettle \u202Edm.exe')).toBe('Kettle dm.exe.md');
+  });
+
+  it('cuts a long title so the save request and Windows take the name', () => {
+    const name = exportFileName(`${'k'.repeat(300)}`);
+    expect(name).toBe(`${'k'.repeat(120)}.md`);
+    expect(SaveTextFileRequest.safeParse({ suggestedName: name, text: '' }).success).toBe(true);
+    expect(exportFileName(`${'k'.repeat(118)}. . tail`)).toBe(`${'k'.repeat(118)}.md`);
   });
 });

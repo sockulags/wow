@@ -51,6 +51,9 @@ export interface FindSource {
   readonly modeLabel?: ((id: string) => string) | undefined;
 }
 
+// Same length, so offsets into the text stay the same (find-bar.tsx relies on it).
+export const softBreaks = (text: string): string => text.replace(/[\r\n]/g, ' ');
+
 // Containers put their children on lines of their own; a table row's cells are tab apart; a
 // paragraph, a heading and inline nodes run on.
 const lineContainers = new Set([
@@ -64,6 +67,9 @@ const lineContainers = new Set([
 
 function nodeText(node: Nodes): string {
   if (node.type === 'image' || node.type === 'imageReference') return node.alt ?? '';
+  // A line break inside a paragraph shows as a space; a hard break shows as a new line.
+  if (node.type === 'text') return softBreaks(node.value);
+  if (node.type === 'break') return '\n';
   if ('value' in node) return node.value;
   if (!('children' in node)) return '';
   const children: readonly Nodes[] = node.children;

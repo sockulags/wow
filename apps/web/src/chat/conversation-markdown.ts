@@ -207,6 +207,11 @@ export interface ConversationExport {
 
 type Block = { readonly list: boolean; readonly text: string };
 
+// A row's words on one line, as its summary shows them: a heredoc or a long error broken over
+// lines would otherwise spread the row out and its lines would read as Markdown of their own
+// (a "## You · 20:41" inside a command would look like a message of the user's).
+const flat = (text: string): string => text.replace(/\s*[\r\n\u2028\u2029]\s*/g, ' ').trim();
+
 const quoted = (text: string): string =>
   text
     .replace(/\n+$/, '')
@@ -235,14 +240,14 @@ export function conversationMarkdown(input: ConversationExport): string {
   const turns = new Map(input.turns.map((turn) => [turn.id, turn]));
   const pendingApproval = input.approvals.some((approval) => approval.decision === null);
   const head: string[] = [
-    `# ${input.title}`,
+    `# ${flat(input.title)}`,
     [input.instanceName, input.model, input.project, input.folder, input.branch ?? undefined]
       .filter((part): part is string => part !== undefined && part !== '')
       .join(' · '),
     `Exported ${input.formatAt(input.exportedAt)}`,
   ];
   const blocks: Block[] = [];
-  const line = (text: string) => blocks.push({ list: true, text: `- ${text}` });
+  const line = (text: string) => blocks.push({ list: true, text: `- ${flat(text)}` });
   const heading = (text: string) => blocks.push({ list: false, text: `## ${text}` });
   const paragraph = (text: string) => {
     if (text.trim() !== '') blocks.push({ list: false, text });
@@ -367,20 +372,29 @@ export function conversationMarkdown(input: ConversationExport): string {
   return `${head.join('\n\n')}\n\n${body}\n`;
 }
 
-// Characters Windows refuses in a file name, and names it keeps for devices.
+// Characters Windows refuses in a file name, names it keeps for devices (also before a dot:
+// "CON.backup" is still the device), and direction marks that could make a name read otherwise.
 const refused = /[<>:"/\\|?*]/g;
-const deviceName = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const deviceName = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i;
+const directionMarks = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+// Well under the 255 characters Windows and the save request allow, with room for ".md".
+const nameLength = 120;
 
-// The thread's title as a file name: refused and control characters out, no dot or space at the
-// end, no device name, and "conversation" for a title with nothing left.
+const trimEnd = (text: string) => text.trim().replace(/[. ]+$/, '');
+
+// The thread's title as a file name: refused, control and direction characters out, cut to a
+// length every system takes, no dot or space at the end, no device name, and "conversation" for
+// a title with nothing left.
 export function exportFileName(title: string): string {
-  const cleaned = [...title]
-    .filter((character) => (character.codePointAt(0) ?? 0) >= 32)
-    .join('')
-    .replace(refused, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/[. ]+$/, '');
+  const whole = trimEnd(
+    [...title]
+      .filter((character) => (character.codePointAt(0) ?? 0) >= 32)
+      .join('')
+      .replace(directionMarks, '')
+      .replace(refused, '')
+      .replace(/\s+/g, ' '),
+  );
+  const cleaned = trimEnd([...whole].slice(0, nameLength).join(''));
   const name = cleaned === '' ? 'conversation' : cleaned;
-  return `${deviceName.test(name) ? `${name}-conversation` : name}.md`;
+  return `${deviceName.test(name) ? name.replace(/^[^.]*/, '$&-conversation') : name}.md`;
 }

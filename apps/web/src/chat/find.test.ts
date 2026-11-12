@@ -83,6 +83,16 @@ describe('what find matches (spec 2)', () => {
     expect(found(pieces, '**')).toEqual([]);
   });
 
+  it('reads a line break inside a paragraph as the space it shows as, and keeps code lines', () => {
+    expect(markdownText('Put the\nkettle on.')).toBe('Put the kettle on.');
+    expect(markdownText('Hard  \nbreak')).toBe('Hard\nbreak');
+    expect(markdownText('```\nthe\nkettle\n```')).toBe('the\nkettle');
+    const pieces = conversationText(
+      source([item('a', 'assistant_text', { text: 'Put the\nkettle on.' })]),
+    );
+    expect(found(pieces, 'the kettle')).toEqual([{ itemId: 'a', text: 'the kettle', opens: [] }]);
+  });
+
   it('matches a user message, its files and its skills, but not the mention line twice', () => {
     const pieces = conversationText(
       source([

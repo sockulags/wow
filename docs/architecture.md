@@ -3298,7 +3298,8 @@ and exported is what the conversation shows. Searching the page alone would miss
   out) and gives each shown item's text pieces in reading order, each with its row's item id and
   the open-state keys of what holds it. A message is its markdown parsed with GFM and turned into
   text (`markdownText`, mdast from `mdast-util-from-markdown` with the GFM extensions, the parse
-  react-markdown uses), so `**kettle**` is found as "kettle". Tool rows give their line
+  react-markdown uses), so `**kettle**` is found as "kettle"; a line break inside a paragraph
+  reads as the space it shows as, a hard break as a new line. Tool rows give their line
   (`toolLine` in `conversation-markdown.ts`, without times), an MCP call's arguments as key: value,
   an edit's diff lines, and their whole output, the earlier lines (before the last
   `chat.toolOutputLines`) as a piece of their own that also opens "Show all N lines". Reasoning,
@@ -3325,7 +3326,11 @@ and exported is what the conversation shows. Searching the page alone would miss
   nested row's, not button words), never by rewriting the markup. It paints after every commit
   and, through a `MutationObserver`, when lazily rendered text arrives. Where the API is missing
   (jsdom) the current match's row is outlined (`data-find-outline`); the row always carries
-  `data-find-current`.
+  `data-find-current`. The marks search the row's text on screen again (line breaks in rendered
+  Markdown outside `<pre>` read as spaces), which can hold words find does not count (a time, a
+  heading button's words); when a row's marks and its counted matches differ in number, the
+  current match's row is outlined instead of marking an occurrence that may not be the counted
+  one.
 - **Bar and keys.** Ctrl+F (`keybindings.findInConversation`, Mod+F) opens the bar above the
   conversation with its field focused from anywhere in the view, composer included (a Mod key
   works in text fields); pressed again it selects the field. Enter and Shift+Enter are the field's
@@ -3344,7 +3349,9 @@ and exported is what the conversation shows. Searching the page alone would miss
   question, error, divider, compaction, task list update and stopped turn, worded as the rows
   (`toolLine`, `approvalLine`, `questionLine`, `taskLine`, `settingsChangeText`,
   `compactionText`): "$ pnpm test · exit 1 · 4.2 s", "Allowed once: $ pnpm test", "Denied: $ rm
-  -rf build · note: keep the build". A subagent call is its line and its answer as a quote. No
+  -rf build · note: keep the build". A row's words (and the title) go on one line: a line break
+  and the space around it become one space, so a heredoc or a long error cannot spread out and
+  read as headings of its own. A subagent call is its line and its answer as a quote. No
   tool output or input, no usage, no queued message, no earlier version; reasoning only with
   `chat.exportReasoning`. Palette `chat.copyMarkdown` and `chat.saveMarkdown`, and the thread
   header's "More thread actions" menu (a shadcn `dropdown-menu`).
@@ -3353,12 +3360,15 @@ and exported is what the conversation shows. Searching the page alone would miss
   `wowDesktop.saveTextFile`) sends `SaveTextFileRequest {suggestedName, text}` (contracts
   `desktop-files.ts`) on `wow:save-text-file` (`fileChannels` in `apps/desktop/src/app.ts`). The
   main process answers only `wow://app` pages, as for `wow:pick-folder`
-  (`apps/desktop/src/main/save-text-file.ts`): it cuts the suggested name to a bare file name,
-  shows `dialog.showSaveDialog` in the documents folder with a Markdown filter, writes UTF-8
-  without a byte order mark and answers the path, or null when cancelled. The browser build has
-  no `saveTextFile`, so `saveTextFile(runtime, file)` in `app/runtime.tsx` downloads a Blob
+  (`apps/desktop/src/main/save-text-file.ts`): it cuts the suggested name to a bare file name
+  (cleaned again by the same rules as the page's, at most 200 characters before `.md`), shows
+  `dialog.showSaveDialog` in the documents folder with a Markdown filter, writes UTF-8 without
+  a byte order mark and answers the path, or null when cancelled; a request it cannot read
+  throws, so the page says the conversation was not saved. The browser build has no
+  `saveTextFile`, so `saveTextFile(runtime, file)` in `app/runtime.tsx` downloads a Blob
   instead. `exportFileName(title)` takes out what Windows refuses (`<>:"/\|?*` and control
-  characters), trailing dots and spaces, and device names.
+  characters) and direction marks, cuts the title to 120 characters, drops trailing dots and
+  spaces, and renames a device name, also one followed by a dot ("CON.backup").
 
 ### Edit and Fork
 
