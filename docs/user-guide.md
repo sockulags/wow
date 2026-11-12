@@ -506,6 +506,30 @@ model, effort and permission selects. When a workflow run waits at a gate after 
 the thread shows the gate with **Approve** (**Ctrl+Enter**), **Send back** (**Ctrl+Shift+Enter**)
 and **Stop**, the same as the run view.
 
+**Finding threads**: **Ctrl+Shift+F**, or **/** while the list has the keyboard, puts the cursor
+in the filter above the list. It matches a thread's title, its project's name and words said in
+its messages. When threads sit in more than one project, a chip per project narrows the list (also
+"Show threads of <project>" and "Show threads of all projects" in the palette); when the chips go
+away, so does the narrowing. The arrow keys move between rows and Enter opens one; Enter in the
+filter opens the first.
+
+**Rename, archive, unread**: **F2** or "Rename thread" edits the title in the header; the list
+and the palette follow. "Archive thread" hides a thread from the list; the filter and the palette
+still find it once you type, marked "Archived", and "Unarchive thread" brings it back. A workflow
+step's thread belongs to its run and is not archived on its own. An archived thread comes back to
+the list by itself when a turn starts in it (you send a message, or the agent goes on after
+background work) or when it asks for an approval or a question. A thread whose turn ended or that
+needs you while you were not looking at it is bold with a dot until you open it; "Mark unread"
+makes it bold again and goes back to the list, and **Alt+Shift+Down** (or "Next unread thread")
+opens the next bold one.
+
+**Notifications**: when a chat thread you are not looking at asks for an approval or a question,
+wow tells you "Needs you: <thread>" with what it asks; clicking opens the thread, and in the
+desktop app an approval's notification has **Allow once** and **Deny**. A turn that ran longer
+than `chat.finishedAfterSeconds` (30) tells you "Finished: <thread>" when it ends. Choose in
+`chat.notifications`: needs you and finished (the default), needs you only, or off. Nothing shows
+for the thread on screen in a focused window, or for a turn you stopped yourself.
+
 **Mark thread done** in the thread header (or in the palette) moves a thread you have finished
 with to **Done**. It is available while the agent neither works nor waits for you. **Reopen
 thread** puts it back under Idle (a thread whose last turn failed keeps its marker), and sending a

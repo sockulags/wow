@@ -164,6 +164,14 @@ function turnStarted(
   };
 }
 
+// A turn starting or a request arriving brings an archived thread back to the list, so what it
+// does next is not hidden from the user (coordinator decision on spec 68).
+const unarchived = (threadId: string): DomainEvent => ({
+  kind: 'thread.archived',
+  aggregate: threadId,
+  payload: { threadId, archived: false },
+});
+
 function requireThread(read: ReadModel, threadId: string) {
   const thread = read.thread(threadId);
   if (!thread) throw new CommandRejected('not_found', `No thread ${threadId}`);
@@ -361,6 +369,7 @@ export function decideThread(
           assistant: assistant !== undefined,
           skills: withSkills.skills,
         }),
+        ...(thread.archived ? [unarchived(thread.id)] : []),
       ];
     }
     case 'thread.sendPrepared': {
@@ -753,6 +762,12 @@ function decideProviderEvents(
     return { count: stored.count, last: last.success ? last.data.tasks : undefined };
   };
   let seen = thread.seen ?? true;
+  let archived = thread.archived ?? false;
+  const unarchive = () => {
+    if (!archived) return;
+    archived = false;
+    out.push(unarchived(threadId));
+  };
   // The assistant thread is not in the thread list, so it has nothing to mark.
   const markUnseen = () => {
     if (!seen || thread.kind === 'assistant') return;
@@ -898,6 +913,7 @@ function decideProviderEvents(
         usage: null,
       };
       out.push({ kind: 'turn.startedByProvider', aggregate: threadId, payload: { turn } });
+      unarchive();
       state = 'working';
       continue;
     }
@@ -1006,6 +1022,7 @@ function decideProviderEvents(
           },
         });
         setState('needs_you');
+        unarchive();
         needsYou(event.approvalId, event.summary, id);
         break;
       }
@@ -1041,6 +1058,7 @@ function decideProviderEvents(
           },
         });
         setState('needs_you');
+        unarchive();
         needsYou(`question:${event.askId ?? event.questionId}`, event.question, null);
         break;
       }

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase, type Database } from '../db/database.js';
-import { threads as threadsTable } from '../db/schema.js';
+import { events as eventLog, threads as threadsTable } from '../db/schema.js';
 import { Engine } from './engine.js';
 import { snapshot } from './subscriptions.js';
 import { searchThreads } from './thread-search.js';
@@ -35,6 +35,13 @@ const later = (seconds: number) => {
 };
 const thread = (id = 't1') =>
   (snapshot(database.db, { topic: 'threads' }) as Thread[]).find((row) => row.id === id);
+const archivedEvents = () =>
+  database.db
+    .select()
+    .from(eventLog)
+    .all()
+    .filter((row) => row.kind === 'thread.archived')
+    .map((row) => (row.payload as { archived: boolean }).archived);
 const notifications = () => snapshot(database.db, { topic: 'notifications' }) as AppNotification[];
 const setting = (key: string, value: unknown) =>
   dispatch({ type: 'setting.set', key, scope: 'global', value });
@@ -208,6 +215,32 @@ describe('the thread list (spec 67 to 70)', () => {
       dispatch({ type: 'thread.setArchived', threadId: 'step-thread', archived: true }),
     ).toThrow("A workflow step's thread belongs to its run, so it is not archived on its own.");
     expect(thread('step-thread')?.archived).toBe(false);
+  });
+
+  it('brings an archived thread back when a turn starts or a request arrives, once', () => {
+    const archive = () => dispatch({ type: 'thread.setArchived', threadId: 't1', archived: true });
+
+    archive();
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Run the tests' });
+    expect(thread()?.archived).toBe(false);
+
+    archive();
+    // Two requests in one batch, and another later: one event brings it back.
+    events('t1', approval('t1', 'tool-1'), approval('t1', 'tool-2'));
+    expect(thread()?.archived).toBe(false);
+    events('t1', approval('t1', 'tool-3'));
+    expect(archivedEvents()).toEqual([true, false, true, false]);
+
+    archive();
+    events('t1', question('q1', 'Which colour?'));
+    expect(thread()?.archived).toBe(false);
+    expect(notifications().map((row) => row.threadId)).toContain('t1');
+
+    events('t1', { type: 'turnCompleted', threadId: 't1' });
+    archive();
+    events('t1', { type: 'turnStartedByProvider', threadId: 't1' });
+    expect(thread()?.archived).toBe(false);
+    expect(archivedEvents()).toEqual([true, false, true, false, true, false, true, false]);
   });
 
   it('marks a thread unread when a turn ends or it starts to need the user, until it is seen', () => {

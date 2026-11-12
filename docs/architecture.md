@@ -2801,7 +2801,11 @@ title (`chat/thread-title.tsx`) is a button that edits it.
 thread, which belongs to its run; there is no delete. `thread.markSeen` and
 `thread.markUnread` store `thread.seenChanged`. None of them changes `updatedAt`, so the list
 keeps its order. The server sets `seen` false itself when a turn ends or a thread starts to need
-the user (an approval or a question), for every thread but the assistant's. The web app sends
+the user (an approval or a question), for every thread but the assistant's. A turn starting
+(`thread.sendMessage`, or `turnStartedByProvider` after background work) or an approval or a
+question arriving in an archived thread stores `thread.archived {archived: false}` with it, once
+per batch, so the thread, its unread mark and its notification are back in the list (coordinator
+decision; a thread archived while its turn runs stays archived when that turn ends). The web app sends
 `thread.markSeen` when the open thread is on screen in a focused window and is unread, once per
 `updatedAt` while it stays open, and again each time it turns from read to unread on screen (a
 second approval or question in a thread that already needs the user is stored unread without
