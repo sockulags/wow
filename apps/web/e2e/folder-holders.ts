@@ -1,0 +1,110 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import path from 'node:path';
+
+// Finding 143: on the Windows runner a seeded project folder stayed held (EBUSY) after
+// everything inside it was gone. The seeding checks whether the emptied folder is held and, when
+// it is, writes which processes could hold it, so one CI run names the holder. Neither wmic
+// nor tasklist reports a working directory: wmic gives command lines, where `git -C <folder>`
+// names the folder, and tasklist (when wmic is not installed) at least names the git and node
+// processes still running.
+
+const run = (command: string, args: string[]): string | undefined => {
+  try {
+    return execFileSync(command, args, {
+      encoding: 'utf8',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return undefined;
+  }
+};
+
+export function describeFolderHolders(folder: string): string {
+  const wanted = [folder, folder.replaceAll('\\', '/')].map((name) => name.toLowerCase());
+  const processes = run('wmic', [
+    'process',
+    'get',
+    'ProcessId,ParentProcessId,Name,CommandLine',
+    '/format:csv',
+  ]);
+  if (processes !== undefined) {
+    const lines = processes
+      .split(/\r?\n/)
+      .filter((line) => line.trim() !== '')
+      .filter((line) => {
+        const lower = line.toLowerCase();
+        return wanted.some((name) => lower.includes(name)) || /\b(git|git-\w+)\.exe\b/.test(lower);
+      });
+    return lines.length === 0 ? 'wmic: no process names the folder or is a git' : lines.join('\n');
+  }
+  const tasks = [
+    run('tasklist', ['/v', '/fo', 'csv', '/fi', 'IMAGENAME eq git.exe']),
+    run('tasklist', ['/v', '/fo', 'csv', '/fi', 'IMAGENAME eq node.exe']),
+  ].filter((text) => text !== undefined);
+  return tasks.length === 0 ? 'neither wmic nor tasklist could run' : tasks.join('\n');
+}
+
+// The holder lookup is always for the folder itself; a holder's command line names the folder,
+// not the probe, so the probe appears only in the step.
+const writeHeld = (folder: string, step: string, error: unknown): void => {
+  const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
+  process.stderr.write(
+    `[e2e] ${folder} is held (${code} while ${step}); processes that may hold it:\n${describeFolderHolders(folder)}\n`,
+  );
+};
+
+// The folder is emptied, not removed: on Windows something can still hold the folder itself,
+// and removing it then fails with EBUSY and takes the e2e server down. What is inside can always
+// go; a file git has open for a moment is tried again. When even that fails, the possible holders
+// are written out before the error goes on, since the server stops there.
+export function emptyFolder(folder: string, platform: NodeJS.Platform = process.platform): void {
+  mkdirSync(folder, { recursive: true });
+  try {
+    for (const name of readdirSync(folder)) {
+      rmSync(path.join(folder, name), {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      });
+    }
+  } catch (error) {
+    if (platform === 'win32') writeHeld(folder, 'emptying it', error);
+    throw error;
+  }
+  reportFolderHolders(folder, platform);
+}
+
+// On Windows a process whose working directory is the folder keeps it from being removed or
+// renamed. A rename there and straight back tells whether something holds it without removing it:
+// a removed folder that a watcher still has open stays pending and could not be made again. A
+// refusal is written out with the possible holders and the folder is left as it is. A probe folder
+// an earlier run could not rename back would make the first rename fail, so it goes first; when
+// the rename back fails, seeding goes on in a new folder.
+export function reportFolderHolders(
+  folder: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform !== 'win32') return;
+  const probe = `${folder}.probe`;
+  try {
+    rmSync(probe, { recursive: true, force: true });
+  } catch (error) {
+    writeHeld(folder, `removing the probe ${probe} an earlier run left`, error);
+    return;
+  }
+  try {
+    renameSync(folder, probe);
+  } catch (error) {
+    writeHeld(folder, `renaming it to ${probe}`, error);
+    return;
+  }
+  try {
+    renameSync(probe, folder);
+  } catch (error) {
+    writeHeld(folder, `renaming ${probe} back to ${folder}`, error);
+    mkdirSync(folder, { recursive: true });
+  }
+}

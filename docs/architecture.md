@@ -134,7 +134,9 @@ projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see 
   (tracked plus untracked files Git does not ignore, read as the output streams and stopped at
   `viewer.fileListLimit`; a name that is no file on disk, a tracked file deleted or a submodule's
   folder, is left out; when git runs out of time the names read so far are the answer, marked
-  `truncated`, since a walk would list what Git ignores), else a breadth-first walk that skips hidden folders and
+  `truncated`, since a walk would list what Git ignores; at the limit and out of time the
+  stopped git is waited for, up to `advanced.gitStopWaitMs`, as every stopped git is, see "Git"
+  under "Projects"), else a breadth-first walk that skips hidden folders and
   `node_modules` and stops at the same limit; the answer says which (`source`) and whether it
   stopped (`truncated`). A
   relative path is looked for in each folder in order, a full path must lie in one of them. The
@@ -1606,6 +1608,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
 - updates: `updates.enabled`, `updates.checkIntervalMinutes`
 - advanced: `advanced.port`, `advanced.logLevel`, `advanced.secretsTimeoutMs`,
+  `advanced.gitStopWaitMs` (see "Git" under "Projects"),
   `advanced.setupFileMaxBytes` (see "Setup file"), `advanced.showSettingKeys` (`WOW_HOME` is an
   environment variable, see "Server")
 
@@ -1754,7 +1757,12 @@ project and its `project:<id>` settings and unlinks what pointed at it rather th
 project folder with `git -C <folder>`: `rev-parse --git-dir` (fails: `noRepository`), `remote -v`
 and `symbolic-ref --short HEAD`, with `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` and `GIT_OPTIONAL_LOCKS=0`
 (`gitEnvironment`), so nothing waits for credentials (no terminal prompt, no Git Credential
-Manager window on Windows) or takes a lock, and `trackers.gitTimeoutMs` as the limit. Without git on the
+Manager window on Windows) or takes a lock, and `trackers.gitTimeoutMs` as the limit. A git
+that runs out of time, or writes more than 4 MB, is stopped with its whole process tree on Windows
+(`taskkill /T /F`, `projects/stop-process.ts`): Git for Windows' `cmd\git.exe` starts the real
+`git.exe` and waits for it, and killing only the wrapper would leave the real git running with the
+folder as its working directory, which holds the folder. The answer then waits for the stopped git
+to be gone, but no longer than `advanced.gitStopWaitMs`; the same goes for `files.list`. Without git on the
 PATH it reads `<folder>/.git/config` and `HEAD` itself (`gitUnavailable` when that fails too). A
 folder that is gone is `folderMissing`. `parseRemoteUrl` reads https, ssh://, git:// and scp-like
 `user@host:path` remotes and local paths, drops user names and passwords from https URLs, and
@@ -4556,6 +4564,8 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   claude and codex factories (the prompt picks the scenario), a seeded Claude instance and
   project (plus a Codex instance on this first server only, for the `$name` form), and fixture
   `SKILL.md` files in the server's own user home that skills discovery finds.
+  The server's seeding helpers in `apps/web/e2e/*.vitest.ts` files run under Vitest in Node (the
+  `e2e-helpers` project in `apps/web/vite.config.ts`); Playwright does not pick those files up.
   Its PATH holds empty stand-in `claude` and `codex` files for `provider.detect`. The workflow
   tests use the same server: its fixture skills cover the Feature template's first steps, and an
   invented `intents/demo/intent.md` in the project folder is the artifact step 1 finds. The projects

@@ -246,7 +246,10 @@ export class TrackerService {
   }
 
   #gitOptions(): GitRunOptions {
-    return { timeoutMs: this.#deps.settings.get('trackers.gitTimeoutMs') };
+    return {
+      timeoutMs: this.#deps.settings.get('trackers.gitTimeoutMs'),
+      stopWaitMs: this.#deps.settings.get('advanced.gitStopWaitMs'),
+    };
   }
 
   #project(projectId: string) {

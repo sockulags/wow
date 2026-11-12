@@ -183,7 +183,7 @@ const git = (dir: string, ...args: string[]) =>
 
 describe('readFolderGit', () => {
   let root: string;
-  const options = { timeoutMs: 10_000 };
+  const options = { timeoutMs: 10_000, stopWaitMs: 5_000 };
   const ceiling = process.env['GIT_CEILING_DIRECTORIES'];
 
   beforeAll(async () => {

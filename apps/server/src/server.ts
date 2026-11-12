@@ -270,7 +270,10 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       return readIntentTexts(project, setting, intentId);
     },
     workingCopyBranch: (folder) =>
-      readCurrentBranch(folder, { timeoutMs: settings.get('trackers.gitTimeoutMs') }),
+      readCurrentBranch(folder, {
+        timeoutMs: settings.get('trackers.gitTimeoutMs'),
+        stopWaitMs: settings.get('advanced.gitStopWaitMs'),
+      }),
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.hostTimers ? { timers: options.hostTimers } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),

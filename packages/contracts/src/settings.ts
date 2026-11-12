@@ -2015,6 +2015,16 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'ms',
   }),
+  'advanced.gitStopWaitMs': defineSetting({
+    schema: z.number().int().min(100).max(60_000),
+    group: 'advanced',
+    label: 'Wait for a stopped git',
+    description:
+      'How long wow waits for a git it stopped (out of time, or at a limit) to be gone before it answers anyway. On Windows a git still running holds its folder, so the folder cannot be removed or moved until it is gone.',
+    default: 5_000,
+    scope: 'global',
+    unit: 'ms',
+  }),
   'advanced.setupFileMaxBytes': defineSetting({
     schema: z.number().int().min(1000).max(50_000_000),
     group: 'advanced',
