@@ -361,9 +361,12 @@ thread it maps to, since the app-server has no request that unloads one.
   `assistant_text`/`reasoning` item per provider item id (`{text}`), tool calls are `tool_call`
   items (`{name, input, output, status}` plus the tool facts and times below), `approval` and
   `question` items point at their `approvals`/`questions` rows (the payload of each item kind is a
-  schema in `packages/contracts`, `*ItemPayload`), each task list update is a `task_list` item of
-  its own (`{tasks, at}`: the first keeps the id `<turn>:tasks`, later ones `<turn>:tasks:<n>`; a
-  turn's single list stored before has no `at`), and usage plus
+  schema in `packages/contracts`, `*ItemPayload`), each change of the task list is a `task_list`
+  item of its own (`{tasks, at}`: the first keeps the id `<turn>:tasks`, later ones
+  `<turn>:tasks:<n>`, where `n` is the number of lists the turn already has, read with one count;
+  a list equal to the turn's last one adds nothing, since Codex sends its plan again unchanged and
+  Claude Code's adapter sends the list on every task tool call; a turn's single list stored before
+  has no `at`), and usage plus
   context usage merge into one `usage` item per turn and the turn's `usage`. Provider ids are only
   unique per session, so row ids are prefixed with the turn or thread id. Thread state: `working`
   while a turn runs, `needs_you` while an approval or question is open, `idle` after a completed or

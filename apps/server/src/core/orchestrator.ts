@@ -81,6 +81,8 @@ export interface ReadModel {
   // Index the next item of the thread gets.
   nextItemIndex(threadId: string): number;
   itemExists(id: string): boolean;
+  // How many task lists the turn has and the payload of its newest one.
+  turnTaskLists(turnId: string): { readonly count: number; readonly last: unknown };
   threadItem(id: string): ThreadItem | undefined;
   approval(id: string): Approval | undefined;
   question(id: string): Question | undefined;

@@ -20,6 +20,7 @@ import {
   assistantThreadId,
   replyProblem,
   replyText,
+  TaskListItemPayload,
   toolFactsOf,
   type QuestionReply,
 } from '@wow/contracts';
@@ -707,6 +708,17 @@ function resumeWork(
   return [stateChanged(threadId, 'working', now)];
 }
 
+type Tasks = TaskListItemPayload['tasks'];
+
+const sameTasks = (a: Tasks, b: Tasks) =>
+  a.length === b.length &&
+  a.every(
+    (task, index) =>
+      task.id === b[index]?.id &&
+      task.content === b[index]?.content &&
+      task.status === b[index]?.status,
+  );
+
 const endedThreadState = {
   completed: 'idle',
   interrupted: 'idle',
@@ -733,6 +745,13 @@ function decideProviderEvents(
   const created = new Set<string>();
   const out: DomainEvent[] = [];
   const exists = (id: string) => created.has(id) || read.itemExists(id);
+  // The task lists of each turn, as stored and as added in this batch.
+  const taskLists = new Map<string, { count: number; last: Tasks | undefined }>();
+  const turnTaskLists = (ofTurn: string) => {
+    const stored = read.turnTaskLists(ofTurn);
+    const last = TaskListItemPayload.safeParse(stored.last);
+    return { count: stored.count, last: last.success ? last.data.tasks : undefined };
+  };
   let seen = thread.seen ?? true;
   // The assistant thread is not in the thread list, so it has nothing to mark.
   const markUnseen = () => {
@@ -1026,11 +1045,20 @@ function decideProviderEvents(
         break;
       }
       case 'taskListUpdated': {
-        // Each update is an item of its own, so the conversation marks where the list changed
-        // (spec 31). The first keeps the id a turn's only list had before.
-        let id = itemId('tasks');
-        for (let count = 1; exists(id); count += 1) id = itemId(`tasks:${count}`);
-        add(current, id, 'task_list', { tasks: event.tasks, at: now }, false);
+        // Each change is an item of its own, so the conversation marks where the list changed
+        // (spec 31). Codex sends its plan again unchanged and Claude Code's adapter sends the
+        // list on every task tool call, so a list equal to the last one adds nothing. The first
+        // keeps the id a turn's only list had before.
+        const lists = taskLists.get(current.id) ?? turnTaskLists(current.id);
+        if (lists.last !== undefined && sameTasks(lists.last, event.tasks)) break;
+        add(
+          current,
+          itemId(lists.count === 0 ? 'tasks' : `tasks:${lists.count}`),
+          'task_list',
+          { tasks: event.tasks, at: now },
+          false,
+        );
+        taskLists.set(current.id, { count: lists.count + 1, last: event.tasks });
         break;
       }
       case 'usage': {

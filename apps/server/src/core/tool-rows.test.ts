@@ -1,5 +1,5 @@
 import type { Command, ProviderEvent, ServerCommand, ThreadItem } from '@wow/contracts';
-import { ToolCallItemPayload } from '@wow/contracts';
+import { settingsRegistry, ToolCallItemPayload } from '@wow/contracts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase, type Database } from '../db/database.js';
 import { threadItems } from '../db/schema.js';
 import { Engine } from './engine.js';
+import { decide, type ReadModel } from './orchestrator.js';
+import { readModel } from './projector.js';
 import { snapshot } from './subscriptions.js';
 
 // Tool rows and task lists (agent workbench U4): the server stamps a tool call's start and end
@@ -182,5 +184,45 @@ describe('task list updates (spec 31)', () => {
       at(2),
       at(2),
     ]);
+  });
+
+  it('adds nothing for a list equal to the last one, in one batch or the next', () => {
+    events(list(0), list(0));
+    later(1);
+    events(list(0));
+    events(list(1));
+    events(list(1), list(0));
+    const lists = items().filter((row) => row.kind === 'task_list');
+    expect(lists.map((row) => row.id)).toEqual([
+      't1:turn:0:tasks',
+      't1:turn:0:tasks:1',
+      't1:turn:0:tasks:2',
+    ]);
+    expect(lists.map((row) => (row.payload as { tasks: unknown }).tasks)).toEqual(
+      [list(0), list(1), list(0)].map((event) =>
+        event.type === 'taskListUpdated' ? event.tasks : [],
+      ),
+    );
+  });
+
+  it('finds the next list id with no read per earlier list', () => {
+    for (let done = 0; done <= 3; done += 1) events(list(done));
+    const stored = readModel(database.db);
+    const asked: string[] = [];
+    const counted: ReadModel = {
+      ...stored,
+      itemExists: (id) => {
+        asked.push(id);
+        return stored.itemExists(id);
+      },
+    };
+    const out = decide({ type: 'provider.events', threadId: 't1', events: [list(0)] }, counted, {
+      now: at(5),
+      registry: settingsRegistry,
+    });
+    expect(
+      out.flatMap((event) => (event.kind === 'threadItem.added' ? [event.payload.id] : [])),
+    ).toEqual(['t1:turn:0:tasks:4']);
+    expect(asked.filter((id) => id.includes(':tasks'))).toEqual([]);
   });
 });

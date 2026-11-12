@@ -860,6 +860,18 @@ export function readModel(tx: DbOrTx): ReadModel {
     itemExists: (id) =>
       tx.select({ id: threadItems.id }).from(threadItems).where(eq(threadItems.id, id)).get() !==
       undefined,
+    turnTaskLists: (turnId) => {
+      const lists = and(eq(threadItems.turnId, turnId), eq(threadItems.kind, 'task_list'));
+      const total = tx.select({ n: count() }).from(threadItems).where(lists).get()?.n ?? 0;
+      const last = tx
+        .select({ payload: threadItems.payload })
+        .from(threadItems)
+        .where(lists)
+        .orderBy(desc(threadItems.index))
+        .limit(1)
+        .get();
+      return { count: total, last: last?.payload };
+    },
     approval: (id) => tx.select().from(approvals).where(eq(approvals.id, id)).get(),
     question: (id) => tx.select().from(questions).where(eq(questions.id, id)).get(),
     openRequests: (threadId) =>
