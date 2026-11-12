@@ -1,3 +1,4 @@
+import { useNeedsYouFocus } from '@/chat/needs-you';
 import {
   findSecret,
   heldSecretSentence,
@@ -15,7 +16,7 @@ import {
   ShieldQuestionIcon,
   XIcon,
 } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { errorMessage } from '@/chat/data';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -171,6 +172,8 @@ export function ProposalCard({
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState('');
   const pending = proposal.state === 'pending';
+  const card = useRef<HTMLElement>(null);
+  useNeedsYouFocus(pending ? `proposal:${proposal.id}` : undefined, card);
   const decline = () => {
     const typed = reason.trim();
     const secret = typed === '' ? null : findSecret(typed, compiled(secretPatterns));
@@ -182,11 +185,13 @@ export function ProposalCard({
   };
   return (
     <section
+      ref={card}
+      tabIndex={-1}
       aria-label={`Proposal: ${proposal.title}`}
       data-testid="assistant-proposal"
       data-state={proposal.state}
       className={cn(
-        'flex flex-col gap-2 rounded-md border p-3 text-sm',
+        'flex flex-col gap-2 rounded-md border p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
         pending ? 'border-state-needs-you/60' : 'border-border text-muted-foreground',
       )}
     >

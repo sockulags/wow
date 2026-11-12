@@ -1,6 +1,9 @@
 import {
   ApprovalItemPayload,
+  CompactionItemPayload,
   ErrorItemPayload,
+  ReasoningItemPayload,
+  SettingsChangeItemPayload,
   QuestionItemPayload,
   TaskListItemPayload,
   TextItemPayload,
@@ -16,6 +19,7 @@ import {
 import {
   BrainIcon,
   ChevronRightIcon,
+  FoldVerticalIcon,
   CircleAlertIcon,
   CircleDashedIcon,
   ClockIcon,
@@ -23,12 +27,14 @@ import {
   RotateCcwIcon,
 } from 'lucide-react';
 import { useRef, useState, type ReactNode } from 'react';
+import { formatBinding } from '@/app/keybindings';
 import { CopyButton, copyText } from '@/components/copy-button';
 import { useRowActions } from '@/lib/row-actions';
 import { WithTooltip } from '@/components/hint';
 import { Markdown } from '@/components/markdown';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { ApprovalCard } from './approval-card';
 import { errorMessage, useDispatch } from './data';
 import {
@@ -37,7 +43,7 @@ import {
   type QuestionHold,
   type QuestionStatus,
 } from './question-card';
-import { formatCost, formatTokens } from './model';
+import { formatCost, formatTokens, shortTokens } from './model';
 import { FileChip } from '@/panel/open-file-button';
 import { withoutMentions } from './mentions';
 import { SentImages } from './image-chip';
@@ -45,7 +51,7 @@ import { SentSkillChip } from './skill-chip';
 import { TaskList, TaskMarker } from './task-pin';
 import { ToolCall } from './tools/index';
 import { useNow } from './tools/time';
-import { formatElapsed } from './view-model';
+import { effortLabel, formatElapsed, type WorkingFacts } from './view-model';
 
 // What a row needs to know about the thread and the turn around it.
 export interface ItemContext {
@@ -77,16 +83,34 @@ export interface ItemContext {
   // thread is the context panel's (a step's), which yields to the open thread's. Absent, a
   // pending card answers them itself.
   readonly keyedApproval?: { readonly id: string; readonly side: boolean } | undefined;
+  // The provider's label for a model or a mode id, for the dividers and usage rows (spec 9).
+  readonly modelLabel?: ((id: string) => string) | undefined;
+  readonly modeLabel?: ((id: string) => string) | undefined;
+  // When the item's turn ended, on the turn's last answer only (spec 75).
+  readonly endedAt?: string | undefined;
+  // Reasoning: whether it is complete, and whether it opens (spec 88). `reasoningKey` changes
+  // when Ctrl+O opens or closes all of it, so a row opened by hand follows too.
+  readonly reasoningDone?: boolean | undefined;
+  readonly reasoningOpen?: boolean | undefined;
+  readonly reasoningKey?: number | undefined;
 }
 
 // One row per thread item. Rows skip layout and paint while off screen, so a long conversation
 // with large tool outputs stays responsive without a virtual list.
+// A message takes the keyboard from Alt+Up and Alt+Down (spec 74), so it can be read and copied.
 function Row({ item, children }: { item: ThreadItem; children: ReactNode }) {
+  const message = item.kind === 'user' || item.kind === 'assistant_text';
   return (
     <li
       data-testid={`item-${item.kind}`}
       data-item-id={item.id}
-      className="[contain-intrinsic-size:auto_2.5rem] [content-visibility:auto]"
+      data-message={message || undefined}
+      tabIndex={message ? -1 : undefined}
+      className={cn(
+        '[contain-intrinsic-size:auto_2.5rem] [content-visibility:auto]',
+        message &&
+          'rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+      )}
     >
       {children}
     </li>
@@ -237,8 +261,9 @@ function UserMessage({
       )}
       {context.at && (
         <time
+          data-testid="message-time"
           dateTime={context.at}
-          className="text-2xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+          className="text-2xs text-muted-foreground tabular-nums"
         >
           {context.formatAt(context.at)}
         </time>
@@ -251,7 +276,15 @@ function UserMessage({
 // fence stays plain text until it is complete.
 // Copy puts the markdown on the clipboard, Copy text what the message reads as on screen (spec
 // 32); both show on hover or focus once the message is complete.
-function AssistantText({ payload, streaming }: { payload: TextItemPayload; streaming: boolean }) {
+function AssistantText({
+  payload,
+  streaming,
+  context,
+}: {
+  payload: TextItemPayload;
+  streaming: boolean;
+  context: ItemContext;
+}) {
   const body = useRef<HTMLDivElement>(null);
   const shownText = () => {
     const element = body.current;
@@ -285,30 +318,110 @@ function AssistantText({ payload, streaming }: { payload: TextItemPayload; strea
       {streaming ? (
         <span aria-hidden className="mt-1 block h-3.5 w-1.5 animate-pulse bg-foreground/60" />
       ) : (
-        <div
-          data-testid="message-copy"
-          className="mt-0.5 flex gap-0.5 text-muted-foreground opacity-0 transition-opacity group-focus-within/message:opacity-100 group-hover/message:opacity-100"
-        >
-          <CopyButton text={payload.text} label="Copy" />
-          <CopyButton text={shownText} label="Copy text" />
+        <div className="mt-0.5 flex items-center gap-1">
+          <div
+            data-testid="message-copy"
+            className="flex gap-0.5 text-muted-foreground opacity-0 transition-opacity group-focus-within/message:opacity-100 group-hover/message:opacity-100"
+          >
+            <CopyButton text={payload.text} label="Copy" />
+            <CopyButton text={shownText} label="Copy text" />
+          </div>
+          {context.endedAt && (
+            <time
+              data-testid="message-time"
+              dateTime={context.endedAt}
+              className="ml-auto text-2xs text-muted-foreground tabular-nums"
+            >
+              {context.formatAt(context.endedAt)}
+            </time>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-// Collapsed by default (the reasoning is there when wanted, not in the way).
-function Reasoning({ payload, streaming }: { payload: TextItemPayload; streaming: boolean }) {
+// Collapsed unless the setting or Ctrl+O opens it. While it streams, its last line shows beside
+// "Thinking…"; once done it reads "Thought for 12 s" (spec 88). Reasoning stored before its
+// times were kept reads "Reasoning", as it did.
+const thoughtFor = (payload: ReasoningItemPayload): string => {
+  if (payload.startedAt === undefined || payload.endedAt === undefined) return 'Reasoning';
+  const seconds = Math.max(
+    1,
+    Math.round((Date.parse(payload.endedAt) - Date.parse(payload.startedAt)) / 1000),
+  );
+  return `Thought for ${seconds} s`;
+};
+
+function Reasoning({ payload, context }: { payload: ReasoningItemPayload; context: ItemContext }) {
+  const done = context.reasoningDone ?? true;
+  const lastLine = payload.text.trimEnd().split('\n').at(-1) ?? '';
   return (
-    <details className="group text-xs text-muted-foreground">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 select-none">
-        <ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />
-        <BrainIcon className="size-3.5" />
-        {streaming ? 'Thinking…' : 'Reasoning'}
+    <details
+      key={context.reasoningKey ?? 0}
+      open={context.reasoningOpen}
+      className="group text-xs text-muted-foreground"
+    >
+      <summary className="flex min-w-0 cursor-pointer list-none items-center gap-1.5 select-none">
+        <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />
+        <BrainIcon className="size-3.5 shrink-0" />
+        <span data-testid="reasoning-label" className="shrink-0">
+          {done ? thoughtFor(payload) : 'Thinking…'}
+        </span>
+        {!done && lastLine !== '' && (
+          <span
+            data-testid="reasoning-last-line"
+            className="min-w-0 truncate text-muted-foreground/70 group-open:hidden"
+          >
+            {lastLine}
+          </span>
+        )}
       </summary>
       <div className="mt-1 border-l border-border pl-3 whitespace-pre-wrap">{payload.text}</div>
     </details>
   );
+}
+
+// A thin line across the conversation with a few words in it.
+function Divider({ children, testId }: { children: ReactNode; testId: string }) {
+  return (
+    <div
+      role="separator"
+      data-testid={testId}
+      className="flex items-center gap-2 text-2xs text-muted-foreground"
+    >
+      <span aria-hidden className="h-px flex-1 bg-border" />
+      <span className="flex min-w-0 items-center gap-1.5 text-center">{children}</span>
+      <span aria-hidden className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+// "Model: Opus → Sonnet · Mode: Accept edits" before the message whose turn runs on them (spec 9).
+export function settingsChangeText(
+  payload: SettingsChangeItemPayload,
+  modelLabel: (id: string) => string = (id) => id,
+  modeLabel: (id: string) => string = (id) => id,
+): string {
+  return [
+    payload.model && `Model: ${modelLabel(payload.model.from)} → ${modelLabel(payload.model.to)}`,
+    payload.effort &&
+      `Effort: ${effortLabel(payload.effort.from)} → ${effortLabel(payload.effort.to)}`,
+    payload.permissionMode && `Mode: ${modeLabel(payload.permissionMode.to)}`,
+  ]
+    .filter((part): part is string => typeof part === 'string')
+    .join(' · ');
+}
+
+// "Conversation compacted (auto) · 152k → 18k", with the counts the provider gave (spec 46).
+export function compactionText(payload: CompactionItemPayload): string {
+  const counts =
+    payload.preTokens === undefined
+      ? undefined
+      : payload.postTokens === undefined
+        ? `${shortTokens(payload.preTokens)} before`
+        : `${shortTokens(payload.preTokens)} → ${shortTokens(payload.postTokens)}`;
+  return [`Conversation compacted (${payload.trigger})`, counts].filter(Boolean).join(' · ');
 }
 
 // An agent's questions in a chat thread or a step: one card for the questions of one ask
@@ -360,13 +473,15 @@ export function ChatQuestions({
         })
       }
       {...(hold ? { check: hold.check, renderHold: hold.render } : {})}
+      needsYouKey={`thread:${first.item.threadId}`}
     />
   );
 }
 
-function UsageRow({ payload }: { payload: UsageItemPayload }) {
+function UsageRow({ payload, context }: { payload: UsageItemPayload; context: ItemContext }) {
   if (payload.inputTokens === undefined && payload.outputTokens === undefined) return null;
   const parts = [
+    ...(payload.model === undefined ? [] : [(context.modelLabel ?? String)(payload.model)]),
     `${formatTokens(payload.inputTokens ?? 0)} in`,
     `${formatTokens(payload.outputTokens ?? 0)} out`,
     `${formatTokens(payload.cachedInputTokens ?? 0)} cached`,
@@ -436,15 +551,15 @@ function ItemBody({
     case 'assistant_text': {
       const parsed = TextItemPayload.safeParse(item.payload);
       return parsed.success ? (
-        <AssistantText payload={parsed.data} streaming={item.streaming} />
+        <AssistantText payload={parsed.data} streaming={item.streaming} context={context} />
       ) : (
         <Unreadable item={item} />
       );
     }
     case 'reasoning': {
-      const parsed = TextItemPayload.safeParse(item.payload);
+      const parsed = ReasoningItemPayload.safeParse(item.payload);
       return parsed.success ? (
-        <Reasoning payload={parsed.data} streaming={item.streaming} />
+        <Reasoning payload={parsed.data} context={context} />
       ) : (
         <Unreadable item={item} />
       );
@@ -491,7 +606,32 @@ function ItemBody({
     }
     case 'usage': {
       const parsed = UsageItemPayload.safeParse(item.payload);
-      return parsed.success ? <UsageRow payload={parsed.data} /> : <Unreadable item={item} />;
+      return parsed.success ? (
+        <UsageRow payload={parsed.data} context={context} />
+      ) : (
+        <Unreadable item={item} />
+      );
+    }
+    case 'settings_change': {
+      const parsed = SettingsChangeItemPayload.safeParse(item.payload);
+      return parsed.success ? (
+        <Divider testId="settings-divider">
+          {settingsChangeText(parsed.data, context.modelLabel, context.modeLabel)}
+        </Divider>
+      ) : (
+        <Unreadable item={item} />
+      );
+    }
+    case 'compaction': {
+      const parsed = CompactionItemPayload.safeParse(item.payload);
+      return parsed.success ? (
+        <Divider testId="compaction-divider">
+          <FoldVerticalIcon aria-hidden className="size-3 shrink-0" />
+          {compactionText(parsed.data)}
+        </Divider>
+      ) : (
+        <Unreadable item={item} />
+      );
     }
     case 'error': {
       const parsed = ErrorItemPayload.safeParse(item.payload);
@@ -534,17 +674,48 @@ export function BackgroundIndicator({ tasks }: { tasks: readonly BackgroundTask[
   );
 }
 
-export function WorkingIndicator({ startedAt }: { startedAt: string | undefined }) {
+// "Running pnpm test · 0:42 · 6 tool calls · ↑12k ↓1.3k · Ctrl+. to stop" (spec 45): the
+// call that runs now, the turn's time from its stored start, its calls, its tokens where the
+// provider counts them during the turn, and the stop key.
+export function WorkingIndicator({
+  startedAt,
+  facts,
+  stopKey,
+}: {
+  startedAt: string | undefined;
+  facts?: WorkingFacts | undefined;
+  stopKey?: string | undefined;
+}) {
   const now = useNow(startedAt !== undefined);
+  const parts = [
+    ...(startedAt ? [formatElapsed(now - new Date(startedAt).getTime())] : []),
+    ...(facts && facts.toolCalls > 0
+      ? [`${facts.toolCalls} tool call${facts.toolCalls === 1 ? '' : 's'}`]
+      : []),
+    ...(facts?.tokens
+      ? [`↑${shortTokens(facts.tokens.input)} ↓${shortTokens(facts.tokens.output)}`]
+      : []),
+    ...(stopKey ? [`${formatBinding(stopKey)} to stop`] : []),
+  ];
   return (
-    <p className="flex items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
-      <CircleDashedIcon className="size-3.5 animate-spin" />
-      <span>
-        Working
-        {startedAt && (
+    <p
+      data-testid="working-line"
+      className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground"
+      aria-live="polite"
+    >
+      <CircleDashedIcon className="size-3.5 shrink-0 animate-spin" />
+      <span className="min-w-0 truncate">
+        {facts?.tool === undefined ? (
+          'Working'
+        ) : (
+          <>
+            Running <span className="font-mono text-foreground">{facts.tool}</span>
+          </>
+        )}
+        {parts.length > 0 && (
           <span data-testid="turn-elapsed" className="tabular-nums" aria-hidden>
-            {' '}
-            · {formatElapsed(now - new Date(startedAt).getTime())}
+            {' · '}
+            {parts.join(' · ')}
           </span>
         )}
       </span>

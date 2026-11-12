@@ -98,6 +98,16 @@ const integer = new Intl.NumberFormat('en-US');
 
 export const formatTokens = (value: number): string => integer.format(value);
 
+// Tokens in few characters, for dividers and the working line: "940", "1.3k", "152k", "1.2M".
+const short = (amount: number, unit: string) =>
+  `${amount < 10 ? Math.round(amount * 10) / 10 : Math.round(amount)}${unit}`;
+
+export function shortTokens(value: number): string {
+  if (value < 1000) return String(value);
+  if (value < 999_500) return short(value / 1000, 'k');
+  return short(value / 1_000_000, 'M');
+}
+
 export function formatCost(usd: number): string {
   return `$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)}`;
 }

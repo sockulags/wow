@@ -648,6 +648,33 @@ or the stop button interrupts a running turn and keeps what it produced; the tur
 "Stopped by you · <time>", which carries **Resume** on the last turn. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
 
+### Reading a long thread
+
+- **What changed**: after you change the model, effort or mode, the next message starts with one
+  line such as "Model: Opus → Sonnet · Mode: Accept edits", and each turn's usage row names the
+  model it ran on.
+- **What runs now**: while a turn runs, the line under the conversation reads "Running pnpm test ·
+  0:42 · 6 tool calls · Ctrl+. to stop". Codex adds the tokens so far (↑12k ↓1.3k); Claude Code
+  reports them only when the turn ends.
+- **Compaction**: when Claude Code compacts the conversation (with `/compact` or by itself) a line
+  says "Conversation compacted (auto) · 152k → 18k". From `chat.contextWarnPercent` (70 %) the
+  context meter turns amber and offers **Compact now**. Codex has no compact action, so it shows
+  no Compact.
+- **Reasoning** reads "Thinking…" with its last line while it streams and "Thought for 12 s"
+  after. **Ctrl+O** opens or closes all reasoning in the thread; `chat.reasoningOpen` opens it by
+  default.
+- **Times**: each message shows when its turn started, each answer when its turn ended.
+- **Moving around**: scrolled up while output arrives, a **New output** pill shows; it or **End**
+  goes back down and follows again. **Alt+Up** and **Alt+Down** move from message to message, and
+  **C** copies the message that has the keyboard. All these keys are settings under Keybindings,
+  for example if Alt+Up clashes with your screen reader.
+- **Next that needs you**: **Ctrl+Shift+J** goes to the oldest approval, question, plan, gate or
+  assistant proposal that waits for you, wherever it is, and puts the keyboard on it; press it
+  again for the next one.
+- **Skills in chat** are listed Yours, Project, Recently used, User, Plugins and wow last; wow's
+  own four are marked "for workflow steps". On a new thread the list opens under the box, so the
+  provider and project pickers stay in view.
+
 ### The palette
 
 **Ctrl+K** opens the palette. Before you type it lists what needs you (threads waiting for an

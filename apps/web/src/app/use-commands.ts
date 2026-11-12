@@ -29,6 +29,8 @@ import {
 } from '@/chat/image-commands';
 import { activeModelBar, modelBarCommands, modelBarStore } from '@/chat/model-commands';
 import { useTopic } from '@/chat/data';
+import { conversationCommands, conversationStore } from '@/chat/conversation-nav';
+import { needsYouCommands, needsYouTargets } from '@/chat/needs-you';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
 import { useProjectsGit } from '@/projects/project-git';
@@ -141,6 +143,8 @@ export function useCommands(gated = false): {
   );
   const imageComposer = useStore(imageComposerStore, activeImageComposer);
   const modelBar = useStore(modelBarStore, activeModelBar);
+  const conversation = useStore(conversationStore);
+  const reasoningByDefault = useSetting('chat.reasoningOpen');
   const all = useMemo(() => {
     const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
@@ -248,6 +252,24 @@ export function useCommands(gated = false): {
       ...rowActionCommands(focusedRowActions({ areas: rowAreas })),
       ...imageComposerCommands(imageComposer),
       ...modelBarCommands(modelBar),
+      ...conversationCommands(
+        {
+          ...conversation,
+          reasoningOpen:
+            conversation.threadId === undefined
+              ? reasoningByDefault
+              : (conversation.reasoning[conversation.threadId]?.open ?? reasoningByDefault),
+        },
+        reasoningByDefault,
+      ),
+      ...needsYouCommands(
+        needsYouTargets({
+          threads: threads ?? [],
+          runs: runs ?? [],
+          proposals: assistantProposals ?? [],
+        }),
+        pathname,
+      ),
       ...assistantCommands({
         changes: assistantChanges ?? [],
         proposals: assistantProposals ?? [],
@@ -332,6 +354,8 @@ export function useCommands(gated = false): {
     paletteHits,
     imageComposer,
     modelBar,
+    conversation,
+    reasoningByDefault,
   ]);
   const commands = useMemo(
     () => (gated ? all.filter((command) => gateCommand(command.id)) : all),

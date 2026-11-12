@@ -1,3 +1,4 @@
+import { useNeedsYouFocus } from './needs-you';
 import {
   cardOrder,
   isEmptyReply,
@@ -61,6 +62,8 @@ export interface QuestionCardProps<H> {
   onSend(replies: ReadonlyMap<string, QuestionReply>): Promise<unknown>;
   check?(replies: ReadonlyMap<string, QuestionReply>): H | null;
   renderHold?(held: H, controls: HoldControls): ReactNode;
+  // "Next that needs you" lands here while a question is open (agent workbench spec 76).
+  readonly needsYouKey?: string | undefined;
 }
 
 interface Row {
@@ -92,6 +95,7 @@ export function QuestionCard<H>({
   onSend,
   check,
   renderHold,
+  needsYouKey,
 }: QuestionCardProps<H>) {
   const questions = given.map(withDistinctLabels);
   const open = questions.filter((question) => question.status.kind === 'open');
@@ -106,6 +110,9 @@ export function QuestionCard<H>({
   const [error, setError] = useState<string>();
   const [held, setHeld] = useState<{ readonly hold: H } | undefined>();
   const elements = useRef<(HTMLElement | null)[]>([]);
+  useNeedsYouFocus(open.length > 0 ? needsYouKey : undefined, {
+    current: elements.current[active] ?? null,
+  });
 
   const replyOf = (question: CardQuestion): QuestionReply => ({
     // In the order the asker gave them, which the provider expects.

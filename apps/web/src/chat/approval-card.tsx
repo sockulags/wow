@@ -1,3 +1,4 @@
+import { useNeedsYouFocus } from './needs-you';
 import {
   ruleText,
   toolName,
@@ -277,6 +278,10 @@ export function ApprovalCard({
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const section = useRef<HTMLElement>(null);
+  useNeedsYouFocus(
+    approval && approval.decision === null ? `thread:${approval.threadId}` : undefined,
+    section,
+  );
   const decision = approval?.decision ?? null;
   const details = requestDetails(approval);
   const pending = decision === null && approval !== undefined;

@@ -1,7 +1,6 @@
 import {
   ambiguousOwnSkill,
   ownSkillFolder,
-  skillGroupLabels,
   type FileScope,
   type ProviderKind,
   type SentImage,
@@ -59,7 +58,14 @@ import {
   type CommandPick,
   type CommandSource,
 } from './slash-commands';
-import { skillGroup, skillGroups, skillSourceLabel } from './view-model';
+import {
+  chatSkillSection,
+  chatSkillSectionLabels,
+  chatSkillSections,
+  isStepSkill,
+  skillGroup,
+  skillSourceLabel,
+} from './view-model';
 
 export interface ComposerHandle {
   focus(): void;
@@ -119,7 +125,16 @@ export interface ComposerProps {
   // Where pasted and dropped images are stored (spec 53). Without it the composer takes no
   // images (the Assistant view, spec 61).
   readonly imageTarget?: ImageTarget | undefined;
+  // Skills the thread was sent with lately, newest first: their own group in the list (spec 57).
+  readonly recentSkills?: readonly string[] | undefined;
+  // The skill and file lists open under the box, so they leave what sits above it in view (the
+  // new thread's provider and project pickers, spec 57).
+  readonly listsBelow?: boolean | undefined;
 }
+
+const noSkills: readonly string[] = [];
+
+const listPlacement = (below: boolean) => (below ? 'top-full mt-1' : 'bottom-full mb-1');
 
 // The `@` list: the thread folder's files as the user types (spec 56). The focus stays in the
 // text box, like the skill list's.
@@ -128,10 +143,12 @@ function FilePicker({
   matches,
   note,
   active,
+  below,
   onPick,
   onHover,
 }: {
   id: string;
+  below: boolean;
   matches: readonly string[];
   note: string | undefined;
   active: string | undefined;
@@ -139,7 +156,12 @@ function FilePicker({
   onHover(path: string): void;
 }) {
   return (
-    <div className="absolute bottom-full left-0 z-10 mb-1 w-full overflow-hidden rounded-md border border-border shadow-md">
+    <div
+      className={cn(
+        'absolute left-0 z-10 w-full overflow-hidden rounded-md border border-border shadow-md',
+        listPlacement(below),
+      )}
+    >
       <Command shouldFilter={false} value={active ?? ''} className={groupClass}>
         <CommandList id={id} label="Files" className="max-h-72">
           {matches.length > 0 && (
@@ -219,10 +241,14 @@ function SkillPicker({
   all,
   active,
   kind,
+  recent,
+  below,
   onPick,
   onHover,
 }: {
   id: string;
+  recent: readonly string[];
+  below: boolean;
   picks: readonly ListPick[];
   // Every skill, to tell which own skills share a name.
   all: readonly Skill[];
@@ -248,7 +274,12 @@ function SkillPicker({
     </CommandItem>
   );
   return (
-    <div className="absolute bottom-full left-0 z-10 mb-1 w-full overflow-hidden rounded-md border border-border shadow-md">
+    <div
+      className={cn(
+        'absolute left-0 z-10 w-full overflow-hidden rounded-md border border-border shadow-md',
+        listPlacement(below),
+      )}
+    >
       <Command shouldFilter={false} value={active ? pickValue(active) : ''} className={groupClass}>
         <CommandList id={id} label="Skills" className="max-h-72">
           {picks.length === 0 && (
@@ -281,17 +312,17 @@ function SkillPicker({
               )}
             </CommandGroup>
           )}
-          {skillGroups.map((group) => {
-            const members = skills.filter((skill) => skillGroup(skill) === group);
+          {chatSkillSections.map((section) => {
+            const members = skills.filter((skill) => chatSkillSection(skill, recent) === section);
             if (members.length === 0) return null;
             return (
-              <CommandGroup key={group} heading={skillGroupLabels[group]}>
+              <CommandGroup key={section} heading={chatSkillSectionLabels[section]}>
                 {members.map((skill) =>
                   item(
                     { kind: 'skill', skill },
                     <>
                       <span className="flex w-full items-baseline gap-2 [&>svg]:size-3 [&>svg]:self-center">
-                        <SkillMark group={group} />
+                        <SkillMark group={skillGroup(skill)} />
                         <span className="font-medium">{skill.name}</span>
                         {skill.source === 'yours' &&
                           ambiguousOwnSkill(all, skill.name) !== undefined && (
@@ -303,6 +334,14 @@ function SkillPicker({
                         {skill.text === undefined && (
                           <span className="font-mono text-2xs text-muted-foreground">
                             {skill.invocations[kind]}
+                          </span>
+                        )}
+                        {isStepSkill(skill) && (
+                          <span
+                            data-testid="step-skill-mark"
+                            className="shrink-0 rounded-sm border border-border px-1 text-2xs text-muted-foreground"
+                          >
+                            for workflow steps
                           </span>
                         )}
                         <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
@@ -326,9 +365,15 @@ function SkillPicker({
   );
 }
 
-// List order: grouped like the list shows them, each group ranked by the filter.
-const inPickerOrder = (skills: readonly Skill[]): Skill[] =>
-  skillGroups.flatMap((group) => skills.filter((skill) => skillGroup(skill) === group));
+// List order: grouped like the list shows them, each group ranked by the filter; the recently
+// used newest first.
+const inPickerOrder = (skills: readonly Skill[], recent: readonly string[]): Skill[] =>
+  chatSkillSections.flatMap((section) => {
+    const members = skills.filter((skill) => chatSkillSection(skill, recent) === section);
+    return section === 'recent'
+      ? members.toSorted((a, b) => recent.indexOf(a.name) - recent.indexOf(b.name))
+      : members;
+  });
 
 const withSkill = (chips: readonly Skill[], skill: Skill): Skill[] =>
   chips.some((chip) => chip.id === skill.id) ? [...chips] : [...chips, skill];
@@ -377,6 +422,8 @@ export function Composer({
   commandSource,
   fileSource,
   imageTarget,
+  recentSkills = noSkills,
+  listsBelow = false,
 }: ComposerProps) {
   const pickerId = useId();
   const filePickerId = useId();
@@ -440,10 +487,12 @@ export function Composer({
         ...(offersCommands
           ? providerCommandPicks(providerCommands, wowPicks, skills ?? [], query.query)
           : []),
-        ...inPickerOrder(filterSkills(skills ?? [], query.query)).map((skill): ListPick => ({
-          kind: 'skill',
-          skill,
-        })),
+        ...inPickerOrder(filterSkills(skills ?? [], query.query), recentSkills).map(
+          (skill): ListPick => ({
+            kind: 'skill',
+            skill,
+          }),
+        ),
       ]
     : [];
   const activeIndex = Math.min(active, Math.max(0, picks.length - 1));
@@ -942,6 +991,8 @@ export function Composer({
             all={skills ?? []}
             active={activePick}
             kind={providerKind}
+            recent={recentSkills}
+            below={listsBelow}
             onPick={choose}
             onHover={(pick) =>
               setActive(
@@ -956,6 +1007,7 @@ export function Composer({
         {fileQuery && (
           <FilePicker
             id={filePickerId}
+            below={listsBelow}
             matches={fileMatches}
             note={fileNote}
             active={activeFile}
