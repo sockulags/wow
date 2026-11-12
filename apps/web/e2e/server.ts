@@ -300,7 +300,10 @@ const guide = Array.from(
 ).join('\n');
 
 function seedTeaRepo(repo: string): void {
-  rmSync(repo, { recursive: true, force: true });
+  // On Windows a git the server just started in the folder (a Changes or link-rules read for a
+  // page another worker has open) holds it for a moment, and removing it then fails with EBUSY
+  // and takes this server down. Node tries again for that error when asked to.
+  rmSync(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   mkdirSync(repo, { recursive: true });
   git(repo, 'init', '-q', '-b', 'main');
   writeInRepo(repo, '.gitignore', '*.log\n');
