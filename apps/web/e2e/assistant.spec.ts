@@ -281,7 +281,7 @@ test.describe('assistant', () => {
     );
     // The run still waits at its gate for the user.
     await page.goto(`/workflows/runs/${runId}`);
-    const gate = page.getByRole('region', { name: 'Gate' });
+    const gate = page.getByTestId('run-gate').getByRole('region', { name: 'Gate' });
     await expect(gate).toHaveCount(1);
     await expect(gate.getByRole('button', { name: 'Approve' })).toBeVisible();
   });
