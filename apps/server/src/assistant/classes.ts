@@ -312,6 +312,8 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
     'The greeting is sent by wow when the user finishes the first-start step.',
   ),
   'thread.sendMessage': chatOnly,
+  'thread.editLast': chatOnly,
+  'thread.dropGoBack': chatOnly,
   'thread.sendPrepared': serverOnly,
   'thread.cancelQueued': chatOnly,
   'thread.sendQueued': serverOnly,

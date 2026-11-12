@@ -125,6 +125,10 @@ interface Session {
   costUsd: number;
   // The model Claude Code says the session runs on (its init message), named on the usage row.
   reportedModel?: string | undefined;
+  // The uuid of the running turn's newest message of the conversation itself (not a subagent's),
+  // which the turn's end reports as its point to go back to (agent workbench spec 62, 71). A
+  // turn that wrote nothing reports none, so a refused resume is not taken for a point.
+  point: string | undefined;
 }
 
 interface Pending<T> {
@@ -449,9 +453,12 @@ export class ClaudeAdapter implements ProviderAdapter {
         `Thread ${command.threadId} was started ${session.toolsOnly ? 'with' : 'without'} the app's tools only and cannot change that`,
       );
     }
-    // The instruction text is fixed when Claude Code starts, so a changed text needs a new
-    // process. It goes on with the same conversation.
-    if (session?.toolsOnly && session.instructions !== command.instructions) {
+    // Edit and Fork go back in the conversation (spec 62, 71): a new process resumes it up to
+    // the point, forked into a new session or not.
+    if (command.goBack) {
+      this.#close(command.threadId);
+      session = await this.#open(command);
+    } else if (session?.toolsOnly && session.instructions !== command.instructions) {
       const resumeId = command.resumeId ?? session.providerSessionId;
       this.#close(command.threadId);
       session = await this.#open({ ...command, ...(resumeId ? { resumeId } : {}) });
@@ -477,6 +484,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     session.turnActive = true;
     session.selfStarted = false;
     session.interrupted = false;
+    session.point = undefined;
     session.input.push(message);
   }
 
@@ -491,7 +499,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       permissionMode: command.permissionMode,
       toolsOnly: command.toolset !== undefined,
       instructions: command.toolset ? command.instructions : undefined,
-      providerSessionId: command.resumeId,
+      providerSessionId: command.goBack?.at === null ? undefined : command.resumeId,
       turnActive: false,
       selfStarted: false,
       background: [],
@@ -503,6 +511,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       edits: new Set(),
       agents: new Set(),
       costUsd: 0,
+      point: undefined,
     };
     // Claimed before the await so a second startTurn for the thread sees it.
     this.#sessions.set(command.threadId, session);
@@ -519,7 +528,16 @@ export class ClaudeAdapter implements ProviderAdapter {
         if (command.permissionMode === 'bypassPermissions')
           options.allowDangerouslySkipPermissions = true;
       }
-      if (command.resumeId) options.resume = command.resumeId;
+      if (command.goBack) {
+        // `at` null is a new conversation: nothing is resumed.
+        if (command.goBack.at !== null && command.resumeId) {
+          options.resume = command.resumeId;
+          options.resumeSessionAt = command.goBack.at;
+          if (command.goBack.fork) options.forkSession = true;
+        }
+      } else if (command.resumeId) {
+        options.resume = command.resumeId;
+      }
       if (command.toolset) this.#toolsOnly(options, command.toolset, command.instructions);
       session.query = this.#query({ prompt: session.input, options });
     } catch (error) {
@@ -576,6 +594,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     session.turnActive = true;
     session.selfStarted = true;
     session.interrupted = false;
+    session.point = undefined;
     this.#emit({ type: 'turnStartedByProvider', threadId: session.threadId });
   }
 
@@ -670,6 +689,7 @@ export class ClaudeAdapter implements ProviderAdapter {
           return;
         }
         this.#selfStart(session);
+        session.point = message.uuid;
         const id = message.message.id;
         message.message.content.forEach((block, index) => {
           if (block.type === 'text' || block.type === 'thinking') {
@@ -705,6 +725,7 @@ export class ClaudeAdapter implements ProviderAdapter {
         // A subagent's tool results belong to its calls, which the running turn shows nested;
         // a background subagent's work after the turn ended has no row to go under.
         if (message.parent_tool_use_id !== null && !session.turnActive) return;
+        if (message.parent_tool_use_id === null && message.uuid) session.point = message.uuid;
         const content = message.message.content;
         if (typeof content === 'string') return;
         for (const block of content) {
@@ -775,18 +796,20 @@ export class ClaudeAdapter implements ProviderAdapter {
         session.turnActive = false;
         session.selfStarted = false;
         session.streamed.clear();
+        const point = session.point ? { resumePoint: session.point } : {};
         if (session.interrupted) {
-          this.#emit({ type: 'turnInterrupted', threadId });
+          this.#emit({ type: 'turnInterrupted', threadId, ...point });
         } else if (message.subtype !== 'success') {
           this.#emit({
             type: 'turnFailed',
             threadId,
             error: message.errors.join('\n') || message.subtype,
+            ...point,
           });
         } else if (message.is_error) {
-          this.#emit({ type: 'turnFailed', threadId, error: message.result });
+          this.#emit({ type: 'turnFailed', threadId, error: message.result, ...point });
         } else {
-          this.#emit({ type: 'turnCompleted', threadId });
+          this.#emit({ type: 'turnCompleted', threadId, ...point });
         }
         return;
       }

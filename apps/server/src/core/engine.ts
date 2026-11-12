@@ -38,6 +38,7 @@ export interface EngineOptions {
   // The code host a project's git data names, while no host read says (see DecideContext).
   readonly codeHost?: (projectId: string) => HostKind | undefined;
   readonly modelLabel?: (model: string, providerInstanceId?: string) => string | undefined;
+  readonly platform?: NodeJS.Platform;
   readonly onListenerError?: (error: unknown) => void;
 }
 
@@ -61,6 +62,7 @@ export class Engine {
   readonly #home: string | undefined;
   readonly #codeHost: ((projectId: string) => HostKind | undefined) | undefined;
   readonly #modelLabel: EngineOptions['modelLabel'];
+  readonly #platform: NodeJS.Platform | undefined;
   readonly #onListenerError: (error: unknown) => void;
   readonly #listeners = new Set<CommitListener>();
 
@@ -71,6 +73,7 @@ export class Engine {
     this.#home = options.home;
     this.#codeHost = options.codeHost;
     this.#modelLabel = options.modelLabel;
+    this.#platform = options.platform;
     // A failing listener must not undo or hide a committed command.
     this.#onListenerError =
       options.onListenerError ??
@@ -114,6 +117,7 @@ export class Engine {
         home: this.#home,
         codeHost: this.#codeHost,
         modelLabel: this.#modelLabel,
+        platform: this.#platform,
         origin,
       });
       const stored: StoredEvent[] = [];

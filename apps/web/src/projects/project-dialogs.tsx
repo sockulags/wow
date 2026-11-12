@@ -1,6 +1,7 @@
 import type { Project } from '@wow/contracts';
 import { FolderOpenIcon } from 'lucide-react';
 import { useId, useState } from 'react';
+import { ChoiceSelect } from '@/components/choice-select';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { FormField } from '@/components/form-field';
 import { Button } from '@/components/ui/button';
@@ -15,6 +16,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { useLayout, useRuntime } from '@/app/runtime';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
+import { ThreadSettings, type ThreadSettingsValue } from '@/chat/thread-settings';
+import { providerLabel } from '@/chat/view-model';
 import { ImportProjects } from './import-dialog';
 import { notify } from '@/lib/feedback';
 import { folderName, newProjectId } from './model';
@@ -212,6 +215,98 @@ function RenameProject({ project, onClose }: { project: Project; onClose: () => 
   );
 }
 
+// What a new thread in the project starts from (agent workbench spec 97): a provider instance
+// and, for it, a model, an effort and a mode. Left empty, a new thread starts as the last one did.
+function ProjectDefaults({ project, onClose }: { project: Project; onClose: () => void }) {
+  const send = useDispatch();
+  const id = useId();
+  const loaded = useTopic('providerInstances');
+  const instances = loaded ?? [];
+  const [chosen, setInstanceId] = useState(project.defaultProviderInstanceId ?? '');
+  // An instance removed since reads as none, so Save does not write its id back.
+  const instanceId =
+    loaded === undefined || instances.some((candidate) => candidate.id === chosen) ? chosen : '';
+  const [value, setValue] = useState<ThreadSettingsValue>({
+    model: project.defaultModel ?? '',
+    effort: project.defaultEffort ?? '',
+    permissionMode: project.defaultPermissionMode ?? '',
+  });
+  const { busy, issue, submit } = useSubmit(onClose);
+  const instance = instances.find((candidate) => candidate.id === instanceId);
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New thread defaults for {project.name}</DialogTitle>
+          <DialogDescription>
+            A new thread in this project starts with these. Without them it starts as your last
+            thread did.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit(() =>
+              send({
+                type: 'project.update',
+                projectId: project.id,
+                defaultProviderInstanceId: orNull(instanceId),
+                defaultModel: instance ? orNull(value.model) : null,
+                defaultEffort: instance ? orNull(value.effort) : null,
+                defaultPermissionMode: instance ? orNull(value.permissionMode) : null,
+              }),
+            );
+          }}
+        >
+          <FormField id={`${id}-agent`} label="Agent" group>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <ChoiceSelect
+                label="Default provider instance"
+                size="sm"
+                className="w-auto data-[size=sm]:h-7"
+                value={instanceId === '' ? noInstance : instanceId}
+                choices={[
+                  { value: noInstance, label: 'As the last thread' },
+                  ...instances.map((candidate) => ({
+                    value: candidate.id,
+                    label: providerLabel(candidate, instances),
+                  })),
+                ]}
+                onValueChange={(picked) => {
+                  setInstanceId(picked === noInstance ? '' : picked);
+                  setValue({ model: '', effort: '', permissionMode: '' });
+                }}
+              />
+              {instance && (
+                <ThreadSettings
+                  providerInstanceId={instance.id}
+                  kind={instance.kind}
+                  defaults={{ model: instance.defaultModel, effort: instance.defaultEffort }}
+                  value={value}
+                  onChange={(changes) => setValue((current) => ({ ...current, ...changes }))}
+                />
+              )}
+            </div>
+          </FormField>
+          <Issue text={issue} />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy}>
+              Save
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const noInstance = 'none';
+const orNull = (text: string) => (text === '' ? null : text);
+
 // Removing a project unlinks its cards and threads, which Undo could not link again, so it asks
 // first (owner decision F-9: confirm only what cannot be undone).
 function RemoveProject({ project, onClose }: { project: Project; onClose: () => void }) {
@@ -246,6 +341,8 @@ export function ProjectDialogs() {
   if (dialog.type === 'import') return <ImportProjects onClose={close} />;
   const project = projects?.find((candidate) => candidate.id === dialog.projectId);
   if (!project) return null;
+  if (dialog.type === 'defaults')
+    return <ProjectDefaults key={project.id} project={project} onClose={close} />;
   return dialog.type === 'rename' ? (
     <RenameProject key={project.id} project={project} onClose={close} />
   ) : (

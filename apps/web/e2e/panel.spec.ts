@@ -65,7 +65,7 @@ test.describe('context panel', () => {
     const thread = panel(page).getByTestId('panel-step-thread');
     await expect(thread).toContainText('Step 1 of 1');
     await expect(thread.getByTestId('conversation')).toContainText('You said:');
-    await expect(details.getByTestId('fact-State')).toHaveText('Needs you');
+    await expect(details.getByTestId('fact-State')).toHaveText('Waiting for you');
     await expect(thread.getByRole('combobox', { name: 'Message' })).toBeVisible();
     const gate = thread.getByRole('region', { name: 'Gate' });
     await expect(gate).toContainText('check-work finished. Approve ends the run.');

@@ -61,6 +61,11 @@ export function formatDuration(milliseconds: number): string {
   return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
 }
 
+// "Took 2 min 5 s"; a step or turn under a second reads "Took under 1 s", not "Took 0 s" (agent
+// workbench spec 98).
+export const tookText = (milliseconds: number): string =>
+  milliseconds < 1000 ? 'Took under 1 s' : `Took ${formatDuration(milliseconds)}`;
+
 // The formatters bound to the calendar's zone (calendar.zone with "outlook" resolved against
 // Outlook's profile), so every view uses the same zone as the calendar.
 export function useDateFormat() {

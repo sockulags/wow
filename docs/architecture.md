@@ -159,7 +159,8 @@ projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see 
 ## Data model (projections)
 
 ```text
-projects         id, name, cwd, defaultProviderInstanceId, defaultModel, createdAt
+projects         id, name, cwd, defaultProviderInstanceId, defaultModel, defaultEffort,
+                 defaultPermissionMode, createdAt
 provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env(json, secret keys by ref),
                  launchArgs, defaultModel, defaultEffort, defaultPermissionMode, status, account,
                  version?, statusMessage?, update(json)?   -- from the last "Test"
@@ -174,10 +175,14 @@ threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessi
                  list, false and true for older rows (migration 0027_thread_list); queued: the
                  message waiting for the running turn to end (migration 0028_queued_messages);
                  baseSha, baseFiles: where a chat thread's Changes are measured from, set at its
-                 first turn (migration 0029_thread_changes)
+                 first turn (migration 0029_thread_changes); stateSince (0031); goBack(json:
+                 GoBack)?, forkedFrom(json: {threadId, turnId})? for Edit and Fork (migration
+                 0032_fork_and_edit)
 turns            id, threadId, index, state, startedAt, endedAt, usage(json),
                  fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
-                 turn began, for "This turn only" (migration 0029_thread_changes)
+                 turn began, for "This turn only" (migration 0029_thread_changes);
+                 resumePoint(json: {sessionId, at})?, replacedBy? -- the provider's point after
+                 the turn and the turn Edit put in its place (migration 0032_fork_and_edit)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'|'settings_change'|
                  'compaction'), payload(json), streaming   -- a subagent's tool_call and
@@ -284,7 +289,8 @@ Both adapters implement one interface from `packages/contracts`:
 
 ```text
 ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode, resumeId?,
-                            toolset? {name, url, token}, instructions?}
+                            toolset? {name, url, token}, instructions?,
+                            goBack? {at|null, fork}}
                  interrupt {threadId} | closeThread {threadId} |
                  answerApproval {approvalId, decision, note?, permissionMode?} |
                  answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
@@ -299,8 +305,9 @@ ProviderEvent:   session {providerSessionId} | textDelta {itemId, delta, parentI
                                     answer?, agentState?} |
                  approvalRequested {approvalId, kind, summary, request, facts?} | questionAsked |
                  taskListUpdated | usage {..., model?} | contextUsage |
-                 compacted {trigger manual|auto, preTokens?, postTokens?} | turnCompleted |
-                 turnFailed | turnInterrupted | turnStartedByProvider |
+                 compacted {trigger manual|auto, preTokens?, postTokens?} |
+                 turnCompleted {resumePoint?} | turnFailed {error, resumePoint?} |
+                 turnInterrupted {resumePoint?} | turnStartedByProvider |
                  backgroundTasks {tasks [{id, description, agent?, kind?, lastOutput?}]} |
                  commandRefused {command stopTask|toBackground, error} (made by the server)
 ```
@@ -1541,12 +1548,13 @@ A group marked with a unit (`(U12)`) belongs to a unit not delivered yet; its ke
 until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
-  `providers.commandListSeconds`, `providers.offerSetup`
+  `providers.commandListSeconds`, `providers.offerSetup`, `providers.sessionListLimit`,
+  `providers.sessionPromptChars` (see "Sessions started in a terminal" under "Projects")
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.toolOutputLines`,
   `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
   `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength`, `chat.editDiffMaxLines` (see "Chat
   view"), `chat.contextWarnPercent`, `chat.reasoningOpen` (see "Conversation reading"), `chat.fileTrigger` (see "Panel tabs and files in chat"), `chat.imageMaxBytes` (see
-  "Images in the composer")
+  "Images in the composer"), `chat.sendKey` (see "Chat view")
 - approvals: `approvals.alwaysAllow` (project-scoped; the "Approvals" page, see "Edits, approvals
   and a thread's Changes")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
@@ -1793,6 +1801,62 @@ macOS), relative paths, folders that no longer exist and folders that already ar
 left out, and the rest come back newest first with the instances that used them. Discovery never
 writes. The web app imports the checked rows as ordinary `project.create` commands, numbering a
 name that is taken, so the folder check and name rule above apply.
+
+**Sessions started in a terminal** ("Open session from Claude Code / Codex…", agent workbench spec
+72). The adapter packages read their CLI's session files the way discovery does, one
+`ProviderSession {id, cwd, firstPrompt, lastUsedAt}` per file: `listClaudeSessions(configDir,
+{limit, promptChars})` in `packages/provider-claude/src/sessions.ts` takes
+`<configDir>/projects/*/<id>.jsonl` (the file name is the id `resume` takes; `agent-*` subagent
+transcripts are left out), the first `cwd` of the file, and as first prompt the first `user` line
+that is the user's own text (not `isMeta`, not a subagent's, not a tool result; a slash command
+reads as its name and arguments from Claude Code's `<command-name>` markup, and a line or text
+block that starts with one of Claude Code's own tags, such as an IDE's `<ide_opened_file>` or
+`<ide_selection>`, is skipped, while other text starting with `<` is the user's; each text block
+of a line is judged on its own);
+`listCodexSessions(codexHome, …)` in `packages/provider-codex/src/sessions.ts` takes every
+`<codexHome>/sessions/**/*.jsonl`, the `session_meta` id and `cwd` (older rollouts: the top-level
+fields, else the id in the file name) and as first prompt the first `user_message` event, else the
+first user message that is not one of Codex's own notes (`<environment_context>`,
+`<user_instructions>`, `# AGENTS.md instructions`, `<INSTRUCTIONS>`; a user message after such a
+note replaces an earlier one, which was an unknown note), taken once a response item other than a
+message, or an assistant message (an answer, reasoning, a tool call or its output), follows it;
+developer and system messages among the notes do not end the read. Only the
+newest `providers.sessionListLimit` files by modification time are opened (more when wow's own
+threads hold some of them, see below), each read line by line and closed once the first prompt is
+known; a file without a prompt is read to its end. The prompt is cut to
+`providers.sessionPromptChars` (`cutSessionPrompt` in contracts).
+`apps/server/src/providers/sessions.ts` (`listTerminalSessions`) asks every instance (or the one
+`provider.listSessions {providerInstanceId?}` names) with its config directory or the default one,
+reads a config directory once when two instances share it, drops relative folders, and answers
+`TerminalSession` rows newest first. wow's own threads write to the same files, so it asks for
+`providers.sessionListLimit` plus the number of threads of that provider kind that hold a session,
+and keeps up to the limit of sessions no wow thread holds and those wow sessions that are among the
+newest limit. A folder gets one spelling (the project's, else the first seen), so the dialog groups
+`C:\Work\Kettle` and `c:\work\kettle` together. Each row is the session plus its instance, the
+`projectId` whose folder it is (compared as discovery compares folders), the `threadId` of a wow
+thread whose `providerSessionId` it already is on an instance reading the same config folder, and `unavailable: "Its folder is gone"` when the
+folder no longer exists. Nothing is written and nothing is cached: the CLIs write these files while
+wow is not looking, so the list is read each time the dialog opens. The web app's
+`chat/terminal-sessions.tsx` (`TerminalSessionsDialog`, palette `chat.openSession`, layout
+`sessionDialog`) lists them per folder (`sessionsByFolder`, project name first), each with its first
+prompt ("No prompt" when there is none), provider, instance and time; a gone folder's session is
+greyed and cannot be picked. A pick opens the thread that already resumes it, or dispatches
+`thread.create` with `resumeSessionId`, the session's folder and project, the title from its first
+prompt and the start a new thread there would get (`threadDefaults`), then opens it. The server
+stores `resumeSessionId` as the thread's `providerSessionId`, so the first message goes out with it
+as `resumeId` like any later turn; `forkFrom` and `resumeSessionId` together are refused, and so
+is a `resumeSessionId` another thread already goes on with on an instance of the same kind reading
+the same config folder (an instance on the default folder counts as reading any), since two threads
+would write to one session file. Folders are compared with the same key as the session listing
+(`files/folder-key.ts`: resolved, and case-folded on Windows and macOS).
+
+**New thread defaults** (agent workbench spec 97). A project holds `defaultProviderInstanceId`,
+`defaultModel`, `defaultEffort` and `defaultPermissionMode` (the last two since migration
+`0033_project_thread_defaults`; absent or null in older rows), set in Settings → Projects with
+"Thread defaults" or the palette's "New thread defaults for project …" (`project.update`). A new
+thread in the project picks that instance unless the draft picked another, and on it starts with
+the project's model, effort and mode over the last thread's and the instance's (`threadDefaults`
+in `chat/new-thread.tsx`); a model the instance does not list is not used.
 
 **Folder picker.** The desktop preload exposes `window.wowDesktop.pickFolder`, which invokes
 `wow:pick-folder`; the main process answers only `wow://app` pages and shows Electron's
@@ -2914,9 +2978,11 @@ while the thread is `working` or `needs_you`, and `turn.started` makes a done th
 again, so a new message reopens it. A workflow step's thread becomes `done` through the engine's
 `setThreadState` effect when the step completes (after Continue when the step has a gate after).
 
-The draft's defaults come from server rows, not browser storage (owner decision F-5): the newest
-thread that no run started gives the instance, and on that instance its model, effort and
-permission mode, and its project or folder; then the instance defaults. Folders used without a
+The draft's defaults come from server rows, not browser storage (owner decision F-5): the
+project's new thread defaults (see "Projects"), then the newest thread that no run started gives
+the instance, and on that instance its model, effort and permission mode, and its project or
+folder; then the instance defaults. `chat.sendKey` picks the key that sends: Enter (Shift+Enter
+makes a new line) or Ctrl+Enter, with which a plain Enter makes a new line (spec 97). Folders used without a
 project (`recentFolders` over `threads`) and "Another folder…" (`Runtime.pickFolder`, a typed path
 in the browser build) replace a separate working-directory field. Starters under the composer come
 from `skills`, open `backlogItems` and the last active thread (`chat.starterCount`). The composer
@@ -3036,8 +3102,8 @@ Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attac
   models refuses nothing. The assistant's thread and a workflow step's thread (one with a
   `stepId`) are refused (`attachments.put` for its id, and `thread.sendMessage` with attachments
   in the decider): a step's thread takes no images wherever it is shown.
-- **Sending.** `dispatch` asks `ImageStore.refusal` before deciding a `thread.sendMessage` with
-  attachments: every image must be stored for that thread, so a message never starts a turn with a
+- **Sending.** `dispatch` asks `ImageStore.refusal` before deciding a `thread.sendMessage` or a
+  `thread.editLast` with attachments: every image must be stored for that thread, so a message never starts a turn with a
   missing image, and the thread's model is checked again as at `attachments.put`, since the model
   may have been changed after the images were added (a new thread is created before its first
   message, so this checks the model it was made with). A message queued with images is not
@@ -3163,7 +3229,8 @@ toggles the sidebar otherwise; the keybindings table shows the two as sharing th
 When the adapter refuses `stopTask` or `toBackground` (Claude Code no longer running, the call
 not sent), the provider service hands the thread a `commandRefused` event, stored as an `error`
 item on the running or the last turn ("Could not stop the task: …", "Could not send it to the
-background: …"), so the refusal is not only in the log.
+background: …") with `notice: 'refused'` on its payload, so the refusal is not only in the log.
+Retry and Resume stay on the thread's last error that is not such a notice.
 
 ### Conversation reading
 
@@ -3216,7 +3283,66 @@ stored by the server; the web app only draws it.
   step thread in the side panel) registers its handle with `showConversation`; the commands are
   `conversationCommands`. These keys are settings in the Chat scope, since Alt+Up/Down may clash
   with screen readers; the builder's rule keys get their own "Workflows" scope in the keybindings
-  table so the shared keys are not reported as conflicts. E and F on a focused message are U12's.
+  table so the shared keys are not reported as conflicts. E and F on a focused message are Edit
+  and Fork (see "Edit and Fork").
+
+### Edit and Fork
+
+Agent workbench spec 62, 63, 71, 74, U12. Both go back in the provider's conversation and never
+rewind files.
+
+- **Points.** The Claude adapter keeps the uuid of the running turn's newest message of the
+  conversation itself (assistant or user messages with `parent_tool_use_id` null; a subagent's
+  are not) and sends it as `resumePoint` on the turn's end. A turn that wrote nothing sends none,
+  so a refused resume is not taken for a point. The decider stores it on the turn as
+  `{sessionId, at}` with the session the thread had then (`turn.ended.resumePoint`); the turns
+  topic only says `resumable`. Turns from before have none, so Edit and Fork are offered only
+  after them.
+- **Going back.** `Thread.goBack {resumeId, at, fork}` is set while the next turn goes back;
+  `turnStarted` then sends `resumeId` and `goBack {at, fork}` (`startFrom` in core/threads.ts). The
+  adapter closes the live session and opens one with `resume`, `resumeSessionAt: at` and, for a
+  fork, `forkSession: true`; `at` null opens a new conversation with nothing resumed. `goBack`
+  is cleared (`thread.goBackChanged`) only when a turn ends with a point, so a turn that failed
+  before Claude Code wrote anything goes back again. A go-back Claude Code keeps refusing (its
+  session file cleaned up, a point it no longer takes) would hold the thread there, so while the
+  last turn failed and `goBack` is set the error row and the palette (`chat.dropGoBack`,
+  `stopGoingBack` in chat/go-back.ts) offer `thread.dropGoBack {threadId}`, which clears it
+  (refused while a turn runs or when nothing goes back): "Go on without going back" goes on in
+  the thread's own session, the replaced exchange included for the agent; a fork, which has no
+  session of its own yet, is offered "Start a new conversation". The mock gives no point to the
+  failure it answers for a point it does not know, as Claude Code gives none.
+- **Edit.** `thread.editLast {threadId, turnId, text, skills?, files?, attachments?}`
+  (core/go-back.ts `editGoBack`): only for a chat thread, only for the last shown message, with
+  no turn running. It goes back to the point of the shown turn before (a new conversation when
+  there is none; forked when that point is in another session, a fork's copied turns) and starts
+  the turn as `thread.sendMessage` would, then `turn.replaced {turnId, by}` marks the old turn.
+  The web app hides a replaced turn's items and shows them as "Earlier version" on the message
+  that replaced it (`goBackView` in chat/go-back.ts, `EarlierVersions` in items.tsx).
+- **Fork.** `thread.create` with `forkFrom {threadId, turnId}` (`forkEvents`): a new chat thread
+  on the origin's provider, project, folder, model, effort and mode, titled "<title> (fork)",
+  with `forkedFrom` and a `goBack` to the turn's point with `fork: true`. `thread.historyCopied`
+  copies the shown turns up to that one and their items with the new thread's ids (a subagent's
+  `parentItemId` follows); approval and question cards stay in the origin, whose rows they need.
+  Images are stored per thread, so once the fork has committed `ImageStore.copyForkImages` copies
+  the copied messages' images into the fork's folder (synchronously, before the answer): the fork
+  shows them and an edit there sends them. The header says "Forked from <title>".
+- **Where not.** `providerChatOptions[kind].cannotGoBack` is null for Claude Code and a sentence
+  for Codex, whose generated protocol has no fork or rollback; its adapter refuses `goBack`. The
+  decider refuses both commands with that sentence; the web app offers no Edit or Fork button on
+  Codex and lists the palette commands "Edit last message" and "Fork from here" with the sentence
+  as their detail.
+- **Keys.** Up in an empty composer (`keybindings.composerEditLast`, the composer's `onRecall`)
+  and E on the focused last message (`keybindings.editMessage`, palette "Edit this message"; on
+  any other message E does nothing) put the message back in the composer with its skills,
+  files and images; the composer shows what sending does, that files stay as they are when that
+  turn changed files (an `edit` tool row that ended ok), and Cancel. F on a focused message
+  (`keybindings.forkMessage`, palette "Fork from this message", else "Fork from the last
+  message") and "Fork from here" on a user message fork. The conversation registers what it can do
+  with `showGoBack` (chat/conversation-nav.ts).
+- **Mock.** The mock Claude Code (`MockProviderAdapter`) keeps each session's turns with a point
+  each (`<session>:<n>`), answers a go-back by keeping the turns up to the point, starting a new
+  session id for a fork or a new conversation, and says first what it still remembers
+  (`keptMessagesText`); an unknown point fails the turn.
 - **Skill list in chat.** `chatSkillSections` orders Yours, Project, Recently used (the skills
   this thread's messages carried, newest first, `recentSkillNames`), User, Plugins, Other and wow
   last; wow's four built-in skills carry "for workflow steps" (`isStepSkill`). On `/chat/new` the
@@ -3451,6 +3577,27 @@ ran longer than `chat.finishedAfterSeconds` completes or fails; a turn the user 
 nothing. `path` is `/chat/<threadId>`. The web toaster and the desktop skip a row whose
 `threadId` is the thread on screen in a focused window.
 
+### Labels, keys and wording (agent workbench U14)
+
+- **Models by label** (spec 86). `chat/model-label.tsx` has `modelLabel(models, id)` (the
+  provider's label, else the id) and `ModelName {providerInstanceId, model, plain?}`, which reads
+  `provider.listModels` through `useModels` and shows the id in a tooltip (`plain`: the
+  browser's own `title`, for a place that is itself a button). The builder's step summary, the
+  run view's step rows and the Assistant header use it; the conversation's settings dividers use
+  `modelLabel`.
+- **Keys** (spec 92). The section keys follow the sidebar: Ctrl+4 is Plans
+  (`keybindings.goPlans`) and Ctrl+5 Backlog (`keybindings.goBacklog`).
+- **Palette** (spec 93). The palette (and the sessions dialog) sit at 12 % of the window's
+  height instead of its middle, so the input stays put as the results change.
+- **Wording** (spec 98). A run or card waiting at a gate reads "Waiting for you" (the Path tab's
+  last row, the calendar's card state); the Ticket tab says where the key came from as "From the
+  backlog item's Jira issue", "From the pull request's title" or "From the branch name"
+  (`ticketSourceLabels`); the run view's own panel offers no "Open run" (`RunStepThread`
+  `runOnScreen`); Claude Code's `dontAsk` mode is "Deny unless allowed"; a step under a second
+  "Took under 1 s" (`tookText` in `lib/format.ts`).
+- **Diagrams** (spec 99). `drawDiagram` sets the theme variable `edgeLabelBackground` to
+  `transparent`, so an edge label has no box in either theme.
+
 ## Workflow builder and run view
 
 `apps/web/src/workflows`. The list's header is a tablist "Workflows view" with Workflows, Runs
@@ -3633,12 +3780,21 @@ answers never move; the panel's conversation shows a copy (`GateBar` without `in
 while its conversation tab is selected. While the run view is on screen the note field opens in
 the run view's bar alone (the copy's Send back opens it there), so there is one note. Below
 `breakpoints.narrow`, where the panel lies over the view (spec 78), the run view's bar ends where
-the panel begins (a right margin of the panel's width, the drag preview in the layout store's
-`contextPanelPreview` while its edge moves, else `appearance.contextPanelWidth`) and puts its
-buttons under its text (`stacked`, wrapping). The bar keeps `gateRoom` (16rem, its widest button
-and padding): over a run view the panel is capped so it leaves the sidebar rail, the workflows
-list and that room (`overlayRoom`, `panel/model.ts`), so the panel never covers Approve, Send
-back and Stop, whatever width is stored. Send back opens a
+the panel begins (a right margin of the panel's shown width, `useShownPanelWidth` in
+`panel/panel-state.ts`: the drag preview in the layout store's `contextPanelPreview` while its
+edge moves, else `appearance.contextPanelWidth`, capped) and puts its buttons under its text
+(`stacked`, wrapping). The bar keeps 16rem (its widest button and padding): over a run view the
+panel is capped so it leaves the sidebar rail, the workflows list and that room (`overlayCap`,
+`panel/model.ts`, from the window width), so the panel never covers Approve, Send back and Stop,
+whatever width is stored. The cap never goes under the panel's minimum width (280 px); in a
+window too small for both, the bar takes what is left beside the panel. 800 px is the narrowest
+window supported, the desktop window's own `minWidth` (`apps/desktop/src/main/index.ts`): there
+the bar still has its room beside a 280 px panel (`gate.spec.ts` checks Approve, Send back and Stop
+at 800 px), while under it the rail, the workflows list and the panel leave the bar less and less
+(nothing at about 584 px), so a narrower window is not laid out for; only a browser can make one. The resize edge starts a
+drag from the shown width and moves within the cap (keys too, End goes to the cap), so the width
+stored is the width shown, and its `aria-valuenow` and `aria-valuemax` are the shown width and
+the cap. Send back opens a
 note field in the gate bar. The
 note being written is view state in `gateStore` (`{runId, gate, note, busy, error}`), so the
 button, the palette and the key act on the same field; nothing about the run is kept there.
@@ -3684,8 +3840,9 @@ Open in editor: <path> for the chosen one.
 gutter mark or on its line numbers opens a comment field under the line; Enter adds the comment,
 Escape puts the field away, and the focus goes back to the line. The line is the folder's line
 number, the base's for a removed line. In a run's Changes, while the run waits at a gate where
-it can send back, a comment goes into the send-back note as `src/bell.ts:12 – text`, one per
-line (`addSendBackComment`, `lineComment` in `gate.ts`), opening the note when it is closed;
+it can send back, a comment goes into the send-back note as `src/bell.ts:12 – text`
+(`src/bell.ts:12 (removed) – text` on a removed line, so the base's number is not read as the
+folder's), one per line (`addSendBackComment`, `lineComment` in `gate.ts`), opening the note when it is closed;
 the Send back key (Ctrl+Shift+Enter) sends it. In a chat thread's Changes the same line goes
 into the thread's composer after what is typed (`commentInComposer`, the composer's `addText`
 in `composer-store.ts`), without taking the focus. The focused line's actions are row actions
@@ -3760,8 +3917,8 @@ card surface, both with borders of at least 3:1, on a work-hours band lighter th
 Cards. `cardKind` (`items.ts`) tells a trigger (a workflow and a project) from a card with a
 workflow but no project (dashed, a warning icon and "No project, will not run") and a plain card.
 Only triggers carry a workflow icon, a state color on the left border and the state in sentence
-case (Scheduled, Running, Needs you, Done, Failed, Stopped, Missed); the calendar only creates them
-`scheduled`, the scheduler and the card's run change it. Local cards are created by clicking (a
+case (Scheduled, Running, Waiting for you, Done, Failed, Stopped, Missed); the calendar only
+creates them `scheduled`, the scheduler and the card's run change it. Local cards are created by clicking (a
 `calendar.cardMinutes` card) or dragging a range, then named in the card dialog; dragging a card
 moves it (also to another day), dragging its lower edge resizes it, both snapped to
 `calendar.snapMinutes`. While a drag is in progress the card is drawn where the pointer is; when
@@ -4002,7 +4159,7 @@ view whatever tab the panel shows; the panel's copy is part of its conversation 
 State (`panel-state.ts`). `appearance.contextPanel` stores whether it is open and
 `appearance.contextPanelWidth` its width (pixels, bounds `contextPanelWidthBounds` in
 `@wow/contracts`). The left edge is a `separator`: dragging previews the width and writes the
-setting once on release; the arrow keys (Shift for four steps), Home and End write it at once.
+setting once on release (a click without a move writes nothing, so it does not store a capped width); the arrow keys (Shift for four steps), Home and End write it at once.
 `lib/use-breakpoint.ts` holds the layout breakpoints (`breakpoints.narrow`, 1200 px) with
 `useBelow` and `isBelow`; below `narrow` the panel never takes room: opening it sets the layout
 store's `contextPanelPeek`, which lays it over the view (`data-overlay`, Escape closes it) and

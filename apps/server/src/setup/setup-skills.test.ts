@@ -101,6 +101,7 @@ function applyOverRpc(server: RunningServer, name: string, text: string) {
     trackers: undefined as never,
     detectProviders: () => Promise.resolve([]),
     discoverProjects: () => Promise.resolve([]),
+    listSessions: () => Promise.resolve([]),
     outlook: () => undefined,
     info: { version: '0.0.0', home: home(name) },
     clock: () => new Date(now),

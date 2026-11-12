@@ -72,6 +72,7 @@ function acceptOverRpc(proposalId: string) {
     trackers: undefined as never,
     detectProviders: () => Promise.resolve([]),
     discoverProjects: () => Promise.resolve([]),
+    listSessions: () => Promise.resolve([]),
     outlook: () => undefined,
     info: { version: '0.0.0', home: path.join(root, '.wow') },
     clock: () => new Date(now),

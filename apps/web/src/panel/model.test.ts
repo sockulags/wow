@@ -4,7 +4,9 @@ import {
   activeStep,
   cardRun,
   clampPanelWidth,
+  effectivePanelWidth,
   hasSelection,
+  overlayCap,
   panelSelection,
   threadUsage,
 } from './model';
@@ -138,5 +140,19 @@ describe('clampPanelWidth', () => {
     expect(clampPanelWidth(100)).toBe(280);
     expect(clampPanelWidth(5000)).toBe(720);
     expect(clampPanelWidth(400.4)).toBe(400);
+  });
+});
+
+describe('overlayCap', () => {
+  it('leaves the rail, the workflows list and the gate room over a run view', () => {
+    expect(overlayCap('run', 1024, 16)).toBe(464);
+    expect(overlayCap('calendar', 1024, 16)).toBe(976);
+    expect(effectivePanelWidth(720, undefined, overlayCap('run', 1024, 16))).toBe(464);
+    expect(effectivePanelWidth(380, 900, overlayCap('run', 1024, 16))).toBe(464);
+  });
+
+  it('never goes under the panel minimum in a small window', () => {
+    expect(overlayCap('run', 800, 16)).toBe(280);
+    expect(overlayCap('run', 560, 16)).toBe(280);
   });
 });

@@ -22,9 +22,13 @@ import { activeStep } from './model';
 export function RunStepThread({
   run,
   workflow,
+  runOnScreen = false,
 }: {
   readonly run: WorkflowRun;
   readonly workflow: Workflow | undefined;
+  // The run view of this run is what the panel sits beside, so "Open run" would lead nowhere
+  // (agent workbench spec 98).
+  readonly runOnScreen?: boolean;
 }) {
   const threads = useTopic('threads');
   const instances = useTopic('providerInstances') ?? [];
@@ -97,11 +101,13 @@ export function RunStepThread({
               review={false}
             />
           )}
-          <Button asChild size="xs" variant="ghost" className="self-center">
-            <Link to="/workflows/runs/$runId" params={{ runId: run.id }}>
-              Open run
-            </Link>
-          </Button>
+          {!runOnScreen && (
+            <Button asChild size="xs" variant="ghost" className="self-center">
+              <Link to="/workflows/runs/$runId" params={{ runId: run.id }}>
+                Open run
+              </Link>
+            </Button>
+          )}
         </div>
       )}
     </section>

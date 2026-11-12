@@ -141,3 +141,56 @@ test.describe('choosing and importing folders', () => {
     ).toHaveCount(1);
   });
 });
+
+test.describe('sessions started in a terminal', () => {
+  test('opens a session started in a terminal @agent-workbench-72', async ({ page }) => {
+    await page.goto('/chat');
+    await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible();
+    await page.keyboard.press('Control+k');
+    await page.getByRole('combobox').fill('Open session from Claude Code');
+    await page.keyboard.press('Enter');
+    const list = page.getByRole('listbox', { name: 'Sessions' });
+    const rows = list.getByTestId('terminal-session');
+    // alpha in both CLIs, beta in Codex, and Claude's gone folder, greyed with the reason.
+    await expect(rows).toHaveCount(4);
+    const alpha = rows.filter({ hasText: 'Invented: tidy the alpha notes' });
+    await expect(alpha).toContainText('Claude Code · Discovery Claude');
+    await expect(rows.filter({ hasText: 'Invented: brew beta' })).toContainText(
+      'Codex · Discovery Codex',
+    );
+    const gone = rows.filter({ hasText: 'Invented: tidy the gone notes' });
+    await expect(gone).toContainText('Its folder is gone');
+    await expect(gone).toHaveAttribute('aria-disabled', 'true');
+    // The folder as the session file spells it; on Windows its separators are backslashes.
+    const alphaFolder = e2eWorkspace(home, 'alpha')
+      .split(/[\\/]/)
+      .map((part) => part.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[\\\\/]');
+    await expect(list.getByText(new RegExp(alphaFolder))).toHaveCount(1);
+
+    await alpha.click();
+    await expect(page).toHaveURL(/\/chat\/[^/]+$/);
+    await expect(
+      page.getByRole('heading', { name: 'Invented: tidy the alpha notes' }),
+    ).toBeVisible();
+    const box = page.getByRole('combobox', { name: 'Message' });
+    await box.fill('Go on with the notes');
+    await box.press('Enter');
+    await expect(page.getByText('Resumed session-1. You said: Go on with the notes')).toBeVisible();
+
+    // Picked again, the session opens the thread that already resumes it.
+    const opened = page.url();
+    await page.goto('/chat');
+    await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible();
+    await page.keyboard.press('Control+k');
+    await page.getByRole('combobox').fill('Open session from Claude Code');
+    await page.keyboard.press('Enter');
+    const again = page
+      .getByRole('listbox', { name: 'Sessions' })
+      .getByTestId('terminal-session')
+      .filter({ hasText: 'Invented: tidy the alpha notes' });
+    await expect(again).toContainText('Open in wow');
+    await again.click();
+    await expect(page).toHaveURL(opened);
+  });
+});

@@ -27,6 +27,7 @@ export {
 } from './compat/schema.js';
 export { compareCodexVersions, parseCodexVersion } from './compat/version.js';
 export { discoverCodexFolders } from './discover.js';
+export { listCodexSessions, type SessionListOptions } from './sessions.js';
 export {
   codexNpmPackage,
   codexUpdateOffer,

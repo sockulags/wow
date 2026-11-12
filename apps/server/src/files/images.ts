@@ -1,5 +1,6 @@
 import {
   AttachmentId,
+  TextItemPayload,
   assistantThreadId,
   attachmentExtensions,
   attachmentMediaType,
@@ -10,15 +11,22 @@ import {
   type AttachmentReadParams,
   type AttachmentReadResult,
   type Command,
+  type DomainEvent,
   type ProviderModel,
 } from '@wow/contracts';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { constants, copyFileSync, mkdirSync } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Db } from '../db/database.js';
 import { threads } from '../db/schema.js';
 import { sniffImage } from './read.js';
+
+const sentImageIds = (payload: unknown): AttachmentId[] => {
+  const parsed = TextItemPayload.pick({ images: true }).safeParse(payload);
+  return parsed.success ? (parsed.data.images ?? []).map((image) => image.id) : [];
+};
 
 // Images pasted or dropped on a thread's composer (agent workbench spec 53 to 55). They are
 // stored under wow's home, one folder per thread, and leave the server only to the thread's
@@ -135,11 +143,13 @@ export class ImageStore {
     return { mediaType: attachmentMediaType(id), base64: bytes.toString('base64') };
   }
 
-  // Looked at before a message is decided: every image it names must be stored for its thread,
+  // Looked at before a message or an edit of one is decided: every image it names must be stored for its thread,
   // so a turn never starts without one of its images, and the thread's model must still take
   // images, since it may have been changed after they were added (spec 54).
   async refusal(command: Command): Promise<string | undefined> {
-    if (command.type !== 'thread.sendMessage') return undefined;
+    if (command.type !== 'thread.sendMessage' && command.type !== 'thread.editLast') {
+      return undefined;
+    }
     const attachments = command.attachments ?? [];
     for (const { id } of attachments) {
       const found = await stat(threadImagePath(this.#deps.home, command.threadId, id)).then(
@@ -156,5 +166,40 @@ export class ImageStore {
       .get();
     if (!thread) return undefined;
     return modelRefusal(this.#deps, thread.providerInstanceId, thread.model);
+  }
+
+  // A fork's copied messages keep their image ids, and images are stored per thread, so the
+  // fork gets its own copies once it is committed: its chips show and an edit there sends them.
+  // Synchronous, so the files are there when the command's answer reaches the client. An image
+  // that cannot be copied shows as no longer stored, as it would in the origin.
+  copyForkImages(events: readonly { readonly event: DomainEvent }[]): void {
+    const origins = new Map<string, string>();
+    for (const { event } of events) {
+      if (event.kind === 'thread.created' && event.payload.forkedFrom) {
+        origins.set(event.payload.id, event.payload.forkedFrom.threadId);
+      }
+      if (event.kind !== 'thread.historyCopied') continue;
+      const origin = origins.get(event.payload.threadId);
+      if (origin === undefined) continue;
+      const ids = event.payload.items.flatMap((item) => sentImageIds(item.payload));
+      if (ids.length === 0) continue;
+      const folder = threadImageFolder(this.#deps.home, event.payload.threadId);
+      try {
+        mkdirSync(folder, { recursive: true, mode: 0o700 });
+      } catch {
+        continue;
+      }
+      for (const id of ids) {
+        try {
+          copyFileSync(
+            threadImagePath(this.#deps.home, origin, id),
+            path.join(folder, id),
+            constants.COPYFILE_EXCL,
+          );
+        } catch {
+          // Missing in the origin too, or already copied.
+        }
+      }
+    }
   }
 }

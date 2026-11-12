@@ -31,7 +31,7 @@ export function RunPanel({ runId }: { readonly runId: string }) {
           meta={`${runStateLabel(run, threads)} · ${project?.name ?? run.projectId} · ${when(run.startedAt)}`}
         />
       </div>
-      <RunStepThread run={run} workflow={workflow} />
+      <RunStepThread run={run} workflow={workflow} runOnScreen />
     </div>
   );
 }

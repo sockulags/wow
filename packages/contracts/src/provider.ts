@@ -56,6 +56,12 @@ export const ProviderCommand = z.discriminatedUnion('type', [
     images: z
       .array(z.object({ path: z.string().min(1), mediaType: AttachmentMediaType }))
       .optional(),
+    // Go back in the conversation before this turn (agent workbench spec 62, 71): the live
+    // session ends and the next one keeps the conversation `resumeId` names up to and including
+    // the point `at`, a `resumePoint` the provider gave at a turn's end; `at` null starts a new
+    // conversation. `fork` leaves `resumeId` as it was and goes on in a new session. Only for a
+    // provider whose chat options say it can (`cannotGoBack` null); files are never rewound.
+    goBack: z.object({ at: z.string().min(1).nullable(), fork: z.boolean() }).optional(),
   }),
   z.object({ type: z.literal('interrupt'), threadId: z.string().min(1) }),
   // Ends the thread's live session in this adapter, if it has one, without a turn event. The
@@ -135,6 +141,7 @@ export const TaskStatus = z.enum(['pending', 'in_progress', 'completed']);
 export type TaskStatus = z.infer<typeof TaskStatus>;
 
 const ThreadScoped = { threadId: z.string().min(1) };
+const ResumePoint = { resumePoint: z.string().min(1).optional() };
 
 // What a tool call is, in wow's words, so the conversation draws it without reading a provider's
 // shapes (agent workbench spec 27 to 30). `edit` covers file edits and writes; `other` is any
@@ -343,9 +350,16 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     usedTokens: z.number().int().nonnegative(),
     maxTokens: z.number().int().positive(),
   }),
-  z.object({ type: z.literal('turnCompleted'), ...ThreadScoped }),
-  z.object({ type: z.literal('turnFailed'), ...ThreadScoped, error: z.string() }),
-  z.object({ type: z.literal('turnInterrupted'), ...ThreadScoped }),
+  // `resumePoint` is the provider's id of the conversation as the turn left it, where it gives
+  // one: a later `startTurn.goBack` to it keeps everything up to here (spec 62, 71).
+  z.object({ type: z.literal('turnCompleted'), ...ThreadScoped, ...ResumePoint }),
+  z.object({
+    type: z.literal('turnFailed'),
+    ...ThreadScoped,
+    error: z.string(),
+    ...ResumePoint,
+  }),
+  z.object({ type: z.literal('turnInterrupted'), ...ThreadScoped, ...ResumePoint }),
   // The provider refused a Stop of a background task or a Ctrl+B; the server reports it, as the
   // request itself changes nothing the user could see.
   z.object({
@@ -391,6 +405,9 @@ export interface ProviderChatOptions {
   // sent to the background (`toBackground`) on this provider (spec 90). Codex has neither.
   readonly stopsTasks: boolean;
   readonly sendsToBackground: boolean;
+  // Why Edit and Fork are not offered on this provider (agent workbench spec 63, 71), or null
+  // when it can go back in its conversation (`startTurn.goBack`).
+  readonly cannotGoBack: string | null;
 }
 
 export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOptions>> = {
@@ -400,7 +417,7 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
       { id: 'acceptEdits', label: 'Accept edits', tone: 'edits' },
       { id: 'plan', label: 'Plan only', tone: 'plan' },
       { id: 'auto', label: 'Auto' },
-      { id: 'dontAsk', label: 'Do not ask (deny what is not allowed)', short: 'Do not ask' },
+      { id: 'dontAsk', label: 'Deny unless allowed' },
       { id: 'bypassPermissions', label: 'Bypass permissions', tone: 'danger' },
     ],
     defaultEffort: 'default',
@@ -410,6 +427,7 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
     modeCycle: ['default', 'acceptEdits', 'plan'],
     stopsTasks: true,
     sendsToBackground: true,
+    cannotGoBack: null,
   },
   codex: {
     permissionModes: [
@@ -430,6 +448,8 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
     modeCycle: ['read-only', 'auto', 'untrusted'],
     stopsTasks: false,
     sendsToBackground: false,
+    cannotGoBack:
+      'Codex cannot go back in its conversation, so a message there cannot be edited or forked.',
   },
 };
 
@@ -490,6 +510,42 @@ export const ProviderFolder = z.object({
   lastUsedAt: z.iso.datetime({ offset: true }).nullable(),
 });
 export type ProviderFolder = z.infer<typeof ProviderFolder>;
+
+// A session a provider CLI keeps in its own files (agent workbench spec 72), as its adapter
+// package read it: the id the CLI resumes it by, the folder it ran in, the first thing the user
+// typed (null when the file has none) and when the file last changed.
+// A CLI session id as Claude Code and Codex write them (a UUID, or a file name of that kind). It
+// goes to the CLI as the resume value, so nothing that reads as an option ("--…") is taken.
+export const SessionId = z.string().regex(/^[A-Za-z0-9_][A-Za-z0-9_-]*$/);
+
+export const ProviderSession = z.object({
+  id: SessionId,
+  cwd: z.string().min(1),
+  firstPrompt: z.string().nullable(),
+  lastUsedAt: z.iso.datetime({ offset: true }).nullable(),
+});
+export type ProviderSession = z.infer<typeof ProviderSession>;
+
+// A session's first prompt on one line, cut after `chars` characters
+// (`providers.sessionPromptChars`).
+export const cutSessionPrompt = (text: string, chars: number): string => {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const shown = [...flat];
+  return shown.length <= chars ? flat : `${shown.slice(0, chars).join('').trimEnd()}…`;
+};
+
+// What `provider.listSessions` answers per session: the session, the instance whose files hold
+// it, the project its folder is (if any), the wow thread that already resumes it (if any), and
+// why it cannot be opened (its folder is gone), else null.
+export const TerminalSession = ProviderSession.extend({
+  providerInstanceId: z.string().min(1),
+  providerInstanceName: z.string(),
+  kind: ProviderKind,
+  projectId: z.string().min(1).nullable(),
+  threadId: z.string().min(1).nullable(),
+  unavailable: z.string().min(1).nullable(),
+});
+export type TerminalSession = z.infer<typeof TerminalSession>;
 
 // What `projects.discover` answers: one row per existing folder that is not a project yet, with
 // the provider instances that worked in it.

@@ -78,30 +78,46 @@ workflows, runs, settings pages and actions together; arrow keys and Enter pick.
 
 Default keys (all changeable in Settings → Keybindings):
 
-| Key              | Does                                     |
-| ---------------- | ---------------------------------------- |
-| Ctrl+K           | Command palette                          |
-| Ctrl+1 … 4       | Calendar, Chat, Workflows, Backlog       |
-| Ctrl+5           | Plans                                    |
-| Ctrl+,           | Settings                                 |
-| Ctrl+B           | Show or hide the sidebar                 |
-| Ctrl+J           | Show or hide the context panel           |
-| F6               | Move the focus into the panel and back   |
-| Ctrl+Shift+L     | Dark or light theme                      |
-| Ctrl+Alt+N       | New thread                               |
-| Ctrl+.           | Stop the running turn                    |
-| T, N, P          | Calendar: today, next, previous          |
-| D, W             | Calendar: day view, week view            |
-| C                | Calendar: new card on the day you are on |
-| Ctrl+= / -       | Calendar: zoom in, zoom out              |
-| Ctrl+0           | Calendar: reset zoom                     |
-| Ctrl+Enter       | Run at a gate: Approve                   |
-| Ctrl+Shift+Enter | Run at a gate: Send back                 |
-| Ctrl+Shift+D     | Run: Steps or Changes tab                |
-| Ctrl+Shift+Y     | Run: Steps or Path tab                   |
-| O                | Changes tab: this step only, and back    |
-| C                | Diff line: comment on it                 |
-| Shift+Enter      | Focused file or line: open in editor     |
+| Key              | Does                                                         |
+| ---------------- | ------------------------------------------------------------ |
+| Ctrl+K           | Command palette                                              |
+| Ctrl+1 … 5       | Calendar, Chat, Workflows, Plans, Backlog                    |
+| Ctrl+,           | Settings                                                     |
+| Ctrl+B           | Show or hide the sidebar                                     |
+| Ctrl+J           | Show or hide the context panel                               |
+| F6               | Move the focus into the panel and back                       |
+| Ctrl+Shift+L     | Dark or light theme                                          |
+| Ctrl+Alt+N       | New thread                                                   |
+| Ctrl+.           | Stop the running turn                                        |
+| Ctrl+B           | Chat: send the running command or subagent to the background |
+| Ctrl+Shift+J     | Next that needs you                                          |
+| Ctrl+O           | Chat: open or close all reasoning                            |
+| Alt+Up / Down    | Chat: previous message, next message                         |
+| C                | Chat: copy the message that has the keyboard                 |
+| E                | Chat: edit your last message, when it has the keyboard       |
+| F                | Chat: fork from the message that has the keyboard            |
+| Up               | Chat, in an empty message box: edit your last message        |
+| End              | Chat: back to the newest output                              |
+| T, N, P          | Calendar: today, next, previous                              |
+| D, W             | Calendar: day view, week view                                |
+| C                | Calendar: new card on the day you are on                     |
+| Ctrl+= / -       | Calendar: zoom in, zoom out                                  |
+| Ctrl+0           | Calendar: reset zoom                                         |
+| Ctrl+Enter       | Run at a gate: Approve                                       |
+| Ctrl+Shift+Enter | Run at a gate: Send back                                     |
+| Ctrl+Shift+D     | Run: Steps or Changes tab                                    |
+| Ctrl+Shift+Y     | Run: Steps or Path tab                                       |
+| O                | Changes tab: this step only, and back                        |
+| C                | Diff line: comment on it                                     |
+| Shift+Enter      | Focused file or line: open in editor                         |
+
+Ctrl+B sends to the background only while the open thread runs a command or subagent its provider
+can move there (Claude Code), so the turn goes on; otherwise, on Windows and Linux, it shows or
+hides the sidebar as usual.
+Ctrl+Shift+J goes to the oldest approval, question, plan, gate or assistant proposal that waits for
+you, wherever it is; pressed again, to the next one. C copies the message that has the keyboard, as
+markdown for an answer and as written for your own; it and the other single-letter chat keys only
+work while a message has the keyboard.
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
@@ -315,12 +331,12 @@ Cards are your own blocks of time. They never leave the app.
   card from any field of the form. Delete, Cancel and Create card stay at the bottom of the form
   while its fields scroll, also in a small window.
 
-A card with a workflow and a project is a **trigger**: at the card's start time the workflow's
-first step starts (see "Triggers" below). Moving the card moves the trigger with it. Triggers carry
-a workflow icon and their state: Scheduled, Running, Needs you, Done, Failed, Stopped or Missed.
+A card with a workflow and a project is a **trigger**: at the card's start time the workflow's first
+step starts (see "Triggers" below). Moving the card moves the trigger with it. Triggers carry a
+workflow icon and their state: Scheduled, Running, Waiting for you, Done, Failed, Stopped or Missed.
 Plain cards show no state. A card with a workflow but no project is drawn dashed with "No project,
-will not run". The form says what a trigger will do ("Starts at 16:30 in Demo · 4 steps, 2
-gates"), warns when it will not run, and links to its run once it has one.
+will not run". The form says what a trigger will do ("Starts at 16:30 in Demo · 4 steps, 2 gates"),
+warns when it will not run, and links to its run once it has one.
 
 ### Repeating cards
 
@@ -373,6 +389,20 @@ you used without a project, and **Another folder…** (the folder dialog in the 
 box in the browser). The chosen folder shows under the picker; hover it for the full path. Write
 the first message and press Enter; the first line becomes the thread's title. Until a project or
 folder is chosen, Send stays disabled and says why.
+
+A project can name what its new threads start with (see Projects, **Thread defaults**): its
+provider instance, model, effort and mode then win over what your last thread used.
+
+Settings → Chat → **Send key** chooses which key sends: **Enter** (Shift+Enter makes a new line) or
+**Ctrl+Enter** (then Enter makes a new line).
+
+**Open session from Claude Code / Codex…** in the palette lists the sessions your provider
+instances keep in their own files, the newest first, grouped by folder, each with its first prompt
+and when it was last used. Pick one and it opens as a wow thread in that folder (and its project)
+that goes on with the session: your next message resumes it. A session already open in wow opens
+that thread. A session whose folder is gone is listed greyed with the reason. Nothing is written
+to Claude's or Codex's files; how many sessions are listed and how much of the prompt shows are
+in Settings → Providers.
 
 ### Model, effort and mode
 
@@ -701,6 +731,20 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   again for the next one. Oldest means the one that has waited longest: renaming a thread or
   changing its model does not move it. A gate that waits for the pull request's checks is not
   waiting for you and is skipped.
+- **Edit your last message**: press **Up** in an empty message box, **E** on your last message, or
+  its **Edit** button. The message comes back into the box; send it and it replaces that message
+  and its answer, and the agent goes on as if the old one had never been sent. The old exchange
+  stays under **Earlier version** on the new message. Files the agent changed stay as they are;
+  the box says so when that turn changed files. **Cancel** leaves it.
+- **Fork from here**: on any of your messages, **Fork from here** (or **F** on the message that
+  has the keyboard, or **/fork**) starts a new thread with the conversation up to that message
+  and its answer, on the same model, effort, mode and folder, images included. The new thread says which one it
+  came from. Edit and Fork work on Claude Code, for messages sent since wow keeps the place in
+  the conversation; Codex cannot go back in its conversation, so it offers neither and the
+  palette says why. If Claude Code cannot pick the conversation up where wow went back to (its
+  own files were cleaned up, say), every message there fails the same way; the error then offers
+  **Go on without going back** (the agent goes on with the whole conversation it has, the replaced
+  exchange included) or, in a fork, **Start a new conversation**. Both are in the palette too.
 - **Skills in chat** are listed Yours, Project, Recently used, User, Plugins and wow last; wow's
   own four are marked "for workflow steps". On a new thread the list opens under the box, so the
   provider and project pickers stay in view.
@@ -845,7 +889,9 @@ at its top, whatever the side panel shows, and the review tabs under it; the sid
 step's conversation with a copy of the gate bar. The note of **Send back** is written in the run
 view's bar. In a window narrower than 1200 px the side panel lies over the view when you open it;
 the gate bar then ends where the panel begins and puts its buttons under its text, so they stay
-in reach. Each tab is also in the palette ("Run: show changes" and so on) and in the address, so
+in reach. Over a run the panel's edge stops where the gate bar's room begins, and the width you
+drag to there is the width kept; in a very small window the panel stays at its narrowest and the
+gate bar takes what is left beside it. Each tab is also in the palette ("Run: show changes" and so on) and in the address, so
 a reload shows the same tab. Workflows → **Runs** lists every run, the ones waiting for you
 first, then the running ones ("Go to runs" in the palette).
 
@@ -855,7 +901,8 @@ first, then the running ones ("Go to runs" in the palette).
   on the right; drag the edge between the list and the diff (or focus it and use the arrow keys)
   to make the list wider (`appearance.changesListWidth`). Focus a line of the diff and press **C**
   (`keybindings.diffComment`), or click beside its line number, to write a comment on it; Enter
-  adds `src/bell.ts:12 – your words` to the send-back note, and **Ctrl+Shift+Enter** sends the note
+  adds `src/bell.ts:12 – your words` to the send-back note (`src/bell.ts:12 (removed) – your words`
+  for a removed line, whose number is the one it had before), and **Ctrl+Shift+Enter** sends the note
   back. In a chat thread's Changes the same comment goes into the thread's composer as a reply.
   **Shift+Enter** (`keybindings.openInEditor`) on a changed file, a diff line, an artifact, a file
   link in chat or in the file viewer opens the file in your editor at its line; the command is the
@@ -1069,7 +1116,7 @@ meanwhile are not started later. A run that cannot start leaves a failed notific
 
 ## Plans
 
-The **Plans** view (**Ctrl+5**, `keybindings.goPlans`) reads the intent, spec and plan files of
+The **Plans** view (**Ctrl+4**, `keybindings.goPlans`) reads the intent, spec and plan files of
 your projects, the format agent-os writes. Each project's `plans.intentsDirectory` (`intents` by
 default) holds one folder per intent with `intent.md`, `spec.md` and `plan.md`. wow only reads
 these files, and reads them again when they change (once a file has stayed the same for
@@ -1227,6 +1274,10 @@ directory and Codex's `sessions` folder in its `CODEX_HOME`. It lists each folde
 that still exists and is not a project yet, with which CLIs used it and how long ago, all checked.
 Uncheck what you do not want (the box above the list checks or clears all) and press **Import**; each folder becomes a project named after it
 (with a number when the name is taken). Nothing is changed in Claude's or Codex's files.
+
+**Thread defaults** (palette: "New thread defaults for project …") picks a provider instance and,
+for it, a model, effort and permission mode that a new thread in the project starts with. "As the
+last thread" clears them.
 
 **Rename** changes only the name; threads, cards and runs follow it. **Remove** asks first and
 leaves the folder and its files alone. Threads that used the project keep working in its folder

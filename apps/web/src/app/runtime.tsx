@@ -31,6 +31,7 @@ export type ProjectDialog =
   | { readonly type: 'create' }
   | { readonly type: 'import' }
   | { readonly type: 'rename'; readonly projectId: string }
+  | { readonly type: 'defaults'; readonly projectId: string }
   | { readonly type: 'remove'; readonly projectId: string };
 
 // The card dialog: a new card for a time range (from a click, a drag or the palette), or an
@@ -132,6 +133,8 @@ export interface LayoutState {
   readonly paletteOpen: boolean;
   readonly providerDialog: ProviderDialog | undefined;
   readonly projectDialog: ProjectDialog | undefined;
+  // "Open session from Claude Code / Codex…" (agent workbench spec 72).
+  readonly sessionDialog: boolean;
   readonly cardDialog: CardDialog | undefined;
 }
 
@@ -145,6 +148,7 @@ export const createLayoutStore = (): LayoutStore =>
     contextPanelPreview: undefined,
     panelTabs: {},
     openFileDialog: undefined,
+    sessionDialog: false,
     openHostDialog: undefined,
     paletteOpen: false,
     providerDialog: undefined,

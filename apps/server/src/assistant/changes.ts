@@ -469,7 +469,14 @@ function inverseOf(command: Command, before: Row | null, changed: readonly strin
           {
             type: 'project.update',
             projectId: command.projectId,
-            ...named(['name', 'cwd', 'defaultProviderInstanceId', 'defaultModel']),
+            ...named([
+              'name',
+              'cwd',
+              'defaultProviderInstanceId',
+              'defaultModel',
+              'defaultEffort',
+              'defaultPermissionMode',
+            ]),
           },
         ];
       case 'card.create':
@@ -879,7 +886,14 @@ export function basisOf(command: Command, read: ReadModel): Row {
         const current = read.project(command.projectId);
         return {
           project: current
-            ? pick({ ...current }, ['name', 'cwd', 'defaultProviderInstanceId', 'defaultModel'])
+            ? pick({ ...current }, [
+                'name',
+                'cwd',
+                'defaultProviderInstanceId',
+                'defaultModel',
+                'defaultEffort',
+                'defaultPermissionMode',
+              ])
             : null,
         };
       }

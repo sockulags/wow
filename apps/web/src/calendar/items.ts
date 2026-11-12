@@ -18,7 +18,7 @@ export const cardState = (item: CalendarItem): CardState => {
 export const cardStateLabels: Readonly<Record<CardState, string>> = {
   scheduled: 'Scheduled',
   running: 'Running',
-  waiting: 'Needs you',
+  waiting: 'Waiting for you',
   done: 'Done',
   failed: 'Failed',
   stopped: 'Stopped',

@@ -6,6 +6,7 @@ import {
   failedToolCalls,
   formatElapsed,
   groupToolCalls,
+  lastErrorId,
   lastUsedThread,
   lastUserSent,
   listTitle,
@@ -296,5 +297,30 @@ describe('Retry resends the last message as it was sent (wow skills spec 18)', (
       skills: [],
       images: [image],
     });
+  });
+});
+
+const error = (id: string, payload: unknown): ThreadItem => ({
+  id,
+  threadId: 'thread',
+  turnId: 'thread:turn:0',
+  index: 0,
+  kind: 'error',
+  payload,
+  streaming: false,
+});
+
+describe('lastErrorId', () => {
+  it('keeps Retry on the failed turn when a refused Stop comes after it', () => {
+    expect(
+      lastErrorId([
+        error('thread:turn:0:error', { message: 'Claude Code exited' }),
+        error('thread:turn:0:refused:3', {
+          message: 'Could not stop the task: Claude Code is not running for thread thread',
+          notice: 'refused',
+        }),
+        error('thread:turn:0:refused:4', { message: 'Could not send it to the background: no' }),
+      ]),
+    ).toBe('thread:turn:0:error');
   });
 });

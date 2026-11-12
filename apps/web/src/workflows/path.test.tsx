@@ -344,7 +344,7 @@ describe('the Path tab', () => {
       steps: [{ ...looped.steps[0]!, state: 'waiting' }, ...looped.steps.slice(1)],
       path: [visit('build', 1, 0)],
     };
-    expect(why(waiting)).toEqual(['waiting for you']);
+    expect(why(waiting)).toEqual(['Waiting for you']);
     expect(
       why({
         ...waiting,
@@ -361,7 +361,7 @@ describe('the Path tab', () => {
           ...waiting.steps.slice(1),
         ],
       }),
-    ).toEqual(['waiting for checks']);
+    ).toEqual(['Waiting for checks']);
     const stopped: WorkflowRun = {
       ...looped,
       state: 'stopped',

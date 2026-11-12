@@ -21,6 +21,7 @@ import { errorMessage, useDispatch, useTopic } from '@/chat/data';
 import type { QuestionHold } from '@/chat/question-card';
 import type { ModelBarProps } from '@/chat/model-bar';
 import { ThreadConversation } from '@/chat/thread-view';
+import { ModelName } from '@/chat/model-label';
 import { providerLabel } from '@/chat/view-model';
 import { Banner } from '@/components/banner';
 import { TopicPlaceholder } from '@/components/states';
@@ -421,6 +422,12 @@ export function AssistantView() {
         <h2 className="text-sm font-medium">Assistant</h2>
         <span data-testid="assistant-provider" className="text-xs text-muted-foreground">
           {instance ? providerLabel(instance, instances) : thread.providerInstanceId}
+          {thread.model !== '' && (
+            <>
+              {' · '}
+              <ModelName providerInstanceId={thread.providerInstanceId} model={thread.model} />
+            </>
+          )}
         </span>
         <Button asChild size="xs" variant="ghost" className="ml-auto">
           <Link to="/settings/$group" params={{ group: 'assistant' }}>

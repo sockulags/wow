@@ -46,6 +46,14 @@ export function projectCommands(projects: readonly Project[]): AppCommand[] {
         run: open({ type: 'rename', projectId: project.id }),
       },
       {
+        id: `projects.defaults.${project.id}`,
+        title: `New thread defaults for project ${project.name}`,
+        value: `New thread defaults for project ${project.name} ${project.id}`,
+        group: 'Settings',
+        keywords: ['project', 'provider', 'model', 'effort', 'mode', 'permissions', project.cwd],
+        run: open({ type: 'defaults', projectId: project.id }),
+      },
+      {
         id: `projects.trackers.${project.id}`,
         title: `Trackers for project ${project.name}`,
         value: `Trackers for project ${project.name} ${project.id}`,

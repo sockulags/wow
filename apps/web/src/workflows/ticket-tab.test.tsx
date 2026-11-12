@@ -134,7 +134,7 @@ describe('the Ticket tab', () => {
     expect(article.getByTestId('ticket-status').textContent).toBe('In Progress');
     expect(article.getByTestId('ticket-type').textContent).toBe('Bug');
     expect(article.getByTestId('ticket-assignee').textContent).toBe('Mira Invented');
-    expect(article.getByTestId('ticket-source').textContent).toBe('the title of its pull request');
+    expect(article.getByTestId('ticket-source').textContent).toBe("From the pull request's title");
     expect(panel.getByTestId('host-fetched').textContent).toContain('jira.example.invalid');
     expect(panel.getByRole('link', { name: 'Open on host' }).getAttribute('href')).toBe(
       'https://jira.example.invalid/browse/ABC-12',

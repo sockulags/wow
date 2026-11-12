@@ -68,7 +68,7 @@ export const errorMessage = (error: unknown): string =>
 // Models of one provider instance, asked once per connection; the provider reports them.
 const modelRequests = new WeakMap<Connection, Map<string, Promise<ProviderModel[]>>>();
 
-function requestModels(connection: Connection, providerInstanceId: string) {
+export function requestModels(connection: Connection, providerInstanceId: string) {
   let perConnection = modelRequests.get(connection);
   if (!perConnection) {
     perConnection = new Map();

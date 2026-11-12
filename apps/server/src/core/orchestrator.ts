@@ -19,6 +19,7 @@ import {
   type EventTrigger,
   type Project,
   type ProviderInstance,
+  type ResumePointRef,
   type Question,
   type RpcErrorCode,
   type SentSkill,
@@ -71,10 +72,16 @@ export interface ReadModel {
   // Every stored value of the key, whatever its scope.
   settingStored(key: string): readonly { readonly scope: string; readonly value: unknown }[];
   thread(id: string): Thread | undefined;
+  // Every thread that goes on with this provider session id, whatever its instance.
+  threadsWithSession(sessionId: string): Thread[];
   runningTurn(threadId: string): Turn | undefined;
   // The thread's turn with the highest index, running or not.
   lastTurn(threadId: string): Turn | undefined;
   turnCount(threadId: string): number;
+  // Every turn of the thread in order, with the provider's point after it (Edit, Fork).
+  threadTurns(threadId: string): (Turn & { readonly resumePoint: ResumePointRef | null })[];
+  // Every item of the thread in order.
+  threadItems(threadId: string): ThreadItem[];
   // The last message the thread was sent with text or skills, as it went to the provider.
   lastSent(
     threadId: string,
@@ -171,6 +178,8 @@ export interface DecideContext {
   // change row names a model as the bar does; undefined while no list names it.
   readonly modelLabel?:
     ((model: string, providerInstanceId?: string) => string | undefined) | undefined;
+  // The platform whose folder names a decision compares; the server's own unless a test says.
+  readonly platform?: NodeJS.Platform | undefined;
 }
 
 // The code host to word a project's change requests and events in: its newest host read, else

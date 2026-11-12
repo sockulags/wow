@@ -166,6 +166,9 @@ export async function drawDiagram(
       theme: dark ? 'dark' : 'default',
       htmlLabels: false,
       flowchart: { htmlLabels: false },
+      // Edge labels sit on the line itself, without the grey box the themes draw behind them
+      // (agent workbench spec 99).
+      themeVariables: { edgeLabelBackground: 'transparent' },
       secure,
     });
     // Any diagram type can carry CSS in a `classDef` or `style` line, so the text is checked
@@ -184,6 +187,26 @@ export async function drawDiagram(
     document.getElementById(id)?.remove();
     document.getElementById(`d${id}`)?.remove();
   }
+}
+
+// The library sizes the drawing before every edge label is placed, so a label at the edge (the
+// paths diagram's last rule) could be cut off (agent workbench spec 99). Once the drawing is in
+// the page, its view box grows to hold everything drawn, with the library's own margin.
+export function fitDrawing(svg: SVGSVGElement, margin = 8): void {
+  if (typeof svg.getBBox !== 'function') return;
+  const box = svg.getBBox();
+  if (box.width === 0 || box.height === 0) return;
+  const [x = 0, y = 0, width = 0, height = 0] = (svg.getAttribute('viewBox') ?? '')
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  const left = Math.min(x, box.x - margin);
+  const top = Math.min(y, box.y - margin);
+  const right = Math.max(x + width, box.x + box.width + margin);
+  const bottom = Math.max(y + height, box.y + box.height + margin);
+  if (left === x && top === y && right === x + width && bottom === y + height) return;
+  svg.setAttribute('viewBox', `${left} ${top} ${right - left} ${bottom - top}`);
+  svg.style.maxWidth = `${right - left}px`;
 }
 
 // Whether diagrams show their source, for all of them at once (the palette command). A diagram's

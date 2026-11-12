@@ -106,6 +106,35 @@ describe('shell', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('goes to the sections with Ctrl+1 to Ctrl+6 in sidebar order (spec 92)', async () => {
+    const user = userEvent.setup();
+    const { router } = await renderApp('/calendar');
+    const visited: string[] = [];
+    for (const digit of ['1', '2', '3', '4', '5', '6']) {
+      await user.keyboard(`{Control>}${digit}{/Control}`);
+      visited.push(router.state.location.pathname);
+    }
+    expect(visited).toEqual([
+      '/calendar',
+      '/chat',
+      '/workflows',
+      '/plans',
+      '/backlog',
+      '/assistant',
+    ]);
+  });
+
+  it('anchors the palette near the top, not centred, so its input stays put (spec 93)', async () => {
+    const user = userEvent.setup();
+    await renderApp('/calendar');
+    await user.keyboard('{Control>}k{/Control}');
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.className).toContain('top-[12vh]');
+    expect(dialog.className).toContain('translate-y-0');
+    expect(dialog.className).not.toContain('top-[50%]');
+    expect(dialog.className).not.toContain('translate-y-[-50%]');
+  });
+
   it('toggles the sidebar with its keybinding', async () => {
     const user = userEvent.setup();
     await renderApp('/chat');

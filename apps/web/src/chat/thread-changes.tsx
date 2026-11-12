@@ -191,7 +191,13 @@ function emptyText(status: Exclude<RunDiffStatus, 'ok'>, message: string | null)
 
 // A comment on a line of a thread's Changes goes into the thread's composer as a line of the
 // reply (spec 80), where the user sends it like any message.
-export function commentInComposer(threadId: string, path: string, line: number, text: string) {
+export function commentInComposer(
+  threadId: string,
+  path: string,
+  line: number,
+  text: string,
+  removed = false,
+) {
   const composer = threadSkillComposer(skillComposerStore.getState(), threadId);
   if (!composer) {
     notify.error('The comment was not added', {
@@ -199,7 +205,7 @@ export function commentInComposer(threadId: string, path: string, line: number, 
     });
     return;
   }
-  composer.addText(lineComment(path, line, text));
+  composer.addText(lineComment(path, line, text, removed));
 }
 
 function FilePatch({ threadId, file }: { readonly threadId: string; readonly file: RunDiffFile }) {
@@ -235,7 +241,8 @@ function FilePatch({ threadId, file }: { readonly threadId: string; readonly fil
       path={file.path}
       patch={diff.patch}
       actions={{
-        comment: (line, text) => commentInComposer(threadId, file.path, line, text),
+        comment: (line, text, removed) =>
+          commentInComposer(threadId, file.path, line, text, removed),
         openAt: (line) => editor.open({ scope: { threadId }, path: file.path, line }),
       }}
     />

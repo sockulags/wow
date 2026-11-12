@@ -6,11 +6,18 @@ import {
   type ConnectionState,
   type SettingValues,
 } from '@wow/client-runtime';
-import { act, fireEvent, screen, within } from '@testing-library/react';
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from '@tanstack/react-router';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createStore } from 'zustand';
-import { createLayoutStore, type Runtime } from '@/app/runtime';
+import { createLayoutStore, RuntimeProvider, type Runtime } from '@/app/runtime';
+import { RunStepThread } from '@/panel/step-thread';
 import { createDraftStore } from '@/chat/draft';
 import { outbox } from '@/test/outbox';
 import { renderApp } from '@/test/render';
@@ -478,5 +485,40 @@ describe('review tab commands', () => {
       'Run: show ticket',
       'Run: show pages',
     ]);
+  });
+});
+
+describe('a run waiting before its first step', () => {
+  const before: WorkflowRun = {
+    ...run,
+    steps: [
+      { stepId: 'build', state: 'not_started', waits: 'before', artifactsFound: [] },
+      { stepId: 'review', state: 'not_started', artifactsFound: [] },
+    ],
+  };
+
+  it('has no "Open run" in the panel beside its own run view (agent workbench spec 98)', async () => {
+    await renderApp(route, fake(before).runtime);
+    const side = within(await panel());
+    expect(side.getByText('This step has not started')).toBeTruthy();
+    expect(side.getByRole('region', { name: 'Gate' })).toBeTruthy();
+    expect(side.queryByRole('link', { name: 'Open run' })).toBeNull();
+  });
+
+  it('still links to the run from a panel elsewhere', async () => {
+    const router = createRouter({
+      routeTree: createRootRoute({
+        component: () => <RunStepThread run={before} workflow={workflow} />,
+      }),
+      history: createMemoryHistory({ initialEntries: ['/'] }),
+    });
+    await router.load();
+    render(
+      <RuntimeProvider runtime={fake(before).runtime}>
+        <RouterProvider router={router} />
+      </RuntimeProvider>,
+    );
+    const link = await screen.findByRole('link', { name: 'Open run' });
+    expect(link.getAttribute('href')).toBe('/workflows/runs/run-1');
   });
 });

@@ -11,6 +11,8 @@ import { Link, useRouter } from '@tanstack/react-router';
 import {
   ArrowDownIcon,
   CircleCheckIcon,
+  GitForkIcon,
+  PencilIcon,
   PinIcon,
   RotateCcwIcon,
   SearchXIcon,
@@ -44,11 +46,14 @@ import { routerPanelRoute } from '@/panel/model';
 import { fullPathOf, openFile, openHostItem } from '@/panel/viewer';
 import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
+import { modelLabel } from './model-label';
 import { Composer, type ComposerHandle } from './composer';
 import type { QuestionHold } from './question-card';
-import { useDispatch, useModels, useTopic } from './data';
+import { errorMessage, useDispatch, useModels, useTopic } from './data';
 import { copyText } from '@/components/copy-button';
-import { conversationStore, showConversation } from './conversation-nav';
+import { conversationStore, showConversation, showGoBack } from './conversation-nav';
+import { forkThread, goBackView, stopGoingBack } from './go-back';
+import { notify } from '@/lib/feedback';
 import { takeLanded } from './needs-you';
 import { HostLinkContext, useHostLinkRules, type HostLinks } from './host-links';
 import { PastedLinks } from './pasted-links';
@@ -71,6 +76,7 @@ import {
   latestContext,
   permissionOptions,
   runLabel,
+  threadTitle,
   runningTurn,
   type ContextUsage,
 } from './model';
@@ -131,6 +137,10 @@ function ThreadHeader({
   const projects = useTopic('projects') ?? [];
   const run = runLabel(thread, runs, workflows);
   const project = projects.find((candidate) => candidate.id === thread.projectId);
+  const threads = useTopic('threads') ?? [];
+  const origin = thread.forkedFrom
+    ? threads.find((candidate) => candidate.id === thread.forkedFrom?.threadId)
+    : undefined;
   return (
     <header className="flex shrink-0 flex-col gap-1.5 border-b border-border px-4 py-2">
       <div className="flex min-w-0 items-center gap-2">
@@ -197,6 +207,24 @@ function ThreadHeader({
         <span data-testid="thread-provider" className="text-xs text-muted-foreground">
           {instance ? providerLabel(instance, instances) : thread.providerInstanceId}
         </span>
+        {thread.forkedFrom && (
+          // A fork names the thread it came from (agent workbench spec 71).
+          <span
+            data-testid="thread-forked-from"
+            className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground"
+          >
+            <span aria-hidden>·</span>
+            <GitForkIcon aria-hidden className="size-3 shrink-0" />
+            Forked from{' '}
+            <Link
+              to="/chat/$threadId"
+              params={{ threadId: thread.forkedFrom.threadId }}
+              className="max-w-48 truncate underline-offset-2 hover:underline"
+            >
+              {origin ? threadTitle(origin) : 'a thread no longer here'}
+            </Link>
+          </span>
+        )}
       </div>
     </header>
   );
@@ -303,6 +331,33 @@ export function ThreadView({ threadId }: { threadId: string }) {
   );
 }
 
+// Above the composer while it holds the last message to send again (agent workbench spec 62,
+// 63): what sending does, and that files stay as the replaced turn left them.
+function EditNotice({ changedFiles, onCancel }: { changedFiles: boolean; onCancel: () => void }) {
+  return (
+    <div
+      data-testid="edit-notice"
+      role="status"
+      className="flex items-start gap-2 rounded-md border border-border px-3 py-2 text-xs text-muted-foreground"
+    >
+      <PencilIcon className="mt-0.5 size-3.5 shrink-0" />
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-foreground">
+          Editing your last message. Sending it replaces that message and its answer.
+        </span>
+        {changedFiles && (
+          <span data-testid="edit-files-note">
+            Files stay as they are: what that turn changed is not undone.
+          </span>
+        )}
+      </div>
+      <Button size="xs" variant="ghost" className="ml-auto" onClick={onCancel}>
+        Cancel
+      </Button>
+    </div>
+  );
+}
+
 // What the Assistant view adds to a conversation without a copy of it: rows after an item and
 // at the end, and its own composer text, check and notice. Skills are not offered there.
 export interface ConversationExtras {
@@ -342,7 +397,14 @@ export function ThreadConversation({
   const threadId = thread.id;
   const send = useDispatch();
   const turns = useTopic('turns', threadId) ?? [];
-  const items = useTopic('threadItems', threadId);
+  const storedItems = useTopic('threadItems', threadId);
+  // Edit and Fork (agent workbench spec 62, 71): a replaced exchange shows only as the earlier
+  // version on the message that replaced it.
+  const goBack = useMemo(() => goBackView(turns, storedItems ?? []), [turns, storedItems]);
+  const items = useMemo(
+    () => storedItems?.filter((item) => !goBack.replaced.has(item.turnId)),
+    [storedItems, goBack],
+  );
   const approvals = useTopic('approvals', threadId) ?? [];
   const questions = useTopic('questions', threadId) ?? [];
   const runs = useTopic('workflowRuns') ?? [];
@@ -500,6 +562,100 @@ export function ThreadConversation({
         : {}),
     });
   const stop = () => void send({ type: 'thread.interrupt', threadId });
+  // A chat thread in the chat view offers Edit and Fork where its provider can go back; on
+  // Codex the palette says why not (spec 63, 71).
+  const goBackShown =
+    !extras && !compact && thread.kind !== 'assistant' && thread.runId === null && !!instance;
+  const goBackRefusal =
+    goBackShown && instance
+      ? (providerChatOptions[instance.kind].cannotGoBack ?? undefined)
+      : undefined;
+  const goesBack = goBackShown && goBackRefusal === undefined;
+  const [editing, setEditing] = useState<{ threadId: string; turnId: string } | undefined>();
+  const edited =
+    editing?.threadId === threadId && goBack.editable?.turnId === editing.turnId
+      ? goBack.editable
+      : undefined;
+  const startEdit = () => {
+    const lastSent = goBack.editable;
+    if (!goesBack || !lastSent) return false;
+    setEditing({ threadId, turnId: lastSent.turnId });
+    // putBack drops the mention line where the files come back as chips.
+    composer.current?.putBack(lastSent.text, lastSent.skills, lastSent.images, lastSent.files);
+    return true;
+  };
+  const cancelEdit = () => {
+    setEditing(undefined);
+    composer.current?.setText('');
+  };
+  const editLast = (
+    text: string,
+    skills?: readonly SkillRef[],
+    files?: readonly string[],
+    images?: readonly SentImage[],
+  ) =>
+    edited
+      ? send({
+          type: 'thread.editLast',
+          threadId,
+          turnId: edited.turnId,
+          text,
+          ...(skills ? { skills: [...skills] } : {}),
+          ...(files && files.length > 0 ? { files: [...files] } : {}),
+          ...(images && images.length > 0
+            ? { attachments: images.map(({ id, name }) => (name ? { id, name } : { id })) }
+            : {}),
+        }).then((receipt) => {
+          setEditing(undefined);
+          return receipt;
+        })
+      : message(text, skills, files, images);
+  const fork = (turnId: string) =>
+    void forkThread(send, thread, turnId).then(
+      (forkId) => router?.navigate({ to: '/chat/$threadId', params: { threadId: forkId } }),
+      (error: unknown) => notify.error(errorMessage(error)),
+    );
+  const stuck = goesBack
+    ? stopGoingBack(thread, canResume && last?.state === 'failed', send)
+    : undefined;
+  const goOn = stuck
+    ? {
+        ...stuck,
+        run: () => void stuck.run().catch((error: unknown) => notify.error(errorMessage(error))),
+      }
+    : undefined;
+  const goBackActions = useRef({ startEdit, fork, goOn });
+  goBackActions.current = { startEdit, fork, goOn };
+  const goOnTitle = goOn?.title;
+  const goOnDetail = goOn?.detail;
+  const forkableKey = [...goBack.forkable.keys()].join('\n');
+  const editableId = goesBack ? goBack.editable?.itemId : undefined;
+  useEffect(() => {
+    if (!goBackShown) return undefined;
+    const forkable = forkableKey === '' ? [] : forkableKey.split('\n');
+    return showGoBack(threadId, {
+      refusal: goBackRefusal,
+      editable: editableId,
+      forkable: goBackRefusal === undefined ? forkable : [],
+      edit: () => void goBackActions.current.startEdit(),
+      fork: (itemId) => {
+        const turnId = itemId.replace(/:user$/, '');
+        goBackActions.current.fork(turnId);
+      },
+      ...(goOnTitle !== undefined && goOnDetail !== undefined
+        ? {
+            goOn: {
+              title: goOnTitle,
+              detail: goOnDetail,
+              run: () => goBackActions.current.goOn?.run(),
+            },
+          }
+        : {}),
+    });
+  }, [goBackShown, threadId, goBackRefusal, editableId, forkableKey, goOnTitle, goOnDetail]);
+  useEffect(() => {
+    setEditing(undefined);
+  }, [threadId]);
   const cancelQueued = () => send({ type: 'thread.cancelQueued', threadId });
   // Off the queue first, so a message the server sent meanwhile is not put back as unsent.
   const editQueued = async () => {
@@ -532,7 +688,7 @@ export function ThreadConversation({
   const { top, children } = nestSubagentWork(items ?? []);
   const endRows = turnEndRows(top, turns);
   const reasoningDone = finishedReasoning(items ?? []);
-  const modelLabel = (id: string) => models.find((model) => model.id === id)?.label ?? id;
+  const labelOf = (id: string) => modelLabel(models, id);
   const modeLabel = (id: string) =>
     instance
       ? (permissionOptions(instance.kind, id).find((option) => option.id === id)?.label ?? id)
@@ -548,7 +704,7 @@ export function ThreadConversation({
     const turn = turnById.get(turnId);
     const said = words.get(itemId);
     return {
-      modelLabel,
+      modelLabel: labelOf,
       modeLabel,
       ...(endRows.has(itemId) && turn?.endedAt ? { endedAt: turn.endedAt } : {}),
       reasoningDone: reasoningDone.has(itemId),
@@ -569,6 +725,9 @@ export function ThreadConversation({
       // An edited file opens in a tab of the view on screen, like a path in a message (spec 17,
       // 33); the Assistant view opens none.
       ...(fileLinks ? { openFile: fileLinks.open } : {}),
+      ...(goesBack && goBack.editable?.itemId === itemId ? { onEdit: () => void startEdit() } : {}),
+      ...(goesBack && goBack.forkable.has(itemId) ? { onFork: () => fork(turnId) } : {}),
+      earlier: goBack.earlier.get(turnId),
       recovery:
         itemId === errorId
           ? {
@@ -589,6 +748,7 @@ export function ThreadConversation({
                 : {}),
               onResume: () => void message(resumePrompt),
               resumePrompt,
+              goOn,
             }
           : undefined,
     };
@@ -794,9 +954,16 @@ export function ThreadConversation({
             running={running !== undefined && !question}
             placeholder={placeholder}
             blockedReason={extras?.blockedReason}
-            onSend={answerQuestion ?? message}
+            onSend={answerQuestion ?? (edited ? editLast : message)}
             onStop={stop}
-            notice={extras?.notice}
+            notice={
+              edited ? (
+                <EditNotice changedFiles={edited.changedFiles} onCancel={cancelEdit} />
+              ) : (
+                extras?.notice
+              )
+            }
+            onRecall={goesBack && goBack.editable && !question ? startEdit : undefined}
             bar={modelBar}
             onBarKey={barKeys}
             // The Assistant view keeps no draft (its text may hold a secret) and lists no commands.

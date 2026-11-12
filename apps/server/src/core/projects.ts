@@ -47,6 +47,8 @@ export function decideProject(
             cwd: command.cwd,
             defaultProviderInstanceId: command.defaultProviderInstanceId ?? null,
             defaultModel: command.defaultModel ?? null,
+            defaultEffort: command.defaultEffort ?? null,
+            defaultPermissionMode: command.defaultPermissionMode ?? null,
             createdAt: context.now,
           },
         },
@@ -68,6 +70,15 @@ export function decideProject(
       }
       if (command.defaultModel !== undefined && command.defaultModel !== project.defaultModel) {
         changes.defaultModel = command.defaultModel;
+      }
+      if (command.defaultEffort !== undefined && command.defaultEffort !== project.defaultEffort) {
+        changes.defaultEffort = command.defaultEffort;
+      }
+      if (
+        command.defaultPermissionMode !== undefined &&
+        command.defaultPermissionMode !== project.defaultPermissionMode
+      ) {
+        changes.defaultPermissionMode = command.defaultPermissionMode;
       }
       if (Object.keys(changes).length === 0) return [];
       return [

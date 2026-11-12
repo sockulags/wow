@@ -1,6 +1,6 @@
 import { settingsRegistry, type HostKind, type ServerMessage } from '@wow/contracts';
-import { discoverClaudeFolders } from '@wow/provider-claude';
-import { discoverCodexFolders } from '@wow/provider-codex';
+import { discoverClaudeFolders, listClaudeSessions } from '@wow/provider-claude';
+import { discoverCodexFolders, listCodexSessions } from '@wow/provider-codex';
 import { SecretStore, defaultProtector, type Protector } from '@wow/secrets';
 import type { WatchFactory } from '@wow/skills';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -15,7 +15,7 @@ import { AssistantTools } from './assistant/tools.js';
 import { Engine } from './core/engine.js';
 import { Subscriptions } from './core/subscriptions.js';
 import { openDatabase, type Database } from './db/database.js';
-import { projects, providerInstances } from './db/schema.js';
+import { projects, providerInstances, threads } from './db/schema.js';
 import { eq } from 'drizzle-orm';
 import {
   ProviderAdapters,
@@ -33,6 +33,7 @@ import { discoverProjects } from './projects/discover.js';
 import { readCurrentBranch, readHeadCommit } from './projects/git.js';
 import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
+import { listTerminalSessions } from './providers/sessions.js';
 import { ProviderUpdates, createNpmRunner, type RunNpm } from './providers/update.js';
 import type { Spawn } from './files/editor.js';
 import { closeConnection, createHandlers, type Connection } from './rpc/handlers.js';
@@ -163,6 +164,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     home,
     codeHost: (projectId) => codeHost?.(projectId),
     modelLabel: (model, providerInstanceId) => modelLabel?.(model, providerInstanceId),
+    platform: options.platform ?? process.platform,
     ...(options.clock ? { clock: options.clock } : {}),
   });
   const settings = new SettingsService(database.db, engine);
@@ -294,6 +296,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     maxBytes: () => settings.get('chat.imageMaxBytes'),
     listModels: (providerInstanceId) => providerService.listModels(providerInstanceId),
   });
+  engine.onCommit((commit) => images.copyForkImages(commit.events));
   const handlers = createHandlers({
     engine,
     subscriptions,
@@ -319,6 +322,27 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
         discover: { claude: discoverClaudeFolders, codex: discoverCodexFolders },
         platform: options.platform ?? process.platform,
       }),
+    listSessions: (providerInstanceId) =>
+      listTerminalSessions(
+        {
+          instances: database.db.select().from(providerInstances).all(),
+          projects: database.db.select().from(projects).all(),
+          threads: database.db
+            .select({
+              id: threads.id,
+              providerInstanceId: threads.providerInstanceId,
+              providerSessionId: threads.providerSessionId,
+            })
+            .from(threads)
+            .all(),
+          defaultConfigDir: (kind) => defaultConfigDir(kind, env),
+          list: { claude: listClaudeSessions, codex: listCodexSessions },
+          limit: settings.get('providers.sessionListLimit'),
+          promptChars: settings.get('providers.sessionPromptChars'),
+          platform: options.platform ?? process.platform,
+        },
+        providerInstanceId,
+      ),
     outlook: () => outlook,
     info: { version, home },
     clock: options.clock ?? (() => new Date()),

@@ -21,6 +21,7 @@ import {
 } from 'react';
 import { useStore } from 'zustand';
 import { useRuntime, useSetting } from '@/app/runtime';
+import { eventToBinding, normalizeBinding } from '@/app/keybindings';
 import { WithTooltip } from '@/components/hint';
 import { Button } from '@/components/ui/button';
 import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command';
@@ -135,6 +136,9 @@ export interface ComposerProps {
   // The skill and file lists open under the box, so they leave what sits above it in view (the
   // new thread's provider and project pickers, spec 57).
   readonly listsBelow?: boolean | undefined;
+  // Up in an empty box (`keybindings.composerEditLast`): brings the last message back to edit it
+  // (agent workbench spec 62); true when it did, so the key does nothing else.
+  onRecall?: (() => boolean) | undefined;
 }
 
 const noSkills: readonly string[] = [];
@@ -429,6 +433,7 @@ export function Composer({
   imageTarget,
   recentSkills = noSkills,
   listsBelow = false,
+  onRecall,
 }: ComposerProps) {
   const pickerId = useId();
   const filePickerId = useId();
@@ -471,6 +476,8 @@ export function Composer({
   const arrivals = useRef<Promise<void>>(Promise.resolve());
   const skills = useTopic('skills');
   const stopBinding = useSetting('keybindings.stopTurn');
+  const sendKey = useSetting('chat.sendKey');
+  const recallBinding = useSetting('keybindings.composerEditLast');
   const trigger = useSetting('chat.skillTrigger');
   const fileTrigger = useSetting('chat.fileTrigger');
   const matchesShown = useSetting('viewer.fileMatchesShown');
@@ -747,10 +754,12 @@ export function Composer({
     returned: readonly SentImage[] = [],
     mentioned: readonly string[] = [],
   ) => {
-    if (mentioned.length > 0) {
-      setFiles((current) => [...mentioned, ...current.filter((file) => !mentioned.includes(file))]);
+    // Without a file source there are no file chips, so the @ lines stay in the text.
+    const shown = fileSource ? mentioned : [];
+    if (shown.length > 0) {
+      setFiles((current) => [...shown, ...current.filter((file) => !shown.includes(file))]);
     }
-    const value = withoutMentionLines(queuedText, mentioned);
+    const value = withoutMentionLines(queuedText, shown);
     if (returned.length > 0 && takesImages) {
       setImages((current) => [
         ...returned,
@@ -898,6 +907,20 @@ export function Composer({
       }
     }
     if (onBarKey?.(event)) return;
+    if (
+      onRecall &&
+      text.trim() === '' &&
+      chips.length === 0 &&
+      files.length === 0 &&
+      images.length === 0 &&
+      !event.nativeEvent.isComposing &&
+      recallBinding !== '' &&
+      eventToBinding(event) === normalizeBinding(recallBinding) &&
+      onRecall()
+    ) {
+      event.preventDefault();
+      return;
+    }
     // The chips stand before the text: at its start, Backspace removes the last chip whole and
     // the left arrow steps onto it (wow skills spec 17).
     const box = event.currentTarget;
@@ -933,6 +956,8 @@ export function Composer({
       }
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      // With Ctrl+Enter as the send key a plain Enter is a new line (agent workbench spec 97).
+      if (sendKey === 'modEnter' && !event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
       send();
     }

@@ -428,8 +428,11 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .run();
       return ['turns'];
     case 'turn.ended': {
-      const { threadId, turnId, state, threadState, endedAt } = event.payload;
-      tx.update(turns).set({ state, endedAt }).where(eq(turns.id, turnId)).run();
+      const { threadId, turnId, state, threadState, endedAt, resumePoint } = event.payload;
+      tx.update(turns)
+        .set({ state, endedAt, ...(resumePoint === undefined ? {} : { resumePoint }) })
+        .where(eq(turns.id, turnId))
+        .run();
       tx.update(threadItems)
         .set({ streaming: false })
         .where(and(eq(threadItems.turnId, turnId), eq(threadItems.streaming, true)))
@@ -443,6 +446,24 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(threads.id, threadId))
         .run();
       return ['turns', 'threadItems', ...threadTopics];
+    }
+    case 'turn.replaced':
+      tx.update(turns)
+        .set({ replacedBy: event.payload.by })
+        .where(eq(turns.id, event.payload.turnId))
+        .run();
+      return ['turns'];
+    case 'thread.goBackChanged':
+      tx.update(threads)
+        .set({ goBack: event.payload.goBack })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
+    case 'thread.historyCopied': {
+      const { turns: copiedTurns, items } = event.payload;
+      for (const turn of copiedTurns) tx.insert(turns).values(turn).run();
+      for (const item of items) tx.insert(threadItems).values(item).run();
+      return ['turns', 'threadItems'];
     }
     case 'threadItem.added':
       tx.insert(threadItems).values(event.payload).run();
@@ -876,6 +897,8 @@ export function readModel(tx: DbOrTx): ReadModel {
         .all()
         .some((row) => isLiveRunState(row.state)),
     thread: (id) => tx.select().from(threads).where(eq(threads.id, id)).get(),
+    threadsWithSession: (sessionId) =>
+      tx.select().from(threads).where(eq(threads.providerSessionId, sessionId)).all(),
     runningTurn: (threadId) =>
       tx
         .select()
@@ -884,6 +907,15 @@ export function readModel(tx: DbOrTx): ReadModel {
         .get(),
     lastTurn: (threadId) =>
       tx.select().from(turns).where(eq(turns.threadId, threadId)).orderBy(desc(turns.index)).get(),
+    threadTurns: (threadId) =>
+      tx.select().from(turns).where(eq(turns.threadId, threadId)).orderBy(asc(turns.index)).all(),
+    threadItems: (threadId) =>
+      tx
+        .select()
+        .from(threadItems)
+        .where(eq(threadItems.threadId, threadId))
+        .orderBy(asc(threadItems.index))
+        .all(),
     turnCount: (threadId) =>
       tx.select({ n: count() }).from(turns).where(eq(turns.threadId, threadId)).get()?.n ?? 0,
     // The prompt is only in the stored event, which says what the provider was sent.

@@ -33,3 +33,19 @@ export function useBelow(breakpoint: Breakpoint): boolean {
     () => false,
   );
 }
+
+// The window's width in pixels, kept current while it is resized.
+export function useWindowWidth(): number {
+  return useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener('resize', onChange);
+      return () => window.removeEventListener('resize', onChange);
+    },
+    () => window.innerWidth,
+    () => 0,
+  );
+}
+
+// What one rem is in pixels; 16, the browsers' default, where nothing says otherwise (jsdom).
+export const remPixels = (): number =>
+  Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;

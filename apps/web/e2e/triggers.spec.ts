@@ -179,7 +179,7 @@ test.describe('triggers', () => {
     await expect(card.getByTestId('card-state')).toHaveText('Scheduled');
 
     // The mock provider finishes step 1 at once, so the run goes straight to its gate.
-    await expect(card.getByTestId('card-state')).toHaveText('Needs you', { timeout: 15_000 });
+    await expect(card.getByTestId('card-state')).toHaveText('Waiting for you', { timeout: 15_000 });
     await expect(
       page.getByRole('region', { name: /^Notifications/ }).getByText('Waiting for you'),
     ).toBeVisible();
@@ -227,12 +227,12 @@ test.describe('triggers', () => {
       const card = cardBlock(page, title);
       const runNow = card.getByRole('button', { name: `Run now: ${title}` });
       if (policy === 'run') {
-        await expect(card.getByTestId('card-state')).toHaveText('Needs you');
+        await expect(card.getByTestId('card-state')).toHaveText('Waiting for you');
         await expect(runNow).toHaveCount(0);
       } else if (policy === 'mark') {
         await expect(card.getByTestId('card-state')).toHaveText('Missed');
         await runNow.click();
-        await expect(card.getByTestId('card-state')).toHaveText('Needs you');
+        await expect(card.getByTestId('card-state')).toHaveText('Waiting for you');
       } else {
         await expect(card.getByTestId('card-state')).toHaveText('Missed');
         await expect(runNow).toHaveCount(0);

@@ -489,6 +489,8 @@ describe('the palette (agent workbench spec 6)', () => {
     expect(titled('Effort: High')?.detail).toBe('Current');
     expect(titled('Permission mode: Ask for permissions')?.detail).toBe('Current');
     expect(titled('Permission mode: Bypass permissions')).toBeDefined();
+    // Claude's dontAsk denies what is not allowed; it never read as "Don't ask" (spec 98).
+    expect(titled('Permission mode: Deny unless allowed')).toBeDefined();
     act(() => titled('Effort: Low (default)')?.run({} as never));
     act(() => titled('Permission mode: Plan only')?.run({} as never));
     expect(configured(sent)).toEqual([
@@ -561,6 +563,34 @@ describe('every composer that runs turns has the bar (agent workbench spec 5)', 
     expect(await within(shown).findByText('Sonnet')).toBeTruthy();
     expect(shown.textContent).toBe('Sonnet·Low·Ask');
     expect(screen.queryByRole('combobox', { name: 'Model' })).toBeNull();
+  });
+});
+
+describe('a new thread in a project with defaults (agent workbench spec 97)', () => {
+  it("starts on the project's instance with its model, effort and mode", async () => {
+    const { connection } = connectionWith({
+      providerInstances: [claude, codex],
+      // The last thread was on Claude in this project; the project names Codex.
+      threads: [{ ...thread, projectId: 'kettle' }],
+      projects: [
+        {
+          id: 'kettle',
+          name: 'Kettle',
+          cwd: '/work/kettle',
+          defaultProviderInstanceId: 'codex',
+          defaultModel: 'kettle-mini',
+          defaultEffort: 'medium',
+          defaultPermissionMode: 'read-only',
+          createdAt: '2026-11-01T08:00:00.000Z',
+        },
+      ],
+      skills: [],
+      backlogItems: [],
+    });
+    await renderApp('/chat/new', runtimeOf(connection));
+    const shown = await screen.findByTestId('model-bar');
+    expect(await within(shown).findByText('Kettle mini')).toBeTruthy();
+    expect(shown.textContent).toBe('Kettle mini·Medium·Read only');
   });
 });
 
