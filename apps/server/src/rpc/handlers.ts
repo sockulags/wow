@@ -164,7 +164,10 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         const refused = await deps.skills.refusal(checked);
         if (refused !== undefined) throw new RpcFault('rejected', refused);
       }
-      if (command.type === 'thread.sendMessage' && (command.attachments ?? []).length > 0) {
+      if (
+        (command.type === 'thread.sendMessage' || command.type === 'thread.editLast') &&
+        (command.attachments ?? []).length > 0
+      ) {
         const missing = await deps.images.refusal(command);
         if (missing !== undefined) throw new RpcFault('rejected', missing);
       }

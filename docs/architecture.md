@@ -2965,8 +2965,8 @@ Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attac
   models refuses nothing. The assistant's thread and a workflow step's thread (one with a
   `stepId`) are refused (`attachments.put` for its id, and `thread.sendMessage` with attachments
   in the decider): a step's thread takes no images wherever it is shown.
-- **Sending.** `dispatch` asks `ImageStore.refusal` before deciding a `thread.sendMessage` with
-  attachments: every image must be stored for that thread, so a message never starts a turn with a
+- **Sending.** `dispatch` asks `ImageStore.refusal` before deciding a `thread.sendMessage` or a
+  `thread.editLast` with attachments: every image must be stored for that thread, so a message never starts a turn with a
   missing image, and the thread's model is checked again as at `attachments.put`, since the model
   may have been changed after the images were added (a new thread is created before its first
   message, so this checks the model it was made with). A message queued with images is not

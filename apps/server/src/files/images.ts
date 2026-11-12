@@ -135,11 +135,13 @@ export class ImageStore {
     return { mediaType: attachmentMediaType(id), base64: bytes.toString('base64') };
   }
 
-  // Looked at before a message is decided: every image it names must be stored for its thread,
+  // Looked at before a message or an edit of one is decided: every image it names must be stored for its thread,
   // so a turn never starts without one of its images, and the thread's model must still take
   // images, since it may have been changed after they were added (spec 54).
   async refusal(command: Command): Promise<string | undefined> {
-    if (command.type !== 'thread.sendMessage') return undefined;
+    if (command.type !== 'thread.sendMessage' && command.type !== 'thread.editLast') {
+      return undefined;
+    }
     const attachments = command.attachments ?? [];
     for (const { id } of attachments) {
       const found = await stat(threadImagePath(this.#deps.home, command.threadId, id)).then(
