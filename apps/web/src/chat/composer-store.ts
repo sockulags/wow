@@ -7,6 +7,8 @@ import { createStore } from 'zustand';
 
 export interface ActiveSkillComposer {
   readonly id: string;
+  // The thread whose draft it holds; absent for a composer that keeps none.
+  readonly draftKey?: string | undefined;
   // The picked skills' names, in the order they are sent.
   readonly chips: readonly string[];
   openSkills(): void;
@@ -32,3 +34,12 @@ export function showSkillComposer(composer: ActiveSkillComposer): () => void {
 
 export const activeSkillComposer = (state: SkillComposersState): ActiveSkillComposer | undefined =>
   state.composers.at(-1);
+
+// A thread's own composer, so text taken off its queue goes back into its box and no other.
+export const threadSkillComposer = (
+  state: SkillComposersState,
+  threadId: string | undefined,
+): ActiveSkillComposer | undefined =>
+  threadId === undefined
+    ? undefined
+    : state.composers.findLast((composer) => composer.draftKey === threadId);

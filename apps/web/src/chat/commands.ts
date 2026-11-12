@@ -6,7 +6,7 @@ import {
 } from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
-import { activeSkillComposer, skillComposerStore } from './composer-store';
+import type { ActiveSkillComposer } from './composer-store';
 import { canMarkDone } from './model';
 import { threadListCommands, type ThreadCommandData } from './thread-commands';
 import { providerLabel } from './view-model';
@@ -22,6 +22,8 @@ export interface ChatCommandData {
   readonly projects?: readonly Project[];
   // The thread list's project chip and the palette's message-text hits.
   readonly threadList?: Pick<ThreadCommandData, 'projectId' | 'found'>;
+  // The open thread's own composer, while it takes text (`threadSkillComposer`).
+  readonly openComposer?: ActiveSkillComposer | undefined;
 }
 
 // Palette commands for the chat (spec 22): every thread, new thread, switch provider, stop, mark
@@ -34,6 +36,7 @@ export function chatCommands({
   inChat = openThread !== undefined,
   projects = [],
   threadList,
+  openComposer,
 }: ChatCommandData): AppCommand[] {
   const commands: AppCommand[] = [
     {
@@ -130,8 +133,9 @@ export function chatCommands({
     }
     const queued = thread.queued;
     if (queued) {
-      commands.push(
-        {
+      // Only with a box to put the text in: taking it off the queue without one would lose it.
+      if (openComposer) {
+        commands.push({
           id: 'chat.editQueued',
           title: 'Edit queued message',
           group: 'Chat',
@@ -139,30 +143,26 @@ export function chatCommands({
           run: ({ connection }) => {
             if (!connection) return;
             dispatch(connection, { type: 'thread.cancelQueued', threadId: thread.id }).then(
-              () =>
-                activeSkillComposer(skillComposerStore.getState())?.putBack(
-                  queued.text,
-                  queued.skills ?? [],
-                ),
+              () => openComposer.putBack(queued.text, queued.skills ?? []),
               () => undefined,
             );
           },
+        });
+      }
+      commands.push({
+        id: 'chat.cancelQueued',
+        title: 'Cancel queued message',
+        group: 'Chat',
+        keywords: ['queue', 'queued', 'cancel', 'remove', 'message'],
+        run: ({ connection }) => {
+          if (connection) {
+            void dispatch(connection, {
+              type: 'thread.cancelQueued',
+              threadId: thread.id,
+            }).catch(() => undefined);
+          }
         },
-        {
-          id: 'chat.cancelQueued',
-          title: 'Cancel queued message',
-          group: 'Chat',
-          keywords: ['queue', 'queued', 'cancel', 'remove', 'message'],
-          run: ({ connection }) => {
-            if (connection) {
-              void dispatch(connection, {
-                type: 'thread.cancelQueued',
-                threadId: thread.id,
-              }).catch(() => undefined);
-            }
-          },
-        },
-      );
+      });
     }
   }
 

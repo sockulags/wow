@@ -12,7 +12,11 @@ import { chatCommands } from '@/chat/commands';
 import { threadChangesCommands, threadChangesStore } from '@/chat/thread-changes';
 import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
-import { activeSkillComposer, skillComposerStore } from '@/chat/composer-store';
+import {
+  activeSkillComposer,
+  skillComposerStore,
+  threadSkillComposer,
+} from '@/chat/composer-store';
 import { skillComposerCommands } from '@/chat/skill-commands';
 import { rowActionCommands } from '@/chat/row-commands';
 import { activeTaskPin, taskPinCommands, taskPinStore } from '@/chat/task-pin';
@@ -115,6 +119,9 @@ export function useCommands(gated = false): {
   const connectShown = useStore(connectStore, (state) => state.shown > 0);
   const questionCard = useStore(questionStore, activeQuestionCard);
   const skillComposer = useStore(skillComposerStore, activeSkillComposer);
+  const openComposer = useStore(skillComposerStore, (state) =>
+    threadSkillComposer(state, openThreadId),
+  );
   const taskPin = useStore(taskPinStore, activeTaskPin);
   const rowAreas = useStore(rowActionStore, (state) => state.areas);
   const taskPinOpen = useStore(taskPinStore, (state) =>
@@ -161,6 +168,7 @@ export function useCommands(gated = false): {
         inChat: pathname.startsWith('/chat'),
         projects: projects ?? [],
         threadList: { projectId: listProjectId, found: paletteHits },
+        openComposer,
       }),
       ...workflowCommands({
         workflows: workflows ?? [],
@@ -282,6 +290,7 @@ export function useCommands(gated = false): {
     connectShown,
     questionCard,
     skillComposer,
+    openComposer,
     taskPin,
     taskPinOpen,
     listProjectId,

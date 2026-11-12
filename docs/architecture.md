@@ -2769,7 +2769,9 @@ focuses on `/chat/new` and on opening a thread; its skill list is a cmdk `Comman
 `skillGroupOf` (see "Skills in the composer"). A message written while a turn runs goes to the
 server, which queues it (see "Providers", Queued messages); the conversation ends with the queued
 row (`QueuedMessageItem` in `items.tsx`: "Queued · sent when the turn ends", its text and skills,
-Edit and Cancel; palette "Edit queued message" and "Cancel queued message"), and a user item
+Edit and Cancel; palette "Edit queued message" and "Cancel queued message"; the palette's Edit
+puts the text back through the open thread's own registered composer, `threadSkillComposer` by
+`draftKey`, and is not offered while there is none), and a user item
 sent from the queue says "Sent during the turn" or "Sent when the turn ended". While a question
 waits, the composer sends
 `question.answer` with its text as the answer's typed text. Questions are drawn by the question

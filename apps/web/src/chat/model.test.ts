@@ -2,6 +2,7 @@ import type { ProviderInstance, Skill, Thread, ThreadItem, WorkflowRun } from '@
 import { describe, expect, it, vi } from 'vitest';
 import type { CommandContext } from '@/app/commands';
 import { chatCommands } from './commands';
+import { showSkillComposer, skillComposerStore, threadSkillComposer } from './composer-store';
 import { createDraftStore } from './draft';
 import {
   canMarkDone,
@@ -258,12 +259,22 @@ const instance: ProviderInstance = {
   updateRun: null,
 };
 
+const openComposer = {
+  id: 'composer-a',
+  draftKey: 'a',
+  chips: [],
+  openSkills: () => undefined,
+  removeSkill: () => undefined,
+  putBack: () => undefined,
+};
+
 const ids = (running: boolean, changes: Partial<Thread> = {}) =>
   chatCommands({
     threads: [],
     instances: [instance],
     openThread: thread('a', changes),
     running,
+    openComposer,
   })
     .map((command) => command.id)
     .filter((id) => ['chat.compact', 'chat.editQueued', 'chat.cancelQueued'].includes(id));
@@ -308,5 +319,60 @@ describe('clear and compact', () => {
         queued: { id: 'q', text: 'Then this', queuedAt: '2026-11-02T08:00:00Z' },
       }),
     ).toEqual(['chat.editQueued', 'chat.cancelQueued']);
+  });
+});
+
+const composer = (id: string, draftKey: string | undefined) => {
+  const putBack = vi.fn<(text: string, skills: readonly unknown[]) => void>();
+  return {
+    putBack,
+    entry: {
+      id,
+      draftKey,
+      chips: [],
+      openSkills: () => undefined,
+      removeSkill: () => undefined,
+      putBack,
+    },
+  };
+};
+
+describe('Edit queued message from the palette (agent workbench spec 52)', () => {
+  const queued = { id: 'q', text: 'Then this', queuedAt: '2026-11-02T08:00:00Z' };
+  const editQueued = (composers: Parameters<typeof showSkillComposer>[0][]) => {
+    const hide = composers.map((entry) => showSkillComposer(entry));
+    const found = threadSkillComposer(skillComposerStore.getState(), 'a');
+    hide.forEach((stop) => stop());
+    return chatCommands({
+      threads: [],
+      instances: [instance],
+      openThread: thread('a', { queued }),
+      running: true,
+      openComposer: found,
+    }).find((command) => command.id === 'chat.editQueued');
+  };
+
+  it('is not offered while the thread has no composer to take the text', () => {
+    expect(editQueued([composer('panel', 'b').entry])).toBeUndefined();
+  });
+
+  it("puts the text back in the thread's own composer, not the one focused last", async () => {
+    const own = composer('main', 'a');
+    const panel = composer('panel', 'b');
+    const command = editQueued([own.entry, panel.entry]);
+    const request = vi.fn<() => Promise<unknown>>(() =>
+      Promise.resolve({
+        commandId: '00000000-0000-4000-8000-000000000000',
+        seqs: [],
+        duplicate: false,
+      }),
+    );
+    const answered = new Promise<void>((resolve) =>
+      own.putBack.mockImplementation(() => resolve()),
+    );
+    command?.run({ connection: { request } } as unknown as CommandContext);
+    await answered;
+    expect(own.putBack).toHaveBeenCalledWith('Then this', []);
+    expect(panel.putBack).not.toHaveBeenCalled();
   });
 });

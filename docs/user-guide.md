@@ -527,7 +527,8 @@ While a turn runs, the thread shows how long it has been working. You can write 
 meanwhile: Enter queues it with the server, and the conversation shows it as "Queued · sent when
 the turn ends". A second message joins it. It stays queued when you switch threads or restart
 wow, and the server sends it when the turn ends. **Edit** puts it back in the composer and
-**Cancel** takes it off; both are in the palette too. On Claude Code the message goes into the
+**Cancel** takes it off; both are in the palette too ("Edit queued message" only while the
+thread's composer can take text). On Claude Code the message goes into the
 running turn at once, as in Claude Code itself, and shows as "Sent during the turn". What you type
 and have not sent stays with its thread: switch threads or restart wow and it is still there. A
 failed turn shows **Retry** (sends your last

@@ -515,12 +515,13 @@ export function Composer({
     if (!takesSkills || disabled) return undefined;
     return showSkillComposer({
       id: composerId,
+      draftKey,
       chips: chipNames === '' ? [] : chipNames.split('\n'),
       openSkills: () => actions.current.openSkills(),
       removeSkill: (index: number) => actions.current.removeChip(index),
       putBack: (value, refs) => actions.current.putBack(value, refs),
     });
-  }, [takesSkills, disabled, composerId, chipNames]);
+  }, [takesSkills, disabled, composerId, chipNames, draftKey]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (pickerOpen) {
