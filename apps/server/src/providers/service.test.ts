@@ -430,6 +430,39 @@ describe('provider service', () => {
         forkFrom: { threadId: 't2', turnId: 't2:turn:0' },
       }),
     ).toThrow('A thread forks or resumes a session, not both');
+
+    // Two threads writing to one session would interleave in its file (finding 142).
+    const resume = (threadId: string, providerInstanceId: string) =>
+      dispatch({
+        type: 'thread.create',
+        threadId,
+        providerInstanceId,
+        cwd: '/work/kettle',
+        model: 'sonnet',
+        effort: 'high',
+        permissionMode: 'default',
+        resumeSessionId: 'terminal-session-1',
+      });
+    const instance = (providerInstanceId: string, configDir: string) =>
+      dispatch({
+        type: 'providerInstance.create',
+        providerInstanceId,
+        kind: 'claude',
+        name: providerInstanceId,
+        binaryPath: 'claude',
+        configDir,
+        env: {},
+        launchArgs: [],
+      });
+    instance('claude-default', '');
+    instance('claude-home', '/home/me/.claude-home');
+    const held = 'Thread "Make the kettle whistle twice" already goes on with this session';
+    expect(() => resume('t4', 'claude-work')).toThrow(held);
+    expect(() => resume('t5', 'claude-default')).toThrow(held);
+    resume('t6', 'claude-home');
+    expect(rows('threads').find((row) => row['id'] === 't6')?.['providerSessionId']).toBe(
+      'terminal-session-1',
+    );
   });
 
   it('pins and unpins a thread without touching its activity time', () => {

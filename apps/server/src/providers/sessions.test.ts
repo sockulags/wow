@@ -210,4 +210,33 @@ describe('listTerminalSessions (agent workbench spec 72)', () => {
       ['s-5', null],
     ]);
   });
+
+  it('names the thread only for the session in the config folder its instance reads (finding 142)', async () => {
+    const given = deps({
+      instances: [
+        instance('claude-work', 'claude', '/home/me/.claude'),
+        instance('claude-home', 'claude', '/home/me/.claude-home'),
+      ],
+      threads: [
+        { id: 'thread-home', providerInstanceId: 'claude-home', providerSessionId: 'same' },
+      ],
+      list: {
+        claude: (configDir) =>
+          Promise.resolve([
+            {
+              id: 'same',
+              cwd: configDir === '/home/me/.claude' ? '/work/kettle' : '/work/tea',
+              firstPrompt: null,
+              lastUsedAt: at(1),
+            },
+          ]),
+        codex: () => Promise.resolve([]),
+      },
+    });
+    const sessions = await listTerminalSessions(given);
+    expect(sessions.map((session) => [session.providerInstanceId, session.threadId])).toEqual([
+      ['claude-work', null],
+      ['claude-home', 'thread-home'],
+    ]);
+  });
 });

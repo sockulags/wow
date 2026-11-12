@@ -52,7 +52,12 @@ export async function listTerminalSessions(
       : resolved;
   };
   const projectOf = new Map(deps.projects.map((project) => [key(project.cwd), project]));
-  const kindOf = new Map(deps.instances.map((instance) => [instance.id, instance.kind]));
+  // A session id names a session only within the config folder an instance reads.
+  const filesOf = (instance: ProviderInstance) =>
+    `${instance.kind}\n${key(instance.configDir || deps.defaultConfigDir(instance.kind))}`;
+  const filesOfInstance = new Map(
+    deps.instances.map((instance) => [instance.id, filesOf(instance)]),
+  );
   // One spelling per folder, so the dialog groups 'C:\Work\Kettle' and 'c:\work\kettle' as one:
   // the project's, else the first seen.
   const spelling = new Map<string, string>();
@@ -63,13 +68,13 @@ export async function listTerminalSessions(
   for (const instance of deps.instances) {
     if (providerInstanceId !== undefined && instance.id !== providerInstanceId) continue;
     const configDir = instance.configDir || deps.defaultConfigDir(instance.kind);
-    const folderKey = `${instance.kind}\n${key(configDir)}`;
+    const folderKey = filesOf(instance);
     if (read.has(folderKey)) continue;
     read.add(folderKey);
     const owned = deps.threads.filter(
       (thread) =>
         thread.providerSessionId !== null &&
-        kindOf.get(thread.providerInstanceId) === instance.kind,
+        filesOfInstance.get(thread.providerInstanceId) === folderKey,
     );
     // wow's own threads write to the same files; the limit counts the sessions started
     // elsewhere, so those do not fall off the list for someone who mostly works in wow.

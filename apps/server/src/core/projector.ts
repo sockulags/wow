@@ -897,6 +897,8 @@ export function readModel(tx: DbOrTx): ReadModel {
         .all()
         .some((row) => isLiveRunState(row.state)),
     thread: (id) => tx.select().from(threads).where(eq(threads.id, id)).get(),
+    threadsWithSession: (sessionId) =>
+      tx.select().from(threads).where(eq(threads.providerSessionId, sessionId)).all(),
     runningTurn: (threadId) =>
       tx
         .select()

@@ -1818,7 +1818,7 @@ and keeps up to the limit of sessions no wow thread holds and those wow sessions
 newest limit. A folder gets one spelling (the project's, else the first seen), so the dialog groups
 `C:\Work\Kettle` and `c:\work\kettle` together. Each row is the session plus its instance, the
 `projectId` whose folder it is (compared as discovery compares folders), the `threadId` of a wow
-thread whose `providerSessionId` it already is, and `unavailable: "Its folder is gone"` when the
+thread whose `providerSessionId` it already is on an instance reading the same config folder, and `unavailable: "Its folder is gone"` when the
 folder no longer exists. Nothing is written and nothing is cached: the CLIs write these files while
 wow is not looking, so the list is read each time the dialog opens. The web app's
 `chat/terminal-sessions.tsx` (`TerminalSessionsDialog`, palette `chat.openSession`, layout
@@ -1828,7 +1828,10 @@ greyed and cannot be picked. A pick opens the thread that already resumes it, or
 `thread.create` with `resumeSessionId`, the session's folder and project, the title from its first
 prompt and the start a new thread there would get (`threadDefaults`), then opens it. The server
 stores `resumeSessionId` as the thread's `providerSessionId`, so the first message goes out with it
-as `resumeId` like any later turn; `forkFrom` and `resumeSessionId` together are refused.
+as `resumeId` like any later turn; `forkFrom` and `resumeSessionId` together are refused, and so
+is a `resumeSessionId` another thread already goes on with on an instance of the same kind reading
+the same config folder (an instance on the default folder counts as reading any), since two threads
+would write to one session file.
 
 **New thread defaults** (agent workbench spec 97). A project holds `defaultProviderInstanceId`,
 `defaultModel`, `defaultEffort` and `defaultPermissionMode` (the last two since migration
