@@ -96,6 +96,21 @@ export const ProviderCommand = z.discriminatedUnion('type', [
     cwd: z.string().min(1),
     threadId: z.string().min(1).optional(),
   }),
+  // Stops a task running in the background (agent workbench spec 90), by the id the provider
+  // gave it in `backgroundTasks`. Only for a provider whose chat options say `stopsTasks`.
+  z.object({
+    type: z.literal('stopTask'),
+    threadId: z.string().min(1),
+    taskId: z.string().min(1),
+  }),
+  // Sends the running turn's command or subagent to the background, as Ctrl+B does in Claude
+  // Code: the call with this provider item id, or every one that runs when it is absent. Only for
+  // a provider whose chat options say `sendsToBackground`.
+  z.object({
+    type: z.literal('toBackground'),
+    threadId: z.string().min(1),
+    itemId: z.string().min(1).optional(),
+  }),
   z.object({ type: z.literal('test') }),
 ]);
 export type ProviderCommand = z.infer<typeof ProviderCommand>;
@@ -124,8 +139,23 @@ const ThreadScoped = { threadId: z.string().min(1) };
 // What a tool call is, in wow's words, so the conversation draws it without reading a provider's
 // shapes (agent workbench spec 27 to 30). `edit` covers file edits and writes; `other` is any
 // tool wow has no row of its own for.
-export const ToolKind = z.enum(['command', 'read', 'search', 'web', 'mcp', 'edit', 'other']);
+// `subagent` is a call that hands work to another agent (Claude Code's Agent tool, Codex's collab
+// agent call), whose own calls are nested under it by `parentItemId` (spec 44).
+export const ToolKind = z.enum([
+  'command',
+  'read',
+  'search',
+  'web',
+  'mcp',
+  'edit',
+  'subagent',
+  'other',
+]);
 export type ToolKind = z.infer<typeof ToolKind>;
+
+// How a subagent stands, in wow's words, where the provider reports it (Codex's agent states).
+export const AgentState = z.enum(['starting', 'running', 'done', 'failed', 'stopped', 'missing']);
+export type AgentState = z.infer<typeof AgentState>;
 
 // The facts an adapter reads from a tool call's input, each only where the provider gives it.
 export const ToolFacts = z.object({
@@ -156,6 +186,12 @@ export const ToolFacts = z.object({
   // The diff is only what the edit writes, read from its input (a write over a file that may
   // exist): the file's current content is not in it. False once a written result replaced it.
   diffWithoutFile: z.boolean().optional(),
+  // A subagent: what it was asked to do in a few words, the whole prompt, its type (Claude
+  // Code's subagent type), and how it stands where the provider reports that (Codex).
+  description: z.string().optional(),
+  prompt: z.string().optional(),
+  agentType: z.string().optional(),
+  agentState: AgentState.optional(),
 });
 export type ToolFacts = z.infer<typeof ToolFacts>;
 
@@ -184,10 +220,16 @@ export const toolFactsOf = (value: unknown): Partial<ToolFacts> => {
 // When it ends, the provider may go on with the thread by itself in a turn wow did not start.
 // `agent` marks a background agent: a workflow step waits only for those, since a shell command
 // such as a dev server or a watcher may never end.
+// `kind`, `startedAt` and `lastOutput` are absent in tasks stored before them (spec 48, 90).
+// `startedAt` is the server's clock when it first heard of the task; adapters leave it out.
+// `lastOutput` is the latest progress line the provider reported for it.
 export const BackgroundTask = z.object({
   id: z.string().min(1),
   description: z.string(),
   agent: z.boolean().optional(),
+  kind: z.enum(['agent', 'command', 'other']).optional(),
+  startedAt: z.iso.datetime({ offset: true }).optional(),
+  lastOutput: z.string().optional(),
 });
 export type BackgroundTask = z.infer<typeof BackgroundTask>;
 
@@ -207,6 +249,8 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     ...ThreadScoped,
     itemId: z.string().min(1),
     delta: z.string(),
+    // Text a subagent wrote, under the call that started it (spec 44).
+    parentItemId: z.string().min(1).optional(),
   }),
   z.object({
     type: z.literal('reasoningDelta'),
@@ -222,6 +266,8 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     input: z.unknown(),
     // Absent from an adapter that does not normalize this tool; the row then shows its name.
     ...ToolFacts.partial().shape,
+    // A call a subagent made: the provider item id of the subagent call it belongs under.
+    parentItemId: z.string().min(1).optional(),
   }),
   z.object({
     type: z.literal('toolCallOutput'),
@@ -241,6 +287,11 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     // An edit's diff as the provider reported it once it was written; it replaces the one the
     // call started with (made from the call's input).
     diff: z.string().optional(),
+    // A subagent call: how many tool calls it made, its final answer and how it ended, where the
+    // provider says so.
+    toolCount: z.number().int().nonnegative().optional(),
+    answer: z.string().optional(),
+    agentState: AgentState.optional(),
   }),
   z.object({
     type: z.literal('approvalRequested'),
@@ -328,6 +379,10 @@ export interface ProviderChatOptions {
   // The modes Shift+Tab steps through in the composer, in order (agent workbench spec 3). A
   // dangerous mode is never here: it is chosen from the list only.
   readonly modeCycle: readonly string[];
+  // Whether a background task can be stopped (`stopTask`) and a running command or subagent
+  // sent to the background (`toBackground`) on this provider (spec 90). Codex has neither.
+  readonly stopsTasks: boolean;
+  readonly sendsToBackground: boolean;
 }
 
 export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOptions>> = {
@@ -345,6 +400,8 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
     assistantPermissionMode: 'dontAsk',
     requiresModel: false,
     modeCycle: ['default', 'acceptEdits', 'plan'],
+    stopsTasks: true,
+    sendsToBackground: true,
   },
   codex: {
     permissionModes: [
@@ -363,6 +420,8 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
     assistantPermissionMode: 'read-only',
     requiresModel: true,
     modeCycle: ['read-only', 'auto', 'untrusted'],
+    stopsTasks: false,
+    sendsToBackground: false,
   },
 };
 

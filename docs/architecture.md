@@ -180,7 +180,8 @@ turns            id, threadId, index, state, startedAt, endedAt, usage(json),
                  turn began, for "This turn only" (migration 0029_thread_changes)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'|'settings_change'|
-                 'compaction'), payload(json), streaming
+                 'compaction'), payload(json), streaming   -- a subagent's tool_call and
+                 assistant_text carry its call's row id as payload.parentItemId
 approvals        id, threadId, itemId, kind ('command'|'fileChange'|'tool'|'plan'), request(json),
                  decision? ('allowOnce'|'allowSession'|'allowAlways'|'deny'), decidedAt?   -- what
                  the card shows (facts, rule, plan, byRule, note) is in the approval item's payload
@@ -284,15 +285,19 @@ ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode
                  answerApproval {approvalId, decision, note?, permissionMode?} |
                  answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
                  listModels | handOver {threadId, prompt} -> {taken} |
-                 listCommands {cwd, threadId?} -> [{name, description, argumentHint?}] | test
-ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta |
-                 toolCallStarted {itemId, name, input, ...ToolFacts?} | toolCallOutput |
-                 toolCallCompleted {itemId, status, exitCode?, durationMs?, diff?} |
+                 listCommands {cwd, threadId?} -> [{name, description, argumentHint?}] |
+                 stopTask {threadId, taskId} | toBackground {threadId, itemId?} | test
+ProviderEvent:   session {providerSessionId} | textDelta {itemId, delta, parentItemId?} |
+                 reasoningDelta |
+                 toolCallStarted {itemId, name, input, ...ToolFacts?, parentItemId?} |
+                 toolCallOutput |
+                 toolCallCompleted {itemId, status, exitCode?, durationMs?, diff?, toolCount?,
+                                    answer?, agentState?} |
                  approvalRequested {approvalId, kind, summary, request, facts?} | questionAsked |
                  taskListUpdated | usage {..., model?} | contextUsage |
                  compacted {trigger manual|auto, preTokens?, postTokens?} | turnCompleted |
                  turnFailed | turnInterrupted | turnStartedByProvider |
-                 backgroundTasks {tasks [{id, description, agent?}]}
+                 backgroundTasks {tasks [{id, description, agent?, kind?, lastOutput?}]}
 ```
 
 **Tool facts.** Each adapter normalizes a tool call into `ToolFacts` (`provider.ts`): `kind`
@@ -305,10 +310,35 @@ duration, so a failed one is only `error`), Read and NotebookRead reads (offset 
 MultiEdit, Write and NotebookEdit edits, anything else `other`. Codex: a `commandExecution` is a
 command with its `cwd`, and its completion carries `exitCode` and `durationMs`; `mcpToolCall` is
 MCP (with `durationMs`), `fileChange` an edit (with `path` when it changes one file), `webSearch`
-web, `imageView` a read, `dynamicToolCall` other. The server stamps `startedAt` on
+web, `imageView` a read, `dynamicToolCall` other, a `collabAgentToolCall` that spawns an agent a
+subagent (below). The server stamps `startedAt` on
 `toolCallStarted` and `endedAt` on `toolCallCompleted` with its own clock and keeps the facts,
 exit code and provider duration in the item's payload, so a reload shows the same times. A call
 stored before has none of these fields and is drawn as it was.
+
+**Subagents** (agent workbench spec 44). A call that hands work to another agent has kind
+`subagent`, with `description`, `prompt`, `agentType` and `agentState` (`starting`, `running`,
+`done`, `failed`, `stopped`, `missing`) where the provider gives them. What the subagent itself
+does arrives as ordinary `toolCallStarted` and `textDelta` events with `parentItemId`, the
+provider id of the subagent call; the server stores it as `parentItemId` (the call's row id) on
+the `tool_call` or `assistant_text` payload, so no migration was needed. When the call ends,
+`toolCallCompleted` may carry `toolCount`, `answer` and `agentState`, kept on the call's payload.
+A turn's last text (a step's final message, the plan fallback) is the thread's own agent's: items
+with a `parentItemId` are left out (`ownText` in `db/schema.ts`). Claude Code: `Agent` (`Task` in
+older versions) is the subagent call; its messages marked with `parent_tool_use_id` become the
+nested events (only their complete assistant messages: their stream deltas and thinking are
+dropped, and a subagent's task list stays its own), and the Agent result's `totalToolUseCount`,
+`totalDurationMs` and text content give the count, the time and the answer; a subagent launched
+into the background answers without them. Its messages while no turn runs (a background
+subagent after the turn) are dropped and start no turn. Codex: a `collabAgentToolCall` with tool
+`spawnAgent` is the call, with its prompt; the other collab calls (wait, send input, close) add
+no row but report the agents they name in `agentsStates`, and each change of a spawned agent's
+state is sent as another `toolCallCompleted` of the spawn call, with the agent's last message as
+the answer once it is done or failed (a closed agent that had finished stays finished). Whether
+the spawned agent's own codex thread reaches wow's connection is not verified; when it does,
+its items and messages (ids prefixed with that thread's id) are nested the same way, and when
+it does not, the row shows prompt, state and final message only. The protocol fingerprint has
+the collab fields the adapter reads, all marked as coped with (hand-added).
 
 **Turns the provider starts.** Claude Code goes on with a thread by itself when background work
 it started (a background subagent or shell command) ends: the open `query()` stream carries more
@@ -325,8 +355,13 @@ turn wow started runs, `turnStartedByProvider` is ignored and the output stays i
 message sent while Claude Code's own turn runs goes into its input queue; Claude Code answers it
 after (or within) that turn. `backgroundTasks` is the SDK's level signal
 (`system/background_tasks_changed`, Claude Code's own `ambient` tasks left out; `agent: true`
-marks a `local_agent` task), stored as the thread's `backgroundTasks` (`thread.backgroundChanged`); the chat shows "Waiting for background
-work" while it is not empty and no turn runs. When Claude Code exits with background work and no
+marks a `local_agent` task; `kind` is `agent`, `command` for `local_bash`, else `other`), stored
+as the thread's `backgroundTasks` (`thread.backgroundChanged`). A task's `lastOutput` is the
+latest `system/task_progress` of it: its `summary`, else "<last tool> · n tool calls"; the next
+list keeps it. Reading a task's own output is not a query method of the SDK, so that is all wow
+has. The server stamps each task's `startedAt` with its clock when it is first listed and keeps
+it in later lists. The chat shows the tasks as chips (see "Subagents and background work" under
+"Chat view"). When Claude Code exits with background work and no
 turn running, the adapter reports a started and failed turn. At startup `recover()` fails such a
 turn only for a thread of a running workflow step that still lists a background agent; every other
 thread only gets its list cleared and keeps its state. When `ProviderService` releases an adapter
@@ -437,6 +472,17 @@ thread it maps to, since the app-server has no request that unloads one.
   the text back in the composer) never puts back a message the server already sent. A queued
   message the server cannot send when the turn ends (a skill gone, the assistant unable to run)
   stays queued with Edit and Cancel; the next turn end tries again.
+- **Background work** (agent workbench spec 90). `thread.stopTask {threadId, taskId}` (a task the
+  thread lists) and `thread.toBackground {threadId, itemId?}` (a running `command` or `subagent`
+  call of the running turn, or every one when absent) are refused where the provider cannot:
+  `providerChatOptions[kind].stopsTasks` and `.sendsToBackground`, true for Claude Code and false
+  for Codex, which has no such request. They become `thread.taskStopRequested` and
+  `thread.backgroundRequested` (no projection), and the provider service sends `stopTask` and
+  `toBackground` (with the provider's call id). Claude Code runs them as the query's
+  `stopTask(taskId)` and `backgroundTasks(toolUseId)`; a `false` answer (nothing of that id runs
+  in the foreground any more) fails the command. A provider that refuses changes nothing; the
+  refusal is logged and the turn goes on. What follows (the call's result, a new task list) comes
+  as the provider's own events.
 - **Claude details.** The SDK version is pinned exactly in `packages/provider-claude/package.json`.
   `launchArgs` (`--flag value`, `--flag=value`, `--flag`) become the SDK's `extraArgs`. Effort
   `default` leaves the effort to Claude Code; other values must be an SDK `EffortLevel`. A thread
@@ -2996,6 +3042,35 @@ lands on something else in the conversation (`rowActionScope`), or the row unmou
 (`StoppedLine`, from the turn's `endedAt`), which carries Resume on the last turn. The line reads
 the turn's stored state, so a turn stopped before this change gets it too: it was stopped, and no
 item, divider or marker is added to it (spec 48 is about new items, not about reading old ones).
+
+### Subagents and background work
+
+Agent workbench U11 (spec 44, 48, 90). `chat/tools/agent.tsx` draws a `subagent` call:
+"Agent: explore the auth code" (`agentTask`: the description, else the prompt's first line), the
+tool calls (`toolCount`, else the calls nested under it) and the time (`formatDuration`, the
+provider's duration where it gave one), and Codex's state in words. While the agent works (its
+call runs, or Codex says `starting` or `running`) the row is open: the prompt and the nested
+items, drawn as the thread's own rows by `ConversationItem` with their own context. Once done the
+answer shows as markdown under the row (or, without an answer, the call's output) and the nested
+list folds behind the row's line. `nestSubagentWork` (view-model.ts) takes items with a
+`parentItemId` whose call is in the thread out of the conversation and hands them to the call
+through `ItemContext.children` and `childContext`; an item whose call is missing stays in the
+conversation. A subagent call is never folded into a group of tool calls. Calls stored before
+kinds have no `subagent` kind and are drawn as the generic row they were.
+
+`chat/background.tsx`: the thread's `backgroundTasks` are chips under the conversation
+(`BackgroundTasks`), each with its kind's icon, its description and the time since the server's
+`startedAt` (display only, once a second); a task stored before has no time. A chip opens
+(Radix popover) to `lastOutput` ("Nothing reported yet." without one) and, where the provider
+`stopsTasks`, Stop (`thread.stopTask`). The line reads "Waiting for background work" between
+turns and "In the background" during one. The open conversation (not a step's thread in the
+panel, not the Assistant) registers its tasks and its `backgroundTarget` (the newest running
+`command` or `subagent` call of the running turn that is the thread's own) in `backgroundStore`;
+`backgroundCommands` offers "Send to the background" (`keybindings.toBackground`, Ctrl+B, only
+where the provider `sendsToBackground`), "Show background task: …" and "Stop background task: …".
+Ctrl+B is Toggle sidebar's key too on Windows and Linux (Mod+B): the palette's command list puts
+the chat's commands first, so the key sends work to the background while there is some and
+toggles the sidebar otherwise; the keybindings table shows the two as sharing the key.
 
 ### Conversation reading
 

@@ -65,6 +65,7 @@ import type {
   WorkingCopy,
 } from '@wow/contracts';
 import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
 
 // Projection tables from docs/architecture.md. Column names are snake_case in SQLite (the
 // `casing` option) and camelCase here. Times are ISO strings.
@@ -552,3 +553,7 @@ export const commandReceipts = sqliteTable('command_receipts', {
   seqs: json<number[]>().notNull(),
   at: text().notNull(),
 });
+
+// The thread's own agent's text, not a subagent's (agent workbench spec 44): what a turn ended
+// with is what the agent said, not what one of its subagents told it.
+export const ownText = sql`json_extract(${threadItems.payload}, '$.parentItemId') is null`;

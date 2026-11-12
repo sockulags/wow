@@ -986,7 +986,7 @@ describe('@wow/provider-claude', () => {
       {
         type: 'backgroundTasks',
         threadId: 't1',
-        tasks: [{ id: 'bg-1', description: 'Count the tea leaves', agent: true }],
+        tasks: [{ id: 'bg-1', description: 'Count the tea leaves', agent: true, kind: 'agent' }],
       },
     ]);
     const before = h.events.length;
@@ -1055,8 +1055,8 @@ describe('@wow/provider-claude', () => {
       type: 'backgroundTasks',
       threadId: 't1',
       tasks: [
-        { id: 'bg-1', description: 'Count the tea leaves', agent: true },
-        { id: 'sh-1', description: 'npm run dev' },
+        { id: 'bg-1', description: 'Count the tea leaves', agent: true, kind: 'agent' },
+        { id: 'sh-1', description: 'npm run dev', kind: 'command' },
       ],
     });
     const before = h.events.length;
@@ -1326,5 +1326,251 @@ describe('extraArgs', () => {
 
   it('refuses a value without a flag', () => {
     expect(() => extraArgs(['opus'])).toThrow(/not a --flag/);
+  });
+});
+
+// A subagent's own messages, as Claude Code marks them with the Agent call they belong to.
+const nested = (parent: string, step: FakeStep): FakeStep => {
+  if (!('message' in step)) return step;
+  return { message: { ...step.message, parent_tool_use_id: parent } as SDKMessage };
+};
+
+const taskProgress = (id: string, fields: { summary?: string; last_tool_name?: string }) =>
+  ({
+    message: {
+      type: 'system',
+      subtype: 'task_progress',
+      task_id: id,
+      description: 'Count the tea leaves',
+      usage: { total_tokens: 10, tool_uses: 4, duration_ms: 1000 },
+      ...fields,
+      uuid: '00000000-0000-4000-8000-0000000000df',
+      session_id: 'sess-1',
+    } as unknown as SDKMessage,
+  }) satisfies FakeStep;
+
+describe('@wow/provider-claude subagents and background work (agent workbench U11)', () => {
+  // Agent workbench spec 44: the Agent call is a subagent row; the subagent's calls and text
+  // come under it, and its result gives the count, the time and the answer.
+  it('nests a subagent’s three tool calls and its text under the Agent call, with count, time and answer', async () => {
+    const h = harness([
+      [
+        assistantToolUse('agent-1', 'Agent', {
+          description: 'explore the auth code',
+          prompt: 'Find where the login is checked.',
+          subagent_type: 'Explore',
+        }),
+        {
+          message: {
+            type: 'stream_event',
+            event: {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'text_delta', text: 'partial' },
+            },
+            parent_tool_use_id: 'agent-1',
+            uuid: '00000000-0000-4000-8000-0000000000e0',
+            session_id: 'sess-1',
+          } as unknown as SDKMessage,
+        },
+        nested('agent-1', assistantToolUse('sub-1', 'Grep', { pattern: 'login', path: 'src' })),
+        nested('agent-1', toolResult('sub-1', {})),
+        nested('agent-1', assistantToolUse('sub-2', 'Read', { file_path: '/work/demo/src/a.ts' })),
+        nested('agent-1', toolResult('sub-2', {})),
+        nested('agent-1', assistantToolUse('sub-3', 'Bash', { command: 'pnpm test auth' })),
+        nested('agent-1', toolResult('sub-3', {})),
+        nested('agent-1', assistantText('sub-text', 'The check is in src/auth.ts.')),
+        toolResult('agent-1', {
+          status: 'completed',
+          agentId: 'a1',
+          prompt: 'Find where the login is checked.',
+          content: [{ type: 'text', text: 'Login is checked in `src/auth.ts`.' }],
+          totalToolUseCount: 3,
+          totalDurationMs: 92_000,
+          totalTokens: 1000,
+          usage: {},
+        }),
+        assistantText('2', 'The subagent found it.'),
+        result(0.01),
+      ],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    const tools = h.events.filter(
+      (event) => event.type === 'toolCallStarted' || event.type === 'textDelta',
+    );
+    expect(tools).toEqual([
+      expect.objectContaining({
+        type: 'toolCallStarted',
+        itemId: 'agent-1',
+        name: 'Agent',
+        kind: 'subagent',
+        description: 'explore the auth code',
+        prompt: 'Find where the login is checked.',
+        agentType: 'Explore',
+      }),
+      expect.objectContaining({ itemId: 'sub-1', kind: 'search', parentItemId: 'agent-1' }),
+      expect.objectContaining({ itemId: 'sub-2', kind: 'read', parentItemId: 'agent-1' }),
+      expect.objectContaining({ itemId: 'sub-3', kind: 'command', parentItemId: 'agent-1' }),
+      {
+        type: 'textDelta',
+        threadId: 't1',
+        itemId: 'msg_sub-text:full:0',
+        delta: 'The check is in src/auth.ts.',
+        parentItemId: 'agent-1',
+      },
+      expect.objectContaining({ type: 'textDelta', delta: 'The subagent found it.' }),
+    ]);
+    expect(tools[0]).not.toHaveProperty('parentItemId');
+    expect(
+      h.events.filter((event) => event.type === 'toolCallCompleted').map((event) => event.itemId),
+    ).toEqual(['sub-1', 'sub-2', 'sub-3', 'agent-1']);
+    expect(
+      h.events.find((event) => event.type === 'toolCallCompleted' && event.itemId === 'agent-1'),
+    ).toEqual({
+      type: 'toolCallCompleted',
+      threadId: 't1',
+      itemId: 'agent-1',
+      status: 'ok',
+      toolCount: 3,
+      durationMs: 92_000,
+      answer: 'Login is checked in `src/auth.ts`.',
+    });
+  });
+
+  it('reads Task, the older name of the subagent tool, and gives no count for a subagent sent to the background', async () => {
+    const h = harness([
+      [
+        assistantToolUse('agent-1', 'Task', { description: 'count leaves', prompt: 'Count.' }),
+        toolResult('agent-1', {
+          status: 'async_launched',
+          agentId: 'a1',
+          description: 'count leaves',
+          prompt: 'Count.',
+          outputFile: '/tmp/out',
+        }),
+        result(0),
+      ],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(h.events.find((event) => event.type === 'toolCallStarted')).toMatchObject({
+      kind: 'subagent',
+      description: 'count leaves',
+    });
+    expect(h.events.find((event) => event.type === 'toolCallCompleted')).toEqual({
+      type: 'toolCallCompleted',
+      threadId: 't1',
+      itemId: 'agent-1',
+      status: 'ok',
+    });
+  });
+
+  // A background subagent goes on after the turn: its messages have no row to go under and start
+  // no turn of their own.
+  it('drops a background subagent’s messages once the turn has ended, starting no turn', async () => {
+    const later = released();
+    const h = harness([
+      [
+        backgroundChanged([{ id: 'bg-agent', description: 'Count the tea leaves' }]),
+        result(0),
+        later.step,
+        nested('bg-agent', assistantToolUse('sub-1', 'Read', { file_path: '/work/demo/a.ts' })),
+        nested('bg-agent', toolResult('sub-1', {})),
+        backgroundChanged([]),
+      ],
+    ]);
+    const first = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await first;
+    const before = h.events.length;
+    const cleared = h.next('backgroundTasks');
+    later.release();
+    await cleared;
+    expect(h.events.slice(before).map((event) => event.type)).toEqual(['backgroundTasks']);
+  });
+
+  // Spec 90: a chip opens to the latest a task reported; the list that follows keeps it.
+  it('keeps the latest progress of a background task as its last output', async () => {
+    const h = harness([
+      [
+        backgroundChanged([{ id: 'bg-1', description: 'Count the tea leaves' }]),
+        taskProgress('bg-1', { last_tool_name: 'Grep' }),
+        taskProgress('bg-1', { summary: 'Counted 30 leaves so far' }),
+        taskProgress('other', { summary: 'Not listed' }),
+        backgroundChanged([
+          { id: 'bg-1', description: 'Count the tea leaves' },
+          { id: 'sh-1', description: 'pnpm dev', type: 'local_bash' },
+        ]),
+        result(0),
+      ],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(
+      h.events.flatMap((event) => (event.type === 'backgroundTasks' ? [event.tasks] : [])),
+    ).toEqual([
+      [{ id: 'bg-1', description: 'Count the tea leaves', agent: true, kind: 'agent' }],
+      [
+        {
+          id: 'bg-1',
+          description: 'Count the tea leaves',
+          agent: true,
+          kind: 'agent',
+          lastOutput: 'Grep · 4 tool calls',
+        },
+      ],
+      [
+        {
+          id: 'bg-1',
+          description: 'Count the tea leaves',
+          agent: true,
+          kind: 'agent',
+          lastOutput: 'Counted 30 leaves so far',
+        },
+      ],
+      [
+        {
+          id: 'bg-1',
+          description: 'Count the tea leaves',
+          agent: true,
+          kind: 'agent',
+          lastOutput: 'Counted 30 leaves so far',
+        },
+        { id: 'sh-1', description: 'pnpm dev', kind: 'command' },
+      ],
+    ]);
+  });
+
+  // Spec 90: Stop on a chip and Ctrl+B go to the live query as Claude Code's own stopTask and
+  // backgroundTasks.
+  it('stops a background task and sends a running call to the background through the live query', async () => {
+    const later = released();
+    const h = harness([[later.step, result(0)]]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await h.adapter.send({ type: 'stopTask', threadId: 't1', taskId: 'bg-1' });
+    await h.adapter.send({ type: 'toBackground', threadId: 't1', itemId: 'tool-7' });
+    await h.adapter.send({ type: 'toBackground', threadId: 't1' });
+    await expect(
+      h.adapter.send({ type: 'toBackground', threadId: 't1', itemId: 'none-running' }),
+    ).rejects.toThrow(/Nothing of this turn runs in the foreground/);
+    expect(h.queries[0]?.calls).toEqual([
+      'stopTask:bg-1',
+      'backgroundTasks:tool-7',
+      'backgroundTasks:',
+      'backgroundTasks:none-running',
+    ]);
+    later.release();
+    await done;
+    await expect(
+      h.adapter.send({ type: 'stopTask', threadId: 'other', taskId: 'bg-1' }),
+    ).rejects.toThrow(/not running for thread other/);
+    expect(
+      providerChatOptions.claude.stopsTasks && providerChatOptions.claude.sendsToBackground,
+    ).toBe(true);
   });
 });

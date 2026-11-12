@@ -1351,6 +1351,179 @@ describe('CodexAdapter', () => {
     ]);
   });
 
+  // Agent workbench spec 44: a spawned agent is a subagent row with its prompt and state; the
+  // calls that report on it (wait) give its state and final message to that row. What the
+  // agent's own thread sends, where it reaches wow, is nested under the row.
+  it('shows a collab agent call with its prompt, state and final message, nesting its own calls', async () => {
+    const { adapter, take, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(startTurn);
+    take();
+    const spawn = {
+      type: 'collabAgentToolCall',
+      id: 'spawn-1',
+      tool: 'spawnAgent',
+      status: 'inProgress',
+      senderThreadId: 'codex-thread',
+      receiverThreadIds: [],
+      prompt: 'Explore the auth code and say where login is checked.',
+      model: null,
+      reasoningEffort: null,
+      agentsStates: {},
+    };
+    const params = { threadId: 'codex-thread', turnId: 'turn-1' };
+    current().emit({ method: 'item/started', params: { ...params, item: spawn } });
+    current().emit({
+      method: 'item/completed',
+      params: {
+        ...params,
+        item: {
+          ...spawn,
+          status: 'completed',
+          receiverThreadIds: ['agent-thread'],
+          agentsStates: { 'agent-thread': { status: 'pendingInit', message: null } },
+        },
+      },
+    });
+    const agentParams = { threadId: 'agent-thread', turnId: 'agent-turn' };
+    const read = {
+      type: 'commandExecution',
+      id: 'cmd-1',
+      pluginId: null,
+      scriptPath: null,
+      command: 'rg login src',
+      cwd: '/work/demo',
+      processId: null,
+      source: 'agent',
+      commandActions: [],
+      aggregatedOutput: null,
+      exitCode: null,
+      durationMs: null,
+      status: 'inProgress',
+    };
+    current().emit({ method: 'item/started', params: { ...agentParams, item: read } });
+    current().emit({
+      method: 'item/completed',
+      params: {
+        ...agentParams,
+        item: { ...read, status: 'completed', aggregatedOutput: 'src/auth.ts\n', exitCode: 0 },
+      },
+    });
+    const wait = {
+      ...spawn,
+      id: 'wait-1',
+      tool: 'wait',
+      status: 'completed',
+      receiverThreadIds: ['agent-thread'],
+      prompt: null,
+      agentsStates: {
+        'agent-thread': { status: 'completed', message: 'Login is checked in src/auth.ts.' },
+      },
+    };
+    current().emit({
+      method: 'item/started',
+      params: { ...params, item: { ...wait, status: 'inProgress' } },
+    });
+    current().emit({ method: 'item/completed', params: { ...params, item: wait } });
+    // A closed agent that had finished stays finished.
+    current().emit({
+      method: 'item/completed',
+      params: {
+        ...params,
+        item: {
+          ...wait,
+          id: 'close-1',
+          tool: 'closeAgent',
+          agentsStates: { 'agent-thread': { status: 'shutdown', message: null } },
+        },
+      },
+    });
+    expect(take()).toEqual([
+      {
+        type: 'toolCallStarted',
+        threadId: 'thread-1',
+        itemId: 'spawn-1',
+        name: 'spawnAgent',
+        input: { prompt: spawn.prompt, model: null },
+        kind: 'subagent',
+        prompt: spawn.prompt,
+      },
+      {
+        type: 'toolCallCompleted',
+        threadId: 'thread-1',
+        itemId: 'spawn-1',
+        status: 'ok',
+        agentState: 'starting',
+      },
+      expect.objectContaining({
+        type: 'toolCallStarted',
+        itemId: 'agent-thread:cmd-1',
+        kind: 'command',
+        parentItemId: 'spawn-1',
+      }),
+      {
+        type: 'toolCallOutput',
+        threadId: 'thread-1',
+        itemId: 'agent-thread:cmd-1',
+        output: 'src/auth.ts\n',
+      },
+      {
+        type: 'toolCallCompleted',
+        threadId: 'thread-1',
+        itemId: 'agent-thread:cmd-1',
+        status: 'ok',
+        exitCode: 0,
+      },
+      {
+        type: 'toolCallCompleted',
+        threadId: 'thread-1',
+        itemId: 'spawn-1',
+        status: 'ok',
+        agentState: 'done',
+        answer: 'Login is checked in src/auth.ts.',
+      },
+    ]);
+    expect(providerChatOptions.codex.stopsTasks).toBe(false);
+    await expect(
+      adapter.send({ type: 'stopTask', threadId: 'thread-1', taskId: 'x' }),
+    ).rejects.toThrow(/Codex cannot/);
+  });
+
+  // The fallback where nothing of the agent's own thread reaches wow: the row alone.
+  it('shows a failed collab agent without a nested list when its thread sends nothing', async () => {
+    const { adapter, take, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(startTurn);
+    take();
+    const params = { threadId: 'codex-thread', turnId: 'turn-1' };
+    current().emit({
+      method: 'item/completed',
+      params: {
+        ...params,
+        item: {
+          type: 'collabAgentToolCall',
+          id: 'spawn-2',
+          tool: 'spawnAgent',
+          status: 'failed',
+          senderThreadId: 'codex-thread',
+          receiverThreadIds: ['agent-2'],
+          prompt: 'Count the leaves.',
+          model: null,
+          reasoningEffort: null,
+          agentsStates: { 'agent-2': { status: 'errored', message: 'No leaves found.' } },
+        },
+      },
+    });
+    expect(take()).toEqual([
+      {
+        type: 'toolCallCompleted',
+        threadId: 'thread-1',
+        itemId: 'spawn-2',
+        status: 'error',
+        agentState: 'failed',
+        answer: 'No leaves found.',
+      },
+    ]);
+  });
+
   it('ignores lines that are not JSON-RPC and notifications for other threads', async () => {
     const { adapter, take, current } = setup(() => new ScriptedCodex(baseAnswers));
     await adapter.send(startTurn);

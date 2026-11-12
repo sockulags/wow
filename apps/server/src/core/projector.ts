@@ -44,6 +44,7 @@ import {
   turns,
   workflowRuns,
   workflows,
+  ownText,
 } from '../db/schema.js';
 import type { ReadModel } from './orchestrator.js';
 
@@ -396,6 +397,8 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .run();
       return threadTopics;
     case 'turn.interruptRequested':
+    case 'thread.taskStopRequested':
+    case 'thread.backgroundRequested':
       return [];
     case 'turn.usageRecorded':
       tx.update(turns)
@@ -921,7 +924,7 @@ export function readModel(tx: DbOrTx): ReadModel {
       tx
         .select()
         .from(threadItems)
-        .where(and(eq(threadItems.turnId, turnId), eq(threadItems.kind, 'assistant_text')))
+        .where(and(eq(threadItems.turnId, turnId), eq(threadItems.kind, 'assistant_text'), ownText))
         .orderBy(desc(threadItems.index))
         .get(),
     approval: (id) => tx.select().from(approvals).where(eq(approvals.id, id)).get(),

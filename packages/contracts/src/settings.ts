@@ -1824,6 +1824,11 @@ export const settingsRegistry = {
     'Open or close the task list pinned above the composer of the open thread.',
     'Mod+T',
   ),
+  'keybindings.toBackground': keybinding(
+    'Chat: send to the background',
+    "Send the open thread's running command or subagent to the background, where the provider can (Claude Code), so the turn goes on. While nothing can go there, the key does what it otherwise does.",
+    'Ctrl+B',
+  ),
   'keybindings.renameThread': keybinding(
     'Chat: rename thread',
     'Edit the title of the open thread.',

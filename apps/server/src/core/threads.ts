@@ -38,7 +38,10 @@ import {
   replyProblem,
   replyText,
   TaskListItemPayload,
+  ToolCallItemPayload,
+  providerChatOptions,
   toolFactsOf,
+  type BackgroundTask,
   type QuestionReply,
 } from '@wow/contracts';
 import { z } from 'zod';
@@ -81,6 +84,8 @@ type ThreadCommand = Extract<
       | 'thread.retry'
       | 'thread.answerQuestions'
       | 'thread.interrupt'
+      | 'thread.stopTask'
+      | 'thread.toBackground'
       | 'thread.configure'
       | 'thread.setPinned'
       | 'thread.setDone'
@@ -465,6 +470,23 @@ function messageTurn(
   ];
 }
 
+// What the thread's provider can do with background work; an instance gone can do nothing.
+function providerAbility(read: ReadModel, providerInstanceId: string) {
+  const kind = read.providerInstance(providerInstanceId)?.kind;
+  return kind ? providerChatOptions[kind] : { stopsTasks: false, sendsToBackground: false };
+}
+
+// The server's clock says when a background task began (spec 90): when it was first listed, so
+// a later list keeps the time.
+function stampedTasks(
+  tasks: readonly BackgroundTask[],
+  before: readonly BackgroundTask[],
+  now: string,
+): BackgroundTask[] {
+  const known = new Map(before.map((task) => [task.id, task.startedAt]));
+  return tasks.map((task) => ({ ...task, startedAt: known.get(task.id) ?? task.startedAt ?? now }));
+}
+
 function requireThread(read: ReadModel, threadId: string) {
   const thread = read.thread(threadId);
   if (!thread) throw new CommandRejected('not_found', `No thread ${threadId}`);
@@ -821,6 +843,68 @@ export function decideThread(
             threadId: thread.id,
             turnId: turn.id,
             providerInstanceId: thread.providerInstanceId,
+          },
+        },
+      ];
+    }
+    // Background work (agent workbench spec 90): the provider does the stopping and moving, and
+    // what it reports afterwards is what the thread shows.
+    case 'thread.stopTask': {
+      const thread = requireThread(read, command.threadId);
+      if (!providerAbility(read, thread.providerInstanceId).stopsTasks) {
+        throw new CommandRejected('rejected', 'This provider cannot stop a background task.');
+      }
+      if (!(thread.backgroundTasks ?? []).some((task) => task.id === command.taskId)) {
+        throw new CommandRejected(
+          'conflict',
+          `Thread ${thread.id} has no background task ${command.taskId}`,
+        );
+      }
+      return [
+        {
+          kind: 'thread.taskStopRequested',
+          aggregate: thread.id,
+          payload: {
+            threadId: thread.id,
+            taskId: command.taskId,
+            providerInstanceId: thread.providerInstanceId,
+          },
+        },
+      ];
+    }
+    case 'thread.toBackground': {
+      const thread = requireThread(read, command.threadId);
+      if (!providerAbility(read, thread.providerInstanceId).sendsToBackground) {
+        throw new CommandRejected('rejected', 'This provider cannot send work to the background.');
+      }
+      const turn = read.runningTurn(thread.id);
+      if (!turn) throw new CommandRejected('rejected', `Thread ${thread.id} has no running turn`);
+      let toolUseId: string | undefined;
+      if (command.itemId !== undefined) {
+        const call = read.threadItem(command.itemId);
+        const payload = ToolCallItemPayload.safeParse(call?.payload);
+        if (
+          call?.turnId !== turn.id ||
+          !payload.success ||
+          payload.data.status !== 'running' ||
+          (payload.data.kind !== 'command' && payload.data.kind !== 'subagent')
+        ) {
+          throw new CommandRejected(
+            'conflict',
+            'Only a running command or subagent of the running turn can go to the background.',
+          );
+        }
+        toolUseId = command.itemId.slice(turn.id.length + 1);
+      }
+      return [
+        {
+          kind: 'thread.backgroundRequested',
+          aggregate: thread.id,
+          payload: {
+            threadId: thread.id,
+            turnId: turn.id,
+            providerInstanceId: thread.providerInstanceId,
+            ...(toolUseId === undefined ? {} : { toolUseId }),
           },
         },
       ];
@@ -1419,12 +1503,13 @@ function decideProviderEvents(
       continue;
     }
     if (event.type === 'backgroundTasks') {
-      if (JSON.stringify(event.tasks) !== JSON.stringify(background)) {
-        background = event.tasks;
+      const tasks = stampedTasks(event.tasks, background, now);
+      if (JSON.stringify(tasks) !== JSON.stringify(background)) {
+        background = tasks;
         out.push({
           kind: 'thread.backgroundChanged',
           aggregate: threadId,
-          payload: { threadId, tasks: event.tasks, updatedAt: now },
+          payload: { threadId, tasks, updatedAt: now },
         });
       }
       continue;
@@ -1455,7 +1540,7 @@ function decideProviderEvents(
       case 'textDelta':
       case 'reasoningDelta': {
         const id = itemId(event.itemId);
-        if (event.type === 'textDelta') {
+        if (event.type === 'textDelta' && event.parentItemId === undefined) {
           lastText =
             lastText?.id === id
               ? { id, text: lastText.text + event.delta }
@@ -1480,8 +1565,16 @@ function decideProviderEvents(
             current,
             id,
             reasoning ? 'reasoning' : 'assistant_text',
-            reasoning ? { text: event.delta, startedAt: now, endedAt: now } : { text: event.delta },
-            true,
+            reasoning
+              ? { text: event.delta, startedAt: now, endedAt: now }
+              : {
+                  text: event.delta,
+                  ...(event.type === 'textDelta' && event.parentItemId !== undefined
+                    ? { parentItemId: itemId(event.parentItemId) }
+                    : {}),
+                },
+            // A subagent's note comes whole (spec 44), so it is not drawn as still being written.
+            !(event.type === 'textDelta' && event.parentItemId !== undefined),
           );
         }
         break;
@@ -1502,6 +1595,9 @@ function decideProviderEvents(
               output: '',
               status: 'running',
               startedAt: now,
+              ...(event.parentItemId === undefined
+                ? {}
+                : { parentItemId: itemId(event.parentItemId) }),
             },
             true,
           );
@@ -1531,6 +1627,9 @@ function decideProviderEvents(
               endedAt: now,
               ...(event.exitCode === undefined ? {} : { exitCode: event.exitCode }),
               ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+              ...(event.toolCount === undefined ? {} : { toolCount: event.toolCount }),
+              ...(event.answer === undefined ? {} : { answer: event.answer }),
+              ...(event.agentState === undefined ? {} : { agentState: event.agentState }),
               ...(event.diff === undefined
                 ? {}
                 : {

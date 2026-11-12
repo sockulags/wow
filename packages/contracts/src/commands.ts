@@ -200,6 +200,14 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('thread.retry'), threadId: Id }),
   // Stops the running turn; what it produced so far stays (spec 23).
   z.object({ type: z.literal('thread.interrupt'), threadId: Id }),
+  // Stops a task the agent runs in the background (agent workbench spec 90), by its id in the
+  // thread's `backgroundTasks`. Refused when the thread lists no such task or its provider
+  // cannot stop one.
+  z.object({ type: z.literal('thread.stopTask'), threadId: Id, taskId: Id }),
+  // Sends the running turn's command or subagent to the background (spec 90): the running call
+  // with this item id, or every one that runs when it is absent. Refused without a running turn,
+  // for a call that is not a running command or subagent, or where the provider cannot.
+  z.object({ type: z.literal('thread.toBackground'), threadId: Id, itemId: Id.optional() }),
   // Takes the queued message off the queue; nothing is sent (agent workbench spec 52). Edit is
   // this too: the app puts the text back in the composer once the server took it off. Refused
   // when nothing waits, so a message already sent is never put back as if it had not gone.
@@ -1014,6 +1022,23 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('turn.interruptRequested'),
     aggregate: Id,
     payload: z.object({ threadId: Id, turnId: Id, providerInstanceId: Id }),
+  }),
+  // What the provider service sends on (spec 90); the provider's answer arrives as its
+  // `backgroundTasks` and tool events. `toolUseId` is the provider's id of the call.
+  z.object({
+    kind: z.literal('thread.taskStopRequested'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, taskId: Id, providerInstanceId: Id }),
+  }),
+  z.object({
+    kind: z.literal('thread.backgroundRequested'),
+    aggregate: Id,
+    payload: z.object({
+      threadId: Id,
+      turnId: Id,
+      providerInstanceId: Id,
+      toolUseId: Id.optional(),
+    }),
   }),
   z.object({
     kind: z.literal('turn.usageRecorded'),

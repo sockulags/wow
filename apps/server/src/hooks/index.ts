@@ -13,6 +13,7 @@ export {
   mockClaudeCommands,
   mockCodexModels,
   mockCompaction,
+  mockSubagent,
   mockTwoTools,
   prefersMockProviders,
   type MockScript,

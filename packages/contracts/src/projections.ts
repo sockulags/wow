@@ -196,6 +196,9 @@ export const TextItemPayload = z.object({
   // Images pasted or dropped on the composer (agent workbench spec 53), stored by the server for
   // the thread and read back for display with `attachments.read`. Absent for older messages.
   images: z.array(SentImage).optional(),
+  // An agent's text written by a subagent: the row id of the subagent call it belongs under
+  // (agent workbench spec 44). Absent for the thread's own agent and for older items.
+  parentItemId: Id.optional(),
 });
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 
@@ -217,6 +220,12 @@ export const ToolCallItemPayload = ToolFacts.partial().extend({
   diffCounts: z
     .object({ added: z.number().int().nonnegative(), removed: z.number().int().nonnegative() })
     .optional(),
+  // A call a subagent made: the row id of the subagent call it is drawn under (spec 44).
+  parentItemId: Id.optional(),
+  // A subagent call that ended: how many tool calls it made and its final answer, where the
+  // provider reported them.
+  toolCount: z.number().int().nonnegative().optional(),
+  answer: z.string().optional(),
 });
 export type ToolCallItemPayload = z.infer<typeof ToolCallItemPayload>;
 

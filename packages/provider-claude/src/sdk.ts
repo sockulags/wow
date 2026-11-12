@@ -23,6 +23,10 @@ export interface ClaudeQuery extends AsyncIterable<SDKMessage> {
     detail?: 'summary' | 'full';
   }): Promise<{ totalTokens: number; maxTokens: number }>;
   accountInfo(): Promise<AccountInfo>;
+  // A background task by its task id; Claude Code then reports it stopped (spec 90).
+  stopTask(taskId: string): Promise<void>;
+  // Ctrl+B: the foreground call with this tool use id, or every one, goes to the background.
+  backgroundTasks(toolUseId?: string): Promise<boolean>;
   close(): void;
 }
 

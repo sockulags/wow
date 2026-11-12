@@ -28,7 +28,7 @@ import { tmpdir } from 'node:os';
 import { z } from 'zod';
 import { AsyncQueue } from './queue.js';
 import { resultDiff } from './diff.js';
-import { claudeToolFacts } from './tools.js';
+import { agentResult, claudeToolFacts } from './tools.js';
 import {
   extraArgs,
   isEffortLevel,
@@ -119,6 +119,8 @@ interface Session {
   readonly tasks: Map<string, Task>;
   // Edit calls waiting for their result, whose patch becomes the row's diff.
   readonly edits: Set<string>;
+  // Agent calls waiting for their result, which carries the subagent's count and answer.
+  readonly agents: Set<string>;
   // total_cost_usd is cumulative per query(); a turn's cost is the difference.
   costUsd: number;
   // The model Claude Code says the session runs on (its init message), named on the usage row.
@@ -140,6 +142,24 @@ const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 const editTools = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+const agentTools = new Set(['Agent', 'Task']);
+
+// What a background task is, from Claude Code's task type.
+const taskKind = (type: string): NonNullable<BackgroundTask['kind']> =>
+  type === 'local_agent' ? 'agent' : type === 'local_bash' ? 'command' : 'other';
+
+// The latest a task reported of itself (spec 90): its one-line summary, else its last tool.
+// Reading a task's own output is not a query method, so this is all there is.
+function progressLine(message: {
+  summary?: string;
+  last_tool_name?: string;
+  usage: { tool_uses: number };
+}): string | undefined {
+  if (message.summary?.trim()) return message.summary.trim();
+  if (!message.last_tool_name) return undefined;
+  const calls = message.usage.tool_uses;
+  return `${message.last_tool_name} · ${calls} tool call${calls === 1 ? '' : 's'}`;
+}
 
 interface ApprovalAnswer {
   readonly decision: ProviderApprovalDecision;
@@ -310,6 +330,14 @@ export class ClaudeAdapter implements ProviderAdapter {
         return this.#handOver(command.threadId, command.prompt);
       case 'listCommands':
         return this.#listCommands(command.cwd, command.threadId);
+      case 'stopTask':
+        await this.#live(command.threadId).stopTask(command.taskId);
+        return { ok: true };
+      case 'toBackground': {
+        const sent = await this.#live(command.threadId).backgroundTasks(command.itemId);
+        if (!sent) throw new Error('Nothing of this turn runs in the foreground any more');
+        return { ok: true };
+      }
       case 'test':
         return this.#test();
     }
@@ -324,6 +352,13 @@ export class ClaudeAdapter implements ProviderAdapter {
     this.#sessions.clear();
     this.#listeners.clear();
     return Promise.resolve();
+  }
+
+  // The thread's open query, for what only a live Claude Code can do.
+  #live(threadId: string): ClaudeQuery {
+    const query = this.#sessions.get(threadId)?.query;
+    if (!query) throw new Error(`Claude Code is not running for thread ${threadId}`);
+    return query;
   }
 
   #emit(event: ProviderEvent): void {
@@ -461,6 +496,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       taskCreates: new Map(),
       tasks: new Map(),
       edits: new Set(),
+      agents: new Set(),
       costUsd: 0,
     };
     // Claimed before the await so a second startTurn for the thread sees it.
@@ -569,16 +605,32 @@ export class ClaudeAdapter implements ProviderAdapter {
               : { postTokens: Math.max(0, Math.round(postTokens)) }),
           });
         } else if (message.subtype === 'background_tasks_changed') {
-          // Ambient tasks are Claude Code's own housekeeping, not work anyone waits for.
+          // Ambient tasks are Claude Code's own housekeeping, not work anyone waits for. A task
+          // keeps the last progress line it reported (spec 90).
+          const before = new Map(session.background.map((task) => [task.id, task]));
           this.#setBackground(
             session,
             message.tasks
               .filter((task) => task.ambient !== true)
-              .map((task) => ({
-                id: task.task_id,
-                description: task.description,
-                ...(task.task_type === 'local_agent' ? { agent: true } : {}),
-              })),
+              .map((task) => {
+                const lastOutput = before.get(task.task_id)?.lastOutput;
+                return {
+                  id: task.task_id,
+                  description: task.description,
+                  ...(task.task_type === 'local_agent' ? { agent: true } : {}),
+                  kind: taskKind(task.task_type),
+                  ...(lastOutput === undefined ? {} : { lastOutput }),
+                };
+              }),
+          );
+        } else if (message.subtype === 'task_progress') {
+          const line = progressLine(message);
+          if (line === undefined) return;
+          this.#setBackground(
+            session,
+            session.background.map((task) =>
+              task.id === message.task_id ? { ...task, lastOutput: line } : task,
+            ),
           );
         } else if (
           message.subtype === 'task_notification' &&
@@ -593,6 +645,7 @@ export class ClaudeAdapter implements ProviderAdapter {
         }
         return;
       case 'stream_event': {
+        // A subagent's text comes whole in its assistant messages, so its deltas are not needed.
         if (message.parent_tool_use_id !== null) return;
         this.#selfStart(session);
         const event = message.event;
@@ -607,7 +660,10 @@ export class ClaudeAdapter implements ProviderAdapter {
         return;
       }
       case 'assistant': {
-        if (message.parent_tool_use_id !== null) return;
+        if (message.parent_tool_use_id !== null) {
+          this.#nested(session, message.parent_tool_use_id, message.message);
+          return;
+        }
         this.#selfStart(session);
         const id = message.message.id;
         message.message.content.forEach((block, index) => {
@@ -635,12 +691,15 @@ export class ClaudeAdapter implements ProviderAdapter {
             });
             this.#trackTasks(session, block.id, block.name, block.input);
             if (editTools.has(block.name)) session.edits.add(block.id);
+            if (agentTools.has(block.name)) session.agents.add(block.id);
           }
         });
         return;
       }
       case 'user': {
-        if (message.parent_tool_use_id !== null) return;
+        // A subagent's tool results belong to its calls, which the running turn shows nested;
+        // a background subagent's work after the turn ended has no row to go under.
+        if (message.parent_tool_use_id !== null && !session.turnActive) return;
         const content = message.message.content;
         if (typeof content === 'string') return;
         for (const block of content) {
@@ -654,12 +713,16 @@ export class ClaudeAdapter implements ProviderAdapter {
           const diff = session.edits.delete(block.tool_use_id)
             ? resultDiff(message.tool_use_result)
             : undefined;
+          const agent = session.agents.delete(block.tool_use_id)
+            ? agentResult(message.tool_use_result)
+            : {};
           this.#emit({
             type: 'toolCallCompleted',
             threadId,
             itemId: block.tool_use_id,
             status: block.is_error ? 'error' : 'ok',
             ...(diff === undefined || block.is_error ? {} : { diff }),
+            ...agent,
           });
           const subject = session.taskCreates.get(block.tool_use_id);
           const created = TaskCreateResult.safeParse(message.tool_use_result);
@@ -725,6 +788,41 @@ export class ClaudeAdapter implements ProviderAdapter {
       default:
         return;
     }
+  }
+
+  // A subagent's message (spec 44): its text and tool calls, under the Agent call that started it.
+  // Only while a turn runs: a background subagent's work after the turn has no row to go under,
+  // and it must not start a turn of its own. Its thinking and task lists stay its own.
+  #nested(
+    session: Session,
+    parentItemId: string,
+    message: Extract<SDKMessage, { type: 'assistant' }>['message'],
+  ): void {
+    if (!session.turnActive) return;
+    const threadId = session.threadId;
+    message.content.forEach((block, index) => {
+      if (block.type === 'text' && block.text.length > 0) {
+        this.#emit({
+          type: 'textDelta',
+          threadId,
+          itemId: `${message.id}:full:${index}`,
+          delta: block.text,
+          parentItemId,
+        });
+      } else if (block.type === 'tool_use') {
+        this.#emit({
+          type: 'toolCallStarted',
+          threadId,
+          itemId: block.id,
+          name: block.name,
+          input: block.input,
+          ...claudeToolFacts(block.name, block.input),
+          parentItemId,
+        });
+        if (editTools.has(block.name)) session.edits.add(block.id);
+        if (agentTools.has(block.name)) session.agents.add(block.id);
+      }
+    });
   }
 
   #stream(

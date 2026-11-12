@@ -456,6 +456,41 @@ describe('provider service', () => {
     expect(thread()).toMatchObject({ state: 'failed' });
   });
 
+  // Agent workbench spec 90: Stop on a background chip and Ctrl+B on a running command reach
+  // Claude Code as its own stopTask and backgroundTasks, by the provider's ids.
+  it('sends Stop for a background task and Ctrl+B for a running command to the adapter', async () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Start the dev server' });
+    const listed = committed('thread.backgroundChanged');
+    adapter.emit(
+      {
+        type: 'toolCallStarted',
+        threadId: 't1',
+        itemId: 'bash-7',
+        name: 'Bash',
+        input: { command: 'pnpm dev' },
+        kind: 'command',
+        command: 'pnpm dev',
+      },
+      {
+        type: 'backgroundTasks',
+        threadId: 't1',
+        tasks: [{ id: 'bg-1', description: 'Count the tea leaves', agent: true, kind: 'agent' }],
+      },
+    );
+    await listed;
+    dispatch({ type: 'thread.toBackground', threadId: 't1', itemId: 't1:turn:0:bash-7' });
+    expect(adapter.sent.at(-1)).toEqual({ type: 'toBackground', threadId: 't1', itemId: 'bash-7' });
+    dispatch({ type: 'thread.toBackground', threadId: 't1' });
+    expect(adapter.sent.at(-1)).toEqual({ type: 'toBackground', threadId: 't1' });
+    dispatch({ type: 'thread.stopTask', threadId: 't1', taskId: 'bg-1' });
+    expect(adapter.sent.at(-1)).toEqual({ type: 'stopTask', threadId: 't1', taskId: 'bg-1' });
+    // A provider that refuses changes nothing in the thread; the turn goes on.
+    adapter.failNext = 'Background tasks are disabled';
+    dispatch({ type: 'thread.stopTask', threadId: 't1', taskId: 'bg-1' });
+    await service.idle();
+    expect(thread()).toMatchObject({ state: 'working' });
+  });
+
   it('stops a running turn and keeps its partial output', async () => {
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Long task' });
     // A second message waits for the turn instead (agent workbench spec 50); taken off again here.

@@ -292,6 +292,23 @@ export class ProviderService {
             threadId: event.payload.threadId,
           });
           break;
+        // Neither stops the turn when the provider refuses; the refusal is only logged.
+        case 'thread.taskStopRequested':
+          this.#send(event.payload.providerInstanceId, event.payload.threadId, false, {
+            type: 'stopTask',
+            threadId: event.payload.threadId,
+            taskId: event.payload.taskId,
+          });
+          break;
+        case 'thread.backgroundRequested': {
+          const { providerInstanceId, threadId, toolUseId } = event.payload;
+          this.#send(providerInstanceId, threadId, false, {
+            type: 'toBackground',
+            threadId,
+            ...(toolUseId === undefined ? {} : { itemId: toolUseId }),
+          });
+          break;
+        }
         case 'thread.configured': {
           const { threadId, providerInstanceId, changes } = event.payload;
           if (changes.model !== undefined) {

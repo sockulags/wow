@@ -8,6 +8,7 @@ import type {
   ProviderInstance,
   ProviderTestResult,
   ProviderUpdate,
+  AgentState,
   QuestionReply,
   TaskStatus,
   ToolFacts,
@@ -132,6 +133,9 @@ interface ThreadState {
   // Items whose text or output arrived as deltas, so item/completed does not repeat it.
   readonly streamed: Set<string>;
   readonly fileChanges: Map<string, FileUpdateChange[]>;
+  // The agents this thread spawned (spec 44): each receiving codex thread's spawn call, and the
+  // state last reported for it.
+  readonly agents: Map<string, { readonly itemId: string; state: AgentState | undefined }>;
 }
 
 interface OpenApproval {
@@ -153,6 +157,33 @@ interface OpenInput {
 }
 
 const okStatuses = new Set(['completed']);
+
+type CollabCall = Extract<ThreadItem, { type: 'collabAgentToolCall' }>;
+
+// Codex's agent states in wow's words (spec 44).
+const agentStates: Readonly<Record<string, AgentState>> = {
+  pendingInit: 'starting',
+  running: 'running',
+  completed: 'done',
+  errored: 'failed',
+  interrupted: 'stopped',
+  shutdown: 'stopped',
+  notFound: 'missing',
+};
+
+// The state and last message of the agent a collab call names, where Codex reports them.
+function collabAgent(
+  item: CollabCall,
+  receiver: string,
+): { agentState?: AgentState; message?: string } {
+  const state = item.agentsStates?.[receiver];
+  if (!state) return {};
+  const agentState = agentStates[state.status];
+  return {
+    ...(agentState ? { agentState } : {}),
+    ...(state.message ? { message: state.message } : {}),
+  };
+}
 
 const accountLabel = (account: NonNullable<GetAccountResponse['account']>): string => {
   switch (account.type) {
@@ -306,6 +337,20 @@ function toolView(item: ThreadItem): ToolView | null {
       return { name: 'webSearch', input: { query: item.query }, kind: 'web', query: item.query };
     case 'imageView':
       return { name: 'imageView', input: { path: item.path }, kind: 'read', path: item.path };
+    // A spawned agent is a subagent row; the other collab calls (wait, send input, close) only
+    // report on it, so they change that row instead of adding their own (spec 44).
+    case 'collabAgentToolCall': {
+      if (item.tool !== 'spawnAgent') return null;
+      const receiver = item.receiverThreadIds?.[0];
+      const { agentState } = receiver === undefined ? {} : collabAgent(item, receiver);
+      return {
+        name: 'spawnAgent',
+        input: { prompt: item.prompt, model: item.model },
+        kind: 'subagent',
+        ...(item.prompt ? { prompt: item.prompt } : {}),
+        ...(agentState ? { agentState } : {}),
+      };
+    }
     default:
       return null;
   }
@@ -430,6 +475,10 @@ export class CodexAdapter implements ProviderAdapter {
         return { taken: false } satisfies HandOverResult;
       case 'listCommands':
         return [];
+      // Codex's app-server has no request for either (spec 90); wow does not offer them there.
+      case 'stopTask':
+      case 'toBackground':
+        throw new Error('Codex cannot stop or move work to the background');
       case 'test':
         return this.#test();
     }
@@ -658,6 +707,7 @@ export class CodexAdapter implements ProviderAdapter {
       usageBaseline: null,
       streamed: new Set(),
       fileChanges: new Map(),
+      agents: new Map(),
     };
     this.#threads.set(wowId, thread);
     this.#byCodexId.set(codexId, thread);
@@ -1021,7 +1071,10 @@ export class CodexAdapter implements ProviderAdapter {
     const codexThreadId = params['threadId'];
     if (typeof codexThreadId !== 'string') return;
     const thread = this.#byCodexId.get(codexThreadId);
-    if (!thread) return;
+    if (!thread) {
+      this.#agentNotification(codexThreadId, message);
+      return;
+    }
     const threadId = thread.wowId;
     switch (message.method) {
       case 'turn/started':
@@ -1103,6 +1156,10 @@ export class CodexAdapter implements ProviderAdapter {
       case 'item/started': {
         const { item } = message.params;
         if (item.type === 'fileChange') thread.fileChanges.set(item.id, item.changes);
+        if (item.type === 'collabAgentToolCall' && item.tool === 'spawnAgent') {
+          for (const receiver of item.receiverThreadIds ?? [])
+            thread.agents.set(receiver, { itemId: item.id, state: undefined });
+        }
         const view = toolView(item);
         if (view) this.#emit({ type: 'toolCallStarted', threadId, itemId: item.id, ...view });
         return;
@@ -1113,8 +1170,87 @@ export class CodexAdapter implements ProviderAdapter {
     }
   }
 
+  // What a spawned agent's own codex thread reports, where it reaches this connection (not
+  // verified; spec Open risks): its tool calls and messages, nested under the spawn call. Its
+  // item ids are only unique in its own thread, so they carry the thread's id.
+  #agentNotification(codexThreadId: string, message: ServerNotification): void {
+    const parent = [...this.#threads.values()].find((thread) => thread.agents.has(codexThreadId));
+    const spawn = parent?.agents.get(codexThreadId);
+    if (!parent || !spawn || parent.turnId === null) return;
+    const threadId = parent.wowId;
+    const nestedId = (id: string) => `${codexThreadId}:${id}`;
+    if (message.method === 'item/started') {
+      const view = toolView(message.params.item);
+      if (view)
+        this.#emit({
+          type: 'toolCallStarted',
+          threadId,
+          itemId: nestedId(message.params.item.id),
+          ...view,
+          parentItemId: spawn.itemId,
+        });
+    } else if (message.method === 'item/completed') {
+      const { item } = message.params;
+      if (item.type === 'agentMessage') {
+        if (item.text)
+          this.#emit({
+            type: 'textDelta',
+            threadId,
+            itemId: nestedId(item.id),
+            delta: item.text,
+            parentItemId: spawn.itemId,
+          });
+        return;
+      }
+      if (!toolView(item)) return;
+      const { output, ok } = toolResult(item);
+      if (output)
+        this.#emit({ type: 'toolCallOutput', threadId, itemId: nestedId(item.id), output });
+      this.#emit({
+        type: 'toolCallCompleted',
+        threadId,
+        itemId: nestedId(item.id),
+        status: ok ? 'ok' : 'error',
+        ...toolTimes(item),
+      });
+    }
+  }
+
+  // A collab call reports how the agents it names stand. The spawn call's row takes each change,
+  // with the agent's last message as its answer once it has finished (spec 44).
+  #collabCompleted(thread: ThreadState, item: CollabCall): void {
+    if (item.tool === 'spawnAgent') {
+      for (const receiver of item.receiverThreadIds ?? []) {
+        if (!thread.agents.has(receiver))
+          thread.agents.set(receiver, { itemId: item.id, state: undefined });
+      }
+    }
+    for (const [receiver, agent] of thread.agents) {
+      const { agentState, message } = collabAgent(item, receiver);
+      const spawned = item.tool === 'spawnAgent' && agent.itemId === item.id;
+      if (!spawned && (agentState === undefined || agentState === agent.state)) continue;
+      // A closed agent that had finished stays finished.
+      if (agentState === 'stopped' && (agent.state === 'done' || agent.state === 'failed'))
+        continue;
+      if (agentState !== undefined) agent.state = agentState;
+      const finished = agentState === 'done' || agentState === 'failed';
+      this.#emit({
+        type: 'toolCallCompleted',
+        threadId: thread.wowId,
+        itemId: agent.itemId,
+        status: agentState === 'failed' || (spawned && item.status === 'failed') ? 'error' : 'ok',
+        ...(agentState === undefined ? {} : { agentState }),
+        ...(finished && message ? { answer: message } : {}),
+      });
+    }
+  }
+
   #itemCompleted(thread: ThreadState, item: ThreadItem): void {
     const threadId = thread.wowId;
+    if (item.type === 'collabAgentToolCall') {
+      this.#collabCompleted(thread, item);
+      return;
+    }
     const streamed = thread.streamed.delete(item.id);
     if (item.type === 'agentMessage') {
       if (!streamed && item.text)

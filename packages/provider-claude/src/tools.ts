@@ -69,7 +69,49 @@ export function claudeToolFacts(name: string, input: unknown): ToolFacts {
     }
     case 'NotebookEdit':
       return defined({ kind: 'edit', path: text(fields, 'notebook_path') });
+    // Claude Code's subagent tool, named Task before it was Agent (spec 44).
+    case 'Agent':
+    case 'Task':
+      return defined({
+        kind: 'subagent',
+        description: text(fields, 'description'),
+        prompt: text(fields, 'prompt'),
+        agentType: text(fields, 'subagent_type'),
+      });
     default:
       return { kind: 'other' };
   }
+}
+
+// What an Agent call's result says of the subagent's work: its tool calls, how long it took and
+// its final answer. A subagent launched into the background answers with neither; its work then
+// shows as a background task.
+export interface AgentResult {
+  readonly toolCount?: number;
+  readonly durationMs?: number;
+  readonly answer?: string;
+}
+
+export function agentResult(result: unknown): AgentResult {
+  if (typeof result !== 'object' || result === null) return {};
+  const fields = result as Record<string, unknown>;
+  if (fields['status'] !== undefined && fields['status'] !== 'completed') return {};
+  const toolCount = count(fields, 'totalToolUseCount');
+  const duration = fields['totalDurationMs'];
+  const content = Array.isArray(fields['content']) ? (fields['content'] as unknown[]) : [];
+  const answer = content
+    .flatMap((block) =>
+      typeof block === 'object' &&
+      block !== null &&
+      (block as Record<string, unknown>)['type'] === 'text' &&
+      typeof (block as Record<string, unknown>)['text'] === 'string'
+        ? [(block as Record<string, unknown>)['text'] as string]
+        : [],
+    )
+    .join('\n\n');
+  return {
+    ...(toolCount === undefined ? {} : { toolCount }),
+    ...(typeof duration === 'number' && duration >= 0 ? { durationMs: duration } : {}),
+    ...(answer === '' ? {} : { answer }),
+  };
 }
