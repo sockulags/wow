@@ -272,7 +272,7 @@ describe('the approval card (spec 36 to 38)', () => {
     expect(screen.getByText('Bell')).toBeTruthy();
   });
 
-  it('has no Open file on an edit that waits for its answer or is still being made', async () => {
+  it('has no Open file on an edit that waits for its answer, is still being made or was denied', async () => {
     const h = harness();
     const opened = vi.fn<(path: string) => void>();
     const edit: ApprovalItemPayload = {
@@ -302,6 +302,38 @@ describe('the approval card (spec 36 to 38)', () => {
       </RuntimeProvider>,
     );
     expect(screen.getByRole('button', { name: 'Open file' })).toBeTruthy();
+    // Denied, the file never changed and Changes does not have it.
+    rerender(
+      <RuntimeProvider runtime={h.runtime}>
+        <ul>{card('deny')}</ul>
+      </RuntimeProvider>,
+    );
+    expect(screen.getByRole('table', { name: 'Diff of src/bell.ts' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open file' })).toBeNull();
+    const deniedRow = (
+      <RuntimeProvider runtime={h.runtime}>
+        <ul>
+          <ConversationItem
+            item={item('tool_call', {
+              kind: 'edit',
+              name: 'Write',
+              input: {},
+              output: 'The user denied this edit.',
+              status: 'error',
+              path: '/work/kettle/src/bell.ts',
+              diff: '@@ -0,0 +1 @@\n+ring();',
+            })}
+            approvals={[]}
+            questions={[]}
+            context={{ ...context, turnEnded: true, openFile: opened }}
+          />
+        </ul>
+      </RuntimeProvider>
+    );
+    rerender(deniedRow);
+    await userEvent.setup().click(screen.getByText('Edit', { exact: false }));
+    expect(screen.getByTestId('edit-diff')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open file' })).toBeNull();
     rerender(
       <RuntimeProvider runtime={h.runtime}>
         <ul>
@@ -322,7 +354,7 @@ describe('the approval card (spec 36 to 38)', () => {
         </ul>
       </RuntimeProvider>,
     );
-    await userEvent.setup().click(screen.getByText('Edit', { exact: false }));
+    // Still open from the denied row: the same item, now running.
     expect(screen.getByTestId('edit-diff')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Open file' })).toBeNull();
   });

@@ -427,7 +427,7 @@ Every tool call is one line, drawn by what the call does:
   src/timer.ts +4 −1"; opened, it shows the change in colour, removed lines red and added lines
   green, with **Open file**, which opens the file in a tab of the side panel (not offered for a
   file outside the thread's folder, and not while the edit is still running or its request waits
-  for your answer, since the file has not changed yet). A new file shows as
+  for your answer, nor when it was denied or failed, since the file has not changed). A new file shows as
   added lines. Before Claude Code writes a whole file (its Write), the request and the row show
   only the new content, as added lines, with "The new content only; the file's current content
   is not shown": it may replace a file that exists. Once written, the row shows the real change. A very long diff is cut at `chat.editDiffMaxLines` lines; the thread's Changes

@@ -3020,8 +3020,8 @@ diff drawn with the run Changes tab's `DiffLines`, and Open file. Open file is
 `ItemContext.openFile`, the conversation's `FileLinkContext` `open`: the file in a panel tab of
 the view on screen, in the thread's scope, for a chat thread and a step's thread alike, Git or
 not (see "Panel tabs and files in chat"). It is not offered for a file outside the thread's
-folder (the path stays absolute), nor on a running edit row or a pending approval card, whose
-file has not changed yet, nor in the Assistant view, which opens no files. An `edit` row without
+folder (the path stays absolute), nor on an edit row that is not `ok` (running, failed or
+denied) or an approval card that is pending or denied, whose file has not changed, nor in the Assistant view, which opens no files. An `edit` row without
 a diff (stored before) is drawn as the generic row it was.
 
 **Approvals in wow's words** (spec 36). `approvalRequested` carries `facts: ApprovalFacts` (the
