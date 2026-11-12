@@ -9,6 +9,8 @@ import {
   XIcon,
   type LucideIcon,
 } from 'lucide-react';
+import type { HostItemRead } from '@wow/contracts';
+import { hostItemIcon, hostItemLabel, readOf } from '@/chat/host-links';
 import { DETAILS_TAB, useRuntime, type PanelTab, type PanelTabs } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
 import { cn } from '@/lib/utils';
@@ -22,8 +24,12 @@ import { closeTab, fileLanguage, selectTab, tabName } from './viewer';
 const pictures = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
 const prose = new Set(['md', 'markdown', 'txt']);
 
-function tabIcon(tab: PanelTab): LucideIcon {
+function tabIcon(tab: PanelTab, hostReads: readonly HostItemRead[]): LucideIcon {
   if (tab.kind === 'page') return BookOpenIcon;
+  if (tab.kind === 'host') {
+    const { threadId, item } = tab.host;
+    return hostItemIcon(item, readOf(hostReads, threadId, item)?.data);
+  }
   const kind = tab.file.read?.kind;
   const extension = fileLanguage(tab.file.path);
   if (kind === 'image' || (extension !== undefined && pictures.has(extension))) return ImageIcon;
@@ -104,8 +110,15 @@ export function PanelTabStrip({
 }) {
   const { layout } = useRuntime();
   const pageReads = useTopic('pageReads') ?? [];
+  // A view's host tabs are one thread's (the chat, or the step whose conversation opened them).
+  const hostThread = tabs.tabs.find((tab) => tab.kind === 'host')?.host.threadId;
+  const hostReads = useTopic('hostItemReads', hostThread) ?? [];
   const nameOf = (tab: PanelTab): string => {
     if (tab.kind === 'file') return tabName(tab);
+    if (tab.kind === 'host') {
+      const { threadId, item } = tab.host;
+      return hostItemLabel(item, readOf(hostReads, threadId, item)?.data);
+    }
     const link = runPageRead(pageReads, tab.page.runId)?.pages.find(
       (entry) => entry.ref === tab.page.ref,
     );
@@ -131,8 +144,14 @@ export function PanelTabStrip({
           route={route}
           id={tab.id}
           name={nameOf(tab)}
-          title={tab.kind === 'file' ? tab.file.path : nameOf(tab)}
-          icon={tabIcon(tab)}
+          title={
+            tab.kind === 'file'
+              ? tab.file.path
+              : tab.kind === 'host'
+                ? tab.host.item.url
+                : nameOf(tab)
+          }
+          icon={tabIcon(tab, hostReads)}
           selected={tabs.selected === tab.id}
           onClose={() => closeTab(layout, route, tab.id)}
         />

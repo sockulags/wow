@@ -1,5 +1,6 @@
 import type {
   FileScope,
+  HostItemRef,
   ProviderKind,
   SettingKey,
   SettingValue,
@@ -71,9 +72,18 @@ export interface ViewerPage {
   readonly from: string;
 }
 
+// An item a chat thread links to on one of the user's hosts (agent workbench spec 21): a pull or
+// merge request, an issue, a ticket or a page. What it shows is the thread's stored read of it.
+export interface ViewerHostItem {
+  readonly threadId: string;
+  readonly item: HostItemRef;
+  readonly from: string;
+}
+
 export type PanelTab =
   | { readonly kind: 'file'; readonly id: string; readonly file: ViewerFile }
-  | { readonly kind: 'page'; readonly id: string; readonly page: ViewerPage };
+  | { readonly kind: 'page'; readonly id: string; readonly page: ViewerPage }
+  | { readonly kind: 'host'; readonly id: string; readonly host: ViewerHostItem };
 
 // The tabs of one view's panel (agent workbench spec 11 to 14). The panel's own body (Details,
 // or a run's conversation) is the tab `DETAILS_TAB`, always first and never closed.
@@ -107,6 +117,8 @@ export interface LayoutState {
   // Panel tabs per route (agent workbench spec 13): a thread or a run keeps its own.
   readonly panelTabs: Readonly<Record<string, PanelTabs>>;
   readonly openFileDialog: OpenFileDialog | undefined;
+  // "Open issue, PR or ticket…" (agent workbench spec 25): the thread whose hosts it reads.
+  readonly openHostDialog: { readonly threadId: string; readonly from: string } | undefined;
   readonly paletteOpen: boolean;
   readonly providerDialog: ProviderDialog | undefined;
   readonly projectDialog: ProjectDialog | undefined;
@@ -122,6 +134,7 @@ export const createLayoutStore = (): LayoutStore =>
     contextPanelFocus: false,
     panelTabs: {},
     openFileDialog: undefined,
+    openHostDialog: undefined,
     paletteOpen: false,
     providerDialog: undefined,
     projectDialog: undefined,

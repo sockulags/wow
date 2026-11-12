@@ -30,6 +30,19 @@ function storage(): Storage | undefined {
   }
 }
 
+// Who wants to know when a draft changes: the pasted-link chips above the composer (agent
+// workbench spec 25) read the draft the composer keeps, without the composer knowing them.
+const listeners = new Set<(key: string) => void>();
+
+export function onDraftChange(listener: (key: string) => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+const changed = (key: string) => {
+  for (const listener of listeners) listener(key);
+};
+
 export const emptyDraft: ComposerDraft = { text: '', skills: [] };
 
 export function readDraft(key: string): ComposerDraft {
@@ -43,8 +56,13 @@ export function readDraft(key: string): ComposerDraft {
   }
 }
 
+// The draft's text as last written, also while storage is missing.
+const texts = new Map<string, string>();
+export const draftText = (key: string): string => texts.get(key) ?? readDraft(key).text;
+
 // An empty draft is removed, so sending clears it.
 export function writeDraft(key: string, draft: ComposerDraft): void {
+  texts.set(key, draft.text);
   try {
     const files = draft.files ?? [];
     if (draft.text === '' && draft.skills.length === 0 && files.length === 0) {
@@ -61,6 +79,8 @@ export function writeDraft(key: string, draft: ComposerDraft): void {
     );
   } catch {
     // Kept on screen only; see storage().
+  } finally {
+    changed(key);
   }
 }
 

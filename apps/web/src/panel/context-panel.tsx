@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { BacklogPanel } from './backlog-panel';
 import { CalendarPanel, useCalendarPanelTitle } from './calendar-panel';
 import { FileViewer } from './file-viewer';
+import { HostTab } from './host-tab';
 import { PageViewer } from './page-viewer';
 import { clampPanelWidth, hasSelection, panelSelection, type PanelSelection } from './model';
 import { CONTEXT_PANEL_ID, closeContextPanel, takePanelFocusRequest } from './panel-state';
@@ -185,6 +186,7 @@ export function ContextPanel() {
   const tab = selectedTab(tabs);
   const file = tab?.kind === 'file' ? tab.file : undefined;
   const page = tab?.kind === 'page' ? tab.page : undefined;
+  const hostItem = tab?.kind === 'host' ? tab.host : undefined;
   const width = preview ?? storedWidth;
   const baseLabel = baseTabLabel(selection);
   const threads = useTopic('threads');
@@ -284,6 +286,8 @@ export function ContextPanel() {
             'File'
           ) : page ? (
             'Page'
+          ) : hostItem ? (
+            'Linked item'
           ) : selection.view === 'calendar' && selection.itemId ? (
             <CalendarTitle itemId={selection.itemId} />
           ) : (
@@ -309,6 +313,8 @@ export function ContextPanel() {
           <FileViewer key={tab.id} file={file} backLabel={backLabel} />
         ) : page && tab ? (
           <PageViewer key={tab.id} page={page} />
+        ) : hostItem && tab ? (
+          <HostTab key={tab.id} host={hostItem} />
         ) : (
           <PanelBody selection={selection} />
         )}

@@ -1,6 +1,14 @@
-import type { ReactNode } from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
+import { useMemo, type ReactNode } from 'react';
+import ReactMarkdown, { type Components, type Options } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { HostLinkRules } from '@wow/contracts';
+import {
+  HostChip,
+  bareHostRefs,
+  recogniseHostLink,
+  recogniseHostRef,
+  useHostLinks,
+} from '@/chat/host-links';
 import { CodeBlock } from './code-block';
 import { FileLink, isFilePath, useFileLinks } from './file-links';
 import { safeHref } from './markdown';
@@ -45,7 +53,16 @@ const components: Components = {
   hr: () => <hr className="border-border" />,
   a: function Anchor({ href, children }) {
     const files = useFileLinks();
+    const hosts = useHostLinks();
+    // A bare reference the plugin below marked (agent workbench spec 24).
+    if (href?.startsWith(bareRefScheme)) {
+      const item = hosts && recogniseHostRef(href.slice(bareRefScheme.length), hosts.rules);
+      return item && hosts ? <HostChip item={item} links={hosts} /> : <>{children}</>;
+    }
     const safe = safeHref(href);
+    // A link to an item on one of the thread's hosts is a chip (spec 20); any other stays a link.
+    const item = safe && hosts ? recogniseHostLink(safe, hosts.rules) : undefined;
+    if (item && hosts) return <HostChip item={item} links={hosts} />;
     if (safe) {
       return (
         <a href={safe} target="_blank" rel="noreferrer" className="underline underline-offset-2">
@@ -90,7 +107,11 @@ const components: Components = {
   ),
   code: function InlineCode({ children }) {
     const files = useFileLinks();
+    const hosts = useHostLinks();
     const code = <code className="rounded bg-muted px-1 font-mono text-[0.9em]">{children}</code>;
+    const item =
+      hosts && typeof children === 'string' ? recogniseHostRef(children, hosts.rules) : undefined;
+    if (item && hosts) return <HostChip item={item} links={hosts} />;
     return files && typeof children === 'string' && isFilePath(children) ? (
       <FileLink path={children}>{code}</FileLink>
     ) : (
@@ -125,12 +146,61 @@ function safeDecode(href: string): string | undefined {
   }
 }
 
-const plugins = [remarkGfm];
-// Web and mail addresses stay; a relative path stays for the file link above; anything else
-// (javascript:, file:) is dropped.
-const urlTransform = (url: string) => safeHref(url) ?? (isFilePath(url) ? url : '');
+// The address the plugin gives a bare reference's link, so the anchor above can tell it apart.
+const bareRefScheme = 'wow-host-ref:';
+
+interface MdNode {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: MdNode[];
+}
+
+// Bare references in plain text (`DEMO-42`, `#14`, `!7`) become links the anchor above turns
+// into chips; text inside links and code is left alone.
+function bareRefs(rules: HostLinkRules) {
+  const split = (node: MdNode): MdNode[] => {
+    if (node.type !== 'text' || node.value === undefined) return [node];
+    const value = node.value;
+    const matches = bareHostRefs(value, rules);
+    if (matches.length === 0) return [node];
+    const parts: MdNode[] = [];
+    let at = 0;
+    for (const match of matches) {
+      if (match.start > at) parts.push({ type: 'text', value: value.slice(at, match.start) });
+      parts.push({
+        type: 'link',
+        url: `${bareRefScheme}${match.text}`,
+        children: [{ type: 'text', value: match.text }],
+      });
+      at = match.end;
+    }
+    if (at < value.length) parts.push({ type: 'text', value: value.slice(at) });
+    return parts;
+  };
+  const walk = (node: MdNode): void => {
+    if (!node.children || node.type === 'link' || node.type === 'linkReference') return;
+    node.children = node.children.flatMap(split);
+    for (const child of node.children) walk(child);
+  };
+  return () => (tree: unknown) => walk(tree as MdNode);
+}
+
+// Web and mail addresses stay; a relative path stays for the file link above; a bare reference
+// keeps its mark; anything else (javascript:, file:) is dropped.
+const urlTransform = (url: string) =>
+  url.startsWith(bareRefScheme) ? url : (safeHref(url) ?? (isFilePath(url) ? url : ''));
 
 export default function MarkdownBody({ text }: { readonly text: string }) {
+  const hosts = useHostLinks();
+  const rules = hosts?.rules;
+  const plugins = useMemo<NonNullable<Options['remarkPlugins']>>(
+    () =>
+      rules && (rules.repository !== null || rules.jiraKey !== null)
+        ? [remarkGfm, bareRefs(rules)]
+        : [remarkGfm],
+    [rules],
+  );
   return (
     <ReactMarkdown remarkPlugins={plugins} components={components} urlTransform={urlTransform}>
       {text}

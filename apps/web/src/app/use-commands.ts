@@ -22,7 +22,12 @@ import { connectStore } from '@/providers/connect-step';
 import { setupCommands } from '@/settings/setup';
 import { skillCommands } from '@/settings/skills';
 import { formatWhen } from '@/lib/format';
-import { openFileCommands, panelCommands, viewerCommands } from '@/panel/commands';
+import {
+  hostItemCommands,
+  openFileCommands,
+  panelCommands,
+  viewerCommands,
+} from '@/panel/commands';
 import { panelSelection } from '@/panel/model';
 import { planCommands } from '@/plans/commands';
 import { openPlan, runRead } from '@/plans/model';
@@ -216,6 +221,14 @@ export function useCommands(gated = false): {
         pageReads: pageReads ?? [],
       }),
       ...openFileCommands(fileTarget),
+      ...hostItemCommands({
+        target:
+          openThread && openThread.kind !== 'assistant'
+            ? { threadId: openThread.id, from: pathname }
+            : undefined,
+        panelTabs,
+        pathname,
+      }),
       ...connectCommands(connectShown),
       ...providerCommands(instances ?? []),
       ...projectCommands(projects ?? []),

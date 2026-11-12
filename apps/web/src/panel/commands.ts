@@ -1,4 +1,5 @@
 import { runFolder, type PageRead, type Project, type WorkflowRun } from '@wow/contracts';
+import { openInBrowser } from '@/chat/host-links';
 import { safeHref } from '@/components/markdown';
 import type { AppCommand, CommandGroup } from '@/app/commands';
 import { DETAILS_TAB, type LayoutState, type OpenFileDialog } from '@/app/runtime';
@@ -235,4 +236,62 @@ export function openFileCommands(target: OpenFileDialog | undefined): AppCommand
       run: ({ layout }) => layout.setState({ openFileDialog: target }),
     },
   ];
+}
+
+// "Open issue, PR or ticket…" for the open chat or step thread (agent workbench spec 25), and
+// Refresh now and Open on host for the host item tab on screen (spec 21, 22).
+export function hostItemCommands({
+  target,
+  panelTabs,
+  pathname,
+}: {
+  readonly target: { readonly threadId: string; readonly from: string } | undefined;
+  readonly panelTabs: LayoutState['panelTabs'];
+  readonly pathname: string;
+}): AppCommand[] {
+  const commands: AppCommand[] = [];
+  if (target) {
+    commands.push({
+      id: 'panel.openHostItem',
+      title: 'Open issue, PR or ticket…',
+      group: 'Actions',
+      keywords: ['pull request', 'merge request', 'jira', 'confluence', 'page', 'link', 'url'],
+      detail: 'In a panel tab',
+      run: ({ layout }) => layout.setState({ openHostDialog: target }),
+    });
+  }
+  const tab = selectedTab(panelTabsOf({ panelTabs }, pathname));
+  if (tab?.kind === 'host') {
+    const { threadId, item } = tab.host;
+    commands.push(
+      {
+        id: 'panel.host.refresh',
+        title: 'Refresh now',
+        group: 'Actions',
+        keywords: ['host', 'read again', 'fetch'],
+        detail: item.url,
+        run: ({ connection }) =>
+          void connection
+            ?.request('hosts.lookup', { threadId, ref: item.url, read: 'refresh' })
+            .catch(() => undefined),
+      },
+      {
+        id: 'panel.host.openOnHost',
+        title: 'Open on host',
+        group: 'Actions',
+        keywords: ['browser', 'external'],
+        detail: item.url,
+        run: () => openInBrowser(item),
+      },
+      {
+        id: 'viewer.back',
+        title: 'Back to details',
+        group: 'Actions',
+        keywords: ['close', 'side panel'],
+        detail: item.url,
+        run: ({ layout }) => closeViewer(layout, pathname),
+      },
+    );
+  }
+  return commands;
 }

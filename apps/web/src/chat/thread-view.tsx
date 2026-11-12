@@ -25,12 +25,14 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { fullPathOf, openFile } from '@/panel/viewer';
+import { fullPathOf, openFile, openHostItem } from '@/panel/viewer';
 import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
 import { Composer, type ComposerHandle } from './composer';
 import type { QuestionHold } from './question-card';
 import { useDispatch, useTopic } from './data';
+import { HostLinkContext, useHostLinkRules, type HostLinks } from './host-links';
+import { PastedLinks } from './pasted-links';
 import {
   BackgroundIndicator,
   ChatQuestions,
@@ -329,6 +331,28 @@ export function ThreadConversation({
     [extras, thread.kind, thread.id, thread.cwd, settings, layout, router],
   );
 
+  // Links to the user's hosts in messages are chips that open in a panel tab (agent workbench
+  // spec 20 to 25); the Assistant view has none, like file links.
+  const linksOn = fileLinks !== undefined;
+  const hostRules = useHostLinkRules(linksOn ? thread.id : undefined);
+  const hostReads = useTopic('hostItemReads', linksOn ? thread.id : undefined);
+  const hostLinks = useMemo<HostLinks | undefined>(
+    () =>
+      linksOn
+        ? {
+            threadId: thread.id,
+            rules: hostRules,
+            reads: hostReads ?? [],
+            open: (item) =>
+              openHostItem(
+                { settings, layout },
+                { threadId: thread.id, item, from: router?.state.location.pathname ?? '' },
+              ),
+          }
+        : undefined,
+    [linksOn, thread.id, hostRules, hostReads, settings, layout, router],
+  );
+
   useEffect(() => {
     if (autoFocus) composer.current?.focus();
   }, [autoFocus, threadId, composer]);
@@ -444,131 +468,134 @@ export function ThreadConversation({
   const column = compact ? 'w-full px-3' : 'mx-auto w-full max-w-3xl px-4';
   return (
     <FileLinkContext value={fileLinks}>
-      <div
-        ref={container}
-        onScroll={onScroll}
-        className={cn('min-h-0 flex-1 overflow-y-auto', compact ? 'py-3' : 'py-4')}
-        data-testid="conversation"
-      >
-        <div className={column}>
-          <ol aria-label="Conversation" className="flex flex-col gap-3">
-            {entries.map((entry) => {
-              const tail = entry.kind === 'item' ? entry.item : entry.items.at(-1);
-              const after = tail && afters.get(tail.id);
-              return (
-                <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
-                  {entry.kind === 'item' ? (
-                    <ConversationItem
-                      item={entry.item}
-                      approvals={approvals}
-                      questions={questions}
-                      context={itemContext(entry.item.turnId, entry.item.id)}
-                    />
-                  ) : entry.kind === 'questions' ? (
-                    <li data-testid="item-question" data-item-id={entry.id}>
-                      <ChatQuestions
-                        items={entry.items}
+      <HostLinkContext value={hostLinks}>
+        <div
+          ref={container}
+          onScroll={onScroll}
+          className={cn('min-h-0 flex-1 overflow-y-auto', compact ? 'py-3' : 'py-4')}
+          data-testid="conversation"
+        >
+          <div className={column}>
+            <ol aria-label="Conversation" className="flex flex-col gap-3">
+              {entries.map((entry) => {
+                const tail = entry.kind === 'item' ? entry.item : entry.items.at(-1);
+                const after = tail && afters.get(tail.id);
+                return (
+                  <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
+                    {entry.kind === 'item' ? (
+                      <ConversationItem
+                        item={entry.item}
+                        approvals={approvals}
                         questions={questions}
-                        turnEnded={itemContext(entry.items[0]?.turnId ?? '', entry.id).turnEnded}
-                        hold={extras?.questionHold}
+                        context={itemContext(entry.item.turnId, entry.item.id)}
                       />
-                    </li>
-                  ) : (
-                    <ToolCallGroup
-                      items={entry.items}
-                      contextOf={(item) => itemContext(item.turnId, item.id)}
+                    ) : entry.kind === 'questions' ? (
+                      <li data-testid="item-question" data-item-id={entry.id}>
+                        <ChatQuestions
+                          items={entry.items}
+                          questions={questions}
+                          turnEnded={itemContext(entry.items[0]?.turnId ?? '', entry.id).turnEnded}
+                          hold={extras?.questionHold}
+                        />
+                      </li>
+                    ) : (
+                      <ToolCallGroup
+                        items={entry.items}
+                        contextOf={(item) => itemContext(item.turnId, item.id)}
+                      />
+                    )}
+                    {after && <li>{after}</li>}
+                  </Fragment>
+                );
+              })}
+              {extras?.end && <li>{extras.end}</li>}
+              {thread.queued && (
+                <QueuedMessageItem
+                  queued={thread.queued}
+                  onCancel={cancelQueued}
+                  onEdit={editQueued}
+                />
+              )}
+            </ol>
+            {running && thread.state === 'working' && (
+              <div className="mt-3">
+                <WorkingIndicator startedAt={running.startedAt} />
+              </div>
+            )}
+            {!running && thread.backgroundTasks && thread.backgroundTasks.length > 0 && (
+              <div className="mt-3">
+                <BackgroundIndicator tasks={thread.backgroundTasks} />
+              </div>
+            )}
+          </div>
+        </div>
+        <div
+          className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}
+          // The palette's model commands go to the bar whose composer had the focus last.
+          onFocus={() => frontModelBar(barId)}
+        >
+          {gateRun && (
+            <GateBar
+              run={gateRun}
+              workflow={workflows.find((candidate) => candidate.id === gateRun.workflowId)}
+              project={projects.find((candidate) => candidate.id === gateRun.projectId)}
+              review={false}
+            />
+          )}
+          {hostLinks && <PastedLinks draftKey={threadId} links={hostLinks} />}
+          <Composer
+            ref={composer}
+            providerKind={extras ? undefined : instance?.kind}
+            running={running !== undefined && !question}
+            placeholder={placeholder}
+            blockedReason={extras?.blockedReason}
+            onSend={answerQuestion ?? message}
+            onStop={stop}
+            notice={extras?.notice}
+            bar={modelBar}
+            onBarKey={barKeys}
+            // The Assistant view keeps no draft (its text may hold a secret) and lists no commands.
+            draftKey={extras ? undefined : threadId}
+            commandSource={
+              extras || compact || !instance
+                ? undefined
+                : { providerInstanceId: instance.id, cwd: thread.cwd, threadId }
+            }
+            {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
+            fileSource={fileLinks ? { threadId } : undefined}
+            footer={
+              (showMeter && context) || (canResume && !errorId) ? (
+                <div className="flex min-h-6 flex-wrap items-center gap-3">
+                  {showMeter && context && (
+                    <ContextMeter
+                      context={context}
+                      onCompact={
+                        compactPrompt !== null && !running
+                          ? () => void message(compactPrompt)
+                          : undefined
+                      }
                     />
                   )}
-                  {after && <li>{after}</li>}
-                </Fragment>
-              );
-            })}
-            {extras?.end && <li>{extras.end}</li>}
-            {thread.queued && (
-              <QueuedMessageItem
-                queued={thread.queued}
-                onCancel={cancelQueued}
-                onEdit={editQueued}
-              />
-            )}
-          </ol>
-          {running && thread.state === 'working' && (
-            <div className="mt-3">
-              <WorkingIndicator startedAt={running.startedAt} />
-            </div>
-          )}
-          {!running && thread.backgroundTasks && thread.backgroundTasks.length > 0 && (
-            <div className="mt-3">
-              <BackgroundIndicator tasks={thread.backgroundTasks} />
-            </div>
-          )}
-        </div>
-      </div>
-      <div
-        className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}
-        // The palette's model commands go to the bar whose composer had the focus last.
-        onFocus={() => frontModelBar(barId)}
-      >
-        {gateRun && (
-          <GateBar
-            run={gateRun}
-            workflow={workflows.find((candidate) => candidate.id === gateRun.workflowId)}
-            project={projects.find((candidate) => candidate.id === gateRun.projectId)}
-            review={false}
+                  {canResume && !errorId && (
+                    // A stopped turn has no error row to carry Resume, so it sits here.
+                    <WithTooltip label={`Sends: ${resumePrompt}`}>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        className="ml-auto"
+                        onClick={() => void message(resumePrompt)}
+                      >
+                        <RotateCcwIcon />
+                        Resume
+                      </Button>
+                    </WithTooltip>
+                  )}
+                </div>
+              ) : undefined
+            }
           />
-        )}
-        <Composer
-          ref={composer}
-          providerKind={extras ? undefined : instance?.kind}
-          running={running !== undefined && !question}
-          placeholder={placeholder}
-          blockedReason={extras?.blockedReason}
-          onSend={answerQuestion ?? message}
-          onStop={stop}
-          notice={extras?.notice}
-          bar={modelBar}
-          onBarKey={barKeys}
-          // The Assistant view keeps no draft (its text may hold a secret) and lists no commands.
-          draftKey={extras ? undefined : threadId}
-          commandSource={
-            extras || compact || !instance
-              ? undefined
-              : { providerInstanceId: instance.id, cwd: thread.cwd, threadId }
-          }
-          {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
-          fileSource={fileLinks ? { threadId } : undefined}
-          footer={
-            (showMeter && context) || (canResume && !errorId) ? (
-              <div className="flex min-h-6 flex-wrap items-center gap-3">
-                {showMeter && context && (
-                  <ContextMeter
-                    context={context}
-                    onCompact={
-                      compactPrompt !== null && !running
-                        ? () => void message(compactPrompt)
-                        : undefined
-                    }
-                  />
-                )}
-                {canResume && !errorId && (
-                  // A stopped turn has no error row to carry Resume, so it sits here.
-                  <WithTooltip label={`Sends: ${resumePrompt}`}>
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      className="ml-auto"
-                      onClick={() => void message(resumePrompt)}
-                    >
-                      <RotateCcwIcon />
-                      Resume
-                    </Button>
-                  </WithTooltip>
-                )}
-              </div>
-            ) : undefined
-          }
-        />
-      </div>
+        </div>
+      </HostLinkContext>
     </FileLinkContext>
   );
 }

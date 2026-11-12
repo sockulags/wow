@@ -714,6 +714,25 @@ best `viewer.fileMatchesShown` matches as you type, and opens the pick. Typing `
 a word in the composer (`chat.fileTrigger`) opens the same list; a pick becomes a chip, and the
 message names the file as `@path` for the agent. A pasted `@` opens nothing.
 
+### Pull requests, issues and tickets in chat
+
+A link in a chat to a pull or merge request, an issue, a Jira issue or a Confluence page on a host
+you stored a token for in Settings → Trackers shows as a chip with the host's icon and the item's
+key. In a project's thread, `DEMO-42` (the project's Jira key), `#14` and, on GitLab, `!7` are
+chips too. Press Enter on a chip, or click it, to open the item in a side panel tab: the pull
+request with its checks and review comments, the issue or ticket with its description, or the
+page. Shift+Enter or Shift+click opens it in your browser instead.
+
+wow reads the item once when its tab first opens and again only when you press Refresh now; it
+never checks it on a timer. What it read is kept, so the chip shows its state ("PR #14 · Draft ·
+2 checks failed") after a restart, and the tab says when it was fetched. If the host refuses or
+fails, the tab shows its reason and keeps what it read before. Links to hosts without a token
+stay plain links. Nothing read from a host is sent to the agent.
+
+"Open issue, PR or ticket…" in the palette takes a web address or a key. A link you paste into
+the composer shows its chip above the text with "Open in panel". The thread's Details tab lists
+under "Mentioned" every file and host item its messages name.
+
 ### Working copies
 
 Turn on **Own working copy** in a workflow's builder (or "Own working copy" in the palette) and

@@ -1,4 +1,4 @@
-import type { FileScope } from '@wow/contracts';
+import { hostItemKey, type FileScope } from '@wow/contracts';
 import type { SettingsStore } from '@wow/client-runtime';
 import {
   DETAILS_TAB,
@@ -7,6 +7,7 @@ import {
   type PanelTab,
   type PanelTabs,
   type ViewerFile,
+  type ViewerHostItem,
   type ViewerPage,
 } from '@/app/runtime';
 import { eventToBinding, normalizeBinding, type KeyLike } from '@/app/keybindings';
@@ -38,15 +39,19 @@ export const fileTabId = (file: Pick<ViewerFile, 'scope' | 'path'>): string =>
   `file:${scopeKey(file.scope)}:${file.path}`;
 export const pageTabId = (page: Pick<ViewerPage, 'runId' | 'ref'>): string =>
   `page:${page.runId}:${page.ref}`;
+export const hostTabId = (host: Pick<ViewerHostItem, 'threadId' | 'item'>): string =>
+  `host:${host.threadId}:${hostItemKey(host.item)}`;
 
-// The short name a tab shows: the file's own name.
+// The short name a tab shows: the file's own name. Host items name themselves in tabs.tsx.
 export const tabName = (tab: PanelTab): string =>
   tab.kind === 'file'
     ? (tab.file.path
         .split(/[\\/]/)
         .filter((part) => part !== '')
         .at(-1) ?? tab.file.path)
-    : tab.page.ref;
+    : tab.kind === 'page'
+      ? tab.page.ref
+      : tab.host.item.id;
 
 function updateTabs(layout: LayoutStore, route: string, change: (tabs: PanelTabs) => PanelTabs) {
   layout.setState((state) => {
@@ -112,6 +117,11 @@ export function openFile(context: ViewerContext, opening: FileOpening): void {
 // A linked Confluence page (review loop spec 35).
 export function openPage(context: ViewerContext, page: ViewerPage): void {
   openTab(context, page.from, { kind: 'page', id: pageTabId(page), page });
+}
+
+// An item a chat links to (agent workbench spec 21), in a tab of the view it was opened from.
+export function openHostItem(context: ViewerContext, host: ViewerHostItem): void {
+  openTab(context, host.from, { kind: 'host', id: hostTabId(host), host });
 }
 
 export const selectedTab = (tabs: PanelTabs): PanelTab | undefined =>
