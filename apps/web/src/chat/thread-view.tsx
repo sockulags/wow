@@ -16,7 +16,8 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import { useSetting } from '@/app/runtime';
+import { useRuntime, useSetting } from '@/app/runtime';
+import { openFile } from '@/panel/viewer';
 import { IconButton, WithTooltip } from '@/components/hint';
 import { EmptyState } from '@/components/states';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +26,7 @@ import { useDateFormat } from '@/lib/format';
 import { rowActionScope } from '@/lib/row-actions';
 import { cn } from '@/lib/utils';
 import { GateBar } from '@/workflows/gate-bar';
-import { gateRunForThread } from '@/workflows/model';
+import { artifactPath, gateRunForThread } from '@/workflows/model';
 import { Composer, type ComposerHandle } from './composer';
 import type { QuestionHold } from './question-card';
 import { useDispatch, useTopic } from './data';
@@ -53,6 +54,7 @@ import {
 } from './model';
 import { ModelBar, useModelBarKeys, type ModelBarHandle, type ModelBarProps } from './model-bar';
 import { frontModelBar } from './model-commands';
+import { openThreadChanges, ThreadChangesChip } from './thread-changes';
 import { ThreadTitle } from './thread-title';
 import {
   groupQuestions,
@@ -122,6 +124,7 @@ function ThreadHeader({
           </Badge>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {thread.runId === null && <ThreadChangesChip threadId={thread.id} />}
           <IconButton
             label={thread.pinned ? 'Unpin thread' : 'Pin thread'}
             aria-pressed={thread.pinned}
@@ -287,6 +290,7 @@ export function ThreadConversation({
 }) {
   const threadId = thread.id;
   const send = useDispatch();
+  const runtime = useRuntime();
   const turns = useTopic('turns', threadId) ?? [];
   const items = useTopic('threadItems', threadId);
   const approvals = useTopic('approvals', threadId) ?? [];
@@ -346,6 +350,21 @@ export function ThreadConversation({
       )?.label ?? thread.permissionMode)
     : thread.permissionMode;
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
+  // An edited file opens in the thread's Changes, or for a step in the run's file viewer.
+  const openEdited = (path: string) => {
+    const relative = path.replaceAll('\\', '/');
+    if (thread.runId === null) {
+      openThreadChanges(runtime, threadId, relative);
+      return;
+    }
+    openFile(runtime, {
+      runId: thread.runId,
+      path: relative,
+      fullPath: artifactPath(thread.cwd, relative),
+      // The view on screen when the row was clicked; the app's history is the browser's.
+      from: window.location.pathname,
+    });
+  };
   const itemContext = (turnId: string, itemId: string): ItemContext => {
     const turn = turnById.get(turnId);
     return {
@@ -357,6 +376,7 @@ export function ThreadConversation({
       formatAt: when,
       questionHold: extras?.questionHold,
       outputLines,
+      ...(thread.kind === 'assistant' ? {} : { openFile: openEdited }),
       recovery:
         itemId === errorId
           ? {

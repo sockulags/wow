@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { ItemContext } from '../items';
 import { commandParts } from './command';
+import { editParts } from './edit';
 import type { ToolPayload } from './facts';
 import { genericParts } from './generic';
 import { mcpParts } from './mcp';
@@ -9,8 +10,8 @@ import { ToolRowFrame, type ToolParts } from './row';
 import { searchParts } from './search';
 import { webParts } from './web';
 
-// The row of one tool call by its kind. Edits are drawn as a plain row until their diff row
-// exists; a call without a kind (stored before) is drawn as it was.
+// The row of one tool call by its kind. An edit without a diff (stored before edits carried one)
+// and a call without a kind are drawn as they were.
 export function toolParts(
   payload: ToolPayload,
   context: ItemContext,
@@ -27,6 +28,10 @@ export function toolParts(
       return webParts(payload, context, extra);
     case 'mcp':
       return mcpParts(payload, context, extra);
+    case 'edit':
+      return payload.diff === undefined
+        ? genericParts(payload, context, extra)
+        : editParts(payload, context, extra);
     default:
       return genericParts(payload, context, extra);
   }

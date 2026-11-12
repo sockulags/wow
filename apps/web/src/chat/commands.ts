@@ -1,7 +1,5 @@
 import {
   providerChatOptions,
-  type Approval,
-  type ApprovalDecision,
   type Project,
   type ProviderInstance,
   type Thread,
@@ -19,8 +17,6 @@ export interface ChatCommandData {
   // The thread open in the chat view, if any, and whether a turn of it is running.
   readonly openThread: Thread | undefined;
   readonly running: boolean;
-  // The approval the open thread waits for, if any.
-  readonly approval?: Approval | undefined;
   // The chat view is open: its contextual commands (switch provider) only exist there.
   readonly inChat?: boolean;
   readonly projects?: readonly Project[];
@@ -28,28 +24,13 @@ export interface ChatCommandData {
   readonly threadList?: Pick<ThreadCommandData, 'projectId' | 'found'>;
 }
 
-const approvalCommands: ReadonlyArray<{
-  readonly decision: ApprovalDecision;
-  readonly title: string;
-  readonly keybinding: AppCommand['keybinding'];
-}> = [
-  { decision: 'allowOnce', title: 'Allow once', keybinding: 'keybindings.approvalAllowOnce' },
-  {
-    decision: 'allowSession',
-    title: 'Allow for this session',
-    keybinding: 'keybindings.approvalAllowSession',
-  },
-  { decision: 'deny', title: 'Deny', keybinding: 'keybindings.approvalDeny' },
-];
-
 // Palette commands for the chat (spec 22): every thread, new thread, switch provider, stop, mark
-// done or reopen, and the answers to the approval the open thread waits for.
+// done or reopen. The answers to the approval on screen are the approval card's (approval-card.tsx).
 export function chatCommands({
   threads,
   instances,
   openThread,
   running,
-  approval,
   inChat = openThread !== undefined,
   projects = [],
   threadList,
@@ -100,27 +81,6 @@ export function chatCommands({
               : {}),
           });
           void navigate({ to: '/chat/new' });
-        },
-      });
-    }
-  }
-
-  if (openThread && approval && approval.decision === null) {
-    const approvalId = approval.id;
-    for (const { decision, title, keybinding } of approvalCommands) {
-      commands.push({
-        id: `chat.approval.${decision}`,
-        title,
-        group: 'Chat',
-        keywords: ['approval', 'approve', 'permission', 'request'],
-        ...(keybinding ? { keybinding } : {}),
-        detail: 'Approval',
-        run: ({ connection }) => {
-          if (connection) {
-            void dispatch(connection, { type: 'approval.answer', approvalId, decision }).catch(
-              () => undefined,
-            );
-          }
         },
       });
     }

@@ -7,7 +7,9 @@ import { assistantCommands } from '@/assistant/commands';
 import { backlogCommands } from '@/backlog/commands';
 import { calendarCommands } from '@/calendar/commands';
 import { validateCalendarSearch } from '@/calendar/search';
+import { approvalCommands, approvalCardStore } from '@/chat/approval-card';
 import { chatCommands } from '@/chat/commands';
+import { threadChangesCommands, threadChangesStore } from '@/chat/thread-changes';
 import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
 import { activeSkillComposer, skillComposerStore } from '@/chat/composer-store';
@@ -33,7 +35,6 @@ import { openPlan, runRead } from '@/plans/model';
 import { runPullRequest } from '@/workflows/pull-request-tab';
 import { runTicketRead } from '@/workflows/ticket-tab';
 import { useCalendarPrefs } from '@/calendar/prefs';
-import { pendingApproval } from '@/chat/view-model';
 import { changesStore } from '@/workflows/changes';
 import { workflowCommands } from '@/workflows/commands';
 import { gateStore, sendBackDraft } from '@/workflows/gate';
@@ -65,7 +66,9 @@ export function useCommands(gated = false): {
   const instances = useTopic('providerInstances');
   const projects = useTopic('projects');
   const turns = useTopic('turns', openThreadId);
-  const approvals = useTopic('approvals', openThreadId);
+  const approvalOffer = useStore(approvalCardStore, (state) => state.offer);
+  const changesOpen = useStore(threadChangesStore, (state) => state.threadId);
+  const changesTurnOnly = useStore(threadChangesStore, (state) => state.turnOnly);
   // The calendar's zone with "outlook" resolved (F-8), for the cards' "when".
   const { zone: calendarZone } = useCalendarPrefs();
   const openRunId = /^\/workflows\/runs\/([^/]+)$/.exec(pathname)?.[1];
@@ -144,12 +147,17 @@ export function useCommands(gated = false): {
           : undefined;
         return start ? { ...command, detail: `Card · ${when(start)}` } : command;
       }),
+      ...approvalCommands(approvalOffer),
+      ...threadChangesCommands(
+        openThread?.runId === null ? openThread.id : undefined,
+        changesOpen !== undefined && changesOpen === openThread?.id,
+        changesTurnOnly,
+      ),
       ...chatCommands({
         threads: threads ?? [],
         instances: instances ?? [],
         openThread,
         running: runningTurn(turns ?? []) !== undefined,
-        approval: pendingApproval(approvals ?? []),
         inChat: pathname.startsWith('/chat'),
         projects: projects ?? [],
         threadList: { projectId: listProjectId, found: paletteHits },
@@ -231,7 +239,9 @@ export function useCommands(gated = false): {
     calendarZone,
     outlookProfile,
     showWeekends,
-    approvals,
+    approvalOffer,
+    changesOpen,
+    changesTurnOnly,
     pathname,
     locationSearch,
     updateState,

@@ -100,6 +100,23 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       it, and each change adds one "Updated tasks (n/3)" line. Write down which tools Claude used
       (TodoWrite, or TaskCreate and TaskUpdate) and whether a call that changed nothing added a
       line (it must not).
+- [ ] **Edits and Changes (Claude Code).** In the scratch repository (a Git folder) ask Claude to
+      change one line of `README.md` and to write a new file `notes.txt`. Expected: the approval
+      shows the edit as a diff; the rows read "Edit README.md +1 −1" and "Edit notes.txt +n −0",
+      opening to the diff with line numbers (from the result's `structuredPatch`; without it the
+      row shows the old and new text without line numbers: write down which you saw). The header
+      chip reads "+n −m in 2 files"; Ctrl+Shift+D lists both, and after a second message that
+      edits only `notes.txt`, This turn only (O) lists just that one.
+- [ ] **Deny with a note (Claude Code).** Ask Claude to run `npm install`, press D, write "Use
+      pnpm instead" and Enter. Write down what Claude says it was told: expected the note.
+- [ ] **Always allow (Claude Code).** Ask Claude to run `pnpm --version`, press Y: the card showed
+      "Run commands starting with `pnpm --version`" (or the prefix Claude Code suggested; write it
+      down). In a second thread of the same project, ask for `pnpm --version` again: no request,
+      the row reads "Allowed by rule". Remove the rule in Settings → Approvals: the next one asks.
+- [ ] **Plan card (Claude Code).** In Plan only, ask Claude to plan a change to `smoke.txt` and to
+      leave plan mode. Write down whether the card says "The plan as written in the conversation"
+      (the request carried no `plan`) or shows the plan without that line (it did). Press Enter:
+      the bar shows Accept edits and Claude edits without asking.
 
 ## 4. Codex turn
 
@@ -136,6 +153,16 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       folder exactly as shown (plain `C:\…` or `\\?\C:\…`), since that is the `cwd` Codex sent.
       Ask it to read `README.md`: write down whether that is a command row
       (`$ Get-Content …` or similar) or something else.
+- [ ] **Edits and a denial's note (Codex).** In Auto, ask Codex to add a line to `README.md` and
+      to create `notes.txt`. Expected: the approval (if Codex asks) shows the diff, and the rows
+      read "Edit README.md +1 −0" and "Edit notes.txt +n −0". Write down how a new file's diff
+      looked (Codex's `diff` of an added file is read as its content). Ask it to run a command
+      that needs approval, press D, write a note and Enter: the turn stops ("Stopped") and your
+      note is the next message; write down what Codex answered to it.
+- [ ] **Always allow (Codex).** In a project where a Claude thread stored a rule (above), ask
+      Codex to run the same command: no request, the row reads "Allowed by rule". Write down the
+      prefix Codex proposed (`proposedExecpolicyAmendment`), if the card of a new command shows
+      one.
 - [ ] **Plan (Codex).** Ask Codex to plan three steps and do them. Expected: the pin shows
       "n/3 · <step>" and an "Updated tasks" line appears only when a step changes, even where
       Codex sends the same plan again. Write down how many lines appeared for how many changes.

@@ -126,6 +126,7 @@ describe('shell', () => {
       'Providers',
       'Projects',
       'Chat',
+      'Approvals',
       'Calendar',
       'Outlook',
       'Scheduler',

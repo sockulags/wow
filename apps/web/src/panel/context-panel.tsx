@@ -7,6 +7,7 @@ import { DisconnectedState, EmptyState } from '@/components/states';
 import { IconButton } from '@/components/hint';
 import { useBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
+import { ThreadChanges, useOpenThreadChanges } from '@/chat/thread-changes';
 import { BacklogPanel } from './backlog-panel';
 import { CalendarPanel, useCalendarPanelTitle } from './calendar-panel';
 import { FileViewer } from './file-viewer';
@@ -166,6 +167,8 @@ export function ContextPanel() {
     pathname,
   );
   const width = preview ?? storedWidth;
+  // A chat thread's Changes take the place of its details until Back (agent workbench spec 34).
+  const changes = useOpenThreadChanges(selection.view === 'chat' ? selection.threadId : undefined);
 
   // "Focus context panel" on a closed panel: take the focus once it is on screen.
   useEffect(() => {
@@ -212,6 +215,8 @@ export function ContextPanel() {
         <h2 className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
           {file ? (
             'File'
+          ) : changes ? (
+            'Changes'
           ) : page ? (
             'Page'
           ) : selection.view === 'calendar' && selection.itemId ? (
@@ -234,6 +239,8 @@ export function ContextPanel() {
           <FileViewer key={`${file.runId}\n${file.path}`} file={file} />
         ) : page ? (
           <PageViewer key={`${page.runId}\n${page.ref}`} page={page} />
+        ) : changes && selection.view === 'chat' && selection.threadId ? (
+          <ThreadChanges threadId={selection.threadId} />
         ) : (
           <PanelBody selection={selection} />
         )}

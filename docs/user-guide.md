@@ -422,8 +422,13 @@ Every tool call is one line, drawn by what the call does:
   relative to it.
 - **An MCP call** reads `server › tool` with its arguments as `key: value`; opened, it lists them
   one per line, **Show JSON** shows the arguments as sent, and the output sits below.
-- **Any other tool**, a file edit, and every call stored before this version keep the row they
-  had: the tool's name and the first text of its input; opened, its input and output.
+- **An edit** (Claude Code's Edit, MultiEdit and Write, Codex's file changes) reads "Edit
+  src/timer.ts +4 −1"; opened, it shows the change in colour, removed lines red and added lines
+  green, with **Open file**, which opens the thread's Changes at that file. A new file shows as
+  added lines. A very long diff is cut at `chat.editDiffMaxLines` lines; the thread's Changes
+  have all of it.
+- **Any other tool**, and every call stored before this version, keep the row they had: the
+  tool's name and the first text of its input; opened, its input and output.
 
 While a call runs, its time counts up from when it started; reloading the page shows the same
 time, because the server stored the start. A call its turn left running reads "not finished".
@@ -449,6 +454,15 @@ keyboard was last on: "Copy message", "Copy message text", "Copy code", "Copy ou
 all N lines". When nothing could be copied (the browser has no clipboard or refused it), a notice
 "Nothing was copied" says so.
 
+**Changes**: a chat thread in a Git folder shows a chip in its header, such as "+42 −7 in 5
+files": what changed in its folder since its first message, committed or not. Click it, or press
+**Ctrl+Shift+D** (`keybindings.threadChanges`, "Show changes" in the palette), to list the files
+in the side panel with their added and removed lines; pick one to see its diff, and **Back** to
+return to the thread's details. **This turn only** (**O**) narrows the list to files that changed
+since the last turn began. Files that were already edited when the thread began and have not
+changed since are left out. A folder that is not in Git, and a thread that began before this
+version, say so instead of listing files.
+
 A turn ends with its usage: input, output and cached tokens, and the cost when the provider
 reports one. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.
@@ -456,10 +470,31 @@ how much of the context window the thread uses, with a Compact action for Claude
 ### When the agent needs you
 
 - **Approvals**: when the agent wants to run a command, change files or use a tool, the thread
-  shows the request with the folder it runs in, the permission mode, and **Allow once** (**A**),
-  **Allow for this session** (**S**) and **Deny** (**D**). The request takes the focus, so the keys
-  work at once; they are in Settings → Keybindings and in the palette. The tool row reads "waiting
-  for approval" meanwhile.
+  shows the request as what it is: a command line with the folder it runs in, an edit as its
+  diff, a web address, or a tool as `server › tool` with its arguments (the provider's own JSON is
+  behind **Details**), and the permission mode. Answer with **Allow once** (**A**), **Allow for
+  this session** (**S**), **Always allow in this project** (**Y**) or **Deny** (**D**). The request
+  takes the focus, so the keys work at once; they are in Settings → Keybindings and in the
+  palette. The tool row reads "waiting for approval" meanwhile.
+  - **Deny** opens a one-line note, "No, and tell it what to do instead". Enter denies with what
+    you wrote, or without a note when it is empty; Escape closes it. Claude Code gets the note as
+    the reason for the denial. Codex takes no reason with a denial, so wow stops its turn and sends
+    the note as your next message, as Codex itself does.
+  - **Always allow in this project** shows the rule it keeps, such as "Run commands starting with
+    `pnpm test`" (the command's first words) or "Use the tool `github › create_issue`", and allows
+    the request. From then on a request any thread of the project makes that the rule covers is
+    allowed without asking, on Claude Code and Codex alike, and its row reads "Allowed by rule:
+    …". A command that chains, pipes or redirects (`&&`, `;`, `|`, `>`) is never covered. Edits
+    get no rule (use the Accept edits mode for that), and a thread without a project does not
+    offer it. Settings → Approvals lists each project's rules with when they were added; **Remove**
+    makes the next such request ask again. wow keeps the rules itself and writes nothing to Claude
+    Code's or Codex's settings.
+- **Plans**: in Plan only, when Claude Code is ready to leave plan mode, the thread shows a plan
+  card: the plan as formatted text, **Start, accept edits** (Enter, or **1**), **Start, ask each
+  time** (**2**) and **Keep planning** (**3**), which opens a note for what to change. A start
+  allows the request and sets the thread's mode, which the composer bar then shows. When Claude
+  Code did not send the plan with its request, the card shows its last message and says it is the
+  plan as written in the conversation. The choices are in the palette as "Plan: …".
 - **Questions**: when the agent asks (Claude's `AskUserQuestion`, Codex's user input request), the
   thread shows a question card: each question with its header as a small chip, its choices (the
   one the agent recommends first, marked **Recommended**) and a last choice **Other** with a text
