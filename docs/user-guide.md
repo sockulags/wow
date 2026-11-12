@@ -687,7 +687,9 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   for example if Alt+Up clashes with your screen reader.
 - **Next that needs you**: **Ctrl+Shift+J** goes to the oldest approval, question, plan, gate or
   assistant proposal that waits for you, wherever it is, and puts the keyboard on it; press it
-  again for the next one.
+  again for the next one. Oldest means the one that has waited longest: renaming a thread or
+  changing its model does not move it. A gate that waits for the pull request's checks is not
+  waiting for you and is skipped.
 - **Skills in chat** are listed Yours, Project, Recently used, User, Plugins and wow last; wow's
   own four are marked "for workflow steps". On a new thread the list opens under the box, so the
   provider and project pickers stay in view.

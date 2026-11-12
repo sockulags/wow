@@ -259,3 +259,29 @@ describe('the mock provider (agent workbench U10)', () => {
     ).toEqual(['pnpm lint', 'pnpm test']);
   });
 });
+
+describe('when a thread began to wait (spec 76)', () => {
+  const thread = () =>
+    (snapshot(database.db, { topic: 'threads' }) as { stateSince?: string | null }[])[0];
+  const approval = (id: string) =>
+    events({
+      type: 'approvalRequested',
+      threadId: 't1',
+      approvalId: id,
+      kind: 'command',
+      summary: `Run ${id}`,
+      request: { toolName: 'Bash' },
+    });
+
+  it('keeps the time it came to need the user through a rename, a new model and a second approval', () => {
+    later(10);
+    approval('a1');
+    const since = at(10);
+    expect(thread()).toMatchObject({ state: 'needs_you', stateSince: since });
+    later(5);
+    dispatch({ type: 'thread.rename', threadId: 't1', title: 'Kettle timer, again' });
+    dispatch({ type: 'thread.configure', threadId: 't1', model: 'sonnet' });
+    approval('a2');
+    expect(thread()).toMatchObject({ state: 'needs_you', stateSince: since });
+  });
+});

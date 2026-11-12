@@ -566,6 +566,21 @@ describe('next that needs you (spec 76)', () => {
     expect(nextNeedsYou(targets, '/assistant', 'proposal:proposal-1')?.key).toBe('run:run-1');
   });
 
+  it('orders a waiting thread by when its wait began, not by its last change', () => {
+    const renamed: Thread = {
+      ...waitingThread,
+      id: 'thread-3',
+      stateSince: '2026-11-12T08:01:00.000Z',
+      updatedAt: '2026-11-12T08:09:00.000Z',
+    };
+    const targets = needsYouTargets({
+      threads: [{ ...waitingThread, stateSince: '2026-11-12T08:05:00.000Z' }, renamed],
+      runs: [],
+      proposals: [],
+    });
+    expect(targets.map((target) => target.key)).toEqual(['thread:thread-3', 'thread:thread-2']);
+  });
+
   it('leaves out a run whose gate waits for the checks', () => {
     const checks = {
       id: 'run-2',

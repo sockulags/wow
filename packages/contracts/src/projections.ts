@@ -117,6 +117,10 @@ export const Thread = z.object({
   seen: z.boolean().optional(),
   // The message waiting for the running turn to end; null or absent when none waits.
   queued: QueuedMessage.nullable().optional(),
+  // When the thread came to its current state, so a thread that waits is ordered by when the wait
+  // began (agent workbench spec 76); a rename or a change of model does not move it. Null or
+  // absent in rows from before.
+  stateSince: Timestamp.nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });

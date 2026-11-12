@@ -128,6 +128,8 @@ export const threads = sqliteTable(
     // before, or outside git.
     baseSha: text(),
     baseFiles: json<FileHash[]>(),
+    // When the thread came to its current state; null for a thread stored before it was kept.
+    stateSince: text(),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },

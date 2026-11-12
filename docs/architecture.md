@@ -3126,9 +3126,13 @@ stored by the server; the web app only draws it.
   composer gets `listsBelow`, so the skill and file lists open under the box and leave the
   provider and project pickers in view.
 - **Next that needs you.** `chat/needs-you.ts` `needsYouTargets` lists, from the subscribed rows,
-  threads in `needs_you` (approval, question, plan card; at `updatedAt`, which nothing else moves
-  while it waits; a step thread waiting for its run's gate counts as the gate), runs `waiting` at a
-  gate (at the reviewed step's `endedAt`) and pending assistant proposals, oldest first.
+  threads in `needs_you` (approval, question, plan card; at `Thread.stateSince`, which the
+  projector sets when the thread's state changes and keeps through a rename, a change of model or
+  mode, background work or a second approval; rows from before migration 0031 take their
+  `updatedAt`; a step thread waiting for its run's gate counts as the gate), runs `waiting` at a
+  gate for the user (at the reviewed step's `endedAt`; a gate waiting for checks, `runNeedsYou`,
+  is left out, and its gate bar does not take the focus) and pending assistant proposals, oldest
+  first.
   Ctrl+Shift+J (`keybindings.nextNeedsYou`, palette "Next that needs you") navigates to the next
   after the one it went to last and sets a focus request; the approval card, question card, gate
   bar's Approve and the proposal card call `useNeedsYouFocus(key, ref)` and take the focus once

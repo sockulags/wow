@@ -39,27 +39,25 @@ export function needsYouTargets({
   proposals: readonly AssistantProposal[];
 }): NeedsYouTarget[] {
   const targets: NeedsYouTarget[] = [
-    // A thread changes nothing else while it waits, so its last change is when it began to.
-    // A step's thread that needs the user because its run waits at the gate after it is the
-    // run's gate, listed once below.
+    // A thread waits since it came to need the user; a row from before the server kept that
+    // falls back to its last change. A step's thread that needs the user because its run waits at
+    // the gate after it is the run's gate, listed once below.
     ...threads
       .filter((thread) => thread.state === 'needs_you' && !gateRunForThread(thread, runs))
       .map((thread) => ({
         key: `thread:${thread.id}`,
-        at: thread.updatedAt,
+        at: thread.stateSince ?? thread.updatedAt,
         title: threadTitle(thread),
         path: `/chat/${thread.id}`,
         open: { to: '/chat/$threadId' as const, params: { threadId: thread.id } },
       })),
-    ...runs
-      .filter(runNeedsYou)
-      .map((run) => ({
-        key: `run:${run.id}`,
-        at: reviewedStep(run)?.endedAt ?? run.startedAt,
-        title: 'Gate',
-        path: `/workflows/runs/${run.id}`,
-        open: { to: '/workflows/runs/$runId' as const, params: { runId: run.id } },
-      })),
+    ...runs.filter(runNeedsYou).map((run) => ({
+      key: `run:${run.id}`,
+      at: reviewedStep(run)?.endedAt ?? run.startedAt,
+      title: 'Gate',
+      path: `/workflows/runs/${run.id}`,
+      open: { to: '/workflows/runs/$runId' as const, params: { runId: run.id } },
+    })),
     ...proposals
       .filter((proposal) => proposal.state === 'pending')
       .map((proposal) => ({
