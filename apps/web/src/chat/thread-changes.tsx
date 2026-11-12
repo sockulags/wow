@@ -91,8 +91,6 @@ function parsed(received: unknown): ThreadDiff {
 export function useThreadDiff(
   threadId: string,
   path?: string,
-  // Off where the thread has no Changes (a step's or the assistant's thread).
-  wanted = true,
 ): { readonly diff: ThreadDiff | undefined; readonly error: string | undefined } {
   const { connection } = useRuntime();
   const turns = useTopic('turns', threadId) ?? [];
@@ -102,7 +100,7 @@ export function useThreadDiff(
   const what = `${threadId}\n${path ?? ''}`;
   const asked = `${what}\n${key}\n${refresh}`;
   useEffect(() => {
-    if (!connection || !wanted) return;
+    if (!connection) return;
     let current = true;
     connection
       .request('threads.diff', path === undefined ? { threadId } : { threadId, path })
@@ -114,7 +112,7 @@ export function useThreadDiff(
     return () => {
       current = false;
     };
-  }, [connection, threadId, path, asked, wanted]);
+  }, [connection, threadId, path, asked]);
   // An older read of the same thread and file stays on screen until the new one comes; one for
   // another thread or file is never shown in its place.
   const shown = answer !== undefined && answer.for.startsWith(`${what}\n`) ? answer : undefined;

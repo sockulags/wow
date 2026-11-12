@@ -461,6 +461,9 @@ test.describe('chat', () => {
     await expect(
       panel.getByRole('region', { name: 'File viewer' }).getByTestId('viewer-path'),
     ).toHaveText('src/timer.ts');
+    // Leave the panel closed for the cases after this one.
+    await page.keyboard.press('Control+j');
+    await expect(panel).toBeHidden();
   });
 
   test('denies with a note @agent-workbench-37', async ({ page }) => {
