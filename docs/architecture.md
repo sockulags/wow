@@ -174,10 +174,14 @@ threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessi
                  list, false and true for older rows (migration 0027_thread_list); queued: the
                  message waiting for the running turn to end (migration 0028_queued_messages);
                  baseSha, baseFiles: where a chat thread's Changes are measured from, set at its
-                 first turn (migration 0029_thread_changes)
+                 first turn (migration 0029_thread_changes); stateSince (0031); goBack(json:
+                 GoBack)?, forkedFrom(json: {threadId, turnId})? for Edit and Fork (migration
+                 0032_fork_and_edit)
 turns            id, threadId, index, state, startedAt, endedAt, usage(json),
                  fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
-                 turn began, for "This turn only" (migration 0029_thread_changes)
+                 turn began, for "This turn only" (migration 0029_thread_changes);
+                 resumePoint(json: {sessionId, at})?, replacedBy? -- the provider's point after
+                 the turn and the turn Edit put in its place (migration 0032_fork_and_edit)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'|'settings_change'|
                  'compaction'), payload(json), streaming   -- a subagent's tool_call and
@@ -280,7 +284,8 @@ Both adapters implement one interface from `packages/contracts`:
 
 ```text
 ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode, resumeId?,
-                            toolset? {name, url, token}, instructions?}
+                            toolset? {name, url, token}, instructions?,
+                            goBack? {at|null, fork}}
                  interrupt {threadId} | closeThread {threadId} |
                  answerApproval {approvalId, decision, note?, permissionMode?} |
                  answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
@@ -295,8 +300,9 @@ ProviderEvent:   session {providerSessionId} | textDelta {itemId, delta, parentI
                                     answer?, agentState?} |
                  approvalRequested {approvalId, kind, summary, request, facts?} | questionAsked |
                  taskListUpdated | usage {..., model?} | contextUsage |
-                 compacted {trigger manual|auto, preTokens?, postTokens?} | turnCompleted |
-                 turnFailed | turnInterrupted | turnStartedByProvider |
+                 compacted {trigger manual|auto, preTokens?, postTokens?} |
+                 turnCompleted {resumePoint?} | turnFailed {error, resumePoint?} |
+                 turnInterrupted {resumePoint?} | turnStartedByProvider |
                  backgroundTasks {tasks [{id, description, agent?, kind?, lastOutput?}]} |
                  commandRefused {command stopTask|toBackground, error} (made by the server)
 ```
@@ -3133,7 +3139,57 @@ stored by the server; the web app only draws it.
   step thread in the side panel) registers its handle with `showConversation`; the commands are
   `conversationCommands`. These keys are settings in the Chat scope, since Alt+Up/Down may clash
   with screen readers; the builder's rule keys get their own "Workflows" scope in the keybindings
-  table so the shared keys are not reported as conflicts. E and F on a focused message are U12's.
+  table so the shared keys are not reported as conflicts. E and F on a focused message are Edit
+  and Fork (see "Edit and Fork").
+
+### Edit and Fork
+
+Agent workbench spec 62, 63, 71, 74, U12. Both go back in the provider's conversation and never
+rewind files.
+
+- **Points.** The Claude adapter keeps the uuid of the running turn's newest message of the
+  conversation itself (assistant or user messages with `parent_tool_use_id` null; a subagent's
+  are not) and sends it as `resumePoint` on the turn's end. A turn that wrote nothing sends none,
+  so a refused resume is not taken for a point. The decider stores it on the turn as
+  `{sessionId, at}` with the session the thread had then (`turn.ended.resumePoint`); the turns
+  topic only says `resumable`. Turns from before have none, so Edit and Fork are offered only
+  after them.
+- **Going back.** `Thread.goBack {resumeId, at, fork}` is set while the next turn goes back;
+  `turnStarted` then sends `resumeId` and `goBack {at, fork}` (`startFrom` in core/threads.ts). The
+  adapter closes the live session and opens one with `resume`, `resumeSessionAt: at` and, for a
+  fork, `forkSession: true`; `at` null opens a new conversation with nothing resumed. `goBack`
+  is cleared (`thread.goBackChanged`) only when a turn ends with a point, so a turn that failed
+  before Claude Code wrote anything goes back again.
+- **Edit.** `thread.editLast {threadId, turnId, text, skills?, files?, attachments?}`
+  (core/go-back.ts `editGoBack`): only for a chat thread, only for the last shown message, with
+  no turn running. It goes back to the point of the shown turn before (a new conversation when
+  there is none; forked when that point is in another session, a fork's copied turns) and starts
+  the turn as `thread.sendMessage` would, then `turn.replaced {turnId, by}` marks the old turn.
+  The web app hides a replaced turn's items and shows them as "Earlier version" on the message
+  that replaced it (`goBackView` in chat/go-back.ts, `EarlierVersions` in items.tsx).
+- **Fork.** `thread.create` with `forkFrom {threadId, turnId}` (`forkEvents`): a new chat thread
+  on the origin's provider, project, folder, model, effort and mode, titled "<title> (fork)",
+  with `forkedFrom` and a `goBack` to the turn's point with `fork: true`. `thread.historyCopied`
+  copies the shown turns up to that one and their items with the new thread's ids (a subagent's
+  `parentItemId` follows); approval and question cards stay in the origin, whose rows they need.
+  The header says "Forked from <title>".
+- **Where not.** `providerChatOptions[kind].cannotGoBack` is null for Claude Code and a sentence
+  for Codex, whose generated protocol has no fork or rollback; its adapter refuses `goBack`. The
+  decider refuses both commands with that sentence; the web app offers no Edit or Fork button on
+  Codex and lists the palette commands "Edit last message" and "Fork from here" with the sentence
+  as their detail.
+- **Keys.** Up in an empty composer (`keybindings.composerEditLast`, the composer's `onRecall`)
+  and E on the focused last message (`keybindings.editMessage`, palette "Edit this message"; on
+  any other message E does nothing) put the message back in the composer with its skills,
+  files and images; the composer shows what sending does, that files stay as they are when that
+  turn changed files (an `edit` tool row that ended ok), and Cancel. F on a focused message
+  (`keybindings.forkMessage`, palette "Fork from this message", else "Fork from the last
+  message") and "Fork from here" on a user message fork. The conversation registers what it can do
+  with `showGoBack` (chat/conversation-nav.ts).
+- **Mock.** The mock Claude Code (`MockProviderAdapter`) keeps each session's turns with a point
+  each (`<session>:<n>`), answers a go-back by keeping the turns up to the point, starting a new
+  session id for a fork or a new conversation, and says first what it still remembers
+  (`keptMessagesText`); an unknown point fails the turn.
 - **Skill list in chat.** `chatSkillSections` orders Yours, Project, Recently used (the skills
   this thread's messages carried, newest first, `recentSkillNames`), User, Plugins, Other and wow
   last; wow's four built-in skills carry "for workflow steps" (`isStepSkill`). On `/chat/new` the

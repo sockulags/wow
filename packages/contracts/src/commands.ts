@@ -10,6 +10,9 @@ import {
   BacklogState,
   CalendarItem,
   CardState,
+  CopiedTurn,
+  ForkOrigin,
+  GoBack,
   OutlookItemState,
   OutlookProfile,
   PlanIntent,
@@ -19,6 +22,7 @@ import {
   ProviderInstanceStatus,
   Question,
   QueuedMessage,
+  ResumePointRef,
   Skill,
   Thread,
   ThreadItem,
@@ -145,6 +149,12 @@ export const Command = z.discriminatedUnion('type', [
     model: z.string().min(1),
     effort: z.string().min(1),
     permissionMode: z.string().min(1),
+    // "Fork from here" (agent workbench spec 71): the new thread holds the conversation of
+    // `threadId` up to and including the exchange of the message `turnId` starts with, on the
+    // same provider, folder, project and settings, which the server takes from that thread (what
+    // the fields above say is not used then). The provider forks its own conversation at the
+    // next message. Refused where the provider cannot go back, or the turn gave no point to.
+    forkFrom: ForkOrigin.optional(),
   }),
   // Makes the one assistant thread, or brings it in line with the provider instance, model and
   // effort the settings name now (app assistant spec 1). Refused with the reason when no
@@ -181,6 +191,22 @@ export const Command = z.discriminatedUnion('type', [
     files: z.array(z.string().min(1)).optional(),
     // Images given to `attachments.put` for this thread before (agent workbench spec 53, 55), by
     // id. The assistant takes none (spec 61).
+    attachments: z
+      .array(z.object({ id: AttachmentId, name: z.string().min(1).max(200).optional() }))
+      .optional(),
+  }),
+  // Edit (agent workbench spec 62): the message replaces the last exchange, whose user message
+  // `turnId` starts. The conversation goes on from before that message, in wow and in the
+  // provider; the replaced exchange stays as the new turn's earlier version. Files stay as they
+  // are. Refused while a turn runs, when `turnId` is no longer the last message, and where the
+  // provider cannot go back.
+  z.object({
+    type: z.literal('thread.editLast'),
+    threadId: Id,
+    turnId: Id,
+    text: z.string(),
+    skills: z.array(SkillRef).optional(),
+    files: z.array(z.string().min(1)).optional(),
     attachments: z
       .array(z.object({ id: AttachmentId, name: z.string().min(1).max(200).optional() }))
       .optional(),
@@ -999,6 +1025,8 @@ export const DomainEvent = z.discriminatedUnion('kind', [
         effort: z.string().min(1),
         permissionMode: z.string().min(1),
         resumeId: z.string().min(1).nullable(),
+        // The thread goes back in the conversation first (`ProviderCommand` startTurn.goBack).
+        goBack: z.object({ at: z.string().min(1).nullable(), fork: z.boolean() }).optional(),
         // The message's images by id; the provider service hands their files to the adapter.
         images: z.array(AttachmentId).optional(),
         // Set for the assistant thread: the provider service then hands the turn wow's tools,
@@ -1054,7 +1082,28 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       state: TurnState.exclude(['running']),
       threadState: ThreadState,
       endedAt: Timestamp,
+      // The provider's point after this turn (`ProviderEvent` turnCompleted.resumePoint), in the
+      // session the thread had then.
+      resumePoint: ResumePointRef.optional(),
     }),
+  }),
+  // Edit put `by` in the place of `turnId` (agent workbench spec 62).
+  z.object({
+    kind: z.literal('turn.replaced'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, turnId: Id, by: Id }),
+  }),
+  z.object({
+    kind: z.literal('thread.goBackChanged'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, goBack: GoBack.nullable() }),
+  }),
+  // A fork's conversation copied from its origin (spec 71), right after its `thread.created`:
+  // the turns and items with the new thread's ids.
+  z.object({
+    kind: z.literal('thread.historyCopied'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, turns: z.array(CopiedTurn), items: z.array(ThreadItem) }),
   }),
   z.object({ kind: z.literal('threadItem.added'), aggregate: Id, payload: ThreadItem }),
   // Streaming text grows by appending, so the history does not store every intermediate text.

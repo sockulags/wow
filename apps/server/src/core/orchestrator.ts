@@ -19,6 +19,7 @@ import {
   type EventTrigger,
   type Project,
   type ProviderInstance,
+  type ResumePointRef,
   type Question,
   type RpcErrorCode,
   type SentSkill,
@@ -75,6 +76,10 @@ export interface ReadModel {
   // The thread's turn with the highest index, running or not.
   lastTurn(threadId: string): Turn | undefined;
   turnCount(threadId: string): number;
+  // Every turn of the thread in order, with the provider's point after it (Edit, Fork).
+  threadTurns(threadId: string): (Turn & { readonly resumePoint: ResumePointRef | null })[];
+  // Every item of the thread in order.
+  threadItems(threadId: string): ThreadItem[];
   // The last message the thread was sent with text or skills, as it went to the provider.
   lastSent(
     threadId: string,

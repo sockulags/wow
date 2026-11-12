@@ -1859,6 +1859,21 @@ export const settingsRegistry = {
     'Copy the message that has the keyboard, as markdown for an answer and as written for your own.',
     'C',
   ),
+  'keybindings.editMessage': keybinding(
+    'Chat: edit the focused message',
+    'Put the message that has the keyboard back in the composer to change and send again, when it is the last one you sent. Files the agent changed stay as they are.',
+    'E',
+  ),
+  'keybindings.forkMessage': keybinding(
+    'Chat: fork from the focused message',
+    'Start a new thread with the conversation up to the message that has the keyboard and its answer, on the same settings and folder.',
+    'F',
+  ),
+  'keybindings.composerEditLast': keybinding(
+    'Chat: edit the last message from the composer',
+    'In an empty composer, put your last message back in it to change and send again. Sending replaces that message and its answer.',
+    'ArrowUp',
+  ),
   'keybindings.conversationEnd': keybinding(
     'Chat: back to the newest output',
     'Scroll the conversation back to the bottom after you scrolled up, so it follows new output again.',

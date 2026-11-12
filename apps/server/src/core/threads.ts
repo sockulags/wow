@@ -1,6 +1,7 @@
 import type {
   CompactionItemPayload,
   DomainEvent,
+  GoBack,
   ProviderEvent,
   SettingsChangeItemPayload,
   QueuedMessage,
@@ -59,6 +60,7 @@ import {
   type DecideContext,
   type ReadModel,
 } from './orchestrator.js';
+import { editGoBack, forkEvents } from './go-back.js';
 import { messageWithSkills } from './skills.js';
 
 // Decisions for provider instances, threads, turns, approvals and questions. Provider events
@@ -76,6 +78,7 @@ type ThreadCommand = Extract<
       | 'thread.openAssistant'
       | 'thread.greetAssistant'
       | 'thread.sendMessage'
+      | 'thread.editLast'
       | 'thread.sendPrepared'
       | 'thread.cancelQueued'
       | 'thread.sendQueued'
@@ -212,11 +215,22 @@ function turnStarted(
         model: thread.model,
         effort: thread.effort,
         permissionMode: thread.permissionMode,
-        resumeId: thread.providerSessionId,
+        ...startFrom(thread),
         ...(images && images.length > 0 ? { images: images.map((image) => image.id) } : {}),
         ...(assistant ? { kind: 'assistant' as const } : {}),
       },
     },
+  };
+}
+
+// Where the provider goes on from: the thread's own session, or the point Edit or Fork went
+// back to (agent workbench spec 62, 71).
+function startFrom(thread: Thread): { resumeId: string | null; goBack?: Omit<GoBack, 'resumeId'> } {
+  const back = thread.goBack;
+  if (!back) return { resumeId: thread.providerSessionId };
+  return {
+    resumeId: back.at === null ? null : back.resumeId,
+    goBack: { at: back.at, fork: back.fork },
   };
 }
 
@@ -593,6 +607,9 @@ export function decideThread(
           `No provider instance ${command.providerInstanceId}`,
         );
       }
+      if (command.forkFrom) {
+        return forkEvents(read, command.threadId, command.forkFrom, command.title, now);
+      }
       if (command.projectId !== undefined && !read.project(command.projectId)) {
         throw new CommandRejected('not_found', `No project ${command.projectId}`);
       }
@@ -673,6 +690,33 @@ export function decideThread(
         command.files,
         images,
       );
+    }
+    case 'thread.editLast': {
+      const stored = requireThread(read, command.threadId);
+      const goBack = editGoBack(read, stored, command.turnId);
+      const by = turnId(stored.id, read.turnCount(stored.id));
+      return [
+        {
+          kind: 'thread.goBackChanged',
+          aggregate: stored.id,
+          payload: { threadId: stored.id, goBack },
+        },
+        ...messageTurn(
+          read,
+          context,
+          { ...stored, goBack },
+          command.text,
+          command.skills ?? [],
+          undefined,
+          command.files,
+          sentImages(command.attachments),
+        ),
+        {
+          kind: 'turn.replaced',
+          aggregate: stored.id,
+          payload: { threadId: stored.id, turnId: command.turnId, by },
+        },
+      ];
     }
     case 'thread.cancelQueued': {
       const thread = requireThread(read, command.threadId);
@@ -1380,6 +1424,8 @@ function decideProviderEvents(
   };
   let seen = thread.seen ?? true;
   let archived = thread.archived ?? false;
+  let goBack = Boolean(thread.goBack);
+  let sessionId = thread.providerSessionId;
   const unarchive = () => {
     if (!archived) return;
     archived = false;
@@ -1498,7 +1544,8 @@ function decideProviderEvents(
 
   for (const event of events) {
     if (event.type === 'session') {
-      if (event.providerSessionId !== thread.providerSessionId) {
+      if (event.providerSessionId !== sessionId) {
+        sessionId = event.providerSessionId;
         out.push({
           kind: 'thread.sessionStarted',
           aggregate: threadId,
@@ -1865,8 +1912,20 @@ function decideProviderEvents(
             state: ended,
             threadState: endedThreadState[ended],
             endedAt: now,
+            ...(event.resumePoint === undefined || sessionId === null
+              ? {}
+              : { resumePoint: { sessionId, at: event.resumePoint } }),
           },
         });
+        // The provider wrote the turn after going back, so the next one goes on from it.
+        if (event.resumePoint !== undefined && sessionId !== null && goBack) {
+          goBack = false;
+          out.push({
+            kind: 'thread.goBackChanged',
+            aggregate: threadId,
+            payload: { threadId, goBack: null },
+          });
+        }
         state = endedThreadState[ended];
         finished(current, ended);
         turn = undefined;

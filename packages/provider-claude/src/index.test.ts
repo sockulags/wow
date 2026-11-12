@@ -335,7 +335,11 @@ describe('@wow/provider-claude', () => {
         model: 'claude-sonnet-4-5',
       },
       { type: 'contextUsage', threadId: 't1', usedTokens: 1500, maxTokens: 200_000 },
-      { type: 'turnCompleted', threadId: 't1' },
+      {
+        type: 'turnCompleted',
+        threadId: 't1',
+        resumePoint: '00000000-0000-4000-8000-000000000009',
+      },
     ]);
 
     const [query] = h.queries;
@@ -633,6 +637,114 @@ describe('@wow/provider-claude', () => {
     expect(h.queries).toHaveLength(2);
     expect(h.queries[1]?.options.resume).toBeUndefined();
     expect(h.events.filter((event) => event.type === 'turnFailed')).toEqual([]);
+  });
+
+  // Agent workbench spec 62, 71: the point a turn leaves the conversation at is the uuid of its
+  // newest message of the conversation itself; a subagent's message is not one.
+  it("reports the uuid of the turn's last message as its point to go back to", async () => {
+    const subagent: FakeStep = {
+      message: {
+        ...(assistantText('sub', 'Looking.') as { message: object }).message,
+        parent_tool_use_id: 'toolu_agent',
+        uuid: '00000000-0000-4000-8000-0000000000dd',
+      } as unknown as SDKMessage,
+    };
+    const h = harness([
+      [initStep(), assistantText('1', 'Done.'), subagent, result(0)],
+      [result(0)],
+    ]);
+    let done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    expect(await done).toEqual({
+      type: 'turnCompleted',
+      threadId: 't1',
+      resumePoint: '00000000-0000-4000-8000-0000000000cc',
+    });
+    // A turn that wrote nothing has no point of its own.
+    done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ prompt: 'And then?' }));
+    expect(await done).toEqual({ type: 'turnCompleted', threadId: 't1' });
+  });
+
+  it('goes back for Edit by resuming the session up to the point, in a new process', async () => {
+    const h = harness([[initStep(), assistantText('1', 'Done.'), result(0)], [result(0)]]);
+    let done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    done = h.next('turnCompleted');
+    await h.adapter.send(
+      startTurn({
+        prompt: 'What is in the changelog?',
+        resumeId: 'sess-1',
+        goBack: { at: '00000000-0000-4000-8000-0000000000cc', fork: false },
+      }),
+    );
+    await done;
+    expect(h.queries).toHaveLength(2);
+    expect(h.queries[0]?.closed).toBe(true);
+    expect(h.queries[1]?.options).toMatchObject({
+      resume: 'sess-1',
+      resumeSessionAt: '00000000-0000-4000-8000-0000000000cc',
+    });
+    expect(h.queries[1]?.options.forkSession).toBeUndefined();
+    expect(h.queries[1]?.prompts).toEqual(['What is in the changelog?']);
+  });
+
+  it('forks with resume, resumeSessionAt and forkSession, and reports the new session', async () => {
+    const forked: FakeStep = {
+      message: {
+        ...(initStep() as { message: object }).message,
+        session_id: 'sess-fork',
+      } as SDKMessage,
+    };
+    const h = harness([[forked, result(0)]]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(
+      startTurn({
+        threadId: 't2',
+        resumeId: 'sess-1',
+        goBack: { at: '00000000-0000-4000-8000-0000000000cc', fork: true },
+      }),
+    );
+    await done;
+    expect(h.queries[0]?.options).toMatchObject({
+      resume: 'sess-1',
+      resumeSessionAt: '00000000-0000-4000-8000-0000000000cc',
+      forkSession: true,
+    });
+    expect(h.events).toContainEqual({
+      type: 'session',
+      threadId: 't2',
+      providerSessionId: 'sess-fork',
+    });
+  });
+
+  it('starts a new conversation when Edit goes back before the first message', async () => {
+    const h = harness([
+      [initStep(), result(0)],
+      [initStep(), result(0)],
+    ]);
+    let done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    const before = h.events.length;
+    done = h.next('turnCompleted');
+    await h.adapter.send(
+      startTurn({
+        prompt: 'Something else',
+        resumeId: 'sess-1',
+        goBack: { at: null, fork: false },
+      }),
+    );
+    await done;
+    expect(h.queries[1]?.options.resume).toBeUndefined();
+    expect(h.queries[1]?.options.resumeSessionAt).toBeUndefined();
+    // The new process's session is told again, though Claude Code's fixture reuses the id.
+    expect(h.events.slice(before)).toContainEqual({
+      type: 'session',
+      threadId: 't1',
+      providerSessionId: 'sess-1',
+    });
   });
 
   // Agent workbench spec 46: a compact boundary becomes a compaction with trigger and counts;
@@ -1020,7 +1132,11 @@ describe('@wow/provider-claude', () => {
       },
       expect.objectContaining({ type: 'usage', costUsd: expect.closeTo(0.02) }),
       { type: 'contextUsage', threadId: 't1', usedTokens: 1500, maxTokens: 200_000 },
-      { type: 'turnCompleted', threadId: 't1' },
+      {
+        type: 'turnCompleted',
+        threadId: 't1',
+        resumePoint: '00000000-0000-4000-8000-0000000000cc',
+      },
     ]);
     expect(h.queries[0]?.prompts).toEqual(['What is in the readme?']);
   });
@@ -1119,7 +1235,11 @@ describe('@wow/provider-claude', () => {
     const interrupted = h.next('turnInterrupted');
     await h.adapter.send({ type: 'interrupt', threadId: 't1' });
     stopped.release();
-    expect(await interrupted).toEqual({ type: 'turnInterrupted', threadId: 't1' });
+    expect(await interrupted).toEqual({
+      type: 'turnInterrupted',
+      threadId: 't1',
+      resumePoint: '00000000-0000-4000-8000-0000000000cc',
+    });
     expect(h.queries[0]?.calls).toEqual(['interrupt']);
     expect(h.events.map((event) => event.type)).not.toContain('turnFailed');
   });

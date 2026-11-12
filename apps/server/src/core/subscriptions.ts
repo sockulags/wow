@@ -31,14 +31,19 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
         return db.select().from(t.threads).where(eq(t.threads.kind, 'assistant')).all();
       case 'turns':
         // The mark itself stays on the server; that it exists tells the client to read the
-        // thread's Changes again.
+        // thread's Changes again. So does the provider's point: the client only needs to know
+        // that Edit and Fork can go back to it.
         return db
           .select()
           .from(t.turns)
           .where(eq(t.turns.threadId, threadId))
           .orderBy(asc(t.turns.index))
           .all()
-          .map(({ fileMark, ...turn }) => ({ ...turn, marked: fileMark !== null }));
+          .map(({ fileMark, resumePoint, ...turn }) => ({
+            ...turn,
+            marked: fileMark !== null,
+            resumable: resumePoint !== null,
+          }));
       case 'threadItems':
         return db
           .select()
