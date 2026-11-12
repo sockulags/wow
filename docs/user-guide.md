@@ -812,7 +812,8 @@ first, then the running ones ("Go to runs" in the palette).
   **Shift+Enter** (`keybindings.openInEditor`) on a changed file, a diff line, an artifact, a file
   link in chat or in the file viewer opens the file in your editor at its line; the command is the
   `viewer.editorCommand` setting (by default `code --goto {path}:{line}`, run by the wow server,
-  not through a shell unless `viewer.editorShell` is on). A file the step under review changed
+  not through a shell unless `viewer.editorShell` is on; in a shell line write `{path}` without
+  quotes, since wow quotes it). A file the step under review changed
   carries a small mark ("This step changed it" on hover); **This step only** (**O**,
   `keybindings.changesStepOnly`) narrows the list to those. When the first step starts, wow
   records the commit the folder was on (the run's base); everything is compared with it. A binary

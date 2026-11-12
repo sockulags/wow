@@ -3890,7 +3890,10 @@ such as `code` runs through cmd.exe with its words quoted (`quoteForCmd`), since
 those only through a shell. cmd.exe expands `%NAME%` even inside quotes and `cmd /c` has no
 sure escape for it, so a path with a `%` is answered `rejected` whenever cmd.exe would read the
 line (`EditorRefused`). With `viewer.editorShell` on, the command goes to the shell as one
-line with only the path quoted, so it can use shell syntax. `startEditor` starts it detached,
+line with only the path quoted, so it can use shell syntax. A line with `{path}` inside quotes,
+or right after or before a quote or the shell's escape character (`\` for sh, `^` for cmd.exe),
+is refused (`pathQuoted`): the user's quotes would cancel wow's and leave a name's `$(…)` or `&`
+to the shell. `startEditor` starts it detached,
 without a window, and lets it go once it has started; a program that does not start is answered
 `rejected` with the reason, which the app shows as a toast. Through a shell (the setting, or a
 `.cmd`) "started" means the shell started: a program the shell then does not find fails unseen.

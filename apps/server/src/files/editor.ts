@@ -80,6 +80,34 @@ function cmdSafe(target: EditorTarget): void {
 const quoteForSh = (value: string): string =>
   /^[\w@./:=+-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 
+// Whether a {path} in a shell line is inside quotes, or right after or before a quote or the
+// shell's escape character. wow quotes the path itself; quotes the user wrote around it would
+// cancel wow's and leave the name's own characters (`$(…)`, `&`) to the shell.
+function pathQuoted(command: string, windows: boolean): boolean {
+  const escape = windows ? '^' : '\\';
+  const marks = windows ? ['"', escape] : ['"', "'", escape];
+  const at = [...command.matchAll(/\{path\}/g)].map((found) => found.index);
+  if (
+    at.some(
+      (index) =>
+        marks.includes(command.charAt(index - 1)) ||
+        marks.includes(command.charAt(index + '{path}'.length)),
+    )
+  )
+    return true;
+  let quote: string | undefined;
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command.charAt(index);
+    if (quote !== undefined && at.includes(index)) return true;
+    if (quote === undefined) {
+      if (character === escape) index += 1;
+      else if (marks.includes(character)) quote = character;
+    } else if (character === quote) quote = undefined;
+    else if (quote === '"' && !windows && character === escape) index += 1;
+  }
+  return false;
+}
+
 export interface EditorLaunch {
   readonly file: string;
   readonly args: readonly string[];
@@ -107,6 +135,11 @@ export async function planEditor(options: PlanOptions): Promise<EditorLaunch> {
   if (options.shell) {
     // The line stays as written, shell syntax and all; only the path is quoted for the shell.
     const { command, target } = options;
+    if (pathQuoted(command, windows)) {
+      throw new EditorRefused(
+        'The editor command has {path} in quotes or next to one. wow quotes the path for the shell itself, so write {path} without quotes.',
+      );
+    }
     if (windows) cmdSafe(target);
     const filled = fill(command, target, quote(target.path));
     const line = command.includes('{path}') ? filled : `${filled} ${quote(target.path)}`;

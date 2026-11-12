@@ -91,6 +91,62 @@ describe('the editor command', () => {
     expect((await plan('a b$`x.ts', true)).line).toBe("code --goto '/w/a b$`x.ts':3");
   });
 
+  it('refuses a shell line that puts {path} in quotes, where a hostile name would run', async () => {
+    const cases = [
+      {
+        platform: 'linux' as const,
+        path: '/w/a$(touch pwned).ts',
+        commands: [
+          'code --goto "{path}:{line}"',
+          "code '{path}'",
+          'code \\{path}',
+          'code "-g {path}"',
+        ],
+      },
+      {
+        platform: 'win32' as const,
+        path: 'C:\\w\\a&calc.exe&.ts',
+        commands: ['code --goto "{path}:{line}"', 'code ^{path}', 'code "-g {path}"'],
+      },
+    ];
+    for (const { platform, path: hostile, commands } of cases) {
+      for (const command of commands) {
+        await expect(
+          planEditor({
+            command,
+            shell: true,
+            target: { path: hostile, line: 3 },
+            platform,
+            env: {},
+          }),
+        ).rejects.toThrow(/write \{path\} without quotes/);
+      }
+    }
+    // Unquoted, wow's own quoting keeps the name one word for the shell.
+    expect(
+      (
+        await planEditor({
+          command: 'code --goto {path}:{line} "--new window"',
+          shell: true,
+          target: { path: '/w/a$(touch pwned).ts', line: 3 },
+          platform: 'linux',
+          env: {},
+        })
+      ).line,
+    ).toBe(`code --goto '/w/a$(touch pwned).ts':3 "--new window"`);
+    expect(
+      (
+        await planEditor({
+          command: 'code --goto {path}:{line}',
+          shell: true,
+          target: { path: 'C:\\w\\a&calc.exe&.ts', line: 3 },
+          platform: 'win32',
+          env: {},
+        })
+      ).line,
+    ).toBe('code --goto "C:\\w\\a&calc.exe&.ts":3');
+  });
+
   it('refuses a Windows path with a % before cmd.exe could expand it', async () => {
     const bin = path.join(folder, 'bin');
     await mkdir(bin);

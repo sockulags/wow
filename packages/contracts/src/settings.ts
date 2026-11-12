@@ -1349,7 +1349,7 @@ export const settingsRegistry = {
     group: 'viewer',
     label: 'Run the editor command in a shell',
     description:
-      'Give the editor command to the system shell (cmd.exe on Windows, sh elsewhere) as one line, so it can use shell syntax. The path and line are quoted for it.',
+      'Give the editor command to the system shell (cmd.exe on Windows, sh elsewhere) as one line, so it can use shell syntax. The path and line are quoted for it, so write {path} without quotes around it: a command with {path} in quotes or next to one is refused.',
     default: false,
     scope: 'global',
   }),
