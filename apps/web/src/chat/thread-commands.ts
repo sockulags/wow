@@ -65,6 +65,29 @@ export function filteredThreads(
   });
 }
 
+// A chip for each project that has a thread; the list shows them only while there are two or
+// more.
+export function projectChips<P extends Pick<Project, 'id'>>(
+  threads: readonly Pick<Thread, 'projectId'>[],
+  projects: readonly P[],
+): P[] {
+  const chips = projects.filter((project) =>
+    threads.some((thread) => thread.projectId === project.id),
+  );
+  return chips.length > 1 ? chips : [];
+}
+
+// The chip that narrows the list. A pick whose chip is gone (its last thread went, or the chips
+// went with all but one project) narrows nothing, since there is no chip left to undo it with.
+export const pickedProject = (
+  threads: readonly Pick<Thread, 'projectId'>[],
+  projects: readonly Pick<Project, 'id'>[],
+  projectId: string | undefined,
+): string | undefined =>
+  projectChips(threads, projects).some((project) => project.id === projectId)
+    ? projectId
+    : undefined;
+
 // The order the list shows the threads in, top to bottom.
 export const listOrder = (threads: readonly Thread[]): Thread[] =>
   groupThreads(threads).flatMap(([, members]) => members);
@@ -129,35 +152,31 @@ export function threadListCommands({
     },
   ];
   // The same projects the list has chips for.
-  const chips = projects.filter((project) =>
-    threads.some((thread) => thread.projectId === project.id),
-  );
-  if (chips.length > 1) {
-    const showProject =
-      (id: string | undefined): AppCommand['run'] =>
-      ({ navigate }) => {
-        if (!inChat) void navigate({ to: '/chat' });
-        threadListStore.setState({ projectId: id });
-      };
-    for (const project of chips) {
-      if (project.id === projectId) continue;
-      commands.push({
-        id: `chat.threadsOf.${project.id}`,
-        title: `Show threads of ${project.name}`,
-        group: 'Chat',
-        keywords: ['project', 'chip', 'thread list', 'narrow'],
-        run: showProject(project.id),
-      });
-    }
-    if (projectId !== undefined) {
-      commands.push({
-        id: 'chat.threadsOfAll',
-        title: 'Show threads of all projects',
-        group: 'Chat',
-        keywords: ['project', 'chip', 'thread list'],
-        run: showProject(undefined),
-      });
-    }
+  const picked = pickedProject(threads, projects, projectId);
+  const showProject =
+    (id: string | undefined): AppCommand['run'] =>
+    ({ navigate }) => {
+      if (!inChat) void navigate({ to: '/chat' });
+      threadListStore.setState({ projectId: id });
+    };
+  for (const project of projectChips(threads, projects)) {
+    if (project.id === picked) continue;
+    commands.push({
+      id: `chat.threadsOf.${project.id}`,
+      title: `Show threads of ${project.name}`,
+      group: 'Chat',
+      keywords: ['project', 'chip', 'thread list', 'narrow'],
+      run: showProject(project.id),
+    });
+  }
+  if (picked !== undefined) {
+    commands.push({
+      id: 'chat.threadsOfAll',
+      title: 'Show threads of all projects',
+      group: 'Chat',
+      keywords: ['project', 'chip', 'thread list'],
+      run: showProject(undefined),
+    });
   }
   const next = nextUnread(listOrder(threads), openThread?.id);
   if (next) {

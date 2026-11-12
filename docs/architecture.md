@@ -2784,8 +2784,10 @@ Enter in the filter opens the first. The list's state (filter, chip, which title
 edited, a focus request) is a zustand store in `chat/thread-commands.ts`, beside the palette
 commands Filter threads, Rename thread (`keybindings.renameThread`, F2, which like every
 function key also works in a text field), Archive thread or Unarchive thread, Mark unread and
-Next unread thread (`keybindings.nextBoldThread`, Alt+Shift+Down), and, while there are chips,
-"Show threads of <project>" and "Show threads of all projects". The palette's thread entries
+Next unread thread (`keybindings.nextBoldThread`, Alt+Shift+Down), "Show threads of <project>"
+while there are chips, and "Show threads of all projects" while one is picked. A picked project
+that is no longer among the chips (`pickedProject`: its last thread left, or only one project has
+threads, so there are no chips) narrows nothing, since nothing on screen could undo it. The palette's thread entries
 carry the project name as a keyword and say "Archived" for an archived thread. The palette asks
 `threads.search` for its text as well (`usePaletteThreadSearch`, into the `paletteThreadHits`
 store): a thread found there gets `foundBy` (the text), which `paletteScore` matches below any

@@ -9,6 +9,8 @@ import {
   filteredThreads,
   listOrder,
   nextUnread,
+  pickedProject,
+  projectChips,
   threadListCommands,
   threadListStore,
 } from './thread-commands';
@@ -235,6 +237,28 @@ describe('palette commands of the thread list (spec 67 to 69)', () => {
         (command) => command.id,
       ),
     ).not.toContain('chat.threadsOfAll');
+  });
+
+  it('reads a pick whose chip is gone as no pick, and offers all projects for a pick', () => {
+    const twoProjects = [...projects, { id: 'p-tea', name: 'Tea' }];
+    const listed = [...threads, thread('Steep', { projectId: 'p-tea' })];
+    const chipCommands = (list: readonly Thread[], projectId: string | undefined) =>
+      threadListCommands({
+        threads: list,
+        projects: twoProjects,
+        openThread: undefined,
+        inChat: true,
+        projectId,
+      })
+        .map((command) => command.id)
+        .filter((id) => id.startsWith('chat.threadsOf'));
+    expect(chipCommands(listed, 'p-tea')).toEqual(['chat.threadsOf.p-garden', 'chat.threadsOfAll']);
+    // Tea has no thread any more, so there are no chips and nothing is narrowed.
+    expect(chipCommands(threads, 'p-tea')).toEqual([]);
+    expect(pickedProject(threads, twoProjects, 'p-tea')).toBeUndefined();
+    expect(pickedProject(listed, twoProjects, 'p-tea')).toBe('p-tea');
+    expect(pickedProject(listed, twoProjects, 'p-gone')).toBeUndefined();
+    expect(projectChips(threads, twoProjects)).toEqual([]);
   });
 
   it('finds a thread by a word only in its messages for the text the server searched', () => {

@@ -17,7 +17,14 @@ import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { useDispatch, useTopic } from './data';
 import { groupThreads } from './model';
-import { filteredThreads, isArchived, isUnread, threadListStore } from './thread-commands';
+import {
+  filteredThreads,
+  isArchived,
+  isUnread,
+  pickedProject,
+  projectChips,
+  threadListStore,
+} from './thread-commands';
 import { useThreadSearch } from './thread-search';
 import { stateDotClass } from './thread-view';
 import { listTitle } from './view-model';
@@ -95,11 +102,11 @@ function ThreadList() {
     const run = runs.find((candidate) => candidate.id === runId);
     return workflows.find((candidate) => candidate.id === run?.workflowId)?.name ?? 'Workflow run';
   };
-  const visible = threads ? filteredThreads(threads, projects, { filter, projectId, hits }) : [];
-  // A chip for each project that has a thread.
-  const chips = projects.filter((project) =>
-    (threads ?? []).some((thread) => thread.projectId === project.id),
-  );
+  const chips = projectChips(threads ?? [], projects);
+  const picked = pickedProject(threads ?? [], projects, projectId);
+  const visible = threads
+    ? filteredThreads(threads, projects, { filter, projectId: picked, hits })
+    : [];
   const rows = () => [...(list.current?.querySelectorAll<HTMLElement>(rowSelector) ?? [])];
   const move = (by: number) => {
     const all = rows();
@@ -180,11 +187,11 @@ function ThreadList() {
             Messages could not be searched: {searchError}
           </p>
         )}
-        {chips.length > 1 && (
+        {chips.length > 0 && (
           <ToggleGroup
             type="single"
             aria-label="Project"
-            value={projectId ?? ''}
+            value={picked ?? ''}
             onValueChange={(value) =>
               threadListStore.setState({ projectId: value === '' ? undefined : value })
             }

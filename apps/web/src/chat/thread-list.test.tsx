@@ -129,6 +129,25 @@ describe('the thread list (spec 66, 69, 70)', () => {
     expect(rowTitles()).toHaveLength(2);
   });
 
+  it('lists every thread again when the picked chip goes with the chips', async () => {
+    const garden = thread('t1', 'Water the plants', { projectId: 'p-garden' });
+    const { runtime, push } = fake({
+      projects: [project('p-garden', 'Garden'), project('p-tea', 'Tea')],
+      threads: [garden, thread('t2', 'Steep the leaves', { projectId: 'p-tea' })],
+    });
+    await renderApp('/chat', runtime);
+    const user = userEvent.setup();
+    await waitFor(() => expect(rowTitles()).toHaveLength(2));
+    const chips = screen.getByRole('radiogroup', { name: 'Project' });
+    await user.click(within(chips).getByRole('radio', { name: 'Tea' }));
+    expect(rowTitles()).toEqual(['Steep the leaves']);
+    // Tea's only thread moves elsewhere: one project is left, so the chips go, and with them the
+    // pick.
+    push('threads', [garden, thread('t3', 'Steep the leaves', { cwd: '/work/loose' })]);
+    expect(screen.queryByRole('radiogroup', { name: 'Project' })).toBeNull();
+    expect(rowTitles()).toHaveLength(2);
+  });
+
   it('shows no chips while every thread is in one project', async () => {
     const { runtime } = fake({
       projects: [project('p-garden', 'Garden'), project('p-tea', 'Tea')],
