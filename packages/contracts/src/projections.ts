@@ -1,7 +1,10 @@
 import { z } from 'zod';
+import { SentImage } from './attachments.js';
 import type { HostKind } from './hosts.js';
+import { ApprovalPlan, ProposedRuleSchema } from './approvals.js';
 import {
   ApprovalDecision,
+  ApprovalFacts,
   ApprovalKind,
   BackgroundTask,
   ProviderKind,
@@ -78,6 +81,12 @@ export const QueuedMessage = z.object({
   id: Id,
   text: z.string(),
   skills: z.array(SkillRef).optional(),
+  // Images of the message (agent workbench spec 53). A queue with images waits for the turn's
+  // end; it is not handed to the running turn.
+  images: z.array(SentImage).optional(),
+  // Files mentioned with `@` (agent workbench spec 56), once each; absent on messages queued
+  // before they were kept.
+  files: z.array(z.string().min(1)).optional(),
   queuedAt: Timestamp,
 });
 export type QueuedMessage = z.infer<typeof QueuedMessage>;
@@ -132,6 +141,9 @@ export const Turn = z.object({
   startedAt: Timestamp,
   endedAt: Timestamp.nullable(),
   usage: Usage.nullable(),
+  // A chat turn whose changed files wow read as it began (agent workbench spec 34, 35): its
+  // thread's Changes can measure it. The turns topic sets it; a turn event carries none.
+  marked: z.boolean().optional(),
 });
 export type Turn = z.infer<typeof Turn>;
 
@@ -172,6 +184,13 @@ export const TextItemPayload = z.object({
   // went into the running turn (Claude Code takes it there), `afterTurn` was sent by the server
   // when the turn ended. Absent for a message sent at once.
   queued: z.enum(['duringTurn', 'afterTurn']).optional(),
+  // Files the user mentioned with `@` (agent workbench spec 56), as written, relative to the
+  // thread's folder. `text` names each as `@path` on its first line; the thread shows them as
+  // chips. Absent for older messages and messages without mentions.
+  files: z.array(z.string().min(1)).optional(),
+  // Images pasted or dropped on the composer (agent workbench spec 53), stored by the server for
+  // the thread and read back for display with `attachments.read`. Absent for older messages.
+  images: z.array(SentImage).optional(),
 });
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 
@@ -187,13 +206,34 @@ export const ToolCallItemPayload = ToolFacts.partial().extend({
   startedAt: Timestamp.optional(),
   endedAt: Timestamp.optional(),
   durationMs: z.number().nonnegative().optional(),
+  // An edit's diff was longer than `chat.editDiffMaxLines` and is cut there.
+  diffCut: z.boolean().optional(),
+  // The lines the whole diff adds and removes, counted before any cut.
+  diffCounts: z
+    .object({ added: z.number().int().nonnegative(), removed: z.number().int().nonnegative() })
+    .optional(),
 });
 export type ToolCallItemPayload = z.infer<typeof ToolCallItemPayload>;
 
+// What the approval card shows (agent workbench spec 36 to 43). Every field after `summary` is
+// absent on an approval stored before the agent workbench, which then shows as it did.
 export const ApprovalItemPayload = z.object({
   approvalId: Id,
   kind: ApprovalKind,
   summary: z.string(),
+  // The request in wow's words: a command and its folder, an edit's diff, a tool's arguments.
+  facts: ApprovalFacts.optional(),
+  // The rule "Always allow in this project" would store; absent when it is not offered.
+  rule: ProposedRuleSchema.optional(),
+  // A plan approval's plan.
+  plan: ApprovalPlan.optional(),
+  // Set when a stored rule answered the request by itself (spec 39).
+  byRule: ProposedRuleSchema.optional(),
+  // The note a denial was sent with, and the mode a plan was started in.
+  note: z.string().optional(),
+  permissionMode: z.string().optional(),
+  // An edit diff longer than `chat.editDiffMaxLines` is cut; the file's own diff is in Changes.
+  diffCut: z.boolean().optional(),
 });
 export type ApprovalItemPayload = z.infer<typeof ApprovalItemPayload>;
 

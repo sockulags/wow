@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AttachmentId } from './attachments.js';
 import { AssistantChange, AssistantProposal } from './assistant.js';
 import { OwnSkill, SentSkill, SkillRef } from './skills.js';
 import {
@@ -30,8 +31,10 @@ import {
   Workflow,
   WorkflowRun,
 } from './projections.js';
+import { HostItemData, HostItemRead, HostItemRef } from './host-links.js';
 import {
   ChangeRequest,
+  HostError,
   HostKind,
   HostRead,
   HostReadOutcome,
@@ -173,6 +176,14 @@ export const Command = z.discriminatedUnion('type', [
     threadId: Id,
     text: z.string(),
     skills: z.array(SkillRef).optional(),
+    // Files mentioned with `@` (agent workbench spec 56); the text already names them. Kept on
+    // the message so the thread shows them as chips. The assistant takes none.
+    files: z.array(z.string().min(1)).optional(),
+    // Images given to `attachments.put` for this thread before (agent workbench spec 53, 55), by
+    // id. The assistant takes none (spec 61).
+    attachments: z
+      .array(z.object({ id: AttachmentId, name: z.string().min(1).max(200).optional() }))
+      .optional(),
   }),
   // The user's answer to the questions the assistant asked with its tool (questions spec 9):
   // `itemId` is that tool call, with one reply per question. It is sent as the user's next
@@ -213,7 +224,15 @@ export const Command = z.discriminatedUnion('type', [
   // The thread was opened, or the user asked to see it as new again (spec 70).
   z.object({ type: z.literal('thread.markSeen'), threadId: Id }),
   z.object({ type: z.literal('thread.markUnread'), threadId: Id }),
-  z.object({ type: z.literal('approval.answer'), approvalId: Id, decision: ApprovalDecision }),
+  // `note` goes with a denial (agent workbench spec 37); `permissionMode` starts a plan in that
+  // mode (spec 42). `allowAlways` stores the rule the approval offers (spec 38).
+  z.object({
+    type: z.literal('approval.answer'),
+    approvalId: Id,
+    decision: ApprovalDecision,
+    note: z.string().max(4000).optional(),
+    permissionMode: z.string().min(1).optional(),
+  }),
   // Answers to an agent's questions, sent together when one ask holds several (questions
   // spec 3). Refused for a question whose turn ended.
   z.object({
@@ -514,8 +533,30 @@ export const InternalCommand = z.discriminatedUnion('type', [
   // turn. Nothing happens when another message waits by then or a turn runs again.
   z.object({ type: z.literal('thread.sendQueued'), threadId: Id, queuedId: Id }),
   // The provider took the queued message `queuedId` into its running turn: it leaves the queue
-  // and the conversation shows it as a user message of that turn.
-  z.object({ type: z.literal('thread.handedOver'), threadId: Id, queuedId: Id }),
+  // and the conversation shows it as a user message of that turn. `offered` is what the provider
+  // got, so a message joined or cancelled meanwhile still shows it and keeps only the rest.
+  z.object({
+    type: z.literal('thread.handedOver'),
+    threadId: Id,
+    queuedId: Id,
+    offered: z
+      .object({
+        text: z.string(),
+        skills: z.array(SkillRef).optional(),
+        files: z.array(z.string().min(1)).optional(),
+      })
+      .optional(),
+  }),
+  // The provider service, before a chat thread's turn is sent: the commit its folder is on and
+  // what already differed from it (first turn only), and the changed files' hashes as the turn
+  // begins (agent workbench spec 34). Null where git could not say.
+  z.object({
+    type: z.literal('thread.changesMarked'),
+    threadId: Id,
+    turnId: Id,
+    base: z.object({ sha: z.string().min(1), files: z.array(FileHash) }).nullable(),
+    mark: z.array(FileHash).nullable(),
+  }),
   // Replaces the plans projection with a fresh read of every project's intents folder; the
   // server's plans service sends it.
   z.object({ type: z.literal('plans.sync'), intents: z.array(PlanIntent) }),
@@ -547,6 +588,18 @@ export const InternalCommand = z.discriminatedUnion('type', [
     at: Timestamp,
     hostName: z.string(),
     reads: z.array(PageReadOutcome),
+  }),
+  // What the host lookup read about one item a chat thread links to (agent workbench spec 22).
+  z.object({
+    type: z.literal('hosts.itemRead'),
+    threadId: Id,
+    at: Timestamp,
+    item: HostItemRef,
+    hostName: z.string(),
+    result: z.discriminatedUnion('ok', [
+      z.object({ ok: z.literal(true), data: HostItemData }),
+      z.object({ ok: z.literal(false), error: HostError.omit({ at: true }) }),
+    ]),
   }),
   // Something a plan run depends on changed (its unit's run ended, or the plan's unit statuses
   // did): decide again what it does next. The plan runs service sends it.
@@ -792,6 +845,12 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       removedChangeRequests: z.array(Id),
     }),
   }),
+  // A chat thread's read of one linked item as it now is.
+  z.object({
+    kind: z.literal('hosts.itemRead'),
+    aggregate: Id,
+    payload: z.object({ read: HostItemRead }),
+  }),
   // Ticket reads as they now are.
   z.object({
     kind: z.literal('tickets.synced'),
@@ -872,6 +931,16 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     aggregate: Id,
     payload: z.object({ threadId: Id, pinned: z.boolean() }),
   }),
+  z.object({
+    kind: z.literal('thread.changesMarked'),
+    aggregate: Id,
+    payload: z.object({
+      threadId: Id,
+      turnId: Id,
+      base: z.object({ sha: z.string().min(1), files: z.array(FileHash) }).nullable(),
+      mark: z.array(FileHash).nullable(),
+    }),
+  }),
   // The thread's queued message changed: queued, joined, sent or cancelled (null). `handOver`
   // is set when the provider may take it into the running turn: the provider service offers it
   // the prompt, and answers `thread.handedOver` when it did.
@@ -919,6 +988,8 @@ export const DomainEvent = z.discriminatedUnion('kind', [
         effort: z.string().min(1),
         permissionMode: z.string().min(1),
         resumeId: z.string().min(1).nullable(),
+        // The message's images by id; the provider service hands their files to the adapter.
+        images: z.array(AttachmentId).optional(),
         // Set for the assistant thread: the provider service then hands the turn wow's tools,
         // the instruction text and the app's empty folder. The token is never stored here.
         kind: ThreadKind.optional(),
@@ -989,6 +1060,10 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       providerApprovalId: Id,
       decision: ApprovalDecision,
       decidedAt: Timestamp,
+      note: z.string().min(1).optional(),
+      permissionMode: z.string().min(1).optional(),
+      // A stored rule answered it, not the user.
+      byRule: z.boolean().optional(),
     }),
   }),
   z.object({

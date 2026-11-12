@@ -11,6 +11,7 @@ import { isSettingGroup, settingGroupTitles, settingsByGroup } from '@/app/secti
 import { UpdateStatusPanel } from '@/app/update-banner';
 import { KeybindingsTable } from './keybindings-table';
 import { SettingsForm } from './setting-row';
+import { AlwaysAllowSection } from './always-allow-section';
 import { SetupSection } from './setup-section';
 import { SkillsSection } from './skills-section';
 import { TrackersSection } from './trackers-section';
@@ -174,7 +175,9 @@ export function SettingsPage() {
       {current === 'advanced' && <SetupSection />}
       {current === 'skills' && <SkillsSection />}
       {/* Remount per group so drafts never leak between pages. */}
-      {current === 'trackers' ? (
+      {current === 'approvals' ? (
+        <AlwaysAllowSection />
+      ) : current === 'trackers' ? (
         <TrackersSection key={group} entries={entries} />
       ) : current === 'keybindings' ? (
         <KeybindingsTable key={group} entries={entries} />

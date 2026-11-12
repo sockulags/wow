@@ -11,7 +11,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadMarkdown } from '../test/markdown';
 import { createStore } from 'zustand';
-import { createLayoutStore, type Runtime, type ViewerFile } from '@/app/runtime';
+import { createLayoutStore, type LayoutState, type Runtime, type ViewerFile } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
 import { renderApp } from '@/test/render';
 import { viewerCommands } from './commands';
@@ -20,6 +20,7 @@ import {
   fileLanguage,
   formatBytes,
   frameDocument,
+  fileTabId,
   scriptedFrameDocument,
   shownFile,
 } from './viewer';
@@ -118,7 +119,8 @@ function fake(
     close: () => undefined,
   };
   const layout = createLayoutStore();
-  if (options.viewer !== undefined) layout.setState({ viewer: fileAt(options.viewer) });
+  if (options.viewer !== undefined)
+    layout.setState({ panelTabs: tabsWith(fileAt(options.viewer)) });
   return {
     asked,
     runtime: {
@@ -137,8 +139,22 @@ function fake(
   };
 }
 
+// The panel tabs of a view with this one file open and shown.
+const tabsWith = (file: ViewerFile | undefined): LayoutState['panelTabs'] =>
+  file
+    ? {
+        [file.from]: {
+          tabs: [{ kind: 'file', id: fileTabId(file), file }],
+          selected: fileTabId(file),
+          history: [],
+        },
+      }
+    : {};
+
+const shownOf = (runtime: Runtime) => shownFile(runtime.layout.getState(), route);
+
 const fileAt = (path: string, from = route): ViewerFile => ({
-  runId: 'run-1',
+  scope: { runId: 'run-1' },
   path,
   fullPath: `/home/me/demo/${path}`,
   from,
@@ -149,7 +165,7 @@ const fileAt = (path: string, from = route): ViewerFile => ({
 const viewer = () => screen.findByRole('region', { name: 'File viewer' });
 
 describe('file viewer', () => {
-  it('opens from an artifact button, which is not a file:// link, and goes back to the conversation', async () => {
+  it('opens from an artifact button, which is not a file:// link, and goes back to the conversation @agent-workbench-14', async () => {
     const user = userEvent.setup();
     const server = fake(
       {
@@ -178,6 +194,13 @@ describe('file viewer', () => {
     expect(within(shown).getByText('Markdown · 1.2 KB')).toBeTruthy();
     // The run view stays next to it.
     expect(screen.getByRole('list', { name: 'Run steps' })).toBeTruthy();
+    // The step's conversation is a tab beside the file (agent workbench spec 14).
+    const strip = screen.getByRole('tablist', { name: 'Panel tabs' });
+    expect(
+      within(strip)
+        .getAllByRole('tab')
+        .map((tab) => tab.textContent),
+    ).toEqual(['Conversation', 'notes.md']);
 
     await user.click(within(shown).getByRole('button', { name: 'Copy path' }));
     expect(await navigator.clipboard.readText()).toBe('/real/demo/file');
@@ -230,7 +253,7 @@ describe('file viewer', () => {
     ).toBe('true');
     expect(picture.className).not.toContain('object-contain');
     // The palette's commands act on what the server read, like the header's buttons.
-    expect(server.runtime.layout.getState().viewer?.read).toEqual({
+    expect(shownOf(server.runtime)?.read).toEqual({
       kind: 'image',
       absolutePath: '/real/demo/file',
     });
@@ -342,16 +365,16 @@ describe('file viewer', () => {
 
   it('belongs to the view it was opened on', () => {
     const file = fileAt('a.md');
-    expect(shownFile(file, route)).toBe(file);
-    expect(shownFile(file, '/calendar')).toBeUndefined();
-    expect(shownFile(undefined, route)).toBeUndefined();
+    expect(shownFile({ panelTabs: tabsWith(file) }, route)).toBe(file);
+    expect(shownFile({ panelTabs: tabsWith(file) }, '/calendar')).toBeUndefined();
+    expect(shownFile({ panelTabs: {} }, route)).toBeUndefined();
   });
 });
 
 const titles = (file: ViewerFile | undefined, openRun: WorkflowRun | undefined = run) =>
-  viewerCommands({ viewer: file, pathname: route, openRun, projects: [project] }).map(
-    (command) => command.title,
-  );
+  viewerCommands({ panelTabs: tabsWith(file), pathname: route, openRun, projects: [project] })
+    .map((command) => command.title)
+    .filter((title) => !title.includes('panel tab'));
 
 describe('viewer commands', () => {
   it('lists every artifact of the open run, and the open file’s actions only while it shows', () => {
@@ -360,7 +383,7 @@ describe('viewer commands', () => {
       'Open artifact: review/screen.png',
     ]);
     expect(
-      viewerCommands({ viewer: undefined, pathname: route, openRun: undefined, projects: [] }),
+      viewerCommands({ panelTabs: {}, pathname: route, openRun: undefined, projects: [] }),
     ).toEqual([]);
     const actions = ['Back to conversation', 'Copy file path'];
     expect(titles(fileAt('review/notes.md')).slice(2)).toEqual(actions);
@@ -387,7 +410,12 @@ describe('viewer commands', () => {
     const file = fileAt('review/notes.md');
     const resolved = { kind: 'markdown', absolutePath: '/real/demo/review/notes.md' } as const;
     for (const shown of [file, { ...file, read: resolved }]) {
-      await viewerCommands({ viewer: shown, pathname: route, openRun: run, projects: [project] })
+      await viewerCommands({
+        panelTabs: tabsWith(shown),
+        pathname: route,
+        openRun: run,
+        projects: [project],
+      })
         .find((command) => command.id === 'viewer.copyPath')
         ?.run(undefined as never);
     }

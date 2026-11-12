@@ -111,6 +111,9 @@ export const e2ePlanRunWorkflowId = 'plan-run-e2e';
 export const e2ePlanRunIntentId = '2026-07-tea-pot';
 export const e2eCopyProjectId = 'tea-cup';
 export const e2eCopyWorkflowId = 'copy-e2e';
+// A chat thread's Changes (agent workbench U6) read a tea repository of their own, project
+// `tea-chat`, so no run reseeds it under them.
+export const e2eThreadChangesProjectId = 'tea-chat';
 // The same server holds a seventh repository as project `tea-field` for the GitLab tests
 // (e2e/gitlab.spec.ts): its git remote is on the mock GitLab under /gitlab on the tracker port
 // (project `tea/fields/tea-field`, nested groups), it is on the branch of an open merge request,

@@ -41,6 +41,17 @@ export interface MockMergeRequest {
   readonly sourceProjectId?: number;
 }
 
+// An issue (agent workbench spec 21).
+export interface MockGitLabIssue {
+  readonly iid: number;
+  readonly title: string;
+  readonly description: string;
+  readonly state: 'opened' | 'closed';
+  readonly author: string;
+  readonly labels?: readonly string[];
+  readonly notes?: readonly MockGitLabNote[];
+}
+
 export interface MockGitLabRequest {
   readonly method: string;
   // Path and query below /api/v4, such as `/projects/group%2Fapp/merge_requests?…`.
@@ -62,6 +73,7 @@ export class MockGitLab {
   // Where the invented merge requests "live" for their links.
   readonly webUrl: string;
   mergeRequests: MockMergeRequest[] = [];
+  issues: MockGitLabIssue[] = [];
   // Off: the merge request search is turned down with 400, like a version that does not know it.
   search = true;
   // Every request fails with this status and message until it is cleared.
@@ -175,6 +187,32 @@ export class MockGitLab {
           system: entry.system ?? false,
           created_at: '2026-11-03T08:15:00Z',
           ...(entry.path ? { position: { new_path: entry.path, old_path: entry.path } } : {}),
+        })),
+      );
+    }
+    const issue = /^\/issues\/(\d+)(\/notes)?$/.exec(rest);
+    if (issue) {
+      const found = this.issues.find((candidate) => candidate.iid === Number(issue[1]));
+      if (!found) return json(404, { message: '404 Not found' });
+      if (issue[2] === undefined) {
+        return json(200, {
+          iid: found.iid,
+          title: found.title,
+          description: found.description,
+          state: found.state,
+          author: { username: found.author },
+          labels: found.labels ?? [],
+          web_url: `${this.webUrl}/${this.projectPath}/-/issues/${found.iid}`,
+        });
+      }
+      return json(
+        200,
+        (found.notes ?? []).toReversed().map((entry) => ({
+          id: entry.id,
+          body: entry.body,
+          author: { username: entry.author },
+          system: entry.system ?? false,
+          created_at: '2026-11-03T08:25:00Z',
         })),
       );
     }

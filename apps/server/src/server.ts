@@ -24,6 +24,8 @@ import {
   type ServerHooks,
   type ServiceContext,
 } from './hooks/index.js';
+import { ImageStore } from './files/images.js';
+import { HostLookup } from './hosts/lookup.js';
 import { HostPoller } from './hosts/poller.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
 import type { OutlookService } from './outlook/service.js';
@@ -114,6 +116,8 @@ export interface RunningServer {
   readonly scheduler: Scheduler;
   readonly trackers: TrackerService;
   readonly hosts: HostPoller;
+  // Reads the items chat threads link to, when asked (agent workbench spec 22).
+  readonly hostLookup: HostLookup;
   // Where the assistant's tools are reached and the token that opens them (see "Assistant").
   readonly assistant: AssistantEndpoint;
   readonly logger: Logger;
@@ -170,6 +174,15 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const providers = new ProviderAdapters(options.hooks?.providers ?? {}, env);
   // Known once the server listens; the assistant's turn asks for it when it starts.
   let assistantAccess: { url: string; token: string } | undefined;
+  const folderChanges = {
+    base: (folder: string) => readRunBase(folder, changesOptions(settings)),
+    head: async (folder: string) => {
+      const head = await readHeadCommit(folder, changesOptions(settings).git);
+      return head.status === 'ok' ? head.sha : undefined;
+    },
+    snapshot: (folder: string, baseSha: string) =>
+      snapshotChanges(folder, baseSha, changesOptions(settings)),
+  };
   const providerService = new ProviderService({
     db: database.db,
     engine,
@@ -179,20 +192,14 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     home,
     assistant: () => assistantAccess,
+    changes: folderChanges,
   });
   const workspaces = new Workspaces({ db: database.db, engine, settings, logger });
   const workflows = new WorkflowRunner({
     db: database.db,
     engine,
     detectArtifacts: options.detectArtifacts ?? detectArtifacts,
-    changes: {
-      base: (folder) => readRunBase(folder, changesOptions(settings)),
-      head: async (folder) => {
-        const head = await readHeadCommit(folder, changesOptions(settings).git);
-        return head.status === 'ok' ? head.sha : undefined;
-      },
-      snapshot: (folder, baseSha) => snapshotChanges(folder, baseSha, changesOptions(settings)),
-    },
+    changes: folderChanges,
     prepare: (runId) => workspaces.prepare(runId),
     logger,
   });
@@ -259,11 +266,26 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     ...(options.hostTimers ? { timers: options.hostTimers } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
+  const hostLookup = new HostLookup({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    linkHosts: (projectId, tokens) => trackers.linkHosts(projectId, tokens),
+    ...(options.clock ? { clock: options.clock } : {}),
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
   const planRuns = new PlanRuns({
     db: database.db,
     engine,
     logger,
     readPlan: (planId) => hosts.readPlan(planId),
+  });
+  const images = new ImageStore({
+    db: database.db,
+    home,
+    maxBytes: () => settings.get('chat.imageMaxBytes'),
+    listModels: (providerInstanceId) => providerService.listModels(providerInstanceId),
   });
   const handlers = createHandlers({
     engine,
@@ -279,6 +301,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     providerUpdates,
     trackers,
     hosts,
+    hostLookup,
+    images,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     discoverProjects: () =>
       discoverProjects({
@@ -475,6 +499,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     scheduler,
     trackers,
     hosts,
+    hostLookup,
     assistant: { ...assistantAccess, tools: assistantTools },
     logger,
     stop,

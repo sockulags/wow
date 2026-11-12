@@ -25,6 +25,7 @@ import {
   changeRequests,
   events,
   hostReads,
+  hostItemReads,
   ticketReads,
   pageReads,
   notifications,
@@ -169,6 +170,14 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           .run();
       }
       return ['hostReads', 'changeRequests'];
+    }
+    case 'hosts.itemRead': {
+      const { read } = event.payload;
+      tx.insert(hostItemReads)
+        .values(read)
+        .onConflictDoUpdate({ target: hostItemReads.id, set: read })
+        .run();
+      return ['hostItemReads'];
     }
     case 'tickets.synced':
       for (const read of event.payload.reads) {
@@ -337,6 +346,17 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(threads.id, event.payload.threadId))
         .run();
       return threadTopics;
+    case 'thread.changesMarked': {
+      const { threadId, turnId, base, mark } = event.payload;
+      if (base) {
+        tx.update(threads)
+          .set({ baseSha: base.sha, baseFiles: base.files })
+          .where(eq(threads.id, threadId))
+          .run();
+      }
+      if (mark) tx.update(turns).set({ fileMark: mark }).where(eq(turns.id, turnId)).run();
+      return ['turns'];
+    }
     case 'thread.queueChanged':
       tx.update(threads)
         .set({ queued: event.payload.queued })
@@ -741,6 +761,7 @@ export function readModel(tx: DbOrTx): ReadModel {
         .find((row) => isLivePlanRunState(row.state)),
     hostReads: (projectId) =>
       tx.select().from(hostReads).where(eq(hostReads.projectId, projectId)).all(),
+    hostItemRead: (id) => tx.select().from(hostItemReads).where(eq(hostItemReads.id, id)).get(),
     ticketReads: (projectId) =>
       tx.select().from(ticketReads).where(eq(ticketReads.projectId, projectId)).all(),
     pageReads: (projectId) =>
@@ -878,6 +899,13 @@ export function readModel(tx: DbOrTx): ReadModel {
         .get();
       return { count: total, last: last?.payload };
     },
+    lastAssistantText: (turnId) =>
+      tx
+        .select()
+        .from(threadItems)
+        .where(and(eq(threadItems.turnId, turnId), eq(threadItems.kind, 'assistant_text')))
+        .orderBy(desc(threadItems.index))
+        .get(),
     approval: (id) => tx.select().from(approvals).where(eq(approvals.id, id)).get(),
     question: (id) => tx.select().from(questions).where(eq(questions.id, id)).get(),
     openRequests: (threadId) =>

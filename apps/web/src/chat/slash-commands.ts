@@ -112,7 +112,8 @@ export function runPaletteCommand(command: AppCommand): void {
   if (context) command.run(context);
 }
 
-// The provider's commands for a folder, asked once per connection, instance and folder.
+// The provider's commands for a folder, asked each time the list opens: a project command can be
+// added or removed while the app runs. Only a request in flight is shared.
 const commandRequests = new WeakMap<Connection, Map<string, Promise<ProviderSlashCommand[]>>>();
 
 function requestCommands(
@@ -136,9 +137,13 @@ function requestCommands(
         ...(threadId ? { threadId } : {}),
       })
       .then((result) => ProviderSlashCommand.array().parse(result));
-    // A failed request is asked again next time; the list shows wow's commands meanwhile.
-    request.catch(() => perConnection.delete(key));
-    perConnection.set(key, request);
+    const asked = request;
+    // On failure the list shows wow's commands meanwhile.
+    const settled = () => {
+      if (perConnection.get(key) === asked) perConnection.delete(key);
+    };
+    asked.then(settled, settled);
+    perConnection.set(key, asked);
   }
   return request;
 }

@@ -1,18 +1,19 @@
 import {
   hostReadId,
   pageSourceLabels,
+  type Page,
   type PageLink,
   type PageRead,
   type WorkflowRun,
 } from '@wow/contracts';
 import { Link, useRouterState } from '@tanstack/react-router';
-import { ExternalLinkIcon, LibraryIcon, PanelRightOpenIcon } from 'lucide-react';
+import { ExternalLinkIcon, ImageOffIcon, LibraryIcon, PanelRightOpenIcon } from 'lucide-react';
 import { useRuntime } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
-import { openPage } from '@/panel/viewer';
+import { openPage, pageDocument } from '@/panel/viewer';
 import { HostLink, HostReadLine, useHostRefresh } from '@/plans/host-read';
 import { settingGroup, settingLabel } from '@/plans/model';
 
@@ -118,5 +119,33 @@ export function PagesTab({ run }: { readonly run: WorkflowRun }) {
         </ul>
       )}
     </div>
+  );
+}
+
+// A Confluence page's body as Confluence rendered it, in a frame without an origin where nothing
+// runs and nothing is fetched. Shared by the run's page viewer and a chat link's tab (agent
+// workbench spec 21).
+export function PageBody({ page }: { readonly page: Page }) {
+  return (
+    <>
+      <p
+        data-testid="page-pictures-note"
+        className="flex shrink-0 items-center gap-1.5 border-b border-border px-4 py-1.5 text-2xs text-muted-foreground"
+      >
+        <ImageOffIcon aria-hidden className="size-3.5 shrink-0" />
+        Pictures and attachments need your Confluence sign-in, so they do not load here. Open the
+        page on the host to see them.
+      </p>
+      {/* The sandbox gives the page no origin and runs nothing in it; its policy lets it
+          fetch nothing. */}
+      <iframe
+        title={page.title || 'Confluence page'}
+        data-testid="page-frame"
+        sandbox=""
+        referrerPolicy="no-referrer"
+        srcDoc={pageDocument(page.body)}
+        className="min-h-0 w-full flex-1 bg-white [color-scheme:light]"
+      />
+    </>
   );
 }

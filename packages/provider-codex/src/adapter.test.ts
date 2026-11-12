@@ -6,6 +6,7 @@ import {
 } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import {
+  fileChangeDiff,
   CodexAdapter,
   codexVersionFromUserAgent,
   type CodexAdapterOptions,
@@ -155,6 +156,39 @@ const startTurn = {
 const written = (child: FakeCodexProcess, method: string) =>
   child.written.find((message) => message['method'] === method);
 
+describe('fileChangeDiff (agent workbench spec 33)', () => {
+  it('gives an update its hunks, a new file all added lines and several files their headers', () => {
+    expect(
+      fileChangeDiff([
+        {
+          path: 'a.ts',
+          kind: { type: 'update', move_path: null },
+          diff: '--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y\n',
+        },
+      ]),
+    ).toBe('@@ -1 +1 @@\n-x\n+y');
+    expect(fileChangeDiff([{ path: 'new.ts', kind: { type: 'add' }, diff: 'one\ntwo\n' }])).toBe(
+      '@@ -0,0 +1,2 @@\n+one\n+two',
+    );
+    expect(
+      fileChangeDiff([
+        { path: 'new.ts', kind: { type: 'add' }, diff: 'one\n' },
+        { path: 'old.ts', kind: { type: 'delete' }, diff: 'gone\n' },
+      ]),
+    ).toBe(
+      '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+one\n--- a/old.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone',
+    );
+    // A new file whose first line only looks like a diff's is still its content.
+    expect(
+      fileChangeDiff([{ path: 'notes.md', kind: { type: 'add' }, diff: '--- title\nbody\n' }]),
+    ).toBe('@@ -0,0 +1,2 @@\n+--- title\n+body');
+    expect(
+      fileChangeDiff([{ path: 'new.ts', kind: { type: 'add' }, diff: '@@ -0,0 +1 @@\n+one\n' }]),
+    ).toBe('@@ -0,0 +1 @@\n+one');
+    expect(fileChangeDiff([])).toBeUndefined();
+  });
+});
+
 describe('CodexAdapter with recorded sessions', () => {
   it('streams a turn with reasoning, a plan, tools, approvals, questions and usage', async () => {
     const fixture = readFixture('turn-tools.jsonl');
@@ -223,6 +257,7 @@ describe('CodexAdapter with recorded sessions', () => {
         approvalId: 'id-1',
         kind: 'command',
         summary: 'pnpm test',
+        facts: expect.objectContaining({ kind: 'command', command: 'pnpm test' }),
       }),
     ]);
 
@@ -247,12 +282,14 @@ describe('CodexAdapter with recorded sessions', () => {
         input: { changes: [{ path: 'README.md', kind: 'update' }] },
         kind: 'edit',
         path: 'README.md',
+        diff: '@@ -1 +1 @@\n-# Demo\n+# Demo app',
       },
       expect.objectContaining({
         type: 'approvalRequested',
         approvalId: 'id-2',
         kind: 'fileChange',
         summary: 'Edit README.md',
+        facts: { kind: 'edit', path: 'README.md', diff: '@@ -1 +1 @@\n-# Demo\n+# Demo app' },
         request: expect.objectContaining({
           changes: [expect.objectContaining({ path: 'README.md' })],
         }),
@@ -269,7 +306,13 @@ describe('CodexAdapter with recorded sessions', () => {
         itemId: 'item-patch',
         output: '@@ -1 +1 @@\n-# Demo\n+# Demo app\n',
       },
-      { type: 'toolCallCompleted', threadId, itemId: 'item-patch', status: 'error' },
+      {
+        type: 'toolCallCompleted',
+        threadId,
+        itemId: 'item-patch',
+        status: 'error',
+        diff: '@@ -1 +1 @@\n-# Demo\n+# Demo app',
+      },
       {
         type: 'questionAsked',
         threadId,
@@ -515,6 +558,32 @@ describe('CodexAdapter', () => {
     const { adapter } = setup(() => new ScriptedCodex(baseAnswers));
     expect(adapter.requiresModel).toBe(true);
     expect(providerChatOptions.codex.requiresModel).toBe(adapter.requiresModel);
+  });
+
+  // Agent workbench spec 53: Codex reads the image files wow stored, as `localImage` inputs
+  // after the text; a message of images only sends no empty text.
+  it('sends the images of a message as localImage inputs @agent-workbench-53', async () => {
+    const { adapter, current } = setup(() => new ScriptedCodex(baseAnswers));
+    const shot = '/home/demo/.wow/images/thread-1/0f8fad5b-d9cb-469f-a165-70867728950e.png';
+    await adapter.send({
+      ...startTurn,
+      prompt: 'What is wrong here?',
+      images: [{ path: shot, mediaType: 'image/png' }],
+    });
+    expect(written(current(), 'turn/start')?.['params']).toMatchObject({
+      input: [
+        { type: 'text', text: 'What is wrong here?', text_elements: [] },
+        { type: 'localImage', path: shot },
+      ],
+    });
+    await adapter.send({
+      ...startTurn,
+      threadId: 'thread-2',
+      prompt: '',
+      images: [{ path: shot, mediaType: 'image/png' }],
+    });
+    const turns = current().written.filter((message) => message['method'] === 'turn/start');
+    expect(turns.at(-1)?.['params']).toMatchObject({ input: [{ type: 'localImage', path: shot }] });
   });
 
   it('passes Test with the account, version and paged models', async () => {
@@ -1053,6 +1122,76 @@ describe('CodexAdapter', () => {
     await expect(
       adapter.send({ type: 'answerApproval', approvalId: 'id-2', decision: 'deny' }),
     ).rejects.toMatchObject({ code: 'state' });
+  });
+
+  it('shows a command request with its folder and words the rule from the amendment codex proposes (spec 36, 38), and declines without a note (spec 37)', async () => {
+    const { adapter, current, take } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(startTurn);
+    take();
+    current().emit({
+      id: 12,
+      method: 'item/commandExecution/requestApproval',
+      params: {
+        threadId: 'codex-thread',
+        turnId: 'turn-1',
+        itemId: 'c',
+        startedAtMs: 0,
+        environmentId: null,
+        command: 'pnpm test --watch',
+        cwd: '/work/demo/app',
+        proposedExecpolicyAmendment: ['pnpm', 'test'],
+      },
+    });
+    expect(take()).toEqual([
+      expect.objectContaining({
+        kind: 'command',
+        facts: {
+          kind: 'command',
+          command: 'pnpm test --watch',
+          cwd: '/work/demo/app',
+          ruleHint: 'pnpm test',
+        },
+      }),
+    ]);
+    await adapter.send({
+      type: 'answerApproval',
+      approvalId: 'id-1',
+      decision: 'deny',
+      note: 'Run it once, not in watch mode.',
+    });
+    expect(current().written.at(-1)).toEqual({ id: 12, result: { decision: 'decline' } });
+  });
+
+  it('shows the command inside the shell line codex runs, keeping the line in the request', async () => {
+    const { adapter, current, take } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(startTurn);
+    take();
+    const params = {
+      threadId: 'codex-thread',
+      turnId: 'turn-1',
+      itemId: 'c',
+      startedAtMs: 0,
+      environmentId: null,
+      cwd: '/work/demo/app',
+      commandActions: [{ type: 'unknown', command: 'pnpm test --watch' }],
+    };
+    current().emit({
+      id: 13,
+      method: 'item/commandExecution/requestApproval',
+      params: { ...params, command: "/bin/zsh -lc 'pnpm test --watch'" },
+    });
+    current().emit({
+      id: 14,
+      method: 'item/commandExecution/requestApproval',
+      params: { ...params, command: '/bin/zsh -lc "pnpm test && rm -rf ~"' },
+    });
+    const [wrapped, chained] = take();
+    expect(wrapped).toMatchObject({
+      facts: { kind: 'command', command: 'pnpm test --watch' },
+      request: { command: "/bin/zsh -lc 'pnpm test --watch'" },
+    });
+    expect(chained).toMatchObject({ facts: { command: 'pnpm test && rm -rf ~' } });
+    await adapter.send({ type: 'answerApproval', approvalId: 'id-1', decision: 'allowOnce' });
   });
 
   it('forgets an approval codex resolved on its own', async () => {

@@ -113,6 +113,8 @@ describe('Outlook service', () => {
       db: undefined as never,
       skills: undefined as never,
       hosts: undefined as never,
+      hostLookup: undefined as never,
+      images: undefined as never,
       plans: undefined as never,
       workflows: undefined as never,
       providers: undefined as never,

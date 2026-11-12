@@ -10,7 +10,7 @@ import {
   SearchXIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { useLayout, useRuntime } from '@/app/runtime';
+import { DETAILS_TAB, useLayout, useRuntime } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
@@ -19,7 +19,7 @@ import { formatDuration, useDateFormat } from '@/lib/format';
 import { isBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
 import { useContextPanelShown } from '@/panel/panel-state';
-import { shownFile } from '@/panel/viewer';
+import { panelTabsOf } from '@/panel/viewer';
 import { runRead } from '@/plans/model';
 import { Artifact } from './artifact-link';
 import { runTabs, type RunSearch } from './changes';
@@ -206,11 +206,10 @@ export function RunView({ runId, search = {} }: { runId: string; search?: RunSea
 
   const waiting = runs?.find((candidate) => candidate.id === runId)?.state === 'waiting';
   const panelShown = useContextPanelShown();
-  const fileInPanel =
-    shownFile(
-      useLayout((state) => state.viewer),
-      `/workflows/runs/${runId}`,
-    ) !== undefined;
+  // A file or page tab is selected in place of the step's conversation (agent workbench spec 14).
+  const fileInPanel = useLayout(
+    (state) => panelTabsOf(state, `/workflows/runs/${runId}`).selected !== DETAILS_TAB,
+  );
 
   // At a gate the step's conversation and the gate bar belong in the side panel (review loop
   // spec 14), so a wide window shows it without changing the user's panel setting. It stays

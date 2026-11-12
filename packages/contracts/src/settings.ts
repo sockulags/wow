@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AlwaysAllowRule } from './approvals.js';
 import { BuiltInSkillName } from './skills.js';
 import {
   SecretPattern,
@@ -22,6 +23,7 @@ export type SettingScope = z.infer<typeof SettingScope>;
 export const SettingGroup = z.enum([
   'providers',
   'chat',
+  'approvals',
   'calendar',
   'outlook',
   'scheduler',
@@ -47,6 +49,7 @@ export type SettingGroup = z.infer<typeof SettingGroup>;
 export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
   providers: 'Providers',
   chat: 'Chat',
+  approvals: 'Approvals',
   calendar: 'Calendar',
   outlook: 'Outlook',
   scheduler: 'Scheduler',
@@ -477,6 +480,24 @@ export const settingsRegistry = {
     default: 20,
     scope: 'global',
   }),
+  'chat.editDiffMaxLines': defineSetting({
+    schema: z.number().int().min(20).max(20000),
+    group: 'chat',
+    label: 'Longest edit diff in a row',
+    description:
+      "An edit row or approval card shows at most this many lines of the edit's diff; the file's whole diff is in the thread's Changes.",
+    default: 400,
+    scope: 'global',
+  }),
+  'approvals.alwaysAllow': defineSetting({
+    schema: z.array(AlwaysAllowRule),
+    group: 'approvals',
+    label: 'Always allow in this project',
+    description:
+      'Requests these rules cover are allowed without asking, in every thread of the project, on Claude Code and Codex alike. A command rule covers commands that start with its words; a tool rule covers that tool. "Always allow in this project" on an approval adds one; nothing is written to the providers\' own settings.',
+    default: [],
+    scope: 'project',
+  }),
   'chat.starterCount': defineSetting({
     schema: z.number().int().min(0).max(12),
     group: 'chat',
@@ -544,6 +565,25 @@ export const settingsRegistry = {
       "How many characters the thread filter and the palette search the threads' messages for. A longer text finds threads by title and project only.",
     default: 500,
     scope: 'global',
+  }),
+  'chat.fileTrigger': defineSetting({
+    schema: z.string().regex(/^\S$/u, 'One character that is not a space'),
+    group: 'chat',
+    label: 'File list character',
+    description:
+      "Typed at the start of a word, this character opens the list of the thread folder's files in the composer. A picked file becomes a chip and the message names its path. When it is the same as the skill list character, the skill list wins.",
+    default: '@',
+    scope: 'global',
+  }),
+  'chat.imageMaxBytes': defineSetting({
+    schema: z.number().int().min(10_000).max(50_000_000),
+    group: 'chat',
+    label: 'Largest image',
+    description:
+      'An image pasted or dropped on the composer that is larger than this is refused and not added. Claude and Codex may refuse smaller ones themselves.',
+    default: 5_000_000,
+    scope: 'global',
+    unit: 'bytes',
   }),
   'calendar.zone': defineSetting({
     personal: 'person',
@@ -1280,6 +1320,24 @@ export const settingsRegistry = {
     default: false,
     scope: 'global',
   }),
+  'viewer.fileListLimit': defineSetting({
+    schema: z.number().int().min(10).max(200_000),
+    group: 'viewer',
+    label: 'Files listed',
+    description:
+      'How many files of a thread\'s folder "Open file…" and @ in the composer list at most. A folder outside Git is walked until this many are found.',
+    default: 5000,
+    scope: 'global',
+  }),
+  'viewer.fileMatchesShown': defineSetting({
+    schema: z.number().int().min(5).max(1000),
+    group: 'viewer',
+    label: 'File matches shown',
+    description:
+      'How many matching files "Open file…" and @ in the composer show while you type. Typing more narrows them.',
+    default: 50,
+    scope: 'global',
+  }),
   'viewer.highlightMaxBytes': defineSetting({
     schema: z.number().int().min(0).max(50_000_000),
     group: 'viewer',
@@ -1619,7 +1677,7 @@ export const settingsRegistry = {
   ),
   'keybindings.changesStepOnly': keybinding(
     'Changes: this step only',
-    "Narrow the open run's Changes tab to the files the step under review changed, and back (while the tab is open).",
+    "Narrow the open run's Changes tab to the files the step under review changed, or a thread's Changes to the last turn, and back (while they are open).",
     'O',
   ),
   'keybindings.ruleAdd': keybinding(
@@ -1654,8 +1712,33 @@ export const settingsRegistry = {
   ),
   'keybindings.approvalDeny': keybinding(
     'Approval: deny',
-    'Deny the request the open thread waits for.',
+    'Open the note of a denial for the request the open thread waits for; Enter denies with what it says, or without a note when it is empty.',
     'D',
+  ),
+  'keybindings.approvalAllowAlways': keybinding(
+    'Approval: always allow in this project',
+    'Allow the request the open thread waits for and store the rule its card shows, so the project allows such requests from now on.',
+    'Y',
+  ),
+  'keybindings.planAcceptEdits': keybinding(
+    'Plan: start, accept edits',
+    'Start the plan the open thread shows, in the mode that accepts edits.',
+    '1',
+  ),
+  'keybindings.planAskEachTime': keybinding(
+    'Plan: start, ask each time',
+    'Start the plan the open thread shows, in the mode that asks for each request.',
+    '2',
+  ),
+  'keybindings.planKeepPlanning': keybinding(
+    'Plan: keep planning',
+    'Open the note of "Keep planning" for the plan the open thread shows.',
+    '3',
+  ),
+  'keybindings.threadChanges': keybinding(
+    'Chat: show changes',
+    "Open the open thread's Changes in the side panel, and close them again.",
+    'Mod+Shift+D',
   ),
   'keybindings.composerModel': keybinding(
     'Composer: choose model',
@@ -1676,6 +1759,31 @@ export const settingsRegistry = {
     'Composer: leave',
     'Move the focus out of the composer to what comes before it, as Shift+Tab does elsewhere, since in the composer Shift+Tab changes the permission mode.',
     'Escape',
+  ),
+  'keybindings.openFile': keybinding(
+    'Open file',
+    "List the files of the open thread's or run's folder, filter them as you type, and open the pick in a panel tab.",
+    'Mod+P',
+  ),
+  'keybindings.panelCloseTab': keybinding(
+    'Panel: close tab',
+    'Close the selected tab of the side panel, while the focus is in the panel. Details stays.',
+    'Alt+W',
+  ),
+  'keybindings.panelNextTab': keybinding(
+    'Panel: next tab',
+    'Select the next tab of the side panel, while the focus is in the panel.',
+    'Ctrl+Tab',
+  ),
+  'keybindings.panelPreviousTab': keybinding(
+    'Panel: previous tab',
+    'Select the tab before in the side panel, while the focus is in the panel.',
+    'Ctrl+Shift+Tab',
+  ),
+  'keybindings.panelBackTab': keybinding(
+    'Panel: back',
+    'Go back to the tab of the side panel shown before, while the focus is in the panel.',
+    'Alt+ArrowLeft',
   ),
   'keybindings.questionFocus': keybinding(
     'Question: go to the card',

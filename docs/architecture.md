@@ -51,7 +51,10 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   `workflowRuns.detectArtifacts` (`{runId}`), `workflowRuns.diff` (`{runId, path?}`, what the run
   changed since its base, see "Run base and changes"), `workflowRuns.removeWorkingCopy` (`{runId}`,
   deletes a kept working copy of an ended run, see "Working copies"), `workflows.matchArtifacts` (`{projectId, globs}`),
-  `files.read` (`{runId, path}`, one file of a run for the viewer, see "Files"), `outlook.open`
+  `files.read` (`{runId | threadId | projectId, path}`, one file for the viewer, see "Files"),
+  `files.list` (`{runId | threadId | projectId}`, the folder's file names for "Open file…" and
+  `@`, see "Files"), `attachments.put` and `attachments.read` (an image for a thread's message,
+  see "Images in the composer"), `outlook.open`
   (`{entryId}`), `outlook.refresh`, `projects.git` (every project folder's git
   status and remotes), `trackers.project` (`{projectId}`, one project's tracker settings with their
   sources and suggestions), `trackers.test` (`{service, projectId?}`, signs in with the tracker
@@ -115,10 +118,25 @@ projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see 
   plus the IANA zone they were entered in; `Temporal` polyfill (`@js-temporal/polyfill`) does zone
   math. Default zone is the system zone. Details in "Scheduler and triggers".
 - **Files.** `apps/server/src/files/read.ts` (`readViewerFile`) is the only way a whole file
-  leaves the server, and `files.read` is its only caller; there is no HTTP file server and no
-  directory listing. (`workflowRuns.diff` sends the changed lines of files git lists as changed
-  inside the run's folder, see "Run base and changes".) The handler gives it the folders the run may read (the project folder; a
-  run with its own working copy adds that folder in front) and `viewer.maxFileBytes`. A
+  of the user's leaves the server, and `files.read` is its only caller; there is no HTTP file
+  server. (`attachments.read` sends back an image wow itself stored for a thread, see "Images in
+  the composer".)
+  (`workflowRuns.diff` sends the changed lines of files git lists as changed inside the run's
+  folder, see "Run base and changes".) `files.read` takes a scope (`FileScope` in
+  `packages/contracts/src/files.ts`, agent workbench Interface): a run (the project folder; a run
+  with its own working copy adds that folder in front), a thread (its folder, then its project's
+  folder; a thread without a project only its own) or a project (its folder). The handler
+  (`fileScope` in `rpc/handlers.ts`) turns the scope into those folders and the words a refusal
+  names them with (`place`), and passes `viewer.maxFileBytes`. The assistant's thread has no
+  files (its folder is wow's own; `rejected`). `files.list` (`files/list.ts`, `listFolderFiles`)
+  names the files of the scope's first folder for "Open file…" and `@` (agent workbench spec 18,
+  56), never their content: inside Git `git ls-files --cached --others --exclude-standard -z`
+  (tracked plus untracked files Git does not ignore, read as the output streams and stopped at
+  `viewer.fileListLimit`; a name that is no file on disk, a tracked file deleted or a submodule's
+  folder, is left out; when git runs out of time the names read so far are the answer, marked
+  `truncated`, since a walk would list what Git ignores), else a breadth-first walk that skips hidden folders and
+  `node_modules` and stops at the same limit; the answer says which (`source`) and whether it
+  stopped (`truncated`). A
   relative path is looked for in each folder in order, a full path must lie in one of them. The
   order of checks: the path as written must stay inside a folder, as registered or at its
   `realpath` (`path.resolve` and `path.relative`, so `..` and other drives are refused without
@@ -149,15 +167,22 @@ provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env
 threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessionId?, title, model,
                  effort, permissionMode, state ('idle'|'working'|'needs_you'|'done'|'failed'),
                  pinned, runId?, stepId?, backgroundTasks(json: BackgroundTask[]), archived, seen,
-                 queued(json: QueuedMessage)?, createdAt, updatedAt   -- backgroundTasks: the
+                 queued(json: QueuedMessage)?, baseSha?, baseFiles(json: FileHash[])?,
+                 createdAt, updatedAt   -- backgroundTasks: the
                  agent's work still running in the background, [] when none (migration
                  0026_background_tasks); archived and seen (false while unread) for the thread
                  list, false and true for older rows (migration 0027_thread_list); queued: the
-                 message waiting for the running turn to end (migration 0028_queued_messages)
-turns            id, threadId, index, state, startedAt, endedAt, usage(json)
+                 message waiting for the running turn to end (migration 0028_queued_messages);
+                 baseSha, baseFiles: where a chat thread's Changes are measured from, set at its
+                 first turn (migration 0029_thread_changes)
+turns            id, threadId, index, state, startedAt, endedAt, usage(json),
+                 fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
+                 turn began, for "This turn only" (migration 0029_thread_changes)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'), payload(json), streaming
-approvals        id, threadId, itemId, kind, request(json), decision?, decidedAt?
+approvals        id, threadId, itemId, kind ('command'|'fileChange'|'tool'|'plan'), request(json),
+                 decision? ('allowOnce'|'allowSession'|'allowAlways'|'deny'), decidedAt?   -- what
+                 the card shows (facts, rule, plan, byRule, note) is in the approval item's payload
 questions        id, threadId, itemId, request(json), answer?, answeredAt?   (answer: the reply
                  as one line; the item's payload holds the reply's picks and text)
 calendar_items   id, source ('outlook'|'local'), externalId?, title, start, end, zone, allDay,
@@ -255,20 +280,22 @@ Both adapters implement one interface from `packages/contracts`:
 ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode, resumeId?,
                             toolset? {name, url, token}, instructions?}
                  interrupt {threadId} | closeThread {threadId} |
-                 answerApproval {approvalId, decision} |
+                 answerApproval {approvalId, decision, note?, permissionMode?} |
                  answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
                  listModels | handOver {threadId, prompt} -> {taken} |
                  listCommands {cwd, threadId?} -> [{name, description, argumentHint?}] | test
 ProviderEvent:   session {providerSessionId} | textDelta | reasoningDelta |
                  toolCallStarted {itemId, name, input, ...ToolFacts?} | toolCallOutput |
-                 toolCallCompleted {itemId, status, exitCode?, durationMs?} | approvalRequested | questionAsked |
+                 toolCallCompleted {itemId, status, exitCode?, durationMs?, diff?} |
+                 approvalRequested {approvalId, kind, summary, request, facts?} | questionAsked |
                  taskListUpdated | usage | contextUsage | turnCompleted | turnFailed | turnInterrupted
                  | turnStartedByProvider | backgroundTasks {tasks [{id, description, agent?}]}
 ```
 
 **Tool facts.** Each adapter normalizes a tool call into `ToolFacts` (`provider.ts`): `kind`
 (`command`, `read`, `search`, `web`, `mcp`, `edit`, `other`) and, where the input gives them,
-`command`, `cwd`, `path`, `lines {from, to?}`, `pattern`, `url`, `query`, `server`, `tool`.
+`command`, `cwd`, `path`, `lines {from, to?}`, `pattern`, `url`, `query`, `server`, `tool`, and
+for an edit `diff` (see "Edits and approvals" below).
 Claude Code (`provider-claude/src/tools.ts`): Bash is a command (its result has no exit code or
 duration, so a failed one is only `error`), Read and NotebookRead reads (offset and limit become
 `lines`), Grep and Glob searches, WebFetch and WebSearch web, `mcp__<server>__<tool>` MCP, Edit,
@@ -316,7 +343,8 @@ thread it maps to, since the app-server has no request that unloads one.
   path, `env: {...process.env, CLAUDE_CONFIG_DIR, ...instance.env}`, `settingSources:
 ['user','project','local']` so skills and plugins load, `includePartialMessages: true` for
   deltas, `resume` with the stored session id, `canUseTool` turns a prompt into `approvalRequested`
-  and an `AskUserQuestion` call into `questionAsked`. `effort` passes through. Usage comes from
+  (with its facts; `ExitPlanMode` as a `plan` approval), answers a denial with its note as the
+  message, and an `AskUserQuestion` call into `questionAsked`. `effort` passes through. Usage comes from
   the result message and `getContextUsage()`.
 - **Codex** (`packages/provider-codex`): spawn `<binaryPath> app-server <launchArgs>` with
   `CODEX_HOME` and the instance env, newline-delimited JSON-RPC on stdio (codex leaves out the
@@ -376,16 +404,23 @@ thread it maps to, since the app-server has no request that unloads one.
   fails the turn with the reason; a turn still `running` at startup failed with the previous server
   process and is marked so. Events after a turn ended are dropped.
 - **Queued messages** (agent workbench spec 50 to 52). `thread.sendMessage` while a turn runs does
-  not start a turn: it sets the thread's `queued` (`QueuedMessage {id, text, skills?, queuedAt}`,
-  a JSON column of `threads`, migration `0028_queued_messages`) through `thread.queueChanged`. A
-  second message joins it (texts separated by a blank line, skills once each) and gets a new `id`
-  (the old one plus `+`), so whatever acts on the queue acts on one version of it. For a chat or
+  not start a turn: it sets the thread's `queued`
+  (`QueuedMessage {id, text, skills?, images?, files?, queuedAt}`, a JSON column of `threads`,
+  migration `0028_queued_messages`) through `thread.queueChanged`. A second message joins it
+  (texts separated by a blank line, skills, images and `@` files once each; the files go on the
+  user item it becomes) and gets a new `id` (the old one plus `+`), so whatever acts on the queue acts on one version of it. For a chat or
   step thread the event carries `handOver {providerInstanceId, prompt}` (the prompt with the
   skills in front, as `thread.sendMessage` would send it); the provider service then sends the
   adapter `handOver {threadId, prompt}`, which answers `HandOverResult {taken}`. Taken, the
-  service dispatches `thread.handedOver {threadId, queuedId}`: the queue empties and a `user` item
-  with `queued: 'duringTurn'` joins the running turn (or the turn that just ended), so the
-  conversation shows it sent. Not taken, it stays queued. On every `turn.ended` whose thread holds
+  service dispatches `thread.handedOver {threadId, queuedId, offered {text, skills?, files?}}`: the queue
+  empties and a `user` item with `queued: 'duringTurn'` joins the running turn (or the turn that
+  just ended), so the conversation shows it sent. Not taken, it stays queued. The service offers a
+  thread one version at a time: a join while the adapter has not answered is not offered. When the
+  answer names an older `queuedId` (joined or cancelled since), the orchestrator still shows
+  `offered` in the running turn it was offered to (the turn id starts the queued id), keeps only
+  the rest of a joined message (text after the offered one, skills and files it did not carry,
+  its images) and offers that rest again. A message with images is never offered (a hand-over
+  carries text only); it waits for the turn's end. On every `turn.ended` whose thread holds
   a queue, the service dispatches `thread.sendQueued {threadId, queuedId}` in a microtask (after
   every listener heard of the end, so none sees the next turn start first) with command id
   `send-queued:<queuedId>`; the orchestrator empties the queue and starts the turn as
@@ -1440,7 +1475,11 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `providers.offerSetup`
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.toolOutputLines`,
   `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
-  `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength` (see "Chat view")
+  `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength`, `chat.editDiffMaxLines` (see "Chat
+  view"), `chat.fileTrigger` (see "Panel tabs and files in chat"), `chat.imageMaxBytes` (see
+  "Images in the composer")
+- approvals: `approvals.alwaysAllow` (project-scoped; the "Approvals" page, see "Edits, approvals
+  and a thread's Changes")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.maxOccurrences` (see "Repeating cards"),
@@ -1472,7 +1511,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount`,
   `hosts.longestWaitMinutes`, `hosts.pageMaxBytes` (see "Hosts")
 - triggers: `triggers.eventsEnabled`, `triggers.forkPullRequests`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
-- viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`
+- viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`,
+  `viewer.fileListLimit`, `viewer.fileMatchesShown` (see "Files" and "Panel tabs and files in
+  chat")
 - diff: `diff.maxFileBytes`, `diff.maxFiles`, `diff.maxHashBytes` (the "Changes" page, see "Run base and changes")
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
@@ -2252,11 +2293,12 @@ decides what a command of the assistant does. The table names every type of `Ser
   that then lets the app do more: `scheduler.paused` off, `scheduler.missedPolicy` to `run`,
   `hosts.polling`, `triggers.eventsEnabled` or `viewer.htmlScripts` on. A change to
   `assistant.secretPatterns` is a proposal too, since that is the assistant's own net, and so
-  is any change to `assistant.allowCodex` or `triggers.forkPullRequests`, either way. Three
+  is any change to `assistant.allowCodex` or `triggers.forkPullRequests`, either way. Four
   more are proposals though spec 9 does not list them, because they do the same kind of thing:
   another skill, extra prompt, provider or model on a step that has a permission mode or a
   gate that passes by itself (the yes once given for that step was for that work); taking a
-  skill off `workflows.alwaysStopSkills`; and a tracker's `baseUrl` or `authMode` while that
+  skill off `workflows.alwaysStopSkills`; a project's `approvals.alwaysAllow` with a rule it
+  does not already have (removing rules is ordinary); and a tracker's `baseUrl` or `authMode` while that
   tracker's token is stored at any scope, since the token would then be sent to the new address
   (a project's own token is sent to the address the project resolves, which can be the global
   one, so a global change counts for a project's token too). Two more close ways around a yes:
@@ -2755,14 +2797,17 @@ focuses on `/chat/new` and on opening a thread; its skill list is a cmdk `Comman
 `skillGroupOf` (see "Skills in the composer"). A message written while a turn runs goes to the
 server, which queues it (see "Providers", Queued messages); the conversation ends with the queued
 row (`QueuedMessageItem` in `items.tsx`: "Queued · sent when the turn ends", its text and skills,
-Edit and Cancel; palette "Edit queued message" and "Cancel queued message"), and a user item
+Edit and Cancel; palette "Edit queued message" and "Cancel queued message"; the palette's Edit
+puts the text back through the open thread's own registered composer, `threadSkillComposer` by
+`draftKey`, and is not offered while there is none), and a user item
 sent from the queue says "Sent during the turn" or "Sent when the turn ended". While a question
 waits, the composer sends
 `question.answer` with its text as the answer's typed text. Questions are drawn by the question
 card (see "Question card"). The working clock reads the running turn's `startedAt` and redraws each second;
 it is display only, the state still comes from `turns`. A pending approval takes the focus, and
-the palette's approval commands (`keybindings.approvalAllowOnce|approvalAllowSession|approvalDeny`,
-plain keys, so they do nothing in text fields) answer it. A thread whose step a waiting run asks
+the palette's approval commands (`keybindings.approvalAllowOnce|approvalAllowSession|approvalAllowAlways|approvalDeny`,
+plain keys, so they do nothing in text fields) answer it (see "Edits, approvals and a thread's
+Changes"). A thread whose step a waiting run asks
 to review (`gateRunForThread`: the gate after this step, or before the next) shows the run view's
 `GateBar` above the composer, and the palette's Continue run and Stop run apply to that run.
 
@@ -2781,8 +2826,8 @@ palette command it runs (`/model` `modelBar.chooseModel`, `/effort`, `/mode`, `/
 `chat.renameThread`, `/done` `chat.markDone`, `/stop` `chat.stop`, `/open`); an entry shows only
 while that command is in the palette, which the shell publishes to `paletteCommandsStore`. A pick
 takes the typed `/word` out of the text and runs the command with the palette's context. Below
-them, "Claude Code commands" lists the provider's own (`provider.listCommands`, asked once per
-connection, instance and folder) without names wow lists or skills the list shows; a pick puts
+them, "Claude Code commands" lists the provider's own (`provider.listCommands`, asked each time
+the list opens, one request in flight per connection, instance and folder) without names wow lists or skills the list shows; a pick puts
 `/name ` in the text, sent as typed. `chat.clear` opens `/chat/new` with the thread's instance,
 project, folder and `DraftState.settings` (model, effort, mode), which the new thread starts
 from instead of the usual defaults; the old thread stays. `chat.compact` sends the provider's
@@ -2825,6 +2870,79 @@ server's Codex lists), and the e2e cases "picks model, effort and mode from the 
 "sets the model from the palette" in `chat.spec.ts` and "the assistant's bar writes its settings"
 in `app-assistant.spec.ts` (run in the `assistant` project, since it uses that copy).
 
+### Images in the composer
+
+Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attachments.ts`.
+
+- **Once to the server, then by id.** Ctrl+V of an image file, a dropped file, or the palette's
+  "Add an image to the message…" (a hidden file input) sends the bytes with `attachments.put
+{threadId, base64, type, name?, providerInstanceId?, model?}` when the image is added, not when
+  the message is sent. The answer is a `SentImage {id, mediaType, name?}` plus its size; from then
+  on the chip, the draft (`ComposerDraft.images`), the message (`thread.sendMessage.attachments`
+  `[{id, name?}]`), the queue (`QueuedMessage.images`) and the user item
+  (`TextItemPayload.images`) carry only that. The id is the server's: a UUID and the extension of
+  the type found in the bytes (`AttachmentId`), so it names the file and its type and nothing the
+  client sends becomes part of a path. `/chat/new` picks its thread id when it opens, so its images
+  are stored where the thread will be, and passes the instance and model it will create the
+  thread with.
+- **Storage** (`apps/server/src/files/images.ts`, `ImageStore`). Files live at
+  `<wow home>/images/<thread folder>/<id>`, where the folder is `t-` and the thread id with every
+  character other than a lowercase letter, digit, `-` or `_` written as `~` and its code in six hex
+  digits (`threadImageFolderName`), so no id climbs out, none holds a character Windows refuses,
+  two ids (also two that differ only in case) never share a folder, and no folder is a name
+  Windows keeps for a device (CON, NUL).
+  Written once (`wx`, mode 0600). Nothing deletes them yet: a chip taken off leaves its file, and
+  a thread's folder stays with the thread.
+- **Refusals** (spec 54), answered as `rejected` with the sentence the composer shows; nothing is
+  stored. The browser checks the type it was told and the size first (`localImageRefusal` in
+  `chat/image-chip.tsx`), so a large file is not sent at all; the server decides again by the
+  first bytes (`sniffImage` from `files/read.ts`: PNG, JPEG, GIF, WebP; SVG and BMP are refused),
+  by `chat.imageMaxBytes` (5 MB), and by the model: `listModels` of the thread's instance (or the
+  given one for a thread not made yet) and the thread's model (or the provider's default for an
+  empty model). Only `imageInput: false` refuses, so Codex models that report no image input are
+  refused and Claude models, which report nothing, are sent; a provider that cannot list its
+  models refuses nothing. The assistant's thread and a workflow step's thread (one with a
+  `stepId`) are refused (`attachments.put` for its id, and `thread.sendMessage` with attachments
+  in the decider): a step's thread takes no images wherever it is shown.
+- **Sending.** `dispatch` asks `ImageStore.refusal` before deciding a `thread.sendMessage` with
+  attachments: every image must be stored for that thread, so a message never starts a turn with a
+  missing image, and the thread's model is checked again as at `attachments.put`, since the model
+  may have been changed after the images were added (a new thread is created before its first
+  message, so this checks the model it was made with). A message queued with images is not
+  checked again when it leaves the queue: a model changed while it waits gets them, and that
+  provider's refusal shows as the turn's error. The decider (`core/threads.ts`) keeps them on the user item and the turn's
+  `start.images` (ids); a message may be images only. The provider service turns the ids into
+  `startTurn.images` `[{path, mediaType}]` under wow's home. Claude Code gets the files read and
+  base64-encoded as image blocks before the text (`userMessage` in `provider-claude/src/sdk.ts`);
+  Codex gets `localImage` inputs after the text and reads the files itself (the text is left out
+  when it is empty). The fingerprint lists `input[]<localImage>.path` as hand-added and coped
+  with: a Codex without it fails the turn, and that refusal shows as the turn's error. A message
+  with images written while a turn runs is queued with them and is not handed to the running
+  Claude Code turn (a hand-over carries text only); it goes when the turn ends. Retry of a chat
+  sends the last message's images again; an answer to a waiting question takes none.
+- **Display.** `attachments.read {threadId, id}` answers the media type and base64, which the
+  app reads once per connection and image (`useImage`) as a data URL. `ComposerImageChip` is a
+  thumbnail button with a cross; uploads run side by side but each chip takes its place in the
+  order the image was added (`arrivals` in the composer chains the answers), so Backspace takes
+  off the last one added; `SentImages` draws a user item's images above its text; a click,
+  Enter or the palette's "Show <image> full size" opens `ImageViewer` (a Dialog). In the composer
+  the images stand right above the text: Backspace at the start of the text takes the last one
+  off, the left arrow steps onto it, Backspace or Delete on a chip takes it off, and "Remove
+  <image> from the message" does it from the palette (`chat/image-commands.ts`,
+  `imageComposerStore`). Send waits while an image is still on its way. Once a message is sent
+  only its own images leave the composer; one added while it was on its way stays for the next.
+  A pasted screenshot has no name and shows as "Image n". A paste whose clipboard also holds text (`text/plain`, as Excel,
+  Word and Outlook put a picture of the copied cells or passage beside it) is left to the text
+  box and adds no image. The Assistant view, and a workflow step's thread in any view, pass no
+  `imageTarget`, so their composer takes no paste, drop or palette image.
+- **Tests.** `apps/server/src/files/images.test.ts` (storage under the home, the exact input the
+  mock adapter is handed, the refusals, the assistant), `providers/queue.test.ts` (images wait
+  for the turn's end), the adapters' "image blocks" and "localImage" cases,
+  `packages/contracts/src/attachments.test.ts`, `apps/web/src/chat/image-chip.test.tsx` (chips,
+  Backspace, full size, refusals, send, the Assistant view), and the e2e case "sends a pasted
+  image" in `chat.spec.ts` (the mock answers "Received n images." with their types); sketch
+  `image-chip`.
+
 The palette (`app/palette.tsx`, `app/palette-model.ts`) lists, before anything is typed, the
 commands marked `needsYou`, the newest by `recentAt` (`appearance.paletteRecent`) and the open
 view's actions; typing searches every command with `paletteScore`, which ranks title matches above
@@ -2842,8 +2960,8 @@ the right "exit 1 · 4.2 s" or, without an exit code, "failed" / "done" with the
 "Fetch example.org", paths shown relative to the thread's folder, compared with either
 separator, any drive-letter case and without a verbatim `\\?\` or `\\?\UNC\` prefix); `mcp.tsx` reads
 `server › tool` with the arguments as `key: value` and the JSON behind Show JSON; `generic.tsx`
-is today's row (name, first input text, status words, input and output) for `other`, `edit` (its
-diff row comes later) and every call stored before kinds. Times (`time.tsx`, `facts.ts`): the
+is today's row (name, first input text, status words, input and output) for `other`, an `edit`
+without a diff and every call stored before kinds; `edit.tsx` draws an edit with a diff. Times (`time.tsx`, `facts.ts`): the
 provider's `durationMs` if it gave one, else `endedAt − startedAt`; a running call counts up from
 `startedAt` once a second (display only); a call its turn left running reads "not finished".
 Opened, output sits in `output.tsx`'s box with its last `chat.toolOutputLines` lines, "Show all N
@@ -2874,6 +2992,154 @@ lands on something else in the conversation (`rowActionScope`), or the row unmou
 (`StoppedLine`, from the turn's `endedAt`), which carries Resume on the last turn. The line reads
 the turn's stored state, so a turn stopped before this change gets it too: it was stopped, and no
 item, divider or marker is added to it (spec 48 is about new items, not about reading old ones).
+
+### Edits, approvals and a thread's Changes
+
+Agent workbench spec 33 to 43, U6.
+
+**Edits.** An edit carries a unified diff in wow's own field (`ToolFacts.diff`, hunks from the
+first `@@`; several files each after a `--- a/<path>` / `+++ b/<path>` pair), made in the adapter.
+Claude Code (`provider-claude/src/diff.ts`): when an Edit, MultiEdit or Write starts, its input
+gives the diff as the old text's lines removed and the new text's added, without the file around
+them (`replacedHunk`; a Write is all added lines, whether or not the file exists, so its facts
+carry `diffWithoutFile: true` and the approval card and the row say "The new content only; the
+file's current content is not shown."); when the result comes, its `structuredPatch`
+gives the real hunks with line numbers and `toolCallCompleted.diff` replaces the first one (the
+orchestrator then sets `diffWithoutFile: false`). wow does not read the file itself to draw a
+pending Write. That
+is the spec's fallback for an old text that cannot be placed in the file: the row then still shows
+what was replaced. Codex (`fileChangeDiff` in `provider-codex/src/adapter.ts`): an update's `diff`
+is unified already (anything before its first `@@` is cut); an added or deleted file's `diff` is
+taken, as far as the schema says, as its content and drawn as all added or removed lines. The
+server keeps at most `chat.editDiffMaxLines` lines of a diff in a row or approval and marks it
+`diffCut`; a tool row also stores `diffCounts {added, removed}` of the whole diff, counted before
+the cut. `chat/tools/edit.tsx` reads "Edit src/timer.ts +4 −1" (from `diffCounts` on the row, or
+for a row stored before it `diffCounts` in `contracts/src/diff.ts` over the stored diff, which
+counts by the hunk headers, so a removed line reading `--- x` is not a header) and opens to the
+diff drawn with the run Changes tab's `DiffLines`, and Open file. Open file is
+`ItemContext.openFile`, the conversation's `FileLinkContext` `open`: the file in a panel tab of
+the view on screen, in the thread's scope, for a chat thread and a step's thread alike, Git or
+not (see "Panel tabs and files in chat"). It is not offered for a file outside the thread's
+folder (the path stays absolute), nor on a running edit row or a pending approval card, whose
+file has not changed yet, nor in the Assistant view, which opens no files. An `edit` row without
+a diff (stored before) is drawn as the generic row it was.
+
+**Approvals in wow's words** (spec 36). `approvalRequested` carries `facts: ApprovalFacts` (the
+tool facts of the call it would allow, an MCP tool's `arguments`, a plan's `plan`, and the
+command prefix the provider proposed, `ruleHint`): Claude Code's from `claudeToolFacts` on the
+request's tool and input (`tool` named for a tool that is not a command, an edit or MCP),
+Codex's command request from its `command`, `cwd` and `proposedExecpolicyAmendment`, its file
+change request from the item's changes. The orchestrator stores them on the approval item
+(`ApprovalItemPayload.facts`), with `rule` (what "always allow" would store), `plan`, `byRule`,
+`note`, `permissionMode` and `diffCut`; the approval row keeps its columns and takes the new
+decision `allowAlways`. `chat/approval-card.tsx` draws a command as `$ <command>` with its folder,
+an edit as its diff, a web address, a tool as `server › tool` with its arguments as `key: value`,
+and the provider's JSON behind Details. An approval stored before has no facts and is drawn as it
+was.
+
+**Deny with a note** (spec 37). Deny (D) opens a one-line note ("No, and tell it what to do
+instead"); Enter sends `approval.answer {decision: 'deny', note}`, an empty note denies without
+one, Escape closes it. `approval.answered` carries the note and the provider service passes it in
+`answerApproval {note}`: Claude Code's adapter answers `{behavior: 'deny', message: note}`. Codex
+takes no message with a decline, so for a Codex thread the same decision also queues the note
+(`thread.queueChanged`, see Queued messages) and asks for the turn to stop
+(`turn.interruptRequested`); when the turn ends the note goes as the next message. A workflow
+step's turn is not stopped, since that would stop the step: there the note waits for the turn's
+end. The adapter declines as before.
+
+**Always allow in this project** (spec 38 to 40). `proposeRule(kind, facts)` in
+`contracts/src/approvals.ts` gives the rule: a command rule (`{kind: 'command', prefix}`) from the
+provider's own prefix when it is one of the command's (Claude Code's `Bash(<prefix>:*)`
+suggestion, Codex's exec policy amendment), else the first word and the second when it is not an
+option (`pnpm test --watch` gives `pnpm test`); a tool rule (`{kind: 'tool', server, tool}`) for a
+named tool. Edits, plans, a Codex permissions request and a command with `;`, `&`, `|`, `<`, `>`,
+`` ` ``, `$`, brackets, a backslash, a quote or a line break get none, and neither does one whose
+first word is a shell or a program that runs what it is handed (`bash`, `cmd`, `powershell`,
+`env`, `sudo`, `xargs`, `busybox`, `npx`, …; such a rule would allow every later script), whose
+first word sets a variable (`FOO=1 bash x.sh`), whose first two words are a runner (`pnpm exec`,
+`pnpm dlx`, `npm exec`, `yarn dlx`, `uv run`, …), an interpreter followed by an option
+(`node -e`, `python -c`, `python -m`; `node scripts/build.mjs` keeps its rule) or a `find`/`fd`
+that runs a program for what it finds (`-exec`, `-execdir`, `-ok`, `-x`), a thread without a
+project or the assistant. The same test runs when a stored rule is matched, so an older rule
+never answers such a command. Codex reports a command as the shell line it runs
+(`/bin/zsh -lc '…'`, on Windows `cmd.exe /d /s /c "…"`, `powershell.exe -Command "…"` or a
+quoted program path such as `"C:\Program Files\PowerShell\7\pwsh.exe" -Command "…"`);
+its adapter puts the command inside (`shellInner`) in `facts.command` and keeps the line in
+`request`, so a rule made on Claude Code matches the same command on Codex. The card shows the rule ("Run commands starting with `pnpm test`",
+`ruleText`) under its fourth choice, Y (`keybindings.approvalAllowAlways`). `allowAlways` appends
+the rule with `addedAt` to the project's `approvals.alwaysAllow` (a `setting.changed` in the same
+commit) and the provider hears `allowOnce`: wow keeps its rules itself and writes nothing to a
+provider's settings. When a request arrives, the orchestrator compares it with the project's rules
+(`ruleCovers`: a command matches the prefix by whole words and never when it has shell control
+characters; a tool by server and name; case counts on every system, Windows too, although
+Windows finds `Pnpm` as `pnpm`: a different case only asks again, and a rule never covers more
+than its words say) and, when one covers it, stores the approval answered at once (`approval.answered {byRule: true}`, decision `allowOnce`) with `byRule` on its item: no
+`needs_you`, no notification, and the provider service answers the adapter as for any answer. The
+row reads "Allowed by rule: …". Settings → Approvals (`settings/always-allow-section.tsx`) lists
+each project's rules with when they were added; Remove writes the list without it, so the next
+request asks again. The assistant's proposal of a rule is U13's.
+
+**Plan card** (spec 42, 43). Claude Code's `ExitPlanMode` reaches `canUseTool`; the adapter
+reports it as an approval of kind `plan` with `facts.plan` when the input carries a `plan`
+string. The SDK's input type declares none, so without it the orchestrator takes the turn's last
+assistant text (`ReadModel.lastAssistantText`, or the text this batch streamed) and stores
+`plan {text, from: 'conversation'}`, which the card labels "The plan as written in the
+conversation". `chat/plan-card.tsx` renders the plan as markdown with "Start, accept edits"
+(focused, so Enter takes it; `keybindings.planAcceptEdits`, 1), "Start, ask each time"
+(`keybindings.planAskEachTime`, 2) and "Keep planning" (`keybindings.planKeepPlanning`, 3), which
+opens the note. A start is `approval.answer {decision: 'allowOnce',
+permissionMode: 'acceptEdits' | 'default'}` (any other mode, or a mode on another kind, is
+refused); the orchestrator adds `thread.configured` with that mode so the bar shows it, and the
+adapter allows with `updatedPermissions: [{type: 'setMode', mode, destination: 'session'}]` and
+keeps the session's mode, so the configure that follows sends nothing. Keep planning denies with
+the note. The card's choices are palette commands from `approvalCommands` (`chat.plan.*`).
+Codex has no plan mode, so it never shows one.
+
+**Palette.** The card of a thread's first pending approval (`ItemContext.keyedApproval`, from
+`pendingApproval(approvals)` in `ThreadConversation`) writes its offer (approval id, kind, rule)
+to `approvalCardStore`, whichever card mounted last; when the open thread and a step thread in
+the context panel (`side`) both wait, the open thread's offer wins. `approvalCommands(offer)` (wired in `app/use-commands.ts`) gives Allow once,
+Allow for this session, Always allow in this project (only with a rule) and Deny…, or the plan's
+three choices. They replace the approval commands `chatCommands` had.
+
+**A thread's Changes** (spec 34, 35). Before the provider service sends a chat thread's turn
+(`runId` null, kind `chat`) it reads the folder through git with the run's code
+(`RunChanges`): the first turn records the base (`readRunBase`: the commit and what already
+differed), every turn the changed files' hashes as it begins (`snapshotChanges`), and reports
+them as `thread.changesMarked {threadId, turnId, base, mark}` (stored as `threads.base_sha`,
+`base_files` and `turns.file_mark`, migration `0029_thread_changes`); then it sends the turn.
+The `turn.started` before it is already published, so the projection of `thread.changesMarked`
+publishes the `turns` topic, whose `Turn.marked` says the turn has a mark (the mark itself is
+not sent); `useThreadDiff` reads `threads.diff` again when a turn starts, is marked or ends, so
+the first turn's Changes and "This turn only" do not wait for the turn's end.
+Git that cannot say leaves them null and the turn goes as usual. A thread stored before has turns
+and no base and gets none later, so its Changes say so. `threads.diff {threadId, path?}` answers
+`ThreadDiff` (`RunDiff` plus `turnPaths`) from `readThreadDiff` in `workflows/changes.ts`: the
+folder against the base commit, without a file that already differed then and is unchanged
+since, and `turnPaths` the listed files whose content differs from the last turn's mark (null
+without a mark). A file that differed before the thread and changed again shows its whole diff
+against the commit, and "This turn only" narrows the list, not a file's diff, since no content is
+kept at a mark. `chat/thread-changes.tsx` is the view (`ThreadChanges`, opened with
+`openThreadChanges(context, threadId, from, path?)` as a panel tab of kind `changes`, id
+`changes:<threadId>`, of the route `from`; Back to details or the panel's close key closes it,
+and Show changes while it is the selected tab closes it too), the header chip
+(`ThreadChangesChip`: "+42 −7 in 5 files", hidden when nothing changed or nothing can be
+compared) and the palette's Show changes (`keybindings.threadChanges`, Mod+Shift+D) and "This
+turn only" (`keybindings.changesStepOnly`, O, while open). Both read again when a turn of the
+thread starts or ends and on Refresh. A step's thread has no chip: its run has the Changes tab.
+
+Tests: `packages/provider-claude/src/index.test.ts` ("draws an Edit as a diff…", "sends the note
+of a denial…", "asks to leave plan mode…", "shows an MCP request…"), `tools.test.ts`,
+`packages/provider-codex/src/adapter.test.ts` (`fileChangeDiff`, "shows a command request with
+its folder…"), `packages/contracts/src/approvals.test.ts`, `apps/server/src/providers/approvals.test.ts`
+(facts and cut diffs, notes on both providers, rules across threads and providers and after
+removal, no rule without a project, plans, base and marks, outside Git, old threads),
+`apps/web/src/chat/approvals.test.tsx`, and the e2e cases "approves an edit seen as a diff",
+"denies with a note", "always allows a command in this project", "starts from a plan" in
+`chat.spec.ts` and "lists a thread's changes" in `changes.spec.ts` (project `tea-chat`, a
+repository of its own in the Changes copy). The mock agent answers "edit the timer", "edit the
+bell", "watch the tests", "run the tests once" and "plan the work"; its Codex declines a denial
+with a note without a message and goes on until stopped.
 
 ### Thread list, unread and chat notifications
 
@@ -3372,14 +3638,16 @@ topics the views read.
   summed over `turns` (`threadUsage`) with the last context report, and the run, card and backlog
   item it belongs to.
 - No selection: a compact `EmptyState` that says what the view would show.
-- File viewer (`file-viewer.tsx`, `viewer.ts`; review loop spec 6 to 9): a state of the panel, not
-  a second panel. `openFile` stores `{runId, path, fullPath, from, fullSize, read}` as the layout
-  store's `viewer` and opens the panel; `read` is the kind and resolved path the server answered
-  (`noteFileRead`), so the palette acts on the same file the header does; while `viewer.from` is the route on screen
-  (`shownFile`), `FileViewer` takes the place of the panel's body, so the main view stays put
-  and leaving the view puts the file away. It is UI state like an open dialog; the content is
-  asked from the server with `files.read` each time a file is opened and never kept. The header
-  has Back to conversation (also Escape), Copy path (the path the server resolved, or the path
+- File viewer (`file-viewer.tsx`, `viewer.ts`; review loop spec 6 to 9): a file opens in a tab
+  of the panel (see "Panel tabs" below), not a second panel. `openFile` stores
+  `{scope, path, fullPath, from, fullSize, read}` (`ViewerFile`; callers that open a run's
+  artifact may pass `runId` for the scope) as a file tab of the route it was opened on and opens
+  the panel; `read` is the kind and resolved path the server answered (`noteFileRead`), so the
+  palette acts on the same file the header does. While its tab is selected (`shownFile`),
+  `FileViewer` takes the place of the panel's body, so the main view stays put. It is UI state
+  like an open dialog; the content is asked from the server with `files.read` each time the tab
+  is shown and never kept. The header has Back to conversation (Back to details on a chat
+  thread; both close the tab, so does Escape), Copy path (the path the server resolved, or the path
   as named until it has answered) and the path; markdown goes through `Markdown`, a picture is a `data:` URL fitted to the panel with a
   Full size switch, other text is a `CodeBlock` colored by its extension up to
   `viewer.highlightMaxBytes`, and a refusal shows the server's sentence. HTML is shown in an
@@ -3403,8 +3671,8 @@ topics the views read.
   artifact: <path>" for every found file of the open run, and Back to conversation, Copy file
   path while a file shows, and the picture's size switch once it is read as a picture.
 - Page viewer (`page-viewer.tsx`; review loop spec 35): the same place for a linked Confluence
-  page. `openPage` stores `{runId, ref, from}` as the layout store's `page` (opening a file
-  clears it and the other way round) and `shownPage` keeps it to the route it was opened on. The
+  page. `openPage` stores `{runId, ref, from}` as a page tab of the route it was opened on, and
+  `shownPage` is it while that tab is selected. The
   body is the server's last read from `pageReads`; nothing is asked of the host here. The header
   has Back to conversation (also Escape), "Open on host", the title and space, version, where it
   was linked from and when it was fetched. The body is shown in an `iframe` with `sandbox=""`
@@ -3414,6 +3682,30 @@ topics the views read.
   frame says so and points to "Open on host". Palette commands: "Open page: <title>" for every
   read page of the open run, and Back to conversation and "Open page on host: <title>" while a
   page shows.
+
+Panel tabs (`tabs.tsx`, `viewer.ts`; agent workbench spec 11 to 14, 87). The layout store's
+`panelTabs` keeps, per panel selection (`panelRoute` in `panel/model.ts`: a thread's
+`/chat/<id>`, a run's `/workflows/runs/<id>`, a calendar card's `/calendar?item=<id>`, so each
+card's step thread has its own), the open
+tabs (`PanelTab`: a file or a page, its id from the scope and the file's full path, with forward
+slashes, no `.` parts and in lower case for a Windows path, so `src/a.ts`, `./src/a.ts`,
+`src\a.ts` and the full path are one tab, or from the run and ref), the
+selected one (`DETAILS_TAB` for the panel's own body) and the tabs shown before (`history`). So a
+thread keeps its tabs while another thread is open, and each is read again when shown. While a
+route has tabs, `PanelTabStrip` shows the panel's own body first ("Details"; in a run view
+"Conversation", the step's thread, so a file or page opened there sits beside it instead of
+replacing it), then a tab per item with an icon by kind and its short name; opening an open item
+selects its tab (`openTab`). Opening keeps the focus where it was and remembers it for that tab
+(`tabOpener(route, id)`): Escape there, outside a text field, closes the tab again while it is the
+one shown, as Escape does in the panel. A route whose last tab closes drops its `panelTabs` entry. Keys while
+the focus is in the panel, matched in the panel's own key handler: `keybindings.panelCloseTab`
+(Alt+W, since Ctrl+W closes a browser tab), `keybindings.panelNextTab` (Ctrl+Tab),
+`keybindings.panelPreviousTab` (Ctrl+Shift+Tab) and `keybindings.panelBackTab` (Alt+ArrowLeft;
+`backTab`, the tab shown before); the Keybindings page lists them "In the side panel". Closing
+the selected tab shows the one shown before it. Palette commands while tabs are open: "Close panel
+tab", "Next panel tab", "Previous panel tab", "Back to the panel tab shown before" (no key of
+their own, so their keys stay the panel's). The run view's gate bar shows while the panel shows
+the conversation tab.
 
 State (`panel-state.ts`). `appearance.contextPanel` stores whether it is open and
 `appearance.contextPanelWidth` its width (pixels, bounds `contextPanelWidthBounds` in
@@ -3430,6 +3722,133 @@ context panel" (`keybindings.focusContextPanel`, F6), which moves the focus into
 panel" while the view has a selection. A focus request made from the palette waits in the layout
 store (`contextPanelFocus`) and is taken in the palette's `onCloseAutoFocus`, because the dialog
 would otherwise put the focus back where it was.
+
+### Panel tabs and files in chat
+
+Agent workbench spec 15 to 18, 56. A chat or step thread's conversation (`ThreadConversation`)
+provides `FileLinkContext` (`components/file-links.tsx`), whose `open(path)` opens the file in a
+panel tab of the route on screen with the thread's scope (`{threadId}`); the Assistant view
+provides none, so it has no file links, Open buttons or `@`. The markdown renderer makes inline
+code and relative link targets that pass `isFilePath` into `FileLink` buttons (click or Enter):
+no spaces, no colon except a drive's, and a file extension or a slash; letters of any script and
+`$` are allowed. A trailing `:line[:column]` or `#fragment` is cut off first (`filePathOf`), and
+the bare path is what opens. The rule is narrow on
+purpose; a miss opens a tab with the server's refusal ("There is no file …", "… is outside the
+thread's folder and the project folder …"), never a read outside. The `urlTransform` keeps such
+a relative target instead of dropping it; a picture's target still only shows as text.
+
+A read row whose tool facts name a file (`ToolFacts.path`, which the adapters fill) has Open
+(`OpenFileButton` in `panel/open-file-button.tsx`, spec 17, from `chat/tools/read.tsx`), with
+the path shown relative to the thread's folder when it is inside; a path outside opens a tab
+with the refusal. An edit row and an approval card have Open file instead (see "Edits,
+approvals and a thread's Changes").
+
+"Open file…" (`panel.openFile`, `keybindings.openFile`, Mod+P) is listed while a chat or step
+thread is open (its folder) or a run view (the run's folder). It sets the layout store's
+`openFileDialog`; `OpenFileDialog` (`panel/file-list.tsx`) asks `files.list` each time it opens
+(`useFileList`), ranks the names with `filterFiles` (the typed letters in order, a match inside
+the file's own name first, fewer breaks first, shorter paths first) and shows at most
+`viewer.fileMatchesShown`, with a line when the list is cut or the folder had more files than
+`viewer.fileListLimit`.
+
+`@` in the composer (`fileSource`, the thread's scope): typed at the start of a word
+(`chat.fileTrigger`, default `@`, by the same `typedTrigger` and `skillQuery` as the skill list;
+when both characters are the same the skill list wins) it opens a list of the folder's files
+filtered as typed; a paste opens nothing. A pick takes the `@word` out and adds a file chip
+(`Mentioned files`, kept in the thread's draft as `files`); Backspace at caret 0 removes the last
+one. On send the composer puts `@path` for each file on the message's first line (`withMentions`
+in `chat/mentions.ts`, the form Claude Code and Codex read) and `thread.sendMessage` carries
+`files`; the server stores them on the user item (`TextItemPayload.files`) and refuses them for
+the assistant. The thread draws them as chips that open the file, with the text after the
+mention line (`withoutMentions`). A message queued during a turn keeps its text, so the paths,
+but not the chips.
+
+Tests: `apps/server/src/files/list.test.ts` (Git, ignore rules, the limit, the walk),
+`server.test.ts` ("reads a file of a thread or a project only inside their folders", "lists a
+thread folder outside Git through files.list"), `core/file-mentions.test.ts`,
+`apps/web/src/panel/tabs.test.tsx` (strip, keys, palette, thread switch, refusal, Open, chips,
+Escape, Ctrl+P), `components/file-links.test.tsx`, `panel/file-list.test.ts`,
+`chat/file-mentions.test.tsx`, and the e2e cases "opens a file from a chat message in a panel
+tab" and "mentions a file with @" in `panel.spec.ts` (the panel copy's project holds invented
+`src/timer.ts` and `docs/spec.md`, and the mock answers "show the file" with those paths).
+
+### Host links in chat
+
+Agent workbench spec 19 to 26. A link in a chat message to a pull or merge request, an issue, a
+Jira issue or a Confluence page on one of the user's hosts is a chip that opens the item in a
+panel tab. Nothing new is polled: an item is read when its tab opens and on Refresh now, and the
+read is stored for the thread (decided in the spec's Interface: chat links are many and mostly
+looked at once).
+
+Every thread view asks `hosts.lookup` for its rules. That answer reads no token: a site counts
+when a token is stored for it (`TrackerService.linkHosts(projectId, 'stored')`). Only the
+token of the host being asked is read, and only then, because on Windows each read of the secret
+store starts PowerShell.
+
+**Recognition** (`packages/contracts/src/host-links.ts`, shared by the server and the web app so
+a chip is exactly what the server will read). `HostLinkRules` are the thread's sites
+(`HostLinkSite`: host kind, web base, name), the project's repository (GitHub or GitLab, with
+its path) and the project's Jira key. `recogniseHostLink(url, rules)` reads
+`<base>/<owner>/<repo>/pull|issues/<n>` (GitHub; the web base comes from the API URL with
+`gitHubWebBase`: `api.` hosts lose it, Enterprise Server loses `/api/v3`),
+`<base>/<path>/-/merge_requests|issues/<n>` (GitLab), `<base>/browse/<KEY-n>` (Jira) and the
+three Confluence page forms; anything else, an address with a user name or password, and any
+other scheme stay plain links. `bareHostRefs(text, rules)` finds `KEY-n` for the project's Jira
+key and `#n` (and `!n` on GitLab) for its repository, never inside a word, path or address, and
+never a `#n` that reads as a colour (six digits, three of one digit, or three digits after `:` or
+before `;`).
+`recogniseHostRef` takes one address or one key (the palette and `hosts.lookup`). A thread
+without a project has no repository or key, so its bare references stay text; its links still
+resolve against Settings → Trackers. `HostItemRef` names one item (host, kind, site, path, id,
+url); `hostItemKey` lower-cases the repository path, a site's path prefix is compared without
+case, and a code host's path parts are decoded once, so `Acme/Tea`, `acme/tea` and `acme/te%61`
+are one item (a read stored under an older, mixed-case key is read again on open). GitHub
+numbers issues and pull requests together, so a bare `#14` there is an `issue`
+until the read says it is a pull request.
+
+**Server.** `TrackerService.linkHosts(projectId | null)` answers the rules and, for the server
+only, each site's token: a site is in the rules only with its settings and a token (GitHub with
+the same rule as the poller for a remote's host). `HostLookup` (`apps/server/src/hosts/lookup.ts`)
+answers RPC `hosts.lookup {threadId, ref?, read?}` with `{rules, item, read}`: without `ref` the
+rules; with it the item it names (null for a plain link) and the stored read; `read: 'open'`
+reads the item only when the thread has no successful read of it (a stored failed first read,
+without `fetchedAt`, is asked again), `read: 'refresh'` always. One read per
+item at a time. Each read builds the adapter of the item's site with that site's token, so a
+token never goes anywhere else, and goes through the internal command `hosts.itemRead`
+(`decideHostItemRead` in `core/hosts.ts`) to the event `hosts.itemRead` and the
+`host_item_reads` table (migration 0030), topic `hostItemReads` (thread-scoped). `HostItemRead`
+has scope `thread` (`HostReadScope` gained it; the poller's rows use `PolledHostScope`), the
+item, `data` (`HostItemData`: a change request, an `Issue`, a `Ticket` or a `Page`), `fetchedAt`
+and `error`; a failed read keeps the last data and its time beside the error. GitHub and GitLab
+adapters gained `readIssue(number)` (GitHub answers `changeRequest` when the number is a pull
+request); the mocks gained `issues`. The assistant's thread is refused, and nothing read is ever
+put into a prompt.
+
+**Web.** `chat/host-links.tsx`: `useHostLinkRules(threadId)` (asked again when the settings or
+projects topics change), `HostLinkContext` (provided by `ThreadConversation` next to
+`FileLinkContext`, not for the Assistant), `HostChip` (icon, key, and once read the state: "PR
+#14 · Draft · 2 checks failed", "DEMO-42 · To Do", a page's title; Enter or click opens the tab,
+Shift+Enter or Shift+click the browser), `hostItemLabel`, `hostItemState`, `hostItemsIn`. The
+markdown body turns recognised links and inline code into chips (inline code only for an address
+or a Jira key: `#n` and `!n` in code stay code), and a remark step marks bare
+references in text (`wow-host-ref:` links the anchor turns into chips). Panel tab kind `host`
+(`ViewerHostItem {threadId, item, from}`, `openHostItem` in `panel/viewer.ts`) renders
+`panel/host-tab.tsx`: it asks `hosts.lookup` with `open` when shown, shows the stored read with
+`HostReadLine` (Last fetched, Refresh now, Open on host) and the body the run's tabs share
+(`ChangeRequestBody`, `TicketBody`, `PageBody` and the new `IssueBody`). Palette:
+`panel.openHostItem` ("Open issue, PR or ticket…", a dialog taking an address or key) while a
+chat thread is open, and `panel.host.refresh`, `panel.host.openOnHost` while a host tab is
+shown. `chat/pasted-links.tsx` shows chips with "Open in panel" above the composer for links in
+the draft; it listens to `drafts.ts` (`onDraftChange`, `draftText`), so the composer is not
+involved. Details lists "Mentioned" (`threadMentions` in `panel/thread-panel.tsx`): the
+thread's file paths and host items, each opening a tab.
+
+Tests: `apps/server/src/hosts/links.test.ts` (lookup per host, read once and on Refresh now, no
+poll, token host check, refused read, bare references, nothing in a prompt),
+`apps/web/src/chat/host-links.test.tsx` (link and key recognition, chips, Shift+Enter,
+Mentioned), the e2e case "opens a pull request and a Jira issue from a chat link" in
+`hosts.spec.ts` (the mock answers "link the work" with those links) and its sketch
+`host-chip.png`.
 
 ## Backlog and trackers
 

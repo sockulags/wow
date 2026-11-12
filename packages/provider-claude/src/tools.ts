@@ -1,4 +1,5 @@
 import type { ToolFacts } from '@wow/contracts';
+import { inputDiff } from './diff.js';
 
 // What wow draws for a Claude Code tool call (agent workbench spec 27 to 29): the kind and the
 // facts read from the tool's input. Claude Code's Bash result has no exit code and no duration,
@@ -51,8 +52,21 @@ export function claudeToolFacts(name: string, input: unknown): ToolFacts {
       return defined({ kind: 'web', query: text(fields, 'query') });
     case 'Edit':
     case 'MultiEdit':
-    case 'Write':
-      return defined({ kind: 'edit', path: text(fields, 'file_path') });
+      return defined({
+        kind: 'edit',
+        path: text(fields, 'file_path'),
+        diff: inputDiff(name, input) || undefined,
+      });
+    case 'Write': {
+      // Before it runs only the new content is known, whether or not the file exists.
+      const diff = inputDiff(name, input) || undefined;
+      return defined({
+        kind: 'edit',
+        path: text(fields, 'file_path'),
+        diff,
+        diffWithoutFile: diff === undefined ? undefined : true,
+      });
+    }
     case 'NotebookEdit':
       return defined({ kind: 'edit', path: text(fields, 'notebook_path') });
     default:

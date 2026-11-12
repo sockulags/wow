@@ -82,6 +82,8 @@ const rpcDispatch = (command: ServerCommand) => {
     db: undefined as never,
     skills: server.skills,
     hosts: undefined as never,
+    hostLookup: undefined as never,
+    images: undefined as never,
     plans: undefined as never,
     workflows: undefined as never,
     providers: undefined as never,
@@ -333,7 +335,7 @@ describe('built-in texts filled from settings and the run (spec 2)', () => {
     expect(prompt).not.toContain('Intent-Unit');
   });
 
-  it('leaves the unit sentence out of a wow-pull-request picked in chat without a unit', () => {
+  it('leaves the unit sentence out of a wow-pull-request picked in chat without a unit', async () => {
     createThread('t1', 'claude-work');
     dispatch({
       type: 'thread.sendMessage',
@@ -341,6 +343,7 @@ describe('built-in texts filled from settings and the run (spec 2)', () => {
       text: 'Open it.',
       skills: [{ name: 'wow-pull-request', source: 'wow' }],
     });
+    await server.providerService.idle();
     const prompt = promptOf('t1') ?? '';
     expect(prompt).toBe(
       [
@@ -851,7 +854,7 @@ describe('runs and workflows stored before (spec 13)', () => {
 });
 
 describe('what a message or a step was sent with (spec 14, 15)', () => {
-  it('stores the skills a chat message was sent with by name, with the text reachable, and the message as typed', () => {
+  it('stores the skills a chat message was sent with by name, with the text reachable, and the message as typed', async () => {
     dispatch({
       type: 'skill.create',
       skill: { name: 'tidy', description: 'Mine', text: 'Tidy the imports.' },
@@ -863,6 +866,7 @@ describe('what a message or a step was sent with (spec 14, 15)', () => {
       text: 'Please.',
       skills: [{ name: 'tidy', source: 'yours' }, { name: 'review' }],
     });
+    await server.providerService.idle();
     expect(promptOf('t1')).toBe([tidyBlock, '', '$review Please.'].join('\n'));
     expect(firstItem('t1')?.payload).toEqual({
       text: 'Please.',
@@ -890,7 +894,7 @@ describe('what a message or a step was sent with (spec 14, 15)', () => {
     expect(startTurns()).toEqual([]);
   });
 
-  it('sends a message that is only a picked skill, and refuses one with neither text nor skill', () => {
+  it('sends a message that is only a picked skill, and refuses one with neither text nor skill', async () => {
     dispatch({
       type: 'skill.create',
       skill: { name: 'tidy', description: 'Mine', text: 'Tidy the imports.' },
@@ -902,6 +906,7 @@ describe('what a message or a step was sent with (spec 14, 15)', () => {
       text: '',
       skills: [{ name: 'tidy', source: 'yours' }],
     });
+    await server.providerService.idle();
     expect(promptOf('t1')).toBe(tidyBlock);
     expect(firstItem('t1')?.payload).toEqual({
       text: '',
@@ -909,7 +914,7 @@ describe('what a message or a step was sent with (spec 14, 15)', () => {
     });
     createThread('t2', 'claude-work');
     expect(() => dispatch({ type: 'thread.sendMessage', threadId: 't2', text: '  ' })).toThrow(
-      'A message needs text or a skill',
+      'A message needs text, a skill or an image',
     );
   });
 

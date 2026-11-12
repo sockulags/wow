@@ -1,5 +1,5 @@
 import { intentUnitLines } from '@wow/agent-os';
-import type { HostCheck, ReviewComment } from '@wow/contracts';
+import type { HostCheck, Issue, ReviewComment } from '@wow/contracts';
 import type { GitHubConfig } from '../trackers/github.js';
 import {
   TrackerError,
@@ -131,6 +131,25 @@ function reviewComment(comment: unknown): ReviewComment | undefined {
     path: textOrNull(field(comment, 'path')),
     url,
     createdAt: time(field(comment, 'created_at')),
+  };
+}
+
+function issueOf(body: unknown, number: number, comments: ReviewComment[]): Issue | undefined {
+  const url = link(field(body, 'html_url'));
+  if (url === null) return undefined;
+  return {
+    host: 'github',
+    number,
+    title: text(field(body, 'title')),
+    state: field(body, 'state') === 'closed' ? 'closed' : 'open',
+    author: text(field(field(body, 'user'), 'login')),
+    labels: list(field(body, 'labels')).flatMap((label) => {
+      const name = typeof label === 'string' ? label : field(label, 'name');
+      return typeof name === 'string' && name !== '' ? [name] : [];
+    }),
+    body: text(field(body, 'body')),
+    url,
+    comments,
   };
 }
 
@@ -300,6 +319,29 @@ export function createGitHubHost(
       const head = encodeURIComponent(`${config.owner}:${branch}`);
       const [newest] = await pulls(`head=${head}&state=all&sort=created&direction=desc&per_page=1`);
       return newest;
+    },
+    async readIssue(number) {
+      const body = await getOr(
+        `${repo}/issues/${number}`,
+        none,
+        () => undefined,
+        (answer) => answer,
+      );
+      if (field(body, 'pull_request') !== undefined) return 'changeRequest';
+      const comments = await getOr(
+        `${repo}/issues/${number}/comments?per_page=${pageSize}`,
+        none,
+        () => [],
+        (answer) => list(answer).flatMap((comment) => reviewComment(comment) ?? []),
+      );
+      const issue = issueOf(body, number, comments);
+      if (!issue) {
+        throw new HostFailure(
+          'failed',
+          `${name} answered issue #${number} in a form wow cannot read; check the GitHub API URL`,
+        );
+      }
+      return issue;
     },
     async read(request) {
       const current =

@@ -21,7 +21,11 @@ const stateVariants = {
   Closed: 'outline',
 } as const;
 
-export function ChangeRequestState({ request }: { readonly request: ChangeRequest }) {
+export function ChangeRequestState({
+  request,
+}: {
+  readonly request: Pick<ChangeRequest, 'state' | 'draft'>;
+}) {
   const label = changeRequestStateLabel(request);
   return (
     <Badge
@@ -40,7 +44,11 @@ const checkVariants = {
   failure: 'destructive',
 } as const;
 
-export function ChecksBadge({ request }: { readonly request: ChangeRequest }) {
+export function ChecksBadge({
+  request,
+}: {
+  readonly request: Pick<ChangeRequest, 'checkState' | 'checks'>;
+}) {
   return (
     <Badge data-testid="change-request-checks" variant={checkVariants[request.checkState]}>
       {checksLabel(request)}

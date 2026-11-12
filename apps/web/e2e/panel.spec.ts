@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { choose } from './controls';
 import { e2ePanelCardId, e2ePanelHome, e2ePanelTrackerPort, e2eViewerWorkflowId } from './env';
 import { sketchPath, sketching, sketchUse } from './sketch';
 
@@ -198,7 +199,7 @@ async function leaks(): Promise<string[]> {
 }
 
 test.describe('file viewer', () => {
-  test('an artifact opens in the side panel @review-loop-6 @review-loop-7', async ({
+  test('an artifact opens in the side panel @review-loop-6 @review-loop-7 @agent-workbench-14', async ({
     page,
     context,
   }) => {
@@ -225,6 +226,13 @@ test.describe('file viewer', () => {
     await expect(viewer.getByRole('table')).toContainText('Keeps the query after a reload');
     await expect(viewer).toContainText('Markdown');
     await expect(step).toBeVisible();
+    // The step's conversation is a tab of its own, and the file opened beside it
+    // (agent workbench spec 14).
+    await expect(tabNames(page)).toHaveText(['Conversation', 'notes.md']);
+    await tabNames(page).first().click();
+    await expect(panel(page).getByTestId('panel-step-thread')).toContainText('Step 1 of 1');
+    await tabNames(page).nth(1).click();
+    await expect(viewer.getByRole('heading', { name: 'Review notes' })).toBeVisible();
     await viewer.getByRole('button', { name: 'Copy path' }).click();
     // The server answers with the resolved path, which differs from the temp folder as written
     // where that is a link or, on Windows, a short name.
@@ -317,9 +325,157 @@ test.describe('file viewer', () => {
   });
 });
 
+// A chat thread in the panel copy's project whose answer names files (e2e/server.ts, "show the
+// file"): `src/timer.ts` and `docs/spec.md` are invented files of that project.
+async function startFileThread(page: Page) {
+  await page.goto('/chat/new');
+  await choose(page.getByLabel('Project'), 'Demo');
+  const composer = page.getByRole('combobox', { name: 'Message' });
+  await composer.fill('show the file');
+  await composer.press('Enter');
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+  const conversation = page.getByRole('list', { name: 'Conversation' });
+  await expect(conversation).toContainText('The timer is in');
+  return conversation;
+}
+
+const tabNames = (page: Page) =>
+  panel(page).getByRole('tablist', { name: 'Panel tabs' }).getByRole('tab');
+
+test.describe('files in chat', () => {
+  test('opens a file from a chat message in a panel tab @agent-workbench-11 @agent-workbench-12 @agent-workbench-15 @agent-workbench-16 @agent-workbench-18 @agent-workbench-87', async ({
+    page,
+  }) => {
+    const conversation = await startFileThread(page);
+    const links = conversation.getByTestId('file-link');
+    await expect(links).toHaveText(['src/timer.ts', 'spec', '../outside.txt']);
+
+    // Inline code opens the file in a tab next to the conversation, which stays where it was.
+    await links.filter({ hasText: 'src/timer.ts' }).click();
+    const viewer = panel(page).getByRole('region', { name: 'File viewer' });
+    await expect(viewer.getByTestId('viewer-text')).toContainText('export const ringTwice');
+    await expect(conversation).toBeVisible();
+    // A relative markdown link is kept and opens the file rendered.
+    await links.filter({ hasText: 'spec' }).click();
+    await expect(viewer.getByRole('heading', { name: 'Tea timer' })).toBeVisible();
+    await expect(tabNames(page)).toHaveText(['Details', 'timer.ts', 'spec.md']);
+    // Opening an open file selects its tab.
+    await links.filter({ hasText: 'src/timer.ts' }).click();
+    await expect(tabNames(page)).toHaveText(['Details', 'timer.ts', 'spec.md']);
+    await expect(tabNames(page).nth(1)).toHaveAttribute('aria-selected', 'true');
+
+    // The tab keys, with the focus in the panel.
+    await tabNames(page).nth(1).focus();
+    await page.keyboard.press('Control+Tab');
+    await expect(tabNames(page).nth(2)).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Control+Shift+Tab');
+    await expect(tabNames(page).nth(1)).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Alt+ArrowLeft');
+    await expect(tabNames(page).nth(2)).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Alt+w');
+    await expect(tabNames(page)).toHaveText(['Details', 'timer.ts']);
+
+    // A path that leads outside the thread's folders is refused in words.
+    await links.filter({ hasText: '../outside.txt' }).click();
+    await expect(viewer.getByTestId('viewer-refusal')).toHaveText(
+      "../outside.txt is outside the thread's folder and the project folder, so it was not read.",
+    );
+    // The focus stayed on the link in the main view: Escape closes the tab from there.
+    await expect(links.filter({ hasText: '../outside.txt' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(tabNames(page)).toHaveText(['Details', 'timer.ts']);
+
+    // Open file… from the palette's key lists the project's files, filtered as typed.
+    await page.getByRole('list', { name: 'Conversation' }).click();
+    await page.keyboard.press('Control+p');
+    const dialog = page.getByRole('dialog', { name: 'Open file' });
+    await expect(dialog.getByRole('option').first()).toBeVisible();
+    await page.keyboard.type('docspec');
+    await expect(dialog.getByRole('option').first()).toHaveText('spec.mddocs');
+    await page.keyboard.press('Enter');
+    await expect(dialog).toBeHidden();
+    await expect(tabNames(page)).toHaveText(['Details', 'timer.ts', 'spec.md']);
+    await expect(viewer.getByRole('heading', { name: 'Tea timer' })).toBeVisible();
+
+    // Another view of the chat and back, inside the app: the tabs are as they were.
+    await page.keyboard.press('Control+Alt+n');
+    await expect(page).toHaveURL(/\/chat\/new$/);
+    await expect(panel(page).getByRole('tablist', { name: 'Panel tabs' })).toBeHidden();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+    await expect(tabNames(page)).toHaveText(['Details', 'timer.ts', 'spec.md']);
+    await expect(viewer.getByRole('heading', { name: 'Tea timer' })).toBeVisible();
+
+    // Leave the panel closed for the tests after this one.
+    await page.keyboard.press('Control+j');
+    await expect(panel(page)).toBeHidden();
+  });
+
+  test('opens the file of a Read row with Open @agent-workbench-17', async ({ page }) => {
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Project'), 'Demo');
+    const composer = page.getByRole('combobox', { name: 'Message' });
+    await composer.fill('read the timer');
+    await composer.press('Enter');
+    const conversation = page.getByRole('list', { name: 'Conversation' });
+    await expect(conversation).toContainText('The timer rings twice.');
+    // The mock reports the Read as the Claude adapter does: its full path in the tool facts.
+    const row = conversation.getByTestId('item-tool_call');
+    // A tool row shows the path as the provider wrote it, so with backslashes on Windows.
+    await expect(row.getByTestId('tool-line')).toHaveText(/^Read src[\\/]timer\.ts$/);
+    await row.getByRole('button', { name: /^Open src[\\/]timer\.ts$/ }).click();
+    await expect(tabNames(page)).toHaveText(['Details', 'timer.ts']);
+    await expect(tabNames(page).nth(1)).toHaveAttribute('aria-selected', 'true');
+    const viewer = panel(page).getByRole('region', { name: 'File viewer' });
+    await expect(viewer.getByTestId('viewer-path')).toHaveText(/^src[\\/]timer\.ts$/);
+    await expect(viewer.getByTestId('viewer-text')).toContainText('export const ringTwice');
+
+    await page.keyboard.press('Control+j');
+    await expect(panel(page)).toBeHidden();
+  });
+
+  test('mentions a file with @ @agent-workbench-56', async ({ page }) => {
+    const conversation = await startFileThread(page);
+    const composer = page.getByRole('combobox', { name: 'Message' });
+    await composer.click();
+    await page.keyboard.type('@tim');
+    const files = page.getByRole('listbox', { name: 'Files' });
+    await expect(files.getByRole('option').first()).toHaveText('timer.tssrc');
+    await page.keyboard.press('Enter');
+    await expect(files).toBeHidden();
+    await expect(page.getByTestId('composer-file-chip')).toHaveText('@timer.ts');
+    await page.keyboard.type('what does it ring?');
+    await page.keyboard.press('Enter');
+    // The agent got the path in the message's text; the thread shows the chip.
+    await expect(conversation).toContainText(/You said: @src\/timer\.ts\s*what does it ring\?/);
+    const chip = conversation.getByTestId('sent-file-chip');
+    await expect(chip).toHaveText('@timer.ts');
+    await chip.click();
+    await expect(
+      panel(page).getByRole('region', { name: 'File viewer' }).getByTestId('viewer-text'),
+    ).toContainText('export const ringTwice');
+
+    await page.keyboard.press('Control+j');
+    await expect(panel(page)).toBeHidden();
+  });
+});
+
 test.describe('sketch', () => {
   test.skip(!sketching, 'Set WOW_E2E_SKETCHES to write the screenshots');
   test.use(sketchUse);
+
+  test('panel tabs beside a chat', async ({ page }) => {
+    const conversation = await startFileThread(page);
+    const links = conversation.getByTestId('file-link');
+    await links.filter({ hasText: 'spec' }).click();
+    await links.filter({ hasText: 'src/timer.ts' }).click();
+    const viewer = panel(page).getByRole('region', { name: 'File viewer' });
+    await expect(viewer.locator('.shiki')).toBeVisible();
+    await expect(tabNames(page)).toHaveText(['Details', 'spec.md', 'timer.ts']);
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'panel-tabs') });
+    await page.keyboard.press('Control+j');
+    await expect(panel(page)).toBeHidden();
+  });
 
   test('the file viewer in the side panel', async ({ page }) => {
     await startViewerRun('viewer-sketch-run');

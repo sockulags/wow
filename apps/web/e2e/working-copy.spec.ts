@@ -31,6 +31,9 @@ const projectStatus = () =>
 
 test.describe('working copies', () => {
   test('a run in its own working copy @review-loop-36', async ({ page }) => {
+    // A git worktree is made, used by two steps and removed: on Windows that alone used 25 of
+    // the default 30 seconds before the chat panel's tabs and links were added.
+    test.slow();
     // The switch is in the builder and is stored with Save.
     await page.goto(`/workflows/${e2eCopyWorkflowId}`);
     const own = page.getByRole('switch', { name: 'Own working copy' });

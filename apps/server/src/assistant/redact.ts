@@ -32,7 +32,17 @@ const textOf = (event: Streamed) => (event.type === 'toolCallOutput' ? event.out
 const withText = (event: Streamed, text: string): Streamed =>
   event.type === 'toolCallOutput' ? { ...event, output: text } : { ...event, delta: text };
 
-const toolTexts = ['command', 'cwd', 'path', 'pattern', 'url', 'query', 'server', 'tool'] as const;
+const toolTexts = [
+  'command',
+  'cwd',
+  'path',
+  'pattern',
+  'url',
+  'query',
+  'server',
+  'tool',
+  'diff',
+] as const;
 
 // The facts an adapter read from a tool's input repeat parts of it, so they get the same net.
 const hiddenFacts = (
@@ -75,7 +85,11 @@ export class AssistantRedactor {
           break;
         case 'toolCallCompleted':
           this.#end(out, compiled, (stream) => stream.event.itemId === event.itemId);
-          out.push(event);
+          out.push(
+            event.diff === undefined
+              ? event
+              : { ...event, diff: hideSecrets(event.diff, compiled) },
+          );
           break;
         case 'toolCallStarted':
           this.#end(out, compiled, (stream) => stream.event.type !== 'toolCallOutput');
@@ -92,6 +106,9 @@ export class AssistantRedactor {
             ...event,
             summary: hideSecrets(event.summary, compiled),
             request: hideSecretsDeep(event.request, compiled),
+            ...(event.facts === undefined
+              ? {}
+              : { facts: hideSecretsDeep(event.facts, compiled) as typeof event.facts }),
           });
           break;
         case 'questionAsked':

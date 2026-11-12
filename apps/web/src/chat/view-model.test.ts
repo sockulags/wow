@@ -264,23 +264,37 @@ describe('Retry resends the last message as it was sent (wow skills spec 18)', (
         { name: 'deliver-work' },
         { name: 'kit:review' },
       ],
+      images: [],
     });
   });
 
   it('gives a message that is only chips, and an old message with $name as plain text', () => {
     expect(
       lastUserSent([user('only', { text: '', skills: [{ name: 'tidy-notes', source: 'yours' }] })]),
-    ).toEqual({ text: '', skills: [{ name: 'tidy-notes', source: 'yours' }] });
+    ).toEqual({ text: '', skills: [{ name: 'tidy-notes', source: 'yours' }], images: [] });
     expect(lastUserSent([user('old', { text: '$deliver-work now' })])).toEqual({
       text: '$deliver-work now',
       skills: [],
+      images: [],
     });
   });
 
   it('skips empty and unreadable user items and gives nothing without a user message', () => {
     expect(
       lastUserSent([user('a', { text: 'first' }), user('b', { text: '  ' }), user('c', 42)]),
-    ).toEqual({ text: 'first', skills: [] });
+    ).toEqual({ text: 'first', skills: [], images: [] });
     expect(lastUserSent([item('answer', 'assistant_text')])).toBeUndefined();
+  });
+
+  it('gives a message that is only images, with them, so Retry sends them again @agent-workbench-53', () => {
+    const image = {
+      id: '0f8fad5b-d9cb-469f-a165-70867728950e.png',
+      mediaType: 'image/png' as const,
+    };
+    expect(lastUserSent([user('shot', { text: '', images: [image] })])).toEqual({
+      text: '',
+      skills: [],
+      images: [image],
+    });
   });
 });

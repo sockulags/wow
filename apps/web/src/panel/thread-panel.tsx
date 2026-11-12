@@ -1,5 +1,12 @@
+import {
+  TextItemPayload,
+  type HostItemRef,
+  type HostLinkRules,
+  type ThreadItem,
+} from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
-import { SearchXIcon } from 'lucide-react';
+import { FileIcon, SearchXIcon } from 'lucide-react';
+import { useRuntime } from '@/app/runtime';
 import { useCalendarPrefs } from '@/calendar/prefs';
 import { isoDate, localDate } from '@/calendar/time';
 import { cardTitle } from '@/calendar/commands';
@@ -16,12 +23,124 @@ import {
 import { TaskDetails } from '@/chat/task-pin';
 import { stateDotClass, threadStateLabels } from '@/chat/thread-view';
 import { effortLabel, providerLabel } from '@/chat/view-model';
+import {
+  hostChipText,
+  hostItemIcon,
+  hostItemKeyOf,
+  hostItemsIn,
+  readOf,
+  useHostLinkRules,
+} from '@/chat/host-links';
+import { filePathOf } from '@/components/file-links';
 import { PathText } from '@/components/path-text';
 import { EmptyState } from '@/components/states';
 import { formatWhen } from '@/lib/format';
 import { runStateLabels } from '@/workflows/model';
 import { FactList, PanelSection, PanelTitle, panelLinkClass } from './details';
-import { threadUsage } from './model';
+import { threadUsage, usePanelRoute } from './model';
+import { fullPathOf, openFile, openHostItem } from './viewer';
+
+// What a thread's messages mention (agent workbench spec 19): the file paths (inline code, a
+// relative link target, an `@` mention) and the host items (links on the thread's sites, bare
+// references of its project), each once, in the order first written.
+export function threadMentions(
+  items: readonly ThreadItem[],
+  rules: HostLinkRules,
+): { readonly files: string[]; readonly links: HostItemRef[] } {
+  const files = new Set<string>();
+  const links = new Map<string, HostItemRef>();
+  for (const item of items) {
+    if (item.kind !== 'user' && item.kind !== 'assistant_text') continue;
+    const payload = TextItemPayload.safeParse(item.payload);
+    if (!payload.success) continue;
+    const { text } = payload.data;
+    for (const file of payload.data.files ?? []) files.add(file);
+    for (const match of text.matchAll(/`([^`\n]+)`/g)) {
+      const code = filePathOf(match[1] ?? '');
+      if (code !== undefined) files.add(code);
+    }
+    for (const match of text.matchAll(/\]\(([^)\s]+)\)/g)) {
+      const target = match[1] ?? '';
+      const path = /^[a-z][a-z0-9+.-]*:/i.test(target) ? undefined : filePathOf(target);
+      if (path !== undefined) files.add(path);
+    }
+    for (const link of hostItemsIn(text, rules)) {
+      const key = hostItemKeyOf(link);
+      if (!links.has(key)) links.set(key, link);
+    }
+  }
+  return { files: [...files], links: [...links.values()] };
+}
+
+const mentionClass =
+  'flex w-full min-w-0 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring';
+
+function Mentioned({
+  threadId,
+  cwd,
+  items,
+}: {
+  readonly threadId: string;
+  readonly cwd: string;
+  readonly items: readonly ThreadItem[];
+}) {
+  const { settings, layout } = useRuntime();
+  const pathname = usePanelRoute();
+  const rules = useHostLinkRules(threadId);
+  const reads = useTopic('hostItemReads', threadId) ?? [];
+  const { files, links } = threadMentions(items, rules);
+  if (files.length === 0 && links.length === 0) return null;
+  return (
+    <PanelSection label="Mentioned">
+      <ul aria-label="Mentioned" className="flex flex-col gap-0.5">
+        {files.map((file) => (
+          <li key={`file:${file}`}>
+            <button
+              type="button"
+              data-testid="mentioned-file"
+              className={mentionClass}
+              onClick={() =>
+                openFile(
+                  { settings, layout },
+                  {
+                    scope: { threadId },
+                    path: file,
+                    fullPath: fullPathOf(cwd, file),
+                    from: pathname,
+                  },
+                )
+              }
+            >
+              <FileIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate font-mono">{file}</span>
+            </button>
+          </li>
+        ))}
+        {links.map((link) => {
+          const Icon = hostItemIcon(link, readOf(reads, threadId, link)?.data);
+          return (
+            <li key={`host:${hostItemKeyOf(link)}`}>
+              <button
+                type="button"
+                data-testid="mentioned-link"
+                title={link.url}
+                className={mentionClass}
+                onClick={() =>
+                  openHostItem({ settings, layout }, { threadId, item: link, from: pathname })
+                }
+              >
+                <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate">
+                  {hostChipText(link, readOf(reads, threadId, link))}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </PanelSection>
+  );
+}
 
 // The chat view's panel: the thread's setup, usage and what it belongs to. The conversation
 // itself is already the main view, so it is not repeated here.
@@ -113,6 +232,9 @@ export function ThreadPanel({ threadId }: { readonly threadId: string }) {
       <PanelSection label="Tasks">
         <TaskDetails items={items} turns={turns} />
       </PanelSection>
+      {thread.kind !== 'assistant' && (
+        <Mentioned threadId={thread.id} cwd={thread.cwd} items={items} />
+      )}
       {(run || card || item) && (
         <PanelSection label="Belongs to">
           <FactList

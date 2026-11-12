@@ -18,8 +18,10 @@ import type {
   FileHash,
   HostCheck,
   HostError,
+  HostItemData,
+  HostItemRef,
   HostKind,
-  HostReadScope,
+  PolledHostScope,
   NotificationKind,
   OccurrenceOutcome,
   OutlookProfile,
@@ -120,6 +122,11 @@ export const threads = sqliteTable(
     archived: bool().notNull().default(false),
     seen: bool().notNull().default(true),
     queued: json<QueuedMessage>(),
+    // Where a chat thread's Changes are measured from (agent workbench spec 34): the commit its
+    // folder was on at the first turn, and what already differed then. Null for a thread stored
+    // before, or outside git.
+    baseSha: text(),
+    baseFiles: json<FileHash[]>(),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },
@@ -136,6 +143,8 @@ export const turns = sqliteTable(
     startedAt: text().notNull(),
     endedAt: text(),
     usage: json<Usage>(),
+    // The changed files' hashes as the turn began, for "This turn only".
+    fileMark: json<FileHash[]>(),
   },
   (table) => [index('turns_thread_idx').on(table.threadId, table.index)],
 );
@@ -440,7 +449,7 @@ export const planIntents = sqliteTable('plan_intents', {
 export const hostReads = sqliteTable('host_reads', {
   id: text().primaryKey(),
   projectId: text().notNull(),
-  scope: text().$type<HostReadScope>().notNull(),
+  scope: text().$type<PolledHostScope>().notNull(),
   host: text().$type<HostKind>().notNull(),
   hostName: text().notNull(),
   branch: text(),
@@ -448,6 +457,23 @@ export const hostReads = sqliteTable('host_reads', {
   fetchedAt: text(),
   error: json<HostError>(),
 });
+
+// What was last read about one item a chat thread links to (agent workbench spec 22), read only
+// when its tab opens and on Refresh now.
+export const hostItemReads = sqliteTable(
+  'host_item_reads',
+  {
+    id: text().primaryKey(),
+    scope: text().$type<'thread'>().notNull(),
+    threadId: text().notNull(),
+    item: json<HostItemRef>().notNull(),
+    hostName: text().notNull(),
+    data: json<HostItemData>(),
+    fetchedAt: text(),
+    error: json<HostError>(),
+  },
+  (table) => [index('host_item_reads_thread_idx').on(table.threadId)],
+);
 
 // What was last read about one run's ticket (`run:<id>`), with the ticket itself.
 export const ticketReads = sqliteTable('ticket_reads', {

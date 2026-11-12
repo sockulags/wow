@@ -11,6 +11,7 @@ import {
   type HostKind,
   type HostRead,
   type TicketRead,
+  type HostItemRead,
   type PageRead,
   type OutlookStatus,
   type BacklogItem,
@@ -40,7 +41,7 @@ import { decideBacklog, isBacklogCommand } from './backlog.js';
 import { decideCalendar, isCalendarCommand } from './calendar.js';
 import { decideTickets } from './tickets.js';
 import { decidePages } from './pages.js';
-import { decideHosts, decidePlansSync, isHostCommand } from './hosts.js';
+import { decideHostItemRead, decideHosts, decidePlansSync, isHostCommand } from './hosts.js';
 import { decidePlanRun, isPlanRunCommand } from './plan-runs.js';
 import { decideProject, isProjectCommand } from './projects.js';
 import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
@@ -84,6 +85,8 @@ export interface ReadModel {
   // How many task lists the turn has and the payload of its newest one.
   turnTaskLists(turnId: string): { readonly count: number; readonly last: unknown };
   threadItem(id: string): ThreadItem | undefined;
+  // The turn's newest assistant text item, if it has one.
+  lastAssistantText(turnId: string): ThreadItem | undefined;
   approval(id: string): Approval | undefined;
   question(id: string): Question | undefined;
   // Approvals and questions of the thread that are still waiting for an answer.
@@ -104,6 +107,8 @@ export interface ReadModel {
   changeRequests(projectId: string): ChangeRequest[];
   // What was last read about the tickets of the project's runs.
   ticketReads(projectId: string): TicketRead[];
+  // What was last read about one item a chat thread links to.
+  hostItemRead(id: string): HostItemRead | undefined;
   // What was last read about the pages the texts of the project's runs link to.
   pageReads(projectId: string): PageRead[];
   workflow(id: string): Workflow | undefined;
@@ -196,6 +201,7 @@ export function decide(
   if (isHostCommand(command)) return decideHosts(command, read, context);
   if (isSkillCommand(command)) return decideSkill(command, read, context);
   if (command.type === 'tickets.sync') return decideTickets(command, read);
+  if (command.type === 'hosts.itemRead') return decideHostItemRead(command, read);
   if (command.type === 'pages.sync') return decidePages(command, read);
   if (isPlanRunCommand(command)) return decidePlanRun(command, read, context);
   if (isAssistantCommand(command) || isSetupCommand(command)) {
@@ -259,7 +265,7 @@ export function decide(
   }
 }
 
-const settingAggregate = (key: string, scope: SettingScopeRef) => `setting:${scope}:${key}`;
+export const settingAggregate = (key: string, scope: SettingScopeRef) => `setting:${scope}:${key}`;
 
 function settingDefinition(key: string, context: DecideContext): SettingDefinition {
   const definition = Object.hasOwn(context.registry, key) ? context.registry[key] : undefined;

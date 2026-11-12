@@ -1,4 +1,11 @@
-import type { FileHash, RunDiff, RunDiffFile, RunDiffStatus, WorkflowRun } from '@wow/contracts';
+import type {
+  FileHash,
+  RunDiff,
+  RunDiffFile,
+  RunDiffStatus,
+  ThreadDiff,
+  WorkflowRun,
+} from '@wow/contracts';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, readFile, readlink } from 'node:fs/promises';
@@ -273,4 +280,57 @@ export async function readRunDiff({
     return { ...answer, files: [{ ...only.file, content: 'tooLarge' }], patch: null };
   }
   return { ...answer, patch };
+}
+
+export interface ThreadDiffRequest {
+  readonly folder: string;
+  // Set at the thread's first turn; null for a thread stored before, or begun outside git.
+  readonly baseSha: string | null;
+  readonly baseFiles: readonly FileHash[] | null;
+  // The changed files' hashes as the last turn began, or null when it has none.
+  readonly mark: readonly FileHash[] | null;
+  readonly path?: string | undefined;
+  readonly options: ChangesOptions;
+}
+
+// A chat thread's changes (agent workbench spec 34, 35) with the run's diff code: the folder
+// against the commit of its first turn, without what already differed then and is unchanged
+// since. "This turn only" compares each listed file's content now with its hash when the last
+// turn began; a file the mark does not list was as in the base then. A file that differed before
+// the thread and changed again shows its whole diff against the commit.
+export async function readThreadDiff({
+  folder,
+  baseSha,
+  baseFiles,
+  mark,
+  path: asked,
+  options,
+}: ThreadDiffRequest): Promise<ThreadDiff> {
+  const diff = await readRunDiff({
+    folder,
+    run: { baseSha, baseFiles: baseFiles ? [...baseFiles] : null, steps: [] },
+    path: asked,
+    options,
+  });
+  if (diff.status !== 'ok' || baseSha === null) return { ...diff, turnPaths: null };
+  // A file that already differed from the commit when the thread began, and is as it was then,
+  // is not the thread's change.
+  const began = new Map((baseFiles ?? []).map((entry) => [entry.path, entry.hash]));
+  const before = mark && new Map(mark.map((entry) => [entry.path, entry.hash]));
+  const files: RunDiffFile[] = [];
+  const turnPaths: string[] = [];
+  for (const file of diff.files) {
+    const now = await hashOf(folder, file.path, options.maxHashBytes);
+    if (began.has(file.path) && began.get(file.path) === now) continue;
+    files.push(file);
+    if (before && (!before.has(file.path) || before.get(file.path) !== now)) {
+      turnPaths.push(file.path);
+    }
+  }
+  return {
+    ...diff,
+    files,
+    patch: files.length === 0 ? null : diff.patch,
+    turnPaths: before ? turnPaths : null,
+  };
 }

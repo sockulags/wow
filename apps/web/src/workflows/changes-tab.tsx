@@ -68,7 +68,7 @@ function readAnswer(received: unknown): RunDiff | Error {
     : new Error('The server answered in a form this app does not read.');
 }
 
-function DiffLines({ path, patch }: { readonly path: string; readonly patch: string }) {
+export function DiffLines({ path, patch }: { readonly path: string; readonly patch: string }) {
   const rows = parsePatch(patch);
   return (
     <table

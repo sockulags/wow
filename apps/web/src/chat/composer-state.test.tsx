@@ -251,6 +251,23 @@ describe('the Commands group (agent workbench spec 58 to 61)', () => {
     expect(box().value).toBe('/review ');
   });
 
+  it('asks the provider again each time the list opens, so a command added meanwhile shows', async () => {
+    publishPaletteCommands([], {} as CommandContext);
+    const reported: ProviderSlashCommand[] = [{ name: 'review', description: 'Review' }];
+    const { user, request } = setup({ commandSource: source }, reported);
+    await user.type(box(), '/');
+    expect(await screen.findByText('/review')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await user.clear(box());
+    // A project command written in the folder while the app is open.
+    reported.push({ name: 'ship', description: 'Ship it' });
+    await user.type(box(), '/');
+    expect(await screen.findByText('/ship')).toBeTruthy();
+    expect(
+      request.mock.calls.filter(([method]) => method === 'provider.listCommands'),
+    ).toHaveLength(2);
+  });
+
   it('shows no provider commands where the provider reports none (Codex)', async () => {
     publishPaletteCommands([paletteCommand('chat.clear')], {} as CommandContext);
     const { user } = setup({ commandSource: source, providerKind: 'codex' }, []);

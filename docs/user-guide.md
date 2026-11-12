@@ -382,7 +382,8 @@ can type in to filter. While the composer has the cursor:
   Code Ask, Accept edits, Plan only and back to Ask; on Codex Read only, Auto, Ask untrusted and
   back. Bypass permissions and Full access are never in that cycle; pick them from the list.
 - **Escape** (`keybindings.composerLeave`) takes the cursor out of the composer to what comes
-  before it, which is what Shift+Tab does everywhere else.
+  before it, which is what Shift+Tab does everywhere else. In a context panel laid over the view
+  (a narrow window) Escape closes the panel instead.
 
 The mode is coloured by what it allows: Plan only blue, Accept edits (and Codex's Auto) green,
 Bypass permissions and Full access red with a warning sign. A pick applies to the next turn and
@@ -422,8 +423,17 @@ Every tool call is one line, drawn by what the call does:
   relative to it.
 - **An MCP call** reads `server › tool` with its arguments as `key: value`; opened, it lists them
   one per line, **Show JSON** shows the arguments as sent, and the output sits below.
-- **Any other tool**, a file edit, and every call stored before this version keep the row they
-  had: the tool's name and the first text of its input; opened, its input and output.
+- **An edit** (Claude Code's Edit, MultiEdit and Write, Codex's file changes) reads "Edit
+  src/timer.ts +4 −1"; opened, it shows the change in colour, removed lines red and added lines
+  green, with **Open file**, which opens the file in a tab of the side panel (not offered for a
+  file outside the thread's folder, and not while the edit is still running or its request waits
+  for your answer, since the file has not changed yet). A new file shows as
+  added lines. Before Claude Code writes a whole file (its Write), the request and the row show
+  only the new content, as added lines, with "The new content only; the file's current content
+  is not shown": it may replace a file that exists. Once written, the row shows the real change. A very long diff is cut at `chat.editDiffMaxLines` lines; the thread's Changes
+  have all of it.
+- **Any other tool**, and every call stored before this version, keep the row they had: the
+  tool's name and the first text of its input; opened, its input and output.
 
 While a call runs, its time counts up from when it started; reloading the page shows the same
 time, because the server stored the start. A call its turn left running reads "not finished".
@@ -449,6 +459,15 @@ keyboard was last on: "Copy message", "Copy message text", "Copy code", "Copy ou
 all N lines". When nothing could be copied (the browser has no clipboard or refused it), a notice
 "Nothing was copied" says so.
 
+**Changes**: a chat thread in a Git folder shows a chip in its header, such as "+42 −7 in 5
+files": what changed in its folder since its first message, committed or not. Click it, or press
+**Ctrl+Shift+D** (`keybindings.threadChanges`, "Show changes" in the palette), to list the files
+in a **Changes** tab of the side panel with their added and removed lines; pick one to see its
+diff, and **Back to details** (or Alt+W, or Ctrl+Shift+D again) to close the tab. **This turn only** (**O**) narrows the list to files that changed
+since the last turn began. Files that were already edited when the thread began and have not
+changed since are left out. A folder that is not in Git, and a thread that began before this
+version, say so instead of listing files.
+
 A turn ends with its usage: input, output and cached tokens, and the cost when the provider
 reports one. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.
@@ -456,10 +475,37 @@ how much of the context window the thread uses, with a Compact action for Claude
 ### When the agent needs you
 
 - **Approvals**: when the agent wants to run a command, change files or use a tool, the thread
-  shows the request with the folder it runs in, the permission mode, and **Allow once** (**A**),
-  **Allow for this session** (**S**) and **Deny** (**D**). The request takes the focus, so the keys
-  work at once; they are in Settings → Keybindings and in the palette. The tool row reads "waiting
-  for approval" meanwhile.
+  shows the request as what it is: a command line with the folder it runs in, an edit as its
+  diff, a web address, or a tool as `server › tool` with its arguments (the provider's own JSON is
+  behind **Details**), and the permission mode. Answer with **Allow once** (**A**), **Allow for
+  this session** (**S**), **Always allow in this project** (**Y**) or **Deny** (**D**). The request
+  takes the focus, so the keys work at once; they are in Settings → Keybindings and in the
+  palette. The tool row reads "waiting for approval" meanwhile.
+  - **Deny** opens a one-line note, "No, and tell it what to do instead". Enter denies with what
+    you wrote, or without a note when it is empty; Escape closes it. Claude Code gets the note as
+    the reason for the denial. Codex takes no reason with a denial, so wow stops its turn and sends
+    the note as your next message, as Codex itself does.
+  - **Always allow in this project** shows the rule it keeps, such as "Run commands starting with
+    `pnpm test`" (the command's first words) or "Use the tool `github › create_issue`", and allows
+    the request. From then on a request any thread of the project makes that the rule covers is
+    allowed without asking, on Claude Code and Codex alike, and its row reads "Allowed by rule:
+    …". A command that chains, pipes, redirects or quotes (`&&`, `;`, `|`, `>`, `"`) is never
+    covered, and neither is one that hands another command to a shell or a wrapper (`bash -c`,
+    `powershell -Command`, `sudo`, `env`, `FOO=1 …`, `npx`, `pnpm exec`, `node -e`,
+    `python -c`, `find … -exec`); when Codex runs a command through your shell, the
+    command inside it is what is shown and matched. A rule matches the case it was stored in:
+    `Pnpm test` asks again even where `pnpm test` is allowed. Edits get no rule (use the Accept edits mode
+    for that), and a thread without a project does not offer it. Settings → Approvals lists each
+    project's rules (the project setting `approvals.alwaysAllow`) with when they were added;
+    **Remove** makes the next such request ask again. The app assistant cannot add a rule without
+    your yes. wow keeps the rules itself and writes nothing to Claude
+    Code's or Codex's settings.
+- **Plans**: in Plan only, when Claude Code is ready to leave plan mode, the thread shows a plan
+  card: the plan as formatted text, **Start, accept edits** (Enter, or **1**), **Start, ask each
+  time** (**2**) and **Keep planning** (**3**), which opens a note for what to change. A start
+  allows the request and sets the thread's mode, which the composer bar then shows. When Claude
+  Code did not send the plan with its request, the card shows its last message and says it is the
+  plan as written in the conversation. The choices are in the palette as "Plan: …".
 - **Questions**: when the agent asks (Claude's `AskUserQuestion`, Codex's user input request), the
   thread shows a question card: each question with its header as a small chip, its choices (the
   one the agent recommends first, marked **Recommended**) and a last choice **Other** with a text
@@ -480,7 +526,8 @@ While a turn runs, the thread shows how long it has been working. You can write 
 meanwhile: Enter queues it with the server, and the conversation shows it as "Queued · sent when
 the turn ends". A second message joins it. It stays queued when you switch threads or restart
 wow, and the server sends it when the turn ends. **Edit** puts it back in the composer and
-**Cancel** takes it off; both are in the palette too. On Claude Code the message goes into the
+**Cancel** takes it off; both are in the palette too ("Edit queued message" only while the
+thread's composer can take text). On Claude Code the message goes into the
 running turn at once, as in Claude Code itself, and shows as "Sent during the turn". What you type
 and have not sent stays with its thread: switch threads or restart wow and it is still there. A
 failed turn shows **Retry** (sends your last
@@ -493,6 +540,24 @@ Claude goes on by itself: the new turn appears in the thread as it runs, without
 you, its usage is counted, **Stop** stops it, and the thread is marked as after any turn. Should
 the server stop while Claude waits, the waiting line goes away; only a workflow step that waited
 for a background agent shows a failed turn (send a message to go on).
+
+### Images in a message
+
+Paste an image into the composer (**Ctrl+V**, a screenshot for example) or drop an image file on
+it, and it shows as a small picture above the text; "Add an image to the message…" in the palette
+picks a file instead. Click a picture, or press Enter on it, to see it full size. **Backspace** at
+the start of the text takes the last picture off, the left arrow steps onto the pictures, and
+Delete takes the one you are on off; the palette has "Remove <image> from the message" too. The
+message goes with its pictures, and your message in the thread shows them; Retry sends them
+again.
+
+Only PNG, JPEG, GIF and WebP images up to `chat.imageMaxBytes` (5 MB to start with) are taken.
+Anything else, and an image for a Codex model that says it takes no images, is refused with the
+reason and not added. Claude Code does not say which of its models take images, so wow sends them
+and shows Claude's own refusal, if any, as the turn's error. wow keeps the pictures in its own
+folder (`~/.wow/images`, one folder per thread) and sends them only to the thread's provider. The
+Assistant and a workflow step's thread take no images. A message with pictures written while a turn runs waits for the turn's
+end, also on Claude Code.
 
 ### Skills
 
@@ -759,6 +824,45 @@ too.
 wow reads only files inside the run's folder and the project folder. A path outside them, a missing
 file, a binary file that is not a picture, or a file larger than `viewer.maxFileBytes` is not read,
 and the panel says why.
+
+Each file or page opens in a **tab** of the panel. The first tab is the panel's own: in a run
+view the step's **Conversation**, in a chat **Details**. Opening a file that is already open selects
+its tab. With the focus in the panel, Alt+W closes the tab, Ctrl+Tab and Ctrl+Shift+Tab move
+between tabs and Alt+Left goes back to the tab shown before (the "Panel" keys in Settings →
+Keybindings, and "Close panel tab", "Next panel tab", "Previous panel tab" and "Back to the panel
+tab shown before" in the palette). A thread or run keeps its tabs while you look at another one.
+Escape closes the file you opened from the main view, also while the focus is still on its link.
+
+In a chat, a path in an answer (`src/timer.ts` as code, or a link such as `[spec](docs/spec.md)`)
+opens the file in a tab, and so does **Open** on a tool row that read or changed a file. A line
+number or a heading after the path (`src/timer.ts:42`, `docs/spec.md#rules`) opens the file
+itself. Paths are read from the thread's folder and its project's folder; anything outside is refused with the
+reason. **Open file…** (Ctrl+P) lists the folder's files (what Git tracks plus untracked files it
+does not ignore, or the folder's files outside Git, at most `viewer.fileListLimit`), shows the
+best `viewer.fileMatchesShown` matches as you type, and opens the pick. Typing `@` at the start of
+a word in the composer (`chat.fileTrigger`) opens the same list; a pick becomes a chip, and the
+message names the file as `@path` for the agent. A pasted `@` opens nothing.
+
+### Pull requests, issues and tickets in chat
+
+A link in a chat to a pull or merge request, an issue, a Jira issue or a Confluence page on a host
+you stored a token for in Settings → Trackers shows as a chip with the host's icon and the item's
+key. In a project's thread, `DEMO-42` (the project's Jira key), `#14` and, on GitLab, `!7` are
+chips too, except inside inline code (where only a Jira key or an address is a chip) and a `#`
+number that reads as a colour, such as `#333` or `#102030`. Press Enter on a chip, or click it, to open the item in a side panel tab: the pull
+request with its checks and review comments, the issue or ticket with its description, or the
+page. Shift+Enter or Shift+click opens it in your browser instead.
+
+wow reads the item once when its tab first opens and again only when you press Refresh now; it
+never checks it on a timer. What it read is kept, so the chip shows its state ("PR #14 · Draft ·
+2 checks failed") after a restart, and the tab says when it was fetched. If the host refuses or
+fails, the tab shows its reason and keeps what it read before; when even the first read failed,
+opening the tab again asks the host again. Links to hosts without a token
+stay plain links. Nothing read from a host is sent to the agent.
+
+"Open issue, PR or ticket…" in the palette takes a web address or a key. A link you paste into
+the composer shows its chip above the text with "Open in panel". The thread's Details tab lists
+under "Mentioned" every file and host item its messages name.
 
 ### Working copies
 

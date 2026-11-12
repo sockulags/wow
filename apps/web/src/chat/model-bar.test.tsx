@@ -107,12 +107,13 @@ const codex: ProviderInstance = {
   defaultEffort: null,
 };
 
-function connectionWith(topics: Record<string, unknown>) {
+function connectionWith(topics: Record<string, unknown>, refused = false) {
   const request = vi.fn<(method: string, params: unknown) => Promise<unknown>>((method, params) => {
     if (method === 'provider.listModels') {
       const { providerInstanceId } = params as { providerInstanceId: string };
       return Promise.resolve(providerInstanceId === 'codex' ? codexModels : claudeModels);
     }
+    if (refused && method === 'dispatch') return Promise.reject(new Error('Refused'));
     return Promise.resolve({
       commandId: '00000000-0000-4000-8000-000000000000',
       seqs: [],
@@ -266,6 +267,30 @@ describe('Shift+Tab and the colours (agent workbench spec 3, 4)', () => {
     expect(configured(sent)).toEqual([]);
   });
 
+  it('lets Escape reach a context panel laid over the view, so one press closes it', async () => {
+    const { connection } = connectionWith({ turns: [], threadItems: [] });
+    const seen: boolean[] = [];
+    render(
+      <RuntimeProvider runtime={runtimeOf(connection)}>
+        <button type="button">Before the panel</button>
+        <aside
+          id="context-panel"
+          data-overlay=""
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') seen.push(event.defaultPrevented);
+          }}
+        >
+          <ThreadConversation thread={thread} instance={claude} compact />
+        </aside>
+      </RuntimeProvider>,
+    );
+    const box = screen.getByRole('combobox', { name: 'Message' });
+    box.focus();
+    await userEvent.setup().keyboard('{Escape}');
+    expect(seen).toEqual([false]);
+    expect(document.activeElement).toBe(box);
+  });
+
   it('reads the keys from the keybinding settings', () => {
     const bindings = {
       model: 'Mod+Shift+M',
@@ -360,6 +385,26 @@ describe('keys pressed faster than the thread echoes them', () => {
     expect(configured(sent).map((command) => command.permissionMode)).toEqual([
       'acceptEdits',
       'plan',
+    ]);
+  });
+
+  it('cycles from the mode on screen again after the server refused the last one', async () => {
+    const { connection, sent } = connectionWith({ turns: [], threadItems: [] }, true);
+    render(
+      <RuntimeProvider runtime={runtimeOf(connection)}>
+        <ThreadConversation thread={thread} instance={claude} />
+      </RuntimeProvider>,
+    );
+    const box = screen.getByRole('combobox', { name: 'Message' });
+    const user = userEvent.setup();
+    box.focus();
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    // The refusal settles before the next key, as it would on a real connection.
+    await act(() => Promise.resolve());
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(configured(sent).map((command) => command.permissionMode)).toEqual([
+      'acceptEdits',
+      'acceptEdits',
     ]);
   });
 

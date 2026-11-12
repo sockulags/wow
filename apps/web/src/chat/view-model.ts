@@ -9,6 +9,7 @@ import {
   type ProviderInstance,
   type ProviderKind,
   type Question,
+  type SentImage,
   type SentSkill,
   type Skill,
   type SkillRef,
@@ -168,7 +169,8 @@ function lastText(items: readonly ThreadItem[], kind: ThreadItem['kind']): strin
 // (a message may be only a chip).
 export function lastUserSent(
   items: readonly ThreadItem[],
-): { readonly text: string; readonly skills: SkillRef[] } | undefined {
+):
+  { readonly text: string; readonly skills: SkillRef[]; readonly images: SentImage[] } | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
     if (item?.kind !== 'user') continue;
@@ -179,8 +181,9 @@ export function lastUserSent(
         ? { name: skill.name, source: skill.source }
         : { name: skill.name },
     );
-    if (parsed.data.text.trim() !== '' || skills.length > 0) {
-      return { text: parsed.data.text, skills };
+    const images = parsed.data.images ?? [];
+    if (parsed.data.text.trim() !== '' || skills.length > 0 || images.length > 0) {
+      return { text: parsed.data.text, skills, images };
     }
   }
   return undefined;

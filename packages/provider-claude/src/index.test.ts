@@ -9,6 +9,9 @@ import {
   ProviderModel,
   providerChatOptions,
 } from '@wow/contracts';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ClaudeAdapter, extraArgs, providerKind } from './index.js';
 import type { SDKMessage } from './sdk.js';
@@ -261,6 +264,7 @@ describe('@wow/provider-claude', () => {
         kind: 'command',
         summary: 'Claude wants to run ls',
         request: { toolName: 'Bash', input: { command: 'ls' } },
+        facts: { kind: 'command', command: 'ls', ruleHint: 'ls' },
       },
       { type: 'toolCallOutput', threadId: 't1', itemId: 'toolu_bash', output: 'README.md\nsrc' },
       { type: 'toolCallCompleted', threadId: 't1', itemId: 'toolu_bash', status: 'ok' },
@@ -725,6 +729,175 @@ describe('@wow/provider-claude', () => {
     ]);
   });
 
+  it('sends the note of a denial as its message (agent workbench spec 37)', async () => {
+    const steps = [...loadFixture('turn.json').slice(0, 8), result(0)];
+    const h = harness([steps], (event) => {
+      if (event.type === 'approvalRequested') {
+        void h.adapter.send({
+          type: 'answerApproval',
+          approvalId: event.approvalId,
+          decision: 'deny',
+          note: 'Use pnpm, not npm.',
+        });
+      }
+    });
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(h.queries[0]?.permissionResults).toEqual([
+      { behavior: 'deny', message: 'Use pnpm, not npm.' },
+    ]);
+  });
+
+  it('draws an Edit as a diff from its input, then from its result patch (spec 33)', async () => {
+    const input = { file_path: '/work/demo/src/timer.ts', old_string: 'a\nb', new_string: 'a\nc' };
+    const written: FakeStep = {
+      message: {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'toolu_e', content: 'ok' }],
+        },
+        parent_tool_use_id: null,
+        tool_use_result: {
+          filePath: '/work/demo/src/timer.ts',
+          structuredPatch: [
+            { oldStart: 3, oldLines: 2, newStart: 3, newLines: 2, lines: [' a', '-b', '+c'] },
+          ],
+        },
+        session_id: 'sess-1',
+      } as unknown as SDKMessage,
+    };
+    const created = { file_path: '/work/demo/src/new.ts', content: 'one\ntwo\n' };
+    const h = harness([
+      [
+        assistantToolUse('toolu_e', 'Edit', input),
+        written,
+        assistantToolUse('toolu_w', 'Write', created),
+        result(0),
+      ],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    const started = h.events.filter((event) => event.type === 'toolCallStarted');
+    expect(started).toEqual([
+      expect.objectContaining({
+        kind: 'edit',
+        path: '/work/demo/src/timer.ts',
+        diff: '@@ -1,2 +1,2 @@\n-a\n-b\n+a\n+c',
+      }),
+      expect.objectContaining({
+        kind: 'edit',
+        path: '/work/demo/src/new.ts',
+        diff: '@@ -0,0 +1,2 @@\n+one\n+two',
+      }),
+    ]);
+    expect(h.events.find((event) => event.type === 'toolCallCompleted')).toEqual({
+      type: 'toolCallCompleted',
+      threadId: 't1',
+      itemId: 'toolu_e',
+      status: 'ok',
+      diff: '@@ -3,2 +3,2 @@\n a\n-b\n+c',
+    });
+  });
+
+  it('asks to leave plan mode as a plan approval and starts in the chosen mode (spec 42)', async () => {
+    const plan = '1. Read the timer\n2. Add a bell';
+    const h = harness(
+      [
+        [
+          {
+            permission: { toolName: 'ExitPlanMode', input: { plan }, toolUseID: 'toolu_plan' },
+          },
+          { permission: { toolName: 'ExitPlanMode', input: {}, toolUseID: 'toolu_plan2' } },
+          result(0),
+        ],
+      ],
+      (event) => {
+        if (event.type !== 'approvalRequested') return;
+        void h.adapter.send(
+          event.approvalId === 'toolu_plan'
+            ? {
+                type: 'answerApproval',
+                approvalId: event.approvalId,
+                decision: 'allowOnce',
+                permissionMode: 'acceptEdits',
+              }
+            : {
+                type: 'answerApproval',
+                approvalId: event.approvalId,
+                decision: 'deny',
+                note: 'Plan the tests too.',
+              },
+        );
+      },
+    );
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ permissionMode: 'plan' }));
+    await done;
+    const asked = h.events.filter((event) => event.type === 'approvalRequested');
+    expect(asked).toEqual([
+      expect.objectContaining({ kind: 'plan', facts: { kind: 'other', plan } }),
+      // The request did not carry the plan: wow falls back to the conversation's text.
+      expect.objectContaining({ kind: 'plan', facts: {} }),
+    ]);
+    expect(h.queries[0]?.permissionResults).toEqual([
+      {
+        behavior: 'allow',
+        updatedInput: { plan },
+        updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+      },
+      { behavior: 'deny', message: 'Plan the tests too.' },
+    ]);
+    // The session already is in the new mode, so the thread's own mode change sends nothing.
+    await h.adapter.send({
+      type: 'setPermissionMode',
+      threadId: 't1',
+      permissionMode: 'acceptEdits',
+    });
+    expect(h.queries[0]?.calls).not.toContain('setPermissionMode:acceptEdits');
+  });
+
+  it('shows an MCP request as its server, tool and arguments (spec 36)', async () => {
+    const h = harness(
+      [
+        [
+          {
+            permission: {
+              toolName: 'mcp__github__create_issue',
+              input: { title: 'Bell' },
+              toolUseID: 'toolu_m',
+            },
+          },
+          result(0),
+        ],
+      ],
+      (event) => {
+        if (event.type === 'approvalRequested')
+          void h.adapter.send({
+            type: 'answerApproval',
+            approvalId: event.approvalId,
+            decision: 'allowOnce',
+          });
+      },
+    );
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(h.events.find((event) => event.type === 'approvalRequested')).toEqual(
+      expect.objectContaining({
+        kind: 'tool',
+        facts: {
+          kind: 'mcp',
+          server: 'github',
+          tool: 'create_issue',
+          arguments: { title: 'Bell' },
+        },
+      }),
+    );
+  });
+
   it('follows TaskCreate and TaskUpdate as one task list', async () => {
     const h = harness([
       [
@@ -962,6 +1135,65 @@ describe('@wow/provider-claude', () => {
     expect(h.events).toContainEqual({ type: 'turnStartedByProvider', threadId: 't1' });
     expect(h.queries[0]?.prompts).toEqual(['What is in the readme?', 'Then sum it up']);
     expect(h.queries[0]?.priorities).toEqual([undefined, 'next']);
+  });
+
+  // Agent workbench spec 53: the images wow stored go to Claude Code as base64 image blocks in
+  // the user message, before its text.
+  it('sends the images of a message as image blocks before the text @agent-workbench-53', async () => {
+    const folder = await mkdtemp(path.join(tmpdir(), 'wow claude images '));
+    const screenshot = path.join(folder, 'a.png');
+    const photo = path.join(folder, 'b.jpg');
+    await writeFile(screenshot, Buffer.from('invented png bytes'));
+    await writeFile(photo, Buffer.from('invented jpeg bytes'));
+    try {
+      const h = harness([[result(0.01)]]);
+      const done = h.next('turnCompleted');
+      await h.adapter.send(
+        startTurn({
+          prompt: 'What is wrong here?',
+          images: [
+            { path: screenshot, mediaType: 'image/png' },
+            { path: photo, mediaType: 'image/jpeg' },
+          ],
+        }),
+      );
+      await done;
+      expect(h.queries[0]?.messages[0]?.message).toEqual({
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: 'image/png',
+              data: Buffer.from('invented png bytes').toString('base64'),
+            },
+          },
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: 'image/jpeg',
+              data: Buffer.from('invented jpeg bytes').toString('base64'),
+            },
+          },
+          { type: 'text', text: 'What is wrong here?' },
+        ],
+      });
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+
+  it('sends a message without images as plain text, as before', async () => {
+    const h = harness([[result(0.01)]]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(h.queries[0]?.messages[0]?.message).toEqual({
+      role: 'user',
+      content: 'What is in the readme?',
+    });
   });
 
   it('takes no message when no turn runs', async () => {

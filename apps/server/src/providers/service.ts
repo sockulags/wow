@@ -1,5 +1,6 @@
 import {
   assistantToolsetName,
+  attachmentMediaType,
   HandOverResult,
   ProviderEvent,
   ProviderModel,
@@ -10,6 +11,7 @@ import {
   type ProviderAdapter,
   type ProviderCommand,
   type ProviderInstance,
+  type QueuedMessage,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
 import { and, eq, isNotNull, ne } from 'drizzle-orm';
@@ -19,10 +21,12 @@ import { prepareAssistantFolder } from '../assistant/thread.js';
 import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
+import { threadImagePath } from '../files/images.js';
 import { providerInstances, threads, turns, workflowRuns } from '../db/schema.js';
 import type { ProviderAdapters } from '../hooks/providers.js';
 import type { Logger } from '../logger.js';
 import type { SettingsService } from '../settings/service.js';
+import type { RunChanges } from '../workflows/runner.js';
 
 export interface ProviderServiceDeps {
   readonly db: Db;
@@ -36,6 +40,9 @@ export interface ProviderServiceDeps {
   // Where the assistant's tools answer and the token that opens them; undefined until the
   // server listens. Kept in memory only and handed to the adapter with the turn.
   readonly assistant: () => { readonly url: string; readonly token: string } | undefined;
+  // Reads a chat thread's folder through git for its Changes (agent workbench spec 34); without
+  // it, threads get no base and no marks.
+  readonly changes?: RunChanges | undefined;
 }
 
 type StartTurn = Extract<ProviderCommand, { type: 'startTurn' }>;
@@ -53,6 +60,10 @@ export class ProviderService {
   readonly #unsubscribe: () => void;
   #flushScheduled = false;
   #stopped = false;
+  // Threads whose queued message the provider has been offered and not yet answered.
+  readonly #handingOver = new Set<string>();
+  // Turns being prepared before they go out (the assistant's tools, a chat thread's marks).
+  readonly #preparing = new Set<Promise<unknown>>();
 
   constructor(deps: ProviderServiceDeps) {
     this.#deps = deps;
@@ -234,19 +245,33 @@ export class ProviderService {
             effort: start.effort,
             permissionMode: start.permissionMode,
             ...(start.resumeId === null ? {} : { resumeId: start.resumeId }),
+            ...(start.images && start.images.length > 0
+              ? {
+                  images: start.images.map((id) => ({
+                    path: threadImagePath(this.#deps.home, turn.threadId, id),
+                    mediaType: attachmentMediaType(id),
+                  })),
+                }
+              : {}),
           };
           this.#send(
             providerInstanceId,
             turn.threadId,
             true,
-            start.kind === 'assistant' ? () => this.#assistantTurn(command) : command,
+            start.kind === 'assistant'
+              ? () => this.#assistantTurn(command)
+              : this.#chatThread(turn.threadId)
+                ? () => this.#marked(command, turn.id, turn.index)
+                : command,
           );
           break;
         }
         case 'thread.queueChanged': {
           const { threadId, queued, handOver } = event.payload;
-          if (queued && handOver)
-            this.#handOver(handOver.providerInstanceId, threadId, queued.id, handOver.prompt);
+          // One offer at a time: a join offered while the provider still decides on the first
+          // would give it the first text twice; its answer offers what is left.
+          if (queued && handOver && !this.#handingOver.has(threadId))
+            this.#handOver(handOver.providerInstanceId, threadId, queued, handOver.prompt);
           break;
         }
         // Dispatched after this commit's listeners have all heard of the turn's end, so none of
@@ -301,13 +326,18 @@ export class ProviderService {
           }
           break;
         }
-        case 'approval.answered':
+        // wow keeps its rules itself (agent workbench spec 38): the provider hears "once".
+        case 'approval.answered': {
+          const { decision, note, permissionMode } = event.payload;
           this.#send(event.payload.providerInstanceId, event.payload.threadId, false, {
             type: 'answerApproval',
             approvalId: event.payload.providerApprovalId,
-            decision: event.payload.decision,
+            decision: decision === 'allowAlways' ? 'allowOnce' : decision,
+            ...(note === undefined ? {} : { note }),
+            ...(permissionMode === undefined ? {} : { permissionMode }),
           });
           break;
+        }
         case 'question.answered':
           this.#send(event.payload.providerInstanceId, event.payload.threadId, false, {
             type: 'answerQuestion',
@@ -371,7 +401,12 @@ export class ProviderService {
 
   // Offers the queued message to the running turn. Not taken, it stays queued and goes when
   // the turn ends (agent workbench spec 51 and its open risk).
-  #handOver(providerInstanceId: string, threadId: string, queuedId: string, prompt: string): void {
+  #handOver(
+    providerInstanceId: string,
+    threadId: string,
+    queued: QueuedMessage,
+    prompt: string,
+  ): void {
     let answer: Promise<unknown>;
     try {
       answer = this.#adapter(providerInstanceId).send({ type: 'handOver', threadId, prompt });
@@ -379,22 +414,81 @@ export class ProviderService {
       this.#deps.logger.warn('provider handOver failed', describeError(error));
       return;
     }
+    this.#handingOver.add(threadId);
     answer
       .then(
         (result) => {
+          this.#handingOver.delete(threadId);
           if (this.#stopped || !HandOverResult.safeParse(result).data?.taken) return;
-          this.#deps.engine.dispatch(`handed-over:${queuedId}`, {
+          this.#deps.engine.dispatch(`handed-over:${queued.id}`, {
             type: 'thread.handedOver',
             threadId,
-            queuedId,
+            queuedId: queued.id,
+            offered: {
+              text: queued.text,
+              ...(queued.skills ? { skills: queued.skills } : {}),
+              ...(queued.files ? { files: queued.files } : {}),
+            },
           });
         },
-        (error: unknown) =>
-          this.#deps.logger.warn('provider handOver failed', describeError(error)),
+        (error: unknown) => {
+          this.#handingOver.delete(threadId);
+          this.#deps.logger.warn('provider handOver failed', describeError(error));
+        },
       )
       .catch((error: unknown) =>
         this.#deps.logger.warn('the handed over message was not recorded', describeError(error)),
       );
+  }
+
+  // A chat thread, whose changes are measured; a step's thread has its run's.
+  #chatThread(threadId: string): boolean {
+    if (!this.#deps.changes) return false;
+    const row = this.#deps.db
+      .select({ runId: threads.runId, kind: threads.kind })
+      .from(threads)
+      .where(eq(threads.id, threadId))
+      .get();
+    return row !== undefined && row.runId === null && row.kind === 'chat';
+  }
+
+  // Before a chat thread's turn goes out, the folder is read (agent workbench spec 34): its
+  // first turn records the base, every turn the changed files' hashes. A thread stored before
+  // this change has turns but no base and gets none, so its Changes say so (spec 35). Git that
+  // cannot say leaves the turn as it is; it never stops the turn.
+  async #marked(command: StartTurn, turnId: string, index: number): Promise<StartTurn> {
+    const changes = this.#deps.changes;
+    if (!changes) return command;
+    try {
+      const stored = this.#deps.db
+        .select({ baseSha: threads.baseSha })
+        .from(threads)
+        .where(eq(threads.id, command.threadId))
+        .get();
+      const base = index === 0 ? await changes.base(command.cwd) : undefined;
+      const sha = base?.baseSha ?? stored?.baseSha ?? null;
+      const mark =
+        sha === null
+          ? undefined
+          : index === 0
+            ? base?.files
+            : await changes.snapshot(command.cwd, sha);
+      if (!this.#stopped && (base || mark)) {
+        this.#deps.engine.dispatch(`changes-marked:${turnId}`, {
+          type: 'thread.changesMarked',
+          threadId: command.threadId,
+          turnId,
+          base: base ? { sha: base.baseSha, files: base.files } : null,
+          mark: mark ?? null,
+        });
+      }
+    } catch (error) {
+      this.#deps.logger.warn(
+        'the thread folder was not read for its changes',
+        describeError(error),
+      );
+    }
+    return command;
   }
 
   // The assistant's turn (app assistant spec 2): wow's tools and no others, the instruction
@@ -426,10 +520,27 @@ export class ProviderService {
     };
     const send = (ready: ProviderCommand) => this.#adapter(providerInstanceId).send(ready);
     try {
-      (typeof command === 'function' ? command().then(send) : send(command)).catch(fail);
+      if (typeof command === 'function') {
+        const prepared = command().then((ready) => {
+          this.#preparing.delete(prepared);
+          return send(ready);
+        });
+        this.#preparing.add(prepared);
+        prepared.catch((error: unknown) => {
+          this.#preparing.delete(prepared);
+          fail(error);
+        });
+      } else {
+        send(command).catch(fail);
+      }
     } catch (error) {
       fail(error);
     }
+  }
+
+  // Resolves once every turn being prepared has been handed to its adapter (for tests).
+  async idle(): Promise<void> {
+    while (this.#preparing.size > 0) await Promise.allSettled(this.#preparing);
   }
 
   // Events that arrive together (a burst of text deltas) are stored in one transaction.

@@ -23,18 +23,22 @@ import { ProviderService } from './service.js';
 // by the next one, offered to the running turn, and sent when the turn ends.
 
 // An adapter the test drives: it records what it is sent, takes a handed-over message only when
-// told to, and emits what the test says.
+// told to (at once, or when the test answers a held offer), and emits what the test says.
 class QueueAdapter implements ProviderAdapter {
   readonly requiresModel = false;
   readonly sent: ProviderCommand[] = [];
+  readonly held: Array<(taken: boolean) => void> = [];
   readonly #listeners = new Set<(event: ProviderEvent) => void>();
   constructor(
     readonly kind: ProviderKind,
-    readonly takes: boolean,
+    readonly takes: boolean | 'later',
   ) {}
 
   send(command: ProviderCommand): Promise<unknown> {
     this.sent.push(command);
+    if (command.type === 'handOver' && this.takes === 'later') {
+      return new Promise((resolve) => this.held.push((taken) => resolve({ taken })));
+    }
     if (command.type === 'handOver') return Promise.resolve({ taken: this.takes });
     return Promise.resolve({ ok: true });
   }
@@ -97,7 +101,10 @@ const startService = (kind: ProviderKind) =>
     ),
   });
 
-async function setup(kind: ProviderKind, takes: boolean) {
+const handedOver = () =>
+  adapter.sent.flatMap((command) => (command.type === 'handOver' ? [command.prompt] : []));
+
+async function setup(kind: ProviderKind, takes: boolean | 'later') {
   adapter = new QueueAdapter(kind, takes);
   service = startService(kind);
   dispatch({
@@ -142,12 +149,9 @@ describe('queued messages', () => {
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Then sum it up' });
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'In three lines' });
     expect(thread()?.['queued']).toMatchObject({ text: 'Then sum it up\n\nIn three lines' });
-    // Codex was offered each version and took none; nothing else went to it.
-    expect(adapter.sent.map((command) => command.type)).toEqual([
-      'startTurn',
-      'handOver',
-      'handOver',
-    ]);
+    // Codex was offered the first and took it not; the join came while it decided, so it waits
+    // with the rest. Nothing else went to it.
+    expect(adapter.sent.map((command) => command.type)).toEqual(['startTurn', 'handOver']);
 
     const sent = committed('turn.started');
     adapter.emit({ type: 'turnCompleted', threadId: 't1' });
@@ -234,10 +238,87 @@ describe('queued messages', () => {
     expect(prompts()).toEqual(['Read the readme']);
   });
 
+  it('offers a joined message only after the provider answered the first offer, and keeps what it did not get', async () => {
+    await setup('claude', 'later');
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Also check the license' });
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'And the changelog' });
+    expect(handedOver()).toEqual(['Also check the license']);
+
+    const first = committed('threadItem.added');
+    adapter.held[0]?.(true);
+    await first;
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      turnId: 't1:turn:0',
+      payload: { text: 'Also check the license', queued: 'duringTurn' },
+    });
+    expect(thread()?.['queued']).toMatchObject({ text: 'And the changelog' });
+    expect(handedOver()).toEqual(['Also check the license', 'And the changelog']);
+
+    const second = committed('threadItem.added');
+    adapter.held[1]?.(true);
+    await second;
+    expect(thread()?.['queued']).toBeNull();
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      payload: { text: 'And the changelog', queued: 'duringTurn' },
+    });
+
+    const ended = committed('turn.ended');
+    adapter.emit({ type: 'turnCompleted', threadId: 't1' });
+    await ended;
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(prompts()).toEqual(['Read the readme']);
+  });
+
+  it('keeps the files the provider took on its item, and the rest of a join with its images queued', async () => {
+    await setup('claude', 'later');
+    const image = '0f8fad5b-d9cb-469f-a165-70867728950e.png';
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: '@src/timer.ts what rings?',
+      files: ['src/timer.ts'],
+    });
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: '@docs/spec.md and this screenshot',
+      files: ['docs/spec.md'],
+      attachments: [{ id: image }],
+    });
+    expect(handedOver()).toEqual(['@src/timer.ts what rings?']);
+
+    const shown = committed('threadItem.added');
+    adapter.held[0]?.(true);
+    await shown;
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      payload: { text: '@src/timer.ts what rings?', files: ['src/timer.ts'], queued: 'duringTurn' },
+    });
+    // The rest keeps its own file and its image, and a message with an image is not offered.
+    expect(thread()?.['queued']).toMatchObject({
+      text: '@docs/spec.md and this screenshot',
+      files: ['docs/spec.md'],
+      images: [{ id: image, mediaType: 'image/png' }],
+    });
+    expect(handedOver()).toEqual(['@src/timer.ts what rings?']);
+  });
+
+  it('shows a message the provider took after it was cancelled', async () => {
+    await setup('claude', 'later');
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Too late to take back' });
+    dispatch({ type: 'thread.cancelQueued', threadId: 't1' });
+    const shown = committed('threadItem.added');
+    adapter.held[0]?.(true);
+    await shown;
+    expect(thread()?.['queued']).toBeNull();
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      payload: { text: 'Too late to take back', queued: 'duringTurn' },
+    });
+  });
+
   it('refuses an empty message while a turn runs', async () => {
     await setup('codex', false);
     expect(() => dispatch({ type: 'thread.sendMessage', threadId: 't1', text: '  ' })).toThrow(
-      /needs text or a skill/,
+      /needs text, a skill or an image/,
     );
     expect(thread()?.['queued']).toBeNull();
   });
@@ -274,6 +355,35 @@ describe('queued messages', () => {
     expect(thread()).toMatchObject({ queued: null, state: 'working' });
     expect(rows('threadItems').at(-1)).toMatchObject({
       payload: { text: 'Waiting since yesterday', queued: 'afterTurn' },
+    });
+  });
+
+  it('keeps the images of a message written during a Claude Code turn and sends them when it ends @agent-workbench-53', async () => {
+    await setup('claude', true);
+    const image = '0f8fad5b-d9cb-469f-a165-70867728950e.png';
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: 'And this screenshot',
+      attachments: [{ id: image }],
+    });
+    // A hand-over carries text only, so Claude Code is not offered it.
+    expect(adapter.sent.map((command) => command.type)).toEqual(['startTurn']);
+    expect(thread()?.['queued']).toMatchObject({
+      text: 'And this screenshot',
+      images: [{ id: image, mediaType: 'image/png' }],
+    });
+
+    const sent = committed('turn.started');
+    adapter.emit({ type: 'turnCompleted', threadId: 't1' });
+    await sent;
+    expect(adapter.sent.at(-1)).toMatchObject({
+      type: 'startTurn',
+      prompt: 'And this screenshot',
+      images: [{ path: path.join(dir, 'images', 't-t1', image), mediaType: 'image/png' }],
+    });
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      payload: { images: [{ id: image }], queued: 'afterTurn' },
     });
   });
 });

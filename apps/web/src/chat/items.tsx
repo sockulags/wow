@@ -7,7 +7,6 @@ import {
   ToolCallItemPayload,
   UsageItemPayload,
   type Approval,
-  type ApprovalDecision,
   type BackgroundTask,
   type Question,
   type QueuedMessage,
@@ -22,16 +21,15 @@ import {
   ClockIcon,
   HourglassIcon,
   RotateCcwIcon,
-  ShieldQuestionIcon,
 } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { CopyButton, copyText } from '@/components/copy-button';
 import { useRowActions } from '@/lib/row-actions';
 import { WithTooltip } from '@/components/hint';
 import { Markdown } from '@/components/markdown';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { ApprovalCard } from './approval-card';
 import { errorMessage, useDispatch } from './data';
 import {
   QuestionCard,
@@ -40,6 +38,9 @@ import {
   type QuestionStatus,
 } from './question-card';
 import { formatCost, formatTokens } from './model';
+import { FileChip } from '@/panel/open-file-button';
+import { withoutMentions } from './mentions';
+import { SentImages } from './image-chip';
 import { SentSkillChip } from './skill-chip';
 import { TaskList, TaskMarker } from './task-pin';
 import { ToolCall } from './tools/index';
@@ -69,6 +70,13 @@ export interface ItemContext {
   readonly questionHold?: QuestionHold | undefined;
   // How many last lines of a tool's output an opened row shows (`chat.toolOutputLines`).
   readonly outputLines?: number | undefined;
+  // Opens an edited file (an edit row's and an approval card's Open file); absent where nothing
+  // can open it.
+  readonly openFile?: ((path: string) => void) | undefined;
+  // The thread's first pending approval, which the keys and the palette answer, and whether the
+  // thread is the context panel's (a step's), which yields to the open thread's. Absent, a
+  // pending card answers them itself.
+  readonly keyedApproval?: { readonly id: string; readonly side: boolean } | undefined;
 }
 
 // One row per thread item. Rows skip layout and paint while off screen, so a long conversation
@@ -165,7 +173,15 @@ export function QueuedMessageItem({
   );
 }
 
-function UserMessage({ payload, context }: { payload: TextItemPayload; context: ItemContext }) {
+function UserMessage({
+  threadId,
+  payload,
+  context,
+}: {
+  threadId: string;
+  payload: TextItemPayload;
+  context: ItemContext;
+}) {
   // The answer to the assistant's questions shows on their card; here only that it was sent.
   if (payload.answers) {
     return (
@@ -177,8 +193,25 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
   // The skills it was sent with are chips; a message stored before them shows its text as it was
   // (wow skills spec 14, 18).
   const skills = payload.skills ?? [];
+  const files = payload.files ?? [];
+  const images = payload.images ?? [];
+  const text = withoutMentions(payload.text, files);
   return (
     <div className="group flex flex-col items-end gap-0.5">
+      {images.length > 0 && <SentImages threadId={threadId} images={images} />}
+      {files.length > 0 && (
+        <div
+          role="list"
+          aria-label="Sent with files"
+          className="flex max-w-[85%] flex-wrap justify-end gap-1"
+        >
+          {files.map((file) => (
+            <span role="listitem" key={file}>
+              <FileChip path={file} />
+            </span>
+          ))}
+        </div>
+      )}
       {skills.length > 0 && (
         <div
           role="list"
@@ -192,9 +225,9 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
           ))}
         </div>
       )}
-      {payload.text.trim() !== '' && (
+      {text.trim() !== '' && (
         <div className="w-fit max-w-[85%] rounded-lg bg-secondary px-3 py-2 text-sm whitespace-pre-wrap text-secondary-foreground">
-          {payload.text}
+          {text}
         </div>
       )}
       {payload.queued && (
@@ -275,131 +308,6 @@ function Reasoning({ payload, streaming }: { payload: TextItemPayload; streaming
       </summary>
       <div className="mt-1 border-l border-border pl-3 whitespace-pre-wrap">{payload.text}</div>
     </details>
-  );
-}
-
-const decisionLabels: Readonly<Record<ApprovalDecision, string>> = {
-  allowOnce: 'Allowed once',
-  allowSession: 'Allowed for this session',
-  deny: 'Denied',
-};
-
-const approvalKindLabels = { command: 'Command', fileChange: 'File change', tool: 'Tool' } as const;
-
-function approvalDetails(approval: Approval | undefined): unknown {
-  const request = approval?.request;
-  if (typeof request !== 'object' || request === null || !('details' in request)) return null;
-  return request.details;
-}
-
-// The folder the request runs in: the provider's own report when it sends one, else the thread's.
-function requestFolder(details: unknown, fallback: string): string {
-  if (typeof details === 'object' && details !== null && 'cwd' in details) {
-    const cwd = (details as { cwd: unknown }).cwd;
-    if (typeof cwd === 'string' && cwd !== '') return cwd;
-  }
-  return fallback;
-}
-
-function ApprovalRow({
-  payload,
-  approval,
-  context,
-}: {
-  payload: ApprovalItemPayload;
-  approval: Approval | undefined;
-  context: ItemContext;
-}) {
-  const send = useDispatch();
-  const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
-  const section = useRef<HTMLElement>(null);
-  const decision = approval?.decision ?? null;
-  const details = approvalDetails(approval);
-  const pending = decision === null && approval !== undefined;
-  // A new request takes the focus, so its keys (A, S, D) work at once (audit A-11).
-  useEffect(() => {
-    if (pending) section.current?.focus();
-  }, [pending]);
-  const answer = (choice: ApprovalDecision) => {
-    setBusy(true);
-    setError(undefined);
-    send({ type: 'approval.answer', approvalId: payload.approvalId, decision: choice }).then(
-      () => setBusy(false),
-      (reason: unknown) => {
-        setBusy(false);
-        setError(errorMessage(reason));
-      },
-    );
-  };
-  return (
-    <section
-      ref={section}
-      tabIndex={-1}
-      aria-label="Approval request"
-      data-pending={pending || undefined}
-      className={cn(
-        'flex flex-col gap-2 rounded-md border p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
-        decision === null ? 'border-state-needs-you/60' : 'border-border',
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <ShieldQuestionIcon className="size-4 shrink-0 text-state-needs-you" />
-        <Badge variant="outline">{approvalKindLabels[payload.kind]}</Badge>
-        <span className="min-w-0 font-mono text-xs break-all">{payload.summary}</span>
-      </div>
-      <p data-testid="approval-context" className="text-xs text-muted-foreground">
-        In <span className="font-mono">{requestFolder(details, context.cwd)}</span> ·{' '}
-        {context.permissionLabel}
-      </p>
-      {details !== null && details !== undefined && (
-        <details className="group text-xs">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-muted-foreground select-none">
-            <ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />
-            Details
-          </summary>
-          <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted p-2 font-mono text-2xs whitespace-pre-wrap">
-            {JSON.stringify(details, null, 2)}
-          </pre>
-        </details>
-      )}
-      {decision === null ? (
-        <div className="flex flex-wrap gap-2">
-          <WithTooltip label="Allow once" shortcut="keybindings.approvalAllowOnce">
-            <Button size="sm" disabled={busy || !approval} onClick={() => answer('allowOnce')}>
-              Allow once
-            </Button>
-          </WithTooltip>
-          <WithTooltip label="Allow for this session" shortcut="keybindings.approvalAllowSession">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy || !approval}
-              onClick={() => answer('allowSession')}
-            >
-              Allow for this session
-            </Button>
-          </WithTooltip>
-          <WithTooltip label="Deny" shortcut="keybindings.approvalDeny">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy || !approval}
-              onClick={() => answer('deny')}
-            >
-              Deny
-            </Button>
-          </WithTooltip>
-        </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">{decisionLabels[decision]}</p>
-      )}
-      {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
-    </section>
   );
 }
 
@@ -520,7 +428,7 @@ function ItemBody({
     case 'user': {
       const parsed = TextItemPayload.safeParse(item.payload);
       return parsed.success ? (
-        <UserMessage payload={parsed.data} context={context} />
+        <UserMessage threadId={item.threadId} payload={parsed.data} context={context} />
       ) : (
         <Unreadable item={item} />
       );
@@ -553,7 +461,7 @@ function ItemBody({
       const parsed = ApprovalItemPayload.safeParse(item.payload);
       if (!parsed.success) return <Unreadable item={item} />;
       const approval = approvals.find((row) => row.id === parsed.data.approvalId);
-      return <ApprovalRow payload={parsed.data} approval={approval} context={context} />;
+      return <ApprovalCard payload={parsed.data} approval={approval} context={context} />;
     }
     case 'question': {
       const parsed = QuestionItemPayload.safeParse(item.payload);

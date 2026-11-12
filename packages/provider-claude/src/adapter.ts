@@ -6,7 +6,7 @@ import {
   type PermissionUpdate,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
-  ApprovalDecision,
+  ApprovalFacts,
   BackgroundTask,
   HandOverResult,
   ApprovalKind,
@@ -14,6 +14,7 @@ import type {
   ProviderAdapterContext,
   ProviderCommand,
   ProviderEvent,
+  ProviderApprovalDecision,
   ProviderInstance,
   ProviderModel,
   ProviderSlashCommand,
@@ -22,15 +23,18 @@ import type {
   TaskStatus,
 } from '@wow/contracts';
 import { markRecommended, replyText } from '@wow/contracts';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
 import { AsyncQueue } from './queue.js';
+import { resultDiff } from './diff.js';
 import { claudeToolFacts } from './tools.js';
 import {
   extraArgs,
   isEffortLevel,
   isPermissionMode,
   userMessage,
+  type MessageImage,
   type CanUseTool,
   type ClaudeQuery,
   type Options,
@@ -113,6 +117,8 @@ interface Session {
   readonly streamed: Map<string, string>;
   readonly taskCreates: Map<string, string>;
   readonly tasks: Map<string, Task>;
+  // Edit calls waiting for their result, whose patch becomes the row's diff.
+  readonly edits: Set<string>;
   // total_cost_usd is cumulative per query(); a turn's cost is the difference.
   costUsd: number;
 }
@@ -131,7 +137,16 @@ export interface ClaudeAdapterOptions {
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+const editTools = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+interface ApprovalAnswer {
+  readonly decision: ProviderApprovalDecision;
+  readonly note?: string | undefined;
+  readonly permissionMode?: string | undefined;
+}
+
 const approvalKind = (toolName: string): ApprovalKind => {
+  if (toolName === 'ExitPlanMode') return 'plan';
   if (toolName === 'Bash' || toolName === 'PowerShell') return 'command';
   if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(toolName)) return 'fileChange';
   return 'tool';
@@ -168,8 +183,52 @@ const toolOutput = (content: unknown): string => {
     .join('\n');
 };
 
+// The prefix of a `Bash(<prefix>:*)` rule Claude Code suggests, which wow reads only to word its
+// own rule (spec 38).
+function ruleHint(suggestions: readonly PermissionUpdate[] | undefined): string | undefined {
+  for (const suggestion of suggestions ?? []) {
+    if (suggestion.type !== 'addRules') continue;
+    for (const rule of suggestion.rules) {
+      if (rule.toolName !== 'Bash' || !rule.ruleContent) continue;
+      const prefix = rule.ruleContent.replace(/:\*$/, '').trim();
+      if (prefix !== '') return prefix;
+    }
+  }
+  return undefined;
+}
+
+// What an approval card shows of a Claude Code request (spec 36, 42), in wow's words.
+function approvalFacts(
+  toolName: string,
+  input: Record<string, unknown>,
+  options: PermissionOptions,
+): ApprovalFacts {
+  const facts: ApprovalFacts = { ...claudeToolFacts(toolName, input) };
+  if (toolName === 'ExitPlanMode') {
+    const plan = input['plan'];
+    return typeof plan === 'string' && plan.trim() !== '' ? { kind: 'other', plan } : {};
+  }
+  if (facts.kind === 'mcp') facts.arguments = input;
+  else if (facts.kind !== 'command' && facts.kind !== 'edit') facts.tool = toolName;
+  if (facts.kind === 'command') {
+    const hint = ruleHint(options.suggestions);
+    if (hint !== undefined) facts.ruleHint = hint;
+  }
+  return facts;
+}
+
 // One adapter per provider instance. Each thread gets one Agent SDK query() in streaming input
 // mode that lives across turns, so interrupt, setModel and setPermissionMode work mid-session.
+// The message's images as wow stored them (agent workbench spec 53, 55), as image blocks.
+async function readImages(images: NonNullable<StartTurn['images']>): Promise<MessageImage[]> {
+  return Promise.all(
+    images.map(async (image) => ({
+      mediaType: image.mediaType,
+      base64: (await readFile(image.path)).toString('base64'),
+    })),
+  );
+}
+
 export class ClaudeAdapter implements ProviderAdapter {
   readonly kind = 'claude' as const;
   // Claude Code picks a model itself when a step names none.
@@ -179,7 +238,7 @@ export class ClaudeAdapter implements ProviderAdapter {
   readonly #query: QueryFunction;
   readonly #baseEnv: Record<string, string | undefined>;
   readonly #sessions = new Map<string, Session>();
-  readonly #approvals = new Map<string, Pending<ApprovalDecision>>();
+  readonly #approvals = new Map<string, Pending<ApprovalAnswer>>();
   readonly #questions = new Map<string, Pending<QuestionReply>>();
   readonly #listeners = new Set<Listener>();
 
@@ -208,7 +267,16 @@ export class ClaudeAdapter implements ProviderAdapter {
         await this.#interrupt(command.threadId);
         return { ok: true };
       case 'answerApproval':
-        this.#settle(this.#approvals, command.approvalId, command.decision, 'approval');
+        this.#settle(
+          this.#approvals,
+          command.approvalId,
+          {
+            decision: command.decision,
+            note: command.note,
+            permissionMode: command.permissionMode,
+          },
+          'approval',
+        );
         return { ok: true };
       case 'answerQuestion':
         this.#settle(this.#questions, command.questionId, command.answer, 'question');
@@ -327,10 +395,12 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (!isPermissionMode(command.permissionMode)) {
       throw new Error(`Unknown Claude permission mode "${command.permissionMode}"`);
     }
+    // Read before anything changes, so a missing image fails the turn and leaves the session.
+    const message = userMessage(command.prompt, await readImages(command.images ?? []));
     let session = this.#sessions.get(command.threadId);
     // A message sent just as Claude Code went on by itself waits in its queue for that turn.
     if (session?.turnActive && session.selfStarted) {
-      session.input.push(userMessage(command.prompt));
+      session.input.push(message);
       return;
     }
     if (session?.turnActive)
@@ -365,7 +435,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     session.turnActive = true;
     session.selfStarted = false;
     session.interrupted = false;
-    session.input.push(userMessage(command.prompt));
+    session.input.push(message);
   }
 
   async #open(command: StartTurn): Promise<Session> {
@@ -388,6 +458,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       streamed: new Map(),
       taskCreates: new Map(),
       tasks: new Map(),
+      edits: new Set(),
       costUsd: 0,
     };
     // Claimed before the await so a second startTurn for the thread sees it.
@@ -544,6 +615,7 @@ export class ClaudeAdapter implements ProviderAdapter {
               ...claudeToolFacts(block.name, block.input),
             });
             this.#trackTasks(session, block.id, block.name, block.input);
+            if (editTools.has(block.name)) session.edits.add(block.id);
           }
         });
         return;
@@ -560,11 +632,15 @@ export class ClaudeAdapter implements ProviderAdapter {
             itemId: block.tool_use_id,
             output: toolOutput(block.content),
           });
+          const diff = session.edits.delete(block.tool_use_id)
+            ? resultDiff(message.tool_use_result)
+            : undefined;
           this.#emit({
             type: 'toolCallCompleted',
             threadId,
             itemId: block.tool_use_id,
             status: block.is_error ? 'error' : 'ok',
+            ...(diff === undefined || block.is_error ? {} : { diff }),
           });
           const subject = session.taskCreates.get(block.tool_use_id);
           const created = TaskCreateResult.safeParse(message.tool_use_result);
@@ -691,21 +767,36 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (options.description) request['description'] = options.description;
     if (options.blockedPath) request['blockedPath'] = options.blockedPath;
     if (options.decisionReason) request['decisionReason'] = options.decisionReason;
-    const decision = await this.#wait(this.#approvals, approvalId, threadId, options.signal, () =>
+    const kind = approvalKind(toolName);
+    const answer = await this.#wait(this.#approvals, approvalId, threadId, options.signal, () =>
       this.#emit({
         type: 'approvalRequested',
         threadId,
         approvalId,
-        kind: approvalKind(toolName),
+        kind,
         summary: options.title ?? toolName,
         request,
+        facts: approvalFacts(toolName, input, options),
       }),
     );
-    if (decision === undefined) {
+    if (answer === undefined) {
       return { behavior: 'deny', message: 'The turn was interrupted.', interrupt: true };
     }
-    if (decision === 'deny') return { behavior: 'deny', message: 'The user denied this request.' };
-    if (decision === 'allowSession' && options.suggestions) {
+    // The note goes to Claude Code as the denial's message (agent workbench spec 37).
+    if (answer.decision === 'deny') {
+      return { behavior: 'deny', message: answer.note ?? 'The user denied this request.' };
+    }
+    // A plan started in a mode: Claude Code leaves plan mode for that one (spec 42).
+    const mode = answer.permissionMode;
+    if (mode !== undefined && isPermissionMode(mode)) {
+      session.permissionMode = mode;
+      return {
+        behavior: 'allow',
+        updatedInput: input,
+        updatedPermissions: [{ type: 'setMode', mode, destination: 'session' }],
+      };
+    }
+    if (answer.decision === 'allowSession' && options.suggestions) {
       const updatedPermissions = options.suggestions.map((suggestion): PermissionUpdate => ({
         ...suggestion,
         destination: 'session',
