@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import { appChannels, decodeServerInfoArg, folderChannels, updateChannels } from '../app.js';
+import {
+  appChannels,
+  decodeServerInfoArg,
+  fileChannels,
+  folderChannels,
+  updateChannels,
+} from '../app.js';
 
 // The web app reads `window.wowServerInfo` (see apps/web/src/app/bootstrap.ts) to find the server.
 contextBridge.exposeInMainWorld('wowServerInfo', decodeServerInfoArg(process.argv));
@@ -9,6 +15,9 @@ contextBridge.exposeInMainWorld('wowServerInfo', decodeServerInfoArg(process.arg
 contextBridge.exposeInMainWorld('wowDesktop', {
   // Settings → Projects picks a project's folder with the system dialog instead of a typed path.
   pickFolder: (): Promise<unknown> => ipcRenderer.invoke(folderChannels.pick),
+  // "Save conversation…" writes the conversation where the system's save dialog says.
+  saveTextFile: (file: unknown): Promise<unknown> =>
+    ipcRenderer.invoke(fileChannels.saveText, file),
   // "Restart now" next to a setting marked "Restart required".
   restart: (): Promise<unknown> => ipcRenderer.invoke(appChannels.restart),
   updates: {

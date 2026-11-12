@@ -23,4 +23,5 @@ export * from './skills.js';
 export * from './template.js';
 export * from './trackers.js';
 export * from './updates.js';
+export * from './desktop-files.js';
 export * from './workflow.js';
