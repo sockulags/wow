@@ -159,6 +159,22 @@ function setup(shown: Partial<Thread> = {}, instance: ProviderInstance = claude)
 }
 
 const bar = () => screen.getByTestId('model-bar');
+
+// The bar hands its models to the palette's store in an effect after they are drawn, so a test
+// that reads the store waits for that write rather than for the text on screen.
+const modelsRegistered = () => (activeModelBar(modelBarStore.getState())?.models.length ?? 0) > 0;
+
+function registeredModels(): Promise<void> {
+  return new Promise((resolve) => {
+    const loaded = modelsRegistered;
+    if (loaded()) return resolve();
+    const stop = modelBarStore.subscribe(() => {
+      if (!loaded()) return;
+      stop();
+      resolve();
+    });
+  });
+}
 const configured = (sent: () => unknown[]) =>
   sent().filter((command) => (command as { type: string }).type === 'thread.configure') as Record<
     string,
@@ -398,6 +414,7 @@ describe('the palette (agent workbench spec 6)', () => {
   it('lists model, effort and mode with the current one marked, and applies them', async () => {
     const { sent } = setup();
     await within(bar()).findByText('Opus');
+    await act(registeredModels);
     const active = activeModelBar(modelBarStore.getState());
     const commands = modelBarCommands(active);
     const titled = (title: string) => commands.find((command) => command.title === title);
