@@ -2898,8 +2898,12 @@ Agent workbench spec 33 to 43, U6.
 first `@@`; several files each after a `--- a/<path>` / `+++ b/<path>` pair), made in the adapter.
 Claude Code (`provider-claude/src/diff.ts`): when an Edit, MultiEdit or Write starts, its input
 gives the diff as the old text's lines removed and the new text's added, without the file around
-them (`replacedHunk`; a Write is all added lines); when the result comes, its `structuredPatch`
-gives the real hunks with line numbers and `toolCallCompleted.diff` replaces the first one. That
+them (`replacedHunk`; a Write is all added lines, whether or not the file exists, so its facts
+carry `diffWithoutFile: true` and the approval card and the row say "The new content only; the
+file's current content is not shown."); when the result comes, its `structuredPatch`
+gives the real hunks with line numbers and `toolCallCompleted.diff` replaces the first one (the
+orchestrator then sets `diffWithoutFile: false`). wow does not read the file itself to draw a
+pending Write. That
 is the spec's fallback for an old text that cannot be placed in the file: the row then still shows
 what was replaced. Codex (`fileChangeDiff` in `provider-codex/src/adapter.ts`): an update's `diff`
 is unified already (anything before its first `@@` is cut); an added or deleted file's `diff` is

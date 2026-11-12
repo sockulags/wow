@@ -61,6 +61,13 @@ describe('Claude Code tool facts (agent workbench spec 27 to 29)', () => {
       kind: 'edit',
       path: 'src/new.ts',
     });
+    // A write's diff from its input is the new content alone; the card says so.
+    expect(claudeToolFacts('Write', { file_path: 'src/timer.ts', content: 'a\n' })).toEqual({
+      kind: 'edit',
+      path: 'src/timer.ts',
+      diff: '@@ -0,0 +1 @@\n+a',
+      diffWithoutFile: true,
+    });
     expect(
       claudeToolFacts('MultiEdit', {
         file_path: 'src/timer.ts',

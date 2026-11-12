@@ -428,7 +428,9 @@ Every tool call is one line, drawn by what the call does:
   outside the thread's folder, or when the folder is not in Git or the thread is older than
   Changes, and not while the edit is still running or its request waits for your answer, since
   the file has not changed yet). A new file shows as
-  added lines. A very long diff is cut at `chat.editDiffMaxLines` lines; the thread's Changes
+  added lines. Before Claude Code writes a whole file (its Write), the request and the row show
+  only the new content, as added lines, with "The new content only; the file's current content
+  is not shown": it may replace a file that exists. Once written, the row shows the real change. A very long diff is cut at `chat.editDiffMaxLines` lines; the thread's Changes
   have all of it.
 - **Any other tool**, and every call stored before this version, keep the row they had: the
   tool's name and the first text of its input; opened, its input and output.

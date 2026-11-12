@@ -1337,7 +1337,11 @@ function decideProviderEvents(
               ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
               ...(event.diff === undefined
                 ? {}
-                : { diffCut: false, ...cutToolDiff(event.diff, read, context) }),
+                : {
+                    diffCut: false,
+                    diffWithoutFile: false,
+                    ...cutToolDiff(event.diff, read, context),
+                  }),
             },
             false,
           );

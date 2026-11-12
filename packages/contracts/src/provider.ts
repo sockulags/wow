@@ -147,6 +147,9 @@ export const ToolFacts = z.object({
   // An edit: its unified diff, hunks only (from the first `@@` on), made by the adapter (spec 33).
   // Several files' hunks each follow a `--- a/<path>` and `+++ b/<path>` pair.
   diff: z.string().optional(),
+  // The diff is only what the edit writes, read from its input (a write over a file that may
+  // exist): the file's current content is not in it. False once a written result replaced it.
+  diffWithoutFile: z.boolean().optional(),
 });
 export type ToolFacts = z.infer<typeof ToolFacts>;
 

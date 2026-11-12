@@ -166,6 +166,7 @@ function RequestBody({
           diff={facts.diff}
           path={path}
           cut={payload.diffCut}
+          withoutFile={facts.diffWithoutFile}
           // Until the edit is allowed and made, the file has not changed and Changes lacks it.
           onOpenFile={pending ? undefined : context.openFile}
         />

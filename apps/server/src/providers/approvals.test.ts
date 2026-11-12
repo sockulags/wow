@@ -297,6 +297,38 @@ describe('approvals in wow words (spec 36)', () => {
     ).findLast((entry) => entry.kind === 'tool_call')?.payload;
     expect(tool).toMatchObject({ diffCut: true, diffCounts: { added: 30, removed: 0 } });
   });
+
+  it('keeps that a write is drawn from its input until its written diff replaces it', async () => {
+    await running('t1', 'claude');
+    const started = committed('threadItem.added');
+    adapters.claude.emit({
+      type: 'toolCallStarted',
+      threadId: 't1',
+      itemId: 'write-1',
+      name: 'Write',
+      input: {},
+      kind: 'edit',
+      path: 'src/timer.ts',
+      diff: '@@ -0,0 +1 @@\n+export const minutes = 5;',
+      diffWithoutFile: true,
+    });
+    await started;
+    const row = () =>
+      (snapshot(database.db, { topic: 'threadItems', threadId: 't1' }) as ThreadItem[]).findLast(
+        (entry) => entry.kind === 'tool_call',
+      )?.payload;
+    expect(row()).toMatchObject({ diffWithoutFile: true });
+    const ended = committed('threadItem.patched');
+    adapters.claude.emit({
+      type: 'toolCallCompleted',
+      threadId: 't1',
+      itemId: 'write-1',
+      status: 'ok',
+      diff: '@@ -1 +1 @@\n-export const minutes = 3;\n+export const minutes = 5;',
+    });
+    await ended;
+    expect(row()).toMatchObject({ diffWithoutFile: false });
+  });
 });
 
 describe('a denial with a note (spec 37)', () => {

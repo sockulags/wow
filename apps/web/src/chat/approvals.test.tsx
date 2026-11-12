@@ -294,6 +294,7 @@ describe('the approval card (spec 36 to 38)', () => {
     };
     const { rerender } = h.show(<ul>{card(null)}</ul>);
     expect(screen.getByRole('table', { name: 'Diff of src/bell.ts' })).toBeTruthy();
+    expect(screen.queryByTestId('edit-without-file')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Open file' })).toBeNull();
     rerender(
       <RuntimeProvider runtime={h.runtime}>
@@ -324,6 +325,24 @@ describe('the approval card (spec 36 to 38)', () => {
     await userEvent.setup().click(screen.getByText('Edit', { exact: false }));
     expect(screen.getByTestId('edit-diff')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Open file' })).toBeNull();
+  });
+
+  it('says that a write drawn from its input does not show the file it replaces', () => {
+    const h = harness();
+    showApproval(h, {
+      approvalId: 't1:a2',
+      kind: 'fileChange',
+      summary: 'Write the timer',
+      facts: {
+        kind: 'edit',
+        path: '/work/kettle/src/timer.ts',
+        diff: '@@ -0,0 +1 @@\n+export const minutes = 5;',
+        diffWithoutFile: true,
+      },
+    });
+    expect(screen.getByTestId('edit-without-file').textContent).toBe(
+      "The new content only; the file's current content is not shown.",
+    );
   });
 
   it('opens a one-line note on Deny; Enter sends it, and an empty note denies without one (spec 37)', async () => {

@@ -68,11 +68,14 @@ export function EditDiff({
   diff,
   path,
   cut,
+  withoutFile,
   onOpenFile,
 }: {
   readonly diff: string;
   readonly path: string | undefined;
   readonly cut?: boolean | undefined;
+  // The diff is only the content the edit writes (`ToolFacts.diffWithoutFile`).
+  readonly withoutFile?: boolean | undefined;
   // Opens the file; absent where nothing can open it.
   readonly onOpenFile?: ((path: string) => void) | undefined;
 }) {
@@ -110,6 +113,11 @@ export function EditDiff({
           </div>
         );
       })}
+      {withoutFile && (
+        <p data-testid="edit-without-file" className="text-2xs text-muted-foreground">
+          The new content only; the file's current content is not shown.
+        </p>
+      )}
       {cut && (
         <p className="text-2xs text-muted-foreground">
           The diff is longer than this row shows; the thread's Changes have all of it.
@@ -156,6 +164,7 @@ export function editParts(
           diff={payload.diff}
           path={target}
           cut={payload.diffCut}
+          withoutFile={payload.diffWithoutFile}
           // A running edit may still wait for its approval; the file is in Changes once made.
           onOpenFile={payload.status === 'running' ? undefined : context.openFile}
         />
