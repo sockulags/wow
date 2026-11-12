@@ -768,6 +768,19 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   $ rm -rf build · note: keep the build". Tool output and input are left out, and so is reasoning
   unless `chat.exportReasoning` is on. The desktop app saves through the system's save dialog,
   named after the thread's title; the browser build downloads the file.
+- **Session tools**: the side panel's **Tools** tab (Details → **Show session tools**, the palette
+  **Show session tools**, or the header chip such as "1 MCP server failed") lists what the
+  provider reported for the thread's session: the MCP servers with their state (Connected,
+  Failed, Needs sign-in, Connecting, Turned off), a failed server's error, where it is configured,
+  its version and address and its tools (marked read-only or destructive), the built-in tools,
+  skills, commands, subagents and plugins, each with a count. The filter narrows all of them. The
+  list is what Claude Code said as the last turn started; **Refresh** asks the open session again
+  and is offered only while it is open. wow never starts Claude Code or a server to fill the tab,
+  signs in or turns servers on or off: for a server that needs sign-in, run `/mcp` in Claude Code
+  in a terminal. No environment value, header, argument or address path is shown or kept. Codex
+  reports no such list, so a Codex thread shows the instruction files it loaded and the MCP
+  servers its own tool calls used. A thread from before this version shows the tab empty until
+  its next turn; the Assistant has no Tools tab.
 - **Skills in chat** are listed Yours, Project, Recently used, User, Plugins and wow last; wow's
   own four are marked "for workflow steps". On a new thread the list opens under the box, so the
   provider and project pickers stay in view.

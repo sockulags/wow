@@ -7,6 +7,7 @@ import {
   ImageIcon,
   InfoIcon,
   MessagesSquareIcon,
+  WrenchIcon,
   XIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -27,6 +28,7 @@ const prose = new Set(['md', 'markdown', 'txt']);
 function tabIcon(tab: Exclude<PanelTab, { kind: 'host' }>): LucideIcon {
   if (tab.kind === 'page') return BookOpenIcon;
   if (tab.kind === 'changes') return GitCompareIcon;
+  if (tab.kind === 'tools') return WrenchIcon;
   const kind = tab.file.read?.kind;
   const extension = fileLanguage(tab.file.path);
   if (kind === 'image' || (extension !== undefined && pictures.has(extension))) return ImageIcon;

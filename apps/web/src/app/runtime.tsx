@@ -87,11 +87,18 @@ export interface ViewerChanges {
   readonly from: string;
 }
 
+// What a chat thread's session can use (thread work spec 37) as a tab of the thread's panel.
+export interface ViewerTools {
+  readonly threadId: string;
+  readonly from: string;
+}
+
 export type PanelTab =
   | { readonly kind: 'file'; readonly id: string; readonly file: ViewerFile }
   | { readonly kind: 'page'; readonly id: string; readonly page: ViewerPage }
   | { readonly kind: 'host'; readonly id: string; readonly host: ViewerHostItem }
-  | { readonly kind: 'changes'; readonly id: string; readonly changes: ViewerChanges };
+  | { readonly kind: 'changes'; readonly id: string; readonly changes: ViewerChanges }
+  | { readonly kind: 'tools'; readonly id: string; readonly tools: ViewerTools };
 
 // The tabs of one view's panel (agent workbench spec 11 to 14). The panel's own body (Details,
 // or a run's conversation) is the tab `DETAILS_TAB`, always first and never closed.

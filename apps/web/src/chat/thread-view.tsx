@@ -98,6 +98,7 @@ import {
 import { ModelBar, useModelBarKeys, type ModelBarHandle, type ModelBarProps } from './model-bar';
 import { frontModelBar } from './model-commands';
 import { ThreadChangesChip } from './thread-changes';
+import { ToolsChip } from '@/panel/tools-tab';
 import { ThreadTitle } from './thread-title';
 import {
   finishedReasoning,
@@ -176,6 +177,7 @@ function ThreadHeader({
           </Badge>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          <ToolsChip threadId={thread.id} />
           {thread.runId === null && <ThreadChangesChip threadId={thread.id} />}
           <ConversationMenu />
           <IconButton
