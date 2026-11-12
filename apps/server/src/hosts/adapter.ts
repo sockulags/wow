@@ -3,6 +3,7 @@ import {
   type ChangeRequest,
   type HostErrorKind,
   type HostKind,
+  type Issue,
   type Page,
   type Ticket,
   type UnitRef,
@@ -45,6 +46,9 @@ export interface HostAdapter {
   findForBranch(branch: string): Promise<FoundChangeRequest | undefined>;
   // State, head commit, checks and review comments of one change request.
   read(found: FoundChangeRequest): Promise<HostChangeRequest>;
+  // One issue with its comments (agent workbench spec 21), for a link in a chat. GitHub numbers
+  // issues and pull requests together: `changeRequest` says the number is a pull request.
+  readIssue?(number: number): Promise<Issue | 'changeRequest'>;
   // How many requests this adapter has sent.
   readonly requests: number;
   // Set when the host said to leave it alone until then (its request limit is used up).

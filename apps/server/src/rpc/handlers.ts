@@ -22,6 +22,7 @@ import type { Db } from '../db/database.js';
 import { projects, threads, workflowRuns } from '../db/schema.js';
 import { listFolderFiles } from '../files/list.js';
 import { readViewerFile } from '../files/read.js';
+import type { HostLookup } from '../hosts/lookup.js';
 import type { HostPoller } from '../hosts/poller.js';
 import type { OutlookService } from '../outlook/service.js';
 import type { ProviderService } from '../providers/service.js';
@@ -59,6 +60,7 @@ export interface HandlerDeps {
   readonly providerUpdates: ProviderUpdates;
   readonly trackers: TrackerService;
   readonly hosts: HostPoller;
+  readonly hostLookup: HostLookup;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
   readonly discoverProjects: () => Promise<DiscoveredProject[]>;
   // Undefined until the Outlook service has started, or when the server runs without one.
@@ -202,6 +204,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     'skills.refresh': async () => ({ skills: inListOrder(await deps.skills.refresh()) }),
     'plans.refresh': async () => ({ intents: await deps.plans.refresh() }),
     'hosts.refresh': async (params) => ({ reads: await deps.hosts.refresh(params) }),
+    'hosts.lookup': (params) => deps.hostLookup.lookup(params),
     'projects.git': async () => ({ projects: await deps.trackers.projectsGit() }),
     'trackers.project': ({ projectId }) => deps.trackers.projectTrackers(projectId),
     'trackers.preview': ({ backlogItemId, service, projectId }) =>

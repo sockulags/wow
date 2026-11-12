@@ -30,8 +30,10 @@ import {
   Workflow,
   WorkflowRun,
 } from './projections.js';
+import { HostItemData, HostItemRead, HostItemRef } from './host-links.js';
 import {
   ChangeRequest,
+  HostError,
   HostKind,
   HostRead,
   HostReadOutcome,
@@ -541,6 +543,18 @@ export const InternalCommand = z.discriminatedUnion('type', [
     hostName: z.string(),
     reads: z.array(PageReadOutcome),
   }),
+  // What the host lookup read about one item a chat thread links to (agent workbench spec 22).
+  z.object({
+    type: z.literal('hosts.itemRead'),
+    threadId: Id,
+    at: Timestamp,
+    item: HostItemRef,
+    hostName: z.string(),
+    result: z.discriminatedUnion('ok', [
+      z.object({ ok: z.literal(true), data: HostItemData }),
+      z.object({ ok: z.literal(false), error: HostError.omit({ at: true }) }),
+    ]),
+  }),
   // Something a plan run depends on changed (its unit's run ended, or the plan's unit statuses
   // did): decide again what it does next. The plan runs service sends it.
   z.object({ type: z.literal('planRun.advance'), planRunId: Id }),
@@ -784,6 +798,12 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       changeRequests: z.array(ChangeRequest),
       removedChangeRequests: z.array(Id),
     }),
+  }),
+  // A chat thread's read of one linked item as it now is.
+  z.object({
+    kind: z.literal('hosts.itemRead'),
+    aggregate: Id,
+    payload: z.object({ read: HostItemRead }),
   }),
   // Ticket reads as they now are.
   z.object({

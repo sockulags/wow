@@ -4,6 +4,7 @@ import { AssistantChange, AssistantProposal } from './assistant.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RunDiff, RunDiffParams } from './diff.js';
 import { FileListParams, FileListResult, FileReadParams, FileReadResult } from './files.js';
+import { HostItemRead, HostLookupParams, HostLookupResult } from './host-links.js';
 import { ChangeRequest, HostRead, HostRefreshParams, PageRead, TicketRead } from './hosts.js';
 import {
   Approval,
@@ -71,6 +72,8 @@ export const subscriptionTopics = {
   hostReads: { row: HostRead, threadScoped: false },
   ticketReads: { row: TicketRead, threadScoped: false },
   pageReads: { row: PageRead, threadScoped: false },
+  // What was read about the items a chat thread links to (agent workbench spec 22).
+  hostItemReads: { row: HostItemRead, threadScoped: true },
   settings: { row: SettingRow, threadScoped: false },
   assistantChanges: { row: AssistantChange, threadScoped: false },
   assistantProposals: { row: AssistantProposal, threadScoped: false },
@@ -280,6 +283,13 @@ export const rpcMethods = {
   'hosts.refresh': {
     params: HostRefreshParams,
     result: z.object({ reads: z.array(HostRead) }),
+  },
+  // A chat thread's links (agent workbench spec 20 to 25): the sites and references wow may read
+  // for the thread, the item a link or reference names, and its read. Reads only when asked
+  // (`read`), never on a timer. A host that fails is an answer (the read's `error`).
+  'hosts.lookup': {
+    params: HostLookupParams,
+    result: HostLookupResult,
   },
   // Looks for each started step's expected artifacts in the project folder (behavior 26, run
   // view open) and stores what it finds.

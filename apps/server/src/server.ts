@@ -24,6 +24,7 @@ import {
   type ServerHooks,
   type ServiceContext,
 } from './hooks/index.js';
+import { HostLookup } from './hosts/lookup.js';
 import { HostPoller } from './hosts/poller.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
 import type { OutlookService } from './outlook/service.js';
@@ -114,6 +115,8 @@ export interface RunningServer {
   readonly scheduler: Scheduler;
   readonly trackers: TrackerService;
   readonly hosts: HostPoller;
+  // Reads the items chat threads link to, when asked (agent workbench spec 22).
+  readonly hostLookup: HostLookup;
   // Where the assistant's tools are reached and the token that opens them (see "Assistant").
   readonly assistant: AssistantEndpoint;
   readonly logger: Logger;
@@ -259,6 +262,15 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     ...(options.hostTimers ? { timers: options.hostTimers } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
+  const hostLookup = new HostLookup({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    linkHosts: (projectId) => trackers.linkHosts(projectId),
+    ...(options.clock ? { clock: options.clock } : {}),
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
   const planRuns = new PlanRuns({
     db: database.db,
     engine,
@@ -279,6 +291,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     providerUpdates,
     trackers,
     hosts,
+    hostLookup,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     discoverProjects: () =>
       discoverProjects({
@@ -475,6 +488,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     scheduler,
     trackers,
     hosts,
+    hostLookup,
     assistant: { ...assistantAccess, tools: assistantTools },
     logger,
     stop,

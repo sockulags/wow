@@ -398,6 +398,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'plans.sync': serverOnly,
   'hosts.sync': serverOnly,
   'tickets.sync': serverOnly,
+  'hosts.itemRead': serverOnly,
   'pages.sync': serverOnly,
   'planRun.advance': serverOnly,
   'workflowRun.stepCompleted': serverOnly,

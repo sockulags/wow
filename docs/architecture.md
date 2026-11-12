@@ -3378,6 +3378,72 @@ Escape, Ctrl+P), `components/file-links.test.tsx`, `panel/file-list.test.ts`,
 tab" and "mentions a file with @" in `panel.spec.ts` (the panel copy's project holds invented
 `src/timer.ts` and `docs/spec.md`, and the mock answers "show the file" with those paths).
 
+### Host links in chat
+
+Agent workbench spec 19 to 26. A link in a chat message to a pull or merge request, an issue, a
+Jira issue or a Confluence page on one of the user's hosts is a chip that opens the item in a
+panel tab. Nothing new is polled: an item is read when its tab opens and on Refresh now, and the
+read is stored for the thread (decided in the spec's Interface: chat links are many and mostly
+looked at once).
+
+**Recognition** (`packages/contracts/src/host-links.ts`, shared by the server and the web app so
+a chip is exactly what the server will read). `HostLinkRules` are the thread's sites
+(`HostLinkSite`: host kind, web base, name), the project's repository (GitHub or GitLab, with
+its path) and the project's Jira key. `recogniseHostLink(url, rules)` reads
+`<base>/<owner>/<repo>/pull|issues/<n>` (GitHub; the web base comes from the API URL with
+`gitHubWebBase`: `api.` hosts lose it, Enterprise Server loses `/api/v3`),
+`<base>/<path>/-/merge_requests|issues/<n>` (GitLab), `<base>/browse/<KEY-n>` (Jira) and the
+three Confluence page forms; anything else, an address with a user name or password, and any
+other scheme stay plain links. `bareHostRefs(text, rules)` finds `KEY-n` for the project's Jira
+key and `#n` (and `!n` on GitLab) for its repository, never inside a word, path or address.
+`recogniseHostRef` takes one address or one key (the palette and `hosts.lookup`). A thread
+without a project has no repository or key, so its bare references stay text; its links still
+resolve against Settings → Trackers. `HostItemRef` names one item (host, kind, site, path, id,
+url); GitHub numbers issues and pull requests together, so a bare `#14` there is an `issue`
+until the read says it is a pull request.
+
+**Server.** `TrackerService.linkHosts(projectId | null)` answers the rules and, for the server
+only, each site's token: a site is in the rules only with its settings and a token (GitHub with
+the same rule as the poller for a remote's host). `HostLookup` (`apps/server/src/hosts/lookup.ts`)
+answers RPC `hosts.lookup {threadId, ref?, read?}` with `{rules, item, read}`: without `ref` the
+rules; with it the item it names (null for a plain link) and the stored read; `read: 'open'`
+reads the item only when the thread has no read of it, `read: 'refresh'` always. One read per
+item at a time. Each read builds the adapter of the item's site with that site's token, so a
+token never goes anywhere else, and goes through the internal command `hosts.itemRead`
+(`decideHostItemRead` in `core/hosts.ts`) to the event `hosts.itemRead` and the
+`host_item_reads` table (migration 0028), topic `hostItemReads` (thread-scoped). `HostItemRead`
+has scope `thread` (`HostReadScope` gained it; the poller's rows use `PolledHostScope`), the
+item, `data` (`HostItemData`: a change request, an `Issue`, a `Ticket` or a `Page`), `fetchedAt`
+and `error`; a failed read keeps the last data and its time beside the error. GitHub and GitLab
+adapters gained `readIssue(number)` (GitHub answers `changeRequest` when the number is a pull
+request); the mocks gained `issues`. The assistant's thread is refused, and nothing read is ever
+put into a prompt.
+
+**Web.** `chat/host-links.tsx`: `useHostLinkRules(threadId)` (asked again when the settings or
+projects topics change), `HostLinkContext` (provided by `ThreadConversation` next to
+`FileLinkContext`, not for the Assistant), `HostChip` (icon, key, and once read the state: "PR
+#14 · Draft · 2 checks failed", "DEMO-42 · To Do", a page's title; Enter or click opens the tab,
+Shift+Enter or Shift+click the browser), `hostItemLabel`, `hostItemState`, `hostItemsIn`. The
+markdown body turns recognised links and inline code into chips, and a remark step marks bare
+references in text (`wow-host-ref:` links the anchor turns into chips). Panel tab kind `host`
+(`ViewerHostItem {threadId, item, from}`, `openHostItem` in `panel/viewer.ts`) renders
+`panel/host-tab.tsx`: it asks `hosts.lookup` with `open` when shown, shows the stored read with
+`HostReadLine` (Last fetched, Refresh now, Open on host) and the body the run's tabs share
+(`ChangeRequestBody`, `TicketBody`, `PageBody` and the new `IssueBody`). Palette:
+`panel.openHostItem` ("Open issue, PR or ticket…", a dialog taking an address or key) while a
+chat thread is open, and `panel.host.refresh`, `panel.host.openOnHost` while a host tab is
+shown. `chat/pasted-links.tsx` shows chips with "Open in panel" above the composer for links in
+the draft; it listens to `drafts.ts` (`onDraftChange`, `draftText`), so the composer is not
+involved. Details lists "Mentioned" (`threadMentions` in `panel/thread-panel.tsx`): the
+thread's file paths and host items, each opening a tab.
+
+Tests: `apps/server/src/hosts/links.test.ts` (lookup per host, read once and on Refresh now, no
+poll, token host check, refused read, bare references, nothing in a prompt),
+`apps/web/src/chat/host-links.test.tsx` (link and key recognition, chips, Shift+Enter,
+Mentioned), the e2e case "opens a pull request and a Jira issue from a chat link" in
+`hosts.spec.ts` (the mock answers "link the work" with those links) and its sketch
+`host-chip.png`.
+
 ## Backlog and trackers
 
 `apps/server/src/core/backlog.ts` decides `backlog.create|update|delete|restore|plan` and the

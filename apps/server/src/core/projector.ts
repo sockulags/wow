@@ -25,6 +25,7 @@ import {
   changeRequests,
   events,
   hostReads,
+  hostItemReads,
   ticketReads,
   pageReads,
   notifications,
@@ -169,6 +170,14 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           .run();
       }
       return ['hostReads', 'changeRequests'];
+    }
+    case 'hosts.itemRead': {
+      const { read } = event.payload;
+      tx.insert(hostItemReads)
+        .values(read)
+        .onConflictDoUpdate({ target: hostItemReads.id, set: read })
+        .run();
+      return ['hostItemReads'];
     }
     case 'tickets.synced':
       for (const read of event.payload.reads) {
@@ -723,6 +732,7 @@ export function readModel(tx: DbOrTx): ReadModel {
         .find((row) => isLivePlanRunState(row.state)),
     hostReads: (projectId) =>
       tx.select().from(hostReads).where(eq(hostReads.projectId, projectId)).all(),
+    hostItemRead: (id) => tx.select().from(hostItemReads).where(eq(hostItemReads.id, id)).get(),
     ticketReads: (projectId) =>
       tx.select().from(ticketReads).where(eq(ticketReads.projectId, projectId)).all(),
     pageReads: (projectId) =>

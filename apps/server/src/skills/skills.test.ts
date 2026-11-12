@@ -82,6 +82,7 @@ const rpcDispatch = (command: ServerCommand) => {
     db: undefined as never,
     skills: server.skills,
     hosts: undefined as never,
+    hostLookup: undefined as never,
     plans: undefined as never,
     workflows: undefined as never,
     providers: undefined as never,
