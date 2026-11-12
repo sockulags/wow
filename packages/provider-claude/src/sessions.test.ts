@@ -140,4 +140,27 @@ describe('listClaudeSessions (agent workbench spec 72)', () => {
       await listClaudeSessions(path.join(configDir, 'missing'), { limit: 5, promptChars: 50 }),
     ).toEqual([]);
   });
+
+  it('skips the IDE context sent ahead of the prompt (finding 140)', async () => {
+    await session(
+      '-work-kettle',
+      'abab.jsonl',
+      [
+        user([
+          {
+            type: 'text',
+            text: '<ide_opened_file>The user opened the file /work/kettle/spout.ts in the IDE. This may or may not be related to the current task.</ide_opened_file>',
+          },
+          { type: 'text', text: '<ide_selection>Invented selection</ide_selection>' },
+          { type: 'text', text: 'Invented: the real prompt' },
+        ]),
+      ],
+      '2026-11-09T08:00:00.000Z',
+    );
+    expect(
+      (await listClaudeSessions(configDir, { limit: 5, promptChars: 200 })).map(
+        (found) => found.firstPrompt,
+      ),
+    ).toEqual(['Invented: the real prompt']);
+  });
 });

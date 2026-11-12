@@ -38,12 +38,14 @@ const ownTags = new Set([
   'bash-stdout',
   'bash-stderr',
   'task-notification',
+  'ide_opened_file',
+  'ide_selection',
 ]);
 
 function promptText(text: string): string | undefined {
   const trimmed = text.trim();
   if (trimmed === '') return undefined;
-  const opening = /^<([a-z][a-z-]*)>/.exec(trimmed)?.[1];
+  const opening = /^<([a-z][a-z_-]*)>/.exec(trimmed)?.[1];
   if (opening === undefined || !ownTags.has(opening)) return trimmed;
   const command = tag(trimmed, 'command-name');
   if (command === undefined) return undefined;
@@ -64,7 +66,12 @@ function userText(content: unknown): string | undefined {
       ? [block.text]
       : [],
   );
-  return texts.length === 0 ? undefined : promptText(texts.join('\n'));
+  // Claude Code sends an IDE's context as blocks of its own ahead of the user's.
+  for (const text of texts) {
+    const prompt = promptText(text);
+    if (prompt !== undefined) return prompt;
+  }
+  return undefined;
 }
 
 async function readSession(

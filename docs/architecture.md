@@ -1794,8 +1794,10 @@ name that is taken, so the folder check and name rule above apply.
 `<configDir>/projects/*/<id>.jsonl` (the file name is the id `resume` takes; `agent-*` subagent
 transcripts are left out), the first `cwd` of the file, and as first prompt the first `user` line
 that is the user's own text (not `isMeta`, not a subagent's, not a tool result; a slash command
-reads as its name and arguments from Claude Code's `<command-name>` markup, and a line that starts
-with one of Claude Code's own tags is skipped, while other text starting with `<` is the user's);
+reads as its name and arguments from Claude Code's `<command-name>` markup, and a line or text
+block that starts with one of Claude Code's own tags, such as an IDE's `<ide_opened_file>` or
+`<ide_selection>`, is skipped, while other text starting with `<` is the user's; each text block
+of a line is judged on its own);
 `listCodexSessions(codexHome, …)` in `packages/provider-codex/src/sessions.ts` takes every
 `<codexHome>/sessions/**/*.jsonl`, the `session_meta` id and `cwd` (older rollouts: the top-level
 fields, else the id in the file name) and as first prompt the first `user_message` event, else the
