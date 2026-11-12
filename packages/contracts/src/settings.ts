@@ -126,6 +126,11 @@ export const SettingPersonal = z.enum(['account', 'machine', 'person']);
 export type SettingPersonal = z.infer<typeof SettingPersonal>;
 
 // Which chat threads notify (agent workbench spec 65).
+// Which key sends the composer's message (agent workbench spec 97). With Ctrl+Enter, Enter makes
+// a new line; Shift+Enter always does.
+export const ChatSendKey = z.enum(['enter', 'modEnter']);
+export type ChatSendKey = z.infer<typeof ChatSendKey>;
+
 export const ChatNotifications = z.enum(['off', 'needsYou', 'needsYouAndFinished']);
 export type ChatNotifications = z.infer<typeof ChatNotifications>;
 
@@ -443,6 +448,38 @@ export const settingsRegistry = {
       'Show the first-start step "Connect an agent" in front of the app while there is no provider instance at all; an install with an instance is never held behind it. It turns off once one passes, so a provider removed later does not hide the app again; the Assistant view then shows the same step.',
     default: true,
     scope: 'global',
+  }),
+  'providers.sessionListLimit': defineSetting({
+    schema: z.number().int().min(1).max(1000),
+    group: 'providers',
+    label: 'Sessions listed per instance',
+    description:
+      '"Open session from Claude Code / Codex…" lists at most this many of the newest sessions each provider instance keeps in its own files.',
+    default: 50,
+    scope: 'global',
+  }),
+  'providers.sessionPromptChars': defineSetting({
+    schema: z.number().int().min(20).max(10_000),
+    group: 'providers',
+    label: 'First prompt shown for a session',
+    description:
+      'How many characters of a session\'s first prompt "Open session from Claude Code / Codex…" shows; the rest is cut. The new thread is named after it.',
+    default: 200,
+    scope: 'global',
+  }),
+  'chat.sendKey': defineSetting({
+    schema: ChatSendKey,
+    group: 'chat',
+    label: 'Send key',
+    description:
+      'The key that sends a message from the composer. Shift+Enter always makes a new line.',
+    default: 'enter',
+    scope: 'global',
+    radio: true,
+    options: {
+      enter: { label: 'Enter', description: 'Enter sends; Shift+Enter makes a new line.' },
+      modEnter: { label: 'Ctrl+Enter', description: 'Ctrl+Enter sends; Enter makes a new line.' },
+    },
   }),
   'chat.contextMeter': defineSetting({
     schema: z.boolean(),
@@ -1622,8 +1659,9 @@ export const settingsRegistry = {
   'keybindings.goCalendar': keybinding('Go to Calendar', 'Open the calendar.', 'Mod+1'),
   'keybindings.goChat': keybinding('Go to Chat', 'Open the chat.', 'Mod+2'),
   'keybindings.goWorkflows': keybinding('Go to Workflows', 'Open the workflows.', 'Mod+3'),
-  'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+4'),
-  'keybindings.goPlans': keybinding('Go to Plans', 'Open the plans.', 'Mod+5'),
+  // Ctrl+1 to Ctrl+6 follow the sidebar's order (agent workbench spec 92).
+  'keybindings.goPlans': keybinding('Go to Plans', 'Open the plans.', 'Mod+4'),
+  'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+5'),
   'keybindings.goAssistant': keybinding(
     'Go to Assistant',
     'Open the assistant, the chat that runs wow for you.',

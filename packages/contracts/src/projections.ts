@@ -37,8 +37,12 @@ export const Project = z.object({
   id: Id,
   name: z.string().min(1),
   cwd: z.string().min(1),
+  // What a new thread in the project starts from (agent workbench spec 97); null leaves it to the
+  // instance and the last thread. Absent in rows sent before the effort and mode were kept.
   defaultProviderInstanceId: Id.nullable(),
   defaultModel: z.string().min(1).nullable(),
+  defaultEffort: z.string().min(1).nullable().optional(),
+  defaultPermissionMode: z.string().min(1).nullable().optional(),
   createdAt: Timestamp,
 });
 export type Project = z.infer<typeof Project>;

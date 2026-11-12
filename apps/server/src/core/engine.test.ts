@@ -112,6 +112,8 @@ describe('subscribers after commit', () => {
       cwd: '/work/wow',
       defaultProviderInstanceId: null,
       defaultModel: null,
+      defaultEffort: null,
+      defaultPermissionMode: null,
       createdAt: '2026-11-02T08:00:00.000Z',
     };
     expect(pushes).toEqual([{ id: projects.subscriptionId, data: [expected] }]);

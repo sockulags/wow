@@ -184,9 +184,9 @@ export const TicketSource = z.enum(['backlog', 'pullRequest', 'branch']);
 export type TicketSource = z.infer<typeof TicketSource>;
 
 export const ticketSourceLabels: Readonly<Record<TicketSource, string>> = {
-  backlog: 'the issue its backlog item was published as',
-  pullRequest: 'the title of its pull request',
-  branch: 'the name of its branch',
+  backlog: "From the backlog item's Jira issue",
+  pullRequest: "From the pull request's title",
+  branch: 'From the branch name',
 };
 
 // What was last read about one run's ticket. `key` is null when the run has none; a failed read

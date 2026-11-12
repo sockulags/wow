@@ -91,6 +91,8 @@ export const Command = z.discriminatedUnion('type', [
     cwd: z.string().trim().min(1),
     defaultProviderInstanceId: Id.optional(),
     defaultModel: z.string().min(1).optional(),
+    defaultEffort: z.string().min(1).optional(),
+    defaultPermissionMode: z.string().min(1).optional(),
   }),
   z.object({
     type: z.literal('project.update'),
@@ -99,6 +101,8 @@ export const Command = z.discriminatedUnion('type', [
     cwd: z.string().trim().min(1).optional(),
     defaultProviderInstanceId: Id.nullable().optional(),
     defaultModel: z.string().min(1).nullable().optional(),
+    defaultEffort: z.string().min(1).nullable().optional(),
+    defaultPermissionMode: z.string().min(1).nullable().optional(),
   }),
   // Refused while a run in the project is live. Cards lose the project and their pending trigger;
   // threads keep their folder; finished runs keep the id.
@@ -155,6 +159,10 @@ export const Command = z.discriminatedUnion('type', [
     // the fields above say is not used then). The provider forks its own conversation at the
     // next message. Refused where the provider cannot go back, or the turn gave no point to.
     forkFrom: ForkOrigin.optional(),
+    // "Open session from Claude Code / Codex…" (agent workbench spec 72): the session of the
+    // provider CLI this thread goes on with. Its first message resumes it, as a thread's own
+    // stored session would.
+    resumeSessionId: z.string().min(1).optional(),
   }),
   // Makes the one assistant thread, or brings it in line with the provider instance, model and
   // effort the settings name now (app assistant spec 1). Refused with the reason when no
@@ -728,6 +736,8 @@ export const ProjectChanges = Project.pick({
   cwd: true,
   defaultProviderInstanceId: true,
   defaultModel: true,
+  defaultEffort: true,
+  defaultPermissionMode: true,
 }).partial();
 export type ProjectChanges = z.infer<typeof ProjectChanges>;
 

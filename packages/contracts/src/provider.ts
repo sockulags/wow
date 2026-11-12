@@ -417,7 +417,7 @@ export const providerChatOptions: Readonly<Record<ProviderKind, ProviderChatOpti
       { id: 'acceptEdits', label: 'Accept edits', tone: 'edits' },
       { id: 'plan', label: 'Plan only', tone: 'plan' },
       { id: 'auto', label: 'Auto' },
-      { id: 'dontAsk', label: 'Do not ask (deny what is not allowed)', short: 'Do not ask' },
+      { id: 'dontAsk', label: 'Deny unless allowed' },
       { id: 'bypassPermissions', label: 'Bypass permissions', tone: 'danger' },
     ],
     defaultEffort: 'default',
@@ -510,6 +510,38 @@ export const ProviderFolder = z.object({
   lastUsedAt: z.iso.datetime({ offset: true }).nullable(),
 });
 export type ProviderFolder = z.infer<typeof ProviderFolder>;
+
+// A session a provider CLI keeps in its own files (agent workbench spec 72), as its adapter
+// package read it: the id the CLI resumes it by, the folder it ran in, the first thing the user
+// typed (null when the file has none) and when the file last changed.
+export const ProviderSession = z.object({
+  id: z.string().min(1),
+  cwd: z.string().min(1),
+  firstPrompt: z.string().nullable(),
+  lastUsedAt: z.iso.datetime({ offset: true }).nullable(),
+});
+export type ProviderSession = z.infer<typeof ProviderSession>;
+
+// A session's first prompt on one line, cut after `chars` characters
+// (`providers.sessionPromptChars`).
+export const cutSessionPrompt = (text: string, chars: number): string => {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const shown = [...flat];
+  return shown.length <= chars ? flat : `${shown.slice(0, chars).join('').trimEnd()}…`;
+};
+
+// What `provider.listSessions` answers per session: the session, the instance whose files hold
+// it, the project its folder is (if any), the wow thread that already resumes it (if any), and
+// why it cannot be opened (its folder is gone), else null.
+export const TerminalSession = ProviderSession.extend({
+  providerInstanceId: z.string().min(1),
+  providerInstanceName: z.string(),
+  kind: ProviderKind,
+  projectId: z.string().min(1).nullable(),
+  threadId: z.string().min(1).nullable(),
+  unavailable: z.string().min(1).nullable(),
+});
+export type TerminalSession = z.infer<typeof TerminalSession>;
 
 // What `projects.discover` answers: one row per existing folder that is not a project yet, with
 // the provider instances that worked in it.

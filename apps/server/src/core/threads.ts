@@ -609,6 +609,9 @@ export function decideThread(
         );
       }
       if (command.forkFrom) {
+        if (command.resumeSessionId !== undefined) {
+          throw new CommandRejected('rejected', 'A thread forks or resumes a session, not both');
+        }
         return forkEvents(read, command.threadId, command.forkFrom, command.title, now);
       }
       if (command.projectId !== undefined && !read.project(command.projectId)) {
@@ -624,7 +627,8 @@ export function decideThread(
             cwd: command.cwd,
             branch: command.branch ?? null,
             providerInstanceId: command.providerInstanceId,
-            providerSessionId: null,
+            // A session started in a terminal goes on in this thread (agent workbench spec 72).
+            providerSessionId: command.resumeSessionId ?? null,
             title: command.title ?? '',
             model: command.model,
             effort: command.effort,

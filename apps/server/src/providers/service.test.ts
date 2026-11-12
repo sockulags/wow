@@ -396,6 +396,42 @@ describe('provider service', () => {
     expect(rows('turns').map((turn) => turn['id'])).toEqual(['t1:turn:0', 't1:turn:1']);
   });
 
+  it('resumes a session started in a terminal from the first message of its thread (spec 72)', async () => {
+    dispatch({
+      type: 'thread.create',
+      threadId: 't2',
+      providerInstanceId: 'claude-work',
+      cwd: '/work/kettle',
+      title: 'Make the kettle whistle twice',
+      model: 'sonnet',
+      effort: 'high',
+      permissionMode: 'default',
+      resumeSessionId: 'terminal-session-1',
+    });
+    const created = (
+      snapshot(database.db, { topic: 'threads' }) as Array<Record<string, unknown>>
+    ).find((row) => row['id'] === 't2');
+    expect(created?.['providerSessionId']).toBe('terminal-session-1');
+    dispatch({ type: 'thread.sendMessage', threadId: 't2', text: 'Go on' });
+    await service.idle();
+    expect(
+      adapter.sent.find((command) => command.type === 'startTurn' && command.threadId === 't2'),
+    ).toMatchObject({ cwd: '/work/kettle', prompt: 'Go on', resumeId: 'terminal-session-1' });
+    expect(() =>
+      dispatch({
+        type: 'thread.create',
+        threadId: 't3',
+        providerInstanceId: 'claude-work',
+        cwd: '/work/kettle',
+        model: 'sonnet',
+        effort: 'high',
+        permissionMode: 'default',
+        resumeSessionId: 'terminal-session-1',
+        forkFrom: { threadId: 't2', turnId: 't2:turn:0' },
+      }),
+    ).toThrow('A thread forks or resumes a session, not both');
+  });
+
   it('pins and unpins a thread without touching its activity time', () => {
     const before = rows('threads')[0];
     expect(dispatch({ type: 'thread.setPinned', threadId: 't1', pinned: true }).seqs).toHaveLength(

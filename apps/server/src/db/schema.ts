@@ -82,6 +82,8 @@ export const projects = sqliteTable('projects', {
   cwd: text().notNull(),
   defaultProviderInstanceId: text(),
   defaultModel: text(),
+  defaultEffort: text(),
+  defaultPermissionMode: text(),
   createdAt: text().notNull(),
 });
 

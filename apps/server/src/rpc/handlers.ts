@@ -6,6 +6,7 @@ import {
   type Command,
   type DetectedProvider,
   type DiscoveredProject,
+  type TerminalSession,
   type FileScope,
 } from '@wow/contracts';
 import { OutlookError } from '@wow/outlook-bridge';
@@ -66,6 +67,7 @@ export interface HandlerDeps {
   readonly images: ImageStore;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
   readonly discoverProjects: () => Promise<DiscoveredProject[]>;
+  readonly listSessions: (providerInstanceId?: string) => Promise<TerminalSession[]>;
   // Undefined until the Outlook service has started, or when the server runs without one.
   readonly outlook: () => OutlookService | undefined;
   readonly info: { readonly version: string; readonly home: string };
@@ -207,6 +209,9 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         listModels: (providerInstanceId) => deps.providers.listModels(providerInstanceId),
       }),
     'projects.discover': async () => ({ projects: await deps.discoverProjects() }),
+    'provider.listSessions': async ({ providerInstanceId }) => ({
+      sessions: await deps.listSessions(providerInstanceId),
+    }),
     'secrets.set': ({ name, value }) => deps.secrets.set(name, value),
     'secrets.delete': async ({ name }) => ({ removed: await deps.secrets.delete(name) }),
     'outlook.open': async ({ entryId }) => {

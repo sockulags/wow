@@ -159,7 +159,8 @@ projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see 
 ## Data model (projections)
 
 ```text
-projects         id, name, cwd, defaultProviderInstanceId, defaultModel, createdAt
+projects         id, name, cwd, defaultProviderInstanceId, defaultModel, defaultEffort,
+                 defaultPermissionMode, createdAt
 provider_instances id, kind ('claude'|'codex'), name, binaryPath, configDir, env(json, secret keys by ref),
                  launchArgs, defaultModel, defaultEffort, defaultPermissionMode, status, account,
                  version?, statusMessage?, update(json)?   -- from the last "Test"
@@ -1533,12 +1534,13 @@ A group marked with a unit (`(U12)`) belongs to a unit not delivered yet; its ke
 until that unit removes the mark. `group.*` covers every key of the group.
 
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
-  `providers.offerSetup`
+  `providers.offerSetup`, `providers.sessionListLimit`, `providers.sessionPromptChars` (see
+  "Sessions started in a terminal" under "Projects")
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.toolOutputLines`,
   `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
   `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength`, `chat.editDiffMaxLines` (see "Chat
   view"), `chat.contextWarnPercent`, `chat.reasoningOpen` (see "Conversation reading"), `chat.fileTrigger` (see "Panel tabs and files in chat"), `chat.imageMaxBytes` (see
-  "Images in the composer")
+  "Images in the composer"), `chat.sendKey` (see "Chat view")
 - approvals: `approvals.alwaysAllow` (project-scoped; the "Approvals" page, see "Edits, approvals
   and a thread's Changes")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
@@ -1784,6 +1786,47 @@ macOS), relative paths, folders that no longer exist and folders that already ar
 left out, and the rest come back newest first with the instances that used them. Discovery never
 writes. The web app imports the checked rows as ordinary `project.create` commands, numbering a
 name that is taken, so the folder check and name rule above apply.
+
+**Sessions started in a terminal** ("Open session from Claude Code / Codex…", agent workbench
+spec 72). The adapter packages read their CLI's session files the way discovery does, one
+`ProviderSession {id, cwd, firstPrompt, lastUsedAt}` per file: `listClaudeSessions(configDir,
+{limit, promptChars})` in `packages/provider-claude/src/sessions.ts` takes
+`<configDir>/projects/*/<id>.jsonl` (the file name is the id `resume` takes; `agent-*` subagent
+transcripts are left out), the first `cwd` of the file, and as first prompt the first `user` line
+that is the user's own text (not `isMeta`, not a subagent's, not a tool result; a slash command
+reads as its name and arguments from Claude Code's `<command-name>` markup);
+`listCodexSessions(codexHome, …)` in `packages/provider-codex/src/sessions.ts` takes every
+`<codexHome>/sessions/**/*.jsonl`, the `session_meta` id and `cwd` (older rollouts: the top-level
+fields, else the id in the file name) and as first prompt the first `user_message` event, else
+the first user message that is not one of Codex's own `<…>` notes. Only the newest
+`providers.sessionListLimit` files by modification time are opened, each read line by line and
+closed at the first prompt, and the prompt is cut to `providers.sessionPromptChars`
+(`cutSessionPrompt` in contracts). `apps/server/src/providers/sessions.ts`
+(`listTerminalSessions`) asks every instance (or the one `provider.listSessions
+{providerInstanceId?}` names) with its config directory or the default one, reads a config
+directory once when two instances share it, drops relative folders, and answers
+`TerminalSession` rows newest first: the session plus its instance, the `projectId` whose folder
+it is (compared as discovery compares folders), the `threadId` of a wow thread whose
+`providerSessionId` it already is, and `unavailable: "Its folder is gone"` when the folder no
+longer exists. Nothing is written and nothing is cached: the CLIs write these files while wow
+is not looking, so the list is read each time the dialog opens.
+The web app's `chat/terminal-sessions.tsx` (`TerminalSessionsDialog`, palette `chat.openSession`,
+layout `sessionDialog`) lists them per folder (`sessionsByFolder`, project name first), each with
+its first prompt ("No prompt" when there is none), provider, instance and time; a gone folder's
+session is greyed and cannot be picked. A pick opens the thread that already resumes it, or
+dispatches `thread.create` with `resumeSessionId`, the session's folder and project, the title
+from its first prompt and the start a new thread there would get (`threadDefaults`), then opens
+it. The server stores `resumeSessionId` as the thread's `providerSessionId`, so the first message
+goes out with it as `resumeId` like any later turn; `forkFrom` and `resumeSessionId` together are
+refused.
+
+**New thread defaults** (agent workbench spec 97). A project holds `defaultProviderInstanceId`,
+`defaultModel`, `defaultEffort` and `defaultPermissionMode` (the last two since migration
+`0033_project_thread_defaults`; absent or null in older rows), set in Settings → Projects with
+"Thread defaults" or the palette's "New thread defaults for project …" (`project.update`). A new
+thread in the project picks that instance unless the draft picked another, and on it starts with
+the project's model, effort and mode over the last thread's and the instance's (`threadDefaults`
+in `chat/new-thread.tsx`); a model the instance does not list is not used.
 
 **Folder picker.** The desktop preload exposes `window.wowDesktop.pickFolder`, which invokes
 `wow:pick-folder`; the main process answers only `wow://app` pages and shows Electron's
@@ -2847,9 +2890,11 @@ while the thread is `working` or `needs_you`, and `turn.started` makes a done th
 again, so a new message reopens it. A workflow step's thread becomes `done` through the engine's
 `setThreadState` effect when the step completes (after Continue when the step has a gate after).
 
-The draft's defaults come from server rows, not browser storage (owner decision F-5): the newest
-thread that no run started gives the instance, and on that instance its model, effort and
-permission mode, and its project or folder; then the instance defaults. Folders used without a
+The draft's defaults come from server rows, not browser storage (owner decision F-5): the
+project's new thread defaults (see "Projects"), then the newest thread that no run started gives
+the instance, and on that instance its model, effort and permission mode, and its project or
+folder; then the instance defaults. `chat.sendKey` picks the key that sends: Enter (Shift+Enter
+makes a new line) or Ctrl+Enter, with which a plain Enter makes a new line (spec 97). Folders used without a
 project (`recentFolders` over `threads`) and "Another folder…" (`Runtime.pickFolder`, a typed path
 in the browser build) replace a separate working-directory field. Starters under the composer come
 from `skills`, open `backlogItems` and the last active thread (`chat.starterCount`). The composer
@@ -3423,6 +3468,27 @@ approval), and "Finished: <thread>" (`kind` `finished`, id `<turnId>:finished`) 
 ran longer than `chat.finishedAfterSeconds` completes or fails; a turn the user stopped tells
 nothing. `path` is `/chat/<threadId>`. The web toaster and the desktop skip a row whose
 `threadId` is the thread on screen in a focused window.
+
+### Labels, keys and wording (agent workbench U14)
+
+- **Models by label** (spec 86). `chat/model-label.tsx` has `modelLabel(models, id)` (the
+  provider's label, else the id) and `ModelName {providerInstanceId, model, plain?}`, which reads
+  `provider.listModels` through `useModels` and shows the id in a tooltip (`plain`: the
+  browser's own `title`, for a place that is itself a button). The builder's step summary, the
+  run view's step rows and the Assistant header use it; the conversation's settings dividers use
+  `modelLabel`.
+- **Keys** (spec 92). The section keys follow the sidebar: Ctrl+4 is Plans
+  (`keybindings.goPlans`) and Ctrl+5 Backlog (`keybindings.goBacklog`).
+- **Palette** (spec 93). The palette (and the sessions dialog) sit at 12 % of the window's
+  height instead of its middle, so the input stays put as the results change.
+- **Wording** (spec 98). A run or card waiting at a gate reads "Waiting for you" (the Path tab's
+  last row, the calendar's card state); the Ticket tab says where the key came from as "From the
+  backlog item's Jira issue", "From the pull request's title" or "From the branch name"
+  (`ticketSourceLabels`); the run view's own panel offers no "Open run" (`RunStepThread`
+  `runOnScreen`); Claude Code's `dontAsk` mode is "Deny unless allowed"; a step under a second
+  "Took under 1 s" (`tookText` in `lib/format.ts`).
+- **Diagrams** (spec 99). `drawDiagram` sets the theme variable `edgeLabelBackground` to
+  `transparent`, so an edge label has no box in either theme.
 
 ## Workflow builder and run view
 
