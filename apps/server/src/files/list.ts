@@ -32,6 +32,9 @@ function gitFiles(folder: string, limit: number, options: GitRunOptions): Promis
     let rest = '';
     let truncated = false;
     let done = false;
+    // At the limit git is stopped and the answer waits for it to be gone: on Windows a git that
+    // is still running holds the folder.
+    let stopped = false;
     const finish = (value: GitList) => {
       if (done) return;
       done = true;
@@ -48,10 +51,11 @@ function gitFiles(folder: string, limit: number, options: GitRunOptions): Promis
       rest = parts.pop() ?? '';
       for (const part of parts) {
         if (part === '') continue;
+        if (stopped) return;
         if (files.size >= limit) {
           truncated = true;
+          stopped = true;
           child.kill();
-          finish({ files: [...files], truncated });
           return;
         }
         // A file both tracked and changed is listed once.
@@ -60,6 +64,7 @@ function gitFiles(folder: string, limit: number, options: GitRunOptions): Promis
     });
     child.on('error', () => finish(undefined));
     child.on('close', (code) => {
+      if (stopped) return finish({ files: [...files], truncated });
       if (code !== 0) return finish(undefined);
       if (rest !== '' && files.size < limit) files.add(rest);
       finish({ files: [...files], truncated });
