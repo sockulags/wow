@@ -21,6 +21,7 @@ import { EmptyState } from '@/components/states';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
+import { rowActionScope } from '@/lib/row-actions';
 import { cn } from '@/lib/utils';
 import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
@@ -408,7 +409,7 @@ export function ThreadConversation({
         data-testid="conversation"
       >
         <div className={column}>
-          <ol aria-label="Conversation" className="flex flex-col gap-3">
+          <ol aria-label="Conversation" className="flex flex-col gap-3" onFocus={rowActionScope}>
             {entries.map((entry, index) => {
               const tail = entry.kind === 'item' ? entry.item : entry.items.at(-1);
               const after = tail && afters.get(tail.id);

@@ -1,6 +1,8 @@
 import { ChevronRightIcon } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import type { ToolKind } from '@wow/contracts';
+import { copyText } from '@/components/copy-button';
+import { useRowActions } from '@/lib/row-actions';
 import { cn } from '@/lib/utils';
 
 // What a tool row is drawn from: its one line, and what it shows when opened. The body is only
@@ -14,14 +16,30 @@ export function ToolRowFrame({
   parts,
   kind,
   failed,
+  output = '',
 }: {
   parts: ToolParts;
   kind: ToolKind | undefined;
   failed: boolean;
+  // What the call printed, which the row copies from the palette while it has the focus.
+  output?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const actions = useRowActions(
+    output === ''
+      ? []
+      : [
+          {
+            id: 'copyOutput',
+            title: 'Copy output',
+            keywords: ['copy', 'tool', 'clipboard'],
+            run: () => copyText(output),
+          },
+        ],
+  );
   return (
     <details
+      {...actions}
       data-tool-kind={kind ?? 'old'}
       className={cn(
         'group rounded-md border text-xs',

@@ -1,7 +1,8 @@
 import type { BundledLanguage, BundledTheme, HighlighterGeneric } from 'shiki/bundle/web';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
-import { CopyButton } from './copy-button';
+import { useRowActions } from '@/lib/row-actions';
+import { CopyButton, copyText } from './copy-button';
 
 // Highlighted code (audit A-24) for chat code blocks, tool output and markdown previews. Shiki
 // loads on first use, in its own chunk, with the JavaScript regex engine (no WebAssembly). Until it
@@ -61,9 +62,21 @@ export function CodeBlock({
 }) {
   const block = <HighlightedCode code={code} language={language} className={className} />;
   if (!copy) return block;
+  return <CopyableCode code={code}>{block}</CopyableCode>;
+}
+
+function CopyableCode({ code, children }: { readonly code: string; readonly children: ReactNode }) {
+  const actions = useRowActions([
+    {
+      id: 'copyCode',
+      title: 'Copy code',
+      keywords: ['copy', 'snippet', 'clipboard'],
+      run: () => copyText(code),
+    },
+  ]);
   return (
-    <div className="group/code relative">
-      {block}
+    <div className="group/code relative" {...actions}>
+      {children}
       <CopyButton
         text={code}
         label="Copy code"

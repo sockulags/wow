@@ -12,7 +12,9 @@ import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
 import { activeSkillComposer, skillComposerStore } from '@/chat/composer-store';
 import { skillComposerCommands } from '@/chat/skill-commands';
+import { rowActionCommands } from '@/chat/row-commands';
 import { activeTaskPin, taskPinCommands, taskPinStore } from '@/chat/task-pin';
+import { focusedRowActions, rowActionStore } from '@/lib/row-actions';
 import { paletteThreadHits, threadListStore } from '@/chat/thread-commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
@@ -110,6 +112,7 @@ export function useCommands(gated = false): {
   const questionCard = useStore(questionStore, activeQuestionCard);
   const skillComposer = useStore(skillComposerStore, activeSkillComposer);
   const taskPin = useStore(taskPinStore, activeTaskPin);
+  const rowAreas = useStore(rowActionStore, (state) => state.areas);
   const taskPinOpen = useStore(taskPinStore, (state) =>
     taskPin === undefined ? false : (state.open[taskPin] ?? false),
   );
@@ -198,6 +201,7 @@ export function useCommands(gated = false): {
       ...questionCommands(questionCard),
       ...skillComposerCommands(skillComposer),
       ...taskPinCommands(taskPin, taskPinOpen),
+      ...rowActionCommands(focusedRowActions({ areas: rowAreas })),
       ...assistantCommands({
         changes: assistantChanges ?? [],
         proposals: assistantProposals ?? [],
@@ -220,6 +224,7 @@ export function useCommands(gated = false): {
       ...staticCommands,
     ];
   }, [
+    rowAreas,
     calendarZone,
     outlookProfile,
     showWeekends,

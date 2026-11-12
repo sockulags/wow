@@ -2753,7 +2753,15 @@ before (no `at`) is drawn in full as before. The panel's thread Details has a Ta
 
 Copy (`components/copy-button.tsx`): an assistant message has Copy (its markdown) and Copy text
 (what it reads on screen) on hover or focus; fenced code in markdown has Copy code
-(`CodeBlock copy`); tool output has Copy output. A stopped turn ends with "Stopped by you · 20:41"
+(`CodeBlock copy`); tool output has Copy output. `copyText` does the write; when the browser has
+no clipboard or refuses the write, the error toast "Nothing was copied" says so and the button
+does not turn to Copied. The same actions are palette commands for the row or message that last
+had the focus (`lib/row-actions.ts`, `chat/row-commands.ts`): each copyable element registers its
+actions with `useRowActions` and they become the offered ones when the focus enters it, inner
+first (a code block's Copy code before its message's Copy message and Copy message text; a tool
+row's Copy output, and once open "Show all N lines" / "Show the last N lines"). Opening the
+palette takes the focus, so the last row's actions stay until another row takes it, the focus
+lands on something else in the conversation (`rowActionScope`), or the row unmounts. A stopped turn ends with "Stopped by you · 20:41"
 (`StoppedLine`, from the turn's `endedAt`), which carries Resume on the last turn. The line reads
 the turn's stored state, so a turn stopped before this change gets it too: it was stopped, and no
 item, divider or marker is added to it (spec 48 is about new items, not about reading old ones).

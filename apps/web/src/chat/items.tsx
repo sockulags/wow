@@ -23,7 +23,8 @@ import {
   ShieldQuestionIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { CopyButton } from '@/components/copy-button';
+import { CopyButton, copyText } from '@/components/copy-button';
+import { useRowActions } from '@/lib/row-actions';
 import { WithTooltip } from '@/components/hint';
 import { Markdown } from '@/components/markdown';
 import { Badge } from '@/components/ui/badge';
@@ -136,8 +137,32 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
 // 32); both show on hover or focus once the message is complete.
 function AssistantText({ payload, streaming }: { payload: TextItemPayload; streaming: boolean }) {
   const body = useRef<HTMLDivElement>(null);
+  const shownText = () => {
+    const element = body.current;
+    if (!element) return payload.text;
+    // jsdom has no innerText; a browser's keeps the line breaks the reader sees.
+    return (element.innerText ?? element.textContent ?? '').trim();
+  };
+  const actions = useRowActions(
+    streaming
+      ? []
+      : [
+          {
+            id: 'copy',
+            title: 'Copy message',
+            keywords: ['copy', 'markdown', 'clipboard'],
+            run: () => copyText(payload.text),
+          },
+          {
+            id: 'copyText',
+            title: 'Copy message text',
+            keywords: ['copy', 'plain', 'clipboard'],
+            run: () => copyText(shownText()),
+          },
+        ],
+  );
   return (
-    <div aria-busy={streaming} className="group/message relative">
+    <div aria-busy={streaming} className="group/message relative" {...actions}>
       <div ref={body}>
         <Markdown text={payload.text} streaming={streaming} />
       </div>
@@ -149,15 +174,7 @@ function AssistantText({ payload, streaming }: { payload: TextItemPayload; strea
           className="mt-0.5 flex gap-0.5 text-muted-foreground opacity-0 transition-opacity group-focus-within/message:opacity-100 group-hover/message:opacity-100"
         >
           <CopyButton text={payload.text} label="Copy" />
-          <CopyButton
-            text={() => {
-              const element = body.current;
-              if (!element) return payload.text;
-              // jsdom has no innerText; a browser's keeps the line breaks the reader sees.
-              return (element.innerText ?? element.textContent ?? '').trim();
-            }}
-            label="Copy text"
-          />
+          <CopyButton text={shownText} label="Copy text" />
         </div>
       )}
     </div>

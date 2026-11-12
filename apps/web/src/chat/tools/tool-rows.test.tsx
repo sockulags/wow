@@ -4,6 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadMarkdown } from '../../test/markdown';
 import { ConversationItem, StoppedLine, type ItemContext } from '../items';
+import { Toaster, toast } from 'sonner';
+import type { CommandContext } from '@/app/commands';
+import { focusedRowActions, rowActionStore } from '@/lib/row-actions';
+import { rowActionCommands } from '../row-commands';
 import { TaskDetails, TaskPin, taskPinCommands, taskPinStore, activeTaskPin } from '../task-pin';
 import { formatDuration, groupSummary } from './facts';
 import { ToolCallGroup } from './group';
@@ -293,6 +297,103 @@ describe('copy (spec 32)', () => {
     open(row);
     await user.click(within(row).getByRole('button', { name: 'Copy output' }));
     expect(await navigator.clipboard.readText()).toBe(testOutput);
+  });
+});
+
+const rowCommands = () => rowActionCommands(focusedRowActions(rowActionStore.getState()));
+// The palette command runs the row's own action; the action gives back the clipboard write.
+const runRow = async (id: string) => {
+  expect(rowCommands().some((command) => command.id === `chat.${id}`)).toBe(true);
+  await focusedRowActions(rowActionStore.getState())
+    .find((action) => action.id === id)
+    ?.run();
+};
+const copyMessage = (): ThreadItem => ({
+  id: 'm2',
+  threadId: 't1',
+  turnId: 'turn-1',
+  index: 2,
+  kind: 'assistant_text',
+  payload: { text: 'Boil **water**.\n\n```bash\npnpm dev\n```' },
+  streaming: false,
+});
+const failedNotices = () => screen.queryAllByText('Nothing was copied');
+
+describe('copy from the palette and when the clipboard fails (spec 32)', () => {
+  afterEach(() => {
+    act(() => void toast.dismiss());
+  });
+
+  it("offers the focused message's, code block's and tool output's actions as commands", async () => {
+    userEvent.setup();
+    show(copyMessage());
+    const shown = screen.getByTestId('item-assistant_text');
+    await within(shown).findByText('water');
+    act(() => within(shown).getByRole('button', { name: 'Copy code' }).focus());
+    expect(rowCommands().map((command) => [command.id, command.title])).toEqual([
+      ['chat.copyCode', 'Copy code'],
+      ['chat.copy', 'Copy message'],
+      ['chat.copyText', 'Copy message text'],
+    ]);
+    await runRow('copyCode');
+    expect(await navigator.clipboard.readText()).toBe('pnpm dev');
+    await runRow('copy');
+    expect(await navigator.clipboard.readText()).toBe('Boil **water**.\n\n```bash\npnpm dev\n```');
+
+    show(tool({ name: 'Bash', kind: 'command', command: 'pnpm test', output: testOutput }));
+    const row = screen.getByTestId('item-tool_call');
+    act(() => (row.querySelector('summary') as HTMLElement).focus());
+    expect(rowCommands().map((command) => command.id)).toEqual(['chat.copyOutput']);
+    open(row);
+    act(() => within(row).getByRole('button', { name: 'Copy output' }).focus());
+    expect(rowCommands().map((command) => command.title)).toEqual([
+      'Copy output',
+      'Show all 25 lines',
+    ]);
+    act(() =>
+      rowCommands()
+        .find((command) => command.id === 'chat.outputLines')
+        ?.run({} as CommandContext),
+    );
+    expect(within(row).getByTestId('tool-output-text').textContent?.split('\n')).toHaveLength(25);
+    expect(rowCommands().map((command) => command.title)).toEqual([
+      'Copy output',
+      'Show the last 20 lines',
+    ]);
+    await runRow('copyOutput');
+    expect(await navigator.clipboard.readText()).toBe(testOutput);
+    expect(failedNotices()).toEqual([]);
+  });
+
+  it('says nothing was copied when the clipboard refuses the text', async () => {
+    const user = userEvent.setup();
+    render(<Toaster />);
+    show(tool({ name: 'Bash', kind: 'command', command: 'pnpm test', output: testOutput }));
+    const row = screen.getByTestId('item-tool_call');
+    open(row);
+    vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(
+      new Error('Write permission denied'),
+    );
+    await user.click(within(row).getByRole('button', { name: 'Copy output' }));
+    expect(await screen.findByText('Nothing was copied')).toBeTruthy();
+    expect(within(row).queryByRole('button', { name: 'Copied' })).toBeNull();
+  });
+
+  it('says nothing was copied when there is no clipboard', async () => {
+    render(<Toaster />);
+    show(copyMessage());
+    const shown = screen.getByTestId('item-assistant_text');
+    await within(shown).findByText('water');
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    try {
+      act(() => within(shown).getByRole('button', { name: 'Copy' }).focus());
+      await runRow('copy');
+      expect(await screen.findByText('Nothing was copied')).toBeTruthy();
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard);
+      else Reflect.deleteProperty(navigator, 'clipboard');
+    }
   });
 });
 
