@@ -78,27 +78,37 @@ workflows, runs, settings pages and actions together; arrow keys and Enter pick.
 
 Default keys (all changeable in Settings → Keybindings):
 
-| Key              | Does                                      |
-| ---------------- | ----------------------------------------- |
-| Ctrl+K           | Command palette                           |
-| Ctrl+1 … 5       | Calendar, Chat, Workflows, Plans, Backlog |
-| Ctrl+,           | Settings                                  |
-| Ctrl+B           | Show or hide the sidebar                  |
-| Ctrl+J           | Show or hide the context panel            |
-| F6               | Move the focus into the panel and back    |
-| Ctrl+Shift+L     | Dark or light theme                       |
-| Ctrl+Alt+N       | New thread                                |
-| Ctrl+.           | Stop the running turn                     |
-| T, N, P          | Calendar: today, next, previous           |
-| D, W             | Calendar: day view, week view             |
-| C                | Calendar: new card on the day you are on  |
-| Ctrl+= / -       | Calendar: zoom in, zoom out               |
-| Ctrl+0           | Calendar: reset zoom                      |
-| Ctrl+Enter       | Run at a gate: Approve                    |
-| Ctrl+Shift+Enter | Run at a gate: Send back                  |
-| Ctrl+Shift+D     | Run: Steps or Changes tab                 |
-| Ctrl+Shift+Y     | Run: Steps or Path tab                    |
-| O                | Changes tab: this step only, and back     |
+| Key              | Does                                                         |
+| ---------------- | ------------------------------------------------------------ |
+| Ctrl+K           | Command palette                                              |
+| Ctrl+1 … 5       | Calendar, Chat, Workflows, Plans, Backlog                    |
+| Ctrl+,           | Settings                                                     |
+| Ctrl+B           | Show or hide the sidebar                                     |
+| Ctrl+J           | Show or hide the context panel                               |
+| F6               | Move the focus into the panel and back                       |
+| Ctrl+Shift+L     | Dark or light theme                                          |
+| Ctrl+Alt+N       | New thread                                                   |
+| Ctrl+.           | Stop the running turn                                        |
+| Ctrl+B           | Chat: send the running command or subagent to the background |
+| Ctrl+Shift+J     | Next that needs you                                          |
+| Ctrl+O           | Chat: open or close all reasoning                            |
+| Alt+Up / Down    | Chat: previous message, next message                         |
+| C                | Chat: copy the message that has the keyboard                 |
+| End              | Chat: back to the newest output                              |
+| T, N, P          | Calendar: today, next, previous                              |
+| D, W             | Calendar: day view, week view                                |
+| C                | Calendar: new card on the day you are on                     |
+| Ctrl+= / -       | Calendar: zoom in, zoom out                                  |
+| Ctrl+0           | Calendar: reset zoom                                         |
+| Ctrl+Enter       | Run at a gate: Approve                                       |
+| Ctrl+Shift+Enter | Run at a gate: Send back                                     |
+| Ctrl+Shift+D     | Run: Steps or Changes tab                                    |
+| Ctrl+Shift+Y     | Run: Steps or Path tab                                       |
+| O                | Changes tab: this step only, and back                        |
+
+Ctrl+B sends work to the background only in a Claude Code thread whose turn runs a command or
+subagent that can go there; otherwise it shows or hides the sidebar. Ctrl+Shift+J works from any
+view. C and the other single-letter chat keys only work while a message has the keyboard.
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
