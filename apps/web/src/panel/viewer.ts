@@ -35,8 +35,22 @@ const scopeKey = (scope: FileScope): string =>
       ? `thread:${scope.threadId}`
       : `project:${scope.projectId}`;
 
-export const fileTabId = (file: Pick<ViewerFile, 'scope' | 'path'>): string =>
-  `file:${scopeKey(file.scope)}:${file.path}`;
+// One file has one tab however it is named: `src/a.ts`, `./src/a.ts`, `src\a.ts` and the full
+// path are one file, so the id is the full path with forward slashes and no `.` parts, in lower
+// case on Windows, whose paths do not tell case apart.
+function samePath(file: Pick<ViewerFile, 'path' | 'fullPath'>): string {
+  const named = (file.fullPath === '' ? file.path : file.fullPath).replace(/\\/g, '/');
+  const head = /^\/+/.exec(named)?.[0] ?? '';
+  const parts = named
+    .slice(head.length)
+    .split('/')
+    .filter((part) => part !== '' && part !== '.');
+  const joined = `${head}${parts.join('/')}${named.endsWith('/') ? '/' : ''}`;
+  return /^[A-Za-z]:\//.test(joined) || head.length > 1 ? joined.toLowerCase() : joined;
+}
+
+export const fileTabId = (file: Pick<ViewerFile, 'scope' | 'path' | 'fullPath'>): string =>
+  `file:${scopeKey(file.scope)}:${samePath(file)}`;
 export const pageTabId = (page: Pick<ViewerPage, 'runId' | 'ref'>): string =>
   `page:${page.runId}:${page.ref}`;
 export const hostTabId = (host: Pick<ViewerHostItem, 'threadId' | 'item'>): string =>

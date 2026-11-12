@@ -3383,7 +3383,9 @@ Panel tabs (`tabs.tsx`, `viewer.ts`; agent workbench spec 11 to 14, 87). The lay
 `panelTabs` keeps, per panel selection (`panelRoute` in `panel/model.ts`: a thread's
 `/chat/<id>`, a run's `/workflows/runs/<id>`, a calendar card's `/calendar?item=<id>`, so each
 card's step thread has its own), the open
-tabs (`PanelTab`: a file or a page, its id from the scope and path or the run and ref), the
+tabs (`PanelTab`: a file or a page, its id from the scope and the file's full path, with forward
+slashes, no `.` parts and in lower case for a Windows path, so `src/a.ts`, `./src/a.ts`,
+`src\a.ts` and the full path are one tab, or from the run and ref), the
 selected one (`DETAILS_TAB` for the panel's own body) and the tabs shown before (`history`). So a
 thread keeps its tabs while another thread is open, and each is read again when shown. While a
 route has tabs, `PanelTabStrip` shows the panel's own body first ("Details"; in a run view
