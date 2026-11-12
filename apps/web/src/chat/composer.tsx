@@ -476,6 +476,7 @@ export function Composer({
   const arrivals = useRef<Promise<void>>(Promise.resolve());
   const skills = useTopic('skills');
   const stopBinding = useSetting('keybindings.stopTurn');
+  const sendKey = useSetting('chat.sendKey');
   const recallBinding = useSetting('keybindings.composerEditLast');
   const trigger = useSetting('chat.skillTrigger');
   const fileTrigger = useSetting('chat.fileTrigger');
@@ -933,6 +934,8 @@ export function Composer({
       }
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      // With Ctrl+Enter as the send key a plain Enter is a new line (agent workbench spec 97).
+      if (sendKey === 'modEnter' && !event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
       send();
     }

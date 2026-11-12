@@ -25,10 +25,11 @@ import {
   Trash2Icon,
   XIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
 import { errorMessage, useDispatch, useModels, useTopic } from '@/chat/data';
 import { ThreadSettings } from '@/chat/thread-settings';
+import { ModelName } from '@/chat/model-label';
 import { providerLabel } from '@/chat/view-model';
 import { ChoiceSelect } from '@/components/choice-select';
 import { Combobox } from '@/components/combobox';
@@ -332,14 +333,20 @@ function StepEditor({
   const label = `Step ${index + 1}`;
   const count = steps.length;
   const ruleCount = step.rules?.length ?? 0;
-  const summary = [
+  const summaryParts: readonly ReactNode[] = [
     instance ? providerLabel(instance, instances) : 'No provider',
-    step.model,
+    step.model ? (
+      <ModelName plain providerInstanceId={instance?.id} model={step.model} />
+    ) : undefined,
     globs.length > 0 ? `${globs.length} artifact${globs.length === 1 ? '' : 's'}` : undefined,
     ruleCount > 0 ? `${ruleCount} rule${ruleCount === 1 ? '' : 's'}` : undefined,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  ].filter(Boolean);
+  const summary = summaryParts.map((part, at) => (
+    <Fragment key={at}>
+      {at > 0 && ' · '}
+      {part}
+    </Fragment>
+  ));
   // An open step marks the rule itself; a closed one says it on its line.
   const shownProblems = expanded
     ? problems

@@ -78,28 +78,27 @@ workflows, runs, settings pages and actions together; arrow keys and Enter pick.
 
 Default keys (all changeable in Settings → Keybindings):
 
-| Key              | Does                                     |
-| ---------------- | ---------------------------------------- |
-| Ctrl+K           | Command palette                          |
-| Ctrl+1 … 4       | Calendar, Chat, Workflows, Backlog       |
-| Ctrl+5           | Plans                                    |
-| Ctrl+,           | Settings                                 |
-| Ctrl+B           | Show or hide the sidebar                 |
-| Ctrl+J           | Show or hide the context panel           |
-| F6               | Move the focus into the panel and back   |
-| Ctrl+Shift+L     | Dark or light theme                      |
-| Ctrl+Alt+N       | New thread                               |
-| Ctrl+.           | Stop the running turn                    |
-| T, N, P          | Calendar: today, next, previous          |
-| D, W             | Calendar: day view, week view            |
-| C                | Calendar: new card on the day you are on |
-| Ctrl+= / -       | Calendar: zoom in, zoom out              |
-| Ctrl+0           | Calendar: reset zoom                     |
-| Ctrl+Enter       | Run at a gate: Approve                   |
-| Ctrl+Shift+Enter | Run at a gate: Send back                 |
-| Ctrl+Shift+D     | Run: Steps or Changes tab                |
-| Ctrl+Shift+Y     | Run: Steps or Path tab                   |
-| O                | Changes tab: this step only, and back    |
+| Key              | Does                                      |
+| ---------------- | ----------------------------------------- |
+| Ctrl+K           | Command palette                           |
+| Ctrl+1 … 5       | Calendar, Chat, Workflows, Plans, Backlog |
+| Ctrl+,           | Settings                                  |
+| Ctrl+B           | Show or hide the sidebar                  |
+| Ctrl+J           | Show or hide the context panel            |
+| F6               | Move the focus into the panel and back    |
+| Ctrl+Shift+L     | Dark or light theme                       |
+| Ctrl+Alt+N       | New thread                                |
+| Ctrl+.           | Stop the running turn                     |
+| T, N, P          | Calendar: today, next, previous           |
+| D, W             | Calendar: day view, week view             |
+| C                | Calendar: new card on the day you are on  |
+| Ctrl+= / -       | Calendar: zoom in, zoom out               |
+| Ctrl+0           | Calendar: reset zoom                      |
+| Ctrl+Enter       | Run at a gate: Approve                    |
+| Ctrl+Shift+Enter | Run at a gate: Send back                  |
+| Ctrl+Shift+D     | Run: Steps or Changes tab                 |
+| Ctrl+Shift+Y     | Run: Steps or Path tab                    |
+| O                | Changes tab: this step only, and back     |
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
@@ -368,6 +367,20 @@ you used without a project, and **Another folder…** (the folder dialog in the 
 box in the browser). The chosen folder shows under the picker; hover it for the full path. Write
 the first message and press Enter; the first line becomes the thread's title. Until a project or
 folder is chosen, Send stays disabled and says why.
+
+A project can name what its new threads start with (see Projects, **Thread defaults**): its
+provider instance, model, effort and mode then win over what your last thread used.
+
+Settings → Chat → **Send key** chooses which key sends: **Enter** (Shift+Enter makes a new line) or
+**Ctrl+Enter** (then Enter makes a new line).
+
+**Open session from Claude Code / Codex…** in the palette lists the sessions your provider
+instances keep in their own files, the newest first, grouped by folder, each with its first prompt
+and when it was last used. Pick one and it opens as a wow thread in that folder (and its project)
+that goes on with the session: your next message resumes it. A session already open in wow opens
+that thread. A session whose folder is gone is listed greyed with the reason. Nothing is written
+to Claude's or Codex's files; how many sessions are listed and how much of the prompt shows are
+in Settings → Providers.
 
 ### Model, effort and mode
 
@@ -1059,7 +1072,7 @@ meanwhile are not started later. A run that cannot start leaves a failed notific
 
 ## Plans
 
-The **Plans** view (**Ctrl+5**, `keybindings.goPlans`) reads the intent, spec and plan files of
+The **Plans** view (**Ctrl+4**, `keybindings.goPlans`) reads the intent, spec and plan files of
 your projects, the format agent-os writes. Each project's `plans.intentsDirectory` (`intents` by
 default) holds one folder per intent with `intent.md`, `spec.md` and `plan.md`. wow only reads
 these files, and reads them again when they change (once a file has stayed the same for
@@ -1212,6 +1225,10 @@ directory and Codex's `sessions` folder in its `CODEX_HOME`. It lists each folde
 that still exists and is not a project yet, with which CLIs used it and how long ago, all checked.
 Uncheck what you do not want (the box above the list checks or clears all) and press **Import**; each folder becomes a project named after it
 (with a number when the name is taken). Nothing is changed in Claude's or Codex's files.
+
+**Thread defaults** (palette: "New thread defaults for project …") picks a provider instance and,
+for it, a model, effort and permission mode that a new thread in the project starts with. "As the
+last thread" clears them.
 
 **Rename** changes only the name; threads, cards and runs follow it. **Remove** asks first and
 leaves the folder and its files alone. Threads that used the project keep working in its folder

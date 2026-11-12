@@ -1,5 +1,6 @@
 import {
   providerChatOptions,
+  type Project,
   type ProviderInstance,
   type ProviderModel,
   type SentImage,
@@ -33,7 +34,8 @@ import { ModelBar, useModelBarKeys, type ModelBarHandle } from './model-bar';
 import type { ThreadSettingsValue } from './thread-settings';
 import { lastUsedThread, providerLabel, recentFolders, starterSkills } from './view-model';
 
-// What a new thread on this instance starts with: what the last thread on it used (owner
+// What a new thread on this instance starts with: what its project names (agent workbench spec
+// 97, when the project names this instance or none), else what the last thread on it used (owner
 // decision F-5), else the instance defaults, else what the provider names as its default model
 // and the model's default effort (agent workbench spec 7, 8), else the first model the provider
 // lists and the first effort and permission mode offered for it.
@@ -41,27 +43,45 @@ export function threadDefaults(
   instance: ProviderInstance,
   models: readonly ProviderModel[],
   last: Pick<Thread, 'providerInstanceId' | 'model' | 'effort' | 'permissionMode'> | undefined,
+  project?: ProjectDefaults,
 ): ThreadSettingsValue {
+  const named =
+    project &&
+    (project.defaultProviderInstanceId ?? instance.id) === instance.id &&
+    // A model the instance does not list (named for another kind of provider) is not used.
+    (!project.defaultModel ||
+      models.length === 0 ||
+      models.some((model) => model.id === project.defaultModel))
+      ? project
+      : undefined;
   const fromLast = last?.providerInstanceId === instance.id ? last : undefined;
   const model =
+    named?.defaultModel ||
     fromLast?.model ||
     instance.defaultModel ||
     models.find((candidate) => candidate.isDefault)?.id ||
     models[0]?.id ||
     '';
   const effort =
+    named?.defaultEffort ||
     fromLast?.effort ||
     instance.defaultEffort ||
     models.find((candidate) => candidate.id === model)?.defaultEffort ||
     effortOptions(instance.kind, models, model, '')[0] ||
     'default';
   const permissionMode =
+    named?.defaultPermissionMode ||
     fromLast?.permissionMode ||
     instance.defaultPermissionMode ||
     providerChatOptions[instance.kind].permissionModes[0]?.id ||
     'default';
   return { model, effort, permissionMode };
 }
+
+export type ProjectDefaults = Pick<
+  Project,
+  'defaultProviderInstanceId' | 'defaultModel' | 'defaultEffort' | 'defaultPermissionMode'
+>;
 
 const statusDot: Readonly<Record<ProviderInstance['status'], string>> = {
   ready: 'bg-state-done',
@@ -110,8 +130,13 @@ export function NewThreadView() {
 
   const last = lastUsedThread(threads);
   const lastInstanceId = lastUsedInstanceId(threads, instances);
+  // Nothing picked yet: the last thread's project, or its folder when it had none.
+  const untouched = picked.projectId === undefined && picked.cwd === undefined;
+  const projectId = untouched ? (last?.projectId ?? undefined) : picked.projectId;
+  const project = projects.find((candidate) => candidate.id === projectId);
   const instance =
     instances?.find((candidate) => candidate.id === picked.providerInstanceId) ??
+    instances?.find((candidate) => candidate.id === project?.defaultProviderInstanceId) ??
     instances?.find((candidate) => candidate.id === lastInstanceId) ??
     instances?.find((candidate) => candidate.status === 'ready') ??
     instances?.[0];
@@ -124,12 +149,8 @@ export function NewThreadView() {
     instance &&
     (seeded
       ? { model: seeded.model, effort: seeded.effort, permissionMode: seeded.permissionMode }
-      : threadDefaults(instance, models, last));
+      : threadDefaults(instance, models, last, project));
 
-  // Nothing picked yet: the last thread's project, or its folder when it had none.
-  const untouched = picked.projectId === undefined && picked.cwd === undefined;
-  const projectId = untouched ? (last?.projectId ?? undefined) : picked.projectId;
-  const project = projects.find((candidate) => candidate.id === projectId);
   const cwd = (untouched && !project ? last?.cwd : picked.cwd) ?? project?.cwd ?? '';
   const folders = recentFolders(threads, projects);
   const { for: overridesFor, ...picks } = overrides;

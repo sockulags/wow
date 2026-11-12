@@ -34,6 +34,7 @@ import { conversationCommands, conversationStore } from '@/chat/conversation-nav
 import { needsYouCommands, needsYouTargets } from '@/chat/needs-you';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
+import { sessionCommands } from '@/chat/terminal-sessions';
 import { useProjectsGit } from '@/projects/project-git';
 import { connectCommands, providerCommands } from '@/providers/commands';
 import { connectStore } from '@/providers/connect-step';
@@ -301,6 +302,7 @@ export function useCommands(gated = false): {
       ...connectCommands(connectShown),
       ...providerCommands(instances ?? []),
       ...projectCommands(projects ?? []),
+      ...sessionCommands(),
       ...updateCommands(updateState),
       ...staticCommands,
     ];

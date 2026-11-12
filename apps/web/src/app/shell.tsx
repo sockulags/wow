@@ -13,6 +13,7 @@ import {
   useContextPanelShown,
 } from '@/panel/panel-state';
 import { ProjectDialogs } from '@/projects/project-dialogs';
+import { TerminalSessionsDialog } from '@/chat/terminal-sessions';
 import { ProviderDialogs } from '@/providers/provider-dialogs';
 import { ConnectionBanner } from './connection-banner';
 import { FirstStart, useFirstStart } from './first-start';
@@ -130,6 +131,7 @@ export function Shell() {
       <OpenHostItemDialog />
       <ProviderDialogs />
       <ProjectDialogs />
+      <TerminalSessionsDialog />
       <AppToaster />
     </div>
   );

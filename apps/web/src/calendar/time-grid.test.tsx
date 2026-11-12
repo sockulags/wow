@@ -78,9 +78,9 @@ describe('TimeGrid', () => {
     expect(block(/^Focus, /).textContent).not.toMatch(/Scheduled/);
     expect(block(/^Feature run, /)).toHaveProperty(
       'ariaLabel',
-      'Feature run, 14:00–15:00, needs you',
+      'Feature run, 14:00–15:00, waiting for you',
     );
-    expect(block(/^Feature run, /).textContent).toContain('Needs you');
+    expect(block(/^Feature run, /).textContent).toContain('Waiting for you');
     expect(block(/^Lost run, /)).toHaveProperty(
       'ariaLabel',
       'Lost run, 16:00–17:00, no project, will not run',

@@ -44,6 +44,7 @@ import { routerPanelRoute } from '@/panel/model';
 import { fullPathOf, openFile, openHostItem } from '@/panel/viewer';
 import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
+import { modelLabel } from './model-label';
 import { Composer, type ComposerHandle } from './composer';
 import type { QuestionHold } from './question-card';
 import { errorMessage, useDispatch, useModels, useTopic } from './data';
@@ -668,7 +669,7 @@ export function ThreadConversation({
   const { top, children } = nestSubagentWork(items ?? []);
   const endRows = turnEndRows(top, turns);
   const reasoningDone = finishedReasoning(items ?? []);
-  const modelLabel = (id: string) => models.find((model) => model.id === id)?.label ?? id;
+  const labelOf = (id: string) => modelLabel(models, id);
   const modeLabel = (id: string) =>
     instance
       ? (permissionOptions(instance.kind, id).find((option) => option.id === id)?.label ?? id)
@@ -677,7 +678,7 @@ export function ThreadConversation({
   const itemContext = (turnId: string, itemId: string): ItemContext => {
     const turn = turnById.get(turnId);
     return {
-      modelLabel,
+      modelLabel: labelOf,
       modeLabel,
       ...(endRows.has(itemId) && turn?.endedAt ? { endedAt: turn.endedAt } : {}),
       reasoningDone: reasoningDone.has(itemId),

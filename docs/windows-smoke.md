@@ -138,6 +138,11 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       `%USERPROFILE%\.wow\images\t-<thread id>` holds the two files. Drop a BMP: it is refused with
       the reason. Copy a few cells in Excel and paste them with Ctrl+V: the text goes into the
       box and no picture is added.
+- [ ] **Session from a terminal (Claude).** In PowerShell, run `claude` in a project folder and
+      ask one thing; quit it. In wow, palette "Open session from Claude Code / Codex…": the
+      session is under that folder (`C:\…`) with its first prompt and time. Pick it, send "Go
+      on": Claude answers in the same conversation (it remembers the first question). Rename the
+      folder of another session: that one is greyed, "Its folder is gone".
 
 ## 4. Codex turn
 
@@ -203,6 +208,10 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
 - [ ] **Plan (Codex).** Ask Codex to plan three steps and do them. Expected: the pin shows
       "n/3 · <step>" and an "Updated tasks" line appears only when a step changes, even where
       Codex sends the same plan again. Write down how many lines appeared for how many changes.
+- [ ] **Session from a terminal (Codex).** Run `codex` in a folder, ask one thing, quit. Open it
+      from "Open session from Claude Code / Codex…" and send "Go on": Codex goes on in the same
+      thread (`thread/resume`). Write down whether the first prompt shown is your own text and not
+      Codex's environment note.
 
 ## 5. Secrets
 
@@ -248,7 +257,7 @@ The three steps the spec asks for:
 
 - [ ] **A followed plan shows unit status from GitHub Enterprise with a personal access token.**
       Put a GitHub Enterprise personal access token in Settings → Trackers (API URL
-      `https://<host>/api/v3`), open the plan in Plans (Ctrl+5) and turn Follow on: units with
+      `https://<host>/api/v3`), open the plan in Plans (Ctrl+4) and turn Follow on: units with
       pull requests show Delivered or Claimed with a link, state and checks, the others Ready,
       Waiting or Blocked, and "Last fetched" names the host. Write down the host's version from
       Test connection.

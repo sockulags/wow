@@ -339,3 +339,25 @@ describe("the assistant's composer (spec 20)", () => {
     expect(activeSkillComposer(skillComposerStore.getState())).toBeUndefined();
   });
 });
+
+describe('the send key (agent workbench spec 97)', () => {
+  it('sends on Enter by default, with Shift+Enter for a new line', async () => {
+    const { box, user, onSend } = setup();
+    await user.click(box);
+    await user.type(box, 'one{Shift>}{Enter}{/Shift}two{Enter}');
+    expect(onSend.mock.calls[0]?.[0]).toBe('one\ntwo');
+  });
+
+  it('makes a new line on Enter and sends on Ctrl+Enter with the send key set to Ctrl+Enter', async () => {
+    const { box, user, onSend } = setup({
+      kind: 'claude',
+      settings: { 'chat.sendKey': 'modEnter' },
+    });
+    await user.click(box);
+    await user.type(box, 'one{Enter}two');
+    expect(onSend).not.toHaveBeenCalled();
+    expect(box.value).toBe('one\ntwo');
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(onSend.mock.calls[0]?.[0]).toBe('one\ntwo');
+  });
+});

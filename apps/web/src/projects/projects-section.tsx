@@ -10,6 +10,7 @@ import {
   InfoIcon,
   PencilIcon,
   PlusIcon,
+  SlidersHorizontalIcon,
   Trash2Icon,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -134,6 +135,16 @@ function ProjectRow({
           >
             <PencilIcon />
             Rename
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              layout.setState({ projectDialog: { type: 'defaults', projectId: project.id } })
+            }
+          >
+            <SlidersHorizontalIcon />
+            Thread defaults
           </Button>
           <Button
             variant="ghost"
