@@ -118,7 +118,13 @@ function setup({
   instance = claude,
   turns = [turn(0), turn(1), turn(2)],
   items = threeMessages(),
-}: { instance?: ProviderInstance; turns?: Turn[]; items?: ThreadItem[] } = {}) {
+  shown = {},
+}: {
+  instance?: ProviderInstance;
+  turns?: Turn[];
+  items?: ThreadItem[];
+  shown?: Partial<Thread>;
+} = {}) {
   const listeners = new Map<string, (rows: unknown) => void>();
   const request = vi.fn<(method: string, params: unknown) => Promise<unknown>>(() =>
     Promise.resolve({
@@ -149,7 +155,7 @@ function setup({
       }}
     >
       <ThreadConversation
-        thread={{ ...thread, providerInstanceId: instance.id }}
+        thread={{ ...thread, providerInstanceId: instance.id, ...shown }}
         instance={instance}
       />
       <ConversationKeys />
@@ -309,6 +315,52 @@ describe('Fork (spec 71, 74)', () => {
       type: 'thread.create',
       forkFrom: { threadId: 'kettle', turnId: turnId(1) },
     });
+  });
+});
+
+describe('A go-back the provider refused', () => {
+  const failedEdit = () => ({
+    turns: [
+      turn(0),
+      turn(1),
+      turn(2, { replacedBy: turnId(3) }),
+      turn(3, { state: 'failed', resumable: false }),
+    ],
+    items: [
+      ...threeMessages(),
+      item(3, 'user', { text: 'Add a light' }),
+      item(3, 'error', { message: 'No message to go back to' }),
+    ],
+  });
+
+  it('offers to go on without going back, on the error and in the palette', async () => {
+    const user = userEvent.setup();
+    const { dispatched } = setup({
+      ...failedEdit(),
+      shown: { goBack: { resumeId: 'session-1', at: 'point-1', fork: false } },
+    });
+    await user.click(screen.getByRole('button', { name: 'Go on without going back' }));
+    expect(dispatched().at(-1)).toEqual({ type: 'thread.dropGoBack', threadId: 'kettle' });
+    expect(commands().find((command) => command.id === 'chat.dropGoBack')?.title).toBe(
+      'Go on without going back',
+    );
+  });
+
+  it('offers a fork that has no conversation of its own to start a new one', () => {
+    setup({
+      ...failedEdit(),
+      shown: {
+        providerSessionId: null,
+        goBack: { resumeId: 'session-0', at: 'point-1', fork: true },
+      },
+    });
+    expect(screen.getByRole('button', { name: 'Start a new conversation' })).toBeTruthy();
+  });
+
+  it('is not offered when the thread does not go back or its last turn did not fail', () => {
+    setup(failedEdit());
+    expect(screen.queryByRole('button', { name: 'Go on without going back' })).toBeNull();
+    expect(commands().some((command) => command.id === 'chat.dropGoBack')).toBe(false);
   });
 });
 

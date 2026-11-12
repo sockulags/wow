@@ -53,6 +53,12 @@ import { ToolCall } from './tools/index';
 import { useNow } from './tools/time';
 import { effortLabel, formatElapsed, type WorkingFacts } from './view-model';
 
+export interface StopGoingBack {
+  readonly title: string;
+  readonly detail: string;
+  readonly run: () => void;
+}
+
 // What a row needs to know about the thread and the turn around it.
 export interface ItemContext {
   readonly cwd: string;
@@ -69,6 +75,8 @@ export interface ItemContext {
         readonly onRetry?: () => void;
         readonly onResume: () => void;
         readonly resumePrompt: string;
+        // A go-back the provider refused: stop going back (`thread.dropGoBack`).
+        readonly goOn?: StopGoingBack | undefined;
       }
     | undefined;
   readonly formatAt: (iso: string) => string;
@@ -587,6 +595,13 @@ function ErrorRow({ payload, context }: { payload: ErrorItemPayload; context: It
               <Button size="xs" variant="outline" onClick={recovery.onRetry}>
                 <RotateCcwIcon />
                 Retry
+              </Button>
+            </WithTooltip>
+          )}
+          {recovery.goOn && (
+            <WithTooltip label={recovery.goOn.detail}>
+              <Button size="xs" variant="outline" onClick={recovery.goOn.run}>
+                {recovery.goOn.title}
               </Button>
             </WithTooltip>
           )}

@@ -702,7 +702,10 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   and its answer, on the same model, effort, mode and folder, images included. The new thread says which one it
   came from. Edit and Fork work on Claude Code, for messages sent since wow keeps the place in
   the conversation; Codex cannot go back in its conversation, so it offers neither and the
-  palette says why.
+  palette says why. If Claude Code cannot pick the conversation up where wow went back to (its
+  own files were cleaned up, say), every message there fails the same way; the error then offers
+  **Go on without going back** (the agent goes on with the whole conversation it has, the replaced
+  exchange included) or, in a fork, **Start a new conversation**. Both are in the palette too.
 - **Skills in chat** are listed Yours, Project, Recently used, User, Plugins and wow last; wow's
   own four are marked "for workflow steps". On a new thread the list opens under the box, so the
   provider and project pickers stay in view.

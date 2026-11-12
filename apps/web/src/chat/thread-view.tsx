@@ -49,7 +49,7 @@ import type { QuestionHold } from './question-card';
 import { errorMessage, useDispatch, useModels, useTopic } from './data';
 import { copyText } from '@/components/copy-button';
 import { conversationStore, showConversation, showGoBack } from './conversation-nav';
-import { forkThread, goBackView } from './go-back';
+import { forkThread, goBackView, stopGoingBack } from './go-back';
 import { withoutMentions } from './mentions';
 import { notify } from '@/lib/feedback';
 import { takeLanded } from './needs-you';
@@ -600,8 +600,19 @@ export function ThreadConversation({
       (forkId) => router?.navigate({ to: '/chat/$threadId', params: { threadId: forkId } }),
       (error: unknown) => notify.error(errorMessage(error)),
     );
-  const goBackActions = useRef({ startEdit, fork });
-  goBackActions.current = { startEdit, fork };
+  const stuck = goesBack
+    ? stopGoingBack(thread, canResume && last?.state === 'failed', send)
+    : undefined;
+  const goOn = stuck
+    ? {
+        ...stuck,
+        run: () => void stuck.run().catch((error: unknown) => notify.error(errorMessage(error))),
+      }
+    : undefined;
+  const goBackActions = useRef({ startEdit, fork, goOn });
+  goBackActions.current = { startEdit, fork, goOn };
+  const goOnTitle = goOn?.title;
+  const goOnDetail = goOn?.detail;
   const forkableKey = [...goBack.forkable.keys()].join('\n');
   const editableId = goesBack ? goBack.editable?.itemId : undefined;
   useEffect(() => {
@@ -616,8 +627,17 @@ export function ThreadConversation({
         const turnId = itemId.replace(/:user$/, '');
         goBackActions.current.fork(turnId);
       },
+      ...(goOnTitle !== undefined && goOnDetail !== undefined
+        ? {
+            goOn: {
+              title: goOnTitle,
+              detail: goOnDetail,
+              run: () => goBackActions.current.goOn?.run(),
+            },
+          }
+        : {}),
     });
-  }, [goBackShown, threadId, goBackRefusal, editableId, forkableKey]);
+  }, [goBackShown, threadId, goBackRefusal, editableId, forkableKey, goOnTitle, goOnDetail]);
   useEffect(() => {
     setEditing(undefined);
   }, [threadId]);
@@ -700,6 +720,7 @@ export function ThreadConversation({
                 : {}),
               onResume: () => void message(resumePrompt),
               resumePrompt,
+              goOn,
             }
           : undefined,
     };

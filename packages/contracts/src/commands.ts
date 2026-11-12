@@ -211,6 +211,11 @@ export const Command = z.discriminatedUnion('type', [
       .array(z.object({ id: AttachmentId, name: z.string().min(1).max(200).optional() }))
       .optional(),
   }),
+  // The way out of a go-back the provider keeps refusing (a session file cleaned up, a point it no
+  // longer accepts): the thread stops going back, so its next message goes on in the thread's
+  // own session, or starts a new conversation where it has none yet (a fork). Edit's replaced
+  // exchange stays marked replaced. Refused while a turn runs and when nothing goes back.
+  z.object({ type: z.literal('thread.dropGoBack'), threadId: Id }),
   // The user's answer to the questions the assistant asked with its tool (questions spec 9):
   // `itemId` is that tool call, with one reply per question. It is sent as the user's next
   // message, marked as the answer. Only the assistant's thread has such questions.

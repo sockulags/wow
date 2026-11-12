@@ -3159,7 +3159,14 @@ rewind files.
   adapter closes the live session and opens one with `resume`, `resumeSessionAt: at` and, for a
   fork, `forkSession: true`; `at` null opens a new conversation with nothing resumed. `goBack`
   is cleared (`thread.goBackChanged`) only when a turn ends with a point, so a turn that failed
-  before Claude Code wrote anything goes back again.
+  before Claude Code wrote anything goes back again. A go-back Claude Code keeps refusing (its
+  session file cleaned up, a point it no longer takes) would hold the thread there, so while the
+  last turn failed and `goBack` is set the error row and the palette (`chat.dropGoBack`,
+  `stopGoingBack` in chat/go-back.ts) offer `thread.dropGoBack {threadId}`, which clears it
+  (refused while a turn runs or when nothing goes back): "Go on without going back" goes on in
+  the thread's own session, the replaced exchange included for the agent; a fork, which has no
+  session of its own yet, is offered "Start a new conversation". The mock gives no point to the
+  failure it answers for a point it does not know, as Claude Code gives none.
 - **Edit.** `thread.editLast {threadId, turnId, text, skills?, files?, attachments?}`
   (core/go-back.ts `editGoBack`): only for a chat thread, only for the last shown message, with
   no turn running. It goes back to the point of the shown turn before (a new conversation when

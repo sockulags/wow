@@ -25,6 +25,8 @@ export interface GoBackActions {
   readonly forkable: readonly string[];
   edit(): void;
   fork(itemId: string): void;
+  // Offered while a go-back the provider refused keeps the thread going back.
+  readonly goOn?: { readonly title: string; readonly detail: string; run(): void } | undefined;
 }
 
 interface ConversationState {
@@ -120,6 +122,17 @@ function goBackCommands(
       keywords: ['fork', 'branch', 'copy', 'thread', 'here'],
       ...(from === focused ? { keybinding: 'keybindings.forkMessage' as const } : {}),
       run: () => actions.fork(from),
+    });
+  }
+  const { goOn } = actions;
+  if (goOn) {
+    commands.push({
+      id: 'chat.dropGoBack',
+      title: goOn.title,
+      detail: goOn.detail,
+      group: 'Chat',
+      keywords: ['go back', 'edit', 'fork', 'failed', 'resume', 'conversation'],
+      run: () => goOn.run(),
     });
   }
   return commands;

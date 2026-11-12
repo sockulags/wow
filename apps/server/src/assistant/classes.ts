@@ -280,6 +280,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   ),
   'thread.sendMessage': chatOnly,
   'thread.editLast': chatOnly,
+  'thread.dropGoBack': chatOnly,
   'thread.sendPrepared': serverOnly,
   'thread.cancelQueued': chatOnly,
   'thread.sendQueued': serverOnly,

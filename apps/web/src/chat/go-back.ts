@@ -142,3 +142,29 @@ export async function forkThread(
   });
   return threadId;
 }
+
+// A thread whose go-back failed keeps going back with every message (the provider wrote nothing,
+// so there is no new point); while its last turn failed it is offered the way out.
+export function stopGoingBack(
+  thread: Pick<Thread, 'id' | 'goBack' | 'providerSessionId'>,
+  lastFailed: boolean,
+  send: (command: Command) => Promise<unknown>,
+):
+  | { readonly title: string; readonly detail: string; readonly run: () => Promise<unknown> }
+  | undefined {
+  if (!thread.goBack || !lastFailed) return undefined;
+  const run = () => send({ type: 'thread.dropGoBack', threadId: thread.id });
+  return thread.providerSessionId === null
+    ? {
+        title: 'Start a new conversation',
+        detail:
+          'The conversation this thread came from could not be picked up. Your next message starts a new one; the messages above stay here.',
+        run,
+      }
+    : {
+        title: 'Go on without going back',
+        detail:
+          'Going back in the conversation failed. Your next message goes on from the conversation as the agent has it, the replaced exchange included.',
+        run,
+      };
+}

@@ -79,6 +79,7 @@ type ThreadCommand = Extract<
       | 'thread.greetAssistant'
       | 'thread.sendMessage'
       | 'thread.editLast'
+      | 'thread.dropGoBack'
       | 'thread.sendPrepared'
       | 'thread.cancelQueued'
       | 'thread.sendQueued'
@@ -1018,6 +1019,25 @@ export function decideThread(
         );
       }
       return [stateChanged(thread.id, 'done', now)];
+    }
+    case 'thread.dropGoBack': {
+      const stored = requireThread(read, command.threadId);
+      if (read.runningTurn(stored.id)) {
+        throw new CommandRejected(
+          'conflict',
+          'A turn runs in this thread; stop it or let it end first.',
+        );
+      }
+      if (!stored.goBack) {
+        throw new CommandRejected('rejected', 'This thread is not going back in its conversation.');
+      }
+      return [
+        {
+          kind: 'thread.goBackChanged',
+          aggregate: stored.id,
+          payload: { threadId: stored.id, goBack: null },
+        },
+      ];
     }
     case 'thread.rename': {
       const thread = requireThread(read, command.threadId);

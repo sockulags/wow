@@ -238,6 +238,50 @@ describe('Edit (spec 62, 63)', () => {
     expect(threadOf('t1')?.goBack).toEqual(goBack);
   });
 
+  it('goes on without going back when asked, after the provider refused the go-back', async () => {
+    await threadOn('claude', 't1');
+    database.sqlite
+      .prepare("UPDATE turns SET resume_point = ? WHERE id = 't1:turn:1'")
+      .run(JSON.stringify({ sessionId: 'mock-t1', at: 'mock-t1:99' }));
+    expect(() => dispatch({ type: 'thread.dropGoBack', threadId: 't1' })).toThrow(/not going back/);
+    const ended = turnEnded('t1');
+    dispatch({ type: 'thread.editLast', threadId: 't1', turnId: 't1:turn:2', text: 'Add a light' });
+    await ended;
+    dispatch({ type: 'thread.dropGoBack', threadId: 't1' });
+    expect(threadOf('t1')?.goBack).toBeNull();
+    await send('t1', 'Add a light, please');
+    const last = starts('claude').at(-1);
+    expect(last).toMatchObject({ resumeId: 'mock-t1' });
+    expect(last).not.toHaveProperty('goBack');
+    expect(turns('t1').at(-1)).toMatchObject({ state: 'completed', resumable: true });
+  });
+
+  it('starts a new conversation in a fork whose go-back was refused, when asked', async () => {
+    await threadOn('claude', 't1');
+    database.sqlite
+      .prepare("UPDATE turns SET resume_point = ? WHERE id = 't1:turn:1'")
+      .run(JSON.stringify({ sessionId: 'mock-t1', at: 'mock-t1:99' }));
+    dispatch({
+      type: 'thread.create',
+      threadId: 'f1',
+      providerInstanceId: 'claude',
+      cwd: '/work/kettle',
+      model: 'mock-model',
+      effort: 'high',
+      permissionMode: 'acceptEdits',
+      forkFrom: { threadId: 't1', turnId: 't1:turn:1' },
+    });
+    await send('f1', 'Add a light instead');
+    expect(turns('f1').at(-1)?.state).toBe('failed');
+    dispatch({ type: 'thread.dropGoBack', threadId: 'f1' });
+    await send('f1', 'Add a light instead');
+    const last = starts('claude').at(-1);
+    expect(last?.threadId).toBe('f1');
+    expect(last).not.toHaveProperty('goBack');
+    expect(last).not.toHaveProperty('resumeId');
+    expect(turns('f1').at(-1)?.state).toBe('completed');
+  });
+
   it('refuses when the exchange before was answered before points were kept', async () => {
     await threadOn('claude', 't1');
     // As a thread stored before this change: no point on its turns.
