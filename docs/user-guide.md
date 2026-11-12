@@ -813,7 +813,9 @@ add the rule in Settings → Workflows or in a workflow's builder if you want it
 Skills come from the folders in `skills.directories` (`~/.claude/skills`, `~/.codex/skills` and
 each project's `.claude/skills` and `.agents/skills` by default) and, with
 `skills.includeClaudePlugins`, from installed Claude plugins. Skills marked
-`disable-model-invocation: true` are offered too, because wow invokes them explicitly.
+`disable-model-invocation: true` are offered too, because wow invokes them explicitly. A
+project's skill folder that does not exist yet is not watched, so the first skill you write into it
+by hand is listed after the next agent turn ends or when you press **Refresh skills**.
 
 ### Skills of a step
 
@@ -1121,7 +1123,8 @@ your projects, the format agent-os writes. Each project's `plans.intentsDirector
 default) holds one folder per intent with `intent.md`, `spec.md` and `plan.md`. wow only reads
 these files, and reads them again when they change (once a file has stayed the same for
 `plans.writeSettleMs`). A project whose intents folder does not exist yet is not watched, so its
-folder can still be renamed or removed on Windows; wow looks for the folder again when you open
+folder can still be renamed or removed on Windows (one with an intents folder is watched, and
+Windows may then refuse; see "Troubleshooting"); wow looks for the folder again when you open
 Plans or press **Refresh now**, when a project changes and after each agent turn or run step.
 
 On the left are the projects and their intents with title, status and revision, which files exist,
@@ -1287,6 +1290,10 @@ without a project. Cards lose the project, so their triggers will not fire until
 one. Finished workflow runs keep their history. A project with a workflow run in progress cannot be
 removed: stop the run or let it finish first. The palette has "Rename project …" and "Remove
 project …" for every project.
+
+To rename, move or delete a project's folder on disk, Remove is not needed first, but on Windows a
+folder with an intents folder, `.claude/skills` or `.agents/skills` inside is watched by wow, and
+Windows may refuse while wow runs. Close wow first if it does.
 
 ## Assistant
 
@@ -1548,6 +1555,9 @@ None are known right now; the rest of this guide describes the intended behavior
   wow waits up to **Wait for a stopped git** (`advanced.gitStopWaitMs`, Settings → Advanced) for
   it to be gone. Wait that long and try again; if the folder is still held, another program has
   it open (a terminal or an editor in that folder).
+- wow watches a project's intents folder, `.claude/skills` and `.agents/skills` when they exist,
+  and Windows may refuse to rename or remove a folder with a watch below it. Close wow, move or
+  remove the folder, and start wow again.
 
 **A card did not start its run**
 

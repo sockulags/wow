@@ -709,11 +709,15 @@ skills are still offered because the app invokes them explicitly. Plugin skills 
 from the newest version folder in `~/.claude/plugins/cache/<marketplace>/<plugin>/`; the plugin
 name comes from `.claude-plugin/plugin.json`. A `SKILL.md` that does not parse is logged and
 skipped. The server's `SkillsService` scans at startup, when a watched folder changes, when the
-skills settings or the project list change, and on `skills.refresh`, and while a skill folder is
-missing also after every `turn.ended`. Only skill folders that exist are watched, for the same
-reason as the plans watcher (see "Plans"): waiting for a missing `<project>/.claude/skills` would
-watch the project folder and hold it on Windows; scans run one at a time and a
-burst of changes shares one queued scan. It sends the result as a `skills.sync` command, which
+skills settings or the project list change, and on `skills.refresh`, and while a skill folder
+inside a project is missing also after every `turn.ended`. A missing skill folder inside a
+project is not watched, for the same reason as the plans watcher (see "Plans"): waiting for a
+missing `<project>/.claude/skills` would watch the project folder and hold it on Windows. A
+missing user-level folder (`~/.codex/skills` for someone without Codex) is watched as before,
+which watches the folder above it in the user's home, and costs no scan per turn. An existing
+`<project>/.claude/skills` or `.agents/skills` is still watched, and on Windows a handle open
+below a folder may still refuse renaming or removing that project folder while wow runs. Scans
+run one at a time and a burst of changes shares one queued scan. It sends the result as a `skills.sync` command, which
 stores only the differences.
 
 ### wow skills
@@ -1939,7 +1943,9 @@ Only an intents folder that exists is watched, never a project's own folder or t
 the way to the intents folder: on Windows a watched folder cannot be renamed or removed until
 the watch is closed, and chokidar waits for a missing path by watching the folder above it, so
 waiting for `intents` held the whole project folder (finding 148). A missing intents folder is
-looked for again on the reads listed above. When the watched folder goes away the watcher
+looked for again on the reads listed above. A project whose intents folder exists still has
+that watch below its root, and on Windows a handle open below a folder may still refuse
+renaming or removing the project folder while wow runs; that limit is left as it is. When the watched folder goes away the watcher
 reports it and the next read watches nothing for that project. The watcher is ready before the
 files are read, so a change made during a read is reported after it. Not followed: a project
 folder that does not exist when the plans are read, and an intents folder refused as a link; both

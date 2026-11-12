@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { snapshot } from '../core/subscriptions.js';
 import { createHandlers, type Connection } from '../rpc/handlers.js';
 import { route } from '../rpc/router.js';
@@ -526,6 +526,27 @@ describe('own skills (spec 5, 6, 7)', () => {
     dispatch({ type: 'thread.sendMessage', threadId: 't-steep', text: 'add a skill' });
     await listed;
     expect(watchedDirs).toContain(path.join(projectDir, '.claude', 'skills'));
+  });
+
+  // ~/.codex/skills is missing for anyone without Codex: it must not cost a scan per turn.
+  it('watches a missing user-level skill folder and does not rescan for it when a turn ends', async () => {
+    await mkdir(path.join(projectDir, '.claude', 'skills'), { recursive: true });
+    await mkdir(path.join(projectDir, '.agents', 'skills'), { recursive: true });
+    await server.skills.refresh();
+    const refresh = vi.spyOn(server.skills, 'refresh');
+    const ended = new Promise<void>((resolve) => {
+      const off = server.engine.onCommit((commit) => {
+        if (commit.events.some(({ event }) => event.kind === 'turn.ended')) {
+          off();
+          resolve();
+        }
+      });
+    });
+    createThread('t-codex', 'claude-work');
+    dispatch({ type: 'thread.sendMessage', threadId: 't-codex', text: 'hello' });
+    await ended;
+    expect(refresh).not.toHaveBeenCalled();
+    expect(watchedDirs).toContain(path.join(userHome, '.codex', 'skills'));
   });
 });
 
