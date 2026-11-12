@@ -34,11 +34,14 @@ const conversation = (page: Page) => page.getByRole('list', { name: 'Conversatio
 const composer = (page: Page) => page.getByRole('combobox', { name: 'Message' });
 
 // Sends a message and waits for the turn's answer, the last row after the message. Every
-// message of the file is different, so it is found by its text.
+// message of the file is different, so it is found by its text; another file of this project
+// may have sent a longer message that holds the same words, so the newest match is the one.
 async function say(page: Page, text: string): Promise<void> {
   await composer(page).fill(text);
   await composer(page).press('Enter');
-  await expect(conversation(page).getByTestId('item-user').filter({ hasText: text })).toBeVisible();
+  await expect(
+    conversation(page).getByTestId('item-user').filter({ hasText: text }).last(),
+  ).toBeVisible();
   await expect(conversation(page).locator(':scope > li').last()).toHaveAttribute(
     'data-testid',
     'item-assistant_text',

@@ -1398,7 +1398,9 @@ test.describe('chat', () => {
     const palette = page.getByRole('dialog');
     await palette.getByRole('combobox').fill('palette target');
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: 'Palette target' })).toBeVisible();
+    await expect(
+      page.locator('#main-view').getByRole('heading', { name: 'Palette target' }),
+    ).toBeVisible();
 
     await page.keyboard.press('Control+k');
     await palette.getByRole('combobox').fill('new thread');
