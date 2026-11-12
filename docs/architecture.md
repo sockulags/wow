@@ -1265,8 +1265,9 @@ removal ask only about files.
   from as this computer knows them now and whether a fetch comes first; else `unavailable` and
   no switch (a folder without a project, not in Git, no commit). It reads only. The line under
   the switch names the branch with `branchName(template, title, threadId)` from contracts, filled
-  as the user types: the draft's thread id is chosen up front, so the name shown is the name
-  made. `branchName` slugs the title (32 characters at most, accents off), takes 6 hex of the
+  as the user types from `firstMessageTitle` (the first line, else the skill chips' names, else
+  "Image"), the same title `thread.create` gets; the draft's thread id is chosen up front, so the
+  name shown is the name made. `branchName` slugs the title (32 characters at most, accents off), takes 6 hex of the
   thread id's SHA-256 (`sha256Hex`, in contracts because the browser's digest is asynchronous),
   and cleans each part of the name to what `git check-ref-format --branch` takes. Two threads'
   names differ in their lower-case id, so they differ without case too, as Windows refs stored
@@ -1288,8 +1289,13 @@ removal ask only about files.
   in `defaultBranch`, the branch the start commit was read from. When it cannot be made, the
   reason (git's own: "fatal: a branch named … already exists"; runGit now prefers git's
   `fatal:`/`error:` line over what it said before it) goes in `thread.workingCopyFailed`, the
-  turn fails with it and the provider gets nothing. The next message tries again; nothing falls
-  back to the project folder.
+  turn fails with it and the provider gets nothing. `worktree add -b` makes the branch before the
+  folder and leaves it when the folder then fails (a folder already there, a path too long, a
+  locked file), so a branch that was not there before, is at the start commit, never moved (one
+  entry in its reflog) and has no folder on it is deleted again (`dropLeftBranch`,
+  `deleteBranch`): it holds nothing, and the next message tries again instead of hearing that
+  the branch exists. A branch that was there before is the user's and is never touched. Nothing
+  falls back to the project folder.
 - **Again on its branch.** A message to a thread whose copy is `removed` (or whose folder went)
   makes it again with `git worktree add <path> <branch>` (`reopenThreadWorkingCopy`); a folder
   that is already there on the branch (a fork made it first) is taken as it is. A deleted branch,
@@ -1297,20 +1303,31 @@ removal ask only about files.
   `ready` again.
 - **Settled at done.** On `thread.stateChanged` to `done`, once every thread whose
   `workingCopy.path` is that folder is done and none has a running turn, `settleWorkingCopy`
-  with `onBranch` removes it when no uncommitted, untracked or ignored file is in it, else keeps
-  it with what it holds; commits are counted for the chip but never keep it. The outcome goes to
-  every thread that shares the folder as `thread.workingCopySettled`.
+  with the thread's `branch` removes it when no uncommitted, untracked or ignored file is in it
+  and no commit was made on no branch, else keeps it with what it holds. Commits on a branch are
+  counted for the chip but do not keep it. `readThreadHolds` adds `commitsOnNoBranch` to
+  `readUnpushed`: commits HEAD of the copy has been on (HEAD and its reflog) that no branch, tag
+  or remote reaches and that are not in the reflog of the thread's branch or the one the copy is
+  on (`countCommitsOnNoBranch`), so a commit made with HEAD detached keeps the copy, and one
+  amended or reset away on the branch does not. The outcome goes to every thread that shares the
+  folder as `thread.workingCopySettled`. While a settle or a removal runs, `prepareThread` for
+  the folder waits for it and reads the row again, so a turn never starts in a folder that is
+  going.
 - **Remove working copy.** `threads.workingCopyStatus {threadId}` answers what it holds now
-  (`readUnpushed`); the dialog shows that and confirms with "Remove and lose them", or a plain
-  "Remove" when nothing would be lost. `threads.removeWorkingCopy {threadId, expect}` reads
-  again and is refused with `conflict` and the new counts as the error's `data` when more files
-  are there than `expect`, and with `rejected` while a turn runs or another thread that is not
-  done works in the folder. Then `git worktree remove --force`; the branch stays. wow never
-  deletes a branch and never pushes here.
+  (`readThreadHolds`); the dialog shows that, commits on no branch among what is lost, and
+  confirms with "Remove and lose them", or a plain "Remove" when nothing would be lost.
+  `threads.removeWorkingCopy {threadId, expect}` reads again and is refused with `conflict` and
+  the new counts as the error's `data` when more files or commits on no branch are there than
+  `expect`, and with `rejected` while a turn runs (checked again right before the removal) or
+  another thread that is not done works in the folder. The counts are compared, not the files:
+  one file swapped for another after the dialog opened is not noticed. Then `git worktree remove
+--force`; the branch stays. Apart from undoing its own failed `-b`, wow never deletes a branch
+  and never pushes here.
 - **Forks.** A fork takes its origin's `cwd`, `branch` and `workingCopy`.
 - **Restart.** `recover()` takes a `pending` copy whose folder git finished on its branch as
   ready; any other `pending` one fails ("The server stopped while the working copy was being
-  made") and is made at the next message. A `ready` copy of a done thread is settled.
+  made"), what git made of it goes (the folder with `git worktree remove --force`, a branch left
+  as `dropLeftBranch` allows), and it is made at the next message. A `ready` copy of a done thread is settled.
 - **Web.** `chat/working-copy.tsx`: `DraftWorkingCopy` (switch and line), `WorkingCopyChip` in
   the thread header (branch and "own working copy", or what a kept copy holds),
   `WorkingCopyDetails` in Details (branch, folder with Copy path and Open in editor, where it

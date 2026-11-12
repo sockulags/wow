@@ -7,7 +7,10 @@ import {
   addTrackingWorktree,
   addWorktree,
   askRemoteDefaultBranch,
+  branchNeverMoved,
   checkBranchName,
+  countCommitsOnNoBranch,
+  deleteBranch,
   fetchRemote,
   fetchRemoteRef,
   pruneWorktrees,
@@ -262,9 +265,33 @@ export async function createThreadWorkingCopy(request: ThreadCreateRequest): Pro
   } catch (error) {
     return failed(error instanceof Error ? error.message : String(error));
   }
+  // A branch that is there already is the user's: git refuses it before making anything.
+  const taken = (await readCommit(projectFolder, `refs/heads/${branch}`, git)) !== null;
   const added = await addNewBranchWorktree(projectFolder, target, branch, start.sha, git);
-  if (!added.ok) return failed(`${added.message} (${target})`);
+  if (!added.ok) {
+    if (!taken) await dropLeftBranch(projectFolder, branch, start.sha, git);
+    return failed(`${added.message} (${target})`);
+  }
   return { ok: true, startSha: start.sha, defaultBranch: start.defaultBranch, note: start.note };
+}
+
+// `worktree add -b` makes the branch before the folder and leaves it when the folder then fails
+// (a folder already there, a path too long, a locked file), so Retry would only ever hear that
+// the branch exists (spec 12). A branch git made at the start commit and never moved, with no
+// folder on it, holds nothing and is taken away again. Callers make sure wow made it: one that
+// was there before is the user's.
+export async function dropLeftBranch(
+  projectFolder: string,
+  branch: string,
+  startSha: string | null,
+  git: GitRunOptions,
+): Promise<void> {
+  const tip = await readCommit(projectFolder, `refs/heads/${branch}`, git);
+  if (tip === null || (startSha !== null && tip !== startSha)) return;
+  if (!(await branchNeverMoved(projectFolder, branch, git))) return;
+  // Git refuses while a folder is on the branch; then it is left as it is.
+  await pruneWorktrees(projectFolder, git);
+  await deleteBranch(projectFolder, branch, git);
 }
 
 // Where a thread's copy would start, read without fetching or writing anything, for the draft's
@@ -353,6 +380,22 @@ async function projectHead(
   }
 }
 
+// What a thread's copy holds that would be lost with it: as for a run, and of its commits the
+// ones made on no branch, which the thread's branch does not keep (spec 14, 15).
+export async function readThreadHolds(
+  target: string,
+  startSha: string | null,
+  branch: string,
+  git: GitRunOptions,
+): Promise<UnpushedWork | undefined> {
+  const unpushed = await readUnpushed(target, startSha, git);
+  if (!unpushed) return undefined;
+  const branches = unpushed.branch === null ? [branch] : [...new Set([branch, unpushed.branch])];
+  const commitsOnNoBranch = await countCommitsOnNoBranch(target, branches, git);
+  if (commitsOnNoBranch === undefined) return undefined;
+  return { ...unpushed, commitsOnNoBranch };
+}
+
 export interface Settled {
   readonly state: 'kept' | 'removed';
   readonly unpushed: UnpushedWork | null;
@@ -365,8 +408,8 @@ export interface SettleRequest {
   readonly startSha: string | null;
   readonly git: GitRunOptions;
   // A run's copy is on no branch, so its commits are lost with it. A thread's copy is on its own
-  // branch, which keeps them (thread work spec 14).
-  readonly onBranch?: boolean | undefined;
+  // branch, named here, which keeps them unless they were made on no branch (thread work spec 14).
+  readonly branch?: string | undefined;
 }
 
 const gone = async (target: string) => (await stat(target).catch(() => undefined)) === undefined;
@@ -379,13 +422,16 @@ export async function settleWorkingCopy({
   target,
   startSha,
   git,
-  onBranch = false,
+  branch,
 }: SettleRequest): Promise<Settled> {
   if (await gone(target)) {
     await pruneWorktrees(projectFolder, git);
     return { state: 'removed', unpushed: null, error: null };
   }
-  const unpushed = await readUnpushed(target, startSha, git);
+  const unpushed: UnpushedWork | undefined =
+    branch === undefined
+      ? await readUnpushed(target, startSha, git)
+      : await readThreadHolds(target, startSha, branch, git);
   if (!unpushed) {
     return {
       state: 'kept',
@@ -393,8 +439,9 @@ export async function settleWorkingCopy({
       error: 'Git could not say what the working copy holds, so it was kept.',
     };
   }
-  const commitsLost = !onBranch && unpushed.unpushedCommits > 0;
-  if (unpushed.uncommittedFiles > 0 || unpushed.ignoredFiles > 0 || commitsLost) {
+  const commitsLost =
+    branch === undefined ? unpushed.unpushedCommits > 0 : (unpushed.commitsOnNoBranch ?? 0) > 0;
+  if (unpushed.uncommittedFiles > 0 || (unpushed.ignoredFiles ?? 0) > 0 || commitsLost) {
     return { state: 'kept', unpushed, error: null };
   }
   const removed = await removeWorktree(projectFolder, target, false, git);
@@ -411,7 +458,7 @@ export async function discardWorkingCopy({
   projectFolder,
   target,
   git,
-}: Omit<SettleRequest, 'startSha' | 'onBranch'>): Promise<Settled> {
+}: Omit<SettleRequest, 'startSha' | 'branch'>): Promise<Settled> {
   if (!(await gone(target))) {
     const removed = await removeWorktree(projectFolder, target, true, git);
     if (!removed.ok) {

@@ -21,6 +21,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
+import { firstMessageTitle } from '@/chat/model';
 import { renderApp, renderWithRuntime } from '@/test/render';
 import {
   askRemoveThreadCopy,
@@ -301,6 +302,15 @@ describe("a thread's chip and Details (spec 13, 14)", () => {
     expect(holdsSummary(holds({ uncommittedFiles: 1 }), 'wow/a')).toBe('1 uncommitted file');
     expect(holdsSummary(holds({ unpushedCommits: 1 }), 'wow/a')).toBe('1 commit on wow/a');
     expect(holdsSummary(holds(), 'wow/a')).toBe('Nothing to lose');
+    expect(holdsSummary(holds({ unpushedCommits: 3, commitsOnNoBranch: 1 }), 'wow/a')).toBe(
+      '1 commit on no branch · 2 commits on wow/a',
+    );
+  });
+
+  it('names the branch from the title the first message gives, skills and images included', () => {
+    expect(firstMessageTitle('Ring twice\nand loud', [], 0)).toBe('Ring twice');
+    expect(firstMessageTitle('', ['plan-work', 'review'], 1)).toBe('plan-work review');
+    expect(firstMessageTitle('', [], 2)).toBe('Image');
   });
 });
 
@@ -359,7 +369,7 @@ describe('Remove working copy (spec 15)', () => {
     await act(() => askRemoveThreadCopy(connection, 't1'));
     const dialog = await screen.findByRole('alertdialog');
     expect(within(dialog).getByTestId('working-copy-loses').textContent).toBe(
-      'Nothing in it would be lost: its commits stay on wow/ring-twice-3fa2c1.',
+      'Nothing in it would be lost. Commits stay on wow/ring-twice-3fa2c1.',
     );
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }));
     expect(within(dialog).getByRole('alert').textContent).toBe(

@@ -15,7 +15,7 @@ import {
   PlugIcon,
   SparklesIcon,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
 import { useRuntime, useSetting } from '@/app/runtime';
 import { ChoiceSelect } from '@/components/choice-select';
@@ -29,7 +29,7 @@ import { cn } from '@/lib/utils';
 import { lastUsedInstanceId } from '@/providers/model';
 import { Composer, type ComposerHandle } from './composer';
 import { useDispatch, useModels, useTopic } from './data';
-import { effortOptions, threadTitle, titleFromMessage } from './model';
+import { effortOptions, firstMessageTitle, threadTitle } from './model';
 import { ModelBar, useModelBarKeys, type ModelBarHandle } from './model-bar';
 import type { ThreadSettingsValue } from './thread-settings';
 import { lastUsedThread, providerLabel, recentFolders, starterSkills } from './view-model';
@@ -125,8 +125,13 @@ export function NewThreadView() {
   const [typingFolder, setTypingFolder] = useState(false);
   // Picked before the first message so pasted images are stored for the thread they go with.
   const [pendingThreadId] = useState(() => globalThis.crypto.randomUUID());
-  // The first line of what is typed, for the branch the working copy line names.
+  // The title the first message would give, for the branch the working copy line names.
   const [typed, setTyped] = useState('');
+  const titleTyped = useCallback(
+    (text: string, skillNames: readonly string[], imageCount: number) =>
+      setTyped(firstMessageTitle(text, skillNames, imageCount)),
+    [],
+  );
   const [overrides, setOverrides] = useState<
     Partial<ThreadSettingsValue> & { readonly for?: string }
   >({});
@@ -227,10 +232,11 @@ export function NewThreadView() {
         ...(project ? { projectId: project.id } : {}),
         ...(ownCopy ? { ownWorkingCopy: true } : {}),
         cwd: cwd.trim(),
-        title:
-          titleFromMessage(text) ||
-          (chosen ?? []).map((skill) => skill.name).join(' ') ||
-          ((images ?? []).length > 0 ? 'Image' : ''),
+        title: firstMessageTitle(
+          text,
+          (chosen ?? []).map((skill) => skill.name),
+          (images ?? []).length,
+        ),
         ...settings,
       });
     await send({
@@ -371,14 +377,14 @@ export function NewThreadView() {
           <DraftWorkingCopy
             plan={copyPlan}
             on={ownCopy}
-            title={titleFromMessage(typed)}
+            title={typed}
             threadId={pendingThreadId}
             onChange={(ownWorkingCopy) => draft.setState({ ownWorkingCopy })}
           />
         )}
         <Composer
           ref={composer}
-          onTextChange={setTyped}
+          onTextChange={titleTyped}
           providerKind={instance?.kind}
           running={false}
           disabled={!instance}

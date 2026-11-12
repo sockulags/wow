@@ -41,13 +41,16 @@ const count = (amount: number, one: string, many: string) =>
 
 const shortSha = (sha: string | null | undefined) => (sha ? sha.slice(0, 7) : '');
 
-// "2 uncommitted files, 1 ignored file", or undefined when no file would be lost.
+// "2 uncommitted files, 1 ignored file, 1 commit on no branch", or undefined when nothing would
+// be lost: commits made on no branch go with the folder, the thread's branch keeps the others.
 export function filesHeld(holds: UnpushedWork): string | undefined {
   const parts = [
     holds.uncommittedFiles > 0 &&
       count(holds.uncommittedFiles, 'uncommitted file', 'uncommitted files'),
     (holds.ignoredFiles ?? 0) > 0 &&
       count(holds.ignoredFiles ?? 0, 'ignored file', 'ignored files'),
+    (holds.commitsOnNoBranch ?? 0) > 0 &&
+      `${count(holds.commitsOnNoBranch ?? 0, 'commit', 'commits')} on no branch`,
   ].filter((part): part is string => typeof part === 'string');
   return parts.length === 0 ? undefined : parts.join(', ');
 }
@@ -55,9 +58,10 @@ export function filesHeld(holds: UnpushedWork): string | undefined {
 // "2 uncommitted files, 1 ignored file · 3 commits on wow/ring-twice-3fa2c1" (spec 14).
 export function holdsSummary(holds: UnpushedWork, branch: string | null): string {
   const files = filesHeld(holds);
+  const onBranches = holds.unpushedCommits - (holds.commitsOnNoBranch ?? 0);
   const commits =
-    holds.unpushedCommits > 0
-      ? `${count(holds.unpushedCommits, 'commit', 'commits')} on ${branch ?? holds.branch ?? 'no branch'}`
+    onBranches > 0
+      ? `${count(onBranches, 'commit', 'commits')} on ${branch ?? holds.branch ?? 'no branch'}`
       : undefined;
   return [files, commits].filter((part) => part !== undefined).join(' · ') || 'Nothing to lose';
 }
@@ -196,6 +200,16 @@ export function RemoveThreadCopyDialog({ thread }: { readonly thread: Thread }) 
   if (!copy) return null;
   const holds = question?.holds;
   const lost = holds ? filesHeld(holds) : undefined;
+  const branch = copy.branch ?? thread.branch;
+  // The folder may have been switched to another branch; commits there stay there.
+  const kept =
+    holds?.branch && holds.branch !== branch ? (
+      'Commits on branches stay.'
+    ) : (
+      <>
+        Commits stay on <span className="font-mono">{branch}</span>.
+      </>
+    );
   return (
     <AlertDialog
       open={question !== undefined}
@@ -212,14 +226,10 @@ export function RemoveThreadCopyDialog({ thread }: { readonly thread: Thread }) 
               ) : lost ? (
                 <span data-testid="working-copy-loses">
                   {question?.changed ? 'It holds more now: ' : 'It holds '}
-                  {lost}. They are lost with the folder. Commits stay on{' '}
-                  <span className="font-mono">{copy.branch ?? thread.branch}</span>.
+                  {lost}. They are lost with the folder. {kept}
                 </span>
               ) : (
-                <span data-testid="working-copy-loses">
-                  Nothing in it would be lost: its commits stay on{' '}
-                  <span className="font-mono">{copy.branch ?? thread.branch}</span>.
-                </span>
+                <span data-testid="working-copy-loses">Nothing in it would be lost. {kept}</span>
               )}
               {question?.error && (
                 <span role="alert" className="text-destructive">

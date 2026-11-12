@@ -14,17 +14,14 @@ import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
 import { projects, threads, turns, workflowRuns } from '../db/schema.js';
 import type { Logger } from '../logger.js';
-import {
-  readCommit,
-  readCurrentBranch,
-  readUnpushed,
-  type GitRunOptions,
-} from '../projects/git.js';
+import { readCommit, readCurrentBranch, type GitRunOptions } from '../projects/git.js';
 import type { SettingsService } from '../settings/service.js';
 import {
   createThreadWorkingCopy,
   createWorkingCopy,
   discardWorkingCopy,
+  dropLeftBranch,
+  readThreadHolds,
   readThreadStart,
   reopenThreadWorkingCopy,
   settleWorkingCopy,
@@ -75,6 +72,9 @@ export class Workspaces {
   // A thread's copy being made, by folder, so a fork and its origin never make it twice.
   readonly #preparingThreads = new Map<string, Promise<string | undefined>>();
   readonly #settling = new Set<string>();
+  // A thread's copy being looked at or removed, by folder: a message waits for it, so its turn
+  // never starts in a folder that is going.
+  readonly #settlingThreads = new Map<string, Promise<void>>();
   readonly #pending = new Set<Promise<unknown>>();
   readonly #unsubscribe: () => void;
 
@@ -203,9 +203,16 @@ export class Workspaces {
     if (!thread || !copy) return Promise.resolve(undefined);
     const running = this.#preparingThreads.get(copy.path);
     if (running) return running;
-    const work = this.#prepareThread(thread).finally(() =>
-      this.#preparingThreads.delete(copy.path),
-    );
+    const settling = this.#settlingThreads.get(copy.path);
+    // After a settle or removal the row says what it left; it is read again then.
+    const work = (
+      settling
+        ? settling.then(() => {
+            const now = this.#thread(threadId);
+            return now ? this.#prepareThread(now) : undefined;
+          })
+        : this.#prepareThread(thread)
+    ).finally(() => this.#preparingThreads.delete(copy.path));
     this.#preparingThreads.set(copy.path, work);
     this.#pending.add(work);
     void work.finally(() => this.#pending.delete(work));
@@ -237,11 +244,12 @@ export class Workspaces {
 
   // What the thread's copy holds now that would be lost with it (spec 15).
   async threadStatus(threadId: string): Promise<UnpushedWork> {
-    const { copy } = this.#threadCopy(threadId);
+    const { thread, copy } = this.#threadCopy(threadId);
     if (copy.state === 'removed' || (await gone(copy.path))) {
       throw new WorkspaceRefused('The working copy is not there any more.');
     }
-    const unpushed = await readUnpushed(copy.path, copy.startSha, this.#git());
+    const branch = copy.branch ?? thread.branch ?? '';
+    const unpushed = await readThreadHolds(copy.path, copy.startSha, branch, this.#git());
     if (!unpushed) {
       throw new WorkspaceRefused('Git could not say what the working copy holds.');
     }
@@ -251,20 +259,39 @@ export class Workspaces {
   // "Remove working copy" of a chat thread (spec 15): only after the user saw `expect`, never
   // while a turn runs or another thread that is not done works in the folder. The branch stays.
   async removeThread(threadId: string, expect: UnpushedWork): Promise<void> {
-    const { thread, copy } = this.#threadCopy(threadId);
+    const { copy } = this.#threadCopy(threadId);
     if (copy.state === 'removed') return;
     if (copy.state === 'pending' || this.#preparingThreads.has(copy.path)) {
       throw new WorkspaceRefused('The working copy is still being made.');
     }
-    const sharing = this.#threadsSharing(copy.path);
-    const running = sharing.find((other) => this.#threadTurnRunning(other.id));
-    if (running) {
-      throw new WorkspaceRefused(
-        running.id === thread.id
-          ? 'A turn runs in this thread. Stop it, then remove the working copy.'
-          : `Thread "${running.title || running.id}" is working in this working copy.`,
-      );
+    if (this.#settlingThreads.has(copy.path)) {
+      throw new WorkspaceRefused('The working copy is being looked at. Try again in a moment.');
     }
+    const work = this.#removeThread(threadId, expect);
+    this.#holdThreadCopy(
+      copy.path,
+      work.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return work;
+  }
+
+  async #removeThread(threadId: string, expect: UnpushedWork): Promise<void> {
+    const { thread, copy } = this.#threadCopy(threadId);
+    const sharing = this.#threadsSharing(copy.path);
+    const refuseRunning = () => {
+      const running = sharing.find((other) => this.#threadTurnRunning(other.id));
+      if (running) {
+        throw new WorkspaceRefused(
+          running.id === thread.id
+            ? 'A turn runs in this thread. Stop it, then remove the working copy.'
+            : `Thread "${running.title || running.id}" is working in this working copy.`,
+        );
+      }
+    };
+    refuseRunning();
     const other = sharing.find((each) => each.id !== thread.id && each.state !== 'done');
     if (other) {
       throw new WorkspaceRefused(
@@ -281,7 +308,8 @@ export class Workspaces {
       const now = await this.threadStatus(threadId);
       if (
         now.uncommittedFiles > expect.uncommittedFiles ||
-        (now.ignoredFiles ?? 0) > (expect.ignoredFiles ?? 0)
+        (now.ignoredFiles ?? 0) > (expect.ignoredFiles ?? 0) ||
+        (now.commitsOnNoBranch ?? 0) > (expect.commitsOnNoBranch ?? 0)
       ) {
         throw new WorkspaceChanged(
           `The working copy holds more than you were shown: ${holdsText(now)}.`,
@@ -289,6 +317,8 @@ export class Workspaces {
         );
       }
     }
+    // A turn that started while git was asked.
+    refuseRunning();
     const outcome = await discardWorkingCopy({
       projectFolder,
       target: copy.path,
@@ -557,6 +587,15 @@ export class Workspaces {
         return;
       }
     }
+    // What git made of it goes, so the next message makes it again: the folder (named after the
+    // thread, so nothing else is in it) and the branch, made for this thread and never moved.
+    const projectFolder = thread.projectId ? this.#projectFolder(thread.projectId) : undefined;
+    if (projectFolder !== undefined) {
+      const outcome = await discardWorkingCopy({ projectFolder, target: copy.path, git });
+      if (branch && outcome.state === 'removed') {
+        await dropLeftBranch(projectFolder, branch, null, git);
+      }
+    }
     this.#dispatch(`workingCopy:${thread.id}:failed:${randomUUID()}`, {
       type: 'thread.workingCopyFailed',
       threadId: thread.id,
@@ -570,24 +609,31 @@ export class Workspaces {
     const thread = this.#thread(threadId);
     const copy = thread?.workingCopy;
     if (!thread || !copy || (copy.state !== 'ready' && copy.state !== 'kept')) return;
-    if (this.#settling.has(copy.path) || this.#preparingThreads.has(copy.path)) return;
+    if (this.#settlingThreads.has(copy.path) || this.#preparingThreads.has(copy.path)) return;
     const sharing = this.#threadsSharing(copy.path);
     if (sharing.some((each) => each.state !== 'done' || this.#threadTurnRunning(each.id))) return;
     const projectFolder = thread.projectId ? this.#projectFolder(thread.projectId) : undefined;
     if (projectFolder === undefined) return;
-    this.#settling.add(copy.path);
-    try {
-      const outcome = await settleWorkingCopy({
-        projectFolder,
-        target: copy.path,
-        startSha: copy.startSha,
-        git: this.#git(),
-        onBranch: true,
-      });
-      this.#reportThreads(sharing, outcome);
-    } finally {
-      this.#settling.delete(copy.path);
-    }
+    const work = settleWorkingCopy({
+      projectFolder,
+      target: copy.path,
+      startSha: copy.startSha,
+      git: this.#git(),
+      branch: copy.branch ?? thread.branch ?? '',
+    }).then((outcome) => this.#reportThreads(sharing, outcome));
+    this.#holdThreadCopy(
+      copy.path,
+      work.catch(() => undefined),
+    );
+    await work;
+  }
+
+  // Set before the first await, so a message that comes meanwhile waits for it.
+  #holdThreadCopy(folder: string, work: Promise<void>): void {
+    this.#settlingThreads.set(folder, work);
+    void work.finally(() => {
+      if (this.#settlingThreads.get(folder) === work) this.#settlingThreads.delete(folder);
+    });
   }
 
   #threadsSharing(folder: string): Thread[] {
@@ -661,13 +707,15 @@ export class Workspaces {
   }
 }
 
-// "2 uncommitted files, 1 ignored file".
+// "2 uncommitted files, 1 ignored file, 1 commit on no branch".
 export function holdsText(holds: UnpushedWork): string {
   const parts = [
     holds.uncommittedFiles > 0 &&
       count(holds.uncommittedFiles, 'uncommitted file', 'uncommitted files'),
     (holds.ignoredFiles ?? 0) > 0 &&
       count(holds.ignoredFiles ?? 0, 'ignored file', 'ignored files'),
+    (holds.commitsOnNoBranch ?? 0) > 0 &&
+      `${count(holds.commitsOnNoBranch ?? 0, 'commit', 'commits')} on no branch`,
   ].filter((part): part is string => typeof part === 'string');
   return parts.length === 0 ? 'nothing that is not committed' : parts.join(', ');
 }

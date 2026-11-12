@@ -321,6 +321,9 @@ export const UnpushedWork = z.object({
   newestSubject: z.string().nullable(),
   // The branch the working copy is on, null while it is on none.
   branch: z.string().nullable(),
+  // A chat thread's copy only (thread work spec 14, 15): of those commits, the ones made on no
+  // branch (HEAD detached), which its branch does not keep and are lost with the folder.
+  commitsOnNoBranch: z.number().int().nonnegative().optional(),
 });
 export type UnpushedWork = z.infer<typeof UnpushedWork>;
 

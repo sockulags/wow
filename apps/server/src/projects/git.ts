@@ -829,6 +829,57 @@ export async function pruneWorktrees(folder: string, options: GitRunOptions): Pr
   return outcomeOf(await runGit(folder, ['worktree', 'prune'], options));
 }
 
+// Only for a branch `addNewBranchWorktree` made before the worktree itself failed: `worktree add
+// -b` makes the branch first and leaves it behind, and a branch of that name refuses every later
+// try. Git refuses while a folder is on the branch.
+export async function deleteBranch(
+  folder: string,
+  branch: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(await runGit(folder, ['branch', '-D', branch], options));
+}
+
+// The tips the history of a ref names (`git reflog`), oldest last; none when it has no history.
+async function reflogTips(folder: string, ref: string, options: GitRunOptions) {
+  const shown = await runGit(folder, ['reflog', 'show', '--format=%H', ref], options);
+  return shown.ok ? shown.stdout.split('\n').filter((sha) => sha !== '') : [];
+}
+
+// Whether the branch's history has only its making in it: no commit, reset or rename since.
+export async function branchNeverMoved(
+  folder: string,
+  branch: string,
+  options: GitRunOptions,
+): Promise<boolean> {
+  return (await reflogTips(folder, `refs/heads/${branch}`, options)).length === 1;
+}
+
+// Commits HEAD of the folder has been on that no branch, tag or remote reaches and that were not
+// made on one of `branches` either: commits made on no branch, gone with the folder. A commit
+// amended or reset away on a branch is in that branch's history and not counted. Undefined when
+// git cannot say.
+export async function countCommitsOnNoBranch(
+  folder: string,
+  branches: readonly string[],
+  options: GitRunOptions,
+): Promise<number | undefined> {
+  const [visited, ...made] = await Promise.all([
+    reflogTips(folder, 'HEAD', options),
+    ...branches.map((branch) => reflogTips(folder, `refs/heads/${branch}`, options)),
+  ]);
+  const tips = ['HEAD', ...new Set(visited)];
+  const known = [...new Set(made.flat())];
+  const counted = await runGit(
+    folder,
+    ['rev-list', '--count', ...tips, '--not', '--branches', '--tags', '--remotes', ...known],
+    options,
+  );
+  if (!counted.ok) return undefined;
+  const amount = Number(counted.stdout.trim());
+  return Number.isInteger(amount) ? amount : undefined;
+}
+
 export interface Unpushed {
   readonly uncommittedFiles: number;
   readonly ignoredFiles: number;

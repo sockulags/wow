@@ -416,7 +416,8 @@ folder's commit (the default) or the default branch's tip.
 The header shows the branch and "own working copy"; Details shows the branch, the folder (with
 Copy path and Open in editor) and where it started. When you mark the thread done, wow removes the
 copy if no uncommitted or ignored file is in it; commits stay on the branch. Otherwise the copy
-is kept and the chip says what it holds. **Remove working copy** (Details or the palette) shows
+is kept and the chip says what it holds. A commit made with no branch checked out (a detached
+HEAD) is not on the branch, so it keeps the copy too. **Remove working copy** (Details or the palette) shows
 what would be lost and removes only after **Remove and lose them**; it is refused while a turn
 runs or while another thread that is not done (a fork) works in the same copy. wow never deletes
 the branch and never pushes. Your next message makes the copy again on its branch. A fork works

@@ -345,6 +345,39 @@ describe("a chat thread's own working copy (thread work spec 10 to 18)", () => {
     expect(thread().workingCopy).toMatchObject({ state: 'ready', error: null });
   });
 
+  it('takes away the branch git made when the folder could not be made, so Retry works once the cause is gone (spec 12)', async () => {
+    create();
+    // A folder left at the thread's place, not a working copy.
+    await mkdir(thread().cwd, { recursive: true });
+    await writeFile(path.join(thread().cwd, 'left.txt'), 'Invented\n');
+    send();
+    expect((await turnEnds()).state).toBe('failed');
+    expect(thread().workingCopy?.error).toMatch(/already exists/);
+    expect(git(project, 'branch', '--list', branchOf())).toBe('');
+    await server.providerService.idle();
+    expect(startTurns()).toEqual([]);
+
+    await rm(thread().cwd, { recursive: true });
+    send();
+    expect((await turnEnds('t1', 1)).state).toBe('completed');
+    expect(startTurns()).toHaveLength(1);
+    expect(git(thread().cwd, 'symbolic-ref', '--short', 'HEAD')).toBe(branchOf());
+  });
+
+  it('takes away a branch a stop left without its folder, so the next message makes the copy (restart)', async () => {
+    create();
+    // As if git had made the branch and the server stopped before the folder.
+    git(project, 'branch', branchOf());
+    await server.stop();
+    server = await launch();
+    await server.workspaces.settled();
+    expect(thread().workingCopy).toMatchObject({ state: 'failed' });
+    expect(git(project, 'branch', '--list', branchOf())).toBe('');
+    send();
+    expect((await turnEnds()).state).toBe('completed');
+    expect(thread().workingCopy).toMatchObject({ state: 'ready' });
+  });
+
   it('fails the turn for a project folder that is not a repository and goes once it is one', async () => {
     const plain = path.join(root, 'plain folder');
     await mkdir(plain);
@@ -375,6 +408,46 @@ describe("a chat thread's own working copy (thread work spec 10 to 18)", () => {
     expect(thread().workingCopy).toMatchObject({ state: 'removed', error: null });
     expect(existsSync(done.cwd)).toBe(false);
     expect(git(project, 'log', '-1', '--format=%s', branchOf())).toBe('Ring the bell');
+  });
+
+  it('removes the copy at Mark done after a commit was amended on the branch (spec 14)', async () => {
+    const done = await firstTurn((cwd) => {
+      execFileSync('node', ['-e', "require('fs').writeFileSync('bell.ts', 'ring();\\n')"], { cwd });
+      git(cwd, 'add', '-A');
+      git(cwd, 'commit', '-q', '-m', 'Ring');
+      git(cwd, 'commit', '-q', '--amend', '-m', 'Ring the bell');
+    });
+    dispatch({ type: 'thread.setDone', threadId: 't1', done: true });
+    await server.workspaces.settled();
+    expect(thread().workingCopy).toMatchObject({ state: 'removed' });
+    expect(existsSync(done.cwd)).toBe(false);
+  });
+
+  it('keeps the copy at Mark done when a commit was made on no branch, and Remove names it (spec 14, 15)', async () => {
+    const done = await firstTurn((cwd) => {
+      git(cwd, 'checkout', '-q', '--detach');
+      execFileSync('node', ['-e', "require('fs').writeFileSync('bell.ts', 'ring();\\n')"], { cwd });
+      git(cwd, 'add', '-A');
+      git(cwd, 'commit', '-q', '-m', 'Ring on no branch');
+      // Back on the branch: the commit is reached only by this folder's history.
+      git(cwd, 'checkout', '-q', branchOf());
+    });
+    dispatch({ type: 'thread.setDone', threadId: 't1', done: true });
+    await server.workspaces.settled();
+    expect(thread().workingCopy).toMatchObject({
+      state: 'kept',
+      unpushed: { uncommittedFiles: 0, commitsOnNoBranch: 1 },
+    });
+    expect(existsSync(done.cwd)).toBe(true);
+
+    const shown = resultOf(await rpc('threads.workingCopyStatus', { threadId: 't1' }));
+    expect(shown).toMatchObject({ commitsOnNoBranch: 1 });
+    git(done.cwd, 'checkout', '-q', '--detach');
+    await commit(done.cwd, 'kettle.ts', 'boil();\n', 'Boil on no branch');
+    const refused = await rpc('threads.removeWorkingCopy', { threadId: 't1', expect: shown });
+    expect(errorOf(refused)).toMatchObject({ code: 'conflict', data: { commitsOnNoBranch: 2 } });
+    expect(errorOf(refused)?.message).toMatch(/2 commits on no branch/);
+    expect(existsSync(done.cwd)).toBe(true);
   });
 
   it('keeps the copy at Mark done with an uncommitted and an ignored file and says so (spec 14)', async () => {
