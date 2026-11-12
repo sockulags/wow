@@ -91,6 +91,7 @@ export class ImageStore {
       .where(eq(threads.id, params.threadId))
       .get();
     if (thread?.kind === 'assistant') throw new ImageRefused('The assistant takes no images.');
+    if (thread?.stepId != null) throw new ImageRefused('A workflow step takes no images.');
     const bytes = Buffer.from(params.base64, 'base64');
     const mediaType = sniffImage(bytes);
     if (!mediaType || mediaType === 'image/svg+xml') {

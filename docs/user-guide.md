@@ -471,7 +471,7 @@ Anything else, and an image for a Codex model that says it takes no images, is r
 reason and not added. Claude Code does not say which of its models take images, so wow sends them
 and shows Claude's own refusal, if any, as the turn's error. wow keeps the pictures in its own
 folder (`~/.wow/images`, one folder per thread) and sends them only to the thread's provider. The
-Assistant takes no images. A message with pictures written while a turn runs waits for the turn's
+Assistant and a workflow step's thread take no images. A message with pictures written while a turn runs waits for the turn's
 end, also on Claude Code.
 
 ### Skills

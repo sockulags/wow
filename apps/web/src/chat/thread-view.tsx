@@ -586,8 +586,9 @@ export function ThreadConversation({
             }
             {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
             fileSource={fileLinks ? { threadId } : undefined}
-            // Images go with chat and step threads; the Assistant view takes none (spec 61).
-            imageTarget={fileLinks ? { threadId } : undefined}
+            // Images go only with chat threads: the Assistant view (spec 61) and a workflow step,
+            // wherever it is shown, take none.
+            imageTarget={fileLinks && thread.stepId === null ? { threadId } : undefined}
             footer={
               (showMeter && context) || (canResume && !errorId) ? (
                 <div className="flex min-h-6 flex-wrap items-center gap-3">

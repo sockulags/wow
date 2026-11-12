@@ -70,12 +70,14 @@ const pngFile = (name: string, size = 64) =>
 
 function setup({
   assistant = false,
+  shown = thread,
   items = [],
   settings = {},
   refuse,
   held,
 }: {
   assistant?: boolean;
+  shown?: Thread;
   items?: ThreadItem[];
   settings?: SettingValues;
   // What the server answers to attachments.put instead of storing the image.
@@ -124,7 +126,7 @@ function setup({
       }}
     >
       <ThreadConversation
-        thread={thread}
+        thread={shown}
         instance={instance}
         {...(assistant ? { extras: { placeholder: 'Message' } } : {})}
       />
@@ -324,6 +326,17 @@ describe('images that are refused (agent workbench spec 54)', () => {
 describe("the Assistant view's composer (agent workbench spec 61)", () => {
   it('takes no pasted or dropped image @agent-workbench-61', async () => {
     const { box, calls } = setup({ assistant: true });
+    await paste(box, [pngFile('image.png')]);
+    await drop(box, [pngFile('kettle.png')]);
+    expect(calls('attachments.put')).toEqual([]);
+    expect(chips()).toHaveLength(0);
+    expect(activeImageComposer(imageComposerStore.getState())).toBeUndefined();
+  });
+});
+
+describe("a workflow step's thread", () => {
+  it('takes no pasted or dropped image, wherever it is shown', async () => {
+    const { box, calls } = setup({ shown: { ...thread, runId: 'run-1', stepId: 'build' } });
     await paste(box, [pngFile('image.png')]);
     await drop(box, [pngFile('kettle.png')]);
     expect(calls('attachments.put')).toEqual([]);

@@ -2841,8 +2841,9 @@ Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attac
   given one for a thread not made yet) and the thread's model (or the provider's default for an
   empty model). Only `imageInput: false` refuses, so Codex models that report no image input are
   refused and Claude models, which report nothing, are sent; a provider that cannot list its
-  models refuses nothing. The assistant's thread is refused (`attachments.put` for its id, and
-  `thread.sendMessage` with attachments in the decider).
+  models refuses nothing. The assistant's thread and a workflow step's thread (one with a
+  `stepId`) are refused (`attachments.put` for its id, and `thread.sendMessage` with attachments
+  in the decider): a step's thread takes no images wherever it is shown.
 - **Sending.** `dispatch` asks `ImageStore.refusal` before deciding a `thread.sendMessage` with
   attachments: every image must be stored for that thread, so a message never starts a turn with a
   missing image, and the thread's model is checked again as at `attachments.put`, since the model
@@ -2871,8 +2872,8 @@ Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attac
   `imageComposerStore`). Send waits while an image is still on its way. A pasted screenshot has
   no name and shows as "Image n". A paste whose clipboard also holds text (`text/plain`, as Excel,
   Word and Outlook put a picture of the copied cells or passage beside it) is left to the text
-  box and adds no image. The Assistant view passes no `imageTarget`, so its composer
-  takes no paste, drop or palette image.
+  box and adds no image. The Assistant view, and a workflow step's thread in any view, pass no
+  `imageTarget`, so their composer takes no paste, drop or palette image.
 - **Tests.** `apps/server/src/files/images.test.ts` (storage under the home, the exact input the
   mock adapter is handed, the refusals, the assistant), `providers/queue.test.ts` (images wait
   for the turn's end), the adapters' "image blocks" and "localImage" cases,

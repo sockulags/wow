@@ -174,7 +174,7 @@ function turnStarted(
 }
 
 // A message needs text, a skill or an image; the assistant takes no skills (wow skills spec 20)
-// and no images (agent workbench spec 61).
+// and no images (agent workbench spec 61), and a workflow step's thread takes no images either.
 function checkMessage(
   thread: Thread,
   text: string,
@@ -189,6 +189,9 @@ function checkMessage(
   }
   if (thread.kind === 'assistant' && images.length > 0) {
     throw new CommandRejected('rejected', 'The assistant takes no images');
+  }
+  if (thread.stepId !== null && images.length > 0) {
+    throw new CommandRejected('rejected', 'A workflow step takes no images');
   }
 }
 
