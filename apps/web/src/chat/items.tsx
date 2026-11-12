@@ -44,6 +44,7 @@ import {
 import { formatCost, formatTokens } from './model';
 import { FileChip, OpenFileButton } from '@/panel/open-file-button';
 import { withoutMentions } from './mentions';
+import { SentImages } from './image-chip';
 import { SentSkillChip } from './skill-chip';
 import { failedToolCalls, formatElapsed } from './view-model';
 
@@ -164,7 +165,15 @@ export function QueuedMessageItem({
   );
 }
 
-function UserMessage({ payload, context }: { payload: TextItemPayload; context: ItemContext }) {
+function UserMessage({
+  threadId,
+  payload,
+  context,
+}: {
+  threadId: string;
+  payload: TextItemPayload;
+  context: ItemContext;
+}) {
   // The answer to the assistant's questions shows on their card; here only that it was sent.
   if (payload.answers) {
     return (
@@ -177,9 +186,11 @@ function UserMessage({ payload, context }: { payload: TextItemPayload; context: 
   // (wow skills spec 14, 18).
   const skills = payload.skills ?? [];
   const files = payload.files ?? [];
+  const images = payload.images ?? [];
   const text = withoutMentions(payload.text, files);
   return (
     <div className="group flex flex-col items-end gap-0.5">
+      {images.length > 0 && <SentImages threadId={threadId} images={images} />}
       {files.length > 0 && (
         <div
           role="list"
@@ -625,7 +636,7 @@ function ItemBody({
     case 'user': {
       const parsed = TextItemPayload.safeParse(item.payload);
       return parsed.success ? (
-        <UserMessage payload={parsed.data} context={context} />
+        <UserMessage threadId={item.threadId} payload={parsed.data} context={context} />
       ) : (
         <Unreadable item={item} />
       );

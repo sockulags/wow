@@ -1,6 +1,7 @@
 import {
   providerChatOptions,
   type ProviderInstance,
+  type SentImage,
   type SkillRef,
   type Thread,
   type ThreadItem,
@@ -361,13 +362,21 @@ export function ThreadConversation({
   const last = lastTurn(turns);
   const canResume = !running && (last?.state === 'failed' || last?.state === 'interrupted');
   const compactPrompt = instance ? providerChatOptions[instance.kind].compactPrompt : null;
-  const message = (text: string, skills?: readonly SkillRef[], files?: readonly string[]) =>
+  const message = (
+    text: string,
+    skills?: readonly SkillRef[],
+    files?: readonly string[],
+    images?: readonly SentImage[],
+  ) =>
     send({
       type: 'thread.sendMessage',
       threadId,
       text,
       ...(skills ? { skills: [...skills] } : {}),
       ...(files && files.length > 0 ? { files: [...files] } : {}),
+      ...(images && images.length > 0
+        ? { attachments: images.map(({ id, name }) => (name ? { id, name } : { id })) }
+        : {}),
     });
   const stop = () => void send({ type: 'thread.interrupt', threadId });
   const cancelQueued = () => send({ type: 'thread.cancelQueued', threadId });
@@ -376,7 +385,7 @@ export function ThreadConversation({
     const queued = thread.queued;
     if (!queued) return;
     await cancelQueued();
-    composer.current?.putBack(queued.text, queued.skills ?? []);
+    composer.current?.putBack(queued.text, queued.skills ?? [], queued.images ?? []);
   };
   const approval = pendingApproval(approvals);
   const question = pendingQuestion(questions, items ?? [], running);
@@ -410,7 +419,12 @@ export function ThreadConversation({
                     onRetry: () =>
                       void (thread.stepId !== null
                         ? send({ type: 'thread.retry', threadId })
-                        : message(retry.text, retry.skills.length > 0 ? retry.skills : undefined)),
+                        : message(
+                            retry.text,
+                            retry.skills.length > 0 ? retry.skills : undefined,
+                            undefined,
+                            retry.images.length > 0 ? retry.images : undefined,
+                          )),
                   }
                 : {}),
               onResume: () => void message(resumePrompt),
@@ -431,15 +445,24 @@ export function ThreadConversation({
   // while an approval waits, the buttons above answer it and the composer only queues the next
   // message (audit C-04).
   const answerQuestion = question
-    ? (text: string, skills?: readonly SkillRef[]) =>
+    ? (
+        text: string,
+        skills?: readonly SkillRef[],
+        _files?: readonly string[],
+        images?: readonly SentImage[],
+      ) =>
         skills
           ? Promise.reject(
               new Error('An answer takes no skills. Remove the chip, or answer on the card.'),
             )
-          : send({
-              type: 'question.answer',
-              answers: [{ questionId: question.id, reply: { picked: [], text } }],
-            })
+          : images
+            ? Promise.reject(
+                new Error('An answer takes no images. Remove them, or answer on the card.'),
+              )
+            : send({
+                type: 'question.answer',
+                answers: [{ questionId: question.id, reply: { picked: [], text } }],
+              })
     : undefined;
   const placeholder = question
     ? 'Type your answer, or answer on the card above'
@@ -563,6 +586,8 @@ export function ThreadConversation({
             }
             {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
             fileSource={fileLinks ? { threadId } : undefined}
+            // Images go with chat and step threads; the Assistant view takes none (spec 61).
+            imageTarget={fileLinks ? { threadId } : undefined}
             footer={
               (showMeter && context) || (canResume && !errorId) ? (
                 <div className="flex min-h-6 flex-wrap items-center gap-3">

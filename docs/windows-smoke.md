@@ -87,6 +87,12 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       Shift+Tab goes Accept edits, Plan only, Ask and never Bypass permissions; Escape leaves the
       composer. Pick Plan only and send "Plan a change to smoke.txt": write down whether Claude
       plans without editing, which shows the mode reached Claude Code.
+- [ ] Images on Claude. Take a screenshot with Win+Shift+S, paste it into the composer with
+      Ctrl+V and drop a PNG file from Explorer on it: two pictures show; Backspace at the start of
+      the text takes the dropped one off. Drop it again, ask "What do these two pictures show?"
+      and send. Write down whether Claude describes both (they went as image blocks), and that
+      `%USERPROFILE%\.wow\images\<thread id>` holds the two files. Drop a BMP: it is refused with
+      the reason.
 
 ## 4. Codex turn
 
@@ -104,6 +110,10 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       models and marks you see, which come from `model/list` (`description`, `isDefault`,
       `defaultReasoningEffort`, `inputModalities`, `hidden`). Shift+Tab goes Auto, Ask untrusted,
       Read only and never Full access.
+- [ ] Images on Codex. On a model with the image icon, paste a screenshot and send "What is in
+      this picture?": write down whether Codex describes it (it went as a `localImage` path under
+      `%USERPROFILE%\.wow\images`). On a model without the icon, pasting is refused with the
+      reason.
 - [ ] Ask Codex to ask you a question with choices with its user input tool (this may need
       Codex's plan mode or collaboration mode; write down how you got it to ask). Answer with a
       choice and typed text in **Other** together. Write down what Codex says it received:

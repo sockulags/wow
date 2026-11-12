@@ -2,6 +2,7 @@ import {
   providerChatOptions,
   type ProviderInstance,
   type ProviderModel,
+  type SentImage,
   type SkillRef,
   type Thread,
 } from '@wow/contracts';
@@ -101,6 +102,8 @@ export function NewThreadView() {
   const bar = useRef<ModelBarHandle>(null);
   const barKeys = useModelBarKeys(bar);
   const [typingFolder, setTypingFolder] = useState(false);
+  // Picked before the first message so pasted images are stored for the thread they go with.
+  const [pendingThreadId] = useState(() => globalThis.crypto.randomUUID());
   const [overrides, setOverrides] = useState<
     Partial<ThreadSettingsValue> & { readonly for?: string }
   >({});
@@ -170,23 +173,38 @@ export function NewThreadView() {
         ? 'Pick a model first'
         : undefined;
 
-  const start = async (text: string, chosen?: readonly SkillRef[]) => {
+  const start = async (
+    text: string,
+    chosen?: readonly SkillRef[],
+    _files?: readonly string[],
+    images?: readonly SentImage[],
+  ) => {
     if (!instance || !settings || blockedReason) throw new Error(blockedReason);
-    const threadId = globalThis.crypto.randomUUID();
-    await send({
-      type: 'thread.create',
-      threadId,
-      providerInstanceId: instance.id,
-      ...(project ? { projectId: project.id } : {}),
-      cwd: cwd.trim(),
-      title: titleFromMessage(text) || (chosen ?? []).map((skill) => skill.name).join(' '),
-      ...settings,
-    });
+    const threadId = pendingThreadId;
+    // Made already when its first message was refused (an image no longer stored): only the
+    // message goes again.
+    const made = threads.some((thread) => thread.id === threadId);
+    if (!made)
+      await send({
+        type: 'thread.create',
+        threadId,
+        providerInstanceId: instance.id,
+        ...(project ? { projectId: project.id } : {}),
+        cwd: cwd.trim(),
+        title:
+          titleFromMessage(text) ||
+          (chosen ?? []).map((skill) => skill.name).join(' ') ||
+          ((images ?? []).length > 0 ? 'Image' : ''),
+        ...settings,
+      });
     await send({
       type: 'thread.sendMessage',
       threadId,
       text,
       ...(chosen ? { skills: [...chosen] } : {}),
+      ...(images && images.length > 0
+        ? { attachments: images.map(({ id, name }) => (name ? { id, name } : { id })) }
+        : {}),
     });
     draft.setState({
       projectId: undefined,
@@ -316,6 +334,16 @@ export function NewThreadView() {
           blockedReason={blockedReason}
           placeholder={`What should the agent do? Type ${skillTrigger} to pick a skill.`}
           onSend={start}
+          // The new thread's id is picked now, so its images are stored where it will be.
+          imageTarget={
+            instance && settings
+              ? {
+                  threadId: pendingThreadId,
+                  providerInstanceId: instance.id,
+                  model: settings.model,
+                }
+              : undefined
+          }
           onBarKey={barKeys}
           bar={
             instance &&

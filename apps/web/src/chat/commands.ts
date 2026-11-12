@@ -184,6 +184,7 @@ export function chatCommands({
                 activeSkillComposer(skillComposerStore.getState())?.putBack(
                   queued.text,
                   queued.skills ?? [],
+                  queued.images ?? [],
                 ),
               () => undefined,
             );

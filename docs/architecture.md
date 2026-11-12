@@ -2818,7 +2818,7 @@ Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attac
 
 - **Once to the server, then by id.** Ctrl+V of an image file, a dropped file, or the palette's
   "Add an image to the message…" (a hidden file input) sends the bytes with `attachments.put
-  {threadId, base64, type, name?, providerInstanceId?, model?}` when the image is added, not when
+{threadId, base64, type, name?, providerInstanceId?, model?}` when the image is added, not when
   the message is sent. The answer is a `SentImage {id, mediaType, name?}` plus its size; from then
   on the chip, the draft (`ComposerDraft.images`), the message (`thread.sendMessage.attachments`
   `[{id, name?}]`), the queue (`QueuedMessage.images`) and the user item

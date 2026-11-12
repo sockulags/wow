@@ -456,6 +456,24 @@ you, its usage is counted, **Stop** stops it, and the thread is marked as after 
 the server stop while Claude waits, the waiting line goes away; only a workflow step that waited
 for a background agent shows a failed turn (send a message to go on).
 
+### Images in a message
+
+Paste an image into the composer (**Ctrl+V**, a screenshot for example) or drop an image file on
+it, and it shows as a small picture above the text; "Add an image to the message…" in the palette
+picks a file instead. Click a picture, or press Enter on it, to see it full size. **Backspace** at
+the start of the text takes the last picture off, the left arrow steps onto the pictures, and
+Delete takes the one you are on off; the palette has "Remove <image> from the message" too. The
+message goes with its pictures, and your message in the thread shows them; Retry sends them
+again.
+
+Only PNG, JPEG, GIF and WebP images up to `chat.imageMaxBytes` (5 MB to start with) are taken.
+Anything else, and an image for a Codex model that says it takes no images, is refused with the
+reason and not added. Claude Code does not say which of its models take images, so wow sends them
+and shows Claude's own refusal, if any, as the turn's error. wow keeps the pictures in its own
+folder (`~/.wow/images`, one folder per thread) and sends them only to the thread's provider. The
+Assistant takes no images. A message with pictures written while a turn runs waits for the turn's
+end, also on Claude Code.
+
 ### Skills
 
 Type `/` at the start of a message or after a space to list skills with their descriptions,

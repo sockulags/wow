@@ -12,6 +12,11 @@ import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
 import { activeSkillComposer, skillComposerStore } from '@/chat/composer-store';
 import { skillComposerCommands } from '@/chat/skill-commands';
+import {
+  activeImageComposer,
+  imageComposerCommands,
+  imageComposerStore,
+} from '@/chat/image-commands';
 import { activeModelBar, modelBarCommands, modelBarStore } from '@/chat/model-commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
@@ -110,6 +115,7 @@ export function useCommands(gated = false): {
   const connectShown = useStore(connectStore, (state) => state.shown > 0);
   const questionCard = useStore(questionStore, activeQuestionCard);
   const skillComposer = useStore(skillComposerStore, activeSkillComposer);
+  const imageComposer = useStore(imageComposerStore, activeImageComposer);
   const modelBar = useStore(modelBarStore, activeModelBar);
   const all = useMemo(() => {
     const zone = calendarZone;
@@ -205,6 +211,7 @@ export function useCommands(gated = false): {
       }),
       ...questionCommands(questionCard),
       ...skillComposerCommands(skillComposer),
+      ...imageComposerCommands(imageComposer),
       ...modelBarCommands(modelBar),
       ...assistantCommands({
         changes: assistantChanges ?? [],
@@ -279,6 +286,7 @@ export function useCommands(gated = false): {
     connectShown,
     questionCard,
     skillComposer,
+    imageComposer,
     modelBar,
   ]);
   const commands = useMemo(

@@ -1,4 +1,4 @@
-import { Skill } from '@wow/contracts';
+import { SentImage, Skill } from '@wow/contracts';
 import { z } from 'zod';
 
 // What is typed in a thread's composer and not sent yet, text and chips, kept per thread in the
@@ -11,12 +11,15 @@ export interface ComposerDraft {
   readonly skills: readonly Skill[];
   // Files mentioned with `@` (spec 56); absent in drafts kept before them.
   readonly files?: readonly string[] | undefined;
+  // Images pasted or dropped (spec 53), already stored by the server; absent in older drafts.
+  readonly images?: readonly SentImage[] | undefined;
 }
 
 const StoredDraft = z.object({
   text: z.string(),
   skills: z.array(Skill),
   files: z.array(z.string()).optional(),
+  images: z.array(SentImage).optional(),
 });
 
 const storageKey = (key: string) => `wow.composerDraft.${key}`;
@@ -65,7 +68,13 @@ export function writeDraft(key: string, draft: ComposerDraft): void {
   texts.set(key, draft.text);
   try {
     const files = draft.files ?? [];
-    if (draft.text === '' && draft.skills.length === 0 && files.length === 0) {
+    const images = draft.images ?? [];
+    if (
+      draft.text === '' &&
+      draft.skills.length === 0 &&
+      files.length === 0 &&
+      images.length === 0
+    ) {
       storage()?.removeItem(storageKey(key));
       return;
     }
@@ -75,6 +84,7 @@ export function writeDraft(key: string, draft: ComposerDraft): void {
         text: draft.text,
         skills: draft.skills,
         ...(files.length > 0 ? { files } : {}),
+        ...(images.length > 0 ? { images } : {}),
       }),
     );
   } catch {
