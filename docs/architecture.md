@@ -3233,7 +3233,9 @@ stored by the server; the web app only draws it.
   Ctrl+Shift+J (`keybindings.nextNeedsYou`, palette "Next that needs you") navigates to the next
   after the one it went to last and sets a focus request; the approval card, question card, gate
   bar's Approve and the proposal card call `useNeedsYouFocus(key, ref)` and take the focus once
-  they render, and `takeLanded` keeps the composer's autofocus from taking it back.
+  they render, and `takeLanded` keeps the composer's autofocus from taking it back. Of a run's
+  two gate bars (the run view's and the panel's copy) only the one that holds the note takes it:
+  the run view's while it is on screen.
 
 ### Edits, approvals and a thread's Changes
 
