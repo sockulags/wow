@@ -165,6 +165,10 @@ export const TextItemPayload = z.object({
   // went into the running turn (Claude Code takes it there), `afterTurn` was sent by the server
   // when the turn ended. Absent for a message sent at once.
   queued: z.enum(['duringTurn', 'afterTurn']).optional(),
+  // Files the user mentioned with `@` (agent workbench spec 56), as written, relative to the
+  // thread's folder. `text` names each as `@path` on its first line; the thread shows them as
+  // chips. Absent for older messages and messages without mentions.
+  files: z.array(z.string().min(1)).optional(),
 });
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 
@@ -173,6 +177,9 @@ export const ToolCallItemPayload = z.object({
   input: z.unknown(),
   output: z.string(),
   status: z.enum(['running', 'ok', 'error']),
+  // The file the call reads, edits or writes, as the adapter names it (agent workbench spec 17):
+  // the row's Open button opens it in a panel tab. Absent when the call names no one file.
+  path: z.string().min(1).optional(),
 });
 export type ToolCallItemPayload = z.infer<typeof ToolCallItemPayload>;
 

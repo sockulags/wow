@@ -245,6 +245,15 @@ export function gitEnvironment(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   };
 }
 
+// The arguments of a read-only git command in `folder`, with nothing of the repository's run.
+export const readOnlyGitArgs = (folder: string, args: readonly string[]): string[] => [
+  ...neverRun,
+  ...plainPaths,
+  '-C',
+  folder,
+  ...args,
+];
+
 function runGit(
   folder: string,
   args: readonly string[],

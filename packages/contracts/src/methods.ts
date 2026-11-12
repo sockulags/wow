@@ -3,7 +3,7 @@ import { CalendarRange, CalendarRangeParams } from './repeat.js';
 import { AssistantChange, AssistantProposal } from './assistant.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RunDiff, RunDiffParams } from './diff.js';
-import { FileReadParams, FileReadResult } from './files.js';
+import { FileListParams, FileListResult, FileReadParams, FileReadResult } from './files.js';
 import { ChangeRequest, HostRead, HostRefreshParams, PageRead, TicketRead } from './hosts.js';
 import {
   Approval,
@@ -305,11 +305,16 @@ export const rpcMethods = {
     params: z.object({ projectId: z.string().min(1), globs: z.array(z.string().min(1)) }),
     result: z.object({ files: z.array(z.string()) }),
   },
-  // Reads one file of a run for the viewer. Only files inside the run's working folder or the
-  // project folder are read; anything else is answered as `refused` with the reason.
+  // Reads one file for the viewer, of a run, a thread or a project. Only files inside the scope's
+  // folders are read; anything else is answered as `refused` with the reason.
   'files.read': {
     params: FileReadParams,
     result: FileReadResult,
+  },
+  // Lists the files of a thread's, run's or project's folder for "Open file…" and `@`.
+  'files.list': {
+    params: FileListParams,
+    result: FileListResult,
   },
   // Each project folder's git status and remotes, for the rows in Settings → Projects. Read only.
   'projects.git': {

@@ -111,6 +111,7 @@ function turnStarted(
     answers,
     skills,
     queued: mark,
+    files,
   }: {
     text: string;
     prompt: string;
@@ -118,6 +119,7 @@ function turnStarted(
     answers?: { askItemId: string; replies: QuestionReply[] };
     skills?: SentSkill[] | undefined;
     queued?: 'afterTurn';
+    files?: readonly string[] | undefined;
   },
 ): DomainEvent {
   const index = read.turnCount(thread.id);
@@ -146,6 +148,7 @@ function turnStarted(
           ...(answers ? { answers } : {}),
           ...(skills && skills.length > 0 ? { skills } : {}),
           ...(mark ? { queued: mark } : {}),
+          ...(files && files.length > 0 ? { files: [...files] } : {}),
         },
         streaming: false,
       },
@@ -229,6 +232,7 @@ function messageTurn(
   text: string,
   picked: readonly SkillRef[],
   mark?: 'afterTurn',
+  files?: readonly string[],
 ): DomainEvent[] {
   checkMessage(stored, text, picked);
   const assistant = stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
@@ -251,6 +255,7 @@ function messageTurn(
       assistant: assistant !== undefined,
       skills: withSkills.skills,
       ...(mark ? { queued: mark } : {}),
+      files,
     }),
   ];
 }
@@ -420,9 +425,14 @@ export function decideThread(
       const stored = requireThread(read, command.threadId);
       const picked = command.skills ?? [];
       checkMessage(stored, command.text, picked);
+      if (stored.kind === 'assistant' && (command.files ?? []).length > 0) {
+        throw new CommandRejected('rejected', 'The assistant takes no file mentions');
+      }
       const running = read.runningTurn(stored.id);
+      // A queued message keeps its text, which names the files; the chips go with a message
+      // sent at once.
       if (running) return [queueMessage(read, context, stored, running, command.text, picked)];
-      return messageTurn(read, context, stored, command.text, picked);
+      return messageTurn(read, context, stored, command.text, picked, undefined, command.files);
     }
     case 'thread.cancelQueued': {
       const thread = requireThread(read, command.threadId);

@@ -171,6 +171,9 @@ export const Command = z.discriminatedUnion('type', [
     threadId: Id,
     text: z.string(),
     skills: z.array(SkillRef).optional(),
+    // Files mentioned with `@` (agent workbench spec 56); the text already names them. Kept on
+    // the message so the thread shows them as chips. The assistant takes none.
+    files: z.array(z.string().min(1)).optional(),
   }),
   // The user's answer to the questions the assistant asked with its tool (questions spec 9):
   // `itemId` is that tool call, with one reply per question. It is sent as the user's next
