@@ -27,7 +27,7 @@ import {
 } from '@wow/server';
 import { execFileSync } from 'node:child_process';
 import { createSocket } from 'node:dgram';
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage } from 'node:http';
 import path from 'node:path';
@@ -300,11 +300,19 @@ const guide = Array.from(
 ).join('\n');
 
 function seedTeaRepo(repo: string): void {
-  // On Windows a git the server just started in the folder (a Changes or link-rules read for a
-  // page another worker has open) holds it for a moment, and removing it then fails with EBUSY
-  // and takes this server down. Node tries again for that error when asked to.
-  rmSync(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  // The folder is emptied, not removed: on Windows something of the server's can still hold the
+  // folder itself (a watcher on a project folder, a git still starting there), and removing it
+  // then fails with EBUSY and takes this server down. What is inside can always go; a file git
+  // has open for a moment is tried again.
   mkdirSync(repo, { recursive: true });
+  for (const name of readdirSync(repo)) {
+    rmSync(path.join(repo, name), {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
+  }
   git(repo, 'init', '-q', '-b', 'main');
   writeInRepo(repo, '.gitignore', '*.log\n');
   writeInRepo(repo, 'README.md', '# Tea timer\n\nRings when the tea is ready.\n');
