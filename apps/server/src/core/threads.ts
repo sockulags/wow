@@ -554,6 +554,13 @@ export function decideThread(
       const thread = requireThread(read, command.threadId);
       const title = command.title.trim();
       if (title === '') throw new CommandRejected('rejected', 'A thread needs a title');
+      const longest = settingValue('chat.threadTitleMaxLength', read, context);
+      if (typeof longest === 'number' && title.length > longest) {
+        throw new CommandRejected(
+          'rejected',
+          `A thread title can have at most ${longest} characters; this one has ${title.length}.`,
+        );
+      }
       if (thread.title === title) return [];
       return [
         {

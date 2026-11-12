@@ -508,13 +508,13 @@ and **Stop**, the same as the run view.
 
 **Finding threads**: **Ctrl+Shift+F**, or **/** while the list has the keyboard, puts the cursor
 in the filter above the list. It matches a thread's title, its project's name and words said in
-its messages. When threads sit in more than one project, a chip per project narrows the list (also
+its messages (messages only for a text up to `chat.threadSearchMaxLength`, 500 characters). When threads sit in more than one project, a chip per project narrows the list (also
 "Show threads of <project>" and "Show threads of all projects" in the palette); when the chips go
 away, so does the narrowing. The arrow keys move between rows and Enter opens one; Enter in the
 filter opens the first.
 
 **Rename, archive, unread**: **F2** or "Rename thread" edits the title in the header; the list
-and the palette follow. "Archive thread" hides a thread from the list; the filter and the palette
+and the palette follow. A title can have up to `chat.threadTitleMaxLength` (200) characters. "Archive thread" hides a thread from the list; the filter and the palette
 still find it once you type, marked "Archived", and "Unarchive thread" brings it back. A workflow
 step's thread belongs to its run and is not archived on its own. An archived thread comes back to
 the list by itself when a turn starts in it (you send a message, or the agent goes on after

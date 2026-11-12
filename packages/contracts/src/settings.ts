@@ -526,6 +526,25 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'seconds',
   }),
+  'chat.threadTitleMaxLength': defineSetting({
+    schema: z.number().int().min(20).max(2000),
+    group: 'chat',
+    label: 'Longest thread title',
+    description:
+      'How many characters a thread title may have. Renaming a thread to a longer title is refused.',
+    default: 200,
+    scope: 'global',
+  }),
+  'chat.threadSearchMaxLength': defineSetting({
+    // SQLite refuses a LIKE pattern over 50,000 bytes; 10,000 characters stay under it.
+    schema: z.number().int().min(20).max(10_000),
+    group: 'chat',
+    label: 'Longest thread search',
+    description:
+      "How many characters the thread filter and the palette search the threads' messages for. A longer text finds threads by title and project only.",
+    default: 500,
+    scope: 'global',
+  }),
   'calendar.zone': defineSetting({
     personal: 'person',
     schema: TimeZoneSetting,

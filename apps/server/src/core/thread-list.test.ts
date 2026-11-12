@@ -5,6 +5,7 @@ import type {
   ServerCommand,
   Thread,
 } from '@wow/contracts';
+import { settingsRegistry } from '@wow/contracts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -42,6 +43,8 @@ const archivedEvents = () =>
     .all()
     .filter((row) => row.kind === 'thread.archived')
     .map((row) => (row.payload as { archived: boolean }).archived);
+const longestSearch = settingsRegistry['chat.threadSearchMaxLength'].default;
+const search = (query: string) => searchThreads(database.db, query, longestSearch);
 const notifications = () => snapshot(database.db, { topic: 'notifications' }) as AppNotification[];
 const setting = (key: string, value: unknown) =>
   dispatch({ type: 'setting.set', key, scope: 'global', value });
@@ -277,22 +280,47 @@ describe('the thread list (spec 67 to 70)', () => {
     });
     dispatch({ type: 'thread.setArchived', threadId: 't3', archived: true });
 
-    expect(searchThreads(database.db, 'kettle')).toEqual(['t3', 't1']);
-    expect(searchThreads(database.db, 'garden')).toEqual(['t2']);
-    expect(searchThreads(database.db, 'TEAPOT dawn')).toEqual(['t3']);
-    expect(searchThreads(database.db, 'teapot timer')).toEqual([]);
-    expect(searchThreads(database.db, '100%')).toEqual(['t3']);
-    expect(searchThreads(database.db, '0%')).toEqual(['t3']);
-    expect(searchThreads(database.db, 'kettle_')).toEqual(['t3']);
-    expect(searchThreads(database.db, 'e%l')).toEqual([]);
+    expect(search('kettle')).toEqual(['t3', 't1']);
+    expect(search('garden')).toEqual(['t2']);
+    expect(search('TEAPOT dawn')).toEqual(['t3']);
+    expect(search('teapot timer')).toEqual([]);
+    expect(search('100%')).toEqual(['t3']);
+    expect(search('0%')).toEqual(['t3']);
+    expect(search('kettle_')).toEqual(['t3']);
+    expect(search('e%l')).toEqual([]);
+  });
+
+  it('refuses a title longer than the setting, with a sentence', () => {
+    const longest = settingsRegistry['chat.threadTitleMaxLength'].default;
+    dispatch({ type: 'thread.rename', threadId: 't1', title: 'k'.repeat(longest) });
+    expect(thread()?.title).toBe('k'.repeat(longest));
+    expect(() =>
+      dispatch({ type: 'thread.rename', threadId: 't1', title: 'k'.repeat(50_000) }),
+    ).toThrow(`A thread title can have at most ${longest} characters; this one has 50000.`);
+    setting('chat.threadTitleMaxLength', 20);
+    expect(() =>
+      dispatch({ type: 'thread.rename', threadId: 't1', title: 'Kettle timer for the porch' }),
+    ).toThrow('A thread title can have at most 20 characters; this one has 26.');
+    expect(thread()?.title).toBe('k'.repeat(longest));
+  });
+
+  it('answers a very long search text with nothing instead of an error', () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'The teapot whistles' });
+    const word = 'é'.repeat(60_000);
+    expect(searchThreads(database.db, word, 10_000)).toEqual([]);
+    expect(search(word)).toEqual([]);
+    expect(search(`teapot ${'x'.repeat(longestSearch)}`)).toEqual([]);
+    // Up to the longest the setting allows, a word is searched for.
+    expect(searchThreads(database.db, `${'%'.repeat(9_990)}teapot`, 10_000)).toEqual([]);
+    expect(search('teapot')).toEqual(['t1']);
   });
 
   it('matches a capital letter outside ASCII in a message whatever the case typed', () => {
     create('t4', 'Notes');
     dispatch({ type: 'thread.sendMessage', threadId: 't4', text: 'Über den Tee mit Émile' });
 
-    expect(searchThreads(database.db, 'über')).toEqual(['t4']);
-    expect(searchThreads(database.db, 'ÜBER')).toEqual(['t4']);
-    expect(searchThreads(database.db, 'émile')).toEqual(['t4']);
+    expect(search('über')).toEqual(['t4']);
+    expect(search('ÜBER')).toEqual(['t4']);
+    expect(search('émile')).toEqual(['t4']);
   });
 });

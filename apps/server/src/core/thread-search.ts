@@ -12,7 +12,10 @@ const words = (query: string) => query.toLowerCase().split(/\s+/).filter(Boolean
 
 const likePattern = (word: string) => `%${word.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
 
-export function searchThreads(db: Db, query: string): string[] {
+// A text longer than `longest` characters is not searched for in messages (SQLite refuses a very
+// long LIKE pattern); the list still matches titles and project names itself.
+export function searchThreads(db: Db, query: string, longest: number): string[] {
+  if (query.length > longest) return [];
   const typed = words(query);
   const rows = db
     .select({ id: threads.id, title: threads.title, projectName: projects.name })

@@ -127,7 +127,9 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       return { removed: deps.subscriptions.unsubscribe(subscriptionId) };
     },
     'settings.resolve': (context) => deps.settings.resolveAll(context),
-    'threads.search': ({ query }) => ({ threadIds: searchThreads(deps.db, query) }),
+    'threads.search': ({ query }) => ({
+      threadIds: searchThreads(deps.db, query, deps.settings.get('chat.threadSearchMaxLength')),
+    }),
     'calendar.occurrences': (range) =>
       readCalendarRange(deps.db, range, deps.settings.get('calendar.maxOccurrences')),
     'provider.test': ({ providerInstanceId }) => deps.providers.test(providerInstanceId),

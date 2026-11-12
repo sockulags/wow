@@ -1396,8 +1396,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
   `providers.offerSetup`
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.toolOutputLines`,
-  `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`
-  (see "Chat view")
+  `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
+  `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength` (see "Chat view")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.maxOccurrences` (see "Repeating cards"),
@@ -2776,7 +2776,9 @@ more than one project, a chip per project. The filter matches titles and project
 app at once and asks the server `threads.search` (`core/thread-search.ts`) for the rest: every
 typed word must be in the title, the project's name or the text of a user or assistant message,
 which SQLite searches with `LIKE` over `wow_lower(text)`, a function `openDatabase` registers
-so case is ignored for every letter, not only ASCII ones. The question is asked again when the
+so case is ignored for every letter, not only ASCII ones. SQLite refuses a `LIKE` pattern over
+50,000 bytes, so a text longer than `chat.threadSearchMaxLength` characters (at most 10,000) is
+answered with no threads rather than searched; the list still matches titles and projects. The question is asked again when the
 threads topic changes or the connection opens again, and a failed search says so under the
 field (`chat/thread-search.ts`). Archived threads
 show only for a filter, marked "Archived". Arrow keys move between rows, Enter opens one, and
@@ -2796,7 +2798,8 @@ match in the command's own words; such an item gets a new React key, since cmdk 
 only when it mounts or the text changes. The header's
 title (`chat/thread-title.tsx`) is a button that edits it.
 
-`thread.rename {threadId, title}` stores `thread.renamed` (an empty title is refused);
+`thread.rename {threadId, title}` stores `thread.renamed` (an empty title is refused, and so is
+one longer than `chat.threadTitleMaxLength` characters, with a sentence that says both lengths);
 `thread.setArchived {threadId, archived}` stores `thread.archived` and refuses a workflow step's
 thread, which belongs to its run; there is no delete. `thread.markSeen` and
 `thread.markUnread` store `thread.seenChanged`. None of them changes `updatedAt`, so the list
