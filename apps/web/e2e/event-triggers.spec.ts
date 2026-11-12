@@ -104,7 +104,7 @@ test('a merged pull request starts a run @review-loop-48', async ({ page }) => {
     `Started by an event: pull request merged on pull request #21 (${e2eEventBranch})`,
   );
   await expect(page.getByTestId('working-copy')).toBeVisible();
-  await page.getByRole('link', { name: 'Open thread' }).click();
+  await page.getByTestId('run-step').getByRole('link', { name: 'Open thread' }).click();
   await expect(
     page.getByText('This run was started by an event: pull request merged.').first(),
   ).toBeVisible();

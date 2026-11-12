@@ -93,7 +93,7 @@ test('a plan run works through ready units @review-loop-40 @review-loop-41', asy
     `Unit U1 Shape the pot of ${e2ePlanRunIntentId}`,
   );
   await expect(page.getByTestId('working-copy')).toBeVisible();
-  await page.getByRole('link', { name: 'Open thread' }).click();
+  await page.getByTestId('run-step').getByRole('link', { name: 'Open thread' }).click();
   await expect(page.getByText('Unit: U1 Shape the pot').first()).toBeVisible();
   await expect(page.getByText(`Intent: ${e2ePlanRunIntentId}`).first()).toBeVisible();
   await expect(

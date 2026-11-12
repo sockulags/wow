@@ -179,7 +179,7 @@ const panel = (page: Page) => page.getByRole('complementary', { name: 'Context p
 // A chat in the tea garden project whose answer links to the work on its hosts.
 async function startLinkThread(page: Page) {
   await page.goto('/chat/new');
-  await choose(page.getByLabel('Project'), 'Tea garden');
+  await choose(page.getByRole('combobox', { name: 'Project' }), 'Tea garden');
   const composer = page.getByRole('combobox', { name: 'Message' });
   await composer.fill('link the work');
   await composer.press('Enter');
