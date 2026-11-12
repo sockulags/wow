@@ -549,9 +549,19 @@ export function Composer({
     sent.then(
       () => {
         setSending(false);
-        // Sent from a thread that is no longer on screen: only its stored draft goes.
+        // Sent from a thread that is no longer on screen: its stored draft goes, but images
+        // added there while the message was on its way stay.
         if (sentFrom === onScreen.current) clear(message.images);
-        else if (sentFrom !== undefined) writeDraft(sentFrom, { text: '', skills: [] });
+        else if (sentFrom !== undefined) {
+          const kept = (readDraft(sentFrom).images ?? []).filter(
+            (image) => !message.images.some((gone) => gone.id === image.id),
+          );
+          writeDraft(sentFrom, {
+            text: '',
+            skills: [],
+            ...(kept.length > 0 ? { images: kept } : {}),
+          });
+        }
       },
       (reason: unknown) => {
         setSending(false);
