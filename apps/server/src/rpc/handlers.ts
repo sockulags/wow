@@ -1,4 +1,5 @@
 import {
+  Thread,
   WorkflowRun,
   inListOrder,
   runFolder,
@@ -45,7 +46,7 @@ import type { TrackerService } from '../trackers/service.js';
 import { detectArtifacts } from '../workflows/artifacts.js';
 import { changesOptions, readRunDiff, readThreadDiff } from '../workflows/changes.js';
 import type { WorkflowRunner } from '../workflows/runner.js';
-import { WorkspaceRefused, type Workspaces } from '../workspaces/service.js';
+import { WorkspaceChanged, WorkspaceRefused, type Workspaces } from '../workspaces/service.js';
 import { planSetup } from '../setup/plan.js';
 import { writeSetup } from '../setup/write.js';
 import { RpcFault, type Handlers } from './router.js';
@@ -343,6 +344,29 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         path: asked,
         options: changesOptions(deps.settings),
       });
+    },
+    'threads.workingCopyPlan': ({ projectId }) => deps.workspaces.plan(projectId),
+    'threads.workingCopyStatus': async ({ threadId }) => {
+      try {
+        return await deps.workspaces.threadStatus(threadId);
+      } catch (error) {
+        if (error instanceof WorkspaceRefused) throw new RpcFault('rejected', error.message);
+        throw error;
+      }
+    },
+    'threads.removeWorkingCopy': async ({ threadId, expect }) => {
+      try {
+        await deps.workspaces.removeThread(threadId, expect);
+      } catch (error) {
+        if (error instanceof WorkspaceChanged) {
+          throw new RpcFault('conflict', error.message, error.holds);
+        }
+        if (error instanceof WorkspaceRefused) throw new RpcFault('rejected', error.message);
+        throw error;
+      }
+      const thread = deps.db.select().from(threads).where(eq(threads.id, threadId)).get();
+      if (!thread) throw new RpcFault('not_found', `No thread ${threadId}`);
+      return Thread.parse(thread);
     },
     'workflowRuns.removeWorkingCopy': async ({ runId }) => {
       if (!deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get()) {

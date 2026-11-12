@@ -61,7 +61,7 @@ import { QuestionReply } from './questions.js';
 import { CardOccurrence, LocalDay, RepeatRule } from './repeat.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
 import { SetupApplication } from './setup.js';
-import { FileHash, RunEffect, UnpushedWork, WorkflowStep } from './workflow.js';
+import { FileHash, RunEffect, UnpushedWork, WorkflowStep, WorkingCopy } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
 // add their own members to both unions.
@@ -164,6 +164,11 @@ export const Command = z.discriminatedUnion('type', [
     // provider CLI this thread goes on with. Its first message resumes it, as a thread's own
     // stored session would.
     resumeSessionId: SessionId.optional(),
+    // "Own working copy" (thread work spec 10, 11): the thread works in a Git worktree of its
+    // project's repository on a new branch, made before its first message goes out. The server
+    // names the folder and the branch; `cwd` and `branch` above are not used then. Refused
+    // without a project and with `resumeSessionId` (a provider session belongs to its folder).
+    ownWorkingCopy: z.boolean().optional(),
   }),
   // Makes the one assistant thread, or brings it in line with the provider instance, model and
   // effort the settings name now (app assistant spec 1). Refused with the reason when no
@@ -710,6 +715,24 @@ export const InternalCommand = z.discriminatedUnion('type', [
     unpushed: UnpushedWork.nullable(),
     error: z.string().nullable(),
   }),
+  // A chat thread's own working copy (thread work spec 11 to 16), as for a run: it exists now
+  // (made, or made again on its branch), it could not be made (the turn that needed it fails),
+  // or what became of it once the thread was done or "Remove working copy" was answered.
+  z.object({
+    type: z.literal('thread.workingCopyReady'),
+    threadId: Id,
+    startSha: z.string().min(1),
+    defaultBranch: z.string().nullable(),
+    note: z.string().nullable(),
+  }),
+  z.object({ type: z.literal('thread.workingCopyFailed'), threadId: Id, error: z.string() }),
+  z.object({
+    type: z.literal('thread.workingCopySettled'),
+    threadId: Id,
+    state: z.enum(['kept', 'removed']),
+    unpushed: UnpushedWork.nullable(),
+    error: z.string().nullable(),
+  }),
   // The scheduler's tick found the trigger due (spec 8). `runAt` is the time it saw, so a card
   // moved in the meantime does not fire.
   z.object({ type: z.literal('trigger.fire'), triggerId: Id, runAt: Timestamp, runId: Id }),
@@ -1108,6 +1131,11 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('turn.replaced'),
     aggregate: Id,
     payload: z.object({ threadId: Id, turnId: Id, by: Id }),
+  }),
+  z.object({
+    kind: z.literal('thread.workingCopyChanged'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, workingCopy: WorkingCopy }),
   }),
   z.object({
     kind: z.literal('thread.goBackChanged'),

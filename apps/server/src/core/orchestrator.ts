@@ -74,6 +74,8 @@ export interface ReadModel {
   thread(id: string): Thread | undefined;
   // Every thread that goes on with this provider session id, whatever its instance.
   threadsWithSession(sessionId: string): Thread[];
+  // Every thread of the project, step threads included.
+  projectThreads(projectId: string): Thread[];
   runningTurn(threadId: string): Turn | undefined;
   // The thread's turn with the highest index, running or not.
   lastTurn(threadId: string): Turn | undefined;

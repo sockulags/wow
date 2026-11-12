@@ -2,6 +2,7 @@ export * from './approvals.js';
 export * from './asked.js';
 export * from './assistant.js';
 export * from './attachments.js';
+export * from './branch-name.js';
 export * from './calendar-prefs.js';
 export * from './commands.js';
 export * from './diff.js';

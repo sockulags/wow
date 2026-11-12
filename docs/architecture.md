@@ -179,7 +179,8 @@ threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessi
                  baseSha, baseFiles: where a chat thread's Changes are measured from, set at its
                  first turn (migration 0029_thread_changes); stateSince (0031); goBack(json:
                  GoBack)?, forkedFrom(json: {threadId, turnId})? for Edit and Fork (migration
-                 0032_fork_and_edit)
+                 0032_fork_and_edit); workingCopy(json: WorkingCopy)? a chat thread's own
+                 working copy, null for older rows (migration 0034_thread_working_copy)
 turns            id, threadId, index, state, startedAt, endedAt, usage(json),
                  fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
                  turn began, for "This turn only" (migration 0029_thread_changes);
@@ -1249,6 +1250,74 @@ whole repository as its working copy, with the copy's root as `cwd`; a kept copy
 at again after someone pushes from it by hand; a step thread of an ended run keeps the removed
 folder as its `cwd`.
 
+### A chat thread's own working copy
+
+Thread work spec 10 to 18. A chat thread in a project whose folder is in a Git repository can
+work in a worktree of its own, on a new branch, with the project folder untouched. It shares the
+code of a run's copy (`workspaces/working-copy.ts`, `projects/git.ts`) and differs in one thing:
+a thread's copy is on a branch, because a chat has no delivery step that names one and a pull
+request (thread work U4) needs one. So its commits are kept by the branch, and settling and
+removal ask only about files.
+
+- **The draft.** `/chat/new` asks `threads.workingCopyPlan {projectId}` when the project
+  changes: `ok` with the project's `chat.ownWorkingCopy` (the switch's start),
+  `chat.workingCopyBranch`, `chat.workingCopyStart`, the branch and commit the copy would start
+  from as this computer knows them now and whether a fetch comes first; else `unavailable` and
+  no switch (a folder without a project, not in Git, no commit). It reads only. The line under
+  the switch names the branch with `branchName(template, title, threadId)` from contracts, filled
+  as the user types: the draft's thread id is chosen up front, so the name shown is the name
+  made. `branchName` slugs the title (32 characters at most, accents off), takes 6 hex of the
+  thread id's SHA-256 (`sha256Hex`, in contracts because the browser's digest is asynchronous),
+  and cleans each part of the name to what `git check-ref-format --branch` takes. Two threads'
+  names differ in their lower-case id, so they differ without case too, as Windows refs stored
+  as files need; when 6 characters of two ids agree the server lengthens the id.
+  `DraftState.ownWorkingCopy` holds the user's pick; palette `chat.draft.ownWorkingCopy`.
+- **Named at create.** `thread.create {ownWorkingCopy: true}` (refused without a project and with
+  `resumeSessionId`: a provider session belongs to its folder) makes the thread with
+  `cwd` = `<workspaces.root>/<project slug, 16 characters>-t<8 hex of the thread id's SHA-256>`,
+  `branch` and `workingCopy {state: 'pending', branch}` (`core/thread-copy.ts`). Since `cwd` is
+  the copy, the thread's Changes, files, `@`, Open in editor and the agent's turns work there
+  with no change of theirs.
+- **Made before the first turn.** The provider service awaits `Workspaces.prepareThread` before
+  a chat turn goes out, before the Changes base is read. A copy never made gets
+  `createThreadWorkingCopy`: the project folder must be a repository with a commit, git must
+  take the branch name (`checkBranchName`), the commit is the project folder's (`head`) or the
+  default branch's tip as for runs (`defaultBranch`, with `workspaces.fetchBeforeCreate` and the
+  same `note` when it is not the fetched tip), and `git worktree add -b <branch> <path> <commit>`
+  (`addNewBranchWorktree`) makes it. `thread.workingCopyReady` stores `ready`, `startSha` and,
+  in `defaultBranch`, the branch the start commit was read from. When it cannot be made, the
+  reason (git's own: "fatal: a branch named … already exists"; runGit now prefers git's
+  `fatal:`/`error:` line over what it said before it) goes in `thread.workingCopyFailed`, the
+  turn fails with it and the provider gets nothing. The next message tries again; nothing falls
+  back to the project folder.
+- **Again on its branch.** A message to a thread whose copy is `removed` (or whose folder went)
+  makes it again with `git worktree add <path> <branch>` (`reopenThreadWorkingCopy`); a folder
+  that is already there on the branch (a fork made it first) is taken as it is. A deleted branch,
+  or one another folder is on, fails the turn with git's reason. A `kept` copy simply becomes
+  `ready` again.
+- **Settled at done.** On `thread.stateChanged` to `done`, once every thread whose
+  `workingCopy.path` is that folder is done and none has a running turn, `settleWorkingCopy`
+  with `onBranch` removes it when no uncommitted, untracked or ignored file is in it, else keeps
+  it with what it holds; commits are counted for the chip but never keep it. The outcome goes to
+  every thread that shares the folder as `thread.workingCopySettled`.
+- **Remove working copy.** `threads.workingCopyStatus {threadId}` answers what it holds now
+  (`readUnpushed`); the dialog shows that and confirms with "Remove and lose them", or a plain
+  "Remove" when nothing would be lost. `threads.removeWorkingCopy {threadId, expect}` reads
+  again and is refused with `conflict` and the new counts as the error's `data` when more files
+  are there than `expect`, and with `rejected` while a turn runs or another thread that is not
+  done works in the folder. Then `git worktree remove --force`; the branch stays. wow never
+  deletes a branch and never pushes here.
+- **Forks.** A fork takes its origin's `cwd`, `branch` and `workingCopy`.
+- **Restart.** `recover()` takes a `pending` copy whose folder git finished on its branch as
+  ready; any other `pending` one fails ("The server stopped while the working copy was being
+  made") and is made at the next message. A `ready` copy of a done thread is settled.
+- **Web.** `chat/working-copy.tsx`: `DraftWorkingCopy` (switch and line), `WorkingCopyChip` in
+  the thread header (branch and "own working copy", or what a kept copy holds),
+  `WorkingCopyDetails` in Details (branch, folder with Copy path and Open in editor, where it
+  started, the note, the state and Remove), `RemoveThreadCopyDialog` and `threadCopyStore`, and
+  `workingCopyCommands` (palette `chat.removeWorkingCopy`, `chat.copyWorkingCopyPath`). Threads
+  stored before have `workingCopy` null and work as they did.
+
 ### Plan runs
 
 A plan run works through a plan's ready units by itself (review loop spec 40 to 47). It starts
@@ -1556,7 +1625,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
   `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength`, `chat.editDiffMaxLines` (see "Chat
   view"), `chat.contextWarnPercent`, `chat.reasoningOpen` (see "Conversation reading"), `chat.fileTrigger` (see "Panel tabs and files in chat"), `chat.imageMaxBytes` (see
-  "Images in the composer"), `chat.sendKey` (see "Chat view")
+  "Images in the composer"), `chat.sendKey` (see "Chat view"), `chat.ownWorkingCopy`,
+  `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
+  working copy")
 - approvals: `approvals.alwaysAllow` (project-scoped; the "Approvals" page, see "Edits, approvals
   and a thread's Changes")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default

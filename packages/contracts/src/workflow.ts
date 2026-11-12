@@ -344,6 +344,32 @@ export const WorkingCopy = z.object({
 });
 export type WorkingCopy = z.infer<typeof WorkingCopy>;
 
+// Where a chat thread's own working copy starts (`chat.workingCopyStart`, thread work spec 11):
+// the commit the project folder is on, or the default branch's tip.
+export const WorkingCopyStart = z.enum(['head', 'defaultBranch']);
+export type WorkingCopyStart = z.infer<typeof WorkingCopyStart>;
+
+// What `/chat/new` says about an own working copy for the chosen project before the thread exists
+// (thread work spec 10), read without changing anything. `ok`: the project folder is in a
+// repository with a commit; `on` is the project's `chat.ownWorkingCopy`, `template` its
+// `chat.workingCopyBranch` (the app fills in the title as it is typed), `from` the branch the
+// copy starts from (null on no branch) and `sha` the commit as this computer knows it now;
+// `fetch` says the default branch is fetched first. Otherwise there is no switch, and `reason`
+// says why.
+export const WorkingCopyPlan = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ok'),
+    on: z.boolean(),
+    template: z.string(),
+    start: WorkingCopyStart,
+    from: z.string().nullable(),
+    sha: z.string().min(1),
+    fetch: z.boolean(),
+  }),
+  z.object({ status: z.literal('unavailable'), reason: z.string() }),
+]);
+export type WorkingCopyPlan = z.infer<typeof WorkingCopyPlan>;
+
 // Whether the folder is (or may still be) on disk.
 export const workingCopyOnDisk = (copy: WorkingCopy): boolean =>
   copy.state === 'ready' || copy.state === 'kept';

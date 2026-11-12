@@ -453,6 +453,12 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(turns.id, event.payload.turnId))
         .run();
       return ['turns'];
+    case 'thread.workingCopyChanged':
+      tx.update(threads)
+        .set({ workingCopy: event.payload.workingCopy })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
     case 'thread.goBackChanged':
       tx.update(threads)
         .set({ goBack: event.payload.goBack })
@@ -899,6 +905,8 @@ export function readModel(tx: DbOrTx): ReadModel {
     thread: (id) => tx.select().from(threads).where(eq(threads.id, id)).get(),
     threadsWithSession: (sessionId) =>
       tx.select().from(threads).where(eq(threads.providerSessionId, sessionId)).all(),
+    projectThreads: (projectId) =>
+      tx.select().from(threads).where(eq(threads.projectId, projectId)).all(),
     runningTurn: (threadId) =>
       tx
         .select()

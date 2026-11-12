@@ -10,6 +10,7 @@ import {
 import { defaultModelGuidance } from './models.js';
 import {
   alwaysStopSkillDefaults,
+  WorkingCopyStart,
   WorkflowTemplate,
   type WorkflowTemplateStep,
 } from './workflow.js';
@@ -491,6 +492,51 @@ export const settingsRegistry = {
     options: {
       enter: { label: 'Enter', description: 'Enter sends; Shift+Enter makes a new line.' },
       modEnter: { label: 'Ctrl+Enter', description: 'Ctrl+Enter sends; Enter makes a new line.' },
+    },
+  }),
+  'chat.ownWorkingCopy': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Own working copy for new threads',
+    description:
+      'Where the project is a Git repository, a new thread starts with "Own working copy" on: it works in a Git worktree of its own, on a new branch, and the project folder is not touched. The switch on the new thread changes it for that thread.',
+    default: false,
+    scope: 'project',
+  }),
+  'chat.workingCopyBranch': defineSetting({
+    schema: z
+      .string()
+      .trim()
+      .min(1)
+      .max(200)
+      .meta({ widget: 'template', placeholders: ['title', 'id'] }),
+    group: 'chat',
+    label: "Branch of a thread's working copy",
+    description:
+      "The name of the new branch a thread's own working copy is on. {{title}} is the thread's title in lower case with dashes, at most 32 characters, and {{id}} six characters of the thread's own. Characters Git does not take in a branch name become dashes.",
+    default: 'wow/{{title}}-{{id}}',
+    scope: 'project',
+  }),
+  'chat.workingCopyStart': defineSetting({
+    schema: WorkingCopyStart,
+    group: 'chat',
+    label: "Where a thread's working copy starts",
+    description:
+      "The commit the new branch of a thread's own working copy starts at. Changes not committed in the project folder stay there either way.",
+    default: 'head',
+    scope: 'project',
+    radio: true,
+    options: {
+      head: {
+        label: 'Where the project folder is',
+        description:
+          'The commit the project folder is on, so the thread goes on from the work in hand.',
+      },
+      defaultBranch: {
+        label: 'The default branch',
+        description:
+          'The tip of the remote\'s default branch, fetched first when "Fetch before making a working copy" is on.',
+      },
     },
   }),
   'chat.contextMeter': defineSetting({

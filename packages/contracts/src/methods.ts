@@ -50,6 +50,7 @@ import {
   ProviderTestResult,
 } from './provider.js';
 import { SecretRef } from './settings.js';
+import { UnpushedWork, WorkingCopyPlan } from './workflow.js';
 import { SetupApplication, SetupRead, SetupSaved } from './setup.js';
 import {
   ProjectGit,
@@ -340,6 +341,24 @@ export const rpcMethods = {
   'workflowRuns.removeWorkingCopy': {
     params: z.object({ runId: z.string().min(1) }),
     result: WorkflowRun,
+  },
+  // A chat thread's own working copy (thread work spec 10, 14, 15). The plan for `/chat/new`,
+  // read only. The status: what is in the copy now that would be lost with it (commits on its
+  // branch are not lost). Remove: deletes the copy after the user saw `expect`; refused with
+  // `conflict`, and the new counts as `data`, when it holds more files than that, and with
+  // `rejected` while a turn runs or another thread that is not done works in it. The branch
+  // stays.
+  'threads.workingCopyPlan': {
+    params: z.object({ projectId: z.string().min(1) }),
+    result: WorkingCopyPlan,
+  },
+  'threads.workingCopyStatus': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: UnpushedWork,
+  },
+  'threads.removeWorkingCopy': {
+    params: z.object({ threadId: z.string().min(1), expect: UnpushedWork }),
+    result: Thread,
   },
   // Files in a project folder that expected artifact globs match, for the builder's "Matches 2
   // files in Demo" line. Read only; nothing is stored.

@@ -344,8 +344,11 @@ function runGit(
     child.on('close', (code) => {
       if (stopped !== undefined) return finish({ ok: false, missing: false, message: stopped });
       if (code === 0) return finish({ ok: true, stdout });
+      // Git may say what it was doing ("Preparing worktree …") before why it stopped.
+      const lines = stderr.trim().split(/\r?\n/);
       const message =
-        (stderr.trim().split(/\r?\n/)[0] ?? '') || `git ${args[0] ?? ''} exited with code ${code}`;
+        (lines.find((line) => /^(fatal|error):/.test(line)) ?? lines[0] ?? '') ||
+        `git ${args[0] ?? ''} exited with code ${code}`;
       finish({ ok: false, missing: false, message });
     });
   });
@@ -754,6 +757,35 @@ export async function addBranchWorktree(
   options: GitRunOptions,
 ): Promise<GitOutcome> {
   return outcomeOf(await runGit(folder, ['worktree', 'add', target, branch], options, longPaths));
+}
+
+// A worktree on a new branch made at `commit`, for a chat thread's own working copy (thread work
+// spec 11). Git refuses when the branch exists, which is the reason the thread's turn fails with.
+export async function addNewBranchWorktree(
+  folder: string,
+  target: string,
+  branch: string,
+  commit: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(folder, ['worktree', 'add', '-b', branch, target, commit], options, longPaths),
+  );
+}
+
+// Whether git takes the name as a branch (`check-ref-format --branch`), with git's reason when
+// not.
+export async function checkBranchName(
+  folder: string,
+  branch: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  const checked = await runGit(folder, ['check-ref-format', '--branch', branch], options);
+  if (checked.ok) return { ok: true };
+  return {
+    ok: false,
+    message: checked.missing ? checked.message : `${branch} is not a name Git takes for a branch`,
+  };
 }
 
 // A worktree on a new local branch that follows the remote's branch of the same name.

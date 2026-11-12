@@ -43,6 +43,9 @@ export interface ProviderServiceDeps {
   // Reads a chat thread's folder through git for its Changes (agent workbench spec 34); without
   // it, threads get no base and no marks.
   readonly changes?: RunChanges | undefined;
+  // Makes a chat thread's own working copy before its turn goes out (thread work spec 12);
+  // answers why it could not, and the turn then fails with that and nothing is sent.
+  readonly prepareThread?: ((threadId: string) => Promise<string | undefined>) | undefined;
   // Milliseconds since the epoch; tests pass their own.
   readonly now?: (() => number) | undefined;
 }
@@ -322,7 +325,7 @@ export class ProviderService {
             start.kind === 'assistant'
               ? () => this.#assistantTurn(command)
               : this.#chatThread(turn.threadId)
-                ? () => this.#marked(command, turn.id, turn.index)
+                ? () => this.#chatTurn(command, turn.id, turn.index)
                 : command,
           );
           break;
@@ -550,15 +553,23 @@ export class ProviderService {
       );
   }
 
-  // A chat thread, whose changes are measured; a step's thread has its run's.
+  // A chat thread, whose working copy is made and whose changes are measured; a step's thread
+  // has its run's.
   #chatThread(threadId: string): boolean {
-    if (!this.#deps.changes) return false;
+    if (!this.#deps.changes && !this.#deps.prepareThread) return false;
     const row = this.#deps.db
       .select({ runId: threads.runId, kind: threads.kind })
       .from(threads)
       .where(eq(threads.id, threadId))
       .get();
     return row !== undefined && row.runId === null && row.kind === 'chat';
+  }
+
+  // The thread's own working copy first: without its folder the turn has nowhere to run.
+  async #chatTurn(command: StartTurn, turnId: string, index: number): Promise<StartTurn> {
+    const failed = await this.#deps.prepareThread?.(command.threadId);
+    if (failed !== undefined) throw new Error(failed);
+    return this.#marked(command, turnId, index);
   }
 
   // Before a chat thread's turn goes out, the folder is read (agent workbench spec 34): its
