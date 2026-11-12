@@ -3421,7 +3421,9 @@ provides `FileLinkContext` (`components/file-links.tsx`), whose `open(path)` ope
 panel tab of the route on screen with the thread's scope (`{threadId}`); the Assistant view
 provides none, so it has no file links, Open buttons or `@`. The markdown renderer makes inline
 code and relative link targets that pass `isFilePath` into `FileLink` buttons (click or Enter):
-no spaces, no colon except a drive's, and a file extension or a slash. The rule is narrow on
+no spaces, no colon except a drive's, and a file extension or a slash; letters of any script and
+`$` are allowed. A trailing `:line[:column]` or `#fragment` is cut off first (`filePathOf`), and
+the bare path is what opens. The rule is narrow on
 purpose; a miss opens a tab with the server's refusal ("There is no file …", "… is outside the
 thread's folder and the project folder …"), never a read outside. The `urlTransform` keeps such
 a relative target instead of dropping it; a picture's target still only shows as text.

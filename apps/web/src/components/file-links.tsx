@@ -14,24 +14,29 @@ export const FileLinkContext = createContext<FileLinks | undefined>(undefined);
 
 export const useFileLinks = (): FileLinks | undefined => useContext(FileLinkContext);
 
-const pathCharacters = /^(?:[A-Za-z]:[\\/])?[\w.@~+\-/\\()[\]]+$/;
+const pathCharacters = /^(?:[A-Za-z]:[\\/])?[\p{L}\p{N}\p{M}_.@~+\-/\\()[\]$]+$/u;
 const extension = /\.[A-Za-z][A-Za-z0-9]{0,9}$/;
 
 // The narrow rule (spec 15, Open risks): no spaces, no colon but a drive's (so no address
-// scheme), and a file extension or a slash. `src/timer.ts`, `README.md`, `docs/` and `C:\work\a.ts` are paths; `pnpm test`,
-// `https://…`, `1.5` and `--force` are not.
-export function isFilePath(text: string): boolean {
+// scheme), and a file extension or a slash. `src/timer.ts`, `README.md`, `docs/` and
+// `C:\work\a.ts` are paths; `pnpm test`, `https://…`, `1.5` and `--force` are not. A line and
+// column (`src/timer.ts:42:7`) or a fragment (`docs/spec.md#rules`) after the path names a place
+// in the file; the path without them is what opens.
+export function filePathOf(text: string): string | undefined {
   const value = text.trim();
-  if (value === '' || value !== text || value.length > 400) return false;
-  if (value.startsWith('-') || !pathCharacters.test(value)) return false;
-  if (/^[./\\]+$/.test(value)) return false;
+  if (value === '' || value !== text || value.length > 400) return undefined;
+  const bare = value.replace(/#[^#/\\]*$/, '').replace(/:\d+(?::\d+)?$/, '');
+  if (bare.startsWith('-') || !pathCharacters.test(bare)) return undefined;
+  if (/^[./\\]+$/.test(bare)) return undefined;
   const last =
-    value
+    bare
       .split(/[\\/]/)
       .filter((part) => part !== '')
       .at(-1) ?? '';
-  return /[\\/]/.test(value) || extension.test(last);
+  return /[\\/]/.test(bare) || extension.test(last) ? bare : undefined;
 }
+
+export const isFilePath = (text: string): boolean => filePathOf(text) !== undefined;
 
 export function FileLink({
   path,

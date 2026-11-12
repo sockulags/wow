@@ -10,7 +10,7 @@ import {
   useHostLinks,
 } from '@/chat/host-links';
 import { CodeBlock } from './code-block';
-import { FileLink, isFilePath, useFileLinks } from './file-links';
+import { FileLink, filePathOf, isFilePath, useFileLinks } from './file-links';
 import { safeHref } from './markdown';
 import { MermaidDiagram } from './mermaid-diagram';
 
@@ -71,8 +71,9 @@ const components: Components = {
       );
     }
     // A relative link in a chat message names a file of the thread (agent workbench spec 15).
-    const target = href === undefined ? undefined : safeDecode(href);
-    return files && target !== undefined && isFilePath(target) ? (
+    const decoded = href === undefined ? undefined : safeDecode(href);
+    const target = decoded === undefined ? undefined : filePathOf(decoded);
+    return files && target !== undefined ? (
       <FileLink path={target}>{children}</FileLink>
     ) : (
       <span>{children}</span>
@@ -112,11 +113,8 @@ const components: Components = {
     const item =
       hosts && typeof children === 'string' ? recogniseHostRef(children, hosts.rules) : undefined;
     if (item && hosts) return <HostChip item={item} links={hosts} />;
-    return files && typeof children === 'string' && isFilePath(children) ? (
-      <FileLink path={children}>{code}</FileLink>
-    ) : (
-      code
-    );
+    const path = typeof children === 'string' ? filePathOf(children) : undefined;
+    return files && path !== undefined ? <FileLink path={path}>{code}</FileLink> : code;
   },
   pre: ({ node, children }) => {
     const code = node?.children[0];

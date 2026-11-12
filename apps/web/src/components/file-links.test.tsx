@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadMarkdown } from '../test/markdown';
-import { FileLinkContext, isFilePath } from './file-links';
+import { FileLinkContext, filePathOf, isFilePath } from './file-links';
 import { Markdown } from './markdown';
 
 beforeAll(loadMarkdown);
@@ -19,8 +19,21 @@ describe('isFilePath', () => {
     '/home/me/demo/src/timer.ts',
     'C:\\work\\demo\\a.ts',
     'apps/web/src/panel',
+    'docs/été/notes.md',
+    'Résumé.md',
+    'src/$id.tsx',
   ])('reads %s as a path', (text) => {
     expect(isFilePath(text)).toBe(true);
+  });
+
+  it.each([
+    ['src/timer.ts:42', 'src/timer.ts'],
+    ['src/timer.ts:42:7', 'src/timer.ts'],
+    ['docs/spec.md#rules', 'docs/spec.md'],
+    ['C:\\work\\a.ts:3', 'C:\\work\\a.ts'],
+    ['README.md', 'README.md'],
+  ])('opens %s as the bare path %s', (text, path) => {
+    expect(filePathOf(text)).toBe(path);
   });
 
   it.each([
@@ -29,6 +42,9 @@ describe('isFilePath', () => {
     'mailto:me@example.invalid',
     'javascript:alert(1)',
     '1.5',
+    '1.5:3',
+    '#rules',
+    'localhost:3000',
     '--force',
     'ringTwice',
     'a b.ts',
@@ -43,7 +59,7 @@ describe('isFilePath', () => {
 
 describe('file links in markdown @agent-workbench-15', () => {
   const text =
-    'The timer is in `src/timer.ts`, as the [spec](docs/spec.md) says. Outside: `../outside.txt` and [up](../outside.txt). Run `pnpm test`; see [the site](https://example.test).';
+    'The timer is in `src/timer.ts`, as the [spec](docs/spec.md) says. Outside: `../outside.txt` and [up](../outside.txt). Run `pnpm test`; see [the site](https://example.test). It rings at `src/timer.ts:42`, by [the rules](docs/spec.md#rules).';
 
   it('makes inline code paths and relative links open the file', async () => {
     const user = userEvent.setup();
@@ -59,13 +75,23 @@ describe('file links in markdown @agent-workbench-15', () => {
       'spec',
       '../outside.txt',
       'up',
+      'src/timer.ts:42',
+      'the rules',
     ]);
     await user.click(links[0] as HTMLElement);
     // Enter opens it too, as a button does.
     (links[1] as HTMLElement).focus();
     await user.keyboard('{Enter}');
     await user.click(links[2] as HTMLElement);
-    expect(open.mock.calls).toEqual([['src/timer.ts'], ['docs/spec.md'], ['../outside.txt']]);
+    await user.click(links[4] as HTMLElement);
+    await user.click(links[5] as HTMLElement);
+    expect(open.mock.calls).toEqual([
+      ['src/timer.ts'],
+      ['docs/spec.md'],
+      ['../outside.txt'],
+      ['src/timer.ts'],
+      ['docs/spec.md'],
+    ]);
     expect(screen.getByText('pnpm test', { selector: 'code' }).closest('button')).toBeNull();
     expect(screen.getByRole('link', { name: 'the site' }).getAttribute('href')).toBe(
       'https://example.test',

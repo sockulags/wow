@@ -30,7 +30,7 @@ import {
   readOf,
   useHostLinkRules,
 } from '@/chat/host-links';
-import { isFilePath } from '@/components/file-links';
+import { filePathOf } from '@/components/file-links';
 import { PathText } from '@/components/path-text';
 import { EmptyState } from '@/components/states';
 import { formatWhen } from '@/lib/format';
@@ -55,12 +55,13 @@ export function threadMentions(
     const { text } = payload.data;
     for (const file of payload.data.files ?? []) files.add(file);
     for (const match of text.matchAll(/`([^`\n]+)`/g)) {
-      const code = match[1] ?? '';
-      if (isFilePath(code)) files.add(code);
+      const code = filePathOf(match[1] ?? '');
+      if (code !== undefined) files.add(code);
     }
     for (const match of text.matchAll(/\]\(([^)\s]+)\)/g)) {
       const target = match[1] ?? '';
-      if (!/^[a-z][a-z0-9+.-]*:/i.test(target) && isFilePath(target)) files.add(target);
+      const path = /^[a-z][a-z0-9+.-]*:/i.test(target) ? undefined : filePathOf(target);
+      if (path !== undefined) files.add(path);
     }
     for (const link of hostItemsIn(text, rules)) {
       const key = hostItemKeyOf(link);

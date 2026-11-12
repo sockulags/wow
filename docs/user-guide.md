@@ -724,8 +724,9 @@ tab shown before" in the palette). A thread or run keeps its tabs while you look
 Escape closes the file you opened from the main view, also while the focus is still on its link.
 
 In a chat, a path in an answer (`src/timer.ts` as code, or a link such as `[spec](docs/spec.md)`)
-opens the file in a tab, and so does **Open** on a tool row that read or changed a file. Paths
-are read from the thread's folder and its project's folder; anything outside is refused with the
+opens the file in a tab, and so does **Open** on a tool row that read or changed a file. A line
+number or a heading after the path (`src/timer.ts:42`, `docs/spec.md#rules`) opens the file
+itself. Paths are read from the thread's folder and its project's folder; anything outside is refused with the
 reason. **Open file…** (Ctrl+P) lists the folder's files (what Git tracks plus untracked files it
 does not ignore, or the folder's files outside Git, at most `viewer.fileListLimit`), shows the
 best `viewer.fileMatchesShown` matches as you type, and opens the pick. Typing `@` at the start of
