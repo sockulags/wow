@@ -78,30 +78,43 @@ workflows, runs, settings pages and actions together; arrow keys and Enter pick.
 
 Default keys (all changeable in Settings → Keybindings):
 
-| Key              | Does                                     |
-| ---------------- | ---------------------------------------- |
-| Ctrl+K           | Command palette                          |
-| Ctrl+1 … 4       | Calendar, Chat, Workflows, Backlog       |
-| Ctrl+5           | Plans                                    |
-| Ctrl+,           | Settings                                 |
-| Ctrl+B           | Show or hide the sidebar                 |
-| Ctrl+J           | Show or hide the context panel           |
-| F6               | Move the focus into the panel and back   |
-| Ctrl+Shift+L     | Dark or light theme                      |
-| Ctrl+Alt+N       | New thread                               |
-| Ctrl+.           | Stop the running turn                    |
-| T, N, P          | Calendar: today, next, previous          |
-| D, W             | Calendar: day view, week view            |
-| C                | Calendar: new card on the day you are on |
-| Ctrl+= / -       | Calendar: zoom in, zoom out              |
-| Ctrl+0           | Calendar: reset zoom                     |
-| Ctrl+Enter       | Run at a gate: Approve                   |
-| Ctrl+Shift+Enter | Run at a gate: Send back                 |
-| Ctrl+Shift+D     | Run: Steps or Changes tab                |
-| Ctrl+Shift+Y     | Run: Steps or Path tab                   |
-| O                | Changes tab: this step only, and back    |
-| C                | Diff line: comment on it                 |
-| Shift+Enter      | Focused file or line: open in editor     |
+| Key              | Does                                                         |
+| ---------------- | ------------------------------------------------------------ |
+| Ctrl+K           | Command palette                                              |
+| Ctrl+1 … 4       | Calendar, Chat, Workflows, Backlog                           |
+| Ctrl+5           | Plans                                                        |
+| Ctrl+,           | Settings                                                     |
+| Ctrl+B           | Show or hide the sidebar                                     |
+| Ctrl+J           | Show or hide the context panel                               |
+| F6               | Move the focus into the panel and back                       |
+| Ctrl+Shift+L     | Dark or light theme                                          |
+| Ctrl+Alt+N       | New thread                                                   |
+| Ctrl+.           | Stop the running turn                                        |
+| Ctrl+B           | Chat: send the running command or subagent to the background |
+| Ctrl+Shift+J     | Next that needs you                                          |
+| Ctrl+O           | Chat: open or close all reasoning                            |
+| Alt+Up / Down    | Chat: previous, next message                                 |
+| C                | Chat message: copy it                                        |
+| End              | Chat: back to the newest output                              |
+| T, N, P          | Calendar: today, next, previous                              |
+| D, W             | Calendar: day view, week view                                |
+| C                | Calendar: new card on the day you are on                     |
+| Ctrl+= / -       | Calendar: zoom in, zoom out                                  |
+| Ctrl+0           | Calendar: reset zoom                                         |
+| Ctrl+Enter       | Run at a gate: Approve                                       |
+| Ctrl+Shift+Enter | Run at a gate: Send back                                     |
+| Ctrl+Shift+D     | Run: Steps or Changes tab                                    |
+| Ctrl+Shift+Y     | Run: Steps or Path tab                                       |
+| O                | Changes tab: this step only, and back                        |
+| C                | Diff line: comment on it                                     |
+| Shift+Enter      | Focused file or line: open in editor                         |
+
+Ctrl+B sends to the background only while the open thread runs a command or subagent its provider
+can move there (Claude Code), so the turn goes on; otherwise, on Windows and Linux, it shows or
+hides the sidebar as usual.
+Ctrl+Shift+J goes to the oldest approval, question, plan, gate or assistant proposal that waits for
+you, wherever it is; pressed again, to the next one. C copies the message that has the keyboard, as
+markdown for an answer and as written for your own.
 
 The single-letter calendar keys only work while the calendar is open and no text field has focus.
 The zoom keys also only work while the calendar is open; there they zoom the calendar instead of
