@@ -697,6 +697,23 @@ wow reads only files inside the run's folder and the project folder. A path outs
 file, a binary file that is not a picture, or a file larger than `viewer.maxFileBytes` is not read,
 and the panel says why.
 
+Each file or page opens in a **tab** of the panel. The first tab is the panel's own: in a run
+view the step's **Conversation**, in a chat **Details**. Opening a file that is already open selects
+its tab. With the focus in the panel, Alt+W closes the tab, Ctrl+Tab and Ctrl+Shift+Tab move
+between tabs and Alt+Left goes back to the tab shown before (the "Panel" keys in Settings →
+Keybindings, and "Close panel tab", "Next panel tab", "Previous panel tab" and "Back to the panel
+tab shown before" in the palette). A thread or run keeps its tabs while you look at another one.
+Escape closes the file you opened from the main view, also while the focus is still on its link.
+
+In a chat, a path in an answer (`src/timer.ts` as code, or a link such as `[spec](docs/spec.md)`)
+opens the file in a tab, and so does **Open** on a tool row that read or changed a file. Paths
+are read from the thread's folder and its project's folder; anything outside is refused with the
+reason. **Open file…** (Ctrl+P) lists the folder's files (what Git tracks plus untracked files it
+does not ignore, or the folder's files outside Git, at most `viewer.fileListLimit`), shows the
+best `viewer.fileMatchesShown` matches as you type, and opens the pick. Typing `@` at the start of
+a word in the composer (`chat.fileTrigger`) opens the same list; a pick becomes a chip, and the
+message names the file as `@path` for the agent. A pasted `@` opens nothing.
+
 ### Working copies
 
 Turn on **Own working copy** in a workflow's builder (or "Own working copy" in the palette) and

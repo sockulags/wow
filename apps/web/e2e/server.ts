@@ -540,6 +540,17 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   if (/break the build/i.test(prompt)) {
     return [session, { type: 'turnFailed', threadId, error: 'The build broke' }];
   }
+  // Paths in an answer (agent workbench spec 15, 16): inline code, a relative markdown link, and
+  // one that leaves the folder.
+  if (/show the file/i.test(prompt)) {
+    return [
+      session,
+      ...finish(
+        threadId,
+        'The timer is in `src/timer.ts`, as the [spec](docs/spec.md) says. Notes outside: `../outside.txt`.',
+      ),
+    ];
+  }
   if (/table and a diagram/i.test(prompt)) {
     return [session, ...finish(threadId, markdownAnswer)];
   }
@@ -756,6 +767,17 @@ if (home === e2ePanelHome) {
     'peer.createOffer().then((offer) => peer.setLocalDescription(offer));',
   ].join(' ');
   await mkdir(review, { recursive: true });
+  // What a chat thread in the project opens from its messages, the palette and `@`.
+  await mkdir(path.join(home, 'src'), { recursive: true });
+  await mkdir(path.join(home, 'docs'), { recursive: true });
+  await writeFile(
+    path.join(home, 'src', 'timer.ts'),
+    'export const ringTwice = (ring: () => void) => {\n  ring();\n  ring();\n};\n',
+  );
+  await writeFile(
+    path.join(home, 'docs', 'spec.md'),
+    '# Tea timer\n\nThe timer rings **twice** when the tea is ready.\n',
+  );
   await writeFile(
     path.join(review, 'notes.md'),
     [
