@@ -100,7 +100,12 @@ export function GateBar({
   const draft = useStore(gateStore, (state) => sendBackDraft(state, run));
   const gate = gateOf(run);
   const approveButton = useRef<HTMLButtonElement>(null);
-  useNeedsYouFocus(gate && runNeedsYou(run) ? `run:${run.id}` : undefined, approveButton);
+  // "Next that needs you" lands on one bar: the run view's own while it is on screen, where the
+  // note is written too, so the copy in the side panel does not take the focus from it.
+  useNeedsYouFocus(
+    gate && noteHere && runNeedsYou(run) ? `run:${run.id}` : undefined,
+    approveButton,
+  );
   if (!isLive(run)) return null;
   const reviewed = reviewedStep(run);
   const atLimit = gate?.limit !== undefined;

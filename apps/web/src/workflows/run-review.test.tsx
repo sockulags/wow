@@ -13,6 +13,7 @@ import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
 import { showSkillComposer } from '@/chat/composer-store';
+import { needsYouStore, requestNeedsYouFocus } from '@/chat/needs-you';
 import { commentInComposer } from '@/chat/thread-changes';
 import { outbox } from '@/test/outbox';
 import { renderApp } from '@/test/render';
@@ -233,6 +234,15 @@ describe('the gate bar of a run view', () => {
     const note = within(runGate()).getByRole('textbox', { name: 'What should change?' });
     expect(document.activeElement).toBe(note);
     expect(screen.getAllByRole('textbox', { name: 'What should change?' })).toHaveLength(1);
+  });
+
+  it("lands the next that needs you on the run view's bar, not the panel's copy (spec 76, 77)", async () => {
+    await renderApp(route, fake().runtime);
+    await screen.findByTestId('run-gate');
+    expect(within(panel() as HTMLElement).getByRole('region', { name: 'Gate' })).toBeTruthy();
+    act(() => requestNeedsYouFocus('run:run-1'));
+    expect(document.activeElement).toBe(within(runGate()).getByRole('button', { name: 'Approve' }));
+    needsYouStore.setState({ request: undefined, last: undefined, landed: undefined });
   });
 
   it('ends where a panel laid over the view begins and puts its buttons under its text (spec 78)', async () => {
