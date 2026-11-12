@@ -305,7 +305,11 @@ export class Workspaces {
   }
 
   #git(): GitRunOptions {
-    return { timeoutMs: this.#deps.settings.get('workspaces.gitTimeoutMs'), git: this.#deps.git };
+    return {
+      timeoutMs: this.#deps.settings.get('workspaces.gitTimeoutMs'),
+      stopWaitMs: this.#deps.settings.get('advanced.gitStopWaitMs'),
+      git: this.#deps.git,
+    };
   }
 
   #projectFolder(projectId: string): string | undefined {

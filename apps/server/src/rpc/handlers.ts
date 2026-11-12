@@ -282,7 +282,10 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       return listFolderFiles({
         folder,
         limit: deps.settings.get('viewer.fileListLimit'),
-        git: { timeoutMs: deps.settings.get('trackers.gitTimeoutMs') },
+        git: {
+          timeoutMs: deps.settings.get('trackers.gitTimeoutMs'),
+          stopWaitMs: deps.settings.get('advanced.gitStopWaitMs'),
+        },
       });
     },
     'files.openInEditor': async (params) => {
