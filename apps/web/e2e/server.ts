@@ -1473,7 +1473,8 @@ if (home === e2eHome) {
 }
 // The projects server: invented Claude and Codex session files in the config directories detection
 // reports, read by two instances that use those defaults. `alpha` appears in both, `beta` only in
-// Codex, and `gone` no longer exists, so the import offers alpha and beta.
+// Codex, and `gone` no longer exists, so the import offers alpha and beta. Each session has a
+// first prompt, which "Open session from Claude Code / Codex…" lists (agent workbench spec 72).
 if (home === e2eProjectsHome) {
   for (const name of ['alpha', 'beta']) await mkdir(e2eWorkspace(home, name), { recursive: true });
   const claudeProjects = path.join(e2eClaudeConfigDir(home), 'projects');
@@ -1483,7 +1484,12 @@ if (home === e2eProjectsHome) {
     await mkdir(dir, { recursive: true });
     await writeFile(
       path.join(dir, 'session-1.jsonl'),
-      `${JSON.stringify({ type: 'user', cwd, sessionId: `invented-${name}` })}\n`,
+      `${JSON.stringify({
+        type: 'user',
+        cwd,
+        sessionId: `invented-${name}`,
+        message: { role: 'user', content: `Invented: tidy the ${name} notes` },
+      })}\n`,
     );
   }
   const codexDay = path.join(e2eCodexHome(home), 'sessions', '2026', '11', '01');
@@ -1491,7 +1497,12 @@ if (home === e2eProjectsHome) {
   for (const name of ['alpha', 'beta']) {
     await writeFile(
       path.join(codexDay, `rollout-invented-${name}.jsonl`),
-      `${JSON.stringify({ type: 'session_meta', payload: { id: name, cwd: e2eWorkspace(home, name) } })}\n`,
+      [
+        { type: 'session_meta', payload: { id: name, cwd: e2eWorkspace(home, name) } },
+        { type: 'event_msg', payload: { type: 'user_message', message: `Invented: brew ${name}` } },
+      ]
+        .map((line) => JSON.stringify(line))
+        .join('\n'),
     );
   }
   for (const kind of ['claude', 'codex'] as const) {

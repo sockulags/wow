@@ -163,6 +163,41 @@ test.describe('workflow rules', () => {
       await page.screenshot({ path: sketchPath(intent, 'paths-diagram') });
       await page.setViewportSize(sketchUse.viewport);
     }
+    // Agent workbench spec 86, 99: the step's model by its label with the id in a tooltip; edge
+    // labels with no box behind them, and the last one inside the drawing.
+    const modelName = stepAt(page, 5).getByTestId('model-name');
+    await expect(modelName).toHaveText('Mock model');
+    await expect(modelName).toHaveAttribute('title', 'mock-model');
+    const drawing = page.getByTestId('paths-diagram').getByRole('img', { name: 'Diagram' });
+    const fit = await drawing.evaluate((element) => {
+      const svg = element.querySelector('svg');
+      const labels = [...element.querySelectorAll('.edgeLabel')];
+      const box = svg?.getBoundingClientRect();
+      const fills = [...element.querySelectorAll('.edgeLabel rect')].map(
+        (rect) => element.ownerDocument.defaultView?.getComputedStyle(rect).fill ?? '',
+      );
+      return {
+        inside: labels.every((label) => {
+          const own = label.getBoundingClientRect();
+          return (
+            box !== undefined &&
+            own.left >= box.left - 0.5 &&
+            own.right <= box.right + 0.5 &&
+            own.bottom <= box.bottom + 0.5
+          );
+        }),
+        fills: [...new Set(fills)],
+      };
+    });
+    expect(fit.inside).toBe(true);
+    expect(
+      fit.fills.every((fill) => fill === 'none' || fill === 'transparent' || fill.endsWith(', 0)')),
+    ).toBe(true);
+    if (sketching) {
+      await page.setViewportSize({ ...sketchUse.viewport, height: 1500 });
+      await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'polish') });
+      await page.setViewportSize(sketchUse.viewport);
+    }
     await page.getByRole('button', { name: 'Expand step 5' }).click();
     const saved = rulesOf(stepAt(page, 5), 5);
     await expect(saved.getByLabel('Step 5 rule 1 value')).toHaveText('changes requested');
