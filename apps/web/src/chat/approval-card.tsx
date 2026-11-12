@@ -345,7 +345,7 @@ export function ApprovalCard({
         {payload.byRule ? (
           <ShieldCheckIcon className="size-4 shrink-0 text-state-done" />
         ) : (
-          <ShieldQuestionIcon className="size-4 shrink-0 text-state-needs-you" />
+          <ShieldQuestionIcon className="size-4 shrink-0 text-state-needs-you-text" />
         )}
         <Badge variant="outline">{kindLabels[payload.kind]}</Badge>
         <span className="min-w-0 font-mono text-xs break-all">{payload.summary}</span>

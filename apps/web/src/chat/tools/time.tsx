@@ -54,7 +54,7 @@ export function ToolTime({
         payload.status === 'error'
           ? 'text-state-failed'
           : running === 'waiting for approval'
-            ? 'text-state-needs-you'
+            ? 'text-state-needs-you-text'
             : running === 'running'
               ? 'text-state-working'
               : 'text-muted-foreground',

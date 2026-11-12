@@ -18,6 +18,7 @@ import {
   type ThreadItem,
 } from '@wow/contracts';
 import { z } from 'zod';
+import { createStore } from 'zustand';
 
 // The Assistant view's reading of the conversation (app assistant spec 7 to 17): where change
 // rows and proposals go, the cards a tool call asks for, and the check before a message is sent.
@@ -204,3 +205,22 @@ export function holdMessage(
 // the box as it is now, which can have changed since the message was held.
 export const withoutSecret = (held: Held, text: string = held.text): string =>
   text.split(held.match.value).join('').trim();
+
+// The proposal card to bring into view and focus, from the waiting line's Show or the palette
+// (agent workbench spec 96). The card that has the id takes it and clears it.
+export const proposalFocus = createStore<{ readonly id: string | undefined }>(() => ({
+  id: undefined,
+}));
+
+// The proposals that wait for the user, oldest first.
+export const waitingProposals = (
+  proposals: readonly AssistantProposal[],
+): readonly AssistantProposal[] => proposals.filter((proposal) => proposal.state === 'pending');
+
+// "1 proposal waits: Run scripts in HTML files", "2 proposals wait: …" with the oldest named.
+export function waitingText(waiting: readonly AssistantProposal[]): string | undefined {
+  const [first] = waiting;
+  if (!first) return undefined;
+  const count = waiting.length === 1 ? '1 proposal waits' : `${waiting.length} proposals wait`;
+  return `${count}: ${first.title}`;
+}

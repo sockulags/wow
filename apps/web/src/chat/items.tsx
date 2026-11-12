@@ -77,6 +77,8 @@ export interface ItemContext {
   // thread is the context panel's (a step's), which yields to the open thread's. Absent, a
   // pending card answers them itself.
   readonly keyedApproval?: { readonly id: string; readonly side: boolean } | undefined;
+  // A tool call the view names in words instead of by the tool's name.
+  readonly toolWords?: string | undefined;
 }
 
 // One row per thread item. Rows skip layout and paint while off screen, so a long conversation

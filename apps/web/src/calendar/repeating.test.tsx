@@ -525,3 +525,30 @@ describe('the new actions', () => {
     expect(occurrenceBlocks([{ ...card, repeat: null }], range(), [run]).items).toEqual([]);
   });
 });
+
+// Agent workbench spec 83: the form's footer stays in view while its fields scroll, and the
+// save key (`keybindings.calendarSaveCard`, Ctrl+Enter by default) saves from any field.
+describe('the card form', () => {
+  it('keeps Delete, Cancel and Save in a footer outside the scrolling fields, and Ctrl+Enter saves', async () => {
+    const { grid, box } = await showWeek();
+    fireEvent.keyDown(block(grid, /^Write report, /), { key: 'Enter' });
+    const dialog = await screen.findByRole('dialog', { name: 'Edit card' });
+    const fields = within(dialog).getByTestId('card-form-fields');
+    const footer = within(dialog).getByTestId('card-form-footer');
+    expect(fields.contains(footer)).toBe(false);
+    expect(fields.className).toContain('overflow-y-auto');
+    expect(within(footer).getByRole('button', { name: 'Delete card' })).toBeTruthy();
+    expect(within(footer).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    expect(within(footer).getByRole('button', { name: 'Save card' })).toBeTruthy();
+    expect(settingsRegistry['keybindings.calendarSaveCard'].default).toBe('Mod+Enter');
+
+    const title = within(dialog).getByRole('textbox', { name: 'Title' });
+    fireEvent.change(title, { target: { value: 'Write the report' } });
+    fireEvent.keyDown(title, { key: 'Enter', ctrlKey: true });
+    await act(() => box.until(() => commandsSent(box).some((sent) => sent.type === 'card.update')));
+    expect(commandsSent(box).find((sent) => sent.type === 'card.update')).toMatchObject({
+      cardId: 'write-report',
+      title: 'Write the report',
+    });
+  });
+});

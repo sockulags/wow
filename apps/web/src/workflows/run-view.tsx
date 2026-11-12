@@ -81,7 +81,7 @@ function StepRow({
       data-testid="gate-marker"
       className="flex items-center gap-2 px-3 text-xs font-medium"
     >
-      <HourglassIcon aria-hidden className="size-3.5 text-state-needs-you" />
+      <HourglassIcon aria-hidden className="size-3.5 text-state-needs-you-text" />
       {waitingLabel}
       <span aria-hidden className="h-px flex-1 border-t border-dashed border-state-needs-you/60" />
     </li>
@@ -138,7 +138,7 @@ function StepRow({
             data-testid="step-limit"
             className="flex items-center gap-1.5 pl-4 text-xs font-medium"
           >
-            <RepeatIcon aria-hidden className="size-3.5 text-state-needs-you" />
+            <RepeatIcon aria-hidden className="size-3.5 text-state-needs-you-text" />
             {limit}
           </p>
         )}

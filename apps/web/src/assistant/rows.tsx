@@ -15,12 +15,14 @@ import {
   ShieldQuestionIcon,
   XIcon,
 } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useStore } from 'zustand';
 import { errorMessage } from '@/chat/data';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { proposalFocus } from './model';
 
 // Change rows and proposal cards inline in the assistant's conversation (app assistant spec 7 to
 // 10, 20). They show the server's rows and send the user's answer; whether a change is undone or
@@ -171,6 +173,15 @@ export function ProposalCard({
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState('');
   const pending = proposal.state === 'pending';
+  const card = useRef<HTMLElement>(null);
+  const focusWanted = useStore(proposalFocus, (state) => state.id === proposal.id);
+  // Show on the waiting line (spec 96) brings the card into view with the focus on it.
+  useEffect(() => {
+    if (!focusWanted) return;
+    card.current?.scrollIntoView({ block: 'center' });
+    card.current?.focus();
+    proposalFocus.setState({ id: undefined });
+  }, [focusWanted]);
   const decline = () => {
     const typed = reason.trim();
     const secret = typed === '' ? null : findSecret(typed, compiled(secretPatterns));
@@ -182,16 +193,22 @@ export function ProposalCard({
   };
   return (
     <section
+      ref={card}
+      tabIndex={-1}
       aria-label={`Proposal: ${proposal.title}`}
       data-testid="assistant-proposal"
+      data-proposal-id={proposal.id}
       data-state={proposal.state}
       className={cn(
-        'flex flex-col gap-2 rounded-md border p-3 text-sm',
+        'flex flex-col gap-2 rounded-md border p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
         pending ? 'border-state-needs-you/60' : 'border-border text-muted-foreground',
       )}
     >
       <div className="flex items-start gap-2">
-        <ShieldQuestionIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-state-needs-you" />
+        <ShieldQuestionIcon
+          aria-hidden
+          className="mt-0.5 size-4 shrink-0 text-state-needs-you-text"
+        />
         <div className="min-w-0 flex-1">
           <h3 className="font-medium text-foreground">{proposal.title}</h3>
           <p className="text-xs text-muted-foreground">
@@ -266,5 +283,46 @@ export function ProposalCard({
         </div>
       )}
     </section>
+  );
+}
+
+// The line above the composer while proposals wait (agent workbench spec 96): the oldest by its
+// title, with Yes, No and Show. No here gives no reason; the card's No asks for one.
+export function WaitingLine({
+  text,
+  onYes,
+  onNo,
+  onShow,
+}: {
+  text: string;
+  onYes(): Promise<unknown>;
+  onNo(): Promise<unknown>;
+  onShow(): void;
+}) {
+  const { busy, error, run } = useAction();
+  return (
+    <div
+      role="status"
+      aria-label="Waiting proposal"
+      data-testid="assistant-waiting"
+      className="flex flex-col gap-1 rounded-md border border-state-needs-you/60 px-3 py-1.5 text-xs"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <ShieldQuestionIcon aria-hidden className="size-3.5 shrink-0 text-state-needs-you-text" />
+        <p data-testid="assistant-waiting-text" className="min-w-0 flex-1 truncate">
+          {text}
+        </p>
+        <Button size="xs" disabled={busy} onClick={() => run(onYes)}>
+          Yes
+        </Button>
+        <Button size="xs" variant="outline" disabled={busy} onClick={() => run(onNo)}>
+          No
+        </Button>
+        <Button size="xs" variant="ghost" onClick={onShow}>
+          Show
+        </Button>
+      </div>
+      {error && <Refusal>{error}</Refusal>}
+    </div>
   );
 }

@@ -278,6 +278,9 @@ export interface ConversationExtras {
   // Its own composer bar (the assistant's settings), or null for none; left out, the thread's
   // own bar, so extras for another reason never drop it.
   readonly modelBar?: Omit<ModelBarProps, 'ref' | 'returnFocus'> | null;
+  // How a tool call reads: undefined as the tool's own row, a text for a row in those words,
+  // null for no row of its own (what `after` draws for it already says it, spec 82).
+  toolWords?(item: ThreadItem): string | null | undefined;
 }
 
 // A thread's conversation, its gate bar and its composer: the chat view's thread and, narrower,
@@ -430,9 +433,17 @@ export function ThreadConversation({
       )?.label ?? thread.permissionMode)
     : thread.permissionMode;
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
+  const words = new Map(
+    (items ?? []).flatMap((item) => {
+      const said = item.kind === 'tool_call' ? extras?.toolWords?.(item) : undefined;
+      return said === undefined ? [] : [[item.id, said] as const];
+    }),
+  );
   const itemContext = (turnId: string, itemId: string): ItemContext => {
     const turn = turnById.get(turnId);
+    const said = words.get(itemId);
     return {
+      ...(typeof said === 'string' ? { toolWords: said } : {}),
       cwd: thread.cwd,
       permissionLabel,
       turnEnded: turn !== undefined && turn.state !== 'running',
@@ -473,7 +484,11 @@ export function ThreadConversation({
   const afters = new Map((items ?? []).map((item) => [item.id, extras?.after?.(item)]));
   const entries: ConversationEntry[] = groupQuestions(
     groupTools
-      ? groupToolCalls(items ?? [], (item) => Boolean(afters.get(item.id)))
+      ? groupToolCalls(
+          items ?? [],
+          (item) => Boolean(afters.get(item.id)),
+          (item) => words.get(item.id) === null,
+        )
       : (items ?? []).map((item) => ({ kind: 'item', item })),
   );
 
@@ -547,7 +562,8 @@ export function ThreadConversation({
                   turn?.state === 'interrupted' && nextTurn !== turn.id ? turn : undefined;
                 return (
                   <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
-                    {entry.kind === 'item' ? (
+                    {entry.kind === 'item' &&
+                    words.get(entry.item.id) === null ? null : entry.kind === 'item' ? (
                       <ConversationItem
                         item={entry.item}
                         approvals={approvals}

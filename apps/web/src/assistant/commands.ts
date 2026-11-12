@@ -3,6 +3,7 @@ import { dispatch } from '@wow/client-runtime';
 import type { AppCommand, CommandContext } from '@/app/commands';
 import { errorMessage } from '@/chat/data';
 import { notify } from '@/lib/feedback';
+import { proposalFocus } from './model';
 
 export interface AssistantCommandData {
   readonly changes: readonly AssistantChange[];
@@ -50,6 +51,18 @@ export function assistantCommands({ changes, proposals }: AssistantCommandData):
           { type: 'assistant.proposal.decline', proposalId: proposal.id },
           `"${proposal.title}" could not be declined`,
         ),
+      },
+      {
+        id: `assistant.show.${proposal.id}`,
+        title: `Show proposal: ${proposal.title}`,
+        group: 'Assistant',
+        keywords: ['assistant', 'proposal', 'show', 'waiting'],
+        detail: 'Proposal',
+        searchOnly: true,
+        run: ({ navigate }) => {
+          proposalFocus.setState({ id: proposal.id });
+          void navigate({ to: '/assistant' });
+        },
       },
     );
   }

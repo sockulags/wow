@@ -311,6 +311,9 @@ Cards are your own blocks of time. They never leave the app.
   With the context panel open, a click shows the card there and **Edit card** opens the dialog.
 - **Delete**: "Delete card" in the form deletes it at once; **Undo** in the message that follows
   puts it back. A card whose workflow run is still going asks first whether to stop the run.
+- **Save from the keyboard**: **Ctrl+Enter** (`keybindings.calendarSaveCard`) creates or saves the
+  card from any field of the form. Delete, Cancel and Create card stay at the bottom of the form
+  while its fields scroll, also in a small window.
 
 A card with a workflow and a project is a **trigger**: at the card's start time the workflow's
 first step starts (see "Triggers" below). Moving the card moves the trigger with it. Triggers carry
@@ -1031,6 +1034,11 @@ to see its units on the right: key, title, dependencies, the `blocked:` note and
 line, and the other intents still show. The palette finds every intent by its title and each unit
 of the open plan as "Unit <key>: <title>".
 
+Press Enter on `intent.md`, `spec.md` or `plan.md` (or click it) to read it, rendered, in the side
+panel. **Start a thread for this unit** on a unit opens a new chat thread in the project with the
+unit's contract as its first message; nothing is sent until you send it. The palette has "Plan:
+open spec.md" and the like, and "Start a thread for <key>: <title>".
+
 ### Unit status
 
 Turn **Follow** on for a plan ("Plan: follow" in the palette) and wow reads its pull requests from the project's host (see
@@ -1248,6 +1256,17 @@ starting a run ("Start <workflow> in <project>"). A card with a workflow that st
 `assistant.startSoonMinutes` (15) from now is a proposal too. A value longer than `assistant.valueLength` (160) characters is cut
 short on its line; "show all of it" under the line opens the whole of it. The palette has Yes and No for every
 waiting proposal and Undo for every change.
+
+Rows say values as the settings page does ("Work hours: From Outlook → 08:00–16:00, Mon–Fri") and
+name models by their label. A tool call that a row or card already shows has no row of its own;
+any other reads in words, such as "Read your workflows". While a proposal waits, a line above the
+composer names it ("1 proposal waits: …") with **Yes**, **No** and **Show**, which brings the card
+into view.
+
+Ask it to always allow a command or a tool in a project ("always allow `pnpm test` in Tea") and it
+proposes the rule; the rule is stored, under Settings → Approvals, only when you press Yes. It
+never stores one itself, and it cannot propose a rule for a command that runs other commands,
+such as `bash` or `npx`.
 
 It never answers a gate: approving, sending back or stopping a run is yours, and wow refuses those
 commands from the assistant. It can read the list of skills and the text of a wow skill, and can

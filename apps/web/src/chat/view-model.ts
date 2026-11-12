@@ -251,9 +251,12 @@ export function groupQuestions(entries: readonly ConversationEntry[]): Conversat
 // fill the screen before its answer. Any other item breaks the run, and so does a row the view
 // draws after a call (`endsRun`: the Assistant's change rows and cards). The entry's id is its
 // first call's, so the row keeps its open state while the run grows.
+// `alone` keeps a call out of every group, as its own entry: one that the view draws no row
+// for, only what follows it.
 export function groupToolCalls(
   items: readonly ThreadItem[],
   endsRun: (item: ThreadItem) => boolean = () => false,
+  alone: (item: ThreadItem) => boolean = () => false,
 ): ConversationEntry[] {
   const entries: ConversationEntry[] = [];
   let run: ThreadItem[] = [];
@@ -269,7 +272,7 @@ export function groupToolCalls(
     run = [];
   };
   for (const item of items) {
-    if (item.kind !== 'tool_call') {
+    if (item.kind !== 'tool_call' || alone(item)) {
       close();
       entries.push({ kind: 'item', item });
       continue;

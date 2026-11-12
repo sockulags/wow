@@ -9,7 +9,16 @@ import {
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
 import { safeHref } from '@/components/markdown';
-import { livePlanRun, revisionLabel, runReadyUnitsBlocked, unitWorkflows } from './model';
+import { fullPathOf, openFile } from '@/panel/viewer';
+import {
+  fileNames,
+  livePlanRun,
+  planFilePath,
+  revisionLabel,
+  runReadyUnitsBlocked,
+  unitThreadText,
+  unitWorkflows,
+} from './model';
 import { askStopPlanRun, startPlanRun } from './plan-run';
 
 export interface PlanCommandData {
@@ -22,6 +31,9 @@ export interface PlanCommandData {
   // For "Run ready units" and Stop on the open plan.
   readonly planRuns?: readonly PlanRun[] | undefined;
   readonly workflows?: readonly Workflow[] | undefined;
+  // The intents folder of a project, and the route whose panel a plan file opens in.
+  readonly directoryOf?: ((projectId: string) => string) | undefined;
+  readonly panelRoute?: string | undefined;
 }
 
 // Palette commands for plans: read the files again and ask the hosts, every intent, and for the
@@ -34,6 +46,8 @@ export function planCommands({
   changeRequests = [],
   planRuns = [],
   workflows = [],
+  directoryOf,
+  panelRoute = '',
 }: PlanCommandData): AppCommand[] {
   const commands: AppCommand[] = [
     {
@@ -124,6 +138,54 @@ export function planCommands({
         detail: 'Unit',
         run: () => void window.open(url, '_blank', 'noreferrer'),
       });
+    }
+    // The plan's files rendered in the panel, and a thread for each unit (agent workbench spec 84).
+    if (directoryOf) {
+      const directory = directoryOf(openIntent.projectId);
+      const project = projects.find((candidate) => candidate.id === openIntent.projectId);
+      const present = [
+        openIntent.hasIntent ? fileNames.intent : null,
+        openIntent.spec ? fileNames.spec : null,
+        openIntent.plan ? fileNames.plan : null,
+      ].filter((name) => name !== null);
+      for (const name of present) {
+        const path = planFilePath(directory, openIntent.intentId, name);
+        commands.push({
+          id: `plans.file.${name}`,
+          title: `Plan: open ${name}`,
+          group: 'Plans',
+          keywords: ['plan', 'file', 'open', 'read', name],
+          run: ({ settings, layout }) =>
+            openFile(
+              { settings, layout },
+              {
+                scope: { projectId: openIntent.projectId },
+                path,
+                fullPath: project ? fullPathOf(project.cwd, path) : path,
+                from: panelRoute,
+              },
+            ),
+        });
+      }
+      const planPath = planFilePath(directory, openIntent.intentId, fileNames.plan);
+      for (const unit of openIntent.units) {
+        commands.push({
+          id: `plans.unit.${unit.key}.thread`,
+          title: `Start a thread for ${unit.key}: ${unit.title}`,
+          group: 'Plans',
+          keywords: ['unit', 'thread', 'chat', 'new thread', 'contract', unit.key],
+          detail: 'Unit',
+          searchOnly: true,
+          run: ({ draft, navigate }) => {
+            draft.setState({
+              projectId: openIntent.projectId,
+              cwd: undefined,
+              text: unitThreadText(openIntent, unit, planPath),
+            });
+            void navigate({ to: '/chat/new' });
+          },
+        });
+      }
     }
     for (const unit of openIntent.units) {
       commands.push({

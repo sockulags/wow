@@ -1,7 +1,7 @@
 import { isLiveRunState, type CalendarItem, type Command } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { AlertTriangleIcon, InfoIcon, WorkflowIcon } from 'lucide-react';
-import { useRef, useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
   useLayout,
   useRuntime,
@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { offerUndo } from '@/lib/feedback';
 import { cn } from '@/lib/utils';
+import { isBinding } from '@/panel/editor';
 import { cardKind as cardKindOf } from './items';
 import {
   durationLabel,
@@ -120,6 +121,7 @@ function CardForm({
   const backlog = useTopic('backlogItems') ?? [];
   const { firstDayOfWeek } = useCalendarPrefs();
   const snapMinutes = useSetting('calendar.snapMinutes');
+  const saveBinding = useSetting('keybindings.calendarSaveCard');
   const runs = useTopic('workflowRuns');
   const run = card?.runId ? runs?.find((entry) => entry.id === card.runId) : undefined;
   const liveRun = run && isLiveRunState(run.state) ? run : undefined;
@@ -281,256 +283,281 @@ function CardForm({
     </Button>
   );
 
+  // Ctrl+Enter (by default) saves from any field (agent workbench spec 83); the app's own use of
+  // the same keys, such as Approve, does not hear it while the form is open.
+  const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (!isBinding(event, saveBinding)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!busy && blocked === undefined) event.currentTarget.requestSubmit();
+  };
+
+  // The fields scroll and the footer stays in view, so Delete, Cancel and Create card are there
+  // in a short window too (spec 83).
   return (
-    <form onSubmit={submit} className="grid min-w-0 gap-4" aria-label="Card" noValidate>
-      <FormField
-        id="card-title"
-        label="Title"
-        error={titleMissing && title === '' ? 'Give the card a title' : undefined}
+    <form
+      onSubmit={submit}
+      onKeyDown={onKeyDown}
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-4"
+      aria-label="Card"
+      noValidate
+    >
+      <div
+        data-testid="card-form-fields"
+        className="-mx-6 grid min-h-0 min-w-0 flex-1 gap-4 overflow-y-auto px-6 pb-1"
       >
-        <Input
-          autoFocus
-          placeholder="What is this time for?"
-          value={form.title}
-          onBlur={() => setTitleMissing(form.title.trim() === '')}
-          onChange={(event) => set({ title: event.target.value })}
-        />
-      </FormField>
-      <div className="grid grid-cols-3 gap-3">
         <FormField
-          id="card-date"
-          label="Date"
-          error={!range.ok && range.field === 'date' ? range.message : undefined}
+          id="card-title"
+          label="Title"
+          error={titleMissing && title === '' ? 'Give the card a title' : undefined}
         >
-          <DateField
+          <Input
+            autoFocus
+            placeholder="What is this time for?"
+            value={form.title}
+            onBlur={() => setTitleMissing(form.title.trim() === '')}
+            onChange={(event) => set({ title: event.target.value })}
+          />
+        </FormField>
+        <div className="grid grid-cols-3 gap-3">
+          <FormField
             id="card-date"
             label="Date"
-            value={form.date}
-            firstDayOfWeek={firstDayOfWeek}
-            onValueChange={(date) => set({ date })}
-          />
-        </FormField>
-        <FormField
-          id="card-start"
-          label="Start"
-          error={!range.ok && range.field === 'start' ? range.message : undefined}
-        >
-          <TimeField
-            id="card-start"
-            label="Start"
-            value={form.start}
-            stepMinutes={snapMinutes}
-            onValueChange={(start) => set({ start })}
-          />
-        </FormField>
-        <FormField
-          id="card-end"
-          label="End"
-          help={
-            range.ok ? (
-              <span data-testid="card-duration">{durationLabel(range.minutes)}</span>
-            ) : undefined
-          }
-          error={!range.ok && range.field === 'end' ? range.message : undefined}
-        >
-          <TimeField
-            id="card-end"
-            label="End"
-            value={form.end}
-            stepMinutes={snapMinutes}
-            onValueChange={(end) => set({ end })}
-          />
-        </FormField>
-      </div>
-      <fieldset className="grid min-w-0 gap-3 rounded-md border border-border p-3">
-        <legend className="flex items-center gap-1.5 px-1 text-sm font-medium">
-          <WorkflowIcon className="size-4 text-muted-foreground" aria-hidden />
-          Run a workflow
-        </legend>
-        <div className="grid grid-cols-2 gap-3">
-          <FormField id="card-workflow" label="Workflow">
-            <ChoiceSelect
-              id="card-workflow"
-              value={form.workflowId}
-              choices={[
-                { value: '', label: 'No workflow' },
-                ...workflows.map((entry) => ({ value: entry.id, label: entry.name })),
-              ]}
-              onValueChange={(workflowId) => set({ workflowId })}
+            error={!range.ok && range.field === 'date' ? range.message : undefined}
+          >
+            <DateField
+              id="card-date"
+              label="Date"
+              value={form.date}
+              firstDayOfWeek={firstDayOfWeek}
+              onValueChange={(date) => set({ date })}
             />
           </FormField>
-          <FormField id="card-project" label="Project">
-            <ChoiceSelect
-              id="card-project"
-              value={form.projectId}
-              choices={[
-                { value: '', label: 'No project' },
-                ...projects.map((entry) => ({ value: entry.id, label: entry.name })),
-              ]}
-              onValueChange={(projectId) => set({ projectId })}
+          <FormField
+            id="card-start"
+            label="Start"
+            error={!range.ok && range.field === 'start' ? range.message : undefined}
+          >
+            <TimeField
+              id="card-start"
+              label="Start"
+              value={form.start}
+              stepMinutes={snapMinutes}
+              onValueChange={(start) => set({ start })}
+            />
+          </FormField>
+          <FormField
+            id="card-end"
+            label="End"
+            help={
+              range.ok ? (
+                <span data-testid="card-duration">{durationLabel(range.minutes)}</span>
+              ) : undefined
+            }
+            error={!range.ok && range.field === 'end' ? range.message : undefined}
+          >
+            <TimeField
+              id="card-end"
+              label="End"
+              value={form.end}
+              stepMinutes={snapMinutes}
+              onValueChange={(end) => set({ end })}
             />
           </FormField>
         </div>
-        {summary.tone !== 'none' && (
+        {/* Above 1200 px the workflow and the repeat sit side by side. */}
+        <div className="grid min-w-0 items-start gap-4 min-[1200px]:grid-cols-2">
+          <fieldset className="grid min-w-0 gap-3 rounded-md border border-border p-3">
+            <legend className="flex items-center gap-1.5 px-1 text-sm font-medium">
+              <WorkflowIcon className="size-4 text-muted-foreground" aria-hidden />
+              Run a workflow
+            </legend>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField id="card-workflow" label="Workflow">
+                <ChoiceSelect
+                  id="card-workflow"
+                  value={form.workflowId}
+                  choices={[
+                    { value: '', label: 'No workflow' },
+                    ...workflows.map((entry) => ({ value: entry.id, label: entry.name })),
+                  ]}
+                  onValueChange={(workflowId) => set({ workflowId })}
+                />
+              </FormField>
+              <FormField id="card-project" label="Project">
+                <ChoiceSelect
+                  id="card-project"
+                  value={form.projectId}
+                  choices={[
+                    { value: '', label: 'No project' },
+                    ...projects.map((entry) => ({ value: entry.id, label: entry.name })),
+                  ]}
+                  onValueChange={(projectId) => set({ projectId })}
+                />
+              </FormField>
+            </div>
+            {summary.tone !== 'none' && (
+              <div
+                data-testid="trigger-summary"
+                role={summary.tone === 'warning' ? 'alert' : 'status'}
+                className={cn(
+                  'flex min-w-0 items-center gap-2 text-xs',
+                  summary.tone === 'warning' ? 'text-warning' : 'text-muted-foreground',
+                )}
+              >
+                {summary.tone === 'warning' ? (
+                  <AlertTriangleIcon className="size-3.5 shrink-0" aria-hidden />
+                ) : (
+                  <InfoIcon className="size-3.5 shrink-0" aria-hidden />
+                )}
+                <span className="min-w-0 flex-1 truncate">{summary.text}</span>
+                {summary.tone === 'run' && (
+                  <Button asChild size="xs" variant="outline">
+                    <Link to="/workflows/runs/$runId" params={{ runId: summary.runId }}>
+                      Open run
+                    </Link>
+                  </Button>
+                )}
+                {canRunNow && card && (
+                  <Button
+                    type="button"
+                    size="xs"
+                    disabled={busy}
+                    onClick={() =>
+                      void send({
+                        type: 'card.runNow',
+                        cardId: card.id,
+                        runId: globalThis.crypto.randomUUID(),
+                      })
+                    }
+                  >
+                    Run now
+                  </Button>
+                )}
+              </div>
+            )}
+          </fieldset>
+          <RepeatSection
+            draft={form.repeat}
+            result={repeat}
+            date={form.date}
+            start={range.ok ? range.start : undefined}
+            zone={zone}
+            firstDayOfWeek={firstDayOfWeek}
+            next={next}
+            onChange={setRepeat}
+          />
+        </div>
+        <FormField id="card-backlog" label="Backlog item">
+          <Combobox
+            id="card-backlog"
+            className="w-full"
+            value={form.backlogItemId}
+            placeholder="No backlog item"
+            searchPlaceholder="Search backlog…"
+            emptyText="No matching item."
+            choices={[
+              { value: '', label: 'No backlog item' },
+              ...backlog.map((entry) => ({ value: entry.id, label: entry.title })),
+            ]}
+            onValueChange={(backlogItemId) => set({ backlogItemId })}
+          />
+        </FormField>
+        <FormField id="card-notes" label="Notes">
+          <Textarea
+            rows={3}
+            placeholder="Anything to remember for this time"
+            value={form.body}
+            onChange={(event) => set({ body: event.target.value })}
+          />
+        </FormField>
+        {zone !== systemZone() && (
+          <p className="text-xs text-muted-foreground">Times are in {formatZone(zone)}.</p>
+        )}
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        )}
+        {asking === 'which' && dialog.type === 'edit' && card && (
           <div
-            data-testid="trigger-summary"
-            role={summary.tone === 'warning' ? 'alert' : 'status'}
-            className={cn(
-              'flex min-w-0 items-center gap-2 text-xs',
-              summary.tone === 'warning' ? 'text-warning' : 'text-muted-foreground',
-            )}
+            role="alertdialog"
+            aria-label={repeating ? 'Delete which?' : 'Delete the card?'}
+            className="grid gap-2 rounded-md border border-destructive/50 p-3 text-xs"
           >
-            {summary.tone === 'warning' ? (
-              <AlertTriangleIcon className="size-3.5 shrink-0" aria-hidden />
-            ) : (
-              <InfoIcon className="size-3.5 shrink-0" aria-hidden />
-            )}
-            <span className="min-w-0 flex-1 truncate">{summary.text}</span>
-            {summary.tone === 'run' && (
-              <Button asChild size="xs" variant="outline">
-                <Link to="/workflows/runs/$runId" params={{ runId: summary.runId }}>
-                  Open run
-                </Link>
+            <p>
+              {repeating
+                ? occurrenceDate
+                  ? `Delete only ${dayText(occurrenceDate)}, or every occurrence of this card?`
+                  : 'Delete every occurrence of this card? To leave out one day, open it from the calendar.'
+                : 'Delete this card?'}
+            </p>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(undefined)}>
+                Cancel
               </Button>
-            )}
-            {canRunNow && card && (
+              {occurrenceDate && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void skipOccurrence()}
+                >
+                  This occurrence
+                </Button>
+              )}
               <Button
                 type="button"
-                size="xs"
+                size="sm"
+                variant="destructive"
                 disabled={busy}
-                onClick={() =>
-                  void send({
-                    type: 'card.runNow',
-                    cardId: card.id,
-                    runId: globalThis.crypto.randomUUID(),
-                  })
-                }
+                autoFocus
+                onClick={removeAll}
               >
-                Run now
+                {repeating ? 'The whole series' : 'Delete card'}
               </Button>
-            )}
+            </div>
           </div>
         )}
-      </fieldset>
-      <RepeatSection
-        draft={form.repeat}
-        result={repeat}
-        date={form.date}
-        start={range.ok ? range.start : undefined}
-        zone={zone}
-        firstDayOfWeek={firstDayOfWeek}
-        next={next}
-        onChange={setRepeat}
-      />
-      <FormField id="card-backlog" label="Backlog item">
-        <Combobox
-          id="card-backlog"
-          className="w-full"
-          value={form.backlogItemId}
-          placeholder="No backlog item"
-          searchPlaceholder="Search backlog…"
-          emptyText="No matching item."
-          choices={[
-            { value: '', label: 'No backlog item' },
-            ...backlog.map((entry) => ({ value: entry.id, label: entry.title })),
-          ]}
-          onValueChange={(backlogItemId) => set({ backlogItemId })}
-        />
-      </FormField>
-      <FormField id="card-notes" label="Notes">
-        <Textarea
-          rows={3}
-          placeholder="Anything to remember for this time"
-          value={form.body}
-          onChange={(event) => set({ body: event.target.value })}
-        />
-      </FormField>
-      {zone !== systemZone() && (
-        <p className="text-xs text-muted-foreground">Times are in {formatZone(zone)}.</p>
-      )}
-      {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
-      {asking === 'which' && dialog.type === 'edit' && card && (
-        <div
-          role="alertdialog"
-          aria-label={repeating ? 'Delete which?' : 'Delete the card?'}
-          className="grid gap-2 rounded-md border border-destructive/50 p-3 text-xs"
-        >
-          <p>
-            {repeating
-              ? occurrenceDate
-                ? `Delete only ${dayText(occurrenceDate)}, or every occurrence of this card?`
-                : 'Delete every occurrence of this card? To leave out one day, open it from the calendar.'
-              : 'Delete this card?'}
-          </p>
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(undefined)}>
-              Cancel
-            </Button>
-            {occurrenceDate && (
+        {asking === 'stopRun' && dialog.type === 'edit' && liveRun && (
+          <div
+            role="alertdialog"
+            aria-label="Stop the run?"
+            className="grid gap-2 rounded-md border border-destructive/50 p-3 text-xs"
+          >
+            <p>
+              This card's workflow run is{' '}
+              {liveRun.state === 'waiting' ? 'waiting for you' : 'running'}. Stop it too? Its
+              threads are kept either way.
+            </p>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(undefined)}>
+                Cancel
+              </Button>
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
                 disabled={busy}
-                onClick={() => void skipOccurrence()}
+                onClick={() => void remove(false)}
               >
-                This occurrence
+                Keep run and delete
               </Button>
-            )}
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
-              disabled={busy}
-              autoFocus
-              onClick={removeAll}
-            >
-              {repeating ? 'The whole series' : 'Delete card'}
-            </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                disabled={busy}
+                onClick={() => void remove(true)}
+              >
+                Stop run and delete
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
-      {asking === 'stopRun' && dialog.type === 'edit' && liveRun && (
-        <div
-          role="alertdialog"
-          aria-label="Stop the run?"
-          className="grid gap-2 rounded-md border border-destructive/50 p-3 text-xs"
-        >
-          <p>
-            This card's workflow run is{' '}
-            {liveRun.state === 'waiting' ? 'waiting for you' : 'running'}. Stop it too? Its threads
-            are kept either way.
-          </p>
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(undefined)}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={() => void remove(false)}
-            >
-              Keep run and delete
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
-              disabled={busy}
-              onClick={() => void remove(true)}
-            >
-              Stop run and delete
-            </Button>
-          </div>
-        </div>
-      )}
-      <DialogFooter>
+        )}
+      </div>
+      <DialogFooter data-testid="card-form-footer" className="shrink-0 border-t border-border pt-4">
         {dialog.type === 'edit' && (
           <Button
             type="button"
@@ -581,9 +608,9 @@ export function CardDialog({ cards }: { cards: readonly CalendarItem[] }) {
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && close()}>
-      {/* The Repeat section makes the form taller than a short window, so it scrolls. */}
+      {/* The Repeat section makes the form taller than a short window, so its fields scroll. */}
       <DialogContent
-        className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden min-[1200px]:max-w-4xl"
         onCloseAutoFocus={(event) => {
           const target = returnFocus.current;
           returnFocus.current = null;

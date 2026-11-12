@@ -2,6 +2,9 @@ import type { ChangeRequest, HostRead, PlanIntent, PlanUnit, Project } from '@wo
 import { describe, expect, it } from 'vitest';
 import { planCommands } from './commands';
 import {
+  intentsDirectoryOf,
+  planFilePath,
+  unitThreadText,
   changeRequestStateLabel,
   checksLabel,
   failingChecks,
@@ -226,5 +229,58 @@ describe('plan palette commands', () => {
       'Plan: refresh pull requests now',
       'Open pull request #14 of U2 on the host',
     ]);
+  });
+});
+
+// Agent workbench spec 84: a plan's files open from the project's intents folder, and a unit's
+// thread starts from its contract.
+describe('plan files and unit threads', () => {
+  it("finds a plan file in the project's own intents folder, else the global one", () => {
+    const rows = [{ key: 'plans.intentsDirectory', scope: 'project:tea', value: 'docs/plans/' }];
+    expect(intentsDirectoryOf(rows, 'tea', 'intents')).toBe('docs/plans/');
+    expect(intentsDirectoryOf(rows, 'other', 'intents')).toBe('intents');
+    expect(planFilePath('docs/plans/', '2026-07-tea', 'spec.md')).toBe(
+      'docs/plans/2026-07-tea/spec.md',
+    );
+  });
+
+  it("writes the unit's contract into the first message, field by field", () => {
+    const withContract: PlanUnit = {
+      ...unit('U2', 'Ring the bell'),
+      contract: [
+        { name: 'Outcome', value: 'The bell rings when the tea is ready.' },
+        { name: 'Boundaries', value: null },
+        { name: 'Acceptance', value: '- Given a timer, then it rings.' },
+      ],
+    };
+    expect(
+      unitThreadText(intent('tea', '2026-07-tea'), withContract, 'intents/2026-07-tea/plan.md'),
+    ).toBe(
+      [
+        'Work on unit U2 "Ring the bell" of "Title of 2026-07-tea" (intents/2026-07-tea/plan.md).',
+        '',
+        'Its contract:',
+        '',
+        'Outcome: The bell rings when the tea is ready.',
+        'Acceptance: - Given a timer, then it rings.',
+      ].join('\n'),
+    );
+  });
+
+  it('has palette commands for the files and for a thread per unit', () => {
+    const open = intent('tea', '2026-07-tea', {
+      spec: { rev: 1, status: 'accepted', stale: null },
+      units: [unit('U2', 'Ring the bell')],
+    });
+    const titles = planCommands({
+      intents: [open],
+      projects: [project('tea', 'Tea')],
+      openIntent: open,
+      directoryOf: () => 'intents',
+    }).map((command) => command.title);
+    expect(titles).toContain('Plan: open intent.md');
+    expect(titles).toContain('Plan: open spec.md');
+    expect(titles).not.toContain('Plan: open plan.md');
+    expect(titles).toContain('Start a thread for U2: Ring the bell');
   });
 });

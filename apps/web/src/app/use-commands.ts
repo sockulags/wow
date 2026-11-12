@@ -45,7 +45,7 @@ import {
 } from '@/panel/commands';
 import { panelRoute, panelSelection } from '@/panel/model';
 import { planCommands } from '@/plans/commands';
-import { openPlan, runRead } from '@/plans/model';
+import { intentsDirectoryOf, openPlan, runRead } from '@/plans/model';
 import { runPullRequest } from '@/workflows/pull-request-tab';
 import { runTicketRead } from '@/workflows/ticket-tab';
 import { useCalendarPrefs } from '@/calendar/prefs';
@@ -79,6 +79,8 @@ export function useCommands(gated = false): {
   const threads = useTopic('threads');
   const instances = useTopic('providerInstances');
   const projects = useTopic('projects');
+  const settingRows = useTopic('settings');
+  const intentsDirectory = useSetting('plans.intentsDirectory');
   const turns = useTopic('turns', openThreadId);
   const approvalOffer = useStore(approvalCardStore, (state) => state.offer);
   const changesOpen = useLayout((state) =>
@@ -237,6 +239,9 @@ export function useCommands(gated = false): {
         changeRequests,
         planRuns,
         workflows,
+        directoryOf: (projectId) =>
+          intentsDirectoryOf(settingRows ?? [], projectId, intentsDirectory),
+        panelRoute: tabsRoute,
       }),
       ...backlogCommands({
         items: backlogItems ?? [],
@@ -315,6 +320,9 @@ export function useCommands(gated = false): {
     planIntents,
     planRuns,
     changeRequests,
+    settingRows,
+    intentsDirectory,
+    tabsRoute,
     hostReads,
     projectsGit,
     ticketReads,
