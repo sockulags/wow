@@ -64,6 +64,7 @@ function acceptOverRpc(proposalId: string) {
     skills: server.skills,
     hosts: undefined as never,
     hostLookup: undefined as never,
+    images: undefined as never,
     plans: undefined as never,
     workflows: undefined as never,
     providers: undefined as never,

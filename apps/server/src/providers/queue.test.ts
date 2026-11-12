@@ -237,7 +237,7 @@ describe('queued messages', () => {
   it('refuses an empty message while a turn runs', async () => {
     await setup('codex', false);
     expect(() => dispatch({ type: 'thread.sendMessage', threadId: 't1', text: '  ' })).toThrow(
-      /needs text or a skill/,
+      /needs text, a skill or an image/,
     );
     expect(thread()?.['queued']).toBeNull();
   });
@@ -274,6 +274,35 @@ describe('queued messages', () => {
     expect(thread()).toMatchObject({ queued: null, state: 'working' });
     expect(rows('threadItems').at(-1)).toMatchObject({
       payload: { text: 'Waiting since yesterday', queued: 'afterTurn' },
+    });
+  });
+
+  it('keeps the images of a message written during a Claude Code turn and sends them when it ends @agent-workbench-53', async () => {
+    await setup('claude', true);
+    const image = '0f8fad5b-d9cb-469f-a165-70867728950e.png';
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: 'And this screenshot',
+      attachments: [{ id: image }],
+    });
+    // A hand-over carries text only, so Claude Code is not offered it.
+    expect(adapter.sent.map((command) => command.type)).toEqual(['startTurn']);
+    expect(thread()?.['queued']).toMatchObject({
+      text: 'And this screenshot',
+      images: [{ id: image, mediaType: 'image/png' }],
+    });
+
+    const sent = committed('turn.started');
+    adapter.emit({ type: 'turnCompleted', threadId: 't1' });
+    await sent;
+    expect(adapter.sent.at(-1)).toMatchObject({
+      type: 'startTurn',
+      prompt: 'And this screenshot',
+      images: [{ path: path.join(dir, 'images', 't1', image), mediaType: 'image/png' }],
+    });
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      payload: { images: [{ id: image }], queued: 'afterTurn' },
     });
   });
 });

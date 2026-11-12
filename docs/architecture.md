@@ -52,7 +52,8 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   deletes a kept working copy of an ended run, see "Working copies"), `workflows.matchArtifacts` (`{projectId, globs}`),
   `files.read` (`{runId | threadId | projectId, path}`, one file for the viewer, see "Files"),
   `files.list` (`{runId | threadId | projectId}`, the folder's file names for "Open file…" and
-  `@`, see "Files"), `outlook.open`
+  `@`, see "Files"), `attachments.put` and `attachments.read` (an image for a thread's message,
+  see "Images in the composer"), `outlook.open`
   (`{entryId}`), `outlook.refresh`, `projects.git` (every project folder's git
   status and remotes), `trackers.project` (`{projectId}`, one project's tracker settings with their
   sources and suggestions), `trackers.test` (`{service, projectId?}`, signs in with the tracker
@@ -116,7 +117,9 @@ projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see 
   plus the IANA zone they were entered in; `Temporal` polyfill (`@js-temporal/polyfill`) does zone
   math. Default zone is the system zone. Details in "Scheduler and triggers".
 - **Files.** `apps/server/src/files/read.ts` (`readViewerFile`) is the only way a whole file
-  leaves the server, and `files.read` is its only caller; there is no HTTP file server.
+  of the user's leaves the server, and `files.read` is its only caller; there is no HTTP file
+  server. (`attachments.read` sends back an image wow itself stored for a thread, see "Images in
+  the composer".)
   (`workflowRuns.diff` sends the changed lines of files git lists as changed inside the run's
   folder, see "Run base and changes".) `files.read` takes a scope (`FileScope` in
   `packages/contracts/src/files.ts`, agent workbench Interface): a run (the project folder; a run
@@ -1427,7 +1430,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - providers: `providers.testTimeoutMs`, `providers.requestTimeoutMs`, `providers.updateTimeoutMs`,
   `providers.offerSetup`
 - chat: `chat.contextMeter`, `chat.resumePrompt`, `chat.groupToolCalls`, `chat.starterCount`,
-  `chat.skillTrigger`, `chat.fileTrigger` (see "Panel tabs and files in chat")
+  `chat.skillTrigger`, `chat.fileTrigger` (see "Panel tabs and files in chat"),
+  `chat.imageMaxBytes` (see "Images in the composer")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
   to `outlook`, see "Outlook profile"), `calendar.showWeekends`, `calendar.weekMaxColumns`,
   `calendar.lookaheadDays`, `calendar.maxOccurrences` (see "Repeating cards"),
@@ -2807,6 +2811,67 @@ colours, lists, palette, new thread, step thread, the assistant's bar),
 server's Codex lists), and the e2e cases "picks model, effort and mode from the composer bar" and
 "sets the model from the palette" in `chat.spec.ts` and "the assistant's bar writes its settings"
 in `app-assistant.spec.ts` (run in the `assistant` project, since it uses that copy).
+
+### Images in the composer
+
+Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attachments.ts`.
+
+- **Once to the server, then by id.** Ctrl+V of an image file, a dropped file, or the palette's
+  "Add an image to the message…" (a hidden file input) sends the bytes with `attachments.put
+  {threadId, base64, type, name?, providerInstanceId?, model?}` when the image is added, not when
+  the message is sent. The answer is a `SentImage {id, mediaType, name?}` plus its size; from then
+  on the chip, the draft (`ComposerDraft.images`), the message (`thread.sendMessage.attachments`
+  `[{id, name?}]`), the queue (`QueuedMessage.images`) and the user item
+  (`TextItemPayload.images`) carry only that. The id is the server's: a UUID and the extension of
+  the type found in the bytes (`AttachmentId`), so it names the file and its type and nothing the
+  client sends becomes part of a path. `/chat/new` picks its thread id when it opens, so its images
+  are stored where the thread will be, and passes the instance and model it will create the
+  thread with.
+- **Storage** (`apps/server/src/files/images.ts`, `ImageStore`). Files live at
+  `<wow home>/images/<thread folder>/<id>`, where the folder is the thread id with every character
+  other than a letter, digit, `-` or `_` written as `~` and its hex code
+  (`threadImageFolderName`), so no id climbs out and none holds a character Windows refuses.
+  Written once (`wx`, mode 0600). Nothing deletes them yet: a chip taken off leaves its file, and
+  a thread's folder stays with the thread.
+- **Refusals** (spec 54), answered as `rejected` with the sentence the composer shows; nothing is
+  stored. The browser checks the type it was told and the size first (`localImageRefusal` in
+  `chat/image-chip.tsx`), so a large file is not sent at all; the server decides again by the
+  first bytes (`sniffImage` from `files/read.ts`: PNG, JPEG, GIF, WebP; SVG and BMP are refused),
+  by `chat.imageMaxBytes` (5 MB), and by the model: `listModels` of the thread's instance (or the
+  given one for a thread not made yet) and the thread's model (or the provider's default for an
+  empty model). Only `imageInput: false` refuses, so Codex models that report no image input are
+  refused and Claude models, which report nothing, are sent; a provider that cannot list its
+  models refuses nothing. The assistant's thread is refused (`attachments.put` for its id, and
+  `thread.sendMessage` with attachments in the decider).
+- **Sending.** `dispatch` asks `ImageStore.refusal` before deciding a `thread.sendMessage` with
+  attachments: every image must be stored for that thread, so a message never starts a turn with a
+  missing image. The decider (`core/threads.ts`) keeps them on the user item and the turn's
+  `start.images` (ids); a message may be images only. The provider service turns the ids into
+  `startTurn.images` `[{path, mediaType}]` under wow's home. Claude Code gets the files read and
+  base64-encoded as image blocks before the text (`userMessage` in `provider-claude/src/sdk.ts`);
+  Codex gets `localImage` inputs after the text and reads the files itself (the text is left out
+  when it is empty). The fingerprint lists `input[]<localImage>.path` as hand-added and coped
+  with: a Codex without it fails the turn, and that refusal shows as the turn's error. A message
+  with images written while a turn runs is queued with them and is not handed to the running
+  Claude Code turn (a hand-over carries text only); it goes when the turn ends. Retry of a chat
+  sends the last message's images again; an answer to a waiting question takes none.
+- **Display.** `attachments.read {threadId, id}` answers the media type and base64, which the
+  app reads once per connection and image (`useImage`) as a data URL. `ComposerImageChip` is a
+  thumbnail button with a cross; `SentImages` draws a user item's images above its text; a click,
+  Enter or the palette's "Show <image> full size" opens `ImageViewer` (a Dialog). In the composer
+  the images stand right above the text: Backspace at the start of the text takes the last one
+  off, the left arrow steps onto it, Backspace or Delete on a chip takes it off, and "Remove
+  <image> from the message" does it from the palette (`chat/image-commands.ts`,
+  `imageComposerStore`). Send waits while an image is still on its way. A pasted screenshot has
+  no name and shows as "Image n". The Assistant view passes no `imageTarget`, so its composer
+  takes no paste, drop or palette image.
+- **Tests.** `apps/server/src/files/images.test.ts` (storage under the home, the exact input the
+  mock adapter is handed, the refusals, the assistant), `providers/queue.test.ts` (images wait
+  for the turn's end), the adapters' "image blocks" and "localImage" cases,
+  `packages/contracts/src/attachments.test.ts`, `apps/web/src/chat/image-chip.test.tsx` (chips,
+  Backspace, full size, refusals, send, the Assistant view), and the e2e case "sends a pasted
+  image" in `chat.spec.ts` (the mock answers "Received n images." with their types); sketch
+  `image-chip`.
 
 The palette (`app/palette.tsx`, `app/palette-model.ts`) lists, before anything is typed, the
 commands marked `needsYou`, the newest by `recentAt` (`appearance.paletteRecent`) and the open

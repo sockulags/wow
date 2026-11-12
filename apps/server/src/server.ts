@@ -24,6 +24,7 @@ import {
   type ServerHooks,
   type ServiceContext,
 } from './hooks/index.js';
+import { ImageStore } from './files/images.js';
 import { HostLookup } from './hosts/lookup.js';
 import { HostPoller } from './hosts/poller.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
@@ -277,6 +278,12 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     readPlan: (planId) => hosts.readPlan(planId),
   });
+  const images = new ImageStore({
+    db: database.db,
+    home,
+    maxBytes: () => settings.get('chat.imageMaxBytes'),
+    listModels: (providerInstanceId) => providerService.listModels(providerInstanceId),
+  });
   const handlers = createHandlers({
     engine,
     subscriptions,
@@ -292,6 +299,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     trackers,
     hosts,
     hostLookup,
+    images,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     discoverProjects: () =>
       discoverProjects({

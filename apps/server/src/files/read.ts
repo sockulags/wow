@@ -48,7 +48,7 @@ const startsWith = (bytes: Uint8Array, ...head: number[]) =>
   head.every((byte, index) => bytes[index] === byte);
 
 // Pictures are told by their first bytes, not by their name.
-function sniffImage(bytes: Uint8Array): ImageMediaType | undefined {
+export function sniffImage(bytes: Uint8Array): ImageMediaType | undefined {
   if (startsWith(bytes, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'image/png';
   if (startsWith(bytes, 0xff, 0xd8, 0xff)) return 'image/jpeg';
   if (startsWith(bytes, 0x47, 0x49, 0x46, 0x38)) return 'image/gif';

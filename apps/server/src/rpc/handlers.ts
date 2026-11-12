@@ -20,6 +20,7 @@ import { readCalendarRange } from '../core/series.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
 import { projects, threads, workflowRuns } from '../db/schema.js';
+import { ImageRefused, type ImageStore } from '../files/images.js';
 import { listFolderFiles } from '../files/list.js';
 import { readViewerFile } from '../files/read.js';
 import type { HostLookup } from '../hosts/lookup.js';
@@ -61,6 +62,7 @@ export interface HandlerDeps {
   readonly trackers: TrackerService;
   readonly hosts: HostPoller;
   readonly hostLookup: HostLookup;
+  readonly images: ImageStore;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
   readonly discoverProjects: () => Promise<DiscoveredProject[]>;
   // Undefined until the Outlook service has started, or when the server runs without one.
@@ -142,6 +144,16 @@ function innerCommands(command: Command, deps: HandlerDeps): Command[] {
   return [];
 }
 
+// A refused image is the user's to fix, so it answers `rejected` with the sentence.
+async function imageCall<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof ImageRefused) throw new RpcFault('rejected', error.message);
+    throw error;
+  }
+}
+
 export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
   return {
     'server.info': () => ({ version: deps.info.version, home: deps.info.home, pid: process.pid }),
@@ -150,6 +162,10 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       for (const checked of [command, ...innerCommands(command, deps)]) {
         const refused = await deps.skills.refusal(checked);
         if (refused !== undefined) throw new RpcFault('rejected', refused);
+      }
+      if (command.type === 'thread.sendMessage' && (command.attachments ?? []).length > 0) {
+        const missing = await deps.images.refusal(command);
+        if (missing !== undefined) throw new RpcFault('rejected', missing);
       }
       const result = deps.engine.dispatch(commandId, command);
       // The command committed but its file could not be written; a scan puts the list back.
@@ -233,6 +249,8 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         place: scope.place,
       });
     },
+    'attachments.put': (params) => imageCall(() => deps.images.put(params)),
+    'attachments.read': (params) => imageCall(() => deps.images.read(params)),
     'files.list': async (params) => {
       const [folder] = fileScope(deps, params).roots;
       if (folder === undefined) throw new RpcFault('not_found', 'No folder to list');

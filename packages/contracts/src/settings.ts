@@ -491,6 +491,16 @@ export const settingsRegistry = {
     default: '@',
     scope: 'global',
   }),
+  'chat.imageMaxBytes': defineSetting({
+    schema: z.number().int().min(10_000).max(50_000_000),
+    group: 'chat',
+    label: 'Largest image',
+    description:
+      'An image pasted or dropped on the composer that is larger than this is refused and not added. Claude and Codex may refuse smaller ones themselves.',
+    default: 5_000_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
   'calendar.zone': defineSetting({
     personal: 'person',
     schema: TimeZoneSetting,

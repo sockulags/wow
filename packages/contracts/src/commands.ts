@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AttachmentId } from './attachments.js';
 import { AssistantChange, AssistantProposal } from './assistant.js';
 import { OwnSkill, SentSkill, SkillRef } from './skills.js';
 import {
@@ -176,6 +177,11 @@ export const Command = z.discriminatedUnion('type', [
     // Files mentioned with `@` (agent workbench spec 56); the text already names them. Kept on
     // the message so the thread shows them as chips. The assistant takes none.
     files: z.array(z.string().min(1)).optional(),
+    // Images given to `attachments.put` for this thread before (agent workbench spec 53, 55), by
+    // id. The assistant takes none (spec 61).
+    attachments: z
+      .array(z.object({ id: AttachmentId, name: z.string().min(1).max(200).optional() }))
+      .optional(),
   }),
   // The user's answer to the questions the assistant asked with its tool (questions spec 9):
   // `itemId` is that tool call, with one reply per question. It is sent as the user's next
@@ -917,6 +923,8 @@ export const DomainEvent = z.discriminatedUnion('kind', [
         effort: z.string().min(1),
         permissionMode: z.string().min(1),
         resumeId: z.string().min(1).nullable(),
+        // The message's images by id; the provider service hands their files to the adapter.
+        images: z.array(AttachmentId).optional(),
         // Set for the assistant thread: the provider service then hands the turn wow's tools,
         // the instruction text and the app's empty folder. The token is never stored here.
         kind: ThreadKind.optional(),

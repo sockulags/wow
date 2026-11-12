@@ -123,6 +123,7 @@ const FIELDS = {
       'input',
       'input[]<text>.text',
       'input[]<text>.text_elements',
+      'input[]<localImage>.path?',
       'cwd',
       'model',
       'effort',

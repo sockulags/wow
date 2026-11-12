@@ -1,5 +1,6 @@
 import {
   assistantToolsetName,
+  attachmentMediaType,
   HandOverResult,
   ProviderEvent,
   ProviderModel,
@@ -19,6 +20,7 @@ import { prepareAssistantFolder } from '../assistant/thread.js';
 import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
+import { threadImagePath } from '../files/images.js';
 import { providerInstances, threads, turns, workflowRuns } from '../db/schema.js';
 import type { ProviderAdapters } from '../hooks/providers.js';
 import type { Logger } from '../logger.js';
@@ -234,6 +236,14 @@ export class ProviderService {
             effort: start.effort,
             permissionMode: start.permissionMode,
             ...(start.resumeId === null ? {} : { resumeId: start.resumeId }),
+            ...(start.images && start.images.length > 0
+              ? {
+                  images: start.images.map((id) => ({
+                    path: threadImagePath(this.#deps.home, turn.threadId, id),
+                    mediaType: attachmentMediaType(id),
+                  })),
+                }
+              : {}),
           };
           this.#send(
             providerInstanceId,

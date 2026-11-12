@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { CalendarRange, CalendarRangeParams } from './repeat.js';
 import { AssistantChange, AssistantProposal } from './assistant.js';
+import {
+  AttachmentPutParams,
+  AttachmentPutResult,
+  AttachmentReadParams,
+  AttachmentReadResult,
+} from './attachments.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RunDiff, RunDiffParams } from './diff.js';
 import { FileListParams, FileListResult, FileReadParams, FileReadResult } from './files.js';
@@ -325,6 +331,18 @@ export const rpcMethods = {
   'files.list': {
     params: FileListParams,
     result: FileListResult,
+  },
+  // Stores one image for a thread's next message (agent workbench spec 53 to 55). Refused, as
+  // `rejected` with the reason, when it is too large, not a PNG, JPEG, GIF or WebP, or for a
+  // model the provider says takes no images, and for the assistant's thread (spec 61).
+  'attachments.put': {
+    params: AttachmentPutParams,
+    result: AttachmentPutResult,
+  },
+  // One stored image of a thread, for its chip and its message.
+  'attachments.read': {
+    params: AttachmentReadParams,
+    result: AttachmentReadResult,
   },
   // Each project folder's git status and remotes, for the rows in Settings → Projects. Read only.
   'projects.git': {

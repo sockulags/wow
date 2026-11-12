@@ -505,6 +505,32 @@ describe('CodexAdapter', () => {
     expect(providerChatOptions.codex.requiresModel).toBe(adapter.requiresModel);
   });
 
+  // Agent workbench spec 53: Codex reads the image files wow stored, as `localImage` inputs
+  // after the text; a message of images only sends no empty text.
+  it('sends the images of a message as localImage inputs @agent-workbench-53', async () => {
+    const { adapter, current } = setup(() => new ScriptedCodex(baseAnswers));
+    const shot = '/home/demo/.wow/images/thread-1/0f8fad5b-d9cb-469f-a165-70867728950e.png';
+    await adapter.send({
+      ...startTurn,
+      prompt: 'What is wrong here?',
+      images: [{ path: shot, mediaType: 'image/png' }],
+    });
+    expect(written(current(), 'turn/start')?.['params']).toMatchObject({
+      input: [
+        { type: 'text', text: 'What is wrong here?', text_elements: [] },
+        { type: 'localImage', path: shot },
+      ],
+    });
+    await adapter.send({
+      ...startTurn,
+      threadId: 'thread-2',
+      prompt: '',
+      images: [{ path: shot, mediaType: 'image/png' }],
+    });
+    const turns = current().written.filter((message) => message['method'] === 'turn/start');
+    expect(turns.at(-1)?.['params']).toMatchObject({ input: [{ type: 'localImage', path: shot }] });
+  });
+
   it('passes Test with the account, version and paged models', async () => {
     const { adapter } = setup(
       () =>

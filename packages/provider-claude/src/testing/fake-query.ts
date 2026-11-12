@@ -62,6 +62,8 @@ export const errorResult = (subtype: 'error_during_execution', sessionId: string
 export class FakeQuery implements ClaudeQuery {
   readonly options: Options;
   readonly prompts: string[] = [];
+  // Every user message as the adapter wrote it, content blocks included.
+  readonly messages: SDKUserMessage[] = [];
   // The priority each user message came with (a message handed to a running turn has one).
   readonly priorities: Array<string | undefined> = [];
   readonly permissionResults: PermissionResult[] = [];
@@ -83,6 +85,7 @@ export class FakeQuery implements ClaudeQuery {
     for await (const user of this.#prompt) {
       const content = user.message.content;
       this.prompts.push(typeof content === 'string' ? content : '');
+      this.messages.push(user);
       this.priorities.push(user.priority);
       this.#interrupted = false;
       for (const step of this.#turns[turn] ?? []) {

@@ -83,6 +83,7 @@ const rpcDispatch = (command: ServerCommand) => {
     skills: server.skills,
     hosts: undefined as never,
     hostLookup: undefined as never,
+    images: undefined as never,
     plans: undefined as never,
     workflows: undefined as never,
     providers: undefined as never,
@@ -910,7 +911,7 @@ describe('what a message or a step was sent with (spec 14, 15)', () => {
     });
     createThread('t2', 'claude-work');
     expect(() => dispatch({ type: 'thread.sendMessage', threadId: 't2', text: '  ' })).toThrow(
-      'A message needs text or a skill',
+      'A message needs text, a skill or an image',
     );
   });
 

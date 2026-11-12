@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AttachmentMediaType } from './attachments.js';
 import { QuestionOption, QuestionReply } from './questions.js';
 
 // The normalized provider protocol. Adapters translate their own wire format to and from these
@@ -44,6 +45,11 @@ export const ProviderCommand = z.discriminatedUnion('type', [
     toolset: ProviderToolset.optional(),
     // What the agent is told it is for, in place of the provider's own instructions for coding.
     instructions: z.string().min(1).optional(),
+    // Images of the message, as files wow stored (agent workbench spec 53, 55): Claude Code gets
+    // them as image blocks, Codex as `localImage` inputs.
+    images: z
+      .array(z.object({ path: z.string().min(1), mediaType: AttachmentMediaType }))
+      .optional(),
   }),
   z.object({ type: z.literal('interrupt'), threadId: z.string().min(1) }),
   // Ends the thread's live session in this adapter, if it has one, without a turn event. The
