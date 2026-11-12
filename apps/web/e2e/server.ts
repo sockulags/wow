@@ -406,6 +406,62 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     const types = images.map((image) => image.mediaType.slice('image/'.length)).join(', ');
     return [session, ...finish(threadId, `${imagesReceived(images.length)} Types: ${types}.`)];
   }
+  // Find in the conversation (thread work U1): the word is in the prompt, closed reasoning, the
+  // first reply (in bold), line 3 of a 40-line command output and a read in a closed group of
+  // reads; the second reply and everything else leave it out, so "kettle" is found 5 times.
+  if (/tell the kettle story/i.test(prompt)) {
+    const story = Array.from({ length: 40 }, (_, line) =>
+      line === 2 ? 'line 3: the kettle whistled' : `line ${line + 1}: the water warmed`,
+    );
+    return [
+      session,
+      {
+        type: 'reasoningDelta',
+        threadId,
+        itemId: 'story-thinking',
+        delta: 'Tell it about the kettle.',
+      },
+      { type: 'textDelta', threadId, itemId: 'story-1', delta: 'Here is the **kettle** story.' },
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'story-cat',
+        name: 'Bash',
+        input: { command: 'cat story.txt' },
+        kind: 'command',
+        command: 'cat story.txt',
+      },
+      { type: 'toolCallOutput', threadId, itemId: 'story-cat', output: `${story.join('\n')}\n` },
+      {
+        type: 'toolCallCompleted',
+        threadId,
+        itemId: 'story-cat',
+        status: 'ok',
+        exitCode: 0,
+        durationMs: 400,
+      },
+      { type: 'textDelta', threadId, itemId: 'story-2', delta: 'Then I read the notes.' },
+      ...['notes/brew.md', 'notes/kettle.md'].flatMap((file, index): ProviderEvent[] => [
+        {
+          type: 'toolCallStarted',
+          threadId,
+          itemId: `story-read-${index}`,
+          name: 'Read',
+          input: { file_path: `${command.cwd}/${file}` },
+          kind: 'read',
+          path: `${command.cwd}/${file}`,
+        },
+        {
+          type: 'toolCallOutput',
+          threadId,
+          itemId: `story-read-${index}`,
+          output: 'Steep for three minutes.\n',
+        },
+        { type: 'toolCallCompleted', threadId, itemId: `story-read-${index}`, status: 'ok' },
+      ]),
+      { type: 'turnCompleted', threadId },
+    ];
+  }
   // The step of the "Needs you e2e" workflow ends at once, so its run waits at the gate.
   if (/sum-up/i.test(prompt)) return [session, ...finish(threadId, 'Summed up.')];
   // A step of a unit's run: the agent opens the unit's pull request, as deliver-work would, and
