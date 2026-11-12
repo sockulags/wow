@@ -14,7 +14,13 @@ import { CalendarPanel, useCalendarPanelTitle } from './calendar-panel';
 import { FileViewer } from './file-viewer';
 import { HostTab } from './host-tab';
 import { PageViewer } from './page-viewer';
-import { clampPanelWidth, hasSelection, panelSelection, type PanelSelection } from './model';
+import {
+  clampPanelWidth,
+  hasSelection,
+  panelRoute,
+  panelSelection,
+  type PanelSelection,
+} from './model';
 import { CONTEXT_PANEL_ID, closeContextPanel, takePanelFocusRequest } from './panel-state';
 import { ThreadPanel } from './thread-panel';
 import { PanelTabStrip } from './tabs';
@@ -182,7 +188,8 @@ export function ContextPanel() {
   const selection = panelSelection(pathname, search);
   // This view's tabs (spec 11, 13): a file or page tab, when selected, takes the place of the
   // panel's own body.
-  const tabs = useLayout((state) => panelTabsOf(state, pathname));
+  const route = panelRoute(pathname, search);
+  const tabs = useLayout((state) => panelTabsOf(state, route));
   const tab = selectedTab(tabs);
   const file = tab?.kind === 'file' ? tab.file : undefined;
   const page = tab?.kind === 'page' ? tab.page : undefined;
@@ -207,11 +214,11 @@ export function ContextPanel() {
       if (typing(active) || active === null || active !== tabOpener()) return;
       if (active.closest('[role="dialog"], [role="alertdialog"]')) return;
       event.preventDefault();
-      closeViewer(layout, pathname);
+      closeViewer(layout, route);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [tab, layout, pathname]);
+  }, [tab, layout, route]);
 
   // "Focus context panel" on a closed panel: take the focus once it is on screen.
   useEffect(() => {
@@ -254,15 +261,15 @@ export function ContextPanel() {
         });
         if (key && tabs.tabs.length > 0) {
           event.preventDefault();
-          if (key === 'close') closeTab(layout, pathname);
-          else if (key === 'back') backTab(layout, pathname);
-          else cycleTab(layout, pathname, key === 'next' ? 1 : -1);
+          if (key === 'close') closeTab(layout, route);
+          else if (key === 'back') backTab(layout, route);
+          else cycleTab(layout, route, key === 'next' ? 1 : -1);
           return;
         }
         // Escape on the tab strip puts the shown file or page away, as it does in the viewer.
         if (event.key === 'Escape' && tab && !typing(event.target as Element)) {
           event.preventDefault();
-          closeViewer(layout, pathname);
+          closeViewer(layout, route);
           return;
         }
         // Over the view, Escape puts it away like a popover; docked, it stays.
@@ -303,7 +310,7 @@ export function ContextPanel() {
           <XIcon />
         </IconButton>
       </div>
-      {tabs.tabs.length > 0 && <PanelTabStrip route={pathname} tabs={tabs} baseLabel={baseLabel} />}
+      {tabs.tabs.length > 0 && <PanelTabStrip route={route} tabs={tabs} baseLabel={baseLabel} />}
       <div
         className="flex min-h-0 flex-1 flex-col"
         role={tabs.tabs.length > 0 ? 'tabpanel' : undefined}

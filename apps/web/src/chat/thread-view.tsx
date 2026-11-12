@@ -26,6 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { panelRoute } from '@/panel/model';
 import { fullPathOf, openFile, openHostItem } from '@/panel/viewer';
 import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
@@ -272,6 +273,10 @@ export interface ConversationExtras {
   readonly modelBar?: Omit<ModelBarProps, 'ref' | 'returnFocus'> | null;
 }
 
+// The tabs a link opens into: those of the view on screen, '' where there is no router.
+const tabsRouteOf = (router: ReturnType<typeof useRouter> | undefined): string =>
+  router ? panelRoute(router.state.location.pathname, router.state.location.search) : '';
+
 // A thread's conversation, its gate bar and its composer: the chat view's thread and, narrower,
 // the context panel's step thread (owner decision F-1), so both answer the same way.
 export function ThreadConversation({
@@ -325,7 +330,7 @@ export function ThreadConversation({
                   scope: { threadId: thread.id },
                   path,
                   fullPath: fullPathOf(thread.cwd, path),
-                  from: router?.state.location.pathname ?? '',
+                  from: tabsRouteOf(router),
                 },
               ),
           },
@@ -347,7 +352,7 @@ export function ThreadConversation({
             open: (item) =>
               openHostItem(
                 { settings, layout },
-                { threadId: thread.id, item, from: router?.state.location.pathname ?? '' },
+                { threadId: thread.id, item, from: tabsRouteOf(router) },
               ),
           }
         : undefined,

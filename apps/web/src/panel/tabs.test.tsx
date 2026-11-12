@@ -1,4 +1,11 @@
-import type { FileReadResult, ProviderInstance, Thread, ThreadItem } from '@wow/contracts';
+import type {
+  CalendarItem,
+  FileReadResult,
+  ProviderInstance,
+  Thread,
+  ThreadItem,
+  WorkflowRun,
+} from '@wow/contracts';
 import {
   createMemorySettingsSource,
   createSettingsStore,
@@ -100,13 +107,71 @@ const files: Readonly<Record<string, FileReadResult>> = {
   },
 };
 
+// Two cards, each with a run whose step thread the calendar's panel shows.
+const card = (id: string, runId: string): CalendarItem => ({
+  id,
+  source: 'local',
+  externalId: null,
+  title: `Card ${id}`,
+  start: '2026-11-02T09:00:00.000Z',
+  end: '2026-11-02T09:30:00.000Z',
+  zone: 'UTC',
+  allDay: false,
+  location: null,
+  joinUrl: null,
+  body: null,
+  organizer: null,
+  projectId: null,
+  backlogItemId: null,
+  workflowId: 'w',
+  runId,
+  state: 'running',
+  updatedAt: '2026-11-02T08:00:00.000Z',
+});
+
+const run = (id: string, threadId: string): WorkflowRun => ({
+  id,
+  workflowId: 'w',
+  projectId: 'demo',
+  calendarItemId: null,
+  backlogItemId: null,
+  state: 'running',
+  currentStep: 0,
+  baseSha: null,
+  baseFiles: null,
+  steps: [
+    {
+      stepId: 'build',
+      state: 'running',
+      threadId,
+      startedAt: '2026-11-02T09:00:00.000Z',
+      artifactsFound: [],
+    },
+  ],
+  startedAt: '2026-11-02T09:00:00.000Z',
+  endedAt: null,
+});
+
+const stepThread = (id: string, runId: string): Thread => ({
+  ...thread(id, `Step of ${runId}`),
+  runId,
+  stepId: 'build',
+});
+
 function fake() {
   const read: unknown[] = [];
   const sent: unknown[] = [];
   const topics: Readonly<Record<string, unknown[]>> = {
-    threads: [thread('tea', 'Tea timer'), thread('kettle', 'Kettle')],
+    threads: [
+      thread('tea', 'Tea timer'),
+      thread('kettle', 'Kettle'),
+      stepThread('step-1', 'run-1'),
+      stepThread('step-2', 'run-2'),
+    ],
     providerInstances: [instance],
     projects: [],
+    calendarItems: [card('card-1', 'run-1'), card('card-2', 'run-2')],
+    workflowRuns: [run('run-1', 'step-1'), run('run-2', 'step-2')],
   };
   const connection: Connection = {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
@@ -130,7 +195,8 @@ function fake() {
     },
     subscribe(topic, params, onData) {
       if (topic === 'threadItems') {
-        onData((params as { threadId?: string }).threadId === 'tea' ? items : []);
+        const shown = (params as { threadId?: string }).threadId;
+        onData(shown === 'tea' || shown?.startsWith('step-') ? items : []);
       } else onData(topics[topic] ?? []);
       return () => undefined;
     },
@@ -304,5 +370,22 @@ describe('panel tabs in chat', () => {
     expect(screen.queryByRole('dialog', { name: 'Open file' })).toBeNull();
     expect(await within(panel()).findByText('export const ring = 2;')).toBeTruthy();
     expect(tabs()).toEqual(['Details', 'timer.ts *']);
+  });
+});
+
+describe('panel tabs in the calendar', () => {
+  it('keeps each card’s tabs apart, though both are the calendar @agent-workbench-13', async () => {
+    const server = fake();
+    const { router } = await renderApp('/calendar?item=card-1', server.runtime);
+    const user = userEvent.setup();
+    expect(await within(panel()).findByTestId('panel-step-thread')).toBeTruthy();
+    await user.click(await fileLink('src/timer.ts'));
+    expect(await within(panel()).findByText('export const ring = 2;')).toBeTruthy();
+    expect(tabs()).toEqual(['Calendar', 'timer.ts *']);
+    await act(() => router.navigate({ to: '/calendar', search: { item: 'card-2' } }));
+    expect(tabs()).toEqual([]);
+    expect(within(panel()).getByTestId('panel-step-thread')).toBeTruthy();
+    await act(() => router.navigate({ to: '/calendar', search: { item: 'card-1' } }));
+    expect(tabs()).toEqual(['Calendar', 'timer.ts *']);
   });
 });

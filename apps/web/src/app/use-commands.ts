@@ -33,7 +33,7 @@ import {
   panelCommands,
   viewerCommands,
 } from '@/panel/commands';
-import { panelSelection } from '@/panel/model';
+import { panelRoute, panelSelection } from '@/panel/model';
 import { planCommands } from '@/plans/commands';
 import { openPlan, runRead } from '@/plans/model';
 import { runPullRequest } from '@/workflows/pull-request-tab';
@@ -102,6 +102,7 @@ export function useCommands(gated = false): {
     [pathname, locationSearch],
   );
   const panelTabs = useLayout((state) => state.panelTabs);
+  const tabsRoute = panelRoute(pathname, locationSearch);
   const changedFiles = useStore(changesStore, (state) =>
     state.runId === openRunId ? state.files : undefined,
   );
@@ -132,12 +133,12 @@ export function useCommands(gated = false): {
     const viewRun = openRunId !== undefined && openRun?.id === openRunId ? openRun : undefined;
     const fileTarget =
       openThread && openThread.kind !== 'assistant'
-        ? { scope: { threadId: openThread.id }, folder: openThread.cwd, from: pathname }
+        ? { scope: { threadId: openThread.id }, folder: openThread.cwd, from: tabsRoute }
         : viewRun && openRunProject
           ? {
               scope: { runId: viewRun.id },
               folder: runFolder(viewRun, openRunProject.cwd),
-              from: pathname,
+              from: tabsRoute,
             }
           : undefined;
     return [
@@ -222,7 +223,7 @@ export function useCommands(gated = false): {
       ...panelCommands(panelSelection(pathname, locationSearch)),
       ...viewerCommands({
         panelTabs,
-        pathname,
+        pathname: tabsRoute,
         openRun,
         projects: projects ?? [],
         pageReads: pageReads ?? [],
@@ -231,10 +232,10 @@ export function useCommands(gated = false): {
       ...hostItemCommands({
         target:
           openThread && openThread.kind !== 'assistant'
-            ? { threadId: openThread.id, from: pathname }
+            ? { threadId: openThread.id, from: tabsRoute }
             : undefined,
         panelTabs,
-        pathname,
+        pathname: tabsRoute,
       }),
       ...connectCommands(connectShown),
       ...providerCommands(instances ?? []),
@@ -249,6 +250,7 @@ export function useCommands(gated = false): {
     approvals,
     pathname,
     locationSearch,
+    tabsRoute,
     updateState,
     staticCommands,
     threads,

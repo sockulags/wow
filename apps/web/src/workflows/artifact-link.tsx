@@ -1,8 +1,8 @@
-import { useRouterState } from '@tanstack/react-router';
 import { CopyIcon, FileTextIcon } from 'lucide-react';
 import { useRuntime } from '@/app/runtime';
 import { IconButton } from '@/components/hint';
 import { openFile } from '@/panel/viewer';
+import { usePanelRoute } from '@/panel/model';
 import { artifactPath } from './model';
 
 // One artifact a step left in the run's folder: open it in the side panel next to the
@@ -17,7 +17,7 @@ export function Artifact({
   readonly path: string;
 }) {
   const { settings, layout } = useRuntime();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pathname = usePanelRoute();
   const full = artifactPath(cwd, path);
   return (
     <li className="flex items-center gap-1.5">

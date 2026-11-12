@@ -4,7 +4,7 @@ import {
   type HostLinkRules,
   type ThreadItem,
 } from '@wow/contracts';
-import { Link, useRouterState } from '@tanstack/react-router';
+import { Link } from '@tanstack/react-router';
 import { FileIcon, SearchXIcon } from 'lucide-react';
 import { useRuntime } from '@/app/runtime';
 import { useCalendarPrefs } from '@/calendar/prefs';
@@ -36,7 +36,7 @@ import { EmptyState } from '@/components/states';
 import { formatWhen } from '@/lib/format';
 import { runStateLabels } from '@/workflows/model';
 import { FactList, PanelSection, PanelTitle, panelLinkClass } from './details';
-import { threadUsage } from './model';
+import { threadUsage, usePanelRoute } from './model';
 import { fullPathOf, openFile, openHostItem } from './viewer';
 
 // What a thread's messages mention (agent workbench spec 19): the file paths (inline code, a
@@ -84,7 +84,7 @@ function Mentioned({
   readonly items: readonly ThreadItem[];
 }) {
   const { settings, layout } = useRuntime();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pathname = usePanelRoute();
   const rules = useHostLinkRules(threadId);
   const reads = useTopic('hostItemReads', threadId) ?? [];
   const { files, links } = threadMentions(items, rules);
