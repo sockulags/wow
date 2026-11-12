@@ -421,12 +421,13 @@ test.describe('files in chat', () => {
     await expect(conversation).toContainText('The timer rings twice.');
     // The mock reports the Read as the Claude adapter does: its full path in the tool facts.
     const row = conversation.getByTestId('item-tool_call');
-    await expect(row.getByTestId('tool-line')).toHaveText('Read src/timer.ts');
-    await row.getByRole('button', { name: 'Open src/timer.ts' }).click();
+    // A tool row shows the path as the provider wrote it, so with backslashes on Windows.
+    await expect(row.getByTestId('tool-line')).toHaveText(/^Read src[\\/]timer\.ts$/);
+    await row.getByRole('button', { name: /^Open src[\\/]timer\.ts$/ }).click();
     await expect(tabNames(page)).toHaveText(['Details', 'timer.ts']);
     await expect(tabNames(page).nth(1)).toHaveAttribute('aria-selected', 'true');
     const viewer = panel(page).getByRole('region', { name: 'File viewer' });
-    await expect(viewer.getByTestId('viewer-path')).toHaveText('src/timer.ts');
+    await expect(viewer.getByTestId('viewer-path')).toHaveText(/^src[\\/]timer\.ts$/);
     await expect(viewer.getByTestId('viewer-text')).toContainText('export const ringTwice');
 
     await page.keyboard.press('Control+j');

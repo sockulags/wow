@@ -271,7 +271,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     engine,
     settings,
     logger,
-    linkHosts: (projectId) => trackers.linkHosts(projectId),
+    linkHosts: (projectId, tokens) => trackers.linkHosts(projectId, tokens),
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });

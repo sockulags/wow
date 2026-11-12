@@ -179,7 +179,7 @@ const panel = (page: Page) => page.getByRole('complementary', { name: 'Context p
 // A chat in the tea garden project whose answer links to the work on its hosts.
 async function startLinkThread(page: Page) {
   await page.goto('/chat/new');
-  await choose(page.getByLabel('Project'), 'Tea garden');
+  await choose(page.getByRole('combobox', { name: 'Project' }), 'Tea garden');
   const composer = page.getByRole('combobox', { name: 'Message' });
   await composer.fill('link the work');
   await composer.press('Enter');
@@ -193,6 +193,9 @@ test.describe('host links in chat', () => {
   test('opens a pull request and a Jira issue from a chat link @agent-workbench-19 @agent-workbench-20 @agent-workbench-21 @agent-workbench-22 @agent-workbench-23 @agent-workbench-24 @agent-workbench-25', async ({
     page,
   }) => {
+    // Seven reads of four hosts, each with a token from the secret store: on Windows they use
+    // most of the default time for one test.
+    test.slow();
     const conversation = await startLinkThread(page);
     const chips = conversation.getByTestId('host-chip');
     // A pull request link, a Jira link and a bare key of the project are chips; a link to a

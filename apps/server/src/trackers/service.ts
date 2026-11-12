@@ -130,6 +130,9 @@ export interface LinkHosts {
   readonly confluence?: { readonly signIn: ConfluenceSignIn; readonly name: string };
 }
 
+// Stands for a token that is stored but was not read.
+const STORED_TOKEN = 'stored';
+
 const trimmed = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
 const serviceNames: Readonly<Record<TrackerKind, string>> = { jira: 'Jira', github: 'GitHub' };
@@ -469,7 +472,13 @@ export class TrackerService {
   // ones in Settings → Trackers. The same rule as the poller's for where a token may go: a site
   // the user stored, or for GitHub the remote's host when it is the one they stored or the token
   // is the project's own. The repository and Jira key are the project's only.
-  async linkHosts(projectId: string | null): Promise<LinkHosts> {
+  // `tokens` 'stored' answers the rules alone, and a host's name reads that host's token only:
+  // a sign-in whose token was not read holds a placeholder and must not be used to ask a host.
+  async linkHosts(
+    projectId: string | null,
+    tokens: 'read' | 'stored' | HostLinkSite['host'] = 'read',
+  ): Promise<LinkHosts> {
+    const reads = (host: HostLinkSite['host']) => tokens === 'read' || tokens === host;
     const project = projectId
       ? this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get()
       : undefined;
@@ -495,7 +504,7 @@ export class TrackerService {
       api?.source !== 'gitRemote' ||
       githubToken.source.startsWith('project:') ||
       hostOf(String(stored)) === githubName;
-    const githubSecret = chosen ? await this.#token(githubToken.value) : '';
+    const githubSecret = chosen ? await this.#token(githubToken.value, reads('github')) : '';
     if (apiUrl !== '' && githubSecret !== '') {
       github = { baseUrl: apiUrl, token: githubSecret, name: githubName };
       const base = gitHubWebBase(apiUrl);
@@ -512,6 +521,7 @@ export class TrackerService {
     );
     const gitlabToken = await this.#token(
       this.#deps.settings.resolve('trackers.gitlab.token', context).value,
+      reads('gitlab'),
     );
     if (gitlabSite !== '' && gitlabToken !== '') {
       const name = hostOf(gitlabSite) ?? '';
@@ -524,7 +534,7 @@ export class TrackerService {
       if (own) repository = { host: 'gitlab', base, path: own.path };
     }
 
-    const jiraConfig = await this.#jiraConfig(values);
+    const jiraConfig = await this.#jiraConfig(values, reads('jira'));
     if (
       jiraConfig.baseUrl !== '' &&
       jiraConfig.token !== '' &&
@@ -535,7 +545,7 @@ export class TrackerService {
       sites.push({ host: 'jira', base: jiraConfig.baseUrl.trim().replace(/\/+$/, ''), name });
     }
 
-    const confluenceSignIn = await this.#confluence(project?.id ?? null);
+    const confluenceSignIn = await this.#confluence(project?.id ?? null, reads('confluence'));
     if (confluenceSignIn.config) {
       const name = hostOf(confluenceSignIn.config.baseUrl) ?? '';
       confluence = { signIn: confluenceSignIn.config, name };
@@ -776,19 +786,25 @@ export class TrackerService {
     return item;
   }
 
-  async #token(value: unknown): Promise<string> {
+  // `read` false answers only whether a token is stored, without asking the secret store: on
+  // Windows each read starts PowerShell, too slow for a question every thread view asks.
+  async #token(value: unknown, read = true): Promise<string> {
     const ref = SecretRef.safeParse(value);
     if (!ref.success) return '';
+    if (!read) return STORED_TOKEN;
     return (await this.#deps.secrets.resolve(ref.data)) ?? '';
   }
 
-  async #jiraConfig(values: ReadonlyMap<string, ResolvedTrackerSetting>): Promise<JiraConfig> {
+  async #jiraConfig(
+    values: ReadonlyMap<string, ResolvedTrackerSetting>,
+    readToken = true,
+  ): Promise<JiraConfig> {
     const text = (key: string) => String(values.get(key)?.value ?? '');
     return {
       baseUrl: text('trackers.jira.baseUrl'),
       authMode: text('trackers.jira.authMode') === 'pat' ? 'pat' : 'cloud-basic',
       email: text('trackers.jira.email'),
-      token: await this.#token(values.get('trackers.jira.token')?.value),
+      token: await this.#token(values.get('trackers.jira.token')?.value, readToken),
       projectKey: text('trackers.jira.projectKey'),
       issueType: text('trackers.jira.issueType'),
     };
@@ -825,14 +841,17 @@ export class TrackerService {
     return { config: { baseUrl, token, projectPath }, missing: [] };
   }
 
-  async #confluence(projectId: string | null): Promise<Configured<ConfluenceSignIn>> {
+  async #confluence(
+    projectId: string | null,
+    readToken = true,
+  ): Promise<Configured<ConfluenceSignIn>> {
     const context = projectId ? { projectId } : {};
     const read = (key: string) => this.#deps.settings.resolve(key, context).value;
     const config: ConfluenceSignIn = {
       baseUrl: trimmed(read('trackers.confluence.baseUrl')),
       authMode: read('trackers.confluence.authMode') === 'cloud-basic' ? 'cloud-basic' : 'pat',
       email: trimmed(read('trackers.confluence.email')),
-      token: await this.#token(read('trackers.confluence.token')),
+      token: await this.#token(read('trackers.confluence.token'), readToken),
     };
     const missing = [
       config.baseUrl === '' && 'trackers.confluence.baseUrl',

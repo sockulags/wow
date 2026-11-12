@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { snapshot } from '../core/subscriptions.js';
 import { providerInstances } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
@@ -284,6 +284,17 @@ describe('host links in chat (agent workbench spec 20 to 26)', () => {
       ['confluence', wikiUrl],
     ]);
     expect(asked()).toBe(0);
+  });
+
+  it('answers the rules without reading a token, and reads the token only to ask the host', async () => {
+    const resolved = vi.spyOn(server.secrets, 'resolve');
+    const ref = `${web}/acme/tea/pull/14`;
+    const { rules, item } = await lookup({ threadId: 't-tea', ref });
+    expect(rules.sites).toHaveLength(4);
+    expect(item).toMatchObject({ host: 'github', id: '14' });
+    expect(resolved).not.toHaveBeenCalled();
+    expect(await readData('t-tea', ref)).toBeTruthy();
+    expect(resolved).toHaveBeenCalled();
   });
 
   it('reads a pull request when its tab opens, once, and again only on Refresh now; nothing polls it (spec 21, 22)', async () => {

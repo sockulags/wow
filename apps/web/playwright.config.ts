@@ -47,6 +47,10 @@ export default defineConfig({
   // Most cases wait for a run to start, a git worktree to be made or a host to be read. On the
   // Windows runner those take longer than the five seconds an assertion waits by default.
   expect: { timeout: 15_000 },
+  // A case that makes a git worktree or reads a host takes 25 to 30 seconds on the Windows
+  // runner and varies by ten seconds between runs, so the default 30 there fails one case or
+  // another on each run.
+  timeout: process.platform === 'win32' ? 60_000 : 30_000,
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     trace: 'retain-on-failure',
