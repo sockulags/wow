@@ -195,6 +195,29 @@ describe('queued messages', () => {
     expect(prompts()).toEqual(['Read the readme', 'Then this']);
   });
 
+  it('keeps a queued message for the next turn end when another turn starts first', async () => {
+    await setup('codex', false);
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Queued one' });
+    // What the workflow runner does with a step's held turn: it starts it on the same commit.
+    const off = engine.onCommit((commit) => {
+      if (!commit.events.some(({ event }) => event.kind === 'turn.ended')) return;
+      off();
+      dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Held step turn' });
+    });
+    const held = committed('turn.started');
+    adapter.emit({ type: 'turnCompleted', threadId: 't1' });
+    await held;
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(prompts()).toEqual(['Read the readme', 'Held step turn']);
+    expect(thread()?.['queued']).toMatchObject({ text: 'Queued one' });
+
+    const sent = committed('turn.started');
+    adapter.emit({ type: 'turnCompleted', threadId: 't1' });
+    await sent;
+    expect(prompts()).toEqual(['Read the readme', 'Held step turn', 'Queued one']);
+    expect(thread()?.['queued']).toBeNull();
+  });
+
   it('takes a queued message off on Cancel, and the server sends nothing (spec 52)', async () => {
     await setup('codex', false);
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Never mind this' });

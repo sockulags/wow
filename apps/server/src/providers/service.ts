@@ -363,6 +363,8 @@ export class ProviderService {
         queuedId,
       });
     } catch (error) {
+      // Another turn started first: the message goes when that one ends.
+      if (error instanceof CommandRejected && error.code === 'conflict') return;
       this.#deps.logger.warn('the queued message was not sent', describeError(error));
     }
   }

@@ -289,6 +289,11 @@ export function Composer({
   const [text, setText] = useState(initial.text);
   // Which draft the text and chips belong to: they are written back only to their own.
   const [draftFor, setDraftFor] = useState(draftKey);
+  // A send answers after its own render: the thread on screen then is read from here.
+  const onScreen = useRef(draftKey);
+  useLayoutEffect(() => {
+    onScreen.current = draftKey;
+  }, [draftKey]);
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   // Where the list was opened by a typed trigger character; undefined while it is closed.
@@ -384,7 +389,7 @@ export function Composer({
       () => {
         setSending(false);
         // Sent from a thread that is no longer on screen: only its stored draft goes.
-        if (sentFrom === draftKey) clear();
+        if (sentFrom === onScreen.current) clear();
         else if (sentFrom !== undefined) writeDraft(sentFrom, { text: '', skills: [] });
       },
       (reason: unknown) => {

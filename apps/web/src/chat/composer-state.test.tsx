@@ -14,7 +14,7 @@ import type { AppCommand, CommandContext } from '@/app/commands';
 import { createLayoutStore, RuntimeProvider } from '@/app/runtime';
 import { Composer, type ComposerHandle, type ComposerProps } from './composer';
 import { createDraftStore } from './draft';
-import { readDraft } from './drafts';
+import { readDraft, writeDraft } from './drafts';
 import { paletteCommandsStore, publishPaletteCommands } from './slash-commands';
 
 // Agent workbench U3: drafts per thread (spec 49) and the Commands group of the `/` list (spec
@@ -142,6 +142,31 @@ describe('drafts per thread (agent workbench spec 49)', () => {
     expect(onSend).not.toHaveBeenCalled();
     expect(box().value).toBe('');
     expect(chips()).toEqual([]);
+    expect(readDraft('thread-a')).toEqual({ text: '', skills: [] });
+  });
+
+  it('a send that answers after another thread came on screen leaves that thread alone', async () => {
+    writeDraft('thread-b', { text: 'draft of b', skills: [] });
+    const { user, view, rendered, onSend } = setup({ draftKey: 'thread-a' });
+    const answers: Array<() => void> = [];
+    onSend.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          answers.push(resolve);
+        }),
+    );
+    await user.type(box(), 'sent from a{Enter}');
+    expect(onSend).toHaveBeenCalledWith('sent from a');
+
+    rendered.rerender(view({ draftKey: 'thread-b' }));
+    expect(box().value).toBe('draft of b');
+    await act(async () => {
+      answers[0]?.();
+      await Promise.resolve();
+    });
+
+    expect(box().value).toBe('draft of b');
+    expect(readDraft('thread-b').text).toBe('draft of b');
     expect(readDraft('thread-a')).toEqual({ text: '', skills: [] });
   });
 

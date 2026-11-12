@@ -437,7 +437,11 @@ export function decideThread(
     case 'thread.sendQueued': {
       const thread = requireThread(read, command.threadId);
       const waiting = thread.queued;
-      if (!waiting || waiting.id !== command.queuedId || read.runningTurn(thread.id)) return [];
+      if (!waiting || waiting.id !== command.queuedId) return [];
+      // Refused rather than a no-op, so no receipt is kept and the next turn end sends it.
+      if (read.runningTurn(thread.id)) {
+        throw new CommandRejected('conflict', 'A turn runs in this thread; the message waits.');
+      }
       return [
         queueChanged(thread.id, null),
         ...messageTurn(read, context, thread, waiting.text, waiting.skills ?? [], 'afterTurn'),

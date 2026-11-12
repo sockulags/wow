@@ -366,7 +366,10 @@ thread it maps to, since the app-server has no request that unloads one.
   every listener heard of the end, so none sees the next turn start first) with command id
   `send-queued:<queuedId>`; the orchestrator empties the queue and starts the turn as
   `thread.sendMessage` would, the user item marked `queued: 'afterTurn'`. `recover()` sends a
-  queue left with no running turn; the command id makes a second dispatch a duplicate. The
+  queue left with no running turn; the command id makes a second dispatch a duplicate. When a
+  turn runs again by then (a listener of the same end started one, as the workflow runner does
+  with a step's held turn), `thread.sendQueued` is refused with `conflict`, so no receipt is kept
+  and the message goes at that turn's end. Any end counts, a failed or stopped turn included. The
   assistant thread's message always waits (its prompt carries notes made when its turn starts).
   `thread.cancelQueued` empties the queue and is refused when nothing waits, so Edit (cancel, then
   the text back in the composer) never puts back a message the server already sent. A queued
