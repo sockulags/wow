@@ -220,6 +220,22 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+describe("the order a thread's commands reach the provider", () => {
+  it('sends a stop after the start of the turn it stops, though the start still reads the folder', async () => {
+    createThread('t9', 'claude');
+    dispatch({ type: 'thread.sendMessage', threadId: 't9', text: 'Work on the kettle' });
+    // The start is still reading the folder for the thread's changes.
+    expect(adapters.claude.sent.map((sent) => sent.type)).not.toContain('startTurn');
+    dispatch({ type: 'thread.interrupt', threadId: 't9' });
+    await service.idle();
+    expect(
+      adapters.claude.sent
+        .filter((sent) => 'threadId' in sent && sent.threadId === 't9')
+        .map((sent) => sent.type),
+    ).toEqual(['startTurn', 'interrupt']);
+  });
+});
+
 describe('approvals in wow words (spec 36)', () => {
   it('keeps the facts of a command, an edit and a tool, and offers a rule for none but edits', async () => {
     await running('t1', 'claude');

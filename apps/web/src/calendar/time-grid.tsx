@@ -630,6 +630,9 @@ export interface TimeGridProps {
   onFloor?(height: number): void;
   onCreate(range: Range): void;
   onEdit(cardId: string): void;
+  // The moves and resizes shown before the server's row has them, so the card form opens on the
+  // times the grid shows and not on the stored ones.
+  onPending?(ranges: ReadonlyMap<string, Range>): void;
   // The item shown in the context panel, and whether the panel is open. While it is, a click or
   // Enter selects an item for the panel instead of opening its dialog or popover, and the arrow
   // keys move the selection with the focus (owner decision F-1).
@@ -670,6 +673,7 @@ export function TimeGrid({
   onFloor,
   onCreate,
   onEdit,
+  onPending,
   selectedId,
   panelShown = false,
   onSelect,
@@ -776,6 +780,10 @@ export function TimeGrid({
     element.addEventListener('wheel', onWheel, { passive: false });
     return () => element.removeEventListener('wheel', onWheel);
   }, []);
+
+  useEffect(() => {
+    onPending?.(pending);
+  }, [pending, onPending]);
 
   // A stored move replaces the pending one once the server's row shows it.
   useEffect(() => {

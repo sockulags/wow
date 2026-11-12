@@ -16,7 +16,7 @@ import {
   writeOwnSkillFile,
 } from '@wow/skills';
 import { existsSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Commit, Engine } from '../core/engine.js';
@@ -56,6 +56,8 @@ export class SkillsService {
   // Counts own-skill commits, so a scan that read the folder before one does not undo it.
   #ownGeneration = 0;
   #lastWriteFailure: { readonly commandId: string; readonly message: string } | undefined;
+  // Whether the last scan found a skill folder inside a project missing.
+  #waiting = false;
 
   constructor(deps: SkillsServiceDeps) {
     this.#deps = deps;
@@ -69,6 +71,11 @@ export class SkillsService {
       this.#deps.engine.onCommit((commit) => {
         if (this.#writeOwnSkills(commit.commandId, commit.events)) this.#rootsMayHaveChanged();
         else if (commit.topics.has('projects')) this.#rootsMayHaveChanged();
+        // A missing project skill folder is not watched, and an agent's turn is how one usually
+        // appears.
+        else if (this.#waiting && commit.events.some(({ event }) => event.kind === 'turn.ended')) {
+          this.#rootsMayHaveChanged();
+        }
       }),
     );
     await this.refresh();
@@ -162,13 +169,16 @@ export class SkillsService {
     this.refresh().catch((error: unknown) => this.#deps.logger.error('skill scan failed', error));
   }
 
-  async #roots(): Promise<SkillRoot[]> {
-    const { settings, db, userHome } = this.#deps;
-    const projectDirs = db
+  #projectDirs(): string[] {
+    return this.#deps.db
       .select({ cwd: projects.cwd })
       .from(projects)
       .all()
       .map((row) => row.cwd);
+  }
+
+  async #roots(projectDirs: readonly string[]): Promise<SkillRoot[]> {
+    const { settings, userHome } = this.#deps;
     const roots = [
       ...wowSkillRoots(this.#deps.wowHome),
       ...skillRoots(settings.get('skills.directories'), { userHome, projectDirs }),
@@ -182,8 +192,9 @@ export class SkillsService {
   async #scan(): Promise<{ skills: Skill[]; overtaken: boolean }> {
     if (this.#stopped) return { skills: [], overtaken: false };
     const generation = this.#ownGeneration;
-    const roots = await this.#roots();
-    await this.#watch(roots);
+    const projectDirs = this.#projectDirs();
+    const roots = await this.#roots(projectDirs);
+    await this.#watch(roots, projectDirs);
     const scanned = await scanSkills(roots);
     const { problems } = scanned;
     // A built-in skill switched off is in no list (wow skills spec 3).
@@ -199,7 +210,19 @@ export class SkillsService {
     return { skills, overtaken: false };
   }
 
-  async #watch(roots: readonly SkillRoot[]): Promise<void> {
+  // A missing folder inside a project is not watched: chokidar waits for a missing one by
+  // watching the folder above it, and on Windows a watched folder cannot be renamed or removed,
+  // so a project without .claude/skills would have its own folder held. A missing user-level
+  // folder is watched as before; the folder above it is the user's configuration, not a project.
+  async #watch(all: readonly SkillRoot[], projectDirs: readonly string[]): Promise<void> {
+    const roots: SkillRoot[] = [];
+    let waiting = false;
+    for (const root of all) {
+      if ((await stat(root.dir).catch(() => undefined))?.isDirectory()) roots.push(root);
+      else if (projectDirs.some((dir) => isInside(dir, root.dir))) waiting = true;
+      else roots.push(root);
+    }
+    this.#waiting = waiting;
     const key = roots.map((root) => root.dir).join('\n');
     if (this.#watcher && key === this.#watchedKey) return;
     await this.#watcher?.close();
@@ -211,3 +234,8 @@ export class SkillsService {
     );
   }
 }
+
+const isInside = (dir: string, child: string): boolean => {
+  const relative = path.relative(dir, child);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+};

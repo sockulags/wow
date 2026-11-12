@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { snapshot } from '../core/subscriptions.js';
 import { createHandlers, type Connection } from '../rpc/handlers.js';
 import { route } from '../rpc/router.js';
@@ -28,6 +28,8 @@ let userHome: string;
 let wowHome: string;
 let projectDir: string;
 let server: RunningServer;
+// The folders the last skills watcher was given.
+let watchedDirs: readonly string[] = [];
 let adapters: MockProviderAdapter[];
 
 const finalMessage = new Map<string, string>();
@@ -225,7 +227,10 @@ beforeEach(async () => {
     protector: plainProtector,
     logSink: (line) => onLog(line),
     userHome,
-    watchSkills: () => ({ close: () => Promise.resolve() }),
+    watchSkills: (dirs) => {
+      watchedDirs = dirs;
+      return { close: () => Promise.resolve() };
+    },
     hooks: {
       providers: {
         claude: (row) => {
@@ -500,6 +505,48 @@ describe('own skills (spec 5, 6, 7)', () => {
     expect(groupOf('by-hand', 'yours')).toBeUndefined();
     await server.skills.refresh();
     expect(groupOf('by-hand', 'yours')).toMatchObject({ text: 'Written by hand.' });
+  });
+
+  // chokidar waits for a missing folder by watching the one above it, and on Windows a watched
+  // folder cannot be renamed or removed: a project without .claude/skills would be held.
+  it('watches only skill folders that exist and lists one created later after a turn ends', async () => {
+    expect(watchedDirs).toContain(path.join(userHome, '.claude', 'skills'));
+    expect(watchedDirs.filter((dir) => dir.startsWith(projectDir))).toEqual([]);
+
+    await writeSkill(path.join(projectDir, '.claude', 'skills'), 'steep');
+    const listed = new Promise<void>((resolve) => {
+      const off = server.engine.onCommit(() => {
+        if (groupOf('steep', 'project-claude')) {
+          off();
+          resolve();
+        }
+      });
+    });
+    createThread('t-steep', 'claude-work');
+    dispatch({ type: 'thread.sendMessage', threadId: 't-steep', text: 'add a skill' });
+    await listed;
+    expect(watchedDirs).toContain(path.join(projectDir, '.claude', 'skills'));
+  });
+
+  // ~/.codex/skills is missing for anyone without Codex: it must not cost a scan per turn.
+  it('watches a missing user-level skill folder and does not rescan for it when a turn ends', async () => {
+    await mkdir(path.join(projectDir, '.claude', 'skills'), { recursive: true });
+    await mkdir(path.join(projectDir, '.agents', 'skills'), { recursive: true });
+    await server.skills.refresh();
+    const refresh = vi.spyOn(server.skills, 'refresh');
+    const ended = new Promise<void>((resolve) => {
+      const off = server.engine.onCommit((commit) => {
+        if (commit.events.some(({ event }) => event.kind === 'turn.ended')) {
+          off();
+          resolve();
+        }
+      });
+    });
+    createThread('t-codex', 'claude-work');
+    dispatch({ type: 'thread.sendMessage', threadId: 't-codex', text: 'hello' });
+    await ended;
+    expect(refresh).not.toHaveBeenCalled();
+    expect(watchedDirs).toContain(path.join(userHome, '.codex', 'skills'));
   });
 });
 

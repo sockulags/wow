@@ -205,6 +205,15 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const today = localDate(new Date(), zone);
   const days = visibleDays(view, anchor, prefs.firstDayOfWeek, showWeekends);
   const cards = useMemo(() => items.filter((item) => item.source === 'local'), [items]);
+  // A card moved or resized a moment ago opens its form on the times the grid shows: the server's
+  // row may not have them yet, and a form opened on the stored times would save them back.
+  const [moving, setMoving] = useState<ReadonlyMap<string, { start: string; end: string }>>(
+    new Map(),
+  );
+  const formCards = useMemo(
+    () => cards.map((card) => ({ ...card, ...moving.get(card.id) })),
+    [cards, moving],
+  );
   // Repeating cards are drawn from the server's occurrences in the shown range (spec 15).
   const rangeRead = useCalendarRange(viewRange(days, zone), [items, triggers, runs]);
   const shownRange = rangeRead.range;
@@ -456,6 +465,7 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
             hourHeight={hourHeight}
             onZoom={(steps) => zoom.step(steps)}
             onFloor={(height) => zoom.setFloor(height)}
+            onPending={setMoving}
             onCreate={(range) => layout.setState({ cardDialog: { type: 'create', ...range } })}
             onEdit={(itemId) => open(itemId)}
             deleteKey={deleteKey}
@@ -469,7 +479,7 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
           />
         </Stale>
       </section>
-      <CardDialog cards={cards} />
+      <CardDialog cards={formCards} />
     </div>
   );
 }

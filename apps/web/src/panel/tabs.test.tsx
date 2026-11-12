@@ -15,7 +15,7 @@ import {
   type Connection,
   type ConnectionState,
 } from '@wow/client-runtime';
-import { act, fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createStore } from 'zustand';
@@ -274,6 +274,12 @@ function fake(shownItems: readonly ThreadItem[] = items) {
 }
 
 const panel = () => screen.getByRole('complementary', { name: 'Context panel' });
+// The file's text is found in the viewer as a whole: once the code is highlighted a line is
+// several elements, and a search for one element with the whole line would miss it.
+const fileShows = (line: string) =>
+  waitFor(() => {
+    expect(within(panel()).getByTestId('viewer-text').textContent).toContain(line);
+  });
 const tabs = () =>
   within(panel())
     .queryAllByRole('tab')
@@ -296,7 +302,7 @@ describe('panel tabs in chat', () => {
     const { user, read } = await openThread();
     expect(tabs()).toEqual([]);
     await user.click(await fileLink('src/timer.ts'));
-    expect(await within(panel()).findByText('export const ring = 2;')).toBeTruthy();
+    await fileShows('export const ring = 2;');
     await user.click(await fileLink('spec'));
     expect(await within(panel()).findByRole('heading', { name: 'Tea timer spec' })).toBeTruthy();
     expect(tabs()).toEqual(['Details', 'timer.ts', 'spec.md *']);
@@ -392,7 +398,7 @@ describe('panel tabs in chat', () => {
     expect(within(conversation()).getByText('show the file')).toBeTruthy();
     expect(within(conversation()).queryByText(/@src\/timer\.ts/, { selector: 'div' })).toBeNull();
     await user.click(within(sent).getByRole('button', { name: '@timer.ts' }));
-    expect(await within(panel()).findByText('export const ring = 2;')).toBeTruthy();
+    await fileShows('export const ring = 2;');
   });
 
   it('opens a file and a host link from Details → Mentioned with Enter @agent-workbench-19', async () => {
@@ -403,7 +409,7 @@ describe('panel tabs in chat', () => {
       .find((entry) => entry.textContent === 'src/timer.ts');
     file?.focus();
     await user.keyboard('{Enter}');
-    expect(await within(panel()).findByText('export const ring = 2;')).toBeTruthy();
+    await fileShows('export const ring = 2;');
     expect(tabs()).toEqual(['Details', 'timer.ts *']);
 
     await user.click(within(panel()).getByRole('tab', { name: 'Details' }));
@@ -494,7 +500,7 @@ describe('panel tabs in chat', () => {
     ]);
     await user.keyboard('{Enter}');
     expect(screen.queryByRole('dialog', { name: 'Open file' })).toBeNull();
-    expect(await within(panel()).findByText('export const ring = 2;')).toBeTruthy();
+    await fileShows('export const ring = 2;');
     expect(tabs()).toEqual(['Details', 'timer.ts *']);
   });
 });
@@ -507,7 +513,7 @@ describe("an edit's file and the thread's Changes in tabs", () => {
     const row = await within(conversation()).findByTestId('item-tool_call');
     await user.click(within(row).getByTestId('tool-line'));
     await user.click(within(row).getByRole('button', { name: 'Open file' }));
-    expect(await within(panel()).findByText('export const ring = 2;')).toBeTruthy();
+    await fileShows('export const ring = 2;');
     expect(server.read).toContainEqual({ threadId: 'tea', path: 'src/timer.ts' });
     expect(tabs()).toEqual(['Details', 'timer.ts *']);
 
@@ -527,7 +533,7 @@ describe('panel tabs in the calendar', () => {
     const user = userEvent.setup();
     expect(await within(panel()).findByTestId('panel-step-thread')).toBeTruthy();
     await user.click(await fileLink('src/timer.ts'));
-    expect(await within(panel()).findByText('export const ring = 2;')).toBeTruthy();
+    await fileShows('export const ring = 2;');
     expect(tabs()).toEqual(['Calendar', 'timer.ts *']);
     await act(() => router.navigate({ to: '/calendar', search: { item: 'card-2' } }));
     expect(tabs()).toEqual([]);
