@@ -9,10 +9,32 @@ import { gitEnvironment, readOnlyGitArgs, type GitRunOptions } from '../projects
 // does not ignore; outside Git a walk, breadth first, that stops at the limit. Paths are relative
 // with forward slashes, so the client compares them as the thread names them.
 
+// What the listing needs of the git process. Tests hand in one they drive, so running out of
+// time is a timer they fire rather than a wait.
+export interface ListingProcess {
+  readonly stdout: {
+    setEncoding(encoding: 'utf8'): unknown;
+    on(event: 'data', listener: (chunk: string) => void): unknown;
+  };
+  on(event: 'error', listener: () => void): unknown;
+  on(event: 'close', listener: (code: number | null) => void): unknown;
+  kill(): boolean;
+}
+
+export type StartListing = (command: string, args: string[]) => ListingProcess;
+
+const startGit: StartListing = (command, args) =>
+  spawn(command, args, {
+    windowsHide: true,
+    env: gitEnvironment(process.env),
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+
 export interface ListFilesRequest {
   readonly folder: string;
   readonly limit: number;
   readonly git: GitRunOptions;
+  readonly start?: StartListing;
 }
 
 type GitList = { readonly files: string[]; readonly truncated: boolean } | undefined;
@@ -21,12 +43,16 @@ type GitList = { readonly files: string[]; readonly truncated: boolean } | undef
 // and git is stopped at the limit, so a huge repository costs no more than the limit. When git
 // runs out of time, what it listed so far is kept: walking instead would list what the
 // repository ignores.
-function gitFiles(folder: string, limit: number, options: GitRunOptions): Promise<GitList> {
+function gitFiles(
+  folder: string,
+  limit: number,
+  options: GitRunOptions,
+  start: StartListing,
+): Promise<GitList> {
   return new Promise((resolve) => {
-    const child = spawn(
+    const child = start(
       options.git ?? 'git',
       readOnlyGitArgs(folder, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']),
-      { windowsHide: true, env: gitEnvironment(process.env), stdio: ['ignore', 'pipe', 'ignore'] },
     );
     const files = new Set<string>();
     let rest = '';
@@ -111,8 +137,9 @@ export async function listFolderFiles({
   folder,
   limit,
   git,
+  start = startGit,
 }: ListFilesRequest): Promise<FileListResult> {
-  const fromGit = await gitFiles(folder, limit, git);
+  const fromGit = await gitFiles(folder, limit, git, start);
   if (fromGit) {
     return {
       files: await onDisk(folder, fromGit.files),
