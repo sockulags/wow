@@ -4012,7 +4012,7 @@ view whatever tab the panel shows; the panel's copy is part of its conversation 
 State (`panel-state.ts`). `appearance.contextPanel` stores whether it is open and
 `appearance.contextPanelWidth` its width (pixels, bounds `contextPanelWidthBounds` in
 `@wow/contracts`). The left edge is a `separator`: dragging previews the width and writes the
-setting once on release; the arrow keys (Shift for four steps), Home and End write it at once.
+setting once on release (a click without a move writes nothing, so it does not store a capped width); the arrow keys (Shift for four steps), Home and End write it at once.
 `lib/use-breakpoint.ts` holds the layout breakpoints (`breakpoints.narrow`, 1200 px) with
 `useBelow` and `isBelow`; below `narrow` the panel never takes room: opening it sets the layout
 store's `contextPanelPeek`, which lays it over the view (`data-overlay`, Escape closes it) and
