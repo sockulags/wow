@@ -287,6 +287,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     maxBytes: () => settings.get('chat.imageMaxBytes'),
     listModels: (providerInstanceId) => providerService.listModels(providerInstanceId),
   });
+  engine.onCommit((commit) => images.copyForkImages(commit.events));
   const handlers = createHandlers({
     engine,
     subscriptions,

@@ -699,7 +699,7 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   the box says so when that turn changed files. **Cancel** leaves it.
 - **Fork from here**: on any of your messages, **Fork from here** (or **F** on the message that
   has the keyboard, or **/fork**) starts a new thread with the conversation up to that message
-  and its answer, on the same model, effort, mode and folder. The new thread says which one it
+  and its answer, on the same model, effort, mode and folder, images included. The new thread says which one it
   came from. Edit and Fork work on Claude Code, for messages sent since wow keeps the place in
   the conversation; Codex cannot go back in its conversation, so it offers neither and the
   palette says why.

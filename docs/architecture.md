@@ -3172,7 +3172,9 @@ rewind files.
   with `forkedFrom` and a `goBack` to the turn's point with `fork: true`. `thread.historyCopied`
   copies the shown turns up to that one and their items with the new thread's ids (a subagent's
   `parentItemId` follows); approval and question cards stay in the origin, whose rows they need.
-  The header says "Forked from <title>".
+  Images are stored per thread, so once the fork has committed `ImageStore.copyForkImages` copies
+  the copied messages' images into the fork's folder (synchronously, before the answer): the fork
+  shows them and an edit there sends them. The header says "Forked from <title>".
 - **Where not.** `providerChatOptions[kind].cannotGoBack` is null for Claude Code and a sentence
   for Codex, whose generated protocol has no fork or rollback; its adapter refuses `goBack`. The
   decider refuses both commands with that sentence; the web app offers no Edit or Fork button on
