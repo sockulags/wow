@@ -79,5 +79,6 @@ export function AppToaster() {
     }
   }, [rows, navigate]);
 
-  return <Toaster theme={theme} duration={seconds * 1000} />;
+  // Listed, not stacked: a later notification must not cover an earlier toast's Undo.
+  return <Toaster theme={theme} duration={seconds * 1000} expand />;
 }
