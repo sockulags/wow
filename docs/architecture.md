@@ -2803,8 +2803,8 @@ palette command it runs (`/model` `modelBar.chooseModel`, `/effort`, `/mode`, `/
 `chat.renameThread`, `/done` `chat.markDone`, `/stop` `chat.stop`, `/open`); an entry shows only
 while that command is in the palette, which the shell publishes to `paletteCommandsStore`. A pick
 takes the typed `/word` out of the text and runs the command with the palette's context. Below
-them, "Claude Code commands" lists the provider's own (`provider.listCommands`, asked once per
-connection, instance and folder) without names wow lists or skills the list shows; a pick puts
+them, "Claude Code commands" lists the provider's own (`provider.listCommands`, asked each time
+the list opens, one request in flight per connection, instance and folder) without names wow lists or skills the list shows; a pick puts
 `/name ` in the text, sent as typed. `chat.clear` opens `/chat/new` with the thread's instance,
 project, folder and `DraftState.settings` (model, effort, mode), which the new thread starts
 from instead of the usual defaults; the old thread stays. `chat.compact` sends the provider's
