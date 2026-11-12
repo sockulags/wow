@@ -2828,9 +2828,11 @@ Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attac
   are stored where the thread will be, and passes the instance and model it will create the
   thread with.
 - **Storage** (`apps/server/src/files/images.ts`, `ImageStore`). Files live at
-  `<wow home>/images/<thread folder>/<id>`, where the folder is the thread id with every character
-  other than a letter, digit, `-` or `_` written as `~` and its hex code
-  (`threadImageFolderName`), so no id climbs out and none holds a character Windows refuses.
+  `<wow home>/images/<thread folder>/<id>`, where the folder is `t-` and the thread id with every
+  character other than a lowercase letter, digit, `-` or `_` written as `~` and its code in six hex
+  digits (`threadImageFolderName`), so no id climbs out, none holds a character Windows refuses,
+  two ids (also two that differ only in case) never share a folder, and no folder is a name
+  Windows keeps for a device (CON, NUL).
   Written once (`wx`, mode 0600). Nothing deletes them yet: a chip taken off leaves its file, and
   a thread's folder stays with the thread.
 - **Refusals** (spec 54), answered as `rejected` with the sentence the composer shows; nothing is

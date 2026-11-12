@@ -299,7 +299,7 @@ describe('queued messages', () => {
     expect(adapter.sent.at(-1)).toMatchObject({
       type: 'startTurn',
       prompt: 'And this screenshot',
-      images: [{ path: path.join(dir, 'images', 't1', image), mediaType: 'image/png' }],
+      images: [{ path: path.join(dir, 'images', 't-t1', image), mediaType: 'image/png' }],
     });
     expect(rows('threadItems').at(-1)).toMatchObject({
       payload: { images: [{ id: image }], queued: 'afterTurn' },

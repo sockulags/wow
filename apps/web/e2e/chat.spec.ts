@@ -691,7 +691,7 @@ test.describe('chat', () => {
     await expect(sent.getByRole('img', { name: 'kettle.png' })).toBeVisible();
     // Stored under wow's home, in the thread's own folder (spec 55): the two sent and the one
     // taken off before sending.
-    const stored = await readdir(path.join(e2eHome, 'images', threadId));
+    const stored = await readdir(path.join(e2eHome, 'images', `t-${threadId}`));
     expect(stored).toHaveLength(3);
     for (const file of stored) expect(file).toMatch(/^[0-9a-f-]{36}\.png$/);
   });

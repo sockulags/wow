@@ -26,14 +26,20 @@ import { sniffImage } from './read.js';
 
 export const imagesFolderName = 'images';
 
-// A thread id is chosen by the app; only letters, digits, `-` and `_` go into the folder name
-// as they are, so no id can climb out of the images folder or hold a character Windows refuses.
+// A thread id is chosen by the app; only lowercase letters, digits, `-` and `_` go into the folder
+// name as they are, so no id can climb out of the images folder or hold a character Windows
+// refuses. Every other character, uppercase too since Windows does not tell case apart, is `~`
+// and six hex digits, so two ids never share a folder; the `t-` in front keeps any id from
+// becoming a name Windows keeps for a device, such as CON or NUL.
 export function threadImageFolderName(threadId: string): string {
-  return [...threadId]
+  const escaped = [...threadId]
     .map((char) =>
-      /^[A-Za-z0-9_-]$/u.test(char) ? char : `~${char.codePointAt(0)?.toString(16) ?? ''}`,
+      /^[a-z0-9_-]$/u.test(char)
+        ? char
+        : `~${(char.codePointAt(0) ?? 0).toString(16).padStart(6, '0')}`,
     )
     .join('');
+  return `t-${escaped}`;
 }
 
 export const threadImageFolder = (home: string, threadId: string): string =>

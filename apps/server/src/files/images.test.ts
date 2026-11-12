@@ -163,7 +163,7 @@ describe('images in the composer', () => {
     expect(second).toMatchObject({ mediaType: 'image/jpeg', name: 'kettle.jpg' });
     expect(second.id).toMatch(/\.jpg$/u);
 
-    const folder = path.join(server.home, 'images', 't1');
+    const folder = path.join(server.home, 'images', 't-t1');
     expect(threadImageFolder(server.home, 't1')).toBe(folder);
     expect(await readFile(path.join(folder, first.id))).toEqual(png());
 
@@ -229,7 +229,7 @@ describe('images in the composer', () => {
       code: 'rejected',
       message: 'This file is a SVG+XML image. Only PNG, JPEG, GIF and WebP images can be sent.',
     });
-    expect(existsSync(path.join(server.home, 'images', 't1'))).toBe(false);
+    expect(existsSync(path.join(server.home, 'images', 't-t1'))).toBe(false);
   });
 
   it('refuses images for a Codex model without image input and takes them for Claude @agent-workbench-54', async () => {
@@ -284,7 +284,7 @@ describe('images in the composer', () => {
       expect.objectContaining({
         prompt: '',
         images: [
-          { path: path.join(server.home, 'images', 'full', image.id), mediaType: 'image/png' },
+          { path: path.join(server.home, 'images', 't-full', image.id), mediaType: 'image/png' },
         ],
       }),
     ]);
@@ -372,8 +372,19 @@ describe('images in the composer', () => {
   });
 
   it('keeps every thread id inside the images folder', () => {
-    expect(threadImageFolderName('run-1:step:2')).toBe('run-1~3astep~3a2');
-    expect(threadImageFolderName('../up')).toBe('~2e~2e~2fup');
+    expect(threadImageFolderName('run-1:step:2')).toBe('t-run-1~00003astep~00003a2');
+    expect(threadImageFolderName('../up')).toBe('t-~00002e~00002e~00002fup');
+    // One folder per id: an escape cannot run into the characters after it, and Windows, which
+    // does not tell case apart, still keeps 'Abc' and 'abc' apart.
+    expect(threadImageFolderName('a.1')).not.toBe(threadImageFolderName('a\u02e1'));
+    expect(threadImageFolderName('Abc').toLowerCase()).not.toBe(
+      threadImageFolderName('abc').toLowerCase(),
+    );
+    // No id becomes a name Windows keeps for a device.
+    for (const reserved of ['CON', 'nul', 'Aux', 'com1', 'LPT9', 'con.txt']) {
+      expect(threadImageFolderName(reserved)).toMatch(/^t-/u);
+    }
+    expect(threadImageFolderName('nul')).toBe('t-nul');
     expect(path.dirname(threadImageFolder(server.home, '../../x'))).toBe(
       path.join(server.home, 'images'),
     );
