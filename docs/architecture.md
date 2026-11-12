@@ -3694,8 +3694,9 @@ Open in editor: <path> for the chosen one.
 gutter mark or on its line numbers opens a comment field under the line; Enter adds the comment,
 Escape puts the field away, and the focus goes back to the line. The line is the folder's line
 number, the base's for a removed line. In a run's Changes, while the run waits at a gate where
-it can send back, a comment goes into the send-back note as `src/bell.ts:12 – text`, one per
-line (`addSendBackComment`, `lineComment` in `gate.ts`), opening the note when it is closed;
+it can send back, a comment goes into the send-back note as `src/bell.ts:12 – text`
+(`src/bell.ts:12 (removed) – text` on a removed line, so the base's number is not read as the
+folder's), one per line (`addSendBackComment`, `lineComment` in `gate.ts`), opening the note when it is closed;
 the Send back key (Ctrl+Shift+Enter) sends it. In a chat thread's Changes the same line goes
 into the thread's composer after what is typed (`commentInComposer`, the composer's `addText`
 in `composer-store.ts`), without taking the focus. The focused line's actions are row actions

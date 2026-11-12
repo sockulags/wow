@@ -71,8 +71,9 @@ export function setSendBackNote(note: string): void {
 
 // A comment on a diff line in the run's Changes (agent workbench spec 80) goes into the note as
 // `src/bell.ts:12 – text`, one per line; the note opens when it is not open yet.
-export const lineComment = (path: string, line: number, text: string): string =>
-  `${path}:${line} – ${text}`;
+// A removed line's number is the base's, so the note says so; otherwise it reads as today's line.
+export const lineComment = (path: string, line: number, text: string, removed = false): string =>
+  `${path}:${line}${removed ? ' (removed)' : ''} – ${text}`;
 
 export function addSendBackComment(run: WorkflowRun, comment: string): void {
   if (!canSendBack(run)) return;

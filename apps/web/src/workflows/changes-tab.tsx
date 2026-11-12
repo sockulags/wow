@@ -163,7 +163,7 @@ function readAnswer(received: unknown): RunDiff | Error {
 // What can be done on the lines of a diff: a comment on a line (C, or the gutter), and "Open in
 // editor" at a line (Shift+Enter). Without them the diff only shows.
 export interface DiffLineActions {
-  comment?(line: number, text: string): void;
+  comment?(line: number, text: string, removed: boolean): void;
   openAt?(line: number): void;
 }
 
@@ -452,7 +452,7 @@ function ActiveDiffLines({
                       line={line}
                       onCancel={() => close(index)}
                       onAdd={(text) => {
-                        comment(line, text);
+                        comment(line, text, row.kind === 'remove');
                         close(index);
                       }}
                     />
@@ -717,8 +717,8 @@ export function ChangesTab({
   const actionsFor = (file: RunDiffFile): DiffLineActions => ({
     ...(commentable
       ? {
-          comment: (line: number, text: string) =>
-            addSendBackComment(run, lineComment(file.path, line, text)),
+          comment: (line: number, text: string, removed: boolean) =>
+            addSendBackComment(run, lineComment(file.path, line, text, removed)),
         }
       : {}),
     openAt: (line: number) => editor.open(editorTarget(file, line)),

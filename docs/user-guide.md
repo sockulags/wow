@@ -870,7 +870,8 @@ first, then the running ones ("Go to runs" in the palette).
   on the right; drag the edge between the list and the diff (or focus it and use the arrow keys)
   to make the list wider (`appearance.changesListWidth`). Focus a line of the diff and press **C**
   (`keybindings.diffComment`), or click beside its line number, to write a comment on it; Enter
-  adds `src/bell.ts:12 – your words` to the send-back note, and **Ctrl+Shift+Enter** sends the note
+  adds `src/bell.ts:12 – your words` to the send-back note (`src/bell.ts:12 (removed) – your words`
+  for a removed line, whose number is the one it had before), and **Ctrl+Shift+Enter** sends the note
   back. In a chat thread's Changes the same comment goes into the thread's composer as a reply.
   **Shift+Enter** (`keybindings.openInEditor`) on a changed file, a diff line, an artifact, a file
   link in chat or in the file viewer opens the file in your editor at its line; the command is the

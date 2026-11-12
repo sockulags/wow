@@ -371,6 +371,21 @@ describe('the Changes tab', () => {
     });
   });
 
+  it('marks a comment on a removed line as removed in the send-back note', async () => {
+    const user = userEvent.setup();
+    const { runtime } = fake();
+    await renderApp(`${route}?tab=changes`, runtime);
+    const removed = await screen.findByRole('row', { name: 'Line 2: ding();' });
+    expect(removed.dataset['kind']).toBe('remove');
+    act(() => removed.focus());
+    await user.keyboard('c');
+    await user.keyboard('Keep the ding{Enter}');
+    const note = within(runGate()).getByRole('textbox', {
+      name: 'What should change?',
+    }) as HTMLTextAreaElement;
+    expect(note.value).toBe('src/bell.ts:2 (removed) – Keep the ding');
+  });
+
   it('puts a comment on a thread diff line into the thread composer (spec 80)', () => {
     const addText = vi.fn<(text: string) => void>();
     const hide = showSkillComposer({
@@ -384,6 +399,8 @@ describe('the Changes tab', () => {
     });
     commentInComposer('t1', 'src/bell.ts', 12, 'Say why');
     expect(addText).toHaveBeenCalledWith('src/bell.ts:12 – Say why');
+    commentInComposer('t1', 'src/bell.ts', 3, 'Why gone?', true);
+    expect(addText).toHaveBeenLastCalledWith('src/bell.ts:3 (removed) – Why gone?');
     hide();
   });
 
