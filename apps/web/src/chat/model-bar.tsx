@@ -21,6 +21,7 @@ import {
 import { eventToBinding, normalizeBinding, type KeyLike } from '@/app/keybindings';
 import { useRuntime } from '@/app/runtime';
 import { WithTooltip } from '@/components/hint';
+import { CONTEXT_PANEL_ID } from '@/panel/panel-state';
 import { Button } from '@/components/ui/button';
 import {
   Command,
@@ -482,6 +483,8 @@ export function useModelBarKeys(
     const handle = bar.current;
     if (!key) return false;
     if (key === 'leave') {
+      // Over the view the panel is put away by Escape, as before the bar had this key.
+      if (event.currentTarget.closest(`#${CONTEXT_PANEL_ID}[data-overlay]`)) return false;
       if (!focusBefore(event.currentTarget)) return false;
     } else if (!handle) {
       return false;

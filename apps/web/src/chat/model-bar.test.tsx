@@ -266,6 +266,30 @@ describe('Shift+Tab and the colours (agent workbench spec 3, 4)', () => {
     expect(configured(sent)).toEqual([]);
   });
 
+  it('lets Escape reach a context panel laid over the view, so one press closes it', async () => {
+    const { connection } = connectionWith({ turns: [], threadItems: [] });
+    const seen: boolean[] = [];
+    render(
+      <RuntimeProvider runtime={runtimeOf(connection)}>
+        <button type="button">Before the panel</button>
+        <aside
+          id="context-panel"
+          data-overlay=""
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') seen.push(event.defaultPrevented);
+          }}
+        >
+          <ThreadConversation thread={thread} instance={claude} compact />
+        </aside>
+      </RuntimeProvider>,
+    );
+    const box = screen.getByRole('combobox', { name: 'Message' });
+    box.focus();
+    await userEvent.setup().keyboard('{Escape}');
+    expect(seen).toEqual([false]);
+    expect(document.activeElement).toBe(box);
+  });
+
   it('reads the keys from the keybinding settings', () => {
     const bindings = {
       model: 'Mod+Shift+M',
