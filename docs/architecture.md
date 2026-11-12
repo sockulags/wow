@@ -3494,7 +3494,8 @@ only, each site's token: a site is in the rules only with its settings and a tok
 the same rule as the poller for a remote's host). `HostLookup` (`apps/server/src/hosts/lookup.ts`)
 answers RPC `hosts.lookup {threadId, ref?, read?}` with `{rules, item, read}`: without `ref` the
 rules; with it the item it names (null for a plain link) and the stored read; `read: 'open'`
-reads the item only when the thread has no read of it, `read: 'refresh'` always. One read per
+reads the item only when the thread has no successful read of it (a stored failed first read,
+without `fetchedAt`, is asked again), `read: 'refresh'` always. One read per
 item at a time. Each read builds the adapter of the item's site with that site's token, so a
 token never goes anywhere else, and goes through the internal command `hosts.itemRead`
 (`decideHostItemRead` in `core/hosts.ts`) to the event `hosts.itemRead` and the

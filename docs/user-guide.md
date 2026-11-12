@@ -745,7 +745,8 @@ page. Shift+Enter or Shift+click opens it in your browser instead.
 wow reads the item once when its tab first opens and again only when you press Refresh now; it
 never checks it on a timer. What it read is kept, so the chip shows its state ("PR #14 · Draft ·
 2 checks failed") after a restart, and the tab says when it was fetched. If the host refuses or
-fails, the tab shows its reason and keeps what it read before. Links to hosts without a token
+fails, the tab shows its reason and keeps what it read before; when even the first read failed,
+opening the tab again asks the host again. Links to hosts without a token
 stay plain links. Nothing read from a host is sent to the agent.
 
 "Open issue, PR or ticket…" in the palette takes a web address or a key. A link you paste into

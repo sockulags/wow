@@ -95,8 +95,8 @@ export const hostItemReadId = (threadId: string, item: HostItemRef): string =>
   `${hostReadId('thread', threadId)}:${hostItemKey(item)}`;
 
 // `hosts.lookup`: the thread's rules, and with `ref` (a web address or a bare reference) the item
-// it names. `read`: `open` reads the item when it was never read in this thread and answers the
-// stored read otherwise; `refresh` reads it again. Without `read` nothing is asked of the host.
+// it names. `read`: `open` reads the item when it was never read in this thread (or only failed)
+// and answers the stored read otherwise; `refresh` reads it again. Without `read` nothing is asked of the host.
 export const HostLookupParams = z.object({
   threadId: Id,
   ref: z.string().min(1).max(2000).optional(),

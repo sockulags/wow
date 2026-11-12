@@ -81,7 +81,8 @@ export class HostLookup {
     if (!item) return { rules, item: null, read: null };
     const id = hostItemReadId(thread.id, item);
     const stored = this.#stored(id);
-    if (params.read === undefined || (params.read === 'open' && stored)) {
+    // A stored read without a time is a failed first read: opening asks the host again.
+    if (params.read === undefined || (params.read === 'open' && stored?.fetchedAt)) {
       return { rules, item, read: stored ?? null };
     }
     let running = this.#inFlight.get(id);

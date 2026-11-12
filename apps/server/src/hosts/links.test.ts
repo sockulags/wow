@@ -433,6 +433,19 @@ describe('host links in chat (agent workbench spec 20 to 26)', () => {
     expect(read?.data?.kind).toBe('issue');
   });
 
+  it('asks the host again on the next open when the first read failed', async () => {
+    const ref = `${web}/acme/tea/issues/3`;
+    github.failure = { status: 401, message: 'Bad credentials' };
+    const first = await lookup({ threadId: 't-tea', ref, read: 'open' });
+    expect(first.read).toMatchObject({ fetchedAt: null, data: null, error: { kind: 'refused' } });
+    const before = github.requests.length;
+    github.failure = undefined;
+    const second = await lookup({ threadId: 't-tea', ref, read: 'open' });
+    expect(github.requests.length).toBeGreaterThan(before);
+    expect(second.read).toMatchObject({ fetchedAt: now.toISOString(), error: null });
+    expect(second.read?.data?.kind).toBe('issue');
+  });
+
   it('makes bare references chips for the project’s Jira key and repository only (spec 24)', async () => {
     const tea = (await lookup({ threadId: 't-tea' })).rules;
     expect(tea.jiraKey).toBe('ABC');
