@@ -139,6 +139,8 @@ export interface ComposerProps {
   // Up in an empty box (`keybindings.composerEditLast`): brings the last message back to edit it
   // (agent workbench spec 62); true when it did, so the key does nothing else.
   onRecall?: (() => boolean) | undefined;
+  // The text as it is typed (the new thread's working copy line names the branch from it).
+  onTextChange?: ((text: string) => void) | undefined;
 }
 
 const noSkills: readonly string[] = [];
@@ -434,6 +436,7 @@ export function Composer({
   recentSkills = noSkills,
   listsBelow = false,
   onRecall,
+  onTextChange,
 }: ComposerProps) {
   const pickerId = useId();
   const filePickerId = useId();
@@ -448,6 +451,7 @@ export function Composer({
     draftKey === undefined ? { text: '', skills: [] } : readDraft(draftKey),
   );
   const [text, setText] = useState(initial.text);
+  useEffect(() => onTextChange?.(text), [onTextChange, text]);
   // Which draft the text and chips belong to: they are written back only to their own.
   const [draftFor, setDraftFor] = useState(draftKey);
   // A send answers after its own render: the thread on screen then is read from here.

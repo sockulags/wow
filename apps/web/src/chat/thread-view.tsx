@@ -83,6 +83,7 @@ import {
 import { ModelBar, useModelBarKeys, type ModelBarHandle, type ModelBarProps } from './model-bar';
 import { frontModelBar } from './model-commands';
 import { ThreadChangesChip } from './thread-changes';
+import { RemoveThreadCopyDialog, WorkingCopyChip } from './working-copy';
 import { ThreadTitle } from './thread-title';
 import {
   finishedReasoning,
@@ -207,6 +208,16 @@ function ThreadHeader({
         <span data-testid="thread-provider" className="text-xs text-muted-foreground">
           {instance ? providerLabel(instance, instances) : thread.providerInstanceId}
         </span>
+        {thread.workingCopy && (
+          // The thread works in its own working copy (thread work spec 13).
+          <>
+            <span aria-hidden className="text-xs text-muted-foreground">
+              ·
+            </span>
+            <WorkingCopyChip thread={thread} />
+            <RemoveThreadCopyDialog thread={thread} />
+          </>
+        )}
         {thread.forkedFrom && (
           // A fork names the thread it came from (agent workbench spec 71).
           <span

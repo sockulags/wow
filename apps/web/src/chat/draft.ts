@@ -6,6 +6,9 @@ export interface DraftState {
   readonly providerInstanceId: string | undefined;
   readonly projectId: string | undefined;
   readonly cwd: string | undefined;
+  // "Own working copy" as the user set it on this draft; undefined follows the project's
+  // `chat.ownWorkingCopy` (thread work spec 10).
+  readonly ownWorkingCopy?: boolean | undefined;
   // The first message's text, put in the composer when the draft opens.
   readonly text?: string | undefined;
   // The model, effort and mode to start with on this instance instead of the usual defaults
