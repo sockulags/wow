@@ -243,6 +243,10 @@ ticket_reads     id ('run:<runId>'), projectId, runId, host ('jira'), hostName, 
 page_reads       id ('run:<runId>'), projectId, runId, host ('confluence'), hostName,
                  pages(json: PageLink[]), fetchedAt?, error(json: HostError)?
                  -- the Confluence pages a run's texts link to, with the pages as last read
+host_item_reads  id ('thread:<threadId>:<hostItemKey>'), scope ('thread'), threadId,
+                 item(json: HostItemRef), hostName, data(json: HostItemData)?, fetchedAt?,
+                 error(json: HostError)?   -- an item a chat thread links to, as last read when
+                 its tab opened or on Refresh now (migration 0030)
 assistant_changes id (the command's id), at, commandType, what, from?, to?, place(json: {label,
                  path}), target(json: {kind, id}), expect(json)?, inverse(json: Command[]), state
                  ('applied'|'undone'), undoneAt?   -- what the assistant changed, with the record
