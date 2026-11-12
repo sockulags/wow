@@ -62,8 +62,14 @@ export class ProviderService {
   readonly #unsubscribe: () => void;
   #flushScheduled = false;
   #stopped = false;
-  // Threads whose queued message the provider has been offered and not yet answered.
-  readonly #handingOver = new Set<string>();
+  // Threads whose queued message the provider has been offered and not yet answered, by offer;
+  // the turn's end lets go of an offer that is never answered.
+  readonly #handingOver = new Map<string, symbol>();
+  // A join made while an offer was out, offered once more should that offer not be taken.
+  readonly #joined = new Map<
+    string,
+    { readonly providerInstanceId: string; readonly queued: QueuedMessage; readonly prompt: string }
+  >();
   readonly #commandLists = new Map<
     string,
     { readonly at: number; readonly commands: ProviderSlashCommand[] }
@@ -194,6 +200,8 @@ export class ProviderService {
 
   async stop(): Promise<void> {
     this.#stopped = true;
+    this.#handingOver.clear();
+    this.#joined.clear();
     this.#unsubscribe();
     this.#flush();
     const adapters = [...this.#adapters.values()];
@@ -286,14 +294,25 @@ export class ProviderService {
           const { threadId, queued, handOver } = event.payload;
           // One offer at a time: a join offered while the provider still decides on the first
           // would give it the first text twice; its answer offers what is left.
-          if (queued && handOver && !this.#handingOver.has(threadId))
+          if (!queued || !handOver) {
+            this.#joined.delete(threadId);
+          } else if (this.#handingOver.has(threadId)) {
+            this.#joined.set(threadId, {
+              providerInstanceId: handOver.providerInstanceId,
+              queued,
+              prompt: handOver.prompt,
+            });
+          } else {
             this.#handOver(handOver.providerInstanceId, threadId, queued, handOver.prompt);
+          }
           break;
         }
         // Dispatched after this commit's listeners have all heard of the turn's end, so none of
         // them sees the next turn start first.
         case 'turn.ended': {
           const { threadId } = event.payload;
+          this.#handingOver.delete(threadId);
+          this.#joined.delete(threadId);
           const queued = this.#deps.db
             .select({ queued: threads.queued })
             .from(threads)
@@ -430,12 +449,27 @@ export class ProviderService {
       this.#deps.logger.warn('provider handOver failed', describeError(error));
       return;
     }
-    this.#handingOver.add(threadId);
+    const offer = Symbol(queued.id);
+    this.#handingOver.set(threadId, offer);
+    this.#joined.delete(threadId);
+    const answered = () => {
+      if (this.#handingOver.get(threadId) !== offer) return undefined;
+      this.#handingOver.delete(threadId);
+      const joined = this.#joined.get(threadId);
+      this.#joined.delete(threadId);
+      return joined;
+    };
     answer
       .then(
         (result) => {
-          this.#handingOver.delete(threadId);
-          if (this.#stopped || !HandOverResult.safeParse(result).data?.taken) return;
+          const joined = answered();
+          if (this.#stopped) return;
+          if (!HandOverResult.safeParse(result).data?.taken) {
+            if (joined) {
+              this.#handOver(joined.providerInstanceId, threadId, joined.queued, joined.prompt);
+            }
+            return;
+          }
           this.#deps.engine.dispatch(`handed-over:${queued.id}`, {
             type: 'thread.handedOver',
             threadId,
@@ -448,7 +482,7 @@ export class ProviderService {
           });
         },
         (error: unknown) => {
-          this.#handingOver.delete(threadId);
+          answered();
           this.#deps.logger.warn('provider handOver failed', describeError(error));
         },
       )

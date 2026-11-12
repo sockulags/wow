@@ -415,7 +415,13 @@ thread it maps to, since the app-server has no request that unloads one.
   service dispatches `thread.handedOver {threadId, queuedId, offered {text, skills?, files?}}`: the queue
   empties and a `user` item with `queued: 'duringTurn'` joins the running turn (or the turn that
   just ended), so the conversation shows it sent. Not taken, it stays queued. The service offers a
-  thread one version at a time: a join while the adapter has not answered is not offered. When the
+  thread one version at a time: a join while the adapter has not answered is not offered then; if
+  that answer is "not taken", the join (the whole queue as it is now) is offered once more. The
+  thread's `turn.ended` (and the service's `stop`) lets go of an offer that is never answered, so
+  the next turn is offered its messages. A known limit: a "taken" answer that arrives after the
+  offered turn ended is still recorded, and if `thread.sendQueued` already sent the message, the
+  provider then has its text twice (ClaudeAdapter answers at once and Codex never takes one, so
+  neither answers late). When the
   answer names an older `queuedId` (joined or cancelled since), the orchestrator still shows
   `offered` in the running turn it was offered to (the turn id starts the queued id), keeps only
   the rest of a joined message (text after the offered one, skills and files it did not carry,
