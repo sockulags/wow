@@ -27,6 +27,8 @@ const rows = new Map([
   ['threads', []],
 ]);
 const subscribers = new Map();
+// Approval answers, in the order they came, written to dispatched.json in WOW_HOME for the test.
+const dispatched = [];
 let nextSubscription = 1;
 
 const settingRows = () => [...settings].map(([key, value]) => ({ key, value, scope: 'global' }));
@@ -45,6 +47,11 @@ const handlers = {
     return { subscriptionId, data: topicRows(topic) };
   },
   dispatch: ({ commandId, command }) => {
+    if (command.type === 'approval.answer') {
+      dispatched.push(command);
+      writeFileSync(path.join(home, 'dispatched.json'), JSON.stringify(dispatched));
+      return { commandId, duplicate: false, seqs: [1] };
+    }
     if (command.type !== 'setting.set') throw new Error(`unsupported command ${command.type}`);
     settings.set(command.key, command.value);
     push('settings');

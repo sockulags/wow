@@ -323,6 +323,7 @@ describe("the net over the agent's own reports (spec 18)", () => {
     });
     expect(items.find((entry) => entry.kind === 'task_list')?.payload).toEqual({
       tasks: [{ id: 't1', content: `Store ${hiddenText}`, status: 'pending' }],
+      at: expect.any(String),
     });
     const stored = server.database.db
       .select()

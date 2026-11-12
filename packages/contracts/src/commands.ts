@@ -17,6 +17,7 @@ import {
   ProviderInstance,
   ProviderInstanceStatus,
   Question,
+  QueuedMessage,
   Skill,
   Thread,
   ThreadItem,
@@ -62,6 +63,8 @@ const Timestamp = z.iso.datetime({ offset: true });
 
 // The server stores tags trimmed, non-empty and unique, in the order given.
 const BacklogTags = z.array(z.string());
+// A thread's title as the user types it; spaces around it are dropped.
+const ThreadTitle = z.string().trim().min(1, 'A thread needs a title');
 
 const WorkflowSteps = z
   .array(WorkflowStep)
@@ -157,6 +160,10 @@ export const Command = z.discriminatedUnion('type', [
   // file left to fill in.
   z.object({ type: z.literal('thread.greetAssistant') }),
   // Starts a turn with the thread's current model, effort and permission mode (spec 14, 17).
+  // While a turn runs the message is queued with the server instead (agent workbench spec 50):
+  // the thread's `queued` holds it, a second message joins it, and the server sends it when the
+  // turn ends. On a provider that takes a message into its running turn (Claude Code) the server
+  // hands it over at once and the conversation shows it sent (spec 51).
   // `skills` are the skills picked for the message, in order (wow skills spec 10, 18): a wow
   // skill goes in as its text, a folder skill as its invocation, both before the text. The text
   // may be empty when skills are picked (a message that is only a chip); the server refuses a
@@ -182,6 +189,10 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('thread.retry'), threadId: Id }),
   // Stops the running turn; what it produced so far stays (spec 23).
   z.object({ type: z.literal('thread.interrupt'), threadId: Id }),
+  // Takes the queued message off the queue; nothing is sent (agent workbench spec 52). Edit is
+  // this too: the app puts the text back in the composer once the server took it off. Refused
+  // when nothing waits, so a message already sent is never put back as if it had not gone.
+  z.object({ type: z.literal('thread.cancelQueued'), threadId: Id }),
   z.object({
     type: z.literal('thread.configure'),
     threadId: Id,
@@ -194,6 +205,14 @@ export const Command = z.discriminatedUnion('type', [
   // Done threads sit in the sidebar's Done group (spec 21). Refused while the thread works or
   // needs the user; reopening puts it back under Idle, and a new message reopens it too.
   z.object({ type: z.literal('thread.setDone'), threadId: Id, done: z.boolean() }),
+  // A new title for a chat thread or a step's thread (agent workbench spec 67).
+  z.object({ type: z.literal('thread.rename'), threadId: Id, title: ThreadTitle }),
+  // Archive hides a thread from the list; there is no delete (spec 68). A workflow step's thread
+  // is refused: it belongs to its run.
+  z.object({ type: z.literal('thread.setArchived'), threadId: Id, archived: z.boolean() }),
+  // The thread was opened, or the user asked to see it as new again (spec 70).
+  z.object({ type: z.literal('thread.markSeen'), threadId: Id }),
+  z.object({ type: z.literal('thread.markUnread'), threadId: Id }),
   z.object({ type: z.literal('approval.answer'), approvalId: Id, decision: ApprovalDecision }),
   // Answers to an agent's questions, sent together when one ask holds several (questions
   // spec 3). Refused for a question whose turn ended.
@@ -491,6 +510,12 @@ export const InternalCommand = z.discriminatedUnion('type', [
     prompt: z.string().min(1),
     skills: z.array(SentSkill),
   }),
+  // The provider service, when a turn ended: the queued message `queuedId` goes as the next
+  // turn. Nothing happens when another message waits by then or a turn runs again.
+  z.object({ type: z.literal('thread.sendQueued'), threadId: Id, queuedId: Id }),
+  // The provider took the queued message `queuedId` into its running turn: it leaves the queue
+  // and the conversation shows it as a user message of that turn.
+  z.object({ type: z.literal('thread.handedOver'), threadId: Id, queuedId: Id }),
   // Replaces the plans projection with a fresh read of every project's intents folder; the
   // server's plans service sends it.
   z.object({ type: z.literal('plans.sync'), intents: z.array(PlanIntent) }),
@@ -847,10 +872,37 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     aggregate: Id,
     payload: z.object({ threadId: Id, pinned: z.boolean() }),
   }),
+  // The thread's queued message changed: queued, joined, sent or cancelled (null). `handOver`
+  // is set when the provider may take it into the running turn: the provider service offers it
+  // the prompt, and answers `thread.handedOver` when it did.
+  z.object({
+    kind: z.literal('thread.queueChanged'),
+    aggregate: Id,
+    payload: z.object({
+      threadId: Id,
+      queued: QueuedMessage.nullable(),
+      handOver: z.object({ providerInstanceId: Id, prompt: z.string().min(1) }).optional(),
+    }),
+  }),
   z.object({
     kind: z.literal('thread.stateChanged'),
     aggregate: Id,
     payload: z.object({ threadId: Id, state: ThreadState, updatedAt: Timestamp }),
+  }),
+  z.object({
+    kind: z.literal('thread.renamed'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, title: z.string().min(1) }),
+  }),
+  z.object({
+    kind: z.literal('thread.archived'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, archived: z.boolean() }),
+  }),
+  z.object({
+    kind: z.literal('thread.seenChanged'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, seen: z.boolean() }),
   }),
   z.object({
     kind: z.literal('turn.started'),

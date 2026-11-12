@@ -31,6 +31,7 @@ import {
   DetectedProvider,
   DiscoveredProject,
   ProviderModel,
+  ProviderSlashCommand,
   ProviderTestResult,
 } from './provider.js';
 import { SecretRef } from './settings.js';
@@ -212,6 +213,16 @@ export const rpcMethods = {
     params: z.object({ providerInstanceId: z.string().min(1) }),
     result: z.array(ProviderModel),
   },
+  // The provider's own slash commands for a thread's folder (agent workbench spec 60); empty for
+  // a provider that reports none (Codex).
+  'provider.listCommands': {
+    params: z.object({
+      providerInstanceId: z.string().min(1),
+      cwd: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: z.array(ProviderSlashCommand),
+  },
   // Asks for the assistant thread (app assistant spec 1, 27): makes it when it is not there yet,
   // moves it when the settings name another provider instance, model or effort, and answers the
   // thread as it is now. When no connected instance can run it, `problem` says why in words and
@@ -234,6 +245,12 @@ export const rpcMethods = {
   'secrets.status': {
     params: NoParams,
     result: z.object({ protection: SecretProtection, names: z.array(z.string()) }),
+  },
+  // The threads whose title, project name or message text hold every word of the query
+  // (agent workbench spec 66, 69), archived ones included, newest first. Never the assistant's.
+  'threads.search': {
+    params: z.object({ query: z.string() }),
+    result: z.object({ threadIds: z.array(z.string()) }),
   },
   // The occurrences of the local cards in a range (recurring cards spec 15, 17): every
   // occurrence of a repeating card, at most `calendar.maxOccurrences` of one card, and a card

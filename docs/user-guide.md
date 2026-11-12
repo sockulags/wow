@@ -369,17 +369,88 @@ box in the browser). The chosen folder shows under the picker; hover it for the 
 the first message and press Enter; the first line becomes the thread's title. Until a project or
 folder is chosen, Send stays disabled and says why.
 
+### Model, effort and mode
+
+The bar at the bottom of the composer, left of Send, reads the thread's model, effort and
+permission mode, such as "Opus · High · Ask". It sits on every composer that runs turns: an open
+thread, a new thread and a workflow step's thread in the side panel. Each part opens a list you
+can type in to filter. While the composer has the cursor:
+
+- **Ctrl+Shift+M** (`keybindings.composerModel`) opens the model list and **Ctrl+Shift+E**
+  (`keybindings.composerEffort`) the effort list.
+- **Shift+Tab** (`keybindings.composerModeCycle`) moves to the next permission mode: on Claude
+  Code Ask, Accept edits, Plan only and back to Ask; on Codex Read only, Auto, Ask untrusted and
+  back. Bypass permissions and Full access are never in that cycle; pick them from the list.
+- **Escape** (`keybindings.composerLeave`) takes the cursor out of the composer to what comes
+  before it, which is what Shift+Tab does everywhere else.
+
+The mode is coloured by what it allows: Plan only blue, Accept edits (and Codex's Auto) green,
+Bypass permissions and Full access red with a warning sign. A pick applies to the next turn and
+the thread keeps it.
+
+Each model in the list shows its label and, under it, the provider's description. The provider
+instance's default model is marked "(default)"; when the instance has none, the model the
+provider calls its own default is marked "(provider's default)". Models the provider hides are
+not listed, and a model the provider says takes images carries an image icon. The effort list
+holds the chosen model's levels, with the instance's default marked "(default)" and, where the
+provider names one, the model's own default marked "(model's default)". Codex reports all of
+these; Claude Code gives descriptions only, so its lists show no image icon and no model default.
+A new thread without a last thread on its instance starts on the provider's default model and
+that model's default effort.
+
+The palette has the same choices for the thread on screen: "Model: <label>", "Effort: <level>"
+and "Permission mode: <label>", with the current one marked **Current**, and "Choose model…" and
+"Choose effort…", which open the bar's lists.
+
 Below the composer, the new-thread view offers starters: a few skills (the project's own first),
 open backlog items to start from, and the thread you worked in last. `chat.starterCount` sets how
 many; 0 hides them.
 
-The reply streams as it is written. Reasoning is folded; click it to read. Every tool call is a
-row you can open to see its input and output. Tool calls one after another in a turn share one
-row: it shows the latest call, how many there are ("10 tool calls") and how many failed, and opens
-(click, or Enter or Space) to list every call. Anything else in the turn, such as text, an
-approval or the Assistant's change rows and cards, starts a new row. `chat.groupToolCalls` off
-shows every call on its own row. A turn ends with its usage: input, output and cached
-tokens, and the cost when the provider reports one. With `chat.contextMeter` on, the composer shows
+The reply streams as it is written. Reasoning is folded; click it to read.
+
+Every tool call is one line, drawn by what the call does:
+
+- **A command** reads `$ <command>` in a fixed-width font, then `in <folder>` when it ran
+  somewhere other than the thread's folder, and on the right how it ended and how long it took:
+  "exit 1 · 4.2 s" when the provider gives the exit code (Codex does), else "failed · 0.8 s" or
+  "done · 0.8 s" (Claude Code gives no exit code, so wow says whether the call failed and measures
+  the time itself). Opened (click, or Enter or Space), it shows the last lines of the output
+  (`chat.toolOutputLines`, 20) with **Show all N lines** for the rest and **Copy output**, which
+  copies all of it.
+- **A read, a search or a web call** is one line: "Read README.md lines 1-80", "Search kettle in
+  src", "Fetch example.org", "Search the web for …". A path inside the thread's folder is shown
+  relative to it.
+- **An MCP call** reads `server › tool` with its arguments as `key: value`; opened, it lists them
+  one per line, **Show JSON** shows the arguments as sent, and the output sits below.
+- **Any other tool**, a file edit, and every call stored before this version keep the row they
+  had: the tool's name and the first text of its input; opened, its input and output.
+
+While a call runs, its time counts up from when it started; reloading the page shows the same
+time, because the server stored the start. A call its turn left running reads "not finished".
+Tool calls one after another in a turn share one row. While the turn is still at it, that row
+shows the latest call, how many there are ("10 tool calls") and how many failed; once something
+follows or the turn ends, it says what was done, such as "Read 2 files, ran 1 command · 1 failed".
+It opens to list every call. Anything else in the turn, such as text, an approval or the
+Assistant's change rows and cards, starts a new row. `chat.groupToolCalls` off shows every call
+on its own row.
+
+When the agent keeps a task list (Claude Code's todo and task tools, Codex's plan), the latest
+list of the running turn, or else of the last turn, is pinned above the composer as one line,
+"3/7 · <the task in progress>". **Ctrl+T** (`keybindings.toggleTasks`, or "Show task list" /
+"Hide task list" in the palette) opens it to the whole list. Each time the list changes, the
+conversation gets a line "Updated tasks (3/7)" that opens to the list as it was then; the same
+list sent again adds nothing. The thread's Details in the context panel has a Tasks section with
+the latest list. Tasks a finished turn left open read "not finished".
+
+**Copying**: an assistant message has **Copy** (its markdown) and **Copy text** (what it reads on
+screen) under it on hover or when you tab to it; a code block has **Copy code** in its corner;
+tool output has **Copy output**. The palette has the same commands for the message or row the
+keyboard was last on: "Copy message", "Copy message text", "Copy code", "Copy output" and "Show
+all N lines". When nothing could be copied (the browser has no clipboard or refused it), a notice
+"Nothing was copied" says so.
+
+A turn ends with its usage: input, output and cached tokens, and the cost when the provider
+reports one. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.
 
 ### When the agent needs you
@@ -406,8 +477,13 @@ Either way, the thread moves to "Needs you" in the sidebar until you answer. Whe
 workflow step, its run says "Waiting for an answer" in the lists of runs, the run view and the context panel.
 
 While a turn runs, the thread shows how long it has been working. You can write the next message
-meanwhile: Enter queues it, and it is sent when the turn ends. **Send now** stops the turn and
-sends it; the cross puts it back in the composer. A failed turn shows **Retry** (sends your last
+meanwhile: Enter queues it with the server, and the conversation shows it as "Queued · sent when
+the turn ends". A second message joins it. It stays queued when you switch threads or restart
+wow, and the server sends it when the turn ends. **Edit** puts it back in the composer and
+**Cancel** takes it off; both are in the palette too. On Claude Code the message goes into the
+running turn at once, as in Claude Code itself, and shows as "Sent during the turn". What you type
+and have not sent stays with its thread: switch threads or restart wow and it is still there. A
+failed turn shows **Retry** (sends your last
 message again; in a workflow step's thread it sends the last message exactly as it went, the
 step's skills and their texts included) and **Resume** (sends `chat.resumePrompt`) in the error row.
 
@@ -425,7 +501,11 @@ grouped by where they come from (Yours, wow, Project, User, Plugins, Other), eac
 its group and the source on the right. Keep typing to filter, move with the arrow keys, and press
 Enter or Tab (or click) to pick one; Escape closes the list. The palette's "Pick a skill for the
 message" opens the same list. The character is the setting `chat.skillTrigger` (`/` by default);
-set it to `$` if you prefer the old key. A slash anywhere else (a path such as `src/app`, a date
+set it to `$` if you prefer the old key. In a thread, the list starts with "Commands": `/model`,
+`/effort`, `/plan`, `/compact`, `/clear`, `/done`, `/stop` and the others that apply to the
+thread, each running the palette command of that name. `/clear` starts a new thread with the same
+provider, model, effort, mode and folder. Below them come Claude Code's own commands; picking one
+puts `/name` in the message, sent as typed. Codex reports none. A slash anywhere else (a path such as `src/app`, a date
 such as `2026/11/12`) or in pasted text opens nothing.
 
 A picked skill becomes a chip in front of the text: its name with the mark of its group. Backspace
@@ -463,10 +543,34 @@ threads first (pin from the thread header). Each row's second line says the proj
 thread was last active. A thread whose turn failed sits under Idle with a marker. A thread started
 by a workflow is titled by its step, with the workflow on the second line.
 
-The thread header shows the project (hover it for the folder), the provider instance, and the
-model, effort and permission selects. When a workflow run waits at a gate after the thread's step,
+The thread header shows the project (hover it for the folder) and the provider instance; the
+model, effort and mode are in the composer bar. When a workflow run waits at a gate after the thread's step,
 the thread shows the gate with **Approve** (**Ctrl+Enter**), **Send back** (**Ctrl+Shift+Enter**)
 and **Stop**, the same as the run view.
+
+**Finding threads**: **Ctrl+Shift+F**, or **/** while the list has the keyboard, puts the cursor
+in the filter above the list. It matches a thread's title, its project's name and words said in
+its messages (messages only for a text up to `chat.threadSearchMaxLength`, 500 characters). When threads sit in more than one project, a chip per project narrows the list (also
+"Show threads of <project>" and "Show threads of all projects" in the palette); when the chips go
+away, so does the narrowing. The arrow keys move between rows and Enter opens one; Enter in the
+filter opens the first.
+
+**Rename, archive, unread**: **F2** or "Rename thread" edits the title in the header; the list
+and the palette follow. A title can have up to `chat.threadTitleMaxLength` (200) characters. "Archive thread" hides a thread from the list; the filter and the palette
+still find it once you type, marked "Archived", and "Unarchive thread" brings it back. A workflow
+step's thread belongs to its run and is not archived on its own. An archived thread comes back to
+the list by itself when a turn starts in it (you send a message, or the agent goes on after
+background work) or when it asks for an approval or a question. A thread whose turn ended or that
+needs you while you were not looking at it is bold with a dot until you open it; "Mark unread"
+makes it bold again and goes back to the list, and **Alt+Shift+Down** (or "Next unread thread")
+opens the next bold one.
+
+**Notifications**: when a chat thread you are not looking at asks for an approval or a question,
+wow tells you "Needs you: <thread>" with what it asks; clicking opens the thread, and in the
+desktop app an approval's notification has **Allow once** and **Deny**. A turn that ran longer
+than `chat.finishedAfterSeconds` (30) tells you "Finished: <thread>" when it ends. Choose in
+`chat.notifications`: needs you and finished (the default), needs you only, or off. Nothing shows
+for the thread on screen in a focused window, or for a turn you stopped yourself.
 
 **Mark thread done** in the thread header (or in the palette) moves a thread you have finished
 with to **Done**. It is available while the agent neither works nor waits for you. **Reopen
@@ -474,8 +578,9 @@ thread** puts it back under Idle (a thread whose last turn failed keeps its mark
 new message to a done thread reopens it as well. A workflow step's thread moves to Done by itself
 when its step completes; with a gate after the step, that happens once you press Approve.
 
-Change model, effort or permission mode in the thread header; the next turn uses them. **Ctrl+.**
-or the stop button interrupts a running turn and keeps what it produced. After a restart, a thread
+Change model, effort or permission mode in the composer bar; the next turn uses them. **Ctrl+.**
+or the stop button interrupts a running turn and keeps what it produced; the turn ends with
+"Stopped by you · <time>", which carries **Resume** on the last turn. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
 
 ### The palette
@@ -961,7 +1066,10 @@ between restarts; there is only one.
 
 It runs on a provider you connected: `assistant.providerInstanceId`, or the first connected
 instance when that is empty, with `assistant.model` and `assistant.effort` (empty means the
-instance's default). On Codex it runs only with `assistant.allowCodex` on: wow switches off Codex's command, image,
+instance's default). The bar at the bottom of its composer shows the instance, the model and the
+effort, and a pick there writes these settings, as Settings → Assistant does; picking another
+instance empties the model and effort, so it starts from that instance's defaults. Its mode
+reads "Read only" and cannot be changed. On Codex it runs only with `assistant.allowCodex` on: wow switches off Codex's command, image,
 image generation, computer and browser use, subagent, goal, app, plugin, skill search, tool
 suggestion, sleep, code mode and question tools and your own Codex hooks for the assistant, but Codex's file edit tool and its MCP
 resource tools have no switch and nobody has yet checked the resulting tool list on a real Codex

@@ -107,3 +107,8 @@ export function formatBinding(binding: string, mac = isMacPlatform()): string {
 
 export const hasCommandModifier = (binding: string): boolean =>
   /(^|\+)(Mod|Ctrl|Alt|Meta)\+/.test(binding);
+
+// A function key types nothing, so like a shortcut with a modifier it works in a text field (F2
+// renames the open thread while the composer has the keyboard).
+export const worksInTextFields = (binding: string): boolean =>
+  hasCommandModifier(binding) || /(^|\+)F([1-9]|1[0-2])$/.test(binding);

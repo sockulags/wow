@@ -33,6 +33,7 @@ import { opensOutside, rendererFile } from './app-protocol.js';
 import { DesktopController, type DesktopShell } from './controller.js';
 import { electronUpdater } from './electron-updater.js';
 import { serverStartTimeoutMs, serverStopTimeoutMs } from './limits.js';
+import { routeOf } from './notifications.js';
 import { RpcClient } from './rpc-client.js';
 import { ServerProcess, wowHome, type ServerEndpoint } from './server-process.js';
 
@@ -154,12 +155,15 @@ const electronShell: DesktopShell = {
     tray.setContextMenu(Menu.buildFromTemplate(template));
     tray.setToolTip(tooltip);
   },
-  notify(notice, onClick) {
+  notify(notice, onClick, actions = []) {
     if (!Notification.isSupported()) return;
+    // Electron draws the buttons on macOS; where a system shows none (Windows without a toast
+    // template), the click still opens the thread with the approval in it.
     const notification = new Notification({
       title: notice.title,
       body: notice.body,
       icon: iconPath,
+      actions: actions.map((action) => ({ type: 'button' as const, text: action.label })),
     });
     notifications.add(notification);
     const release = () => notifications.delete(notification);
@@ -167,8 +171,16 @@ const electronShell: DesktopShell = {
       release();
       onClick();
     });
+    notification.on('action', (_event, index) => {
+      release();
+      actions[index]?.run();
+    });
     notification.on('close', release);
     notification.show();
+  },
+  focusedRoute() {
+    if (window === undefined || !window.isFocused() || !window.isVisible()) return undefined;
+    return routeOf(window.webContents.getURL(), appOrigin);
   },
   setLoginItem(openAtLogin) {
     // In development the login item would point at the bare Electron binary.

@@ -8,6 +8,7 @@ import {
 import type {
   ApprovalDecision,
   BackgroundTask,
+  HandOverResult,
   ApprovalKind,
   ProviderAdapter,
   ProviderAdapterContext,
@@ -15,6 +16,7 @@ import type {
   ProviderEvent,
   ProviderInstance,
   ProviderModel,
+  ProviderSlashCommand,
   ProviderTestResult,
   QuestionReply,
   TaskStatus,
@@ -23,6 +25,7 @@ import { markRecommended, replyText } from '@wow/contracts';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
 import { AsyncQueue } from './queue.js';
+import { claudeToolFacts } from './tools.js';
 import {
   extraArgs,
   isEffortLevel,
@@ -233,6 +236,10 @@ export class ClaudeAdapter implements ProviderAdapter {
       }
       case 'listModels':
         return this.#listModels();
+      case 'handOver':
+        return this.#handOver(command.threadId, command.prompt);
+      case 'listCommands':
+        return this.#listCommands(command.cwd, command.threadId);
       case 'test':
         return this.#test();
     }
@@ -534,6 +541,7 @@ export class ClaudeAdapter implements ProviderAdapter {
               itemId: block.id,
               name: block.name,
               input: block.input,
+              ...claudeToolFacts(block.name, block.input),
             });
             this.#trackTasks(session, block.id, block.name, block.input);
           }
@@ -812,10 +820,11 @@ export class ClaudeAdapter implements ProviderAdapter {
   }
 
   // Opens a short-lived query that never receives a prompt, for questions about the installation.
-  async #probe<T>(read: (query: ClaudeQuery) => Promise<T>): Promise<T> {
+  async #probe<T>(read: (query: ClaudeQuery) => Promise<T>, cwd?: string): Promise<T> {
     const input = new AsyncQueue<SDKUserMessage>();
     const options = this.#options(await this.#context.resolveEnv(), []);
     options.persistSession = false;
+    if (cwd !== undefined) options.cwd = cwd;
     const query = this.#query({ prompt: input, options });
     try {
       return await read(query);
@@ -823,6 +832,32 @@ export class ClaudeAdapter implements ProviderAdapter {
       input.end();
       query.close();
     }
+  }
+
+  // A message for the running turn goes into the session's input as Claude Code's own queue
+  // takes it: with priority `next` it joins the turn at its next step without stopping it
+  // (agent workbench spec 51). Should Claude Code answer it in a turn of its own after the
+  // result instead, that turn arrives as one it started by itself. The assistant's session
+  // never gets one: its messages carry notes made when its turn starts.
+  #handOver(threadId: string, prompt: string): HandOverResult {
+    const session = this.#sessions.get(threadId);
+    if (!session?.turnActive || !session.query || session.toolsOnly) return { taken: false };
+    session.input.push({ ...userMessage(prompt), priority: 'next' });
+    return { taken: true };
+  }
+
+  // Claude Code's commands for the folder (spec 60): the thread's live session knows the
+  // project's own; otherwise a probe opened in the folder is asked.
+  async #listCommands(cwd: string, threadId: string | undefined): Promise<ProviderSlashCommand[]> {
+    const live = threadId === undefined ? undefined : this.#sessions.get(threadId)?.query;
+    const commands = live
+      ? await live.supportedCommands()
+      : await this.#probe((query) => query.supportedCommands(), cwd);
+    return commands.map((command) => ({
+      name: command.name,
+      description: command.description,
+      ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
+    }));
   }
 
   async #listModels(): Promise<ProviderModel[]> {

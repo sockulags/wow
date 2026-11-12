@@ -10,6 +10,7 @@ import { CircleCheckIcon, PinIcon, RotateCcwIcon, SearchXIcon, Undo2Icon } from 
 import {
   Fragment,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   type ReactNode,
@@ -21,6 +22,7 @@ import { EmptyState } from '@/components/states';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
+import { rowActionScope } from '@/lib/row-actions';
 import { cn } from '@/lib/utils';
 import { GateBar } from '@/workflows/gate-bar';
 import { gateRunForThread } from '@/workflows/model';
@@ -31,10 +33,13 @@ import {
   BackgroundIndicator,
   ChatQuestions,
   ConversationItem,
-  ToolCallGroup,
+  QueuedMessageItem,
+  StoppedLine,
   WorkingIndicator,
   type ItemContext,
 } from './items';
+import { TaskPin } from './task-pin';
+import { ToolCallGroup } from './tools/group';
 import {
   canMarkDone,
   contextPercent,
@@ -44,10 +49,11 @@ import {
   permissionOptions,
   runLabel,
   runningTurn,
-  threadTitle,
   type ContextUsage,
 } from './model';
-import { ThreadSettings } from './thread-settings';
+import { ModelBar, useModelBarKeys, type ModelBarHandle, type ModelBarProps } from './model-bar';
+import { frontModelBar } from './model-commands';
+import { ThreadTitle } from './thread-title';
 import {
   groupQuestions,
   groupToolCalls,
@@ -103,7 +109,7 @@ function ThreadHeader({
           aria-hidden
           className={cn('size-2 shrink-0 rounded-full', stateDotClass[thread.state])}
         />
-        <h2 className="min-w-0 truncate text-sm font-medium">{threadTitle(thread)}</h2>
+        <ThreadTitle thread={thread} />
         <span className="sr-only">State:</span>
         <span data-testid="thread-state" className="shrink-0 text-xs text-muted-foreground">
           {threadStateLabels[thread.state]}
@@ -161,16 +167,6 @@ function ThreadHeader({
         <span data-testid="thread-provider" className="text-xs text-muted-foreground">
           {instance ? providerLabel(instance, instances) : thread.providerInstanceId}
         </span>
-        {instance && (
-          <ThreadSettings
-            providerInstanceId={instance.id}
-            kind={instance.kind}
-            value={thread}
-            onChange={(changes) =>
-              void send({ type: 'thread.configure', threadId: thread.id, ...changes })
-            }
-          />
-        )}
       </div>
     </header>
   );
@@ -268,6 +264,9 @@ export interface ConversationExtras {
   // The same check for what is typed on an agent's question card.
   readonly questionHold?: QuestionHold;
   readonly notice?: ReactNode;
+  // Its own composer bar (the assistant's settings), or null for none; left out, the thread's
+  // own bar, so extras for another reason never drop it.
+  readonly modelBar?: Omit<ModelBarProps, 'ref' | 'returnFocus'> | null;
 }
 
 // A thread's conversation, its gate bar and its composer: the chat view's thread and, narrower,
@@ -298,11 +297,15 @@ export function ThreadConversation({
   const showMeter = useSetting('chat.contextMeter');
   const resumePrompt = useSetting('chat.resumePrompt');
   const groupTools = useSetting('chat.groupToolCalls');
+  const outputLines = useSetting('chat.toolOutputLines');
   const skillTrigger = useSetting('chat.skillTrigger');
   const { when } = useDateFormat();
   const { container, onScroll } = useStickToBottom(items);
   const ownComposer = useRef<ComposerHandle>(null);
   const composer = extras?.composerRef ?? ownComposer;
+  const bar = useRef<ModelBarHandle>(null);
+  const barKeys = useModelBarKeys(bar);
+  const barId = useId();
 
   useEffect(() => {
     if (autoFocus) composer.current?.focus();
@@ -320,12 +323,23 @@ export function ThreadConversation({
       ...(skills ? { skills: [...skills] } : {}),
     });
   const stop = () => void send({ type: 'thread.interrupt', threadId });
+  const cancelQueued = () => send({ type: 'thread.cancelQueued', threadId });
+  // Off the queue first, so a message the server sent meanwhile is not put back as unsent.
+  const editQueued = async () => {
+    const queued = thread.queued;
+    if (!queued) return;
+    await cancelQueued();
+    composer.current?.putBack(queued.text, queued.skills ?? []);
+  };
   const approval = pendingApproval(approvals);
   const question = pendingQuestion(questions, items ?? [], running);
   const gateRun = gateRunForThread(thread, runs);
   const context = latestContext(items ?? []);
   const retry = lastUserSent(items ?? []);
   const errorId = canResume ? lastErrorId(items ?? []) : undefined;
+  // A stopped turn's line carries Resume; the footer keeps it for a stopped turn with no items.
+  const stoppedLineResumes =
+    last?.state === 'interrupted' && (items ?? []).some((item) => item.turnId === last.id);
   const permissionLabel = instance
     ? (permissionOptions(instance.kind, thread.permissionMode).find(
         (option) => option.id === thread.permissionMode,
@@ -342,6 +356,7 @@ export function ThreadConversation({
       awaitingApproval: approval !== undefined,
       formatAt: when,
       questionHold: extras?.questionHold,
+      outputLines,
       recovery:
         itemId === errorId
           ? {
@@ -391,6 +406,22 @@ export function ThreadConversation({
         ? 'Write the next message; it is sent when the turn ends'
         : (extras?.placeholder ?? `Message the agent. Type ${skillTrigger} to pick a skill.`);
 
+  // A chat or step thread picks its model, effort and mode in the bar; the pick applies to the
+  // next turn (agent workbench spec 1, 2, 5).
+  const barProps: Omit<ModelBarProps, 'ref' | 'returnFocus'> | null | undefined =
+    extras?.modelBar !== undefined
+      ? extras.modelBar
+      : instance && {
+          providerInstanceId: instance.id,
+          kind: instance.kind,
+          value: thread,
+          defaults: { model: instance.defaultModel, effort: instance.defaultEffort },
+          onChange: (changes) => void send({ type: 'thread.configure', threadId, ...changes }),
+        };
+  const modelBar = barProps && (
+    <ModelBar id={barId} ref={bar} {...barProps} returnFocus={() => composer.current?.focus()} />
+  );
+
   const column = compact ? 'w-full px-3' : 'mx-auto w-full max-w-3xl px-4';
   return (
     <>
@@ -401,10 +432,16 @@ export function ThreadConversation({
         data-testid="conversation"
       >
         <div className={column}>
-          <ol aria-label="Conversation" className="flex flex-col gap-3">
-            {entries.map((entry) => {
+          <ol aria-label="Conversation" className="flex flex-col gap-3" onFocus={rowActionScope}>
+            {entries.map((entry, index) => {
               const tail = entry.kind === 'item' ? entry.item : entry.items.at(-1);
               const after = tail && afters.get(tail.id);
+              const next = entries[index + 1];
+              const nextTurn = next?.kind === 'item' ? next.item.turnId : next?.items[0]?.turnId;
+              const turn = tail && turnById.get(tail.turnId);
+              // A stopped turn ends with its line; Resume sits on the last one (spec 89).
+              const stopped =
+                turn?.state === 'interrupted' && nextTurn !== turn.id ? turn : undefined;
               return (
                 <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
                   {entry.kind === 'item' ? (
@@ -427,13 +464,34 @@ export function ThreadConversation({
                     <ToolCallGroup
                       items={entry.items}
                       contextOf={(item) => itemContext(item.turnId, item.id)}
+                      closed={next !== undefined || after !== undefined}
                     />
                   )}
                   {after && <li>{after}</li>}
+                  {stopped && (
+                    <li>
+                      <StoppedLine
+                        turn={stopped}
+                        formatAt={when}
+                        resume={
+                          canResume && stopped.id === last?.id
+                            ? { onResume: () => void message(resumePrompt), prompt: resumePrompt }
+                            : undefined
+                        }
+                      />
+                    </li>
+                  )}
                 </Fragment>
               );
             })}
             {extras?.end && <li>{extras.end}</li>}
+            {thread.queued && (
+              <QueuedMessageItem
+                queued={thread.queued}
+                onCancel={cancelQueued}
+                onEdit={editQueued}
+              />
+            )}
           </ol>
           {running && thread.state === 'working' && (
             <div className="mt-3">
@@ -447,7 +505,12 @@ export function ThreadConversation({
           )}
         </div>
       </div>
-      <div className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}>
+      <div
+        className={cn('flex shrink-0 flex-col gap-2', column, compact ? 'pb-3' : 'pb-4')}
+        // The palette's model commands go to the bar whose composer had the focus last.
+        onFocus={() => frontModelBar(barId)}
+      >
+        <TaskPin threadId={threadId} items={items ?? []} turns={turns} />
         {gateRun && (
           <GateBar
             run={gateRun}
@@ -465,9 +528,18 @@ export function ThreadConversation({
           onSend={answerQuestion ?? message}
           onStop={stop}
           notice={extras?.notice}
+          bar={modelBar}
+          onBarKey={barKeys}
+          // The Assistant view keeps no draft (its text may hold a secret) and lists no commands.
+          draftKey={extras ? undefined : threadId}
+          commandSource={
+            extras || compact || !instance
+              ? undefined
+              : { providerInstanceId: instance.id, cwd: thread.cwd, threadId }
+          }
           {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
           footer={
-            (showMeter && context) || (canResume && !errorId) ? (
+            (showMeter && context) || (canResume && !errorId && !stoppedLineResumes) ? (
               <div className="flex min-h-6 flex-wrap items-center gap-3">
                 {showMeter && context && (
                   <ContextMeter
@@ -479,7 +551,7 @@ export function ThreadConversation({
                     }
                   />
                 )}
-                {canResume && !errorId && (
+                {canResume && !errorId && !stoppedLineResumes && (
                   // A stopped turn has no error row to carry Resume, so it sits here.
                   <WithTooltip label={`Sends: ${resumePrompt}`}>
                     <Button

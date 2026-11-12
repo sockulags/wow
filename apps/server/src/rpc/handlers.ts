@@ -16,6 +16,7 @@ import { openAssistantThread } from '../assistant/thread.js';
 import type { Engine } from '../core/engine.js';
 import { readModel } from '../core/projector.js';
 import { readCalendarRange } from '../core/series.js';
+import { searchThreads } from '../core/thread-search.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
 import { projects, workflowRuns } from '../db/schema.js';
@@ -126,12 +127,17 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       return { removed: deps.subscriptions.unsubscribe(subscriptionId) };
     },
     'settings.resolve': (context) => deps.settings.resolveAll(context),
+    'threads.search': ({ query }) => ({
+      threadIds: searchThreads(deps.db, query, deps.settings.get('chat.threadSearchMaxLength')),
+    }),
     'calendar.occurrences': (range) =>
       readCalendarRange(deps.db, range, deps.settings.get('calendar.maxOccurrences')),
     'provider.test': ({ providerInstanceId }) => deps.providers.test(providerInstanceId),
     'provider.update': ({ providerInstanceId }) => deps.providerUpdates.start(providerInstanceId),
     'provider.listModels': ({ providerInstanceId }) =>
       deps.providers.listModels(providerInstanceId),
+    'provider.listCommands': ({ providerInstanceId, cwd, threadId }) =>
+      deps.providers.listCommands(providerInstanceId, cwd, threadId),
     'provider.detect': () => deps.detectProviders(),
     'assistant.open': () =>
       openAssistantThread({

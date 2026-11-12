@@ -9,9 +9,10 @@ import {
   ProviderUpdateRun,
   TaskStatus,
   ThreadState,
+  ToolFacts,
 } from './provider.js';
 import { QuestionOption, QuestionReply } from './questions.js';
-import { SentSkill } from './skills.js';
+import { SentSkill, SkillRef } from './skills.js';
 import { CardOccurrence, LocalDay, PastSeries, RepeatRule } from './repeat.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
 import {
@@ -70,6 +71,17 @@ export type ProviderInstance = z.infer<typeof ProviderInstance>;
 export const ThreadKind = z.enum(['chat', 'assistant']);
 export type ThreadKind = z.infer<typeof ThreadKind>;
 
+// A message written while a turn runs, held by the server until the turn ends (agent workbench
+// spec 50). A second message joins it: the texts one after the other, the skills once each. `id`
+// changes with every join, so whatever acts on the queue acts on the message as it was then.
+export const QueuedMessage = z.object({
+  id: Id,
+  text: z.string(),
+  skills: z.array(SkillRef).optional(),
+  queuedAt: Timestamp,
+});
+export type QueuedMessage = z.infer<typeof QueuedMessage>;
+
 export const Thread = z.object({
   id: Id,
   kind: ThreadKind.optional(),
@@ -88,6 +100,14 @@ export const Thread = z.object({
   stepId: Id.nullable(),
   // Background work of the agent still running; absent in threads stored before it was recorded.
   backgroundTasks: z.array(BackgroundTask).optional(),
+  // Archived threads leave the thread list; the filter and the palette still find them (agent
+  // workbench spec 68). Absent in rows from before, which are not archived.
+  archived: z.boolean().optional(),
+  // False once a turn ended or the thread started to need the user since it was last opened
+  // (spec 70). The server keeps it, so every window and the tray agree. Absent means seen.
+  seen: z.boolean().optional(),
+  // The message waiting for the running turn to end; null or absent when none waits.
+  queued: QueuedMessage.nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -148,14 +168,25 @@ export const TextItemPayload = z.object({
   // A user message or a step's prompt sent with skills (wow skills spec 14): their names, and
   // for a wow skill the text that was sent, which `text` leaves out. Absent for older messages.
   skills: z.array(SentSkill).optional(),
+  // A user message that was queued while a turn ran (agent workbench spec 50, 51): `duringTurn`
+  // went into the running turn (Claude Code takes it there), `afterTurn` was sent by the server
+  // when the turn ended. Absent for a message sent at once.
+  queued: z.enum(['duringTurn', 'afterTurn']).optional(),
 });
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 
-export const ToolCallItemPayload = z.object({
+// A tool call stored before tool kinds has only name, input, output and status, and is drawn as
+// it was (agent workbench spec 48). The server stamps `startedAt` when the call starts and
+// `endedAt` when it ends; `durationMs` is the provider's own measure where it gives one.
+export const ToolCallItemPayload = ToolFacts.partial().extend({
   name: z.string(),
   input: z.unknown(),
   output: z.string(),
   status: z.enum(['running', 'ok', 'error']),
+  exitCode: z.number().int().optional(),
+  startedAt: Timestamp.optional(),
+  endedAt: Timestamp.optional(),
+  durationMs: z.number().nonnegative().optional(),
 });
 export type ToolCallItemPayload = z.infer<typeof ToolCallItemPayload>;
 
@@ -179,8 +210,12 @@ export const QuestionItemPayload = z.object({
 });
 export type QuestionItemPayload = z.infer<typeof QuestionItemPayload>;
 
+// Since the agent workbench, every update of the list is an item of its own, stamped `at`, and
+// is drawn as a one-line marker (spec 31). An item without `at` is a turn's only list, stored
+// before, and is drawn in full as it was (spec 48).
 export const TaskListItemPayload = z.object({
   tasks: z.array(z.object({ id: z.string(), content: z.string(), status: TaskStatus })),
+  at: Timestamp.optional(),
 });
 export type TaskListItemPayload = z.infer<typeof TaskListItemPayload>;
 
@@ -506,8 +541,10 @@ export const isEventTrigger = (trigger: Trigger): trigger is EventTrigger =>
 // waiting at a gate, a failed run or trigger. The desktop app shows them as system notifications,
 // the web app as toasts. Only stored while `scheduler.notifications` is on.
 // `skipped` is an occurrence of a repeating card that started nothing because the card's earlier
-// run was still going; it is not a failure.
-export const NotificationKind = z.enum(['started', 'waiting', 'failed', 'skipped']);
+// run was still going; it is not a failure. A chat thread that needs the user is `waiting` too,
+// and `finished` is a chat turn that ran long and ended (agent workbench spec 64); those are
+// stored by the `chat.notifications` setting instead.
+export const NotificationKind = z.enum(['started', 'waiting', 'failed', 'skipped', 'finished']);
 export type NotificationKind = z.infer<typeof NotificationKind>;
 
 export const AppNotification = z.object({
@@ -520,6 +557,11 @@ export const AppNotification = z.object({
   path: z.string().min(1),
   runId: Id.nullable(),
   calendarItemId: Id.nullable(),
+  // The chat thread it is about; absent or null for runs and triggers. A client does not show
+  // it while that thread is on screen in a focused window.
+  threadId: Id.nullable().optional(),
+  // The approval a "Needs you" waits on, so the desktop can answer it from the notification.
+  approvalId: Id.nullable().optional(),
 });
 export type AppNotification = z.infer<typeof AppNotification>;
 

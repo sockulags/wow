@@ -1,8 +1,9 @@
+import type { SkillRef } from '@wow/contracts';
 import { createStore } from 'zustand';
 
-// The composer on screen that takes skills, so the palette reaches it: open its skill list and
-// remove a chip (wow skills spec 16, 17). The Assistant view's composer takes no skills and is
-// never here (spec 20).
+// The composer on screen that takes skills, so the palette reaches it: open its skill list,
+// remove a chip (wow skills spec 16, 17) and take a queued message back (agent workbench spec
+// 52). The Assistant view's composer takes no skills and is never here (spec 20).
 
 export interface ActiveSkillComposer {
   readonly id: string;
@@ -10,6 +11,7 @@ export interface ActiveSkillComposer {
   readonly chips: readonly string[];
   openSkills(): void;
   removeSkill(index: number): void;
+  putBack(text: string, skills: readonly SkillRef[]): void;
 }
 
 interface SkillComposersState {

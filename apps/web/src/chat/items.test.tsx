@@ -2,7 +2,8 @@ import type { ThreadItem } from '@wow/contracts';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadMarkdown } from '../test/markdown';
-import { ConversationItem, ToolCallGroup, type ItemContext } from './items';
+import { ConversationItem, type ItemContext } from './items';
+import { ToolCallGroup } from './tools/group';
 
 beforeAll(loadMarkdown);
 

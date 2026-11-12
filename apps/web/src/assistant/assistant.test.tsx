@@ -712,17 +712,14 @@ describe('Send anyway on a held message (spec 17)', () => {
         />
       </RuntimeProvider>
     );
-    const { rerender } = render(view(true));
+    render(view(true));
     const box = screen.getByRole('combobox', { name: 'Message' });
     await userEvent.type(box, `${githubToken}{Enter}`);
     await userEvent.type(box, ' for the bot');
-    act(() => handle.current?.sendUnchecked());
-    // A turn is running: the message waits in the queue like any other, and as edited.
     expect(onSend).not.toHaveBeenCalled();
-    expect(screen.getByTestId('queued-message').textContent).toContain(
-      `${githubToken} for the bot`,
-    );
-    rerender(view(false));
+    act(() => handle.current?.sendUnchecked());
+    // A turn is running: the message goes to the server, which queues it (agent workbench
+    // spec 50), as edited.
     expect(onSend).toHaveBeenCalledWith(`${githubToken} for the bot`);
   });
 });

@@ -1,5 +1,6 @@
-import type { WorkflowRun } from '@wow/contracts';
+import type { AppNotification, WorkflowRun } from '@wow/contracts';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fakeLaunch, temporaryHome } from '../test/fake-server.js';
@@ -179,6 +180,54 @@ describe('DesktopController', () => {
     await setRows(client, 'workflowRuns', [waitingRun]);
     // The fake server answers test.setRows after pushing, and pushes arrive in order on the
     // controller's socket, so a request round trip on that socket is enough to have seen it.
+    await controller.toggleScheduler();
+    expect(shell.calls.slice(marker).some((call) => call.kind === 'notify')).toBe(false);
+  });
+
+  const needsYou: AppNotification = {
+    id: 't1:needs-you:tool-1',
+    at: '2026-11-02T08:00:00.000Z',
+    kind: 'waiting',
+    title: 'Needs you: Kettle timer',
+    body: 'Allow pnpm test?',
+    path: '/chat/t1',
+    runId: null,
+    calendarItemId: null,
+    threadId: 't1',
+    approvalId: 't1:tool-1',
+  };
+
+  it('shows a chat thread that needs you with Allow once and Deny, which answer the approval', async () => {
+    await controller.start();
+    const client = await connectOther();
+    const marker = shell.calls.length;
+    await setRows(client, 'notifications', [needsYou]);
+    const shown = await shell.waitFor('notify', () => true, marker);
+    expect(shown.notice).toMatchObject({
+      title: 'Needs you: Kettle timer',
+      body: 'Allow pnpm test?',
+    });
+    expect(shown.actions.map((action) => action.label)).toEqual(['Allow once', 'Deny']);
+    shown.actions[0]?.run();
+    // The answer goes out on the controller's socket; a round trip on it after the click means
+    // the dispatch was sent before the toggle's.
+    await controller.toggleScheduler();
+    const dispatched: unknown = JSON.parse(
+      await readFile(path.join(home, 'dispatched.json'), 'utf8'),
+    );
+    expect(dispatched).toEqual([
+      { type: 'approval.answer', approvalId: 't1:tool-1', decision: 'allowOnce' },
+    ]);
+    shown.click();
+    expect(shell.last('openWindow')?.path).toBe('/chat/t1');
+  });
+
+  it('shows no chat notification while that thread is on screen in a focused window', async () => {
+    await controller.start();
+    const client = await connectOther();
+    shell.route = '/chat/t1';
+    const marker = shell.calls.length;
+    await setRows(client, 'notifications', [needsYou]);
     await controller.toggleScheduler();
     expect(shell.calls.slice(marker).some((call) => call.kind === 'notify')).toBe(false);
   });

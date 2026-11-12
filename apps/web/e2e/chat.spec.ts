@@ -33,6 +33,56 @@ async function startThread(page: Page, message: string) {
 
 const conversation = (page: Page) => page.getByRole('list', { name: 'Conversation' });
 const threadList = (page: Page) => page.getByRole('navigation', { name: 'Threads' });
+const messageBox = (page: Page) => page.getByRole('combobox', { name: 'Message' });
+
+// A thread on the Claude instance: a new thread starts on the instance of the newest thread,
+// which an earlier case may have put on Codex.
+async function startClaudeThread(page: Page, message: string) {
+  await page.goto('/chat/new');
+  await choose(page.getByLabel('Provider instance'), 'Mock Claude');
+  await choose(page.getByLabel('Project'), 'Demo');
+  await expect(page.getByTestId('model-bar')).toBeVisible();
+  await messageBox(page).fill(message);
+  await messageBox(page).press('Enter');
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+}
+
+// A Codex thread whose "wait" turn runs until `endWait` ends it.
+async function startCodexWait(page: Page, message: string) {
+  await page.goto('/chat/new');
+  await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+  await choose(page.getByLabel('Project'), 'Demo');
+  await expect(page.getByTestId('model-bar')).toBeVisible();
+  await messageBox(page).fill(message);
+  await messageBox(page).press('Enter');
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+  await expect(page.getByTestId('thread-state')).toHaveText('Working');
+}
+
+// Ends the open thread's "wait" turn through the mock's control port (e2e/server.ts).
+async function endWait(page: Page) {
+  const threadId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+  const done = await fetch(
+    `http://127.0.0.1:${e2eOutlookControlPort}/turn-done?threadId=${threadId}`,
+    { method: 'PUT' },
+  );
+  expect(done.status).toBe(200);
+}
+
+// Puts the open thread back on the mock's first model, the default effort and Ask, through the
+// composer bar.
+async function resetBar(page: Page) {
+  const bar = page.getByTestId('model-bar');
+  for (const [part, option] of [
+    ['Model', /^Mock model$/],
+    ['Effort', /^Default/],
+    ['Permission mode', /^Ask for permissions/],
+  ] as const) {
+    await bar.getByRole('button', { name: part }).click();
+    await page.getByRole('listbox', { name: part }).getByRole('option', { name: option }).click();
+  }
+  await expect(bar).toHaveText('Mock model·Default·Ask');
+}
 
 test.describe('chat', () => {
   test('streams a reply with reasoning, tool rows, tasks and usage', async ({ page }) => {
@@ -47,7 +97,9 @@ test.describe('chat', () => {
     await reasoning.getByText('Reasoning').click();
     await expect(reasoning.getByText('The user said hello.')).toBeVisible();
 
-    await expect(items.getByRole('region', { name: 'Tasks' })).toContainText('Answer it');
+    // Each update of the task list is a marker; the latest is pinned above the composer.
+    await expect(items.getByTestId('task-marker')).toHaveText('Updated tasks (1/2)');
+    await expect(page.getByTestId('task-pin-line')).toHaveText('1/2 · Answer it');
     await expect(items.getByLabel('Turn usage')).toHaveText(
       '1,200 in · 340 out · 800 cached · $0.01',
     );
@@ -189,11 +241,9 @@ test.describe('chat', () => {
     const group = conversation(page).getByTestId('item-tool_group');
     await expect(group).toHaveCount(1);
     const row = group.locator(':scope > details > summary');
-    // The latest call as a single row draws it, the count, and the failure without opening.
-    await expect(row).toContainText('Read');
-    await expect(row).toContainText('README.md');
-    await expect(row).toContainText('done');
-    await expect(group.getByTestId('tool-group-count')).toHaveText('3 tool calls');
+    // Closed, the row says what was done and the failure without opening. These calls carry no
+    // tool kind, as calls stored before kinds, so they count as tools.
+    await expect(group.getByTestId('tool-group-summary')).toHaveText('Used 3 tools · 1 failed');
     await expect(group.getByTestId('tool-group-failed')).toHaveText('1 failed');
     await expect(conversation(page).getByTestId('item-tool_call')).toHaveCount(0);
 
@@ -213,6 +263,80 @@ test.describe('chat', () => {
     await row.focus();
     await page.keyboard.press('Space');
     await expect(calls).toHaveCount(0);
+  });
+
+  test('reads commands, reads and MCP calls as rows with exit code and time', async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.clock.install();
+    await startThread(page, 'Run the tools');
+    const items = conversation(page);
+    const group = items.getByTestId('item-tool_group');
+    const row = group.locator(':scope > details > summary');
+    // While the turn runs, the group draws its latest call with its time counting up from the
+    // start the server stored (spec 30, 91).
+    await expect(row.getByTestId('tool-command')).toHaveText('$ pnpm dev');
+    const time = row.getByTestId('tool-time');
+    const startedAt = await time.getAttribute('data-started-at');
+    expect(startedAt).toMatch(/^\d{4}-/);
+    await page.clock.pauseAt(Date.parse(startedAt ?? '') + 10_000);
+    await expect(time).toHaveText('running · 10 s');
+    await page.clock.runFor(5000);
+    await expect(time).toHaveText('running · 15 s');
+    await page.reload();
+    await expect(row.getByTestId('tool-time')).toHaveAttribute('data-started-at', startedAt ?? '');
+
+    // The task list is pinned above the composer and Ctrl+T opens it (spec 31).
+    await expect(items.getByTestId('task-marker')).toHaveText('Updated tasks (3/7)');
+    await expect(page.getByTestId('task-pin-line')).toHaveText('3/7 · Running the tests');
+    await page.getByRole('combobox', { name: 'Message' }).focus();
+    await page.keyboard.press('Control+t');
+    await expect(page.getByRole('region', { name: 'Pinned tasks' })).toContainText(
+      'Write the summary',
+    );
+    await page.keyboard.press('Control+t');
+    await expect(page.getByRole('region', { name: 'Pinned tasks' })).toBeHidden();
+
+    // Each call is its own row: the command with its folder, exit code and time, the read as one
+    // line, the MCP call as server › tool with its arguments (spec 27 to 29).
+    await row.click();
+    const calls = group.getByTestId('item-tool_call');
+    await expect(calls).toHaveCount(4);
+    const failing = calls.nth(0);
+    await expect(failing.getByTestId('tool-command')).toHaveText('$ pnpm test');
+    await expect(failing.getByTestId('tool-folder')).toHaveText(/^in .*[\\/]app$/);
+    await expect(failing.getByTestId('tool-time')).toHaveText('exit 1 · 4.2 s');
+    await expect(calls.nth(1).getByTestId('tool-line')).toHaveText('Read README.md lines 1-80');
+    await expect(calls.nth(2).getByTestId('tool-mcp')).toHaveText('tracker › find_issue');
+    await expect(calls.nth(2).getByTestId('tool-arguments')).toHaveText(
+      'key: DEMO-42 · fields: ["status"]',
+    );
+
+    // Opened, the command shows its last lines, all of them on request, and Copy (spec 32).
+    await failing.locator('summary').click();
+    await expect(failing.getByTestId('tool-output-text')).toContainText('expected 2 rings');
+    await expect(failing.getByTestId('tool-output-text')).not.toContainText('kettle test 5 passed');
+    await failing.getByRole('button', { name: 'Show all 25 lines' }).click();
+    await expect(failing.getByTestId('tool-output-text')).toContainText('kettle test 5 passed');
+    await failing.getByRole('button', { name: 'Copy output' }).click();
+    // Windows hands the clipboard's text back with its own line ends.
+    const copied = await page.evaluate<string>('navigator.clipboard.readText()');
+    expect(copied.replaceAll('\r\n', '\n')).toMatch(
+      /^kettle test 1 passed\n[\s\S]*expected 2 rings, got 1\n$/,
+    );
+
+    // Stopped, the group says what was done and the turn ends with its line (spec 89, 91).
+    await page.getByRole('combobox', { name: 'Message' }).focus();
+    await page.keyboard.press('Control+.');
+    await expect(group.getByTestId('tool-group-summary')).toHaveText(
+      'Ran 2 commands, read 1 file, used 1 tool · 1 failed',
+    );
+    await expect(items.getByTestId('turn-stopped')).toContainText('Stopped by you');
+    await expect(
+      items.getByTestId('turn-stopped').getByRole('button', { name: 'Resume' }),
+    ).toBeVisible();
   });
 
   test('approves a command and the turn goes on', async ({ page }) => {
@@ -383,6 +507,9 @@ test.describe('chat', () => {
     await page.keyboard.press('Control+.');
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
     await expect(conversation(page).getByText('Working on it')).toBeVisible();
+    await expect(conversation(page).getByTestId('turn-stopped')).toContainText(
+      /^Stopped by you · \d{2}:\d{2}/,
+    );
 
     await page.reload();
     await expect(conversation(page).getByText('Working on it')).toBeVisible();
@@ -420,18 +547,165 @@ test.describe('chat', () => {
     await expect(idle.getByRole('link', { name: /Count the tea leaves/ })).toBeVisible();
   });
 
-  test('queues a message written during a turn and sends it with Send now', async ({ page }) => {
-    await startThread(page, 'Wait for me');
-    await expect(page.getByTestId('thread-state')).toHaveText('Working');
-    await expect(page.getByTestId('turn-elapsed')).toBeVisible();
-    const composer = page.getByRole('combobox', { name: 'Message' });
-    await composer.fill('Then summarise it');
-    await composer.press('Enter');
+  test('keeps a draft and a queued message across threads and a reload @agent-workbench-49 @agent-workbench-50 @agent-workbench-52', async ({
+    page,
+  }) => {
+    await startCodexWait(page, 'Wait for the kettle');
+    const threadA = page.url();
     const queued = page.getByTestId('queued-message');
-    await expect(queued).toContainText('Then summarise it');
-    await queued.getByRole('button', { name: 'Send now' }).click();
+
+    // Enter during the turn: the server holds it, with Edit and Cancel.
+    await messageBox(page).fill('Then sum it up');
+    await messageBox(page).press('Enter');
+    await expect(queued).toContainText('Queued · sent when the turn ends');
+    await expect(queued).toContainText('Then sum it up');
+    await expect(messageBox(page)).toHaveValue('');
+    // Edit takes it off the queue and puts it back in the composer; Enter queues it again.
+    await queued.getByRole('button', { name: 'Edit' }).click();
     await expect(queued).toBeHidden();
-    await expect(conversation(page).getByText('You said: Then summarise it')).toBeVisible();
+    await expect(messageBox(page)).toHaveValue('Then sum it up');
+    await messageBox(page).press('Enter');
+    await expect(queued).toContainText('Then sum it up');
+
+    // A draft with a chip, then another thread: its composer is its own.
+    await messageBox(page).pressSequentially('/deli');
+    await messageBox(page).press('Enter');
+    await messageBox(page).pressSequentially('and list the cups');
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Provider instance'), 'Mock Claude');
+    await choose(page.getByLabel('Project'), 'Demo');
+    await messageBox(page).fill('Hello from the other thread');
+    await messageBox(page).press('Enter');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Hello from the other thread',
+    );
+    await expect(messageBox(page)).toHaveValue('');
+
+    await page.goto(threadA);
+    await expect(messageBox(page)).toHaveValue('and list the cups');
+    const picked = page.getByRole('list', { name: 'Picked skills' });
+    await expect(picked).toHaveText('deliver-work');
+    await expect(queued).toContainText('Then sum it up');
+    await page.reload();
+    await expect(messageBox(page)).toHaveValue('and list the cups');
+    await expect(picked).toHaveText('deliver-work');
+    await expect(queued).toContainText('Then sum it up');
+
+    // A second message joins the first; sending empties the composer.
+    await messageBox(page).press('Enter');
+    await expect(messageBox(page)).toHaveValue('');
+    await expect(picked).toBeHidden();
+    await expect(queued).toContainText('Then sum it up');
+    await expect(queued).toContainText('and list the cups');
+    await expect(queued.getByRole('list', { name: 'Queued with skills' })).toHaveText(
+      'deliver-work',
+    );
+
+    // The turn ends: the server sends what waited, as one message.
+    await endWait(page);
+    await expect(queued).toBeHidden();
+    const sent = conversation(page).getByTestId('item-user').last();
+    await expect(sent).toContainText('Then sum it up');
+    await expect(sent).toContainText('and list the cups');
+    await expect(sent.getByTestId('sent-from-queue')).toHaveText('Sent when the turn ended');
+    await expect(conversation(page).getByTestId('item-assistant_text').last()).toContainText(
+      'You said: $deliver-work Then sum it up',
+    );
+
+    // Cancel takes a queued message off, and the server sends nothing.
+    await messageBox(page).fill('Wait for the second kettle');
+    await messageBox(page).press('Enter');
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await messageBox(page).fill('Never mind this');
+    await messageBox(page).press('Enter');
+    await queued.getByRole('button', { name: 'Cancel' }).click();
+    await expect(queued).toBeHidden();
+    await endWait(page);
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(conversation(page).getByText('Never mind this')).toHaveCount(0);
+  });
+
+  test('hands a message to the running Claude Code turn and shows it sent @agent-workbench-51', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Wait for the tea');
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    await messageBox(page).fill('Also warm the cups');
+    await messageBox(page).press('Enter');
+    const handed = conversation(page).getByTestId('item-user').last();
+    await expect(handed).toContainText('Also warm the cups');
+    await expect(handed.getByTestId('sent-from-queue')).toHaveText('Sent during the turn');
+    await expect(page.getByTestId('queued-message')).toBeHidden();
+    await endWait(page);
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(conversation(page).getByTestId('item-user')).toHaveCount(2);
+  });
+
+  test('runs /clear from the composer @agent-workbench-58 @agent-workbench-59 @agent-workbench-60', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Clear me later');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Clear me later',
+    );
+    const oldThread = page.url();
+    const bar = page.getByTestId('model-bar');
+    await bar.getByRole('button', { name: 'Effort' }).click();
+    await page
+      .getByRole('listbox', { name: 'Effort' })
+      .getByRole('option', { name: 'High' })
+      .click();
+    await expect(bar).toHaveText('Mock model·High·Ask');
+
+    const list = page.getByRole('listbox', { name: 'Skills' });
+    await messageBox(page).pressSequentially('/');
+    // wow's commands, then Claude Code's own, then the skills.
+    await expect(list.locator('[cmdk-group-heading]').first()).toHaveText('Commands');
+    await expect(list.locator('[cmdk-group-heading]').nth(1)).toHaveText('Claude Code commands');
+    const commands = list.getByRole('group', { name: 'Commands' }).getByRole('option');
+    for (const name of ['/model', '/effort', '/plan', '/compact', '/clear', '/done']) {
+      await expect(commands.filter({ hasText: name }).first()).toBeVisible();
+    }
+    // /fork has no palette command yet, so it is not listed.
+    await expect(commands.filter({ hasText: '/fork' })).toHaveCount(0);
+    const claude = list.getByRole('group', { name: 'Claude Code commands' }).getByRole('option');
+    await expect(claude).toHaveCount(2);
+    await expect(claude.first()).toContainText('/review');
+
+    // A Claude Code command goes into the text, to be sent as typed.
+    await messageBox(page).pressSequentially('rev');
+    await messageBox(page).press('Enter');
+    await expect(messageBox(page)).toHaveValue('/review ');
+    await messageBox(page).fill('');
+
+    await messageBox(page).pressSequentially('/cle');
+    await messageBox(page).press('Enter');
+    await expect(page).toHaveURL(/\/chat\/new$/);
+    await expect(page.getByLabel('Provider instance')).toHaveText(/Mock Claude/);
+    await expect(page.getByLabel('Project')).toHaveText(/Demo/);
+    await expect(page.getByTestId('model-bar')).toHaveText('Mock model·High·Ask');
+    await expect(threadList(page).getByRole('link', { name: /Clear me later/ })).toBeVisible();
+
+    // New threads start from the last one, so the later cases get the defaults back.
+    await page.goto(oldThread);
+    await resetBar(page);
+  });
+
+  // U3's `/` list runs U2's "Rename thread" (spec 58, 67).
+  test('renames the thread with /rename from the composer', async ({ page }) => {
+    await startClaudeThread(page, 'Name me from the composer');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Name me from the composer',
+    );
+    await messageBox(page).pressSequentially('/rena');
+    await messageBox(page).press('Enter');
+    await expect(messageBox(page)).toHaveValue('');
+    const title = page.getByRole('textbox', { name: 'Thread title' });
+    await expect(title).toBeFocused();
+    await title.fill('Named by slash');
+    await title.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Named by slash' })).toBeVisible();
+    await expect(threadList(page).getByRole('link', { name: /Named by slash/ })).toBeVisible();
   });
 
   test('a new thread starts from the last one (owner decision F-5)', async ({ page }) => {
@@ -440,6 +714,244 @@ test.describe('chat', () => {
     await expect(page.getByLabel('Project')).toHaveText(/Demo/);
     await expect(page.getByLabel('Model')).toContainText('Mock model');
     await expect(page.getByRole('combobox', { name: 'Message' })).toBeFocused();
+  });
+
+  // Agent workbench U2 (spec 64, 65): the server stores the notification; the window showing
+  // the thread keeps quiet, another window shows it and its Open goes to the thread.
+  test('notifies when a chat thread needs you', async ({ page, context }) => {
+    await page.goto('/chat');
+    await expect(threadList(page)).toBeVisible();
+    const other = await context.newPage();
+    const info: unknown = JSON.parse(await readFile(path.join(e2eHome, 'server.json'), 'utf8'));
+    await other.addInitScript((serverInfo) => {
+      (globalThis as { wowServerInfo?: unknown }).wowServerInfo = serverInfo;
+    }, info);
+    await startThread(other, 'Please approve the kettle check');
+    await expect(
+      conversation(other).getByRole('region', { name: 'Approval request' }),
+    ).toContainText('pnpm test');
+
+    const toast = page
+      .getByRole('listitem')
+      .filter({ hasText: 'Needs you: Please approve the kettle check' });
+    await expect(toast).toBeVisible();
+    await expect(toast).toContainText('pnpm test');
+    await expect(
+      other.getByRole('listitem').filter({ hasText: 'Needs you: Please approve' }),
+    ).toHaveCount(0);
+    await toast.getByRole('button', { name: 'Open' }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Please approve the kettle check' }),
+    ).toBeVisible();
+    await expect(
+      conversation(page).getByRole('region', { name: 'Approval request' }),
+    ).toContainText('pnpm test');
+    await other.close();
+  });
+
+  // Agent workbench U2 (spec 66 to 70).
+  test('filters, renames, archives and marks unread', async ({ page }) => {
+    await startThread(page, 'Count the kettle whistles');
+    const composer = page.getByRole('combobox', { name: 'Message' });
+    await expect(conversation(page).getByText('You said: Count the kettle whistles')).toBeVisible();
+    await composer.fill('The teapot hums in a minor key');
+    await composer.press('Enter');
+    await expect(conversation(page).getByText('You said: The teapot hums')).toBeVisible();
+
+    // A word only in a message finds the thread; Ctrl+Shift+F focuses the filter.
+    await page.keyboard.press('Control+Shift+F');
+    const filter = page.getByRole('searchbox', { name: 'Filter threads' });
+    await expect(filter).toBeFocused();
+    await filter.fill('teapot minor');
+    const rows = threadList(page).getByRole('link', { name: /Count the kettle whistles/ });
+    await expect(rows).toHaveCount(1);
+    await expect(threadList(page).locator('[data-thread-row]')).toHaveCount(1);
+    await filter.fill('Demo kettle whistles');
+    await expect(rows).toHaveCount(1);
+    await filter.fill('');
+
+    // `/` from the list goes back to the filter; arrows move and Enter opens.
+    await page.goto('/chat');
+    await threadList(page).locator('[data-thread-row]').first().focus();
+    await page.keyboard.press('/');
+    await expect(filter).toBeFocused();
+    await filter.fill('kettle whistles');
+    await page.keyboard.press('ArrowDown');
+    await expect(rows).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Count the kettle whistles' })).toBeVisible();
+    await filter.fill('');
+
+    // F2 renames, even from the composer; the title changes in the list, header and palette.
+    await composer.focus();
+    await page.keyboard.press('F2');
+    const title = page.getByRole('textbox', { name: 'Thread title' });
+    await expect(title).toBeFocused();
+    await title.fill('Kettle whistle census');
+    await title.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Kettle whistle census' })).toBeVisible();
+    const renamed = threadList(page).getByRole('link', { name: /Kettle whistle census/ });
+    await expect(renamed).toBeVisible();
+    await page.keyboard.press('Control+k');
+    const palette = page.getByRole('dialog');
+    await palette.getByRole('combobox').fill('whistle census');
+    await expect(palette.getByRole('option', { name: /Kettle whistle census/ })).toBeVisible();
+    // The palette finds it by words only in a message too.
+    await palette.getByRole('combobox').fill('teapot minor');
+    await expect(palette.getByRole('option', { name: /Kettle whistle census/ })).toBeVisible();
+    await palette.getByRole('combobox').fill('archive thread');
+    await page.keyboard.press('Enter');
+
+    // Archived: gone from the list, found by the filter and the palette, and back again.
+    await expect(renamed).toHaveCount(0);
+    await expect(page.getByTestId('thread-archived')).toHaveText('Archived');
+    await filter.fill('census');
+    await expect(renamed).toContainText('Archived');
+    await filter.fill('');
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('whistle census');
+    await expect(palette.getByRole('option', { name: /Kettle whistle census/ })).toContainText(
+      'Archived',
+    );
+    await palette.getByRole('combobox').fill('unarchive thread');
+    await page.keyboard.press('Enter');
+    await expect(renamed).toBeVisible();
+
+    // A turn that ends while the window is away leaves the thread bold until it is opened.
+    await composer.fill('Wait for the kettle');
+    await composer.press('Enter');
+    await expect(page.getByTestId('thread-state')).toHaveText('Working');
+    // The window loses the focus, as when the user switches to another program.
+    await page.evaluate("window.dispatchEvent(new Event('blur'))");
+    await page.keyboard.press('Control+.');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
+    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    await page.goto('/chat');
+    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    await expect(renamed.getByTestId('thread-row-title')).toHaveCSS('font-weight', '600');
+    await page.keyboard.press('Alt+Shift+ArrowDown');
+    await expect(page.getByRole('heading', { name: 'Kettle whistle census' })).toBeVisible();
+    await expect(renamed.getByTestId('thread-unread')).toHaveCount(0);
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('mark unread');
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    // Opening it again reads it.
+    await renamed.click();
+    await expect(page.getByRole('heading', { name: 'Kettle whistle census' })).toBeVisible();
+    await expect(renamed.getByTestId('thread-unread')).toHaveCount(0);
+  });
+
+  test('picks model, effort and mode from the composer bar @agent-workbench-1 @agent-workbench-2 @agent-workbench-3 @agent-workbench-4 @agent-workbench-5 @agent-workbench-7', async ({
+    page,
+  }) => {
+    await startClaudeThread(page, 'Pick from the bar');
+    const bar = page.getByTestId('model-bar');
+    await expect(bar).toHaveText('Mock model·Default·Ask');
+    // The header keeps the project and the provider; the selects left it.
+    await expect(page.locator('header').getByRole('combobox')).toHaveCount(0);
+
+    const box = messageBox(page);
+    await box.focus();
+    await page.keyboard.press('Control+Shift+M');
+    const models = page.getByRole('listbox', { name: 'Model' });
+    await models.getByRole('option', { name: /Mock model, large/ }).click();
+    await expect(bar.getByRole('button', { name: 'Model' })).toHaveText('Mock model, large');
+    await expect(box).toBeFocused();
+    await page.keyboard.press('Control+Shift+E');
+    await page
+      .getByRole('listbox', { name: 'Effort' })
+      .getByRole('option', { name: /^High/ })
+      .click();
+    await expect(bar.getByRole('button', { name: 'Effort' })).toHaveText('High');
+
+    // Shift+Tab steps through Ask, Accept edits and Plan only; Bypass only from the list.
+    const mode = bar.getByRole('button', { name: 'Permission mode' });
+    await box.press('Shift+Tab');
+    await expect(mode).toHaveText('Accept edits');
+    await expect(mode).toHaveClass(/text-state-done/);
+    await box.press('Shift+Tab');
+    await expect(mode).toHaveText('Plan only');
+    await expect(mode).toHaveClass(/text-info/);
+    await box.press('Shift+Tab');
+    await expect(mode).toHaveText('Ask');
+    await expect(box).toBeFocused();
+    await mode.click();
+    await page
+      .getByRole('listbox', { name: 'Permission mode' })
+      .getByRole('option', { name: 'Bypass permissions' })
+      .click();
+    await expect(mode).toHaveText('Bypass permissions');
+    await expect(mode).toHaveClass(/text-destructive/);
+    // The second key leaves the composer.
+    await box.focus();
+    await box.press('Escape');
+    await expect(box).not.toBeFocused();
+
+    // thread.configure stored the picks: they hold after a reload.
+    await page.reload();
+    await expect(page.getByTestId('model-bar')).toHaveText(
+      'Mock model, large·High·Bypass permissions',
+    );
+    // A new thread starts from the last one, so the later cases get the defaults back.
+    await resetBar(page);
+
+    // A new thread has the same bar; on Codex the list says what the provider offers.
+    await page.goto('/chat/new');
+    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await expect(page.getByTestId('model-bar')).toHaveText('Mock model for Codex·Medium·Read only');
+    await page.getByTestId('model-bar').getByRole('button', { name: 'Model' }).click();
+    const offered = page.getByRole('listbox', { name: 'Model' }).getByRole('option');
+    await expect(offered).toHaveText([
+      "Mock model for Codex(provider's default)Invented: the everyday mock model",
+      'Mock model for Codex, miniInvented: small and quick',
+    ]);
+    await expect(offered.first().getByRole('img', { name: 'Takes images' })).toBeVisible();
+    await expect(offered.last().getByRole('img', { name: 'Takes images' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await page.getByTestId('model-bar').getByRole('button', { name: 'Effort' }).click();
+    await expect(page.getByRole('listbox', { name: 'Effort' }).getByRole('option')).toHaveText([
+      'Low',
+      "Medium(model's default)",
+      'High',
+    ]);
+  });
+
+  test('sets the model from the palette @agent-workbench-6', async ({ page }) => {
+    await startClaudeThread(page, 'Pick from the palette');
+    const bar = page.getByTestId('model-bar');
+    await expect(bar).toHaveText('Mock model·Default·Ask');
+    await page.keyboard.press('Control+k');
+    const palette = page.getByRole('dialog');
+    await palette.getByRole('combobox').fill('Model: Mock model');
+    // The current model is marked.
+    await expect(
+      palette.getByRole('option', { name: /^Model: Mock model\s*Current/ }),
+    ).toBeVisible();
+    await palette.getByRole('combobox').fill('Model: Mock model, large');
+    await palette.getByRole('option', { name: /Model: Mock model, large/ }).click();
+    await expect(bar.getByRole('button', { name: 'Model' })).toHaveText('Mock model, large');
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('Permission mode: Plan only');
+    await palette.getByRole('option', { name: /Permission mode: Plan only/ }).click();
+    await expect(bar.getByRole('button', { name: 'Permission mode' })).toHaveText('Plan only');
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('Effort: High');
+    await palette.getByRole('option', { name: /Effort: High/ }).click();
+    await expect(bar.getByRole('button', { name: 'Effort' })).toHaveText('High');
+
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('Choose model');
+    await palette.getByRole('option', { name: /Choose model/ }).click();
+    await expect(page.getByRole('listbox', { name: 'Model' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.reload();
+    await expect(page.getByTestId('model-bar')).toHaveText('Mock model, large·High·Plan only');
+    await resetBar(page);
   });
 
   test('finds threads and actions in the palette', async ({ page }) => {
@@ -470,6 +982,78 @@ test.describe('sketch', () => {
     await expect(answer.locator('.wow-code .shiki')).toBeVisible();
     await answer.getByRole('heading').scrollIntoViewIfNeeded();
     await page.screenshot({ path: sketchPath('2026-11-review-loop', 'chat-markdown') });
+  });
+
+  test('thread-list', async ({ page }) => {
+    await startThread(page, 'Descale the kettle');
+    await expect(conversation(page).getByText('You said: Descale the kettle')).toBeVisible();
+    await startThread(page, 'Sketch the tea timer screen');
+    await expect(conversation(page).getByText('You said: Sketch the tea timer')).toBeVisible();
+    await page.keyboard.press('Control+k');
+    await page.getByRole('dialog').getByRole('combobox').fill('mark unread');
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(
+      threadList(page)
+        .getByRole('link', { name: /Sketch the tea timer screen/ })
+        .getByTestId('thread-unread'),
+    ).toBeVisible();
+    await expect(threadList(page).getByRole('link', { name: /Descale the kettle/ })).toBeVisible();
+    await page.keyboard.press('Control+Shift+F');
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'thread-list') });
+  });
+
+  test('tool-rows', async ({ page }) => {
+    await startThread(page, 'Run the tools');
+    const group = conversation(page).getByTestId('item-tool_group');
+    await expect(
+      group.locator(':scope > details > summary').getByTestId('tool-command'),
+    ).toHaveText('$ pnpm dev');
+    await group.locator(':scope > details > summary').click();
+    const failing = group.getByTestId('item-tool_call').nth(0);
+    await failing.locator('summary').click();
+    await expect(failing.getByTestId('tool-output-text')).toContainText('expected 2 rings');
+    await page.getByRole('combobox', { name: 'Message' }).focus();
+    await page.keyboard.press('Control+t');
+    await expect(page.getByRole('region', { name: 'Pinned tasks' })).toBeVisible();
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'tool-rows') });
+    await page.keyboard.press('Control+.');
+    await expect(conversation(page).getByTestId('turn-stopped')).toBeVisible();
+  });
+
+  test('model-bar', async ({ page }) => {
+    await startClaudeThread(page, 'Hello there');
+    await expect(conversation(page).getByTestId('item-assistant_text')).toHaveText(
+      'You said: Hello there',
+    );
+    const box = messageBox(page);
+    await box.focus();
+    await box.press('Shift+Tab');
+    await expect(
+      page.getByTestId('model-bar').getByRole('button', { name: 'Permission mode' }),
+    ).toHaveText('Accept edits');
+    await box.fill('Now run the tests');
+    await page.keyboard.press('Control+Shift+M');
+    await expect(page.getByRole('listbox', { name: 'Model' })).toBeVisible();
+    // The list fades in; the picture waits for that to end.
+    // (A string, since the e2e files are typed without the DOM.)
+    await page.evaluate(
+      'Promise.all(document.getAnimations().map((animation) => animation.finished))',
+    );
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'model-bar') });
+  });
+
+  test('composer-queued', async ({ page }) => {
+    await startCodexWait(page, 'Wait for the kettle to boil');
+    await messageBox(page).fill('Then sum up what you found in three lines');
+    await messageBox(page).press('Enter');
+    await expect(page.getByTestId('queued-message')).toBeVisible();
+    await messageBox(page).pressSequentially('/deli');
+    await messageBox(page).press('Enter');
+    await messageBox(page).pressSequentially('and after that, list the cups we need');
+    await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'composer-queued') });
+    await page.keyboard.press('Control+.');
+    await expect(page.getByTestId('thread-state')).toHaveText('Idle');
   });
 
   test('skill-chip', async ({ page }) => {

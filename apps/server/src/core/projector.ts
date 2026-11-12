@@ -319,6 +319,30 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(threads.id, event.payload.threadId))
         .run();
       return threadTopics;
+    case 'thread.renamed':
+      tx.update(threads)
+        .set({ title: event.payload.title })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
+    case 'thread.archived':
+      tx.update(threads)
+        .set({ archived: event.payload.archived })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
+    case 'thread.seenChanged':
+      tx.update(threads)
+        .set({ seen: event.payload.seen })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
+    case 'thread.queueChanged':
+      tx.update(threads)
+        .set({ queued: event.payload.queued })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
     case 'thread.stateChanged':
       tx.update(threads)
         .set({ state: event.payload.state, updatedAt: event.payload.updatedAt })
@@ -842,6 +866,18 @@ export function readModel(tx: DbOrTx): ReadModel {
     itemExists: (id) =>
       tx.select({ id: threadItems.id }).from(threadItems).where(eq(threadItems.id, id)).get() !==
       undefined,
+    turnTaskLists: (turnId) => {
+      const lists = and(eq(threadItems.turnId, turnId), eq(threadItems.kind, 'task_list'));
+      const total = tx.select({ n: count() }).from(threadItems).where(lists).get()?.n ?? 0;
+      const last = tx
+        .select({ payload: threadItems.payload })
+        .from(threadItems)
+        .where(lists)
+        .orderBy(desc(threadItems.index))
+        .limit(1)
+        .get();
+      return { count: total, last: last?.payload };
+    },
     approval: (id) => tx.select().from(approvals).where(eq(approvals.id, id)).get(),
     question: (id) => tx.select().from(questions).where(eq(questions.id, id)).get(),
     openRequests: (threadId) =>

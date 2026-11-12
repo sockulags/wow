@@ -1,5 +1,9 @@
 import type { ProviderEvent, ProviderInstance } from '@wow/contracts';
-import { ProviderEvent as ProviderEventSchema, providerChatOptions } from '@wow/contracts';
+import {
+  ProviderEvent as ProviderEventSchema,
+  ProviderModel,
+  providerChatOptions,
+} from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   CodexAdapter,
@@ -209,6 +213,9 @@ describe('CodexAdapter with recorded sessions', () => {
         itemId: 'item-command',
         name: 'command',
         input: { command: 'pnpm test', cwd: '/work/demo' },
+        kind: 'command',
+        command: 'pnpm test',
+        cwd: '/work/demo',
       },
       expect.objectContaining({
         type: 'approvalRequested',
@@ -224,13 +231,22 @@ describe('CodexAdapter with recorded sessions', () => {
     expect(take()).toEqual([
       { type: 'toolCallOutput', threadId, itemId: 'item-command', output: '> vitest run\n' },
       { type: 'toolCallOutput', threadId, itemId: 'item-command', output: 'Tests 12 passed\n' },
-      { type: 'toolCallCompleted', threadId, itemId: 'item-command', status: 'ok' },
+      {
+        type: 'toolCallCompleted',
+        threadId,
+        itemId: 'item-command',
+        status: 'ok',
+        exitCode: 0,
+        durationMs: 2100,
+      },
       {
         type: 'toolCallStarted',
         threadId,
         itemId: 'item-patch',
         name: 'fileChange',
         input: { changes: [{ path: 'README.md', kind: 'update' }] },
+        kind: 'edit',
+        path: 'README.md',
       },
       expect.objectContaining({
         type: 'approvalRequested',
@@ -386,6 +402,16 @@ describe('CodexAdapter with recorded sessions', () => {
     expect((current() as ReplayCodexProcess).mismatches).toEqual([]);
   });
 
+  // Agent workbench spec 51, 60: Codex takes no message into a running turn, so it waits for
+  // the turn to end, and Codex reports no slash commands of its own.
+  it('takes no message into a running turn and lists no commands', async () => {
+    const { adapter } = setup(() => new ReplayCodexProcess([]));
+    expect(await adapter.send({ type: 'handOver', threadId: 't1', prompt: 'Then this' })).toEqual({
+      taken: false,
+    });
+    expect(await adapter.send({ type: 'listCommands', cwd: '/work/demo' })).toEqual([]);
+  });
+
   it('lists models from the recorded model/list answer', async () => {
     const recorded = readFixture('test-not-logged-in.jsonl');
     // Same session without the account check in between.
@@ -401,6 +427,41 @@ describe('CodexAdapter with recorded sessions', () => {
       efforts: expect.arrayContaining(['low', 'medium', 'high']),
     });
   });
+
+  // Agent workbench spec 7, 8: description, default effort, default flag and image input come
+  // from model/list; a hidden model is left out; a field this codex does not send stays absent.
+  it('lists the model fields codex reports and leaves out hidden models', async () => {
+    const { adapter } = setup(
+      () =>
+        new ScriptedCodex({
+          ...baseAnswers,
+          'model/list': () => ({
+            data: [
+              withInputs('a', ['text', 'image']),
+              withInputs('b', ['text']),
+              model('c'),
+              withInputs('secret', ['text', 'image']),
+            ].map((entry) => (entry.id === 'secret' ? { ...entry, hidden: true } : entry)),
+            nextCursor: null,
+          }),
+        }),
+    );
+    const models = ProviderModel.array().parse(await adapter.send({ type: 'listModels' }));
+    expect(models).toEqual([
+      {
+        id: 'a',
+        label: 'A',
+        description: 'a model',
+        efforts: ['low'],
+        defaultEffort: 'low',
+        isDefault: true,
+        imageInput: true,
+      },
+      expect.objectContaining({ id: 'b', isDefault: false, imageInput: false }),
+      expect.objectContaining({ id: 'c' }),
+    ]);
+    expect(models[2]).not.toHaveProperty('imageInput');
+  });
 });
 
 const model = (id: string, hidden = false) => ({
@@ -413,6 +474,8 @@ const model = (id: string, hidden = false) => ({
   defaultReasoningEffort: 'low',
   isDefault: id === 'a',
 });
+
+const withInputs = (id: string, inputModalities: string[]) => ({ ...model(id), inputModalities });
 
 const baseAnswers: Record<string, Answer> = {
   initialize: () => ({ userAgent, codexHome: '/home/demo/.codex' }),
@@ -1061,6 +1124,89 @@ describe('CodexAdapter', () => {
       { type: 'turnStartedByProvider', threadId: 'thread-1' },
       { type: 'textDelta', threadId: 'thread-1', itemId: 'm2', delta: 'Done.' },
       { type: 'turnCompleted', threadId: 'thread-1' },
+    ]);
+  });
+
+  it('gives a failed command its exit code and time, and an MCP call its server and tool (agent workbench spec 27, 29)', async () => {
+    const { adapter, take, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(startTurn);
+    take();
+    const command = {
+      type: 'commandExecution',
+      id: 'cmd-1',
+      pluginId: null,
+      scriptPath: null,
+      command: 'pnpm test',
+      cwd: '/work/demo/app',
+      processId: null,
+      source: 'agent',
+      commandActions: [{ type: 'unknown', command: 'pnpm test' }],
+      aggregatedOutput: null,
+      exitCode: null,
+      durationMs: null,
+      status: 'inProgress',
+    };
+    const mcp = {
+      type: 'mcpToolCall',
+      id: 'mcp-1',
+      server: 'tracker',
+      tool: 'find_issue',
+      status: 'inProgress',
+      arguments: { key: 'DEMO-42' },
+      appContext: null,
+      mcpAppUi: null,
+      pluginId: null,
+      readOnlyHint: null,
+      result: null,
+      error: null,
+      durationMs: null,
+    };
+    const params = { threadId: 'codex-thread', turnId: 'turn-1' };
+    current().emit({ method: 'item/started', params: { ...params, item: command } });
+    current().emit({
+      method: 'item/completed',
+      params: {
+        ...params,
+        item: {
+          ...command,
+          status: 'failed',
+          aggregatedOutput: '1 test failed\n',
+          exitCode: 1,
+          durationMs: 4200,
+        },
+      },
+    });
+    current().emit({ method: 'item/started', params: { ...params, item: mcp } });
+    expect(take()).toEqual([
+      {
+        type: 'toolCallStarted',
+        threadId: 'thread-1',
+        itemId: 'cmd-1',
+        name: 'command',
+        input: { command: 'pnpm test', cwd: '/work/demo/app' },
+        kind: 'command',
+        command: 'pnpm test',
+        cwd: '/work/demo/app',
+      },
+      { type: 'toolCallOutput', threadId: 'thread-1', itemId: 'cmd-1', output: '1 test failed\n' },
+      {
+        type: 'toolCallCompleted',
+        threadId: 'thread-1',
+        itemId: 'cmd-1',
+        status: 'error',
+        exitCode: 1,
+        durationMs: 4200,
+      },
+      {
+        type: 'toolCallStarted',
+        threadId: 'thread-1',
+        itemId: 'mcp-1',
+        name: 'tracker/find_issue',
+        input: { key: 'DEMO-42' },
+        kind: 'mcp',
+        server: 'tracker',
+        tool: 'find_issue',
+      },
     ]);
   });
 

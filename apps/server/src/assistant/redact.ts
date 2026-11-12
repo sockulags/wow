@@ -32,6 +32,21 @@ const textOf = (event: Streamed) => (event.type === 'toolCallOutput' ? event.out
 const withText = (event: Streamed, text: string): Streamed =>
   event.type === 'toolCallOutput' ? { ...event, output: text } : { ...event, delta: text };
 
+const toolTexts = ['command', 'cwd', 'path', 'pattern', 'url', 'query', 'server', 'tool'] as const;
+
+// The facts an adapter read from a tool's input repeat parts of it, so they get the same net.
+const hiddenFacts = (
+  event: Extract<ProviderEvent, { type: 'toolCallStarted' }>,
+  patterns: readonly RegExp[],
+) => {
+  const out: Partial<Record<(typeof toolTexts)[number], string>> = {};
+  for (const key of toolTexts) {
+    const value = event[key];
+    if (value !== undefined) out[key] = hideSecrets(value, patterns);
+  }
+  return out;
+};
+
 const lastSpace = (text: string, from: number): number => {
   for (let index = text.length - 1; index >= from; index -= 1) {
     if (/\s/.test(text[index] ?? '')) return index + 1;
@@ -68,6 +83,7 @@ export class AssistantRedactor {
             ...event,
             name: hideSecrets(event.name, compiled),
             input: hideSecretsDeep(event.input, compiled),
+            ...hiddenFacts(event, compiled),
           });
           break;
         case 'approvalRequested':

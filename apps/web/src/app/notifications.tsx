@@ -1,6 +1,12 @@
 import type { AppNotification } from '@wow/contracts';
-import { useNavigate } from '@tanstack/react-router';
-import { AlertTriangleIcon, BellIcon, PlayIcon, SkipForwardIcon } from 'lucide-react';
+import { useNavigate, useRouterState } from '@tanstack/react-router';
+import {
+  AlertTriangleIcon,
+  BellIcon,
+  CircleCheckIcon,
+  PlayIcon,
+  SkipForwardIcon,
+} from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { useTopic } from '@/chat/data';
@@ -18,17 +24,30 @@ export function freshNotifications(
   return rows.filter((row) => !seen.has(row.id)).toReversed();
 }
 
+// A chat thread's notification is not shown while that thread is on screen in a focused window
+// (agent workbench spec 64); the user is already looking at it.
+export const onScreen = (
+  notification: Pick<AppNotification, 'threadId'>,
+  openThreadId: string | undefined,
+  focused: boolean,
+): boolean => focused && openThreadId !== undefined && notification.threadId === openThreadId;
+
+export const openThreadOf = (pathname: string): string | undefined =>
+  /^\/chat\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
+
 const icons = {
   started: PlayIcon,
   waiting: BellIcon,
   failed: AlertTriangleIcon,
   skipped: SkipForwardIcon,
+  finished: CircleCheckIcon,
 } as const;
 const iconClass = {
   started: 'text-state-working',
   waiting: 'text-state-needs-you',
   failed: 'text-state-failed',
   skipped: 'text-muted-foreground',
+  finished: 'text-state-done',
 } as const;
 
 // The web app's side of the server's notification channel: a toast per new notification (spec 9),
@@ -39,6 +58,9 @@ export function AppToaster() {
   const seconds = useSetting('scheduler.toastSeconds');
   const theme = useSetting('appearance.theme');
   const navigate = useNavigate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const openThread = useRef<string | undefined>(undefined);
+  openThread.current = openThreadOf(pathname);
   const seen = useRef<Set<string>>(undefined);
 
   useEffect(() => {
@@ -46,6 +68,7 @@ export function AppToaster() {
     const fresh = freshNotifications(seen.current, rows);
     seen.current = new Set([...(seen.current ?? []), ...rows.map((row) => row.id)]);
     for (const notification of fresh) {
+      if (onScreen(notification, openThread.current, document.hasFocus())) continue;
       const Icon = icons[notification.kind];
       toast(notification.title, {
         id: notification.id,
@@ -56,5 +79,6 @@ export function AppToaster() {
     }
   }, [rows, navigate]);
 
-  return <Toaster theme={theme} duration={seconds * 1000} />;
+  // Listed, not stacked: a later notification must not cover an earlier toast's Undo.
+  return <Toaster theme={theme} duration={seconds * 1000} expand />;
 }

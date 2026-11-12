@@ -1,7 +1,9 @@
 import type {
   DomainEvent,
   ProviderEvent,
+  QueuedMessage,
   SentSkill,
+  SkillRef,
   ServerCommand,
   Thread,
   ThreadChanges,
@@ -9,8 +11,10 @@ import type {
   ThreadItemKind,
   ThreadState,
   Turn,
+  TurnState,
 } from '@wow/contracts';
 import {
+  ChatNotifications,
   QuestionOption,
   askAnswerPrompt,
   askAnswerText,
@@ -18,9 +22,12 @@ import {
   assistantThreadId,
   replyProblem,
   replyText,
+  TaskListItemPayload,
+  toolFactsOf,
   type QuestionReply,
 } from '@wow/contracts';
 import { z } from 'zod';
+import { resolveStored } from '../settings/service.js';
 import {
   assistantAnswersNote,
   assistantThreadEvents,
@@ -47,12 +54,19 @@ type ThreadCommand = Extract<
       | 'thread.greetAssistant'
       | 'thread.sendMessage'
       | 'thread.sendPrepared'
+      | 'thread.cancelQueued'
+      | 'thread.sendQueued'
+      | 'thread.handedOver'
       | 'thread.retry'
       | 'thread.answerQuestions'
       | 'thread.interrupt'
       | 'thread.configure'
       | 'thread.setPinned'
       | 'thread.setDone'
+      | 'thread.rename'
+      | 'thread.setArchived'
+      | 'thread.markSeen'
+      | 'thread.markUnread'
       | 'approval.answer'
       | 'question.answer'
       | 'provider.events';
@@ -105,12 +119,14 @@ function turnStarted(
     assistant,
     answers,
     skills,
+    queued: mark,
   }: {
     text: string;
     prompt: string;
     assistant: boolean;
     answers?: { askItemId: string; replies: QuestionReply[] };
     skills?: SentSkill[] | undefined;
+    queued?: 'afterTurn';
   },
 ): DomainEvent {
   const index = read.turnCount(thread.id);
@@ -138,6 +154,7 @@ function turnStarted(
           text,
           ...(answers ? { answers } : {}),
           ...(skills && skills.length > 0 ? { skills } : {}),
+          ...(mark ? { queued: mark } : {}),
         },
         streaming: false,
       },
@@ -153,6 +170,107 @@ function turnStarted(
       },
     },
   };
+}
+
+// A turn starting or a request arriving brings an archived thread back to the list, so what it
+// does next is not hidden from the user (coordinator decision on spec 68).
+const unarchived = (threadId: string): DomainEvent => ({
+  kind: 'thread.archived',
+  aggregate: threadId,
+  payload: { threadId, archived: false },
+});
+
+// A message needs text or a skill, and the assistant takes no skills (wow skills spec 20).
+function checkMessage(thread: Thread, text: string, picked: readonly SkillRef[]): void {
+  if (text.trim() === '' && picked.length === 0) {
+    throw new CommandRejected('rejected', 'A message needs text or a skill');
+  }
+  if (thread.kind === 'assistant' && picked.length > 0) {
+    throw new CommandRejected('rejected', 'The assistant takes no skills');
+  }
+}
+
+const queueChanged = (
+  threadId: string,
+  queued: QueuedMessage | null,
+  handOver?: { providerInstanceId: string; prompt: string },
+): DomainEvent => ({
+  kind: 'thread.queueChanged',
+  aggregate: threadId,
+  payload: { threadId, queued, ...(handOver ? { handOver } : {}) },
+});
+
+// A message written while a turn runs waits with the server (agent workbench spec 50); one that
+// already waits takes it in after its own text. A chat or step thread offers it to the running
+// turn as well (spec 51); the assistant's prompt carries notes made when its turn starts, so its
+// message always waits.
+function queueMessage(
+  read: ReadModel,
+  context: DecideContext,
+  thread: Thread,
+  running: Turn,
+  text: string,
+  picked: readonly SkillRef[],
+): DomainEvent {
+  const before = thread.queued ?? undefined;
+  const skills = [...(before?.skills ?? [])];
+  for (const ref of picked) {
+    if (!skills.some((skill) => skill.name === ref.name && skill.source === ref.source))
+      skills.push(ref);
+  }
+  const message: QueuedMessage = {
+    id: before ? `${before.id}+` : `${running.id}:queued:${context.now}`,
+    text: before
+      ? [before.text, text.trim()].filter((part) => part.trim() !== '').join('\n\n')
+      : text,
+    ...(skills.length > 0 ? { skills } : {}),
+    queuedAt: before?.queuedAt ?? context.now,
+  };
+  if (thread.kind === 'assistant') return queueChanged(thread.id, message);
+  const prompt =
+    skills.length > 0
+      ? messageWithSkills(read, context, thread, skills, message.text).prompt
+      : message.text;
+  return queueChanged(thread.id, message, {
+    providerInstanceId: thread.providerInstanceId,
+    prompt,
+  });
+}
+
+// A message as the next turn: on the assistant's thread on the instance the settings name now,
+// with wow's notes before it (app assistant spec 27); the skills go in front of the text.
+function messageTurn(
+  read: ReadModel,
+  context: DecideContext,
+  stored: Thread,
+  text: string,
+  picked: readonly SkillRef[],
+  mark?: 'afterTurn',
+): DomainEvent[] {
+  checkMessage(stored, text, picked);
+  const assistant = stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
+  const thread = assistant?.thread ?? stored;
+  const notes = assistant
+    ? [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
+        (entry): entry is string => entry !== null,
+      )
+    : [];
+  const note = notes.length === 0 ? null : notes.join('\n\n');
+  const withSkills =
+    picked.length > 0
+      ? messageWithSkills(read, context, thread, picked, text)
+      : { prompt: text, skills: undefined };
+  return [
+    ...(assistant?.events ?? []),
+    turnStarted(read, thread, context.now, {
+      text,
+      prompt: note ? `${note}\n\n${withSkills.prompt}` : withSkills.prompt,
+      assistant: assistant !== undefined,
+      skills: withSkills.skills,
+      ...(mark ? { queued: mark } : {}),
+    }),
+    ...(thread.archived ? [unarchived(thread.id)] : []),
+  ];
 }
 
 function requireThread(read: ReadModel, threadId: string) {
@@ -318,40 +436,72 @@ export function decideThread(
     }
     case 'thread.sendMessage': {
       const stored = requireThread(read, command.threadId);
-      if (read.runningTurn(stored.id)) {
-        throw new CommandRejected('rejected', `Thread ${stored.id} already has a running turn`);
-      }
-      // The assistant's turn starts on the instance the settings name now, or not at all with
-      // the reason (app assistant spec 27).
-      const assistant =
-        stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
-      const thread = assistant?.thread ?? stored;
-      const notes = assistant
-        ? [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
-            (entry): entry is string => entry !== null,
-          )
-        : [];
-      const note = notes.length === 0 ? null : notes.join('\n\n');
       const picked = command.skills ?? [];
-      if (command.text.trim() === '' && picked.length === 0) {
-        throw new CommandRejected('rejected', 'A message needs text or a skill');
+      checkMessage(stored, command.text, picked);
+      const running = read.runningTurn(stored.id);
+      if (running) {
+        return [
+          queueMessage(read, context, stored, running, command.text, picked),
+          ...(stored.archived ? [unarchived(stored.id)] : []),
+        ];
       }
-      // The assistant has its own instruction text and takes no skills (wow skills spec 20).
-      if (assistant && picked.length > 0) {
-        throw new CommandRejected('rejected', 'The assistant takes no skills');
+      return messageTurn(read, context, stored, command.text, picked);
+    }
+    case 'thread.cancelQueued': {
+      const thread = requireThread(read, command.threadId);
+      if (!thread.queued) {
+        throw new CommandRejected(
+          'conflict',
+          'No message waits in this thread any more; it was sent or taken off the queue.',
+        );
       }
-      const withSkills =
-        picked.length > 0
-          ? messageWithSkills(read, context, thread, picked, command.text)
-          : { prompt: command.text, skills: undefined };
+      return [queueChanged(thread.id, null)];
+    }
+    case 'thread.sendQueued': {
+      const thread = requireThread(read, command.threadId);
+      const waiting = thread.queued;
+      if (!waiting || waiting.id !== command.queuedId) return [];
+      // Refused rather than a no-op, so no receipt is kept and the next turn end sends it.
+      if (read.runningTurn(thread.id)) {
+        throw new CommandRejected('conflict', 'A turn runs in this thread; the message waits.');
+      }
       return [
-        ...(assistant?.events ?? []),
-        turnStarted(read, thread, now, {
-          text: command.text,
-          prompt: note ? `${note}\n\n${withSkills.prompt}` : withSkills.prompt,
-          assistant: assistant !== undefined,
-          skills: withSkills.skills,
-        }),
+        queueChanged(thread.id, null),
+        ...messageTurn(read, context, thread, waiting.text, waiting.skills ?? [], 'afterTurn'),
+      ];
+    }
+    case 'thread.handedOver': {
+      const thread = requireThread(read, command.threadId);
+      const waiting = thread.queued;
+      if (!waiting || waiting.id !== command.queuedId) return [];
+      // The provider has it, so it shows in the turn it went into, or the one that just ended.
+      const turn = read.runningTurn(thread.id) ?? read.lastTurn(thread.id);
+      if (!turn) return [queueChanged(thread.id, null)];
+      const picked = waiting.skills ?? [];
+      const skills =
+        picked.length > 0
+          ? messageWithSkills(read, context, thread, picked, waiting.text).skills
+          : undefined;
+      const index = read.nextItemIndex(thread.id);
+      return [
+        queueChanged(thread.id, null),
+        {
+          kind: 'threadItem.added',
+          aggregate: thread.id,
+          payload: {
+            id: `${turn.id}:handedOver:${index}`,
+            threadId: thread.id,
+            turnId: turn.id,
+            index,
+            kind: 'user',
+            payload: {
+              text: waiting.text,
+              ...(skills && skills.length > 0 ? { skills } : {}),
+              queued: 'duringTurn',
+            },
+            streaming: false,
+          },
+        },
       ];
     }
     case 'thread.sendPrepared': {
@@ -532,6 +682,50 @@ export function decideThread(
       }
       return [stateChanged(thread.id, 'done', now)];
     }
+    case 'thread.rename': {
+      const thread = requireThread(read, command.threadId);
+      const title = command.title.trim();
+      if (title === '') throw new CommandRejected('rejected', 'A thread needs a title');
+      const longest = settingValue('chat.threadTitleMaxLength', read, context);
+      if (typeof longest === 'number' && title.length > longest) {
+        throw new CommandRejected(
+          'rejected',
+          `A thread title can have at most ${longest} characters; this one has ${title.length}.`,
+        );
+      }
+      if (thread.title === title) return [];
+      return [
+        {
+          kind: 'thread.renamed',
+          aggregate: thread.id,
+          payload: { threadId: thread.id, title },
+        },
+      ];
+    }
+    case 'thread.setArchived': {
+      const thread = requireThread(read, command.threadId);
+      if ((thread.archived ?? false) === command.archived) return [];
+      if (command.archived && thread.runId !== null) {
+        throw new CommandRejected(
+          'rejected',
+          "A workflow step's thread belongs to its run, so it is not archived on its own.",
+        );
+      }
+      return [
+        {
+          kind: 'thread.archived',
+          aggregate: thread.id,
+          payload: { threadId: thread.id, archived: command.archived },
+        },
+      ];
+    }
+    case 'thread.markSeen':
+    case 'thread.markUnread': {
+      const thread = requireThread(read, command.threadId);
+      const seen = command.type === 'thread.markSeen';
+      if ((thread.seen ?? true) === seen) return [];
+      return [seenChanged(thread.id, seen)];
+    }
     case 'approval.answer': {
       const approval = read.approval(command.approvalId);
       if (!approval) throw new CommandRejected('not_found', `No approval ${command.approvalId}`);
@@ -608,9 +802,41 @@ export function decideThread(
       ];
     }
     case 'provider.events':
-      return decideProviderEvents(command.threadId, command.events, read, now);
+      return decideProviderEvents(command.threadId, command.events, read, context);
   }
 }
+
+const seenChanged = (threadId: string, seen: boolean): DomainEvent => ({
+  kind: 'thread.seenChanged',
+  aggregate: threadId,
+  payload: { threadId, seen },
+});
+
+const settingValue = (key: string, read: ReadModel, context: DecideContext): unknown => {
+  const definition = context.registry[key];
+  if (!definition) return undefined;
+  return resolveStored(key, definition, {}, (scope) => read.setting(key, scope)).value;
+};
+
+// What the user asked to hear about chat threads (spec 65).
+const chatNotifications = (read: ReadModel, context: DecideContext): ChatNotifications => {
+  const parsed = ChatNotifications.safeParse(settingValue('chat.notifications', read, context));
+  return parsed.success ? parsed.data : 'needsYouAndFinished';
+};
+
+const finishedAfterMs = (read: ReadModel, context: DecideContext): number => {
+  const value = settingValue('chat.finishedAfterSeconds', read, context);
+  return typeof value === 'number' ? value * 1000 : Number.POSITIVE_INFINITY;
+};
+
+// Only a thread the user started notifies; a step's thread tells through its run, and the
+// assistant has its own view.
+const threadTitleOf = (thread: Thread) =>
+  thread.title.trim() === '' ? 'New thread' : thread.title;
+
+const notifiesAsChat = (thread: Thread) => thread.runId === null && thread.kind !== 'assistant';
+
+export const threadPath = (threadId: string) => `/chat/${threadId}`;
 
 const stateChanged = (threadId: string, state: ThreadState, now: string): DomainEvent => ({
   kind: 'thread.stateChanged',
@@ -630,6 +856,17 @@ function resumeWork(
   return [stateChanged(threadId, 'working', now)];
 }
 
+type Tasks = TaskListItemPayload['tasks'];
+
+const sameTasks = (a: Tasks, b: Tasks) =>
+  a.length === b.length &&
+  a.every(
+    (task, index) =>
+      task.id === b[index]?.id &&
+      task.content === b[index]?.content &&
+      task.status === b[index]?.status,
+  );
+
 const endedThreadState = {
   completed: 'idle',
   interrupted: 'idle',
@@ -642,8 +879,9 @@ function decideProviderEvents(
   threadId: string,
   events: readonly ProviderEvent[],
   read: ReadModel,
-  now: string,
+  context: DecideContext,
 ): DomainEvent[] {
+  const now = context.now;
   const thread = read.thread(threadId);
   // A thread deleted while its provider was still talking; nothing to record.
   if (!thread) return [];
@@ -655,6 +893,76 @@ function decideProviderEvents(
   const created = new Set<string>();
   const out: DomainEvent[] = [];
   const exists = (id: string) => created.has(id) || read.itemExists(id);
+  // The task lists of each turn, as stored and as added in this batch.
+  const taskLists = new Map<string, { count: number; last: Tasks | undefined }>();
+  const turnTaskLists = (ofTurn: string) => {
+    const stored = read.turnTaskLists(ofTurn);
+    const last = TaskListItemPayload.safeParse(stored.last);
+    return { count: stored.count, last: last.success ? last.data.tasks : undefined };
+  };
+  let seen = thread.seen ?? true;
+  let archived = thread.archived ?? false;
+  const unarchive = () => {
+    if (!archived) return;
+    archived = false;
+    out.push(unarchived(threadId));
+  };
+  // The assistant thread is not in the thread list, so it has nothing to mark.
+  const markUnseen = () => {
+    if (!seen || thread.kind === 'assistant') return;
+    seen = false;
+    out.push(seenChanged(threadId, false));
+  };
+  const told = new Set<string>();
+  const notifications = notifiesAsChat(thread) ? chatNotifications(read, context) : 'off';
+  const needsYou = (key: string, summary: string, approvalId: string | null) => {
+    markUnseen();
+    if (notifications === 'off') return;
+    const id = `${threadId}:needs-you:${key}`;
+    // The questions of one ask arrive one by one and are told once.
+    if (told.has(id)) return;
+    told.add(id);
+    out.push({
+      kind: 'notification.sent',
+      aggregate: id,
+      payload: {
+        id,
+        at: now,
+        kind: 'waiting',
+        title: `Needs you: ${threadTitleOf(thread)}`,
+        body: summary,
+        path: threadPath(threadId),
+        runId: null,
+        calendarItemId: null,
+        threadId,
+        approvalId,
+      },
+    });
+  };
+  const finished = (ended: Turn, how: TurnState) => {
+    markUnseen();
+    // The user stopped it themselves, so there is nothing to tell.
+    if (notifications !== 'needsYouAndFinished' || how === 'interrupted') return;
+    const ran = Date.parse(now) - Date.parse(ended.startedAt);
+    if (!(ran > finishedAfterMs(read, context))) return;
+    const id = `${ended.id}:finished`;
+    out.push({
+      kind: 'notification.sent',
+      aggregate: id,
+      payload: {
+        id,
+        at: now,
+        kind: 'finished',
+        title: `Finished: ${threadTitleOf(thread)}`,
+        body: how === 'failed' ? 'The turn failed.' : '',
+        path: threadPath(threadId),
+        runId: null,
+        calendarItemId: null,
+        threadId,
+        approvalId: null,
+      },
+    });
+  };
 
   const item = (
     current: Turn,
@@ -744,6 +1052,7 @@ function decideProviderEvents(
         usage: null,
       };
       out.push({ kind: 'turn.startedByProvider', aggregate: threadId, payload: { turn } });
+      unarchive();
       state = 'working';
       continue;
     }
@@ -775,11 +1084,19 @@ function decideProviderEvents(
       case 'toolCallStarted': {
         const id = itemId(event.itemId);
         if (!exists(id)) {
+          // The server's clock stamps the start, so a reload shows the same time (spec 30).
           add(
             current,
             id,
             'tool_call',
-            { name: event.name, input: event.input ?? null, output: '', status: 'running' },
+            {
+              ...toolFactsOf(event),
+              name: event.name,
+              input: event.input ?? null,
+              output: '',
+              status: 'running',
+              startedAt: now,
+            },
             true,
           );
         }
@@ -798,7 +1115,20 @@ function decideProviderEvents(
       }
       case 'toolCallCompleted': {
         const id = itemId(event.itemId);
-        if (exists(id)) patch(current, id, 'tool_call', { status: event.status }, false);
+        if (exists(id)) {
+          patch(
+            current,
+            id,
+            'tool_call',
+            {
+              status: event.status,
+              endedAt: now,
+              ...(event.exitCode === undefined ? {} : { exitCode: event.exitCode }),
+              ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+            },
+            false,
+          );
+        }
         break;
       }
       case 'approvalRequested': {
@@ -831,6 +1161,8 @@ function decideProviderEvents(
           },
         });
         setState('needs_you');
+        unarchive();
+        needsYou(event.approvalId, event.summary, id);
         break;
       }
       case 'questionAsked': {
@@ -865,11 +1197,27 @@ function decideProviderEvents(
           },
         });
         setState('needs_you');
+        unarchive();
+        needsYou(`question:${event.askId ?? event.questionId}`, event.question, null);
         break;
       }
-      case 'taskListUpdated':
-        patch(current, itemId('tasks'), 'task_list', { tasks: event.tasks });
+      case 'taskListUpdated': {
+        // Each change is an item of its own, so the conversation marks where the list changed
+        // (spec 31). Codex sends its plan again unchanged and Claude Code's adapter sends the
+        // list on every task tool call, so a list equal to the last one adds nothing. The first
+        // keeps the id a turn's only list had before.
+        const lists = taskLists.get(current.id) ?? turnTaskLists(current.id);
+        if (lists.last !== undefined && sameTasks(lists.last, event.tasks)) break;
+        add(
+          current,
+          itemId(lists.count === 0 ? 'tasks' : `tasks:${lists.count}`),
+          'task_list',
+          { tasks: event.tasks, at: now },
+          false,
+        );
+        taskLists.set(current.id, { count: lists.count + 1, last: event.tasks });
         break;
+      }
       case 'usage': {
         const usage =
           event.costUsd === undefined
@@ -921,6 +1269,7 @@ function decideProviderEvents(
           },
         });
         state = endedThreadState[ended];
+        finished(current, ended);
         turn = undefined;
         break;
       }

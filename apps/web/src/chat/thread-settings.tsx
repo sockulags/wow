@@ -1,4 +1,4 @@
-import type { ProviderKind } from '@wow/contracts';
+import type { ProviderKind, ProviderModel } from '@wow/contracts';
 import {
   Select as SelectRoot,
   SelectContent,
@@ -59,10 +59,86 @@ function Select({
   );
 }
 
-const marked = (label: string, isDefault: boolean) => (isDefault ? `${label} (default)` : label);
+export interface ModelDefaults {
+  readonly model: string | null;
+  readonly effort: string | null;
+}
 
-// Model, effort and permission mode pickers (spec 14, 17). The models come from the provider;
-// a change applies to the next turn.
+// One row of the model list (agent workbench spec 7): the label, the provider's description,
+// "(default)" on the instance's default, and whether the provider says the model takes images.
+// While the instance names no default, the model the provider flags as its own default is
+// marked as the provider's. A field the provider does not report stays undefined.
+export interface ModelChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+  readonly isDefault: boolean;
+  readonly providerDefault: boolean;
+  readonly imageInput: boolean | undefined;
+}
+
+export function modelChoices(
+  models: readonly ProviderModel[],
+  current: string,
+  defaults: ModelDefaults | undefined,
+): ModelChoice[] {
+  const instanceDefault = defaults?.model || undefined;
+  return modelOptions(models, current).map((id) => {
+    const model = models.find((candidate) => candidate.id === id);
+    return {
+      id,
+      label: model?.label || id,
+      description: model?.description ?? '',
+      isDefault: id === instanceDefault,
+      providerDefault: instanceDefault === undefined && model?.isDefault === true,
+      imageInput: model?.imageInput,
+    };
+  });
+}
+
+// One row of the effort list (spec 8): the chosen model's own levels; "(default)" on the
+// instance's default, and the model's own default level where the provider names one.
+export interface EffortChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly isDefault: boolean;
+  readonly isModelDefault: boolean;
+}
+
+export function effortChoices(
+  kind: ProviderKind,
+  models: readonly ProviderModel[],
+  model: string,
+  current: string,
+  defaults: ModelDefaults | undefined,
+): EffortChoice[] {
+  const own = models.find((candidate) => candidate.id === model)?.defaultEffort;
+  return effortOptions(kind, models, model, current).map((id) => ({
+    id,
+    label: effortLabel(id),
+    isDefault: id === defaults?.effort,
+    isModelDefault: id === own,
+  }));
+}
+
+// The text a plain list shows for a choice (the builder's selects).
+export const modelChoiceText = (choice: ModelChoice): string =>
+  choice.isDefault
+    ? `${choice.label} (default)`
+    : choice.providerDefault
+      ? `${choice.label} (provider's default)`
+      : choice.label;
+
+export const effortChoiceText = (choice: EffortChoice): string =>
+  [
+    choice.label,
+    ...(choice.isDefault ? [' (default)'] : []),
+    ...(choice.isModelDefault ? [" (model's default)"] : []),
+  ].join('');
+
+// Model, effort and permission mode selects, kept by the workflow builder (agent workbench U1:
+// threads pick them in the composer bar instead). The lists are the bar's. The models come from
+// the provider; a change applies to the next turn.
 export function ThreadSettings({
   providerInstanceId,
   kind,
@@ -76,27 +152,26 @@ export function ThreadSettings({
   kind: ProviderKind;
   value: ThreadSettingsValue;
   // The instance's defaults, marked in the lists (questions and models spec 18).
-  defaults?: { readonly model: string | null; readonly effort: string | null };
+  defaults?: ModelDefaults;
   disabled?: boolean;
   className?: string;
   onChange(changes: Partial<ThreadSettingsValue>): void;
 }) {
   const { models, error } = useModels(providerInstanceId);
-  const modelChoices = modelOptions(models, value.model).map((id) => ({
-    id,
-    label: marked(models.find((model) => model.id === id)?.label || id, id === defaults?.model),
+  const modelList = modelChoices(models, value.model, defaults).map((choice) => ({
+    id: choice.id,
+    label: modelChoiceText(choice),
   }));
-  const efforts = effortOptions(kind, models, value.model, value.effort).map((id) => ({
-    id,
-    label: marked(effortLabel(id), id === defaults?.effort),
-  }));
+  const efforts = effortChoices(kind, models, value.model, value.effort, defaults).map(
+    (choice) => ({ id: choice.id, label: effortChoiceText(choice) }),
+  );
   return (
     <div className={cn('flex flex-wrap items-center gap-1.5', className)}>
       <Select
         label="Model"
         value={value.model}
-        options={modelChoices}
-        disabled={disabled || modelChoices.length === 0}
+        options={modelList}
+        disabled={disabled || modelList.length === 0}
         onChange={(model) => onChange({ model })}
       />
       <Select

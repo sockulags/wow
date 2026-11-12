@@ -12,6 +12,11 @@ import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
 import { activeSkillComposer, skillComposerStore } from '@/chat/composer-store';
 import { skillComposerCommands } from '@/chat/skill-commands';
+import { rowActionCommands } from '@/chat/row-commands';
+import { activeTaskPin, taskPinCommands, taskPinStore } from '@/chat/task-pin';
+import { focusedRowActions, rowActionStore } from '@/lib/row-actions';
+import { paletteThreadHits, threadListStore } from '@/chat/thread-commands';
+import { activeModelBar, modelBarCommands, modelBarStore } from '@/chat/model-commands';
 import { useTopic } from '@/chat/data';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
@@ -37,7 +42,7 @@ import { gateRunForThread } from '@/workflows/model';
 import { triggersPath } from '@/workflows/triggers';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
 import { updateCommands } from './updates';
-import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindings';
+import { eventToBinding, normalizeBinding, worksInTextFields } from './keybindings';
 import { useLayout, useRuntime, useSetting, useUpdateState } from './runtime';
 
 // While the first-start gate is up only the step is on screen, so the palette offers only what
@@ -102,9 +107,17 @@ export function useCommands(gated = false): {
   const ruleBuilder = useStore(rulesStore, (state) => state.builder);
   const ruleAt = useStore(rulesStore, (state) => state.at);
   const staticCommands = useMemo(() => buildCommands(), []);
+  const listProjectId = useStore(threadListStore, (state) => state.projectId);
+  const paletteHits = useStore(paletteThreadHits);
   const connectShown = useStore(connectStore, (state) => state.shown > 0);
   const questionCard = useStore(questionStore, activeQuestionCard);
   const skillComposer = useStore(skillComposerStore, activeSkillComposer);
+  const taskPin = useStore(taskPinStore, activeTaskPin);
+  const rowAreas = useStore(rowActionStore, (state) => state.areas);
+  const taskPinOpen = useStore(taskPinStore, (state) =>
+    taskPin === undefined ? false : (state.open[taskPin] ?? false),
+  );
+  const modelBar = useStore(modelBarStore, activeModelBar);
   const all = useMemo(() => {
     const zone = calendarZone;
     const when = (iso: string) => formatWhen(iso, zone);
@@ -138,6 +151,8 @@ export function useCommands(gated = false): {
         running: runningTurn(turns ?? []) !== undefined,
         approval: pendingApproval(approvals ?? []),
         inChat: pathname.startsWith('/chat'),
+        projects: projects ?? [],
+        threadList: { projectId: listProjectId, found: paletteHits },
       }),
       ...workflowCommands({
         workflows: workflows ?? [],
@@ -187,6 +202,9 @@ export function useCommands(gated = false): {
       }),
       ...questionCommands(questionCard),
       ...skillComposerCommands(skillComposer),
+      ...taskPinCommands(taskPin, taskPinOpen),
+      ...rowActionCommands(focusedRowActions({ areas: rowAreas })),
+      ...modelBarCommands(modelBar),
       ...assistantCommands({
         changes: assistantChanges ?? [],
         proposals: assistantProposals ?? [],
@@ -209,6 +227,7 @@ export function useCommands(gated = false): {
       ...staticCommands,
     ];
   }, [
+    rowAreas,
     calendarZone,
     outlookProfile,
     showWeekends,
@@ -253,6 +272,11 @@ export function useCommands(gated = false): {
     connectShown,
     questionCard,
     skillComposer,
+    taskPin,
+    taskPinOpen,
+    listProjectId,
+    paletteHits,
+    modelBar,
   ]);
   const commands = useMemo(
     () => (gated ? all.filter((command) => gateCommand(command.id)) : all),
@@ -295,8 +319,9 @@ export function useGlobalKeybindings(
         );
       });
       if (!command) return;
-      // Plain keys stay with text fields; shortcuts with Ctrl, Alt or Cmd work everywhere.
-      if (isEditable(event.target) && !hasCommandModifier(pressed)) return;
+      // Plain keys stay with text fields; shortcuts with Ctrl, Alt or Cmd, and F-keys, which type
+      // nothing, work everywhere.
+      if (isEditable(event.target) && !worksInTextFields(pressed)) return;
       // A held key is still claimed (Ctrl+= must not fall through to the browser's page zoom),
       // but only repeatable commands run again.
       event.preventDefault();

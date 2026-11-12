@@ -4,7 +4,11 @@ import type {
   ProviderEvent,
   ProviderInstance,
 } from '@wow/contracts';
-import { ProviderEvent as ProviderEventSchema, providerChatOptions } from '@wow/contracts';
+import {
+  ProviderEvent as ProviderEventSchema,
+  ProviderModel,
+  providerChatOptions,
+} from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import { ClaudeAdapter, extraArgs, providerKind } from './index.js';
 import type { SDKMessage } from './sdk.js';
@@ -247,6 +251,8 @@ describe('@wow/provider-claude', () => {
         itemId: 'toolu_bash',
         name: 'Bash',
         input: { command: 'ls' },
+        kind: 'command',
+        command: 'ls',
       },
       {
         type: 'approvalRequested',
@@ -408,6 +414,42 @@ describe('@wow/provider-claude', () => {
         behavior: 'allow',
         updatedInput: { ...input, answers: { [question.question]: sent } },
       },
+    ]);
+  });
+
+  it('reports a failed Bash call as an error with its command and no exit code (agent workbench spec 27)', async () => {
+    const failed: FakeStep = {
+      message: {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_t', content: '1 failed', is_error: true },
+          ],
+        },
+        parent_tool_use_id: null,
+        tool_use_result: { stdout: '', stderr: '1 failed', interrupted: false },
+        session_id: 'sess-1',
+      } as unknown as SDKMessage,
+    };
+    const h = harness([
+      [assistantToolUse('toolu_t', 'Bash', { command: 'pnpm test' }), failed, result(0)],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(h.events.filter((event) => event.type.startsWith('toolCall'))).toEqual([
+      {
+        type: 'toolCallStarted',
+        threadId: 't1',
+        itemId: 'toolu_t',
+        name: 'Bash',
+        input: { command: 'pnpm test' },
+        kind: 'command',
+        command: 'pnpm test',
+      },
+      { type: 'toolCallOutput', threadId: 't1', itemId: 'toolu_t', output: '1 failed' },
+      { type: 'toolCallCompleted', threadId: 't1', itemId: 'toolu_t', status: 'error' },
     ]);
   });
 
@@ -898,6 +940,59 @@ describe('@wow/provider-claude', () => {
     expect(h.queries[1]?.options.resume).toBe('sess-1');
   });
 
+  // Agent workbench spec 51: a message written during the turn goes into the session's input
+  // the way Claude Code's own queue takes it, so the server shows it sent.
+  it('hands a message to the running turn with priority next', async () => {
+    const later = released();
+    const h = harness([
+      [assistantText('1', 'Reading the readme.'), later.step, result(0.01)],
+      [assistantText('2', 'And the summary.'), result(0.02)],
+    ]);
+    const started = h.next('textDelta');
+    await h.adapter.send(startTurn());
+    await started;
+    expect(
+      await h.adapter.send({ type: 'handOver', threadId: 't1', prompt: 'Then sum it up' }),
+    ).toEqual({ taken: true });
+    const first = h.next('turnCompleted');
+    later.release();
+    await first;
+    // The fake answers the message after the result, as a turn Claude Code starts by itself.
+    await h.next('turnCompleted');
+    expect(h.events).toContainEqual({ type: 'turnStartedByProvider', threadId: 't1' });
+    expect(h.queries[0]?.prompts).toEqual(['What is in the readme?', 'Then sum it up']);
+    expect(h.queries[0]?.priorities).toEqual([undefined, 'next']);
+  });
+
+  it('takes no message when no turn runs', async () => {
+    const h = harness([[result(0.01)], [result(0.02)]]);
+    expect(await h.adapter.send({ type: 'handOver', threadId: 't1', prompt: 'Hello' })).toEqual({
+      taken: false,
+    });
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(await h.adapter.send({ type: 'handOver', threadId: 't1', prompt: 'Late' })).toEqual({
+      taken: false,
+    });
+    expect(h.queries[0]?.prompts).toEqual(['What is in the readme?']);
+  });
+
+  // Spec 60: Claude Code's own commands for the thread's folder, from a probe opened there.
+  it("lists Claude Code's commands from a probe in the folder and closes it", async () => {
+    const h = harness([]);
+    expect(await h.adapter.send({ type: 'listCommands', cwd: '/work/demo' })).toEqual([
+      { name: 'compact', description: 'Clear history but keep a summary' },
+      {
+        name: 'release-notes',
+        description: 'Write the release notes (invented)',
+        argumentHint: '<version>',
+      },
+    ]);
+    expect(h.queries[0]?.options.cwd).toBe('/work/demo');
+    expect(h.queries[0]?.closed).toBe(true);
+  });
+
   it('rejects an effort Claude does not know', async () => {
     const h = harness([]);
     await expect(h.adapter.send(startTurn({ effort: 'extreme' }))).rejects.toThrow(
@@ -918,6 +1013,19 @@ describe('@wow/provider-claude', () => {
       { id: 'haiku', label: 'Haiku', description: 'Fastest', efforts: [] },
     ]);
     expect(h.queries[0]?.closed).toBe(true);
+  });
+
+  // Agent workbench spec 7, 8: Claude Code gives label, description and efforts, but no default
+  // effort, no default flag and no image input, so those stay absent and nothing is guessed.
+  it('shows the description and leaves the fields Claude Code does not report empty', async () => {
+    const h = harness([]);
+    const models = ProviderModel.array().parse(await h.adapter.send({ type: 'listModels' }));
+    expect(models[0]?.description).toBe('Fast and capable');
+    for (const model of models) {
+      expect(model).not.toHaveProperty('defaultEffort');
+      expect(model).not.toHaveProperty('isDefault');
+      expect(model).not.toHaveProperty('imageInput');
+    }
   });
 
   it('tests the instance with a trivial turn and reports account and version', async () => {

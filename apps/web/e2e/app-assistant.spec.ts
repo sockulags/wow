@@ -3,6 +3,7 @@ import { settingsRegistry } from '@wow/contracts';
 import { access, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { e2eAssistantHome } from './env';
 
 // U6 of the app assistant: the spec's ground truth names the behaviors `pnpm e2e` must cover.
 // Each case that covers one carries `@app-assistant-<n>` in its title, so
@@ -101,5 +102,66 @@ test.describe('app assistant coverage', () => {
     expect(smoke.slice(smoke.indexOf('## 1. Install'), smoke.indexOf('## 2.'))).toContain(
       'Connect an agent',
     );
+  });
+});
+
+// Agent workbench U1 (spec 10): the Assistant view's composer bar writes the assistant's
+// settings, as Settings → Assistant does, and its mode is not a choice. It runs against the
+// assistant's server copy, in the `assistant` project with the other files that use it, and
+// puts the model and effort back as it found them.
+test.describe("the assistant's composer bar", () => {
+  test.beforeEach(async ({ page }) => {
+    const info: unknown = JSON.parse(
+      await readFile(path.join(e2eAssistantHome, 'server.json'), 'utf8'),
+    );
+    await page.addInitScript((serverInfo) => {
+      (globalThis as { wowServerInfo?: unknown }).wowServerInfo = serverInfo;
+    }, info);
+  });
+
+  test("the assistant's bar writes its settings @agent-workbench-10", async ({ page }) => {
+    await page.goto('/assistant');
+    const bar = page.getByTestId('model-bar');
+    await expect(bar.getByRole('button', { name: 'Provider instance' })).toHaveText('Mock Claude');
+    await expect(bar).toContainText('Read only');
+    await expect(bar.getByRole('button', { name: 'Permission mode' })).toHaveCount(0);
+    const model = bar.getByRole('button', { name: 'Model' });
+    const effort = bar.getByRole('button', { name: 'Effort' });
+    await expect(model).not.toHaveText('');
+    const before = { model: await model.textContent(), effort: await effort.textContent() };
+
+    // An option's name is its label and, for a model, its description after it.
+    const pick = async (part: 'Model' | 'Effort', label: string) => {
+      await bar.getByRole('button', { name: part }).click();
+      await page
+        .getByRole('listbox', { name: part })
+        .getByRole('option')
+        .filter({ has: page.getByText(label, { exact: true }) })
+        .click();
+    };
+    await pick('Model', 'Mock model, large');
+    await expect(model).toHaveText('Mock model, large');
+    await pick('Effort', 'High');
+    await expect(effort).toHaveText('High');
+
+    await page.goto('/settings/assistant');
+    await expect(page.getByTestId('setting-assistant.model').getByRole('textbox')).toHaveValue(
+      'mock-model-large',
+    );
+    await expect(page.getByTestId('setting-assistant.effort').getByRole('textbox')).toHaveValue(
+      'high',
+    );
+
+    // Back as it was: the thread on its earlier model and effort, the settings empty again.
+    await page.goto('/assistant');
+    await pick('Model', before.model ?? '');
+    await expect(model).toHaveText(before.model ?? '');
+    await pick('Effort', before.effort ?? '');
+    await expect(effort).toHaveText(before.effort ?? '');
+    await page.goto('/settings/assistant');
+    for (const key of ['assistant.model', 'assistant.effort']) {
+      await page.getByTestId(`setting-${key}`).getByText('Reset to default').click();
+      await expect(page.getByTestId(`setting-${key}`).getByRole('textbox')).toHaveValue('');
+    }
   });
 });

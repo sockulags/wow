@@ -1,7 +1,16 @@
-import type { Approval, ApprovalDecision, ProviderInstance, Thread } from '@wow/contracts';
+import {
+  providerChatOptions,
+  type Approval,
+  type ApprovalDecision,
+  type Project,
+  type ProviderInstance,
+  type Thread,
+} from '@wow/contracts';
 import { dispatch } from '@wow/client-runtime';
 import type { AppCommand } from '@/app/commands';
-import { canMarkDone, threadTitle } from './model';
+import { activeSkillComposer, skillComposerStore } from './composer-store';
+import { canMarkDone } from './model';
+import { threadListCommands, type ThreadCommandData } from './thread-commands';
 import { providerLabel } from './view-model';
 
 export interface ChatCommandData {
@@ -14,15 +23,10 @@ export interface ChatCommandData {
   readonly approval?: Approval | undefined;
   // The chat view is open: its contextual commands (switch provider) only exist there.
   readonly inChat?: boolean;
+  readonly projects?: readonly Project[];
+  // The thread list's project chip and the palette's message-text hits.
+  readonly threadList?: Pick<ThreadCommandData, 'projectId' | 'found'>;
 }
-
-const stateDetail: Readonly<Record<Thread['state'], string>> = {
-  needs_you: 'Needs you',
-  working: 'Working',
-  idle: 'Idle',
-  failed: 'Failed',
-  done: 'Done',
-};
 
 const approvalCommands: ReadonlyArray<{
   readonly decision: ApprovalDecision;
@@ -47,6 +51,8 @@ export function chatCommands({
   running,
   approval,
   inChat = openThread !== undefined,
+  projects = [],
+  threadList,
 }: ChatCommandData): AppCommand[] {
   const commands: AppCommand[] = [
     {
@@ -64,6 +70,7 @@ export function chatCommands({
             cwd: openThread.projectId === null ? openThread.cwd : undefined,
           });
         }
+        draft.setState({ settings: undefined });
         void navigate({ to: '/chat/new' });
       },
     },
@@ -84,6 +91,7 @@ export function chatCommands({
         run: ({ navigate, draft }) => {
           draft.setState({
             providerInstanceId: instance.id,
+            settings: undefined,
             ...(openThread
               ? {
                   projectId: openThread.projectId ?? undefined,
@@ -115,6 +123,86 @@ export function chatCommands({
           }
         },
       });
+    }
+  }
+
+  if (openThread) {
+    const thread = openThread;
+    const instance = instances.find((candidate) => candidate.id === thread.providerInstanceId);
+    // `/clear` (agent workbench spec 59): a new thread as this one is, the old one stays.
+    commands.push({
+      id: 'chat.clear',
+      title: 'Clear: new thread with the same settings',
+      group: 'Chat',
+      keywords: ['clear', 'new', 'fresh', 'reset', 'thread'],
+      run: ({ navigate, draft }) => {
+        draft.setState({
+          providerInstanceId: thread.providerInstanceId,
+          projectId: thread.projectId ?? undefined,
+          cwd: thread.cwd,
+          settings: {
+            providerInstanceId: thread.providerInstanceId,
+            model: thread.model,
+            effort: thread.effort,
+            permissionMode: thread.permissionMode,
+          },
+        });
+        void navigate({ to: '/chat/new' });
+      },
+    });
+    const compactPrompt = instance ? providerChatOptions[instance.kind].compactPrompt : null;
+    if (compactPrompt !== null && !running) {
+      commands.push({
+        id: 'chat.compact',
+        title: 'Compact the conversation',
+        group: 'Chat',
+        keywords: ['compact', 'context', 'summary', 'summarize'],
+        run: ({ connection }) => {
+          if (connection) {
+            void dispatch(connection, {
+              type: 'thread.sendMessage',
+              threadId: thread.id,
+              text: compactPrompt,
+            }).catch(() => undefined);
+          }
+        },
+      });
+    }
+    const queued = thread.queued;
+    if (queued) {
+      commands.push(
+        {
+          id: 'chat.editQueued',
+          title: 'Edit queued message',
+          group: 'Chat',
+          keywords: ['queue', 'queued', 'edit', 'message'],
+          run: ({ connection }) => {
+            if (!connection) return;
+            dispatch(connection, { type: 'thread.cancelQueued', threadId: thread.id }).then(
+              () =>
+                activeSkillComposer(skillComposerStore.getState())?.putBack(
+                  queued.text,
+                  queued.skills ?? [],
+                ),
+              () => undefined,
+            );
+          },
+        },
+        {
+          id: 'chat.cancelQueued',
+          title: 'Cancel queued message',
+          group: 'Chat',
+          keywords: ['queue', 'queued', 'cancel', 'remove', 'message'],
+          run: ({ connection }) => {
+            if (connection) {
+              void dispatch(connection, {
+                type: 'thread.cancelQueued',
+                threadId: thread.id,
+              }).catch(() => undefined);
+            }
+          },
+        },
+      );
     }
   }
 
@@ -150,26 +238,22 @@ export function chatCommands({
       id: 'chat.markDone',
       title: 'Mark thread done',
       group: 'Chat',
-      keywords: ['done', 'finish', 'complete', 'archive'],
+      keywords: ['done', 'finish', 'complete'],
       run: ({ connection }) => {
         if (connection) void dispatch(connection, { type: 'thread.setDone', threadId, done: true });
       },
     });
   }
 
-  for (const thread of threads) {
-    commands.push({
-      id: `thread.${thread.id}`,
-      title: threadTitle(thread),
-      value: `${threadTitle(thread)} ${thread.id}`,
-      group: 'Threads',
-      keywords: ['thread', thread.state.replace('_', ' '), thread.model],
-      detail: `Thread · ${stateDetail[thread.state]}`,
-      needsYou: thread.state === 'needs_you',
-      recentAt: thread.updatedAt,
-      run: ({ navigate }) =>
-        void navigate({ to: '/chat/$threadId', params: { threadId: thread.id } }),
-    });
-  }
+  commands.push(
+    ...threadListCommands({
+      threads,
+      projects,
+      openThread,
+      inChat: inChat || openThread !== undefined,
+      projectId: threadList?.projectId,
+      found: threadList?.found,
+    }),
+  );
   return commands;
 }

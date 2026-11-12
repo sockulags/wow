@@ -12,7 +12,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Engine } from '../core/engine.js';
-import { CommandRejected } from '../core/orchestrator.js';
 import { snapshot } from '../core/subscriptions.js';
 import { openDatabase, type Database } from '../db/database.js';
 import { ProviderAdapters } from '../hooks/providers.js';
@@ -300,7 +299,14 @@ describe('provider service', () => {
       {
         id: 't1:turn:0:tool1',
         kind: 'tool_call',
-        payload: { name: 'Bash', input: { command: 'ls' }, output: 'README.md', status: 'ok' },
+        payload: {
+          name: 'Bash',
+          input: { command: 'ls' },
+          output: 'README.md',
+          status: 'ok',
+          startedAt: expect.any(String),
+          endedAt: expect.any(String),
+        },
         streaming: false,
       },
       {
@@ -321,10 +327,23 @@ describe('provider service', () => {
         },
         streaming: false,
       },
+      // Each update is its own item (agent workbench spec 31).
       {
         id: 't1:turn:0:tasks',
         kind: 'task_list',
-        payload: { tasks: [{ id: '1', content: 'Read it', status: 'completed' }] },
+        payload: {
+          tasks: [{ id: '1', content: 'Read it', status: 'in_progress' }],
+          at: expect.any(String),
+        },
+        streaming: false,
+      },
+      {
+        id: 't1:turn:0:tasks:1',
+        kind: 'task_list',
+        payload: {
+          tasks: [{ id: '1', content: 'Read it', status: 'completed' }],
+          at: expect.any(String),
+        },
         streaming: false,
       },
       {
@@ -433,9 +452,10 @@ describe('provider service', () => {
 
   it('stops a running turn and keeps its partial output', async () => {
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Long task' });
-    expect(() => dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Again' })).toThrow(
-      CommandRejected,
-    );
+    // A second message waits for the turn instead (agent workbench spec 50); taken off again here.
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Again' });
+    expect(thread()).toMatchObject({ queued: { text: 'Again' } });
+    dispatch({ type: 'thread.cancelQueued', threadId: 't1' });
     const partial = committed('threadItem.added');
     adapter.emit({ type: 'textDelta', threadId: 't1', itemId: 'm1:0', delta: 'Half' });
     await partial;

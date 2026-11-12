@@ -14,6 +14,7 @@ import {
   MockJira,
   MockProviderAdapter,
   createNpmRunner,
+  mockCodexModels,
   snapshot,
   startOutlookService,
   startServer,
@@ -463,6 +464,91 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       ...finish(threadId, 'The repo holds a kettle.'),
     ];
   }
+  // Tool rows (agent workbench U4): a task list, a command that exits 1 after 4.2 s in a folder
+  // of its own, a read, an MCP call, and a command that keeps running, so the turn runs on.
+  if (/run the tools/i.test(prompt)) {
+    const testOutput = Array.from({ length: 24 }, (_, line) => `kettle test ${line + 1} passed`);
+    const tasks = [
+      'Read the readme',
+      'Find the kettle issue',
+      'Plan the timer',
+      'Running the tests',
+      'Fix the failing test',
+      'Start the dev server',
+      'Write the summary',
+    ].map((content, index) => ({
+      id: String(index + 1),
+      content,
+      status:
+        index < 3
+          ? ('completed' as const)
+          : index === 3
+            ? ('in_progress' as const)
+            : ('pending' as const),
+    }));
+    return [
+      session,
+      { type: 'textDelta', threadId, itemId: 'intro', delta: 'Running the checks.' },
+      { type: 'taskListUpdated', threadId, tasks },
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'cmd-test',
+        name: 'command',
+        input: { command: 'pnpm test', cwd: `${command.cwd}/app` },
+        kind: 'command',
+        command: 'pnpm test',
+        cwd: `${command.cwd}/app`,
+      },
+      {
+        type: 'toolCallOutput',
+        threadId,
+        itemId: 'cmd-test',
+        output: `${[...testOutput, 'kettle test 25 failed: expected 2 rings, got 1'].join('\n')}\n`,
+      },
+      {
+        type: 'toolCallCompleted',
+        threadId,
+        itemId: 'cmd-test',
+        status: 'error',
+        exitCode: 1,
+        durationMs: 4200,
+      },
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'read-readme',
+        name: 'Read',
+        input: { file_path: `${command.cwd}/README.md`, offset: 1, limit: 80 },
+        kind: 'read',
+        path: `${command.cwd}/README.md`,
+        lines: { from: 1, to: 80 },
+      },
+      { type: 'toolCallOutput', threadId, itemId: 'read-readme', output: '# Demo\n' },
+      { type: 'toolCallCompleted', threadId, itemId: 'read-readme', status: 'ok' },
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'mcp-issue',
+        name: 'mcp__tracker__find_issue',
+        input: { key: 'DEMO-42', fields: ['status'] },
+        kind: 'mcp',
+        server: 'tracker',
+        tool: 'find_issue',
+      },
+      { type: 'toolCallOutput', threadId, itemId: 'mcp-issue', output: 'DEMO-42 · To Do\n' },
+      { type: 'toolCallCompleted', threadId, itemId: 'mcp-issue', status: 'ok', durationMs: 300 },
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'cmd-dev',
+        name: 'Bash',
+        input: { command: 'pnpm dev' },
+        kind: 'command',
+        command: 'pnpm dev',
+      },
+    ];
+  }
   if (/approve/i.test(prompt)) {
     return [
       session,
@@ -560,6 +646,9 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     ];
   }
   if (/wait/i.test(prompt)) {
+    // Runs until stopped or until the control port's /turn-done ends it, so a message written
+    // meanwhile is queued (agent workbench spec 50, 51).
+    waitingThreads.push(threadId);
     return [session, { type: 'textDelta', threadId, itemId: 'partial', delta: 'Working on it' }];
   }
   return [
@@ -583,6 +672,14 @@ const threadOf = (id: string) => id.split(separator)[0] ?? id;
 // send what follows through (the provider service takes a thread's events from any adapter).
 const backgroundThreads: string[] = [];
 let claudeMock: MockProviderAdapter | undefined;
+// Threads whose "wait" turn still runs, oldest first, and the chat copy's mock adapters, any of
+// which can send what ends them.
+const waitingThreads: string[] = [];
+const chatMocks: MockProviderAdapter[] = [];
+const chatMock = (adapter: MockProviderAdapter) => {
+  chatMocks.push(adapter);
+  return adapter;
+};
 
 // What the first question of a two-question ask was answered, per thread, until the second is.
 const answered = new Map<string, string[]>();
@@ -611,14 +708,17 @@ const chatScript: MockScript = (command) => {
       answered.delete(threadId);
       return finish(threadId, `You chose ${given.join(' and ')}.`, 'after');
     }
-    case 'interrupt':
+    case 'interrupt': {
+      const waiting = waitingThreads.indexOf(command.threadId);
+      if (waiting !== -1) waitingThreads.splice(waiting, 1);
       return [{ type: 'turnInterrupted', threadId: command.threadId }];
+    }
     default:
       return [];
   }
 };
 
-const chatClaude = () => (claudeMock = new MockProviderAdapter('claude', chatScript));
+const chatClaude = () => (claudeMock = chatMock(new MockProviderAdapter('claude', chatScript)));
 
 // "Update Codex" (settings tests): a Codex instance named "... differs" tests as a compatible
 // other version, one named "... incompatible" as incompatible with an npm update until the fake
@@ -893,7 +993,16 @@ const server = await startServer({
               `http://127.0.0.1:${trackerPort}`,
             )
           : chatClaude(),
-      codex: (instance) => new MockProviderAdapter('codex', chatScript, codexTest(instance)),
+      // The chat copy's Codex lists models the way Codex reports them (agent workbench U1).
+      codex: (instance) =>
+        chatMock(
+          new MockProviderAdapter(
+            'codex',
+            chatScript,
+            codexTest(instance),
+            home === e2eHome ? () => mockCodexModels : undefined,
+          ),
+        ),
     },
     outlook: (mode, context) => {
       if (mode !== 'mock') throw new Error('The e2e server runs with WOW_OUTLOOK=mock');
@@ -918,6 +1027,17 @@ const control = createServer((request, response) => {
         { type: 'turnStartedByProvider', threadId },
         ...finish(threadId, 'The background agent counted 42 leaves.', 'counted'),
       ]);
+    }
+  } else if (url.pathname === '/turn-done' && request.method === 'PUT') {
+    // Ends the "wait" turn of ?threadId=, else the oldest, so what was queued during it is sent.
+    const wanted = url.searchParams.get('threadId');
+    const at = wanted === null ? 0 : waitingThreads.indexOf(wanted);
+    const threadId = at === -1 ? undefined : waitingThreads.splice(at, 1)[0];
+    const adapter = chatMocks[0];
+    if (!threadId || !adapter) {
+      response.statusCode = 409;
+    } else {
+      adapter.emit(finish(threadId, 'Done waiting.', 'waited'));
     }
   } else if (url.pathname === '/opened' && request.method === 'GET') {
     response.setHeader('content-type', 'application/json');

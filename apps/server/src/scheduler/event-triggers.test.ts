@@ -759,6 +759,8 @@ describe('a run that cannot start (spec 53)', () => {
         path: '/workflows/triggers',
         runId: null,
         calendarItemId: null,
+        threadId: null,
+        approvalId: null,
       },
     ]);
     expect(db().select().from(triggerEvents).all()).toEqual([

@@ -262,3 +262,99 @@ describe("a step's thread and a waiting question (wow skills spec 14, 18)", () =
     expect(sent()).toEqual([]);
   });
 });
+
+const said = (
+  id: string,
+  turnId: string,
+  index: number,
+  kind: 'user' | 'assistant_text',
+): ThreadItem => ({
+  id,
+  threadId: thread.id,
+  turnId,
+  index,
+  kind,
+  payload: { text: `${kind} ${id}` },
+  streaming: false,
+});
+
+describe('a turn stopped before this change (agent workbench spec 48, 89)', () => {
+  // The line reads the turn's stored state and end time, which a turn stored before already
+  // has: it was stopped, so it says so. No item, divider or marker is added to it.
+  it('ends with the stopped line, and only the last turn carries Resume', () => {
+    const stopped: Turn = { ...failedTurn, state: 'interrupted' };
+    const later: Turn = {
+      ...failedTurn,
+      id: 'turn-2',
+      index: 1,
+      state: 'completed',
+      startedAt: '2026-11-02T08:03:00.000Z',
+      endedAt: '2026-11-02T08:04:00.000Z',
+    };
+    setup({
+      topics: {
+        turns: [stopped, later],
+        threadItems: [
+          said('a', 'turn-1', 0, 'user'),
+          said('b', 'turn-1', 1, 'assistant_text'),
+          said('c', 'turn-2', 2, 'user'),
+          said('d', 'turn-2', 3, 'assistant_text'),
+        ],
+      },
+    });
+    const line = screen.getByTestId('turn-stopped');
+    expect(line.textContent).toMatch(/^Stopped by you · /);
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+    expect(screen.getAllByRole('listitem')).toHaveLength(5);
+  });
+});
+
+// Agent workbench spec 50 to 52: the message the server holds shows after the conversation with
+// Edit and Cancel; once sent it is a user message marked how it went.
+describe('a queued message (agent workbench spec 50 to 52)', () => {
+  const queued: Thread = {
+    ...thread,
+    state: 'working',
+    queued: {
+      id: 'turn-1:queued',
+      text: 'Then sum it up',
+      skills: [{ name: 'tidy-notes', source: 'yours' }],
+      queuedAt: '2026-11-02T08:01:30.000Z',
+    },
+  };
+
+  it('shows "Queued · sent when the turn ends" with its text and skills', () => {
+    setup({ shown: queued });
+    const row = screen.getByTestId('queued-message');
+    expect(row.textContent).toContain('Queued · sent when the turn ends');
+    expect(row.textContent).toContain('Then sum it up');
+    expect(screen.getByRole('list', { name: 'Queued with skills' }).textContent).toBe('tidy-notes');
+  });
+
+  it('takes it off the queue on Cancel', async () => {
+    const { sent, user } = setup({ shown: queued });
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(sent()).toEqual([{ type: 'thread.cancelQueued', threadId: thread.id }]);
+  });
+
+  it('puts it back in the composer on Edit once the server took it off', async () => {
+    const { box, sent, user } = setup({ shown: queued });
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(sent()).toEqual([{ type: 'thread.cancelQueued', threadId: thread.id }]);
+    expect((box as HTMLTextAreaElement).value).toBe('Then sum it up');
+    expect(
+      screen.queryAllByTestId('skill-chip').map((chip) => chip.getAttribute('aria-label')),
+    ).toEqual(['tidy-notes, Yours skill']);
+  });
+
+  it('marks a sent message by how it went', () => {
+    setup({
+      topics: {
+        threadItems: [
+          { ...failedItems[0], payload: { text: 'Also the license', queued: 'duringTurn' } },
+        ],
+      },
+    });
+    expect(screen.getByTestId('sent-from-queue').textContent).toBe('Sent during the turn');
+  });
+});

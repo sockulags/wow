@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { appId, decodeServerInfoArg, encodeServerInfoArg } from '../app.js';
 import { opensOutside, rendererFile } from './app-protocol.js';
 import { readDesktopSettings } from './desktop-settings.js';
-import { runNotices, runStates } from './notifications.js';
+import { chatNotices, routeOf, runNotices, runStates } from './notifications.js';
 import { applicationMenu } from './app-menu.js';
 import { trayMenu, traySummary, trayTooltip } from './tray-menu.js';
 
@@ -47,6 +47,41 @@ describe('app identity', () => {
     const info = { port: 4317, token: 'a b/c?d=e&f' };
     expect(decodeServerInfoArg(['--other', encodeServerInfoArg(info)])).toEqual(info);
     expect(decodeServerInfoArg(['--other'])).toBeUndefined();
+  });
+});
+
+const chatRow = (id: string, threadId: string | null) => ({
+  id,
+  at: '2026-11-02T08:00:00.000Z',
+  kind: 'waiting' as const,
+  title: 'Needs you: Kettle timer',
+  body: 'Allow pnpm test?',
+  path: '/chat/t1',
+  runId: threadId === null ? 'run-1' : null,
+  calendarItemId: null,
+  threadId,
+  approvalId: threadId === null ? null : 't1:tool-1',
+});
+
+describe('chatNotices', () => {
+  it('stays quiet on the first snapshot and tells only new chat rows after it', () => {
+    expect(chatNotices(undefined, [chatRow('n1', 't1')])).toEqual([]);
+    expect(
+      chatNotices(new Set(['n1']), [chatRow('n3', null), chatRow('n2', 't1'), chatRow('n1', 't1')]),
+    ).toEqual([
+      {
+        id: 'n2',
+        title: 'Needs you: Kettle timer',
+        body: 'Allow pnpm test?',
+        path: '/chat/t1',
+        approvalId: 't1:tool-1',
+      },
+    ]);
+  });
+
+  it('reads the route of a window that shows the app', () => {
+    expect(routeOf('wow://app/chat/t1', 'wow://app')).toBe('/chat/t1');
+    expect(routeOf('https://example.com/chat/t1', 'wow://app')).toBeUndefined();
   });
 });
 

@@ -1,6 +1,6 @@
 import type { UpdateState } from '@wow/contracts';
 import { EventEmitter } from 'node:events';
-import type { DesktopShell } from '../main/controller.js';
+import type { DesktopShell, NoticeAction } from '../main/controller.js';
 import type { Notice } from '../main/notifications.js';
 import type { ServerEndpoint } from '../main/server-process.js';
 import type { TrayEntry } from '../main/tray-menu.js';
@@ -9,7 +9,12 @@ export type ShellCall =
   | { readonly kind: 'openWindow'; readonly endpoint: ServerEndpoint; readonly path?: string }
   | { readonly kind: 'closeWindow' }
   | { readonly kind: 'setTray'; readonly entries: TrayEntry[]; readonly tooltip: string }
-  | { readonly kind: 'notify'; readonly notice: Notice; readonly click: () => void }
+  | {
+      readonly kind: 'notify';
+      readonly notice: Notice;
+      readonly click: () => void;
+      readonly actions: readonly NoticeAction[];
+    }
   | { readonly kind: 'setLoginItem'; readonly openAtLogin: boolean }
   | { readonly kind: 'askRestart'; readonly message: string }
   | { readonly kind: 'setUpdateState'; readonly state: UpdateState }
@@ -22,6 +27,8 @@ export class FakeShell implements DesktopShell {
   readonly logs: string[] = [];
   restartAnswer = false;
   updateRestartAnswer = true;
+  // What `focusedRoute` answers: the route of a focused window, or undefined.
+  route: string | undefined;
   readonly #events = new EventEmitter();
 
   waitFor<K extends ShellCall['kind']>(
@@ -62,8 +69,11 @@ export class FakeShell implements DesktopShell {
   setTray(entries: TrayEntry[], tooltip: string): void {
     this.#record({ kind: 'setTray', entries, tooltip });
   }
-  notify(notice: Notice, onClick: () => void): void {
-    this.#record({ kind: 'notify', notice, click: onClick });
+  notify(notice: Notice, onClick: () => void, actions: readonly NoticeAction[] = []): void {
+    this.#record({ kind: 'notify', notice, click: onClick, actions });
+  }
+  focusedRoute(): string | undefined {
+    return this.route;
   }
   setLoginItem(openAtLogin: boolean): void {
     this.#record({ kind: 'setLoginItem', openAtLogin });

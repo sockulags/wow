@@ -286,13 +286,13 @@ test.describe('assistant', () => {
     await expect(gate.getByRole('button', { name: 'Approve' })).toBeVisible();
   });
 
-  test('the tool calls of a turn are one row, the latest on it', async ({ page }) => {
+  test('the tool calls of a turn are one row that says what was done', async ({ page }) => {
     await page.goto('/assistant');
     await say(page, 'Look over my setup');
     const group = conversation(page).getByTestId('item-tool_group').last();
     const row = group.locator(':scope > details > summary');
-    await expect(row).toContainText('mcp__wow__read_skills');
-    await expect(group.getByTestId('tool-group-count')).toHaveText('3 tool calls');
+    // Closed once the turn ended (agent workbench spec 91).
+    await expect(group.getByTestId('tool-group-summary')).toHaveText('Used 3 tools');
     await expect(group.getByTestId('item-tool_call')).toHaveCount(0);
     await row.focus();
     await page.keyboard.press('Enter');
