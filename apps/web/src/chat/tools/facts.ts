@@ -7,6 +7,11 @@ import { formatElapsed } from '../view-model';
 
 export type ToolPayload = ToolCallItemPayload;
 
+// A Windows path may come in its verbatim form (`\\?\C:\work`, `\\?\UNC\host\share`), which
+// names the same place as `C:\work` and `\\host\share`.
+const plain = (path: string): string =>
+  path.replace(/^[\\/]{2}\?[\\/](?:UNC[\\/])?/i, (prefix) => (/UNC/i.test(prefix) ? '\\\\' : ''));
+
 // Windows paths come with either separator and any drive-letter case, so they are compared in
 // one form; the form keeps every character's place, so the original can be cut at the same spot.
 const comparable = (path: string): string => {
@@ -18,15 +23,17 @@ const trimmed = (folder: string) => folder.replace(/[\\/]+$/, '');
 
 // A path inside the thread's folder is shown relative to it.
 export function shownPath(path: string, cwd: string): string {
-  const folder = comparable(trimmed(cwd));
-  const whole = comparable(path);
-  if (folder !== '' && whole.length === path.length && whole.startsWith(`${folder}/`)) {
-    return path.slice(folder.length + 1);
+  const folder = comparable(trimmed(plain(cwd)));
+  const bare = plain(path);
+  const whole = comparable(bare);
+  if (folder !== '' && whole.length === bare.length && whole.startsWith(`${folder}/`)) {
+    return bare.slice(folder.length + 1);
   }
   return path;
 }
 
-const sameFolder = (a: string, b: string) => comparable(trimmed(a)) === comparable(trimmed(b));
+const sameFolder = (a: string, b: string) =>
+  comparable(trimmed(plain(a))) === comparable(trimmed(plain(b)));
 
 // The folder a command ran in, only when it is not the thread's own.
 export const otherFolder = (payload: ToolPayload, cwd: string): string | undefined =>

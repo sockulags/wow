@@ -37,4 +37,18 @@ describe('paths against the thread folder', () => {
       'C:\\Users\\me\\other',
     );
   });
+
+  it('reads a verbatim path as the same place as its plain form', () => {
+    expect(otherFolder(command('\\\\?\\C:\\work\\demo'), 'C:\\work\\demo')).toBeUndefined();
+    expect(otherFolder(command('C:\\work\\demo'), '\\\\?\\c:\\work\\demo\\')).toBeUndefined();
+    expect(
+      otherFolder(command('\\\\?\\UNC\\host\\share\\demo'), '\\\\host\\share\\demo'),
+    ).toBeUndefined();
+    expect(otherFolder(command('\\\\?\\C:\\work\\other'), 'C:\\work\\demo')).toBe(
+      '\\\\?\\C:\\work\\other',
+    );
+    expect(shownPath('\\\\?\\C:\\work\\demo\\src\\a.ts', 'C:\\work\\demo')).toBe('src\\a.ts');
+    expect(shownPath('C:\\work\\demo\\README.md', '\\\\?\\C:\\work\\demo')).toBe('README.md');
+    expect(shownPath('\\\\?\\UNC\\host\\share\\demo\\a.ts', '\\\\host\\share\\demo')).toBe('a.ts');
+  });
 });
