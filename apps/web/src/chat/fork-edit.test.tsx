@@ -318,21 +318,22 @@ describe('Fork (spec 71, 74)', () => {
   });
 });
 
-describe('A go-back the provider refused', () => {
-  const failedEdit = () => ({
-    turns: [
-      turn(0),
-      turn(1),
-      turn(2, { replacedBy: turnId(3) }),
-      turn(3, { state: 'failed', resumable: false }),
-    ],
-    items: [
-      ...threeMessages(),
-      item(3, 'user', { text: 'Add a light' }),
-      item(3, 'error', { message: 'No message to go back to' }),
-    ],
-  });
+// An Edit whose go-back the provider refused: the new turn failed and wrote nothing.
+const failedEdit = () => ({
+  turns: [
+    turn(0),
+    turn(1),
+    turn(2, { replacedBy: turnId(3) }),
+    turn(3, { state: 'failed', resumable: false }),
+  ],
+  items: [
+    ...threeMessages(),
+    item(3, 'user', { text: 'Add a light' }),
+    item(3, 'error', { message: 'No message to go back to' }),
+  ],
+});
 
+describe('A go-back the provider refused', () => {
   it('offers to go on without going back, on the error and in the palette', async () => {
     const user = userEvent.setup();
     const { dispatched } = setup({
