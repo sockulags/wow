@@ -127,8 +127,10 @@ test.describe('chat', () => {
     await startThread(page, 'Hello there');
     const items = conversation(page);
     await expect(items.getByTestId('item-assistant_text')).toContainText('You said: Hello there');
-    // The message, then its turn's start time.
-    await expect(items.getByTestId('item-user')).toHaveText(/^Hello there\d{2}:\d{2}$/);
+    // The message, its Edit and Fork actions, then its turn's start time.
+    await expect(items.getByTestId('item-user')).toHaveText(
+      /^Hello thereEditFork from here\d{2}:\d{2}$/,
+    );
 
     const reasoning = items.getByTestId('item-reasoning');
     await expect(reasoning.getByText('The user said hello.')).toBeHidden();
@@ -927,8 +929,8 @@ test.describe('chat', () => {
     for (const name of ['/model', '/effort', '/plan', '/compact', '/clear', '/done']) {
       await expect(commands.filter({ hasText: name }).first()).toBeVisible();
     }
-    // /fork has no palette command yet, so it is not listed.
-    await expect(commands.filter({ hasText: '/fork' })).toHaveCount(0);
+    // /fork is listed: the thread has an exchange to fork from.
+    await expect(commands.filter({ hasText: '/fork' })).toHaveCount(1);
     const claude = list.getByRole('group', { name: 'Claude Code commands' }).getByRole('option');
     await expect(claude).toHaveCount(2);
     await expect(claude.first()).toContainText('/review');
@@ -1457,7 +1459,8 @@ test.describe('chat', () => {
 
     await page.keyboard.press('Control+k');
     await palette.getByRole('combobox').fill('new thread');
-    await expect(palette.getByRole('option', { name: /New thread/ })).toBeVisible();
+    // Not "New thread defaults for project ...".
+    await expect(palette.getByRole('option', { name: /^New thread(?! defaults)/ })).toBeVisible();
   });
 });
 
