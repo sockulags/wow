@@ -129,16 +129,25 @@ export class ImageStore {
   }
 
   // Looked at before a message is decided: every image it names must be stored for its thread,
-  // so a turn never starts without one of its images.
+  // so a turn never starts without one of its images, and the thread's model must still take
+  // images, since it may have been changed after they were added (spec 54).
   async refusal(command: Command): Promise<string | undefined> {
     if (command.type !== 'thread.sendMessage') return undefined;
-    for (const { id } of command.attachments ?? []) {
+    const attachments = command.attachments ?? [];
+    for (const { id } of attachments) {
       const found = await stat(threadImagePath(this.#deps.home, command.threadId, id)).then(
         (entry) => entry.isFile(),
         () => false,
       );
       if (!found) return 'An image of this message is no longer stored. Add it again.';
     }
-    return undefined;
+    if (attachments.length === 0) return undefined;
+    const thread = this.#deps.db
+      .select()
+      .from(threads)
+      .where(eq(threads.id, command.threadId))
+      .get();
+    if (!thread) return undefined;
+    return modelRefusal(this.#deps, thread.providerInstanceId, thread.model);
   }
 }

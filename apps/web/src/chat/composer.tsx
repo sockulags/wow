@@ -416,6 +416,7 @@ export function Composer({
   const [error, setError] = useState<string>();
   const [activeDescendant, setActiveDescendant] = useState<string>();
   const pendingCaret = useRef<number>(undefined);
+  const arrivals = useRef<Promise<void>>(Promise.resolve());
   const skills = useTopic('skills');
   const stopBinding = useSetting('keybindings.stopTurn');
   const trigger = useSetting('chat.skillTrigger');
@@ -640,24 +641,29 @@ export function Composer({
       }
       setUploading((count) => count + 1);
       const addedTo = draftFor;
-      putImage(connection, imageTarget, file).then(
-        (image) => {
-          setUploading((count) => count - 1);
-          // The thread changed meanwhile: the image belongs to the draft it was added to.
-          if (addedTo !== onScreen.current) {
-            if (addedTo !== undefined) {
-              const stored = readDraft(addedTo);
-              writeDraft(addedTo, { ...stored, images: [...(stored.images ?? []), image] });
+      const upload = putImage(connection, imageTarget, file);
+      // Uploads run side by side, but each chip takes its place in the order it was added, so
+      // Backspace takes off the last one added, not the last one stored.
+      arrivals.current = arrivals.current
+        .then(() => upload)
+        .then(
+          (image) => {
+            setUploading((count) => count - 1);
+            // The thread changed meanwhile: the image belongs to the draft it was added to.
+            if (addedTo !== onScreen.current) {
+              if (addedTo !== undefined) {
+                const stored = readDraft(addedTo);
+                writeDraft(addedTo, { ...stored, images: [...(stored.images ?? []), image] });
+              }
+              return;
             }
-            return;
-          }
-          setImages((current) => [...current, image]);
-        },
-        (reason: unknown) => {
-          setUploading((count) => count - 1);
-          setError(errorMessage(reason));
-        },
-      );
+            setImages((current) => [...current, image]);
+          },
+          (reason: unknown) => {
+            setUploading((count) => count - 1);
+            setError(errorMessage(reason));
+          },
+        );
     }
   };
 
@@ -1074,8 +1080,12 @@ export function Composer({
           onKeyDown={onKeyDown}
           onPaste={(event) => {
             const pasted = filesOf(event.clipboardData);
-            // Pasted text stays the text box's own; only files become images.
-            if (!takesImages || pasted.length === 0) return;
+            // Pasted text stays the text box's own; only files become images. Office puts a
+            // picture of the copied cells or passage beside the text: the text wins.
+            const hasText =
+              event.clipboardData.types.includes('text/plain') &&
+              event.clipboardData.getData('text/plain') !== '';
+            if (!takesImages || pasted.length === 0 || hasText) return;
             event.preventDefault();
             addImages(pasted);
           }}

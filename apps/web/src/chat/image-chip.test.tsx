@@ -73,12 +73,15 @@ function setup({
   items = [],
   settings = {},
   refuse,
+  held,
 }: {
   assistant?: boolean;
   items?: ThreadItem[];
   settings?: SettingValues;
   // What the server answers to attachments.put instead of storing the image.
   refuse?: string;
+  // Holds every put until the test answers it, to answer them out of order.
+  held?: (() => void)[];
 } = {}) {
   let stored = 0;
   const request = vi.fn<(method: string, params: unknown) => Promise<unknown>>((method, params) => {
@@ -87,12 +90,9 @@ function setup({
       const { name } = params as { name?: string };
       const id = ids[stored] ?? ids[0];
       stored += 1;
-      return Promise.resolve({
-        id,
-        mediaType: 'image/png',
-        bytes: 64,
-        ...(name ? { name } : {}),
-      });
+      const answer = { id, mediaType: 'image/png', bytes: 64, ...(name ? { name } : {}) };
+      if (held) return new Promise((resolve) => held.push(() => resolve(answer)));
+      return Promise.resolve(answer);
     }
     if (method === 'attachments.read') {
       return Promise.resolve({ mediaType: 'image/png', base64: 'aW52ZW50ZWQ=' });
@@ -179,6 +179,42 @@ describe('images in the composer (agent workbench spec 53)', () => {
     await user.keyboard('{Backspace}');
     expect(chips()).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Show Image 1 full size' })).toBeTruthy();
+  });
+
+  it('keeps the chips in the order they were added when the second upload answers first @agent-workbench-53', async () => {
+    const held: (() => void)[] = [];
+    const { box, user } = setup({ held });
+    await paste(box, [pngFile('image.png')]);
+    await drop(box, [pngFile('kettle.png')]);
+    expect(held).toHaveLength(2);
+    await act(async () => held[1]?.());
+    await act(async () => held[0]?.());
+    const list = screen.getByRole('list', { name: 'Images' });
+    expect(
+      within(list)
+        .getAllByRole('button', { name: /full size/ })
+        .map((chip) => chip.getAttribute('aria-label')),
+    ).toEqual(['Show Image 1 full size', 'Show kettle.png full size']);
+    box.focus();
+    box.setSelectionRange(0, 0);
+    await user.keyboard('{Backspace}');
+    expect(screen.getByRole('button', { name: 'Show Image 1 full size' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Show kettle.png full size' })).toBeNull();
+  });
+
+  it('leaves a paste that carries text to the text box, even with a picture beside it', async () => {
+    const { box, calls } = setup();
+    await act(async () => {
+      fireEvent.paste(box, {
+        clipboardData: {
+          files: [pngFile('image.png')],
+          types: ['text/plain', 'text/html', 'Files'],
+          getData: (type: string) => (type === 'text/plain' ? 'Kettle\t2 l' : ''),
+        },
+      });
+    });
+    expect(chips()).toHaveLength(0);
+    expect(calls('attachments.put')).toEqual([]);
   });
 
   it('steps onto a chip with the left arrow and takes it off with Delete', async () => {

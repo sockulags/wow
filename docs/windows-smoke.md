@@ -92,7 +92,8 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       the text takes the dropped one off. Drop it again, ask "What do these two pictures show?"
       and send. Write down whether Claude describes both (they went as image blocks), and that
       `%USERPROFILE%\.wow\images\<thread id>` holds the two files. Drop a BMP: it is refused with
-      the reason.
+      the reason. Copy a few cells in Excel and paste them with Ctrl+V: the text goes into the
+      box and no picture is added.
 
 ## 4. Codex turn
 

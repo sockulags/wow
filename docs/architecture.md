@@ -2845,7 +2845,11 @@ Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attac
   `thread.sendMessage` with attachments in the decider).
 - **Sending.** `dispatch` asks `ImageStore.refusal` before deciding a `thread.sendMessage` with
   attachments: every image must be stored for that thread, so a message never starts a turn with a
-  missing image. The decider (`core/threads.ts`) keeps them on the user item and the turn's
+  missing image, and the thread's model is checked again as at `attachments.put`, since the model
+  may have been changed after the images were added (a new thread is created before its first
+  message, so this checks the model it was made with). A message queued with images is not
+  checked again when it leaves the queue: a model changed while it waits gets them, and that
+  provider's refusal shows as the turn's error. The decider (`core/threads.ts`) keeps them on the user item and the turn's
   `start.images` (ids); a message may be images only. The provider service turns the ids into
   `startTurn.images` `[{path, mediaType}]` under wow's home. Claude Code gets the files read and
   base64-encoded as image blocks before the text (`userMessage` in `provider-claude/src/sdk.ts`);
@@ -2857,13 +2861,17 @@ Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attac
   sends the last message's images again; an answer to a waiting question takes none.
 - **Display.** `attachments.read {threadId, id}` answers the media type and base64, which the
   app reads once per connection and image (`useImage`) as a data URL. `ComposerImageChip` is a
-  thumbnail button with a cross; `SentImages` draws a user item's images above its text; a click,
+  thumbnail button with a cross; uploads run side by side but each chip takes its place in the
+  order the image was added (`arrivals` in the composer chains the answers), so Backspace takes
+  off the last one added; `SentImages` draws a user item's images above its text; a click,
   Enter or the palette's "Show <image> full size" opens `ImageViewer` (a Dialog). In the composer
   the images stand right above the text: Backspace at the start of the text takes the last one
   off, the left arrow steps onto it, Backspace or Delete on a chip takes it off, and "Remove
   <image> from the message" does it from the palette (`chat/image-commands.ts`,
   `imageComposerStore`). Send waits while an image is still on its way. A pasted screenshot has
-  no name and shows as "Image n". The Assistant view passes no `imageTarget`, so its composer
+  no name and shows as "Image n". A paste whose clipboard also holds text (`text/plain`, as Excel,
+  Word and Outlook put a picture of the copied cells or passage beside it) is left to the text
+  box and adds no image. The Assistant view passes no `imageTarget`, so its composer
   takes no paste, drop or palette image.
 - **Tests.** `apps/server/src/files/images.test.ts` (storage under the home, the exact input the
   mock adapter is handed, the refusals, the assistant), `providers/queue.test.ts` (images wait

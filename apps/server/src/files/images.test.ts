@@ -252,6 +252,25 @@ describe('images in the composer', () => {
     ).toMatchObject({ code: 'rejected' });
   });
 
+  it('refuses the images at send when the model was changed to one without image input @agent-workbench-54', async () => {
+    thread('full', 'codex', 'mock-codex');
+    const image = resultOf<{ id: string }>(await put('full', png()));
+    dispatch({ type: 'thread.configure', threadId: 'full', model: 'mock-codex-mini' });
+    expect(
+      errorOf(
+        await rpc('dispatch', {
+          commandId: 'send-after-switch',
+          command: { type: 'thread.sendMessage', threadId: 'full', text: '', attachments: [image] },
+        }),
+      ),
+    ).toEqual({
+      code: 'rejected',
+      message:
+        'Mock model for Codex, mini takes no images. Pick a model that does, or send the message without them.',
+    });
+    expect(startTurns()).toEqual([]);
+  });
+
   it('sends images to Codex as local files @agent-workbench-53', async () => {
     thread('full', 'codex', 'mock-codex');
     const image = resultOf<{ id: string }>(await put('full', png()));
