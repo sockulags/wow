@@ -1293,7 +1293,9 @@ removal ask only about files.
   the copy, the thread's Changes, files, `@`, Open in editor and the agent's turns work there
   with no change of theirs.
 - **Made before the first turn.** The provider service awaits `Workspaces.prepareThread` before
-  a chat turn goes out, before the Changes base is read. A copy never made gets
+  a chat turn goes out, before the Changes base is read, inside the same prepared start, so a
+  stop or other command sent for the thread meanwhile still reaches the provider after the
+  start. A copy never made gets
   `createThreadWorkingCopy`: the project folder must be a repository with a commit, git must
   take the branch name (`checkBranchName`), the commit is the project folder's (`head`) or the
   default branch's tip as for runs (`defaultBranch`, with `workspaces.fetchBeforeCreate` and the
