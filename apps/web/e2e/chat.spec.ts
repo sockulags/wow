@@ -35,11 +35,20 @@ const conversation = (page: Page) => page.getByRole('list', { name: 'Conversatio
 const threadList = (page: Page) => page.getByRole('navigation', { name: 'Threads' });
 const messageBox = (page: Page) => page.getByRole('combobox', { name: 'Message' });
 
+// The instance list hands the keyboard back to its button a moment after it closes. A list
+// opened before that (the project's) would lose the keyboard to it and close again, so the next
+// step waits until the button has it.
+async function pickInstance(page: Page, name: string) {
+  const instance = page.getByLabel('Provider instance');
+  await choose(instance, name);
+  await expect(instance).toBeFocused();
+}
+
 // A thread on the Claude instance: a new thread starts on the instance of the newest thread,
 // which an earlier case may have put on Codex.
 async function startClaudeThread(page: Page, message: string) {
   await page.goto('/chat/new');
-  await choose(page.getByLabel('Provider instance'), 'Mock Claude');
+  await pickInstance(page, 'Mock Claude');
   await choose(page.getByLabel('Project'), 'Demo');
   await expect(page.getByTestId('model-bar')).toBeVisible();
   await messageBox(page).fill(message);
@@ -50,7 +59,7 @@ async function startClaudeThread(page: Page, message: string) {
 // A Codex thread whose "wait" turn runs until `endWait` ends it.
 async function startCodexWait(page: Page, message: string) {
   await page.goto('/chat/new');
-  await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+  await pickInstance(page, 'Mock Codex');
   await choose(page.getByLabel('Project'), 'Demo');
   await expect(page.getByTestId('model-bar')).toBeVisible();
   await messageBox(page).fill(message);
@@ -489,7 +498,7 @@ test.describe('chat', () => {
 
     // Codex takes no message with a decline: the turn stops and the note is the next message.
     await page.goto('/chat/new');
-    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await pickInstance(page, 'Mock Codex');
     await choose(page.getByLabel('Project'), 'Demo');
     await expect(page.getByTestId('model-bar')).toBeVisible();
     await messageBox(page).fill('Approve clearing the logs');
@@ -525,7 +534,7 @@ test.describe('chat', () => {
 
     // Another thread of the project, on the other provider: wow answers by the rule.
     await page.goto('/chat/new');
-    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await pickInstance(page, 'Mock Codex');
     await choose(page.getByLabel('Project'), 'Demo');
     await expect(page.getByTestId('model-bar')).toBeVisible();
     await messageBox(page).fill('Run the tests once');
@@ -553,7 +562,7 @@ test.describe('chat', () => {
 
   test('starts from a plan @agent-workbench-42 @agent-workbench-43', async ({ page }) => {
     await page.goto('/chat/new');
-    await choose(page.getByLabel('Provider instance'), 'Mock Claude');
+    await pickInstance(page, 'Mock Claude');
     await choose(page.getByLabel('Project'), 'Demo');
     const bar = page.getByTestId('model-bar');
     await expect(bar).toBeVisible();
@@ -681,7 +690,7 @@ test.describe('chat', () => {
 
   test('sends the Codex invocation of a chip on a Codex instance', async ({ page }) => {
     await page.goto('/chat/new');
-    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await pickInstance(page, 'Mock Codex');
     await choose(page.getByLabel('Project'), 'Demo');
     const composer = page.getByRole('combobox', { name: 'Message' });
     await composer.pressSequentially('/check');
@@ -835,7 +844,7 @@ test.describe('chat', () => {
     await messageBox(page).press('Enter');
     await messageBox(page).pressSequentially('and list the cups');
     await page.goto('/chat/new');
-    await choose(page.getByLabel('Provider instance'), 'Mock Claude');
+    await pickInstance(page, 'Mock Claude');
     await choose(page.getByLabel('Project'), 'Demo');
     await messageBox(page).fill('Hello from the other thread');
     await messageBox(page).press('Enter');
@@ -967,7 +976,9 @@ test.describe('chat', () => {
     await expect(title).toBeFocused();
     await title.fill('Named by slash');
     await title.press('Enter');
-    await expect(page.getByRole('heading', { name: 'Named by slash' })).toBeVisible();
+    await expect(
+      page.locator('#main-view').getByRole('heading', { name: 'Named by slash' }),
+    ).toBeVisible();
     await expect(threadList(page).getByRole('link', { name: /Named by slash/ })).toBeVisible();
   });
 
@@ -1048,7 +1059,7 @@ test.describe('chat', () => {
     ).toHaveCount(0);
     await toast.getByRole('button', { name: 'Open' }).click();
     await expect(
-      page.getByRole('heading', { name: 'Please approve the kettle check' }),
+      page.locator('#main-view').getByRole('heading', { name: 'Please approve the kettle check' }),
     ).toBeVisible();
     await expect(
       conversation(page).getByRole('region', { name: 'Approval request' }),
@@ -1086,7 +1097,9 @@ test.describe('chat', () => {
     await page.keyboard.press('ArrowDown');
     await expect(rows).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: 'Count the kettle whistles' })).toBeVisible();
+    await expect(
+      page.locator('#main-view').getByRole('heading', { name: 'Count the kettle whistles' }),
+    ).toBeVisible();
     await filter.fill('');
 
     // F2 renames, even from the composer; the title changes in the list, header and palette.
@@ -1096,7 +1109,9 @@ test.describe('chat', () => {
     await expect(title).toBeFocused();
     await title.fill('Kettle whistle census');
     await title.press('Enter');
-    await expect(page.getByRole('heading', { name: 'Kettle whistle census' })).toBeVisible();
+    await expect(
+      page.locator('#main-view').getByRole('heading', { name: 'Kettle whistle census' }),
+    ).toBeVisible();
     const renamed = threadList(page).getByRole('link', { name: /Kettle whistle census/ });
     await expect(renamed).toBeVisible();
     await page.keyboard.press('Control+k');
@@ -1137,7 +1152,9 @@ test.describe('chat', () => {
     await expect(renamed.getByTestId('thread-unread')).toBeVisible();
     await expect(renamed.getByTestId('thread-row-title')).toHaveCSS('font-weight', '600');
     await page.keyboard.press('Alt+Shift+ArrowDown');
-    await expect(page.getByRole('heading', { name: 'Kettle whistle census' })).toBeVisible();
+    await expect(
+      page.locator('#main-view').getByRole('heading', { name: 'Kettle whistle census' }),
+    ).toBeVisible();
     await expect(renamed.getByTestId('thread-unread')).toHaveCount(0);
 
     await page.keyboard.press('Control+k');
@@ -1147,7 +1164,9 @@ test.describe('chat', () => {
     await expect(renamed.getByTestId('thread-unread')).toBeVisible();
     // Opening it again reads it.
     await renamed.click();
-    await expect(page.getByRole('heading', { name: 'Kettle whistle census' })).toBeVisible();
+    await expect(
+      page.locator('#main-view').getByRole('heading', { name: 'Kettle whistle census' }),
+    ).toBeVisible();
     await expect(renamed.getByTestId('thread-unread')).toHaveCount(0);
   });
 
@@ -1207,7 +1226,7 @@ test.describe('chat', () => {
 
     // A new thread has the same bar; on Codex the list says what the provider offers.
     await page.goto('/chat/new');
-    await choose(page.getByLabel('Provider instance'), 'Mock Codex');
+    await pickInstance(page, 'Mock Codex');
     await expect(page.getByTestId('model-bar')).toHaveText('Mock model for Codex·Medium·Read only');
     await page.getByTestId('model-bar').getByRole('button', { name: 'Model' }).click();
     const offered = page.getByRole('listbox', { name: 'Model' }).getByRole('option');
@@ -1266,7 +1285,7 @@ test.describe('chat', () => {
   }) => {
     // The skill list opens under a new thread's composer, so the pickers above stay in view.
     await page.goto('/chat/new');
-    await choose(page.getByLabel('Provider instance'), 'Mock Claude');
+    await pickInstance(page, 'Mock Claude');
     await messageBox(page).pressSequentially('/');
     const skills = page.getByRole('listbox', { name: 'Skills' });
     await expect(skills).toBeVisible();
