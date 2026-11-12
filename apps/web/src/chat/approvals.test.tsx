@@ -29,7 +29,7 @@ import { diffParts } from './tools/edit';
 
 beforeAll(loadMarkdown);
 afterEach(() => {
-  approvalCardStore.setState({ offer: undefined, noting: undefined });
+  approvalCardStore.setState({ offer: undefined, keyed: [], noting: undefined });
   threadChangesStore.setState({ threadId: undefined, path: undefined, turnOnly: false });
 });
 
@@ -298,6 +298,67 @@ describe('the approval card (spec 36 to 38)', () => {
       approvalId: 't1:a1',
       decision: 'deny',
     });
+  });
+
+  it("answers the thread's first pending request with the keys, and the open thread's before a step's", () => {
+    const h = harness();
+    const first = approvalRow({
+      approvalId: 't1:a1',
+      kind: 'command',
+      summary: 'First',
+      facts: { kind: 'command', command: 'pnpm lint' },
+    });
+    const second = approvalRow({
+      approvalId: 't1:a2',
+      kind: 'command',
+      summary: 'Second',
+      facts: { kind: 'command', command: 'pnpm test' },
+      rule: { kind: 'command', prefix: 'pnpm test' },
+    });
+    const step = approvalRow({
+      approvalId: 's1:a1',
+      kind: 'command',
+      summary: 'Step',
+      facts: { kind: 'command', command: 'pnpm build' },
+    });
+    const row = (entry: typeof first, keyed: { id: string; side: boolean }) => (
+      <ConversationItem
+        key={entry.approval.id}
+        item={{ ...entry.item, id: entry.approval.id }}
+        approvals={[entry.approval]}
+        questions={[]}
+        context={{ ...context, keyedApproval: keyed }}
+      />
+    );
+    const main = { id: 't1:a1', side: false };
+    const { rerender } = h.show(<ul>{row(first, main)}</ul>);
+    const showAll = (ui: ReactNode) =>
+      rerender(<RuntimeProvider runtime={h.runtime}>{ui}</RuntimeProvider>);
+    // The step's card in the panel mounts last, then the thread's second request.
+    showAll(
+      <ul>
+        {row(first, main)}
+        {row(step, { id: 's1:a1', side: true })}
+      </ul>,
+    );
+    showAll(
+      <ul>
+        {row(first, main)}
+        {row(step, { id: 's1:a1', side: true })}
+        {row(second, main)}
+      </ul>,
+    );
+    expect(approvalCardStore.getState().offer?.approvalId).toBe('t1:a1');
+    // The first one answered, the keys go to the next of the thread, not to the step's.
+    showAll(
+      <ul>
+        {row(step, { id: 's1:a1', side: true })}
+        {row(second, { id: 't1:a2', side: false })}
+      </ul>,
+    );
+    expect(approvalCardStore.getState().offer?.approvalId).toBe('t1:a2');
+    showAll(<ul>{row(step, { id: 's1:a1', side: true })}</ul>);
+    expect(approvalCardStore.getState().offer?.approvalId).toBe('s1:a1');
   });
 
   it('says a request a rule answered was allowed by it, and a denial its note', () => {

@@ -2987,8 +2987,10 @@ keeps the session's mode, so the configure that follows sends nothing. Keep plan
 the note. The card's choices are palette commands from `approvalCommands` (`chat.plan.*`).
 Codex has no plan mode, so it never shows one.
 
-**Palette.** The card on screen writes its offer (approval id, kind, rule) to
-`approvalCardStore`; `approvalCommands(offer)` (wired in `app/use-commands.ts`) gives Allow once,
+**Palette.** The card of a thread's first pending approval (`ItemContext.keyedApproval`, from
+`pendingApproval(approvals)` in `ThreadConversation`) writes its offer (approval id, kind, rule)
+to `approvalCardStore`, whichever card mounted last; when the open thread and a step thread in
+the context panel (`side`) both wait, the open thread's offer wins. `approvalCommands(offer)` (wired in `app/use-commands.ts`) gives Allow once,
 Allow for this session, Always allow in this project (only with a rule) and Deny…, or the plan's
 three choices. They replace the approval commands `chatCommands` had.
 

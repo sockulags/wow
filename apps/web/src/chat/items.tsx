@@ -70,6 +70,10 @@ export interface ItemContext {
   // Opens an edited file (an edit row's and an approval card's Open file); absent where nothing
   // can open it.
   readonly openFile?: ((path: string) => void) | undefined;
+  // The thread's first pending approval, which the keys and the palette answer, and whether the
+  // thread is the context panel's (a step's), which yields to the open thread's. Absent, a
+  // pending card answers them itself.
+  readonly keyedApproval?: { readonly id: string; readonly side: boolean } | undefined;
 }
 
 // One row per thread item. Rows skip layout and paint while off screen, so a long conversation

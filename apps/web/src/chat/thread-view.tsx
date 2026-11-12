@@ -380,6 +380,7 @@ export function ThreadConversation({
       turnEnded: turn !== undefined && turn.state !== 'running',
       at: turn?.startedAt,
       awaitingApproval: approval !== undefined,
+      ...(approval ? { keyedApproval: { id: approval.id, side: compact } } : {}),
       formatAt: when,
       questionHold: extras?.questionHold,
       outputLines,

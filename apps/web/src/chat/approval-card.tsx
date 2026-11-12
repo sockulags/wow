@@ -35,17 +35,47 @@ export interface ApprovalOffer {
   readonly rule: ProposedRule | undefined;
 }
 
+// A conversation's card that the keys may answer: the first pending one of its thread. A thread
+// in the context panel (a step's) yields to the open thread's.
+interface KeyedOffer {
+  readonly offer: ApprovalOffer;
+  readonly side: boolean;
+}
+
 interface ApprovalCardState {
   // The approval on screen that waits for an answer, as its card read it, for the palette.
   readonly offer: ApprovalOffer | undefined;
+  readonly keyed: readonly KeyedOffer[];
   // The card whose note is open: a denial's, or a plan's Keep planning.
   readonly noting: string | undefined;
 }
 
 export const approvalCardStore = createStore<ApprovalCardState>(() => ({
   offer: undefined,
+  keyed: [],
   noting: undefined,
 }));
+
+const keyedOffer = (keyed: readonly KeyedOffer[]): ApprovalOffer | undefined =>
+  (keyed.find((entry) => !entry.side) ?? keyed[0])?.offer;
+
+function keepOffer(entry: KeyedOffer): () => void {
+  const others = approvalCardStore
+    .getState()
+    .keyed.filter((kept) => kept.offer.approvalId !== entry.offer.approvalId);
+  const keyed = [...others, entry];
+  approvalCardStore.setState({ keyed, offer: keyedOffer(keyed) });
+  return () => {
+    const state = approvalCardStore.getState();
+    const left = state.keyed.filter((kept) => kept !== entry);
+    if (left.length === state.keyed.length) return;
+    approvalCardStore.setState({
+      keyed: left,
+      offer: keyedOffer(left),
+      ...(state.noting === entry.offer.approvalId ? { noting: undefined } : {}),
+    });
+  };
+}
 
 export const openApprovalNote = (approvalId: string): void =>
   approvalCardStore.setState({ noting: approvalId });
@@ -252,21 +282,18 @@ export function ApprovalCard({
   useEffect(() => {
     if (pending && payload.kind !== 'plan') section.current?.focus();
   }, [pending, payload.kind]);
-  // The palette and the keys answer the request on screen.
+  // The palette and the keys answer the thread's first request on screen, whichever card
+  // mounted last.
+  const keyed = context.keyedApproval;
+  const answersKeys = pending && (keyed === undefined || keyed.id === payload.approvalId);
+  const side = keyed?.side ?? false;
   useEffect(() => {
-    if (!pending) return;
-    const offer: ApprovalOffer = {
-      approvalId: payload.approvalId,
-      kind: payload.kind,
-      rule: payload.rule,
-    };
-    approvalCardStore.setState({ offer });
-    return () => {
-      if (approvalCardStore.getState().offer?.approvalId === offer.approvalId) {
-        approvalCardStore.setState({ offer: undefined, noting: undefined });
-      }
-    };
-  }, [pending, payload.approvalId, payload.kind, payload.rule]);
+    if (!answersKeys) return;
+    return keepOffer({
+      offer: { approvalId: payload.approvalId, kind: payload.kind, rule: payload.rule },
+      side,
+    });
+  }, [answersKeys, side, payload.approvalId, payload.kind, payload.rule]);
 
   const answer = (
     choice: ApprovalDecision,
