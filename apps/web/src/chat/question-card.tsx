@@ -110,8 +110,11 @@ export function QuestionCard<H>({
   const [error, setError] = useState<string>();
   const [held, setHeld] = useState<{ readonly hold: H } | undefined>();
   const elements = useRef<(HTMLElement | null)[]>([]);
+  // Read when the effect runs: on the first render the rows are not mounted yet.
   useNeedsYouFocus(open.length > 0 ? needsYouKey : undefined, {
-    current: elements.current[active] ?? null,
+    get current() {
+      return elements.current[active] ?? null;
+    },
   });
 
   const replyOf = (question: CardQuestion): QuestionReply => ({
