@@ -2399,7 +2399,12 @@ writes its command from a smaller input than the command's own and goes through 
 dispatch as the change tools. It refuses an unknown project and a command prefix that
 `prefixRuleable` rejects (a shell, a wrapper such as `sudo` or `npx`, an interpreter given
 code, anything that chains, pipes or quotes: `ruleCovers` would never match it), and answers
-"unchanged" for a rule the project has. The card (`rulesCard` in `changes.ts`) reads "Always
+"unchanged" for a rule the project has, comparing with the project's own row (`projectRules`,
+the list rules are answered from, never the resolved value). The class table (`rulesRefusal` in
+`classes.ts`) holds every `approvals.alwaysAllow` change from the assistant to the same terms,
+`set_setting` included: a scope that is not `project:<existing id>` is refused with a pointer to
+the rule tool, and an added command rule `prefixRuleable` rejects is refused in the tool's
+words. The card (`rulesCard` in `changes.ts`) reads "Always
 allow `pnpm test` in Tea" with a line per rule added or removed in `ruleText`'s words, and its
 place, like every change of that setting, is Settings → Approvals.
 

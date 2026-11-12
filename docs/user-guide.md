@@ -1267,7 +1267,7 @@ into view.
 Ask it to always allow a command or a tool in a project ("always allow `pnpm test` in Tea") and it
 proposes the rule; the rule is stored, under Settings → Approvals, only when you press Yes. It
 never stores one itself, and it cannot propose a rule for a command that runs other commands,
-such as `bash` or `npx`.
+such as `bash` or `npx`, nor a rule outside a project, whichever way it asks.
 
 It never answers a gate: approving, sending back or stopping a run is yours, and wow refuses those
 commands from the assistant. It can read the list of skills and the text of a wow skill, and can

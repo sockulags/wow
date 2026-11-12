@@ -1,11 +1,9 @@
 import {
-  AlwaysAllowRule,
   AlwaysAllowRuleRequest,
   Command,
   assistantRuleTool,
   hideSecrets,
   prefixRuleable,
-  ruleText,
   sameRule,
   hideSecretsDeep,
   secretPatterns,
@@ -18,12 +16,14 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
+import { readModel } from '../core/projector.js';
+import { projectRules } from '../core/threads.js';
 import { assistantChanges, assistantProposals, projects } from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import { checkProjectFolder } from '../rpc/handlers.js';
 import { RpcFault } from '../rpc/router.js';
 import { asks } from './asks.js';
-import { alwaysRefused } from './classes.js';
+import { alwaysRefused, unruleable } from './classes.js';
 import { diagnosisReaders } from './diagnosis.js';
 import { guideReaders } from './guides.js';
 import { checkStepModels, modelReaders } from './models.js';
@@ -192,14 +192,10 @@ export const builtTools: Readonly<Record<string, BuiltTool>> = {
           ? { kind: 'command' as const, prefix: rule.prefix.trim().split(/\s+/).join(' ') }
           : rule;
       if (proposed.kind === 'command' && !prefixRuleable(proposed.prefix)) {
-        return {
-          refused: `${ruleText(proposed)} would allow more than that command, so wow offers no rule for it.`,
-        };
+        return { refused: unruleable(proposed) };
       }
-      const current = z
-        .array(AlwaysAllowRule)
-        .catch([])
-        .parse(deps.settings.get('approvals.alwaysAllow', { projectId }));
+      // The project's own list, which is what rules are answered from.
+      const current = projectRules(readModel(deps.db), projectId);
       if (current.some((stored) => sameRule(stored, proposed))) return null;
       return {
         type: 'setting.set',

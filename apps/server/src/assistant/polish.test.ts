@@ -164,6 +164,60 @@ describe('the assistant proposes an always-allow rule (spec 41)', () => {
   });
 });
 
+const rule = (prefix: string) => ({ kind: 'command', prefix, addedAt: now });
+
+describe('rules only for a project, through any tool', () => {
+  it('refuses always-allow rules at a scope that is not an existing project', async () => {
+    for (const scope of ['global', 'project:nowhere', 'provider:claude-work']) {
+      const refused = await call('set_setting', {
+        key: 'approvals.alwaysAllow',
+        scope,
+        value: [rule('rm')],
+      });
+      expect({ scope, ...refused }).toMatchObject({
+        scope,
+        isError: true,
+        content: { outcome: 'refused' },
+      });
+      expect(refused.content.reason).toContain('propose_always_allow_rule');
+    }
+    expect(proposals()).toEqual([]);
+  });
+
+  it("compares and adds a rule against the project's own list, not a global one", async () => {
+    // A value at global scope from before the scope was refused: nothing reads it.
+    asUser({
+      type: 'setting.set',
+      key: 'approvals.alwaysAllow',
+      scope: 'global',
+      value: [rule('pnpm test'), rule('pnpm lint')],
+    });
+    const proposed = await propose({ kind: 'command', prefix: 'pnpm test' });
+    expect(proposed.content).toMatchObject({ outcome: 'proposed' });
+    asUser({ type: 'assistant.proposal.accept', proposalId: proposed.content.proposal?.id ?? '' });
+    expect(setting('approvals.alwaysAllow', 'project:tea')).toEqual([rule('pnpm test')]);
+  });
+
+  it('refuses through set_setting a rule for a command that runs other commands', async () => {
+    for (const prefix of ['bash -c', 'pnpm test`; rm']) {
+      const refused = await call('set_setting', {
+        key: 'approvals.alwaysAllow',
+        scope: 'project:tea',
+        value: [rule(prefix)],
+      });
+      expect({ prefix, ...refused }).toMatchObject({
+        prefix,
+        isError: true,
+        content: { outcome: 'refused' },
+      });
+      expect(refused.content.reason).toContain(
+        'would allow more than that command, so wow offers no rule for it.',
+      );
+    }
+    expect(proposals()).toEqual([]);
+  });
+});
+
 describe("the assistant's tools in words (spec 82)", () => {
   it('names every tool it offers in words', () => {
     const names = server.assistant.tools.list().map((tool) => tool.name);
