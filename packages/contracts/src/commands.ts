@@ -522,8 +522,14 @@ export const InternalCommand = z.discriminatedUnion('type', [
   // turn. Nothing happens when another message waits by then or a turn runs again.
   z.object({ type: z.literal('thread.sendQueued'), threadId: Id, queuedId: Id }),
   // The provider took the queued message `queuedId` into its running turn: it leaves the queue
-  // and the conversation shows it as a user message of that turn.
-  z.object({ type: z.literal('thread.handedOver'), threadId: Id, queuedId: Id }),
+  // and the conversation shows it as a user message of that turn. `offered` is what the provider
+  // got, so a message joined or cancelled meanwhile still shows it and keeps only the rest.
+  z.object({
+    type: z.literal('thread.handedOver'),
+    threadId: Id,
+    queuedId: Id,
+    offered: z.object({ text: z.string(), skills: z.array(SkillRef).optional() }).optional(),
+  }),
   // The provider service, before a chat thread's turn is sent: the commit its folder is on and
   // what already differed from it (first turn only), and the changed files' hashes as the turn
   // begins (agent workbench spec 34). Null where git could not say.

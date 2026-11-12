@@ -393,9 +393,14 @@ thread it maps to, since the app-server has no request that unloads one.
   step thread the event carries `handOver {providerInstanceId, prompt}` (the prompt with the
   skills in front, as `thread.sendMessage` would send it); the provider service then sends the
   adapter `handOver {threadId, prompt}`, which answers `HandOverResult {taken}`. Taken, the
-  service dispatches `thread.handedOver {threadId, queuedId}`: the queue empties and a `user` item
-  with `queued: 'duringTurn'` joins the running turn (or the turn that just ended), so the
-  conversation shows it sent. Not taken, it stays queued. On every `turn.ended` whose thread holds
+  service dispatches `thread.handedOver {threadId, queuedId, offered {text, skills?}}`: the queue
+  empties and a `user` item with `queued: 'duringTurn'` joins the running turn (or the turn that
+  just ended), so the conversation shows it sent. Not taken, it stays queued. The service offers a
+  thread one version at a time: a join while the adapter has not answered is not offered. When the
+  answer names an older `queuedId` (joined or cancelled since), the orchestrator still shows
+  `offered` in the running turn it was offered to (the turn id starts the queued id), keeps only
+  the rest of a joined message (text after the offered one, skills it did not carry) and offers
+  that rest again. On every `turn.ended` whose thread holds
   a queue, the service dispatches `thread.sendQueued {threadId, queuedId}` in a microtask (after
   every listener heard of the end, so none sees the next turn start first) with command id
   `send-queued:<queuedId>`; the orchestrator empties the queue and starts the turn as

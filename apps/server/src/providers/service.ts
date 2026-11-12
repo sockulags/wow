@@ -10,6 +10,7 @@ import {
   type ProviderAdapter,
   type ProviderCommand,
   type ProviderInstance,
+  type QueuedMessage,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
 import { and, eq, isNotNull, ne } from 'drizzle-orm';
@@ -57,6 +58,8 @@ export class ProviderService {
   readonly #unsubscribe: () => void;
   #flushScheduled = false;
   #stopped = false;
+  // Threads whose queued message the provider has been offered and not yet answered.
+  readonly #handingOver = new Set<string>();
   // Turns being prepared before they go out (the assistant's tools, a chat thread's marks).
   readonly #preparing = new Set<Promise<unknown>>();
 
@@ -255,8 +258,10 @@ export class ProviderService {
         }
         case 'thread.queueChanged': {
           const { threadId, queued, handOver } = event.payload;
-          if (queued && handOver)
-            this.#handOver(handOver.providerInstanceId, threadId, queued.id, handOver.prompt);
+          // One offer at a time: a join offered while the provider still decides on the first
+          // would give it the first text twice; its answer offers what is left.
+          if (queued && handOver && !this.#handingOver.has(threadId))
+            this.#handOver(handOver.providerInstanceId, threadId, queued, handOver.prompt);
           break;
         }
         // Dispatched after this commit's listeners have all heard of the turn's end, so none of
@@ -386,7 +391,12 @@ export class ProviderService {
 
   // Offers the queued message to the running turn. Not taken, it stays queued and goes when
   // the turn ends (agent workbench spec 51 and its open risk).
-  #handOver(providerInstanceId: string, threadId: string, queuedId: string, prompt: string): void {
+  #handOver(
+    providerInstanceId: string,
+    threadId: string,
+    queued: QueuedMessage,
+    prompt: string,
+  ): void {
     let answer: Promise<unknown>;
     try {
       answer = this.#adapter(providerInstanceId).send({ type: 'handOver', threadId, prompt });
@@ -394,18 +404,23 @@ export class ProviderService {
       this.#deps.logger.warn('provider handOver failed', describeError(error));
       return;
     }
+    this.#handingOver.add(threadId);
     answer
       .then(
         (result) => {
+          this.#handingOver.delete(threadId);
           if (this.#stopped || !HandOverResult.safeParse(result).data?.taken) return;
-          this.#deps.engine.dispatch(`handed-over:${queuedId}`, {
+          this.#deps.engine.dispatch(`handed-over:${queued.id}`, {
             type: 'thread.handedOver',
             threadId,
-            queuedId,
+            queuedId: queued.id,
+            offered: { text: queued.text, ...(queued.skills ? { skills: queued.skills } : {}) },
           });
         },
-        (error: unknown) =>
-          this.#deps.logger.warn('provider handOver failed', describeError(error)),
+        (error: unknown) => {
+          this.#handingOver.delete(threadId);
+          this.#deps.logger.warn('provider handOver failed', describeError(error));
+        },
       )
       .catch((error: unknown) =>
         this.#deps.logger.warn('the handed over message was not recorded', describeError(error)),

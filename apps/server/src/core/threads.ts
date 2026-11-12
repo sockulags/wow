@@ -243,6 +243,16 @@ function queueMessage(
     queuedAt: before?.queuedAt ?? context.now,
   };
   if (thread.kind === 'assistant') return queueChanged(thread.id, message);
+  return offerQueued(read, context, thread, message);
+}
+
+function offerQueued(
+  read: ReadModel,
+  context: DecideContext,
+  thread: Thread,
+  message: QueuedMessage,
+): DomainEvent {
+  const skills = message.skills ?? [];
   const prompt =
     skills.length > 0
       ? messageWithSkills(read, context, thread, skills, message.text).prompt
@@ -251,6 +261,69 @@ function queueMessage(
     providerInstanceId: thread.providerInstanceId,
     prompt,
   });
+}
+
+// The user item of a message the provider took into `turn`.
+function handedOverItem(
+  read: ReadModel,
+  context: DecideContext,
+  thread: Thread,
+  turn: Turn,
+  text: string,
+  picked: readonly SkillRef[],
+): DomainEvent {
+  const skills =
+    picked.length > 0 ? messageWithSkills(read, context, thread, picked, text).skills : undefined;
+  const index = read.nextItemIndex(thread.id);
+  return {
+    kind: 'threadItem.added',
+    aggregate: thread.id,
+    payload: {
+      id: `${turn.id}:handedOver:${index}`,
+      threadId: thread.id,
+      turnId: turn.id,
+      index,
+      kind: 'user',
+      payload: {
+        text,
+        ...(skills && skills.length > 0 ? { skills } : {}),
+        queued: 'duringTurn',
+      },
+      streaming: false,
+    },
+  };
+}
+
+// The provider took an older version of the queue (agent workbench spec 51): it shows in the
+// running turn it was offered to, and of a message joined since only the rest stays queued.
+function handedOverEarlier(
+  read: ReadModel,
+  context: DecideContext,
+  thread: Thread,
+  queuedId: string,
+  offered: { readonly text: string; readonly skills?: readonly SkillRef[] | undefined },
+): DomainEvent[] {
+  const running = read.runningTurn(thread.id);
+  if (!running || !queuedId.startsWith(`${running.id}:queued:`)) return [];
+  const given = offered.skills ?? [];
+  const events = [handedOverItem(read, context, thread, running, offered.text, given)];
+  const waiting = thread.queued;
+  if (!waiting) return events;
+  if (!waiting.id.startsWith(`${queuedId}+`) || !waiting.text.startsWith(offered.text)) {
+    return [...events, offerQueued(read, context, thread, waiting)];
+  }
+  const text = waiting.text.slice(offered.text.length).replace(/^\n\n/, '');
+  const skills = (waiting.skills ?? []).filter(
+    (skill) => !given.some((ref) => ref.name === skill.name && ref.source === skill.source),
+  );
+  if (text.trim() === '' && skills.length === 0) return [...events, queueChanged(thread.id, null)];
+  const rest: QueuedMessage = {
+    id: waiting.id,
+    text,
+    ...(skills.length > 0 ? { skills } : {}),
+    queuedAt: waiting.queuedAt,
+  };
+  return [...events, offerQueued(read, context, thread, rest)];
 }
 
 // A message as the next turn: on the assistant's thread on the instance the settings name now,
@@ -489,35 +562,17 @@ export function decideThread(
     case 'thread.handedOver': {
       const thread = requireThread(read, command.threadId);
       const waiting = thread.queued;
-      if (!waiting || waiting.id !== command.queuedId) return [];
+      if (!waiting || waiting.id !== command.queuedId) {
+        return command.offered
+          ? handedOverEarlier(read, context, thread, command.queuedId, command.offered)
+          : [];
+      }
       // The provider has it, so it shows in the turn it went into, or the one that just ended.
       const turn = read.runningTurn(thread.id) ?? read.lastTurn(thread.id);
       if (!turn) return [queueChanged(thread.id, null)];
-      const picked = waiting.skills ?? [];
-      const skills =
-        picked.length > 0
-          ? messageWithSkills(read, context, thread, picked, waiting.text).skills
-          : undefined;
-      const index = read.nextItemIndex(thread.id);
       return [
         queueChanged(thread.id, null),
-        {
-          kind: 'threadItem.added',
-          aggregate: thread.id,
-          payload: {
-            id: `${turn.id}:handedOver:${index}`,
-            threadId: thread.id,
-            turnId: turn.id,
-            index,
-            kind: 'user',
-            payload: {
-              text: waiting.text,
-              ...(skills && skills.length > 0 ? { skills } : {}),
-              queued: 'duringTurn',
-            },
-            streaming: false,
-          },
-        },
+        handedOverItem(read, context, thread, turn, waiting.text, waiting.skills ?? []),
       ];
     }
     case 'thread.sendPrepared': {
