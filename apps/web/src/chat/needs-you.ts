@@ -2,7 +2,7 @@ import type { AssistantProposal, Thread, WorkflowRun } from '@wow/contracts';
 import { useEffect, type RefObject } from 'react';
 import { createStore, useStore } from 'zustand';
 import type { AppCommand } from '@/app/commands';
-import { gateRunForThread, reviewedStep } from '@/workflows/model';
+import { gateRunForThread, gateStanding, reviewedStep } from '@/workflows/model';
 import { threadTitle } from './model';
 
 // "Next that needs you" (agent workbench spec 76): whatever waits for the user, oldest first,
@@ -24,6 +24,10 @@ export type NeedsYouRoute =
   | { readonly to: '/chat/$threadId'; readonly params: { readonly threadId: string } }
   | { readonly to: '/workflows/runs/$runId'; readonly params: { readonly runId: string } }
   | { readonly to: '/assistant' };
+
+// A gate that waits for the pull request's checks waits for the host, not for the user.
+export const runNeedsYou = (run: WorkflowRun): boolean =>
+  run.state === 'waiting' && gateStanding(run)?.waitsFor !== 'checks';
 
 export function needsYouTargets({
   threads,
@@ -48,7 +52,7 @@ export function needsYouTargets({
         open: { to: '/chat/$threadId' as const, params: { threadId: thread.id } },
       })),
     ...runs
-      .filter((run) => run.state === 'waiting')
+      .filter(runNeedsYou)
       .map((run) => ({
         key: `run:${run.id}`,
         at: reviewedStep(run)?.endedAt ?? run.startedAt,

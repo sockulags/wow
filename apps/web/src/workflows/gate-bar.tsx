@@ -16,7 +16,7 @@ import {
   XIcon,
 } from 'lucide-react';
 import { useId, useRef, useState } from 'react';
-import { useNeedsYouFocus } from '@/chat/needs-you';
+import { runNeedsYou, useNeedsYouFocus } from '@/chat/needs-you';
 import { useStore } from 'zustand';
 import { useSetting } from '@/app/runtime';
 import { errorMessage, useDispatch } from '@/chat/data';
@@ -84,7 +84,7 @@ export function GateBar({
   const draft = useStore(gateStore, (state) => sendBackDraft(state, run));
   const gate = gateOf(run);
   const approveButton = useRef<HTMLButtonElement>(null);
-  useNeedsYouFocus(gate && run.state === 'waiting' ? `run:${run.id}` : undefined, approveButton);
+  useNeedsYouFocus(gate && runNeedsYou(run) ? `run:${run.id}` : undefined, approveButton);
   if (!isLive(run)) return null;
   const reviewed = reviewedStep(run);
   const atLimit = gate?.limit !== undefined;

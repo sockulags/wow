@@ -566,6 +566,25 @@ describe('next that needs you (spec 76)', () => {
     expect(nextNeedsYou(targets, '/assistant', 'proposal:proposal-1')?.key).toBe('run:run-1');
   });
 
+  it('leaves out a run whose gate waits for the checks', () => {
+    const checks = {
+      id: 'run-2',
+      state: 'waiting',
+      startedAt: '2026-11-12T07:00:00.000Z',
+      currentStep: 0,
+      steps: [
+        {
+          stepId: 'step-1',
+          endedAt: '2026-11-12T07:10:00.000Z',
+          waits: 'after',
+          gate: { state: 'waitingForChecks', parts: [], since: '2026-11-12T07:10:00.000Z' },
+        },
+      ],
+    } as unknown as WorkflowRun;
+    const targets = needsYouTargets({ threads: [waitingThread], runs: [checks], proposals: [] });
+    expect(targets.map((target) => target.key)).toEqual(['thread:thread-2']);
+  });
+
   it('puts the keyboard on the waiting approval of the thread on screen', () => {
     const approval = item('turn-0', 'approval', {
       approvalId: 'approval-1',
