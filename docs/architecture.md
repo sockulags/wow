@@ -297,7 +297,8 @@ ProviderEvent:   session {providerSessionId} | textDelta {itemId, delta, parentI
                  taskListUpdated | usage {..., model?} | contextUsage |
                  compacted {trigger manual|auto, preTokens?, postTokens?} | turnCompleted |
                  turnFailed | turnInterrupted | turnStartedByProvider |
-                 backgroundTasks {tasks [{id, description, agent?, kind?, lastOutput?}]}
+                 backgroundTasks {tasks [{id, description, agent?, kind?, lastOutput?}]} |
+                 commandRefused {command stopTask|toBackground, error} (made by the server)
 ```
 
 **Tool facts.** Each adapter normalizes a tool call into `ToolFacts` (`provider.ts`): `kind`
@@ -3069,12 +3070,17 @@ kinds have no `subagent` kind and are drawn as the generic row they were.
 `stopsTasks`, Stop (`thread.stopTask`). The line reads "Waiting for background work" between
 turns and "In the background" during one. The open conversation (not a step's thread in the
 panel, not the Assistant) registers its tasks and its `backgroundTarget` (the newest running
-`command` or `subagent` call of the running turn that is the thread's own) in `backgroundStore`;
+`command` or `subagent` call of the running turn that is the thread's own and has no undecided
+approval; `thread.toBackground` refuses such a call too) in `backgroundStore`;
 `backgroundCommands` offers "Send to the background" (`keybindings.toBackground`, Ctrl+B, only
 where the provider `sendsToBackground`), "Show background task: …" and "Stop background task: …".
 Ctrl+B is Toggle sidebar's key too on Windows and Linux (Mod+B): the palette's command list puts
 the chat's commands first, so the key sends work to the background while there is some and
 toggles the sidebar otherwise; the keybindings table shows the two as sharing the key.
+When the adapter refuses `stopTask` or `toBackground` (Claude Code no longer running, the call
+not sent), the provider service hands the thread a `commandRefused` event, stored as an `error`
+item on the running or the last turn ("Could not stop the task: …", "Could not send it to the
+background: …"), so the refusal is not only in the log.
 
 ### Conversation reading
 

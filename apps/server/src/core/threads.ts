@@ -895,6 +895,11 @@ export function decideThread(
           );
         }
         toolUseId = command.itemId.slice(turn.id.length + 1);
+        // Claude Code holds a call that waits for its approval until it is answered, and does
+        // not send it anywhere before.
+        if (read.approval(approvalRowId(thread.id, toolUseId))?.decision === null) {
+          throw new CommandRejected('conflict', 'This call waits for its approval first.');
+        }
       }
       return [
         {
@@ -1530,6 +1535,23 @@ function decideProviderEvents(
       out.push({ kind: 'turn.startedByProvider', aggregate: threadId, payload: { turn } });
       unarchive();
       state = 'working';
+      continue;
+    }
+    if (event.type === 'commandRefused') {
+      // A background task can be stopped after its turn ended; the notice goes to the last one.
+      const last = turn ?? read.lastTurn(threadId);
+      if (!last) continue;
+      const what =
+        event.command === 'stopTask'
+          ? 'Could not stop the task'
+          : 'Could not send it to the background';
+      add(
+        last,
+        `${last.id}:refused:${nextIndex}`,
+        'error',
+        { message: `${what}: ${event.error}` },
+        false,
+      );
       continue;
     }
     // Events after the turn ended (late output of an interrupted turn) are dropped.

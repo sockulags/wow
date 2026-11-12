@@ -1,6 +1,7 @@
 import {
   providerChatOptions,
   ToolCallItemPayload,
+  type Approval,
   type BackgroundTask,
   type ProviderKind,
   type ThreadItem,
@@ -51,15 +52,25 @@ export const openBackgroundTask = (taskId: string | undefined): void =>
   backgroundStore.setState({ open: taskId });
 
 // The call Ctrl+B sends: the newest running command or subagent of the running turn that is the
-// thread's own (a subagent's command is not a task of the thread's agent).
+// thread's own (a subagent's command is not a task of the thread's agent) and does not wait for
+// its approval.
 export function backgroundTarget(
   items: readonly ThreadItem[],
   turnId: string | undefined,
+  approvals: readonly Approval[] = [],
 ): BackgroundTarget | undefined {
   if (turnId === undefined) return undefined;
+  // A call that waits for its approval goes nowhere until it is answered. Claude Code asks by the
+  // call's own id, which is what follows the turn in the call's row id.
+  const waiting = new Set(
+    approvals
+      .filter((approval) => approval.decision === null)
+      .map((approval) => `${turnId}:${approval.id.slice(approval.threadId.length + 1)}`),
+  );
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
     if (!item || item.turnId !== turnId || item.kind !== 'tool_call') continue;
+    if (waiting.has(item.id)) continue;
     const parsed = ToolCallItemPayload.safeParse(item.payload);
     if (!parsed.success || parsed.data.status !== 'running') continue;
     if (parsed.data.parentItemId !== undefined) continue;

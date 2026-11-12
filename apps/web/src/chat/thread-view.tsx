@@ -573,7 +573,7 @@ export function ThreadConversation({
     threadId,
     !compact && !extras,
     backgroundTasks,
-    backgroundTarget(top, running?.id),
+    backgroundTarget(top, running?.id, approvals),
     instance?.kind,
   );
 

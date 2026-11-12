@@ -550,8 +550,9 @@ has "Show background task: …" and "Stop background task: …" for each. **Ctrl
 (`keybindings.toBackground`, "Send to the background" in the palette) sends the running command
 or subagent of the turn to the background, as in Claude Code, and the turn goes on; on Windows
 and Linux the key is also Toggle sidebar, which it does whenever nothing can go to the
-background. Codex has no background work, so its threads show no chips and Ctrl+B does nothing
-there. When Claude ends its turn to wait for background work, the line reads "Waiting for
+background. A command that still waits for your approval cannot go to the background; answer it
+first. When Claude refuses a Stop or a Ctrl+B, the conversation says so and why. Codex has no
+background work, so its threads show no chips and Ctrl+B does nothing there. When Claude ends its turn to wait for background work, the line reads "Waiting for
 background work". When that work ends,
 Claude goes on by itself: the new turn appears in the thread as it runs, without a message from
 you, its usage is counted, **Stop** stops it, and the thread is marked as after any turn. Should

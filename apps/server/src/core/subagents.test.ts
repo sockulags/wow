@@ -299,6 +299,67 @@ describe('background tasks (spec 90)', () => {
     );
   });
 
+  it('does not send a command that waits for its approval to the background', () => {
+    events(
+      call('bash-2', {
+        name: 'Bash',
+        kind: 'command',
+        command: 'pnpm dev',
+        pattern: undefined,
+      } as Partial<ProviderEvent>),
+      {
+        type: 'approvalRequested',
+        threadId: 't1',
+        approvalId: 'bash-2',
+        kind: 'command',
+        summary: 'Run pnpm dev',
+        request: { toolName: 'Bash' },
+      },
+    );
+    expect(() =>
+      dispatch({ type: 'thread.toBackground', threadId: 't1', itemId: 't1:turn:0:bash-2' }),
+    ).toThrow(/waits for its approval/);
+    dispatch({ type: 'approval.answer', approvalId: 't1:bash-2', decision: 'allowOnce' });
+    expect(
+      dispatch({ type: 'thread.toBackground', threadId: 't1', itemId: 't1:turn:0:bash-2' }).seqs,
+    ).toHaveLength(1);
+  });
+
+  it('tells the thread when the provider refused Stop or Ctrl+B', () => {
+    events(
+      {
+        type: 'commandRefused',
+        threadId: 't1',
+        command: 'toBackground',
+        error: 'Claude Code could not send it to the background.',
+      },
+      { type: 'turnCompleted', threadId: 't1' },
+    );
+    events({
+      type: 'commandRefused',
+      threadId: 't1',
+      command: 'stopTask',
+      error: 'Claude Code is not running for thread t1',
+    });
+    expect(
+      items()
+        .filter((row) => row.kind === 'error')
+        .map((row) => [row.turnId, row.payload]),
+    ).toEqual([
+      [
+        't1:turn:0',
+        {
+          message:
+            'Could not send it to the background: Claude Code could not send it to the background.',
+        },
+      ],
+      [
+        't1:turn:0',
+        { message: 'Could not stop the task: Claude Code is not running for thread t1' },
+      ],
+    ]);
+  });
+
   // Codex has neither (spec Open risks): its chips have no Stop and Ctrl+B does nothing there.
   it('refuses Stop and Ctrl+B on a Codex thread', () => {
     dispatch({

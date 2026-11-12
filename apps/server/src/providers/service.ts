@@ -292,7 +292,7 @@ export class ProviderService {
             threadId: event.payload.threadId,
           });
           break;
-        // Neither stops the turn when the provider refuses; the refusal is only logged.
+        // Neither stops the turn when the provider refuses; the thread is told why.
         case 'thread.taskStopRequested':
           this.#send(event.payload.providerInstanceId, event.payload.threadId, false, {
             type: 'stopTask',
@@ -534,6 +534,13 @@ export class ProviderService {
     const fail = (error: unknown) => {
       this.#deps.logger.warn(`provider ${type} failed`, describeError(error));
       if (failsTurn) this.#enqueue({ type: 'turnFailed', threadId, error: describeError(error) });
+      else if (type === 'stopTask' || type === 'toBackground')
+        this.#enqueue({
+          type: 'commandRefused',
+          threadId,
+          command: type,
+          error: describeError(error),
+        });
     };
     const send = (ready: ProviderCommand) => this.#adapter(providerInstanceId).send(ready);
     try {

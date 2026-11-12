@@ -399,6 +399,30 @@ describe('background tasks (spec 90)', () => {
     ]);
   });
 
+  it('does not offer Ctrl+B for a command that waits for its approval', () => {
+    const items = [
+      call('turn-1:dev', { kind: 'command', command: 'pnpm dev', status: 'running' }),
+      call('turn-1:rm', { kind: 'command', command: 'rm -rf dist', status: 'running' }),
+    ];
+    const approval = {
+      id: `${thread.id}:rm`,
+      threadId: thread.id,
+      itemId: 'turn-1:approval:rm',
+      kind: 'command',
+      request: {},
+      decision: null,
+      decidedAt: null,
+    } as const;
+    expect(backgroundTarget(items, 'turn-1', [approval])).toEqual({
+      itemId: 'turn-1:dev',
+      title: '`pnpm dev`',
+    });
+    expect(
+      backgroundTarget(items, 'turn-1', [{ ...approval, decision: 'allowOnce', decidedAt: at(1) }])
+        ?.itemId,
+    ).toBe('turn-1:rm');
+  });
+
   it('offers no Ctrl+B on Codex', () => {
     setup({
       kind: 'codex',

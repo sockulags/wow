@@ -346,6 +346,14 @@ export const ProviderEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('turnCompleted'), ...ThreadScoped }),
   z.object({ type: z.literal('turnFailed'), ...ThreadScoped, error: z.string() }),
   z.object({ type: z.literal('turnInterrupted'), ...ThreadScoped }),
+  // The provider refused a Stop of a background task or a Ctrl+B; the server reports it, as the
+  // request itself changes nothing the user could see.
+  z.object({
+    type: z.literal('commandRefused'),
+    ...ThreadScoped,
+    command: z.enum(['stopTask', 'toBackground']),
+    error: z.string(),
+  }),
 ]);
 export type ProviderEvent = z.infer<typeof ProviderEvent>;
 

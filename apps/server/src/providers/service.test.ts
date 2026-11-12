@@ -484,11 +484,16 @@ describe('provider service', () => {
     expect(adapter.sent.at(-1)).toEqual({ type: 'toBackground', threadId: 't1' });
     dispatch({ type: 'thread.stopTask', threadId: 't1', taskId: 'bg-1' });
     expect(adapter.sent.at(-1)).toEqual({ type: 'stopTask', threadId: 't1', taskId: 'bg-1' });
-    // A provider that refuses changes nothing in the thread; the turn goes on.
+    // A provider that refuses does not end the turn; the thread says why.
     adapter.failNext = 'Background tasks are disabled';
+    const told = committed('threadItem.added');
     dispatch({ type: 'thread.stopTask', threadId: 't1', taskId: 'bg-1' });
-    await service.idle();
+    await told;
     expect(thread()).toMatchObject({ state: 'working' });
+    expect(rows('threadItems').at(-1)).toMatchObject({
+      kind: 'error',
+      payload: { message: 'Could not stop the task: Background tasks are disabled' },
+    });
   });
 
   it('stops a running turn and keeps its partial output', async () => {
