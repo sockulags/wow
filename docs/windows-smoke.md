@@ -64,7 +64,7 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
 
 - [ ] New thread (Ctrl+Alt+N) on the Claude instance in the scratch repository. Ask it to list the
       files and then create `smoke.txt`.
-- [ ] Text streams in as it is written; tool calls show as rows with input and output.
+- [ ] Text streams in as it is written; tool calls show as rows (see the tool rows check below).
 - [ ] The file change asks for approval; "Needs you" shows in the sidebar; Allow once continues the
       turn and the file exists afterwards.
 - [ ] The turn ends with usage (tokens and cost).
@@ -81,6 +81,19 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       thread says "Waiting for background work" with the agent's description. Without writing
       anything, Claude's answer appears when the agent is done, the thread goes to Working and then
       Idle, and the new turn has its own usage. Write down whether the waiting line showed.
+- [ ] **Tool rows (Claude Code).** Ask Claude to run `cmd /c exit 1`, then `ping -n 4 127.0.0.1`,
+      then to read `README.md` and to search the folder for a word. Expected: `$ cmd /c exit 1`
+      with "failed · <time>" and `$ ping …` with "done · about 3 s": Claude Code's Bash result
+      carries no exit code and no duration, so wow measures the time. Write down if the opened
+      output names an exit code anyway. The read is one line "Read README.md" and the search
+      "Search <word>" (with "in <folder>" when Claude gave a path). Neither may show the thread's
+      own folder in front of the file; when one does, write down the path exactly as shown
+      (separator, drive letter's case, a leading `\\?\`), since that is what Claude sent.
+- [ ] **Task list (Claude Code).** Ask Claude to make a todo list of three steps and work
+      through them. Expected: the pin above the composer reads "0/3 · <first step>", Ctrl+T opens
+      it, and each change adds one "Updated tasks (n/3)" line. Write down which tools Claude used
+      (TodoWrite, or TaskCreate and TaskUpdate) and whether a call that changed nothing added a
+      line (it must not).
 
 ## 4. Codex turn
 
@@ -104,6 +117,16 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       message that asks it to run `Get-ChildItem env:` and to list the MCP servers it has: the
       command shows no variable of the instance (no API key), and the only server is `wow`, none
       from your own `config.toml`. Write down what codex printed.
+- [ ] **Tool rows (Codex).** Ask Codex to run `cmd /c exit 1` and `ping -n 4 127.0.0.1`.
+      Expected: "exit 1 · <time>" and "exit 0 · about 3 s", from the `exitCode` and `durationMs`
+      Codex sends with the finished command. Write down the codex version. The rows must not say
+      "in <folder>" when the command ran in the thread's own folder; when one does, write down the
+      folder exactly as shown (plain `C:\…` or `\\?\C:\…`), since that is the `cwd` Codex sent.
+      Ask it to read `README.md`: write down whether that is a command row
+      (`$ Get-Content …` or similar) or something else.
+- [ ] **Plan (Codex).** Ask Codex to plan three steps and do them. Expected: the pin shows
+      "n/3 · <step>" and an "Updated tasks" line appears only when a step changes, even where
+      Codex sends the same plan again. Write down how many lines appeared for how many changes.
 
 ## 5. Secrets
 

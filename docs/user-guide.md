@@ -373,13 +373,51 @@ Below the composer, the new-thread view offers starters: a few skills (the proje
 open backlog items to start from, and the thread you worked in last. `chat.starterCount` sets how
 many; 0 hides them.
 
-The reply streams as it is written. Reasoning is folded; click it to read. Every tool call is a
-row you can open to see its input and output. Tool calls one after another in a turn share one
-row: it shows the latest call, how many there are ("10 tool calls") and how many failed, and opens
-(click, or Enter or Space) to list every call. Anything else in the turn, such as text, an
-approval or the Assistant's change rows and cards, starts a new row. `chat.groupToolCalls` off
-shows every call on its own row. A turn ends with its usage: input, output and cached
-tokens, and the cost when the provider reports one. With `chat.contextMeter` on, the composer shows
+The reply streams as it is written. Reasoning is folded; click it to read.
+
+Every tool call is one line, drawn by what the call does:
+
+- **A command** reads `$ <command>` in a fixed-width font, then `in <folder>` when it ran
+  somewhere other than the thread's folder, and on the right how it ended and how long it took:
+  "exit 1 · 4.2 s" when the provider gives the exit code (Codex does), else "failed · 0.8 s" or
+  "done · 0.8 s" (Claude Code gives no exit code, so wow says whether the call failed and measures
+  the time itself). Opened (click, or Enter or Space), it shows the last lines of the output
+  (`chat.toolOutputLines`, 20) with **Show all N lines** for the rest and **Copy output**, which
+  copies all of it.
+- **A read, a search or a web call** is one line: "Read README.md lines 1-80", "Search kettle in
+  src", "Fetch example.org", "Search the web for …". A path inside the thread's folder is shown
+  relative to it.
+- **An MCP call** reads `server › tool` with its arguments as `key: value`; opened, it lists them
+  one per line, **Show JSON** shows the arguments as sent, and the output sits below.
+- **Any other tool**, a file edit, and every call stored before this version keep the row they
+  had: the tool's name and the first text of its input; opened, its input and output.
+
+While a call runs, its time counts up from when it started; reloading the page shows the same
+time, because the server stored the start. A call its turn left running reads "not finished".
+Tool calls one after another in a turn share one row. While the turn is still at it, that row
+shows the latest call, how many there are ("10 tool calls") and how many failed; once something
+follows or the turn ends, it says what was done, such as "Read 2 files, ran 1 command · 1 failed".
+It opens to list every call. Anything else in the turn, such as text, an approval or the
+Assistant's change rows and cards, starts a new row. `chat.groupToolCalls` off shows every call
+on its own row.
+
+When the agent keeps a task list (Claude Code's todo and task tools, Codex's plan), the latest
+list of the running turn, or else of the last turn, is pinned above the composer as one line,
+"3/7 · <the task in progress>". **Ctrl+T** (`keybindings.toggleTasks`, or "Show task list" /
+"Hide task list" in the palette) opens it to the whole list. Each time the list changes, the
+conversation gets a line "Updated tasks (3/7)" that opens to the list as it was then; the same
+list sent again adds nothing. The thread's Details in the context panel has a Tasks section with
+the latest list. Tasks a finished turn left open read "not finished".
+
+**Copying**: an assistant message has **Copy** (its markdown) and **Copy text** (what it reads on
+screen) under it on hover or when you tab to it; a code block has **Copy code** in its corner;
+tool output has **Copy output**. The palette has the same commands for the message or row the
+keyboard was last on: "Copy message", "Copy message text", "Copy code", "Copy output" and "Show
+all N lines". When nothing could be copied (the browser has no clipboard or refused it), a notice
+"Nothing was copied" says so.
+
+A turn ends with its usage: input, output and cached tokens, and the cost when the provider
+reports one. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.
 
 ### When the agent needs you
@@ -475,7 +513,8 @@ new message to a done thread reopens it as well. A workflow step's thread moves 
 when its step completes; with a gate after the step, that happens once you press Approve.
 
 Change model, effort or permission mode in the thread header; the next turn uses them. **Ctrl+.**
-or the stop button interrupts a running turn and keeps what it produced. After a restart, a thread
+or the stop button interrupts a running turn and keeps what it produced; the turn ends with
+"Stopped by you · <time>", which carries **Resume** on the last turn. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
 
 ### The palette

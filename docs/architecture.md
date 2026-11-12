@@ -2732,7 +2732,8 @@ out after Escape was lost.
 reads `$ <command>` in mono, `in <folder>` when the command's `cwd` is not the thread's, and on
 the right "exit 1 · 4.2 s" or, without an exit code, "failed" / "done" with the time; `read.tsx`,
 `search.tsx` and `web.tsx` are one line ("Read README.md lines 1-80", "Search kettle in src",
-"Fetch example.org", paths shown relative to the thread's folder); `mcp.tsx` reads
+"Fetch example.org", paths shown relative to the thread's folder, compared with either
+separator, any drive-letter case and without a verbatim `\\?\` or `\\?\UNC\` prefix); `mcp.tsx` reads
 `server › tool` with the arguments as `key: value` and the JSON behind Show JSON; `generic.tsx`
 is today's row (name, first input text, status words, input and output) for `other`, `edit` (its
 diff row comes later) and every call stored before kinds. Times (`time.tsx`, `facts.ts`): the
@@ -2746,8 +2747,9 @@ command · 1 failed", `groupSummary`); before that it draws its latest call with
 `chat/task-pin.tsx`: the latest `task_list` of the running turn, or else the last turn, is pinned
 above the composer as "3/7 · <task in progress>" (`TaskPin`), opening to the list; Ctrl+T
 (`keybindings.toggleTasks`, palette "Show task list" / "Hide task list", acting on the newest pin
-shown, via `taskPinStore`) toggles it, and the open state is the window's, per thread. Each update
-in the conversation is a marker "Updated tasks (3/7)" that opens to that list; a list stored
+shown, via `taskPinStore`) toggles it, and the open state is the window's, per thread. Each change
+of the list (the server stores no item for a list equal to the turn's last one) is a marker in the
+conversation, "Updated tasks (3/7)" that opens to that list; a list stored
 before (no `at`) is drawn in full as before. The panel's thread Details has a Tasks section
 (`TaskDetails`).
 
