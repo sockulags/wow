@@ -446,7 +446,7 @@ export function ThreadConversation({
           kind: instance.kind,
           value: thread,
           defaults: { model: instance.defaultModel, effort: instance.defaultEffort },
-          onChange: (changes) => void send({ type: 'thread.configure', threadId, ...changes }),
+          onChange: (changes) => send({ type: 'thread.configure', threadId, ...changes }),
         };
   const modelBar = barProps && (
     <ModelBar id={barId} ref={bar} {...barProps} returnFocus={() => composer.current?.focus()} />

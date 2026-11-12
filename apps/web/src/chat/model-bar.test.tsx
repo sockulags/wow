@@ -107,12 +107,13 @@ const codex: ProviderInstance = {
   defaultEffort: null,
 };
 
-function connectionWith(topics: Record<string, unknown>) {
+function connectionWith(topics: Record<string, unknown>, refused = false) {
   const request = vi.fn<(method: string, params: unknown) => Promise<unknown>>((method, params) => {
     if (method === 'provider.listModels') {
       const { providerInstanceId } = params as { providerInstanceId: string };
       return Promise.resolve(providerInstanceId === 'codex' ? codexModels : claudeModels);
     }
+    if (refused && method === 'dispatch') return Promise.reject(new Error('Refused'));
     return Promise.resolve({
       commandId: '00000000-0000-4000-8000-000000000000',
       seqs: [],
@@ -384,6 +385,26 @@ describe('keys pressed faster than the thread echoes them', () => {
     expect(configured(sent).map((command) => command.permissionMode)).toEqual([
       'acceptEdits',
       'plan',
+    ]);
+  });
+
+  it('cycles from the mode on screen again after the server refused the last one', async () => {
+    const { connection, sent } = connectionWith({ turns: [], threadItems: [] }, true);
+    render(
+      <RuntimeProvider runtime={runtimeOf(connection)}>
+        <ThreadConversation thread={thread} instance={claude} />
+      </RuntimeProvider>,
+    );
+    const box = screen.getByRole('combobox', { name: 'Message' });
+    const user = userEvent.setup();
+    box.focus();
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    // The refusal settles before the next key, as it would on a real connection.
+    await act(() => Promise.resolve());
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(configured(sent).map((command) => command.permissionMode)).toEqual([
+      'acceptEdits',
+      'acceptEdits',
     ]);
   });
 

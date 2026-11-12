@@ -70,7 +70,8 @@ export interface ModelBarProps {
   readonly value: ThreadSettingsValue;
   // The instance's defaults, marked "(default)" in the lists.
   readonly defaults?: ModelDefaults | undefined;
-  onChange(changes: Partial<ThreadSettingsValue>): void;
+  // A thread returns its dispatch, so a refused mode is not taken as still on its way.
+  onChange(changes: Partial<ThreadSettingsValue>): void | Promise<unknown>;
   // Shown in place of the mode list when the mode cannot be changed (the assistant's).
   readonly modeLocked?: string | undefined;
   // A provider instance part before the model (the Assistant view's).
@@ -196,7 +197,7 @@ export function ModelBar({
 
   const pick = (changes: Partial<ThreadSettingsValue>) => {
     setOpen(undefined);
-    onChange(changes);
+    void onChange(changes);
   };
   // The modes sent since the thread last showed one of them: a second Shift+Tab before the first
   // echoes cycles on from what was sent, not from the mode still on screen.
@@ -212,11 +213,15 @@ export function ModelBar({
       last !== shown &&
       (shown === before.from || before.sent.includes(shown));
     const next = nextPermissionMode(kind, waiting ? last : shown);
-    pending.current =
+    const entry =
       waiting && before
         ? { from: before.from, sent: [...before.sent, next] }
         : { from: shown, sent: [next] };
-    onChange({ permissionMode: next });
+    pending.current = entry;
+    const sending = onChange({ permissionMode: next });
+    sending?.catch(() => {
+      if (pending.current === entry) pending.current = undefined;
+    });
     return true;
   };
 
@@ -248,7 +253,9 @@ export function ModelBar({
       value: { model: shownModel, effort: shownEffort, permissionMode: shownMode },
       defaults: hasDefaults ? { model: defaultModel, effort: defaultEffort } : undefined,
       modeLocked: locked,
-      apply: (changes) => latest.current.onChange(changes),
+      apply: (changes) => {
+        void latest.current.onChange(changes);
+      },
       openModels: () => latest.current.open('model'),
       openEfforts: () => latest.current.open('effort'),
     });
