@@ -22,7 +22,7 @@ import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
 import { renderApp } from '@/test/render';
 import { loadMarkdown } from '../test/markdown';
-import { viewerCommands } from './commands';
+import { hostItemCommands, viewerCommands } from './commands';
 import { selectTab } from './viewer';
 
 beforeAll(loadMarkdown);
@@ -200,7 +200,8 @@ function fake() {
         });
       }
       if (method === 'hosts.lookup') {
-        const { ref } = params as { ref?: string };
+        const { ref, read: mode } = params as { ref?: string; read?: string };
+        if (mode === 'refresh') return Promise.reject(new Error('The host did not answer'));
         const found = ref === undefined ? undefined : recogniseHostRef(ref, hostRules);
         return Promise.resolve({ rules: hostRules, item: found ?? null, read: null });
       }
@@ -373,6 +374,29 @@ describe('panel tabs in chat', () => {
     link.focus();
     await user.keyboard('{Enter}');
     expect(tabs()).toEqual(['Details', 'timer.ts', 'PR #14 *']);
+  });
+
+  it('shows a failed Refresh now from the palette in the host tab, as its button does', async () => {
+    const { user, runtime } = await openThread();
+    await user.click(await within(panel()).findByTestId('mentioned-link'));
+    expect(tabs()).toEqual(['Details', 'PR #14 *']);
+    const refresh = hostItemCommands({
+      target: undefined,
+      panelTabs: runtime.layout.getState().panelTabs,
+      pathname: '/chat/tea',
+    }).find((command) => command.id === 'panel.host.refresh');
+    act(() =>
+      refresh?.run({
+        navigate: (() => Promise.resolve()) as never,
+        settings: runtime.settings,
+        layout: runtime.layout,
+        draft: runtime.draft,
+        connection: runtime.connection,
+      }),
+    );
+    expect((await within(panel()).findByRole('alert')).textContent).toContain(
+      'The host did not answer',
+    );
   });
 
   it('closes a file opened from the main view with Escape while the focus stayed on its link @agent-workbench-87', async () => {

@@ -1,6 +1,8 @@
-import { HostLookupResult, type Issue } from '@wow/contracts';
+import type { Connection } from '@wow/client-runtime';
+import { HostLookupResult, hostItemReadId, type Issue } from '@wow/contracts';
 import { ArrowLeftIcon, CircleDotIcon, LinkIcon } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { createStore, useStore } from 'zustand';
 import { useLayout, useRuntime, type ViewerHostItem } from '@/app/runtime';
 import { errorMessage, useTopic } from '@/chat/data';
 import {
@@ -38,34 +40,59 @@ import { closeViewer, openHostItem } from './viewer';
 
 type Mode = 'open' | 'refresh';
 
+interface AskState {
+  readonly busy: boolean;
+  readonly error?: string;
+  readonly unreadable: boolean;
+}
+
+// How the last ask of each item went, by thread and item, so Refresh now from the palette shows
+// its failure in the tab the same way the tab's own button does.
+const askStore = createStore<{ readonly byItem: Readonly<Record<string, AskState>> }>(() => ({
+  byItem: {},
+}));
+const idle: AskState = { busy: false, unreadable: false };
+const askKey = (host: Pick<ViewerHostItem, 'threadId' | 'item'>): string =>
+  hostItemReadId(host.threadId, host.item);
+const setAsk = (key: string, state: AskState) =>
+  askStore.setState((current) => ({ byItem: { ...current.byItem, [key]: state } }));
+
+export async function askHostItem(
+  connection: Connection | undefined,
+  host: Pick<ViewerHostItem, 'threadId' | 'item'>,
+  read: Mode,
+): Promise<void> {
+  if (!connection) return;
+  const key = askKey(host);
+  const before = askStore.getState().byItem[key] ?? idle;
+  setAsk(key, { busy: true, unreadable: before.unreadable });
+  try {
+    const answer = HostLookupResult.parse(
+      await connection.request('hosts.lookup', {
+        threadId: host.threadId,
+        ref: host.item.url,
+        read,
+      }),
+    );
+    setAsk(key, { busy: false, unreadable: answer.item === null });
+  } catch (caught) {
+    setAsk(key, { busy: false, error: errorMessage(caught), unreadable: before.unreadable });
+  }
+}
+
 function useHostItemRead(host: ViewerHostItem) {
   const { connection } = useRuntime();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-  const [unreadable, setUnreadable] = useState(false);
   const { threadId, item } = host;
+  const key = hostItemReadId(threadId, item);
+  const state = useStore(askStore, (current) => current.byItem[key]) ?? idle;
   const ask = useCallback(
-    async (read: Mode) => {
-      if (!connection) return;
-      setBusy(true);
-      setError(undefined);
-      try {
-        const answer = HostLookupResult.parse(
-          await connection.request('hosts.lookup', { threadId, ref: item.url, read }),
-        );
-        setUnreadable(answer.item === null);
-      } catch (caught) {
-        setError(errorMessage(caught));
-      } finally {
-        setBusy(false);
-      }
-    },
-    [connection, threadId, item.url],
+    (read: Mode) => askHostItem(connection, { threadId, item }, read),
+    [connection, threadId, item],
   );
   useEffect(() => {
     void ask('open');
   }, [ask]);
-  return { busy, error, unreadable, refresh: () => ask('refresh') };
+  return { ...state, refresh: () => ask('refresh') };
 }
 
 export function IssueBody({ issue }: { readonly issue: Issue }) {

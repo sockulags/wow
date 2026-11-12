@@ -6,6 +6,7 @@ import { DETAILS_TAB, type LayoutState, type OpenFileDialog } from '@/app/runtim
 import { artifactPath } from '@/workflows/model';
 import { pageTitle, runPageRead } from '@/workflows/pages-tab';
 import { hasSelection, type PanelSelection } from './model';
+import { askHostItem } from './host-tab';
 import { showInContextPanel } from './panel-state';
 import {
   backTab,
@@ -270,10 +271,7 @@ export function hostItemCommands({
         group: 'Actions',
         keywords: ['host', 'read again', 'fetch'],
         detail: item.url,
-        run: ({ connection }) =>
-          void connection
-            ?.request('hosts.lookup', { threadId, ref: item.url, read: 'refresh' })
-            .catch(() => undefined),
+        run: ({ connection }) => void askHostItem(connection, { threadId, item }, 'refresh'),
       },
       {
         id: 'panel.host.openOnHost',
