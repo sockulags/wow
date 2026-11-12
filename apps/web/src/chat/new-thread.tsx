@@ -142,7 +142,11 @@ export function NewThreadView() {
     if (text !== undefined) {
       draft.setState({ text: undefined });
       composer.current?.setText(text);
-    } else composer.current?.focus();
+      return;
+    }
+    // The providers can arrive after the user has opened a picker; the focus stays where it is.
+    const focused = document.activeElement;
+    if (focused === null || focused === document.body) composer.current?.focus();
   }, [ready, draft]);
 
   if (instances && instances.length === 0) {

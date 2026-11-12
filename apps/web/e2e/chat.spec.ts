@@ -321,7 +321,9 @@ test.describe('chat', () => {
     await failing.getByRole('button', { name: 'Show all 25 lines' }).click();
     await expect(failing.getByTestId('tool-output-text')).toContainText('kettle test 5 passed');
     await failing.getByRole('button', { name: 'Copy output' }).click();
-    expect(await page.evaluate('navigator.clipboard.readText()')).toMatch(
+    // Windows hands the clipboard's text back with its own line ends.
+    const copied = await page.evaluate<string>('navigator.clipboard.readText()');
+    expect(copied.replaceAll('\r\n', '\n')).toMatch(
       /^kettle test 1 passed\n[\s\S]*expected 2 rings, got 1\n$/,
     );
 

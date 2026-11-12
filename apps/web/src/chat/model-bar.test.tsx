@@ -498,6 +498,33 @@ describe('every composer that runs turns has the bar (agent workbench spec 5)', 
   });
 });
 
+describe('a new thread whose providers arrive late', () => {
+  it('leaves the focus on a picker the user opened meanwhile', async () => {
+    const { connection } = connectionWith({
+      threads: [],
+      projects: [],
+      skills: [],
+      backlogItems: [],
+    });
+    // Every reader of the instances waits, as on a slow start.
+    const waiting: ((rows: unknown[]) => void)[] = [];
+    const late: Connection = {
+      ...connection,
+      subscribe(topic, params, onData) {
+        if (topic !== 'providerInstances') return connection.subscribe(topic, params, onData);
+        waiting.push(onData as (rows: unknown[]) => void);
+        return () => undefined;
+      },
+    };
+    await renderApp('/chat/new', runtimeOf(late));
+    const picker = await screen.findByRole('combobox', { name: 'Project' });
+    act(() => picker.focus());
+    act(() => waiting.forEach((onData) => onData([claude])));
+    await screen.findByTestId('model-bar');
+    expect(document.activeElement).toBe(picker);
+  });
+});
+
 describe('a new thread starts from what the provider names (agent workbench spec 7, 8)', () => {
   it("takes the provider's default model and that model's default effort", () => {
     expect(threadDefaults(codex, codexModels, undefined)).toEqual({
