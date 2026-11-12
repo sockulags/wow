@@ -1,4 +1,5 @@
 import {
+  ErrorItemPayload,
   isBuiltInSkillName,
   QuestionItemPayload,
   UsageItemPayload,
@@ -244,9 +245,14 @@ export function lastUserSent(
 export const lastAssistantText = (items: readonly ThreadItem[]) =>
   lastText(items, 'assistant_text');
 
-// The last error item, the one Retry and Resume belong to.
+// The last error item, the one Retry and Resume belong to. A refused Stop or Ctrl+B is a notice,
+// not a failed turn; items stored before the notice field are known by their id.
 export const lastErrorId = (items: readonly ThreadItem[]): string | undefined =>
-  items.findLast((item) => item.kind === 'error')?.id;
+  items.findLast((item) => {
+    if (item.kind !== 'error') return false;
+    const parsed = ErrorItemPayload.safeParse(item.payload);
+    return !(parsed.success && parsed.data.notice === 'refused') && !item.id.includes(':refused:');
+  })?.id;
 
 // One entry of the conversation list: an item as it is, or a run of tool calls drawn as one row.
 export type ConversationEntry =

@@ -3163,7 +3163,8 @@ toggles the sidebar otherwise; the keybindings table shows the two as sharing th
 When the adapter refuses `stopTask` or `toBackground` (Claude Code no longer running, the call
 not sent), the provider service hands the thread a `commandRefused` event, stored as an `error`
 item on the running or the last turn ("Could not stop the task: …", "Could not send it to the
-background: …"), so the refusal is not only in the log.
+background: …") with `notice: 'refused'` on its payload, so the refusal is not only in the log.
+Retry and Resume stay on the thread's last error that is not such a notice.
 
 ### Conversation reading
 
