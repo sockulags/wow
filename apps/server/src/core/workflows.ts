@@ -439,13 +439,34 @@ export function workingCopyPath(
   projectName: string,
   runId: string,
 ): string {
+  return copyFolder(root, home, projectName, runId, '');
+}
+
+// Where a chat thread's own working copy goes (thread work spec 11): beside the runs' copies,
+// with `t` before the id so a thread's folder never has a run's name.
+export function threadWorkingCopyPath(
+  root: string,
+  home: string | undefined,
+  projectName: string,
+  threadId: string,
+): string {
+  return copyFolder(root, home, projectName, threadId, 't');
+}
+
+function copyFolder(
+  root: string,
+  home: string | undefined,
+  projectName: string,
+  ownerId: string,
+  mark: string,
+): string {
   if (!path.isAbsolute(root) && home === undefined) {
     throw new CommandRejected(
       'rejected',
       `${WORKSPACES_ROOT_KEY} is "${root}", which is not a full path, and this server has no folder of its own to put it in`,
     );
   }
-  const id = createHash('sha256').update(runId).digest('hex').slice(0, 8);
+  const id = mark + createHash('sha256').update(ownerId).digest('hex').slice(0, 8);
   const slug = folderSlug(projectName);
   return path.join(path.resolve(home ?? '', root), slug === '' ? id : `${slug}-${id}`);
 }
@@ -937,7 +958,7 @@ const CHECKS_TIMEOUT_KEY = 'workflows.gateChecksTimeoutMinutes';
 const ATTACH_KEY = 'workflows.attachBuiltInSkills';
 
 // The setting as it applies to the project, or to all projects without one.
-function resolvedSetting(
+export function resolvedSetting(
   key: string,
   read: ReadModel,
   context: DecideContext,

@@ -15,7 +15,7 @@ import {
   PlugIcon,
   SparklesIcon,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
 import { useRuntime, useSetting } from '@/app/runtime';
 import { ChoiceSelect } from '@/components/choice-select';
@@ -29,10 +29,11 @@ import { cn } from '@/lib/utils';
 import { lastUsedInstanceId } from '@/providers/model';
 import { Composer, type ComposerHandle } from './composer';
 import { useDispatch, useModels, useTopic } from './data';
-import { effortOptions, threadTitle, titleFromMessage } from './model';
+import { effortOptions, firstMessageTitle, threadTitle } from './model';
 import { ModelBar, useModelBarKeys, type ModelBarHandle } from './model-bar';
 import type { ThreadSettingsValue } from './thread-settings';
 import { lastUsedThread, providerLabel, recentFolders, starterSkills } from './view-model';
+import { DraftWorkingCopy, draftCopyOn, draftCopyStore, useWorkingCopyPlan } from './working-copy';
 
 // What a new thread on this instance starts with: what its project names (agent workbench spec
 // 97, when the project names this instance or none), else what the last thread on it used (owner
@@ -124,6 +125,13 @@ export function NewThreadView() {
   const [typingFolder, setTypingFolder] = useState(false);
   // Picked before the first message so pasted images are stored for the thread they go with.
   const [pendingThreadId] = useState(() => globalThis.crypto.randomUUID());
+  // The title the first message would give, for the branch the working copy line names.
+  const [typed, setTyped] = useState('');
+  const titleTyped = useCallback(
+    (text: string, skillNames: readonly string[], imageCount: number) =>
+      setTyped(firstMessageTitle(text, skillNames, imageCount)),
+    [],
+  );
   const [overrides, setOverrides] = useState<
     Partial<ThreadSettingsValue> & { readonly for?: string }
   >({});
@@ -152,6 +160,13 @@ export function NewThreadView() {
       : threadDefaults(instance, models, last, project));
 
   const cwd = (untouched && !project ? last?.cwd : picked.cwd) ?? project?.cwd ?? '';
+  const copyPlan = useWorkingCopyPlan(project?.id);
+  const ownCopy = project !== undefined && draftCopyOn(copyPlan, picked.ownWorkingCopy);
+  const copyOffered = project !== undefined && copyPlan?.status === 'ok';
+  useEffect(() => {
+    draftCopyStore.setState({ offered: copyOffered, on: ownCopy });
+    return () => draftCopyStore.setState({ offered: false, on: false });
+  }, [copyOffered, ownCopy]);
   const folders = recentFolders(threads, projects);
   const { for: overridesFor, ...picks } = overrides;
   const settings: ThreadSettingsValue | undefined =
@@ -215,11 +230,13 @@ export function NewThreadView() {
         threadId,
         providerInstanceId: instance.id,
         ...(project ? { projectId: project.id } : {}),
+        ...(ownCopy ? { ownWorkingCopy: true } : {}),
         cwd: cwd.trim(),
-        title:
-          titleFromMessage(text) ||
-          (chosen ?? []).map((skill) => skill.name).join(' ') ||
-          ((images ?? []).length > 0 ? 'Image' : ''),
+        title: firstMessageTitle(
+          text,
+          (chosen ?? []).map((skill) => skill.name),
+          (images ?? []).length,
+        ),
         ...settings,
       });
     await send({
@@ -236,6 +253,7 @@ export function NewThreadView() {
       cwd: undefined,
       providerInstanceId: undefined,
       settings: undefined,
+      ownWorkingCopy: undefined,
     });
     await navigate({ to: '/chat/$threadId', params: { threadId } });
   };
@@ -243,7 +261,11 @@ export function NewThreadView() {
   const choose = async (value: string) => {
     setTypingFolder(false);
     if (value.startsWith('project:')) {
-      draft.setState({ projectId: value.slice('project:'.length), cwd: undefined });
+      draft.setState({
+        projectId: value.slice('project:'.length),
+        cwd: undefined,
+        ownWorkingCopy: undefined,
+      });
     } else if (value.startsWith('folder:')) {
       draft.setState({ projectId: undefined, cwd: value.slice('folder:'.length) });
     } else if (value === OTHER) {
@@ -351,8 +373,18 @@ export function NewThreadView() {
             </div>
           )
         )}
+        {project && (
+          <DraftWorkingCopy
+            plan={copyPlan}
+            on={ownCopy}
+            title={typed}
+            threadId={pendingThreadId}
+            onChange={(ownWorkingCopy) => draft.setState({ ownWorkingCopy })}
+          />
+        )}
         <Composer
           ref={composer}
+          onTextChange={titleTyped}
           providerKind={instance?.kind}
           running={false}
           disabled={!instance}

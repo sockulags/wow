@@ -398,6 +398,33 @@ provider instance, model, effort and mode then win over what your last thread us
 Settings → Chat → **Send key** chooses which key sends: **Enter** (Shift+Enter makes a new line) or
 **Ctrl+Enter** (then Enter makes a new line).
 
+#### A thread in its own working copy
+
+When the chosen project's folder is a Git repository with a commit, the draft shows **Own working
+copy** (also "New thread: own working copy" in the palette). It starts on or off as the project's
+**Own working copy for new threads** setting says (Settings → Chat, per project; off by default).
+With it on, the line under it says which branch is made and where it starts, such as "New branch
+wow/ring-the-bell-3fa2c1 from main (4e1d2a0)". The thread then works in a Git worktree of the
+project under the working copies folder (Settings → Working copies), on that new branch: its
+turns, Changes, files and `@` are there, and your project folder, its index and its branch are
+not touched. Changes you have not committed in the project folder stay there.
+
+The copy is made just before the first message goes out. If it cannot be made (the branch name
+is taken, the folder is not a repository), the turn fails with Git's reason and nothing is sent;
+fix the cause and press Retry. The branch name comes from **Branch of a thread's working copy**
+(`{{title}}` and `{{id}}`), and **Where a thread's working copy starts** picks the project
+folder's commit (the default) or the default branch's tip.
+
+The header shows the branch and "own working copy"; Details shows the branch, the folder (with
+Copy path and Open in editor) and where it started. When you mark the thread done, wow removes the
+copy if no uncommitted or ignored file is in it; commits stay on the branch. Otherwise the copy
+is kept and the chip says what it holds. A commit made with no branch checked out (a detached
+HEAD) is not on the branch, so it keeps the copy too. **Remove working copy** (Details or the palette) shows
+what would be lost and removes only after **Remove and lose them**; it is refused while a turn
+runs or while another thread that is not done (a fork) works in the same copy. wow never deletes
+the branch and never pushes. Your next message makes the copy again on its branch. A fork works
+in the same copy.
+
 **Open session from Claude Code / Codex…** in the palette lists the sessions your provider
 instances keep in their own files, the newest first, grouped by folder, each with its first prompt
 and when it was last used. Pick one and it opens as a wow thread in that folder (and its project)

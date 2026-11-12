@@ -21,6 +21,7 @@ import {
   threadTitle,
 } from '@/chat/model';
 import { TaskDetails } from '@/chat/task-pin';
+import { WorkingCopyDetails } from '@/chat/working-copy';
 import { stateDotClass, threadStateLabels } from '@/chat/thread-view';
 import { effortLabel, providerLabel } from '@/chat/view-model';
 import {
@@ -226,11 +227,14 @@ export function ThreadPanel({ threadId }: { readonly threadId: string }) {
             { label: 'Effort', value: effortLabel(thread.effort) },
             { label: 'Permissions', value: permission },
             project !== undefined && { label: 'Project', value: project.name },
-            { label: 'Folder', value: <PathText path={thread.cwd} copy /> },
-            thread.branch !== null && { label: 'Branch', value: thread.branch },
+            // A thread's own working copy has its own section below (thread work spec 13).
+            !thread.workingCopy && { label: 'Folder', value: <PathText path={thread.cwd} copy /> },
+            !thread.workingCopy &&
+              thread.branch !== null && { label: 'Branch', value: thread.branch },
           ]}
         />
       </PanelSection>
+      <WorkingCopyDetails thread={thread} />
       <PanelSection label="Usage">
         {usage.inputTokens + usage.outputTokens === 0 && !context ? (
           <p className="text-xs text-muted-foreground">No usage reported yet.</p>

@@ -139,6 +139,10 @@ export interface ComposerProps {
   // Up in an empty box (`keybindings.composerEditLast`): brings the last message back to edit it
   // (agent workbench spec 62); true when it did, so the key does nothing else.
   onRecall?: (() => boolean) | undefined;
+  // The message as it is put together: the text as it would be sent, the names of its skills and
+  // how many images it has (the new thread's working copy line names the branch from them).
+  onTextChange?:
+    ((text: string, skillNames: readonly string[], imageCount: number) => void) | undefined;
 }
 
 const noSkills: readonly string[] = [];
@@ -434,6 +438,7 @@ export function Composer({
   recentSkills = noSkills,
   listsBelow = false,
   onRecall,
+  onTextChange,
 }: ComposerProps) {
   const pickerId = useId();
   const filePickerId = useId();
@@ -462,6 +467,15 @@ export function Composer({
   const [chips, setChips] = useState<readonly Skill[]>(initial.skills);
   const [files, setFiles] = useState<readonly string[]>(initial.files ?? []);
   const [images, setImages] = useState<readonly SentImage[]>(initial.images ?? []);
+  useEffect(
+    () =>
+      onTextChange?.(
+        withMentions(text.trim(), files),
+        chips.map((chip) => skillRefOf(chip).name),
+        images.length,
+      ),
+    [onTextChange, text, chips, files, images],
+  );
   // The image shown full size, by its index among the chips.
   const [viewing, setViewing] = useState<number>();
   // Images on their way to the server; Send waits for them.

@@ -299,6 +299,15 @@ The three steps the spec asks for:
       first and then removes it. Write down how long the first step took (it installs
       dependencies in the fresh copy).
 
+- [ ] **A chat thread in its own working copy.** In a project in Git, turn on "Own working
+      copy" on a new thread and send a message: the header shows the branch, Details shows a
+      folder under `workspaces.root` (with spaces) on that branch, and the project folder's
+      `git status` and branch are unchanged. Mark the thread done with a file left uncommitted:
+      the copy is kept and says so; "Remove working copy" names the file and removes the folder
+      (also with the file open in an editor: the reason shows and the copy is kept); the branch
+      is still listed by `git branch`. Send another message: the copy is made again on the
+      branch. Try a long thread title: the branch and the path stay short enough to check out.
+
 Further checks against the same hosts:
 
 - [ ] Start a run in a project folder that is on a branch with a pull request: the Pull request

@@ -11,6 +11,7 @@ import { approvalCommands, approvalCardStore } from '@/chat/approval-card';
 import { chatCommands } from '@/chat/commands';
 import { changesShown, threadChangesCommands, threadChangesStore } from '@/chat/thread-changes';
 import { sessionToolsCommands, toolsShown } from '@/panel/tools-tab';
+import { draftCopyStore, workingCopyCommands } from '@/chat/working-copy';
 import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
 import {
@@ -96,6 +97,7 @@ export function useCommands(gated = false): {
     toolsShown(state, panelRoute(pathname, locationSearch), openThreadId),
   );
   const toolsLive = useTopic('threadTools', openThreadId)?.[0]?.live === true;
+  const draftCopy = useStore(draftCopyStore);
   // The calendar's zone with "outlook" resolved (F-8), for the cards' "when".
   const { zone: calendarZone } = useCalendarPrefs();
   const openRunId = /^\/workflows\/runs\/([^/]+)$/.exec(pathname)?.[1];
@@ -206,6 +208,11 @@ export function useCommands(gated = false): {
         toolsOpen,
         toolsLive,
       ),
+      ...workingCopyCommands({
+        openThread: openThread?.runId === null ? openThread : undefined,
+        onNewThread: pathname === '/chat/new',
+        draft: draftCopy,
+      }),
       ...chatCommands({
         threads: threads ?? [],
         instances: instances ?? [],
@@ -331,6 +338,7 @@ export function useCommands(gated = false): {
     approvalOffer,
     changesOpen,
     changesTurnOnly,
+    draftCopy,
     pathname,
     locationSearch,
     tabsRoute,

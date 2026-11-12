@@ -141,6 +141,8 @@ export const threads = sqliteTable(
     // fork's origin, null for a thread that is not one.
     goBack: json<GoBack>(),
     forkedFrom: json<ForkOrigin>(),
+    // A chat thread's own working copy (thread work spec 11); null for a thread in its folder.
+    workingCopy: json<WorkingCopy>(),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },

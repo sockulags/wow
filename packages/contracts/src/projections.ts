@@ -148,6 +148,10 @@ export const Thread = z.object({
   goBack: GoBack.nullable().optional(),
   // A fork's origin (spec 71); null or absent for a thread that is not a fork.
   forkedFrom: ForkOrigin.nullable().optional(),
+  // The thread's own working copy (thread work spec 11): a worktree of the project's repository
+  // on the branch `branch` holds, which is also the thread's `cwd`. A fork shares its origin's.
+  // Null or absent for a thread in its folder, as every thread stored before is (spec 18).
+  workingCopy: WorkingCopy.nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });

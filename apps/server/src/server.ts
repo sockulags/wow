@@ -191,6 +191,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     snapshot: (folder: string, baseSha: string) =>
       snapshotChanges(folder, baseSha, changesOptions(settings)),
   };
+  const workspaces = new Workspaces({ db: database.db, engine, settings, logger });
   const providerService = new ProviderService({
     db: database.db,
     engine,
@@ -201,9 +202,9 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     home,
     assistant: () => assistantAccess,
     changes: folderChanges,
+    prepareThread: (threadId) => workspaces.prepareThread(threadId),
   });
   modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
-  const workspaces = new Workspaces({ db: database.db, engine, settings, logger });
   const workflows = new WorkflowRunner({
     db: database.db,
     engine,

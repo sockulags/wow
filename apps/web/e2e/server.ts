@@ -48,6 +48,7 @@ import {
   e2eChangesWorkflowId,
   e2eCopyProjectId,
   e2eThreadChangesProjectId,
+  e2eMugProjectId,
   e2eCopyWorkflowId,
   e2eGateProjectId,
   e2eConditionWorkflowId,
@@ -222,6 +223,9 @@ const teaRepos = new Set([changesRepo, gateRepo, chatRepo]);
 // The working copy tests (review loop spec 36, 37): the agent must find itself in a working copy
 // under the server's own `workspaces` folder, never in this repository.
 const copyRepo = path.join(home, 'tea-cup');
+// A chat thread's own working copy (thread work U2): a repository cloned from a bare origin.
+const mugRepo = path.join(home, 'tea-mug');
+const mugOrigin = path.join(home, 'tea-mug-origin.git');
 const inTeaRepo = (cwd: string) =>
   teaRepos.has(cwd) || path.dirname(cwd) === path.join(home, 'workspaces');
 // The host tests (review loop spec 23, 28, 31) read a third copy; nothing edits it.
@@ -318,6 +322,19 @@ function seedTeaRepo(repo: string): void {
 function seedCopyRepo(): void {
   seedTeaRepo(copyRepo);
   git(copyRepo, 'config', 'core.autocrlf', 'false');
+}
+
+// The seed is committed in a folder of its own, pushed to a bare origin and cloned from there,
+// so the project has a remote whose default branch is known, as a clone has.
+function seedMugRepo(): void {
+  const seed = `${mugRepo}-seed`;
+  seedTeaRepo(seed);
+  emptyFolder(mugOrigin);
+  execFileSync('git', ['clone', '-q', '--bare', seed, mugOrigin], { stdio: 'pipe' });
+  emptyFolder(mugRepo);
+  execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', mugOrigin, mugRepo], {
+    stdio: 'pipe',
+  });
 }
 
 // The build step: one committed change, then uncommitted ones of every kind the tab lists.
@@ -1324,6 +1341,7 @@ if (home === e2eChangesHome) {
   seedTeaRepo(gateRepo);
   seedTeaRepo(chatRepo);
   seedCopyRepo();
+  seedMugRepo();
   // The host tests: a repository on a branch that has a pull request, with a plan in it.
   seedTeaRepo(hostRepo);
   git(hostRepo, 'checkout', '-q', '-b', e2eHostBranch);
@@ -1831,6 +1849,19 @@ if (home === e2eChangesHome) {
     projectId: e2eThreadChangesProjectId,
     name: 'Tea chat',
     cwd: chatRepo,
+  });
+  server.engine.dispatch('seed-mug-project', {
+    type: 'project.create',
+    projectId: e2eMugProjectId,
+    name: 'Tea mug',
+    cwd: mugRepo,
+  });
+  // New threads in the project start with "Own working copy" on (thread work spec 10).
+  server.engine.dispatch('seed-mug-own-copy', {
+    type: 'setting.set',
+    key: 'chat.ownWorkingCopy',
+    scope: `project:${e2eMugProjectId}`,
+    value: true,
   });
   server.engine.dispatch('seed-copy-project', {
     type: 'project.create',
