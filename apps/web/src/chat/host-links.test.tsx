@@ -1,5 +1,5 @@
 import type { HostItemRead, HostItemRef, HostLinkRules, ThreadItem } from '@wow/contracts';
-import { hostItemReadId } from '@wow/contracts';
+import { hostItemKey, hostItemReadId, sameHostItem } from '@wow/contracts';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -103,6 +103,25 @@ describe('link recognition @agent-workbench-20 @agent-workbench-23', () => {
     'javascript:alert(1)',
   ])('leaves %s plain', (link) => {
     expect(recogniseHostLink(link, rules)).toBeUndefined();
+  });
+
+  it('reads owner, repository and site prefix without case and decodes path parts once', () => {
+    const lower = recogniseHostLink('https://ghe.example.invalid/acme/tea/pull/14', rules);
+    const upper = recogniseHostLink('https://GHE.example.invalid/Acme/TEA/pull/14', rules);
+    const encoded = recogniseHostLink('https://ghe.example.invalid/acme/te%61/pull/14', rules);
+    if (!lower || !upper || !encoded) throw new Error('not recognised');
+    expect(sameHostItem(lower, upper)).toBe(true);
+    expect(sameHostItem(lower, encoded)).toBe(true);
+    expect(encoded.path).toBe('acme/tea');
+    const bare = recogniseHostRef('#14', rules);
+    if (!bare) throw new Error('no bare item');
+    expect(hostItemKey(bare)).toBe(hostItemKey({ ...upper, kind: 'issue' }));
+    expect(
+      recogniseHostLink('https://lab.example.invalid/GitLab/Tea/Field/-/merge_requests/7', rules),
+    ).toMatchObject({ host: 'gitlab', path: 'Tea/Field', id: '7' });
+    expect(
+      recogniseHostLink('https://lab.example.invalid/gitlab/te%2/field/-/issues/4', rules),
+    ).toBeUndefined();
   });
 
   it('knows no link without a site, as for a host without a token', () => {

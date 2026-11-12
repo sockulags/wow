@@ -88,8 +88,9 @@ export const HostItemRead = z.object({
 });
 export type HostItemRead = z.infer<typeof HostItemRead>;
 
+// Code hosts name repositories without case, so `Acme/Tea` and `acme/tea` are one item.
 export const hostItemKey = (item: HostItemRef): string =>
-  [item.host, item.site, item.path, item.kind, item.id].join('|');
+  [item.host, item.site, item.path.toLowerCase(), item.kind, item.id].join('|');
 
 export const hostItemReadId = (threadId: string, item: HostItemRef): string =>
   `${hostReadId('thread', threadId)}:${hostItemKey(item)}`;
@@ -136,7 +137,9 @@ function below(link: URL, base: string): string[] | undefined {
   const site = new URL(base);
   if (link.protocol !== site.protocol || link.host !== site.host) return undefined;
   const prefix = site.pathname.replace(/\/+$/, '');
-  if (prefix !== '' && !link.pathname.startsWith(`${prefix}/`)) return undefined;
+  if (prefix !== '' && !link.pathname.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)) {
+    return undefined;
+  }
   return link.pathname
     .slice(prefix.length)
     .split('/')
@@ -151,9 +154,25 @@ const decoded = (part: string): string | undefined => {
   }
 };
 
+// A code host's path part as the host reads it; undefined when it is not valid or would hold a
+// slash of its own.
+const codePart = (part: string): string | undefined => {
+  try {
+    const plain = decodeURIComponent(part);
+    return plain.includes('/') ? undefined : plain;
+  } catch {
+    return undefined;
+  }
+};
+
 function onSite(link: URL, site: HostLinkSite): HostItemRef | undefined {
-  const parts = below(link, site.base);
-  if (!parts) return undefined;
+  const written = below(link, site.base);
+  if (!written) return undefined;
+  // Confluence titles decode their own way (`+` is a space); code hosts' parts are decoded here,
+  // once.
+  const code = site.host === 'github' || site.host === 'gitlab';
+  const parts = code ? written.map(codePart) : written;
+  if (parts.some((part) => part === undefined)) return undefined;
   const base = trimmed(site.base);
   const of = (kind: HostItemKind, path: string, id: string, url: string): HostItemRef => ({
     host: site.host,

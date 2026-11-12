@@ -3488,7 +3488,10 @@ before `;`).
 `recogniseHostRef` takes one address or one key (the palette and `hosts.lookup`). A thread
 without a project has no repository or key, so its bare references stay text; its links still
 resolve against Settings → Trackers. `HostItemRef` names one item (host, kind, site, path, id,
-url); GitHub numbers issues and pull requests together, so a bare `#14` there is an `issue`
+url); `hostItemKey` lower-cases the repository path, a site's path prefix is compared without
+case, and a code host's path parts are decoded once, so `Acme/Tea`, `acme/tea` and `acme/te%61`
+are one item (a read stored under an older, mixed-case key is read again on open). GitHub
+numbers issues and pull requests together, so a bare `#14` there is an `issue`
 until the read says it is a pull request.
 
 **Server.** `TrackerService.linkHosts(projectId | null)` answers the rules and, for the server
