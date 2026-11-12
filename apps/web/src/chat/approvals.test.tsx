@@ -45,6 +45,7 @@ const context: ItemContext = {
 function harness(answers: Record<string, unknown> = {}, turns: Turn[] = []) {
   const sent: unknown[] = [];
   const asked: unknown[] = [];
+  const turnListeners: ((data: unknown[]) => void)[] = [];
   const request = vi.fn<(method: string, params: unknown) => Promise<unknown>>((method, params) => {
     if (method === 'dispatch') {
       sent.push((params as { command: unknown }).command);
@@ -58,6 +59,7 @@ function harness(answers: Record<string, unknown> = {}, turns: Turn[] = []) {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
     request: request as unknown as Connection['request'],
     subscribe(topic, _params, onData) {
+      if (topic === 'turns') turnListeners.push(onData);
       onData(topic === 'turns' ? turns : []);
       return () => undefined;
     },
@@ -71,7 +73,10 @@ function harness(answers: Record<string, unknown> = {}, turns: Turn[] = []) {
     settings: createSettingsStore(createMemorySettingsSource(undefined, {})),
   };
   const show = (ui: ReactNode) => render(<RuntimeProvider runtime={runtime}>{ui}</RuntimeProvider>);
-  return { sent, asked, show, runtime };
+  const pushTurns = (next: Turn[]) => {
+    for (const listener of turnListeners) listener(next);
+  };
+  return { sent, asked, show, runtime, request, pushTurns };
 }
 
 const item = (kind: ThreadItem['kind'], payload: unknown): ThreadItem => ({
@@ -455,6 +460,31 @@ describe("a thread's Changes (spec 34, 35)", () => {
     ]);
     act(() => threadChangesCommands('t1', true, false)[1]?.run({} as never));
     expect(await names()).toEqual(['MREADME.md+2 −0']);
+  });
+
+  it('reads the changes again once the running turn is marked, not only when it ends', async () => {
+    const turn: Turn = {
+      id: 't1:turn:0',
+      threadId: 't1',
+      index: 0,
+      state: 'running',
+      startedAt: '2026-11-02T08:00:00.000Z',
+      endedAt: null,
+      usage: null,
+      marked: false,
+    };
+    const h = harness(
+      { 'threads.diff': { ...listing, status: 'noBase', files: [], turnPaths: null } },
+      [turn],
+    );
+    act(() => threadChangesStore.setState({ threadId: 't1' }));
+    h.show(<ThreadChanges threadId="t1" />);
+    expect(await screen.findByText('No starting point')).toBeTruthy();
+    h.request.mockImplementation((method) =>
+      Promise.resolve(method === 'threads.diff' ? listing : null),
+    );
+    act(() => h.pushTurns([{ ...turn, marked: true }]));
+    expect(await names()).toEqual(['MREADME.md+2 −0', 'Msrc/timer.ts+40 −7']);
   });
 
   it('says why when the folder is not in git, or the thread has no base', async () => {

@@ -9,6 +9,7 @@ import type {
   ProviderKind,
   ThreadDiff,
   ThreadItem,
+  Turn,
 } from '@wow/contracts';
 import { SecretStore, plainProtector } from '@wow/secrets';
 import { execFileSync } from 'node:child_process';
@@ -541,6 +542,29 @@ describe('a chat thread’s changes (spec 34, 35)', () => {
       ['src/timer.ts', 1, 1],
     ]);
     expect(diff.turnPaths).toEqual(['README.md', 'src/bell.ts']);
+  });
+
+  it('tells the turns topic once the running first turn is marked, so the client reads again', async () => {
+    const topics: string[][] = [];
+    const off = engine.onCommit((commit) => {
+      if (commit.events.some(({ event }) => event.kind === 'thread.changesMarked')) {
+        topics.push([...commit.topics]);
+      }
+    });
+    createThread('t1', 'claude');
+    const marked = committed('thread.changesMarked');
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Work on the kettle' });
+    // The turn has started, but wow has not read the folder for it yet.
+    const before = snapshot(database.db, { topic: 'turns', threadId: 't1' }) as Turn[];
+    expect(before.map((turn) => [turn.state, turn.marked])).toEqual([['running', false]]);
+    expect((await diffOf('t1')).status).toBe('noBase');
+    await marked;
+    off();
+    expect(topics).toEqual([expect.arrayContaining(['turns'])]);
+    const after = snapshot(database.db, { topic: 'turns', threadId: 't1' }) as Turn[];
+    expect(after.map((turn) => [turn.state, turn.marked])).toEqual([['running', true]]);
+    expect((await diffOf('t1')).status).toBe('ok');
+    await service.idle();
   });
 
   it('says why for a folder outside git and for a thread stored before bases were kept', async () => {

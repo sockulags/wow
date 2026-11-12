@@ -63,9 +63,10 @@ export const closeThreadChanges = (): void =>
 export const useOpenThreadChanges = (threadId: string | undefined): boolean =>
   useStore(threadChangesStore, (state) => threadId !== undefined && state.threadId === threadId);
 
-// What a turn list changes when it matters here: a turn starts or ends.
+// What a turn list changes when it matters here: a turn starts, gets its mark or ends. A turn
+// starts before wow has read the folder for it, so its Changes are read again once it has.
 const turnsKey = (turns: readonly Turn[]) =>
-  turns.map((turn) => `${turn.id}:${turn.state}`).join(',');
+  turns.map((turn) => `${turn.id}:${turn.state}:${turn.marked === true}`).join(',');
 
 function parsed(received: unknown): ThreadDiff {
   const result = ThreadDiff.safeParse(received);
@@ -73,7 +74,7 @@ function parsed(received: unknown): ThreadDiff {
   return result.data;
 }
 
-// The thread's changes, read again when a turn starts or ends and when the user asks.
+// The thread's changes, read again when a turn starts, is marked or ends and when the user asks.
 export function useThreadDiff(
   threadId: string,
   path?: string,

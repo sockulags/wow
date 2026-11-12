@@ -346,7 +346,7 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           .run();
       }
       if (mark) tx.update(turns).set({ fileMark: mark }).where(eq(turns.id, turnId)).run();
-      return [];
+      return ['turns'];
     }
     case 'thread.queueChanged':
       tx.update(threads)

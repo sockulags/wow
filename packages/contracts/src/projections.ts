@@ -134,6 +134,9 @@ export const Turn = z.object({
   startedAt: Timestamp,
   endedAt: Timestamp.nullable(),
   usage: Usage.nullable(),
+  // A chat turn whose changed files wow read as it began (agent workbench spec 34, 35): its
+  // thread's Changes can measure it. The turns topic sets it; a turn event carries none.
+  marked: z.boolean().optional(),
 });
 export type Turn = z.infer<typeof Turn>;
 

@@ -2998,6 +2998,10 @@ three choices. They replace the approval commands `chatCommands` had.
 differed), every turn the changed files' hashes as it begins (`snapshotChanges`), and reports
 them as `thread.changesMarked {threadId, turnId, base, mark}` (stored as `threads.base_sha`,
 `base_files` and `turns.file_mark`, migration `0029_thread_changes`); then it sends the turn.
+The `turn.started` before it is already published, so the projection of `thread.changesMarked`
+publishes the `turns` topic, whose `Turn.marked` says the turn has a mark (the mark itself is
+not sent); `useThreadDiff` reads `threads.diff` again when a turn starts, is marked or ends, so
+the first turn's Changes and "This turn only" do not wait for the turn's end.
 Git that cannot say leaves them null and the turn goes as usual. A thread stored before has turns
 and no base and gets none later, so its Changes say so. `threads.diff {threadId, path?}` answers
 `ThreadDiff` (`RunDiff` plus `turnPaths`) from `readThreadDiff` in `workflows/changes.ts`: the

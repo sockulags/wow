@@ -30,12 +30,15 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
       case 'assistantThread':
         return db.select().from(t.threads).where(eq(t.threads.kind, 'assistant')).all();
       case 'turns':
+        // The mark itself stays on the server; that it exists tells the client to read the
+        // thread's Changes again.
         return db
           .select()
           .from(t.turns)
           .where(eq(t.turns.threadId, threadId))
           .orderBy(asc(t.turns.index))
-          .all();
+          .all()
+          .map(({ fileMark, ...turn }) => ({ ...turn, marked: fileMark !== null }));
       case 'threadItems':
         return db
           .select()
