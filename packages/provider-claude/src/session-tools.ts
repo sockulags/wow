@@ -1,6 +1,8 @@
 import type { AgentInfo, McpServerStatus, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import {
   boundedSessionTools,
+  hiddenText,
+  withoutAddressAccount,
   type McpServerInfo,
   type McpServerState,
   type SessionPlugin,
@@ -44,7 +46,9 @@ export function mcpAddress(config: unknown): string | null {
   }
   const command = fields['command'];
   if (typeof command === 'string') {
-    const name = command
+    // A whole command line written into `command` keeps its arguments out: only the program.
+    const program = command.trim().split(/\s+/)[0] ?? '';
+    const name = program
       .split(/[\\/]/)
       .filter((part) => part !== '')
       .at(-1);
@@ -53,12 +57,61 @@ export function mcpAddress(config: unknown): string | null {
   return null;
 }
 
+// The string values of a list or a record (`args`, `env`, `headers`).
+const strings = (value: unknown): string[] =>
+  (Array.isArray(value) ? value : Object.values(record(value) ?? {})).filter(
+    (inner): inner is string => typeof inner === 'string',
+  );
+
+// Shorter values would hide parts of ordinary words.
+const shortestHidden = 4;
+
+const webAddress = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
+const credential = /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]+/gi;
+
+// Text a server or plugin reported about itself, such as a failure: every web address cut to its
+// origin and a credential after Bearer, Basic or Token hidden. With the server's config, its
+// command reads as the program's name and the values of its URL, arguments, environment and
+// headers are hidden (spec 41). The server's secret net runs over it again before it is stored.
+export function cleanReportedText(text: string, config?: unknown): string {
+  let out = text;
+  const fields = record(config);
+  if (fields) {
+    const command = fields['command'];
+    const program = mcpAddress(config);
+    if (typeof command === 'string' && command.trim() !== '' && program !== null) {
+      out = out.split(command.trim()).join(program);
+    }
+    const url = fields['url'];
+    if (typeof url === 'string' && url !== '') {
+      out = out.split(url).join(mcpAddress({ url }) ?? hiddenText);
+    }
+    const values = [
+      ...strings(fields['args']),
+      ...strings(fields['env']),
+      ...strings(fields['headers']),
+    ]
+      .filter((value) => value.length >= shortestHidden)
+      .toSorted((a, b) => b.length - a.length);
+    for (const value of values) out = out.split(value).join(hiddenText);
+  }
+  out = withoutAddressAccount(out).replace(webAddress, (found) => {
+    // Punctuation that ends the sentence is not part of the address.
+    const address = found.replace(/[.,;:!?)\]]+$/, '');
+    const rest = found.slice(address.length);
+    if (!URL.canParse(address)) return hiddenText + rest;
+    const parsed = new URL(address);
+    return (parsed.host === '' ? hiddenText : `${parsed.protocol}//${parsed.host}`) + rest;
+  });
+  return out.replace(credential, (_, word: string) => `${word} ${hiddenText}`);
+}
+
 function pluginsOf(init: InitMessage): SessionPlugin[] {
   const errors = init.plugin_errors ?? [];
   const errorsOf = (name: string) =>
     errors
       .filter((error) => error.plugin === name || error.plugin.split('@')[0] === name)
-      .map((error) => `${error.type}: ${error.message}`);
+      .map((error) => cleanReportedText(`${error.type}: ${error.message}`));
   const loaded = init.plugins.map((plugin) => ({
     name: plugin.name,
     version: plugin.version ?? null,
@@ -71,7 +124,7 @@ function pluginsOf(init: InitMessage): SessionPlugin[] {
     if (known.has(error.plugin) || known.has(error.plugin.split('@')[0] ?? '')) continue;
     failed.set(error.plugin, [
       ...(failed.get(error.plugin) ?? []),
-      `${error.type}: ${error.message}`,
+      cleanReportedText(`${error.type}: ${error.message}`),
     ]);
   }
   return [
@@ -135,7 +188,10 @@ export function completeSessionTools(base: SessionTools, live: LiveAnswers): Ses
       name: server.name,
       state: stateOf(server.status),
       stateWord: server.status,
-      error: server.status === 'failed' ? (server.error ?? null) : null,
+      error:
+        server.status === 'failed' && server.error !== undefined
+          ? cleanReportedText(server.error, server.config)
+          : null,
       source: server.source ?? server.scope ?? sourceOf(server.name),
       version: server.serverInfo?.version ?? null,
       address: mcpAddress(server.config),
@@ -176,15 +232,3 @@ export const withCommands = (
       ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
     })),
   });
-
-export const emptySessionTools = (reportedAt: string): SessionTools => ({
-  reportedAt,
-  complete: false,
-  mcpServers: [],
-  builtInTools: [],
-  skills: [],
-  commands: [],
-  agents: [],
-  plugins: [],
-  instructionFiles: [],
-});

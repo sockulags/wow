@@ -177,7 +177,7 @@ function ThreadHeader({
           </Badge>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
-          <ToolsChip threadId={thread.id} />
+          {thread.kind !== 'assistant' && <ToolsChip threadId={thread.id} />}
           {thread.runId === null && <ThreadChangesChip threadId={thread.id} />}
           <ConversationMenu />
           <IconButton

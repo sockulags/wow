@@ -4,6 +4,7 @@ import {
   type ModelInfo,
   type PermissionResult,
   type PermissionUpdate,
+  type SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   ApprovalFacts,
@@ -31,9 +32,9 @@ import { AsyncQueue } from './queue.js';
 import { resultDiff } from './diff.js';
 import {
   completeSessionTools,
-  emptySessionTools,
   initSessionTools,
   withCommands,
+  type LiveAnswers,
 } from './session-tools.js';
 import { agentResult, claudeToolFacts } from './tools.js';
 import {
@@ -135,6 +136,8 @@ interface Session {
   // What the session can use: its latest init message's list, and the list last reported.
   initTools?: SessionTools | undefined;
   tools?: SessionTools | undefined;
+  // Commands that changed while the first list was still being asked for.
+  changedCommands?: SlashCommand[] | undefined;
   // The uuid of the running turn's newest message of the conversation itself (not a subagent's),
   // which the turn's end reports as its point to go back to (agent workbench spec 62, 71). A
   // turn that wrote nothing reports none, so a refused resume is not taken for a point.
@@ -623,11 +626,16 @@ export class ClaudeAdapter implements ProviderAdapter {
         // The assistant's session (the app's tools only) has no Tools tab (spec 43).
         if (message.subtype === 'init' && !session.toolsOnly) {
           session.initTools = initSessionTools(message, new Date().toISOString());
+          session.changedCommands = undefined;
           void this.#reportTools(session);
         }
-        if (message.subtype === 'commands_changed' && session.tools) {
-          session.tools = withCommands(session.tools, message.commands);
-          this.#emit({ type: 'sessionTools', threadId, tools: session.tools });
+        if (message.subtype === 'commands_changed' && session.initTools && !session.toolsOnly) {
+          if (session.tools) {
+            session.tools = withCommands(session.tools, message.commands);
+            this.#emit({ type: 'sessionTools', threadId, tools: session.tools });
+          } else {
+            session.changedCommands = message.commands;
+          }
         }
         if (message.subtype === 'init' && message.model) session.reportedModel = message.model;
         if (message.subtype === 'init' && message.session_id !== session.providerSessionId) {
@@ -1106,38 +1114,55 @@ export class ClaudeAdapter implements ProviderAdapter {
 
   // Claude Code's commands for the folder (spec 60): the thread's live session knows the
   // project's own; otherwise a probe opened in the folder is asked.
-  // The init message's list completed from the live query (spec 38). When the live calls fail,
-  // the init message's names and states are reported with `complete` false (spec Open risks).
-  async #completedTools(session: Session): Promise<SessionTools | undefined> {
-    const query = session.query;
-    if (!query) return undefined;
-    const base = session.initTools ?? emptySessionTools(new Date().toISOString());
+  // What the live query answers about the session (spec 38), or undefined when a call fails or
+  // does not answer within `providers.requestTimeoutMs` (spec Open risks).
+  async #liveAnswers(query: ClaudeQuery): Promise<LiveAnswers | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), this.#context.requestTimeoutMs());
+    });
     try {
-      const [status, commands, agents] = await Promise.all([
-        query.mcpServerStatus(),
-        query.supportedCommands(),
-        query.supportedAgents(),
+      return await Promise.race([
+        Promise.all([
+          query.mcpServerStatus(),
+          query.supportedCommands(),
+          query.supportedAgents(),
+        ]).then(([status, commands, agents]) => ({ status, commands, agents })),
+        late,
       ]);
-      return completeSessionTools(base, { status, commands, agents });
     } catch {
-      return base;
+      return undefined;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
+  // At each init: its list completed from the live query, or the init message's names and
+  // states alone with `complete` false when the live calls fail.
   async #reportTools(session: Session): Promise<void> {
-    const tools = await this.#completedTools(session);
-    // A session closed meanwhile has given its thread up.
-    if (!tools || this.#sessions.get(session.threadId) !== session) return;
+    const base = session.initTools;
+    const query = session.query;
+    if (!base || !query) return;
+    const live = await this.#liveAnswers(query);
+    // A session closed or started again meanwhile has given this report up.
+    if (this.#sessions.get(session.threadId) !== session || session.initTools !== base) return;
+    let tools = live ? completeSessionTools(base, live) : base;
+    if (session.changedCommands) tools = withCommands(tools, session.changedCommands);
+    session.changedCommands = undefined;
     session.tools = tools;
     this.#emit({ type: 'sessionTools', threadId: session.threadId, tools });
   }
 
   // Refresh asks the live session only; without one the answer is null and nothing is started.
+  // When the live calls fail, the refresh fails too: the init message alone would replace a
+  // complete list with a poorer one.
   async #describe(threadId: string): Promise<SessionTools | null> {
     const session = this.#sessions.get(threadId);
-    if (!session?.query || session.toolsOnly) return null;
-    const tools = await this.#completedTools(session);
-    if (!tools) return null;
+    const base = session?.initTools;
+    if (!session?.query || session.toolsOnly || !base) return null;
+    const live = await this.#liveAnswers(session.query);
+    if (!live) throw new Error('Claude Code did not say what the session can use');
+    const tools = completeSessionTools(base, live);
     session.tools = tools;
     return tools;
   }

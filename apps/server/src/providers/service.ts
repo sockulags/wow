@@ -1,6 +1,7 @@
 import {
   assistantToolsetName,
   attachmentMediaType,
+  boundedSessionTools,
   HandOverResult,
   ProviderEvent,
   ProviderModel,
@@ -8,6 +9,7 @@ import {
   ProviderTestResult,
   SecretRef,
   SessionTools,
+  hideSecrets,
   secretPatterns,
   type ProviderAdapter,
   type ProviderCommand,
@@ -286,7 +288,7 @@ export class ProviderService {
         this.#deps.engine.dispatch(`tools:${randomUUID()}`, {
           type: 'thread.toolsReported',
           threadId,
-          tools,
+          tools: tools && this.#withoutSecrets(tools),
           source,
         }).seqs.length > 0
       );
@@ -294,6 +296,22 @@ export class ProviderService {
       this.#deps.logger.warn('the session tools were not stored', describeError(error));
       return false;
     }
+  }
+
+  // A failure's words are the one free text a report carries; they get the secret net before
+  // they are stored (spec 41), as the adapter already took out the server's config values.
+  #withoutSecrets(tools: SessionTools): SessionTools {
+    const patterns = secretPatterns(this.#deps.settings.get('assistant.secretPatterns'));
+    const hide = (text: string) => hideSecrets(text, patterns);
+    return boundedSessionTools({
+      ...tools,
+      mcpServers: tools.mcpServers.map((server) => ({
+        ...server,
+        error: server.error === null ? null : hide(server.error),
+        address: server.address === null ? null : hide(server.address),
+      })),
+      plugins: tools.plugins.map((plugin) => ({ ...plugin, errors: plugin.errors.map(hide) })),
+    });
   }
 
   // The live sessions of an instance's threads end with its adapter.

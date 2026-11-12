@@ -186,6 +186,7 @@ describe('session tools', () => {
       skills: [],
       mcpServers: mockClaudeSessionTools().mcpServers.map((server) => ({
         ...server,
+        error: 'spawn npx -y @tea/server --api-key=sk-tea-0123456789abcdefghij ENOENT',
         config: { url: 'https://docs.tea.example/v1?key=sk-secret', headers: { A: 'Bearer x' } },
         env: { TOKEN: 'sk-secret' },
         args: ['--token=sk-secret'],
@@ -208,6 +209,7 @@ describe('session tools', () => {
     for (const text of [JSON.stringify(raw), JSON.stringify(history)]) {
       expect(text).not.toContain('sk-secret');
       expect(text).not.toContain('Bearer');
+      expect(text).not.toContain('sk-tea-0123456789abcdefghij');
     }
   });
 

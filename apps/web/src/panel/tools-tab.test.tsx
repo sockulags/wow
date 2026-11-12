@@ -189,7 +189,12 @@ function fake(rows: Readonly<Record<string, ThreadTools>>) {
     subscribe(topic, params, onData) {
       const threadId = (params as { threadId?: string } | null)?.threadId;
       if (topic === 'threads') {
-        onData([thread('tea', 'claude'), thread('brew', 'codex'), thread('old', 'claude')]);
+        onData([
+          thread('tea', 'claude'),
+          thread('brew', 'codex'),
+          thread('old', 'claude'),
+          { ...thread('helper', 'claude'), kind: 'assistant' },
+        ]);
       } else if (topic === 'providerInstances') {
         onData([instance('claude', 'claude'), instance('codex', 'codex')]);
       } else if (topic === 'threadTools') {
@@ -300,6 +305,19 @@ describe('the Tools tab', () => {
     expect(within(toolsTab()).getByTestId('tools-reported').textContent).toBe(
       'Nothing reported yet. The list is filled at the next turn.',
     );
+  });
+
+  it('offers the assistant thread no chip, Details link or command, even with a row @thread-work-43', async () => {
+    const server = fake({ helper: { ...live, threadId: 'helper' } });
+    await renderApp('/chat/helper', server.runtime);
+    const user = userEvent.setup();
+    expect(await screen.findByTestId('thread-state')).toBeTruthy();
+    expect(screen.queryByTestId('tools-chip')).toBeNull();
+    expect(screen.queryByTestId('open-session-tools')).toBeNull();
+    await user.keyboard('{Control>}k{/Control}');
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByRole('combobox'), 'session tools');
+    expect(within(dialog).queryByRole('option', { name: /session tools/i })).toBeNull();
   });
 
   it("shows Codex's instruction files and the servers its tool calls used @thread-work-42", async () => {

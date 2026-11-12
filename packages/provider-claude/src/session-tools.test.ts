@@ -176,9 +176,9 @@ const live: FakeLive = {
   agents: [{ name: 'Explore', description: 'Looks through the code', model: 'haiku' }],
 };
 
-function harness(turns: FakeStep[][], answers: FakeLive = live) {
+function harness(turns: FakeStep[][], answers: FakeLive = live, within = context) {
   const query = fakeQueryFunction(turns, answers);
-  const adapter = new ClaudeAdapter(instance, context, { query, baseEnv: { PATH: '/usr/bin' } });
+  const adapter = new ClaudeAdapter(instance, within, { query, baseEnv: { PATH: '/usr/bin' } });
   const events: ProviderEvent[] = [];
   const waiting: Array<() => void> = [];
   adapter.onEvent((event) => {
@@ -267,6 +267,119 @@ describe('session tools from Claude Code', () => {
     expect(sent).not.toContain('/usr/local/bin');
   });
 
+  it('keeps a command line and a configured URL out of a failure and the address', async () => {
+    const leaky: McpServerStatus[] = [
+      {
+        name: 'tea-tracker',
+        status: 'failed',
+        error: 'spawn npx -y @tea/server --api-key=sk-tea-123 ENOENT',
+        config: { type: 'stdio', command: 'npx -y @tea/server --api-key=sk-tea-123' },
+      },
+      {
+        name: 'tea-docs',
+        status: 'failed',
+        error:
+          'Failed to connect to https://mcp.tea.example/v1/sse?key=sk-tea-123: 401 (Authorization: Bearer sk-tea-456)',
+        config: { type: 'sse', url: 'https://mcp.tea.example/v1/sse?key=sk-tea-123' },
+      },
+      {
+        name: 'tea-cloud',
+        status: 'failed',
+        error:
+          'Redirected to https://u:pw@login.tea.example/a/b?c=d; header tea-header-777 refused',
+        config: {
+          type: 'http',
+          url: 'https://cloud.tea.example/mcp',
+          headers: { 'X-Tea-Key': 'tea-header-777' },
+        },
+      },
+    ];
+    const h = harness([[init, done]], { mcpStatus: leaky });
+    const reported = h.reported();
+    await h.adapter.send(startTurn());
+    await reported;
+    const [tools] = h.tools();
+    expect(tools?.mcpServers.map((server) => [server.address, server.error])).toEqual([
+      ['npx', 'spawn npx ENOENT'],
+      [
+        'https://mcp.tea.example',
+        'Failed to connect to https://mcp.tea.example: 401 (Authorization: Bearer [hidden])',
+      ],
+      [
+        'https://cloud.tea.example',
+        'Redirected to https://login.tea.example; header [hidden] refused',
+      ],
+    ]);
+    const sent = JSON.stringify(h.events);
+    for (const secret of [
+      'sk-tea-123',
+      'sk-tea-456',
+      '/v1/sse',
+      'key=',
+      'u:pw',
+      'tea-header-777',
+    ]) {
+      expect(sent).not.toContain(secret);
+    }
+  });
+
+  it('reports the init message alone when a live call does not answer in time', async () => {
+    const h = harness(
+      [[init, done]],
+      { mcpStatus: new Promise(() => undefined) },
+      {
+        ...context,
+        requestTimeoutMs: () => 1,
+      },
+    );
+    const reported = h.reported();
+    await h.adapter.send(startTurn());
+    await reported;
+    expect(h.tools()[0]?.complete).toBe(false);
+    await expect(h.adapter.send({ type: 'describeSession', threadId: 't1' })).rejects.toThrow(
+      'Claude Code did not say what the session can use',
+    );
+  });
+
+  it('fails a refresh whose live calls fail instead of answering the poorer init list', async () => {
+    const h = harness([[init, done]], { mcpStatus: new Error('Claude Code did not answer') });
+    const reported = h.reported();
+    await h.adapter.send(startTurn());
+    await reported;
+    await expect(h.adapter.send({ type: 'describeSession', threadId: 't1' })).rejects.toThrow(
+      'Claude Code did not say what the session can use',
+    );
+  });
+
+  it('answers null to a refresh before the session said anything', async () => {
+    const gate: { release?: () => void } = {};
+    const hold = new Promise<void>((resolve) => (gate.release = resolve));
+    const h = harness([[{ hold }, init, done]]);
+    const reported = h.reported();
+    await h.adapter.send(startTurn());
+    await expect(h.adapter.send({ type: 'describeSession', threadId: 't1' })).resolves.toBeNull();
+    gate.release?.();
+    await reported;
+    expect(h.tools()).toHaveLength(1);
+  });
+
+  it('keeps commands that changed while the first list was being asked for', async () => {
+    const answer: { give?: (status: McpServerStatus[]) => void } = {};
+    const mcpStatus = new Promise<McpServerStatus[]>((resolve) => (answer.give = resolve));
+    const h = harness([[init, commandsChanged, done]], { ...live, mcpStatus });
+    const ended = new Promise<void>((resolve) =>
+      h.adapter.onEvent((event) => event.type === 'turnCompleted' && resolve()),
+    );
+    const reported = h.reported();
+    await h.adapter.send(startTurn());
+    await ended;
+    answer.give?.(status);
+    await reported;
+    expect(h.tools()).toHaveLength(1);
+    expect(h.tools()[0]?.commands.map((command) => command.name)).toEqual(['steep']);
+    expect(h.tools()[0]?.complete).toBe(true);
+  });
+
   it('reports the init message alone, not complete, when a live call fails', async () => {
     const h = harness([[init, done]], { mcpStatus: new Error('Claude Code did not answer') });
     const reported = h.reported();
@@ -341,6 +454,7 @@ describe('mcpAddress', () => {
     expect(mcpAddress({ command: 'C:\\Tools\\tea\\tea-tracker.exe', args: ['--x'] })).toBe(
       'tea-tracker.exe',
     );
+    expect(mcpAddress({ command: 'npx -y @tea/server --api-key=sk-tea-123' })).toBe('npx');
     expect(mcpAddress({ type: 'sdk', name: 'in-process' })).toBeNull();
     expect(mcpAddress({ url: 'file:///etc/passwd' })).toBeNull();
     expect(mcpAddress(undefined)).toBeNull();

@@ -61,10 +61,10 @@ export const errorResult = (subtype: 'error_during_execution', sessionId: string
     session_id: sessionId,
   }) as unknown as SDKMessage;
 
-// What the live calls answer: the MCP servers' status (an Error makes the call fail) and the
-// subagents.
+// What the live calls answer: the MCP servers' status (an Error makes the call fail; a promise
+// answers when it settles) and the subagents.
 export interface FakeLive {
-  readonly mcpStatus?: McpServerStatus[] | Error;
+  readonly mcpStatus?: McpServerStatus[] | Error | Promise<McpServerStatus[]>;
   readonly agents?: AgentInfo[];
 }
 

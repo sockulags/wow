@@ -200,7 +200,12 @@ export function useCommands(gated = false): {
         changesOpen,
         changesTurnOnly,
       ),
-      ...sessionToolsCommands(openThread?.id, tabsRoute, toolsOpen, toolsLive),
+      ...sessionToolsCommands(
+        openThread && openThread.kind !== 'assistant' ? openThread.id : undefined,
+        tabsRoute,
+        toolsOpen,
+        toolsLive,
+      ),
       ...chatCommands({
         threads: threads ?? [],
         instances: instances ?? [],

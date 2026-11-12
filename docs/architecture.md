@@ -3401,10 +3401,15 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
   then completes it from the live query's `mcpServerStatus()`, `supportedCommands()` and
   `supportedAgents()` (the `ClaudeQuery` seam in `sdk.ts` declares both new calls) and emits
   `sessionTools`. A server's `config` gives only `address` (`mcpAddress`: an http or sse URL's
-  scheme, host and port; a stdio command's file name). When a live call fails, the init message's
-  names and states go out with `complete: false`. `system/commands_changed` replaces the
-  commands. `describeSession` asks the same calls of the thread's live query and answers null
-  when there is none.
+  scheme, host and port; the file name of a stdio command's first word). A failure's words and
+  plugin errors pass `cleanReportedText`: the server's command reads as its program, its URL,
+  argument, environment and header values are hidden, every web address is cut to its origin,
+  and a credential after Bearer, Basic or Token is hidden. When a live call fails or does not
+  answer within `providers.requestTimeoutMs`, the init message's names and states go out with
+  `complete: false`. `system/commands_changed` replaces the commands, also when it arrives while
+  the first list is being asked for. `describeSession` asks the same calls of the thread's live
+  query, answers null when there is none or it has sent no init yet, and fails when the live
+  calls fail (the init list alone would replace a complete one).
 - **Codex** (`provider-codex/src/adapter.ts`). `thread/start` and `thread/resume` answer
   `instructionSources` (added to the generator's `FIELDS` as `instructionSources?` and to
   `fingerprint.ts`); the adapter emits them as `instructionFiles` with `complete: false`.
@@ -3413,7 +3418,9 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
   generated and checked. The web app adds the servers and tools the thread's own `mcp` tool rows
   name, marked "Seen in this thread's tool calls", with a line that Codex reports no list.
 - **Server.** `ProviderService` takes a `sessionTools` event out of the batch and dispatches the
-  internal `thread.toolsReported {threadId, tools, source}` (`core/thread-tools.ts`). It is stored
+  internal `thread.toolsReported {threadId, tools, source}` (`core/thread-tools.ts`), after the
+  `assistant.secretPatterns` net has run over each server's error and address and each plugin
+  error. It is stored
   only when the list (everything but `reportedAt`, compared by `sameSessionTools`) or its
   liveness changed, with the server's time; the assistant is refused. `tools: null` marks the
   stored list not live: at `recover()` (no session survives a restart), when an instance's
@@ -3428,8 +3435,8 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
   needs sign-in ("1 MCP server failed") and opens the tab. Details has a "Session tools" section
   with a summary and "Show session tools". Palette `chat.sessionTools` (Show or Hide session
   tools) and, with a live session, `chat.refreshTools`; no key and no setting. A thread stored
-  before this change has no row and shows "No list yet" until its next turn. The assistant is
-  never an open chat thread, so it gets no tab, chip or command.
+  before this change has no row and shows "No list yet" until its next turn. An assistant thread
+  gets no tab, chip, Details link or command, even when opened at `/chat/<id>`.
 - **Mocks.** `MockProviderAdapter` reports `mockClaudeSessionTools()` (tea-docs connected with two
   tools, tea-tracker failed with "spawn tea-tracker ENOENT", tea-cloud needing sign-in) at every
   turn of a Claude instance and `mockCodexSessionTools(cwd)` (the folder's `AGENTS.md`) for Codex;
