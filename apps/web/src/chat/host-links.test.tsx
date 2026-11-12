@@ -7,9 +7,17 @@ import { Markdown } from '@/components/markdown';
 import { threadMentions } from '@/panel/thread-panel';
 import { loadMarkdown } from '../test/markdown';
 import {
+  BookOpenIcon,
+  CircleDotIcon,
+  GitMergeIcon,
+  GitPullRequestIcon,
+  TicketIcon,
+} from 'lucide-react';
+import {
   HostLinkContext,
   bareHostRefs,
   hostChipText,
+  hostItemIcon,
   recogniseHostLink,
   recogniseHostRef,
   type HostLinks,
@@ -198,6 +206,32 @@ const links = (open: (item: HostItemRef) => void): HostLinks => ({
   open,
 });
 
+const at = (ref: string, on: HostLinkRules): HostItemRef => {
+  const found = recogniseHostRef(ref, on);
+  if (!found) throw new Error(`no item for ${ref}`);
+  return found;
+};
+const read = (item: HostItemRef, data: HostItemRead['data']): HostItemRead => ({
+  ...prRead,
+  id: hostItemReadId('t1', item),
+  item,
+  data,
+});
+const issueOf = (item: HostItemRef, state: 'open' | 'closed'): HostItemRead['data'] => ({
+  kind: 'issue',
+  issue: {
+    host: item.host,
+    number: Number(item.id),
+    title: 'The kettle whistles',
+    state,
+    author: 'jon',
+    labels: [],
+    body: '',
+    url: item.url,
+    comments: [],
+  },
+});
+
 describe('chips @agent-workbench-20 @agent-workbench-21', () => {
   it('says the key before the read and adds the state after it', () => {
     expect(hostChipText(pr, undefined)).toBe('PR #14');
@@ -222,6 +256,66 @@ describe('chips @agent-workbench-20 @agent-workbench-21', () => {
         },
       }),
     ).toBe('DEMO-42 · To Do');
+  });
+
+  it('says MR !7 for a GitLab merge request and Issue #n once an issue was read on either host', () => {
+    const merge = at('!7', gitlabRules);
+    expect(hostChipText(merge, undefined)).toBe('MR !7');
+    const githubIssue = at('#3', rules);
+    expect(hostChipText(githubIssue, undefined)).toBe('#3');
+    expect(hostChipText(githubIssue, read(githubIssue, issueOf(githubIssue, 'open')))).toBe(
+      'Issue #3 · Open',
+    );
+    const gitlabIssue = at('#4', gitlabRules);
+    expect(hostChipText(gitlabIssue, undefined)).toBe('Issue #4');
+    expect(hostChipText(gitlabIssue, read(gitlabIssue, issueOf(gitlabIssue, 'closed')))).toBe(
+      'Issue #4 · Closed',
+    );
+  });
+
+  it('shows a Confluence page by its link before the read and by its title after it', () => {
+    const page = recogniseHostLink(
+      'https://wiki.example.invalid/wiki/pages/viewpage.action?pageId=123',
+      rules,
+    );
+    if (!page) throw new Error('no page');
+    expect(hostChipText(page, undefined)).toBe('Page 123');
+    expect(
+      hostChipText(page, {
+        ...prRead,
+        id: hostItemReadId('t1', page),
+        item: page,
+        data: {
+          kind: 'page',
+          page: {
+            id: '123',
+            title: 'Watering schedule',
+            space: 'ENG',
+            version: 3,
+            body: '',
+            url: page.url,
+          },
+        },
+      }),
+    ).toBe('Watering schedule');
+  });
+
+  it('gives each kind its icon, and a GitHub number the pull request icon once read as one', () => {
+    const ofRef = (ref: string, on: HostLinkRules = rules) => {
+      const found = recogniseHostRef(ref, on);
+      if (!found) throw new Error(`no item for ${ref}`);
+      return hostItemIcon(found);
+    };
+    expect(ofRef('https://ghe.example.invalid/acme/tea/pull/14')).toBe(GitPullRequestIcon);
+    expect(ofRef('!7', gitlabRules)).toBe(GitMergeIcon);
+    expect(ofRef('#3')).toBe(CircleDotIcon);
+    expect(ofRef('DEMO-42')).toBe(TicketIcon);
+    expect(ofRef('https://wiki.example.invalid/wiki/pages/viewpage.action?pageId=123')).toBe(
+      BookOpenIcon,
+    );
+    const bare = recogniseHostRef('#14', rules);
+    if (!bare) throw new Error('no item');
+    expect(hostItemIcon(bare, prRead.data)).toBe(GitPullRequestIcon);
   });
 
   it('shows links and keys of a message as chips, leaves others links, and opens on Enter', async () => {
