@@ -472,13 +472,13 @@ export class TrackerService {
   // ones in Settings → Trackers. The same rule as the poller's for where a token may go: a site
   // the user stored, or for GitHub the remote's host when it is the one they stored or the token
   // is the project's own. The repository and Jira key are the project's only.
-  // `tokens` 'stored' answers the rules alone: each sign-in then holds a placeholder, not the
-  // token, and must not be used to ask a host.
+  // `tokens` 'stored' answers the rules alone, and a host's name reads that host's token only:
+  // a sign-in whose token was not read holds a placeholder and must not be used to ask a host.
   async linkHosts(
     projectId: string | null,
-    tokens: 'read' | 'stored' = 'read',
+    tokens: 'read' | 'stored' | HostLinkSite['host'] = 'read',
   ): Promise<LinkHosts> {
-    const readToken = tokens === 'read';
+    const reads = (host: HostLinkSite['host']) => tokens === 'read' || tokens === host;
     const project = projectId
       ? this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get()
       : undefined;
@@ -504,7 +504,7 @@ export class TrackerService {
       api?.source !== 'gitRemote' ||
       githubToken.source.startsWith('project:') ||
       hostOf(String(stored)) === githubName;
-    const githubSecret = chosen ? await this.#token(githubToken.value, readToken) : '';
+    const githubSecret = chosen ? await this.#token(githubToken.value, reads('github')) : '';
     if (apiUrl !== '' && githubSecret !== '') {
       github = { baseUrl: apiUrl, token: githubSecret, name: githubName };
       const base = gitHubWebBase(apiUrl);
@@ -521,7 +521,7 @@ export class TrackerService {
     );
     const gitlabToken = await this.#token(
       this.#deps.settings.resolve('trackers.gitlab.token', context).value,
-      readToken,
+      reads('gitlab'),
     );
     if (gitlabSite !== '' && gitlabToken !== '') {
       const name = hostOf(gitlabSite) ?? '';
@@ -534,7 +534,7 @@ export class TrackerService {
       if (own) repository = { host: 'gitlab', base, path: own.path };
     }
 
-    const jiraConfig = await this.#jiraConfig(values, readToken);
+    const jiraConfig = await this.#jiraConfig(values, reads('jira'));
     if (
       jiraConfig.baseUrl !== '' &&
       jiraConfig.token !== '' &&
@@ -545,7 +545,7 @@ export class TrackerService {
       sites.push({ host: 'jira', base: jiraConfig.baseUrl.trim().replace(/\/+$/, ''), name });
     }
 
-    const confluenceSignIn = await this.#confluence(project?.id ?? null, readToken);
+    const confluenceSignIn = await this.#confluence(project?.id ?? null, reads('confluence'));
     if (confluenceSignIn.config) {
       const name = hostOf(confluenceSignIn.config.baseUrl) ?? '';
       confluence = { signIn: confluenceSignIn.config, name };

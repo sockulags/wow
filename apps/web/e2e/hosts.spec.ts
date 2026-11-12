@@ -193,6 +193,9 @@ test.describe('host links in chat', () => {
   test('opens a pull request and a Jira issue from a chat link @agent-workbench-19 @agent-workbench-20 @agent-workbench-21 @agent-workbench-22 @agent-workbench-23 @agent-workbench-24 @agent-workbench-25', async ({
     page,
   }) => {
+    // Seven reads of four hosts, each with a token from the secret store: on Windows they use
+    // most of the default time for one test.
+    test.slow();
     const conversation = await startLinkThread(page);
     const chips = conversation.getByTestId('host-chip');
     // A pull request link, a Jira link and a bare key of the project are chips; a link to a

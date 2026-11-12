@@ -36,8 +36,12 @@ export interface HostLookupDeps {
   readonly engine: Engine;
   readonly settings: SettingsService;
   readonly logger: Logger;
-  // 'stored' gives the rules without reading a token; 'read' is for asking a host.
-  readonly linkHosts: (projectId: string | null, tokens: 'read' | 'stored') => Promise<LinkHosts>;
+  // 'stored' gives the rules without reading a token; a host's name reads the token of that
+  // host, to ask it.
+  readonly linkHosts: (
+    projectId: string | null,
+    tokens: 'stored' | HostItemRef['host'],
+  ) => Promise<LinkHosts>;
   readonly clock?: () => Date;
   readonly fetch?: typeof fetch;
 }
@@ -89,7 +93,7 @@ export class HostLookup {
     let running = this.#inFlight.get(id);
     if (!running) {
       running = this.#deps
-        .linkHosts(thread.projectId, 'read')
+        .linkHosts(thread.projectId, item.host)
         .then((hosts) => this.#read(thread.id, item, hosts))
         .finally(() => this.#inFlight.delete(id));
       this.#inFlight.set(id, running);

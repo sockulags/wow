@@ -3781,9 +3781,9 @@ read is stored for the thread (decided in the spec's Interface: chat links are m
 looked at once).
 
 Every thread view asks `hosts.lookup` for its rules. That answer reads no token: a site counts
-when a token is stored for it (`TrackerService.linkHosts(projectId, 'stored')`). The tokens are
-read only when a host is asked, because on Windows each read of the secret store starts
-PowerShell.
+when a token is stored for it (`TrackerService.linkHosts(projectId, 'stored')`). Only the
+token of the host being asked is read, and only then, because on Windows each read of the secret
+store starts PowerShell.
 
 **Recognition** (`packages/contracts/src/host-links.ts`, shared by the server and the web app so
 a chip is exactly what the server will read). `HostLinkRules` are the thread's sites
