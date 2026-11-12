@@ -2871,8 +2871,9 @@ Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attac
   the images stand right above the text: Backspace at the start of the text takes the last one
   off, the left arrow steps onto it, Backspace or Delete on a chip takes it off, and "Remove
   <image> from the message" does it from the palette (`chat/image-commands.ts`,
-  `imageComposerStore`). Send waits while an image is still on its way. A pasted screenshot has
-  no name and shows as "Image n". A paste whose clipboard also holds text (`text/plain`, as Excel,
+  `imageComposerStore`). Send waits while an image is still on its way. Once a message is sent
+  only its own images leave the composer; one added while it was on its way stays for the next.
+  A pasted screenshot has no name and shows as "Image n". A paste whose clipboard also holds text (`text/plain`, as Excel,
   Word and Outlook put a picture of the copied cells or passage beside it) is left to the text
   box and adds no image. The Assistant view, and a workflow step's thread in any view, pass no
   `imageTarget`, so their composer takes no paste, drop or palette image.

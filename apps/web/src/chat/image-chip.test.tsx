@@ -75,6 +75,7 @@ function setup({
   settings = {},
   refuse,
   held,
+  heldSends,
 }: {
   assistant?: boolean;
   shown?: Thread;
@@ -84,6 +85,8 @@ function setup({
   refuse?: string;
   // Holds every put until the test answers it, to answer them out of order.
   held?: (() => void)[];
+  // Holds every dispatch until the test answers it.
+  heldSends?: (() => void)[];
 } = {}) {
   let stored = 0;
   const request = vi.fn<(method: string, params: unknown) => Promise<unknown>>((method, params) => {
@@ -99,11 +102,15 @@ function setup({
     if (method === 'attachments.read') {
       return Promise.resolve({ mediaType: 'image/png', base64: 'aW52ZW50ZWQ=' });
     }
-    return Promise.resolve({
+    const accepted = {
       commandId: '00000000-0000-4000-8000-000000000000',
       seqs: [],
       duplicate: false,
-    });
+    };
+    if (heldSends && method === 'dispatch') {
+      return new Promise((resolve) => heldSends.push(() => resolve(accepted)));
+    }
+    return Promise.resolve(accepted);
   });
   const topics: Record<string, unknown> = { skills: [], turns: [], threadItems: items };
   const connection: Connection = {
@@ -247,6 +254,34 @@ describe('images in the composer (agent workbench spec 53)', () => {
     });
     expect(chips()).toHaveLength(0);
     expect(readDraft('thread-1').images).toBeUndefined();
+  });
+
+  it('keeps an image pasted while the message is on its way @agent-workbench-53', async () => {
+    const heldSends: (() => void)[] = [];
+    const { box, sent, user } = setup({ heldSends });
+    await paste(box, [pngFile('image.png')]);
+    await user.type(box, 'First{Enter}');
+    expect(heldSends).toHaveLength(1);
+    await paste(box, [pngFile('kettle.png')]);
+    expect(chips()).toHaveLength(2);
+    await act(async () => heldSends[0]?.());
+    expect(sent()).toEqual([
+      {
+        type: 'thread.sendMessage',
+        threadId: 'thread-1',
+        text: 'First',
+        attachments: [{ id: ids[0] }],
+      },
+    ]);
+    const list = screen.getByRole('list', { name: 'Images' });
+    expect(
+      within(list)
+        .getAllByRole('button', { name: /full size/ })
+        .map((chip) => chip.getAttribute('aria-label')),
+    ).toEqual(['Show kettle.png full size']);
+    expect(readDraft('thread-1').images).toEqual([
+      { id: ids[1], mediaType: 'image/png', name: 'kettle.png' },
+    ]);
   });
 
   it("shows a sent message's images from the stored item, after a reload too @agent-workbench-53", async () => {

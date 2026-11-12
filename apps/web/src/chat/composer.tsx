@@ -519,11 +519,12 @@ export function Composer({
     setFileOpenAt(skillQuery(value, at, fileOpened, fileTrigger) ? fileOpened : undefined);
   };
 
-  const clear = () => {
+  // Images added while the message was on its way stay for the next one.
+  const clear = (sent: readonly SentImage[]) => {
     update('', 0, undefined, undefined);
     setChips([]);
     setFiles([]);
-    setImages([]);
+    setImages((current) => current.filter((image) => !sent.some((gone) => gone.id === image.id)));
   };
 
   const deliver = (message: Message) => {
@@ -549,7 +550,7 @@ export function Composer({
       () => {
         setSending(false);
         // Sent from a thread that is no longer on screen: only its stored draft goes.
-        if (sentFrom === onScreen.current) clear();
+        if (sentFrom === onScreen.current) clear(message.images);
         else if (sentFrom !== undefined) writeDraft(sentFrom, { text: '', skills: [] });
       },
       (reason: unknown) => {
