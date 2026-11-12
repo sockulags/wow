@@ -38,7 +38,10 @@ export interface ChangesOptions {
 
 // The settings as they are now; git keeps the limit it has for every other read of a project.
 export const changesOptions = (settings: Pick<SettingsService, 'get'>): ChangesOptions => ({
-  git: { timeoutMs: settings.get('trackers.gitTimeoutMs') },
+  git: {
+    timeoutMs: settings.get('trackers.gitTimeoutMs'),
+    stopWaitMs: settings.get('advanced.gitStopWaitMs'),
+  },
   maxFileBytes: settings.get('diff.maxFileBytes'),
   maxFiles: settings.get('diff.maxFiles'),
   maxHashBytes: settings.get('diff.maxHashBytes'),

@@ -1540,6 +1540,13 @@ None are known right now; the rest of this guide describes the intended behavior
   "EBUSY" or "EPERM" on Windows, close other programs that run `codex` (a terminal session, an
   editor extension) and try again.
 
+**A project's folder cannot be removed or moved while wow runs (Windows)**
+
+- A git that wow stopped for running out of time is stopped with the programs it started, and
+  wow waits up to **Wait for a stopped git** (`advanced.gitStopWaitMs`, Settings → Advanced) for
+  it to be gone. Wait that long and try again; if the folder is still held, another program has
+  it open (a terminal or an editor in that folder).
+
 **A card did not start its run**
 
 - The card needs both a workflow and a project.

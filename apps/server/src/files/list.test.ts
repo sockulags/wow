@@ -9,7 +9,7 @@ import { listFolderFiles } from './list.js';
 // The thread folder's files for "Open file…" and `@` (agent workbench spec 18).
 
 let folder: string;
-const git = { timeoutMs: 10_000 };
+const git = { timeoutMs: 10_000, stopWaitMs: 5_000 };
 
 beforeEach(async () => {
   folder = await mkdtemp(path.join(tmpdir(), 'wow-list-'));
@@ -34,6 +34,15 @@ const runGit = (...args: string[]) =>
       GIT_COMMITTER_EMAIL: 'invented@example.invalid',
     },
   });
+
+const fakeChild = () => {
+  const stdout = new EventEmitter();
+  return Object.assign(new EventEmitter(), {
+    pid: 42,
+    stdout: Object.assign(stdout, { setEncoding: () => stdout }),
+    kill: vi.fn<() => boolean>(() => true),
+  });
+};
 
 describe('listFolderFiles', () => {
   it('lists tracked and untracked files Git does not ignore @agent-workbench-18', async () => {
@@ -90,13 +99,53 @@ describe('listFolderFiles', () => {
       const listing = listFolderFiles({
         folder,
         limit: 100,
-        git: { timeoutMs: 500 },
+        git: { timeoutMs: 500, stopWaitMs: 5_000 },
         start: () => child,
       });
       stdout.emit('data', 'a.txt\0b.txt\0');
       vi.advanceTimersByTime(500);
       expect(child.kill).toHaveBeenCalled();
+      child.emit('close', null);
       expect(await listing).toEqual({ source: 'git', truncated: true, files: ['a.txt', 'b.txt'] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // On Windows a git that is still running holds the folder, so a folder removed right after
+  // the answer could not go; one that never closes must not hold the answer for ever.
+  it('answers once a git stopped for running out of time is gone, or after the wait', async () => {
+    await write('a.txt');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const stop = vi.fn<(child: { pid?: number | undefined }) => void>();
+      const answers: string[] = [];
+      const gone = fakeChild();
+      const goneListing = listFolderFiles({
+        folder,
+        limit: 100,
+        git: { timeoutMs: 500, stopWaitMs: 2_000, stop },
+        start: () => gone,
+      }).then((result) => answers.push('gone') && result);
+      const stuck = fakeChild();
+      const stuckListing = listFolderFiles({
+        folder,
+        limit: 100,
+        git: { timeoutMs: 500, stopWaitMs: 2_000, stop },
+        start: () => stuck,
+      }).then((result) => answers.push('stuck') && result);
+      gone.stdout.emit('data', 'a.txt\0');
+      vi.advanceTimersByTime(500);
+      expect(stop).toHaveBeenCalledTimes(2);
+      expect(stop.mock.calls[0]?.[0]).toBe(gone);
+      expect(stop.mock.calls[1]?.[0]).toBe(stuck);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(answers).toEqual([]);
+      gone.emit('close', null);
+      expect(await goneListing).toEqual({ source: 'git', truncated: true, files: ['a.txt'] });
+      expect(answers).toEqual(['gone']);
+      vi.advanceTimersByTime(2_000);
+      expect(await stuckListing).toEqual({ source: 'git', truncated: true, files: [] });
     } finally {
       vi.useRealTimers();
     }

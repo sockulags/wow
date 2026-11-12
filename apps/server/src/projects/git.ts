@@ -5,10 +5,11 @@ import type {
   GitRemote,
   ProjectGitStatus,
 } from '@wow/contracts';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import { devNull } from 'node:os';
 import path from 'node:path';
+import { stopProcessTree, type StopProcess } from './stop-process.js';
 
 // What a project folder's git repository says about its trackers (owner decision F-4): the
 // remotes (GitHub owner and repository come from them) and Jira keys in recent branch names and
@@ -218,9 +219,38 @@ export function guessJiraKeys(texts: readonly string[]): JiraKeyGuess[] {
 
 export interface GitRunOptions {
   readonly timeoutMs: number;
+  // How long a git stopped for running out of time may take to be gone before the answer goes
+  // anyway; a stopped git that never closes would otherwise hold the answer for ever.
+  readonly stopWaitMs: number;
   // Replaces the git binary, for tests.
   readonly git?: string | undefined;
+  // Replace starting and stopping git, for tests.
+  readonly start?: StartGit | undefined;
+  readonly stop?: StopProcess | undefined;
 }
+
+interface GitOutput {
+  setEncoding(encoding: 'utf8'): unknown;
+  on(event: 'data', listener: (chunk: string) => void): unknown;
+}
+
+export interface GitProcess {
+  readonly pid?: number | undefined;
+  readonly stdout: GitOutput;
+  readonly stderr: GitOutput;
+  on(event: 'error', listener: (error: NodeJS.ErrnoException) => void): unknown;
+  on(event: 'close', listener: (code: number | null) => void): unknown;
+  kill(): boolean;
+}
+
+export type StartGit = (command: string, args: string[]) => GitProcess;
+
+const startGit: StartGit = (command, args) =>
+  spawn(command, args, {
+    windowsHide: true,
+    env: gitEnvironment(process.env),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
 type GitResult = { ok: true; stdout: string } | { ok: false; missing: boolean; message: string };
 
@@ -261,23 +291,63 @@ function runGit(
   config: readonly string[] = [],
 ) {
   return new Promise<GitResult>((resolve) => {
-    execFile(
-      options.git ?? 'git',
-      [...neverRun, ...plainPaths, ...config, '-C', folder, ...args],
-      {
-        timeout: options.timeoutMs,
-        windowsHide: true,
-        maxBuffer: 4 * 1024 * 1024,
-        encoding: 'utf8',
-        env: gitEnvironment(process.env),
-      },
-      (error, stdout, stderr) => {
-        if (!error) return resolve({ ok: true, stdout });
-        const code = (error as NodeJS.ErrnoException).code;
-        const message = (stderr.trim().split(/\r?\n/)[0] ?? '') || error.message;
-        resolve({ ok: false, missing: code === 'ENOENT', message });
-      },
+    const command = options.git ?? 'git';
+    const child = (options.start ?? startGit)(command, [
+      ...neverRun,
+      ...plainPaths,
+      ...config,
+      '-C',
+      folder,
+      ...args,
+    ]);
+    const stop = options.stop ?? stopProcessTree();
+    let stdout = '';
+    let stderr = '';
+    let stopped: string | undefined;
+    let done = false;
+    let afterStop: ReturnType<typeof setTimeout> | undefined;
+    const finish = (result: GitResult) => {
+      if (done) return;
+      done = true;
+      clearTimeout(limit);
+      clearTimeout(afterStop);
+      resolve(result);
+    };
+    // A stopped git is waited for, since on Windows one still running holds the folder, but only
+    // for `stopWaitMs`.
+    const stopGit = (reason: string) => {
+      if (stopped !== undefined) return;
+      stopped = reason;
+      stop(child);
+      afterStop = setTimeout(
+        () => finish({ ok: false, missing: false, message: reason }),
+        options.stopWaitMs,
+      );
+    };
+    const limit = setTimeout(
+      () => stopGit(`git did not finish within ${options.timeoutMs} ms and was stopped`),
+      options.timeoutMs,
     );
+    const take = (chunk: string, into: 'stdout' | 'stderr') => {
+      if (into === 'stdout') stdout += chunk;
+      else stderr += chunk;
+      if (stdout.length + stderr.length > 4 * 1024 * 1024) stopGit('git wrote more than wow reads');
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => take(chunk, 'stdout'));
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => take(chunk, 'stderr'));
+    child.on('error', (error) => {
+      if (stopped !== undefined) return;
+      finish({ ok: false, missing: error.code === 'ENOENT', message: error.message });
+    });
+    child.on('close', (code) => {
+      if (stopped !== undefined) return finish({ ok: false, missing: false, message: stopped });
+      if (code === 0) return finish({ ok: true, stdout });
+      const message =
+        (stderr.trim().split(/\r?\n/)[0] ?? '') || `git ${args[0] ?? ''} exited with code ${code}`;
+      finish({ ok: false, missing: false, message });
+    });
   });
 }
 

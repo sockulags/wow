@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { gitEnvironment, readOnlyGitArgs, type GitRunOptions } from '../projects/git.js';
+import { stopProcessTree } from '../projects/stop-process.js';
 
 // The files of a folder for "Open file…" and `@` in the composer (agent workbench spec 18, 56).
 // Names only: nothing is read. Inside Git the list is what Git tracks plus the untracked files it
@@ -12,6 +13,7 @@ import { gitEnvironment, readOnlyGitArgs, type GitRunOptions } from '../projects
 // What the listing needs of the git process. Tests hand in one they drive, so running out of
 // time is a timer they fire rather than a wait.
 export interface ListingProcess {
+  readonly pid?: number | undefined;
   readonly stdout: {
     setEncoding(encoding: 'utf8'): unknown;
     on(event: 'data', listener: (chunk: string) => void): unknown;
@@ -58,19 +60,25 @@ function gitFiles(
     let rest = '';
     let truncated = false;
     let done = false;
-    // At the limit git is stopped and the answer waits for it to be gone: on Windows a git that
-    // is still running holds the folder.
+    // At the limit or out of time git is stopped and the answer waits for it to be gone, since on
+    // Windows a git that is still running holds the folder, but no longer than `stopWaitMs`.
     let stopped = false;
+    let afterStop: ReturnType<typeof setTimeout> | undefined;
     const finish = (value: GitList) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      clearTimeout(afterStop);
       resolve(value);
     };
-    const timer = setTimeout(() => {
-      child.kill();
-      finish({ files: [...files], truncated: true });
-    }, options.timeoutMs);
+    const stop = () => {
+      truncated = true;
+      if (stopped) return;
+      stopped = true;
+      (options.stop ?? stopProcessTree())(child);
+      afterStop = setTimeout(() => finish({ files: [...files], truncated }), options.stopWaitMs);
+    };
+    const timer = setTimeout(stop, options.timeoutMs);
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
       const parts = (rest + chunk).split('\0');
@@ -79,16 +87,14 @@ function gitFiles(
         if (part === '') continue;
         if (stopped) return;
         if (files.size >= limit) {
-          truncated = true;
-          stopped = true;
-          child.kill();
+          stop();
           return;
         }
         // A file both tracked and changed is listed once.
         files.add(part);
       }
     });
-    child.on('error', () => finish(undefined));
+    child.on('error', () => finish(stopped ? { files: [...files], truncated } : undefined));
     child.on('close', (code) => {
       if (stopped) return finish({ files: [...files], truncated });
       if (code !== 0) return finish(undefined);

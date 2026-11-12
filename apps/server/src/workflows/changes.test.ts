@@ -17,7 +17,7 @@ import {
 // Review loop spec 10 to 13 against temporary repositories with invented files.
 
 const options: ChangesOptions = {
-  git: { timeoutMs: 20_000 },
+  git: { timeoutMs: 20_000, stopWaitMs: 5_000 },
   maxFileBytes: 20_000,
   maxFiles: 100,
   maxHashBytes: 1_000_000,
@@ -109,7 +109,10 @@ describe('the base of a run', () => {
     git(empty, 'init', '-q');
     expect(await readRunBase(empty, options)).toBeUndefined();
     const { repo } = await repository('base-no-git', { 'a.txt': 'a\n' });
-    const noGit = { ...options, git: { timeoutMs: 20_000, git: path.join(root, 'no-such-git') } };
+    const noGit = {
+      ...options,
+      git: { timeoutMs: 20_000, stopWaitMs: 5_000, git: path.join(root, 'no-such-git') },
+    };
     expect(await readRunBase(repo, noGit)).toBeUndefined();
   });
 });
@@ -290,7 +293,10 @@ describe('the changes of a run', () => {
     const { repo, base } = await repository('reasons', { 'a.txt': 'a\n' });
     expect(await diffOf(repo, null)).toMatchObject({ status: 'noBase', baseSha: null });
     expect(await diffOf(repo, 'a'.repeat(40))).toMatchObject({ status: 'baseMissing' });
-    const noGit = { ...options, git: { timeoutMs: 20_000, git: path.join(root, 'no-such-git') } };
+    const noGit = {
+      ...options,
+      git: { timeoutMs: 20_000, stopWaitMs: 5_000, git: path.join(root, 'no-such-git') },
+    };
     expect(await diffOf(repo, base, undefined, noGit)).toMatchObject({
       status: 'gitUnavailable',
       files: [],
