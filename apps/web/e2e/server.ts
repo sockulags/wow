@@ -27,7 +27,7 @@ import {
 } from '@wow/server';
 import { execFileSync } from 'node:child_process';
 import { createSocket } from 'node:dgram';
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage } from 'node:http';
 import path from 'node:path';
@@ -94,7 +94,7 @@ import {
   e2eWorkspace,
 } from './env';
 import { AssistantMockAgent } from './assistant-agent';
-import { reportFolderHolders } from './folder-holders';
+import { emptyFolder } from './folder-holders';
 import { e2eIntentMd, e2ePlanMd, e2ePlansDirectory, e2eSpecMd, seedPlanFiles } from './plans-seed';
 
 // WOW_E2E_HOME and WOW_E2E_PORT start a second copy for the settings tests (playwright.config.ts).
@@ -301,19 +301,7 @@ const guide = Array.from(
 ).join('\n');
 
 function seedTeaRepo(repo: string): void {
-  // The folder is emptied, not removed: on Windows something can still hold the folder itself,
-  // and removing it then fails with EBUSY and takes this server down. What is inside can always
-  // go; a file git has open for a moment is tried again. What holds the folder is written out.
-  mkdirSync(repo, { recursive: true });
-  for (const name of readdirSync(repo)) {
-    rmSync(path.join(repo, name), {
-      recursive: true,
-      force: true,
-      maxRetries: 10,
-      retryDelay: 100,
-    });
-  }
-  reportFolderHolders(repo);
+  emptyFolder(repo);
   git(repo, 'init', '-q', '-b', 'main');
   writeInRepo(repo, '.gitignore', '*.log\n');
   writeInRepo(repo, 'README.md', '# Tea timer\n\nRings when the tea is ready.\n');

@@ -4564,6 +4564,8 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
   claude and codex factories (the prompt picks the scenario), a seeded Claude instance and
   project (plus a Codex instance on this first server only, for the `$name` form), and fixture
   `SKILL.md` files in the server's own user home that skills discovery finds.
+  The server's seeding helpers in `apps/web/e2e/*.vitest.ts` files run under Vitest in Node (the
+  `e2e-helpers` project in `apps/web/vite.config.ts`); Playwright does not pick those files up.
   Its PATH holds empty stand-in `claude` and `codex` files for `provider.detect`. The workflow
   tests use the same server: its fixture skills cover the Feature template's first steps, and an
   invented `intents/demo/intent.md` in the project folder is the artifact step 1 finds. The projects

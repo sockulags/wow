@@ -12,8 +12,22 @@ export default defineConfig({
   build: { outDir: 'dist/app' },
   server: { host: '127.0.0.1', port: 5173, strictPort: true },
   test: {
-    environment: 'jsdom',
-    setupFiles: ['./src/test/setup.ts'],
     css: false,
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'web',
+          include: ['src/**/*.{test,spec}.{ts,tsx}'],
+          environment: 'jsdom',
+          setupFiles: ['./src/test/setup.ts'],
+        },
+      },
+      // The e2e server's helpers run in Node; their files end in .vitest.ts so Playwright skips them.
+      {
+        extends: true,
+        test: { name: 'e2e-helpers', include: ['e2e/**/*.vitest.ts'], environment: 'node' },
+      },
+    ],
   },
 });

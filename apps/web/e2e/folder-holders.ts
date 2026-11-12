@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { renameSync } from 'node:fs';
+import { mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import path from 'node:path';
 
 // Finding 143: on the Windows runner a seeded project folder stayed held (EBUSY) after
 // everything inside it was gone. The seeding checks whether the emptied folder is held and, when
@@ -45,21 +46,63 @@ export function describeFolderHolders(folder: string): string {
   return tasks.length === 0 ? 'neither wmic nor tasklist could run' : tasks.join('\n');
 }
 
+const writeHeld = (folder: string, step: string, error: unknown): void => {
+  const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
+  process.stderr.write(
+    `[e2e] ${folder} is held (${code} while ${step}); processes that may hold it:\n${describeFolderHolders(folder)}\n`,
+  );
+};
+
+// The folder is emptied, not removed: on Windows something can still hold the folder itself,
+// and removing it then fails with EBUSY and takes the e2e server down. What is inside can always
+// go; a file git has open for a moment is tried again. When even that fails, the possible holders
+// are written out before the error goes on, since the server stops there.
+export function emptyFolder(folder: string, platform: NodeJS.Platform = process.platform): void {
+  mkdirSync(folder, { recursive: true });
+  try {
+    for (const name of readdirSync(folder)) {
+      rmSync(path.join(folder, name), {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      });
+    }
+  } catch (error) {
+    if (platform === 'win32') writeHeld(folder, 'emptying it', error);
+    throw error;
+  }
+  reportFolderHolders(folder, platform);
+}
+
 // On Windows a process whose working directory is the folder keeps it from being removed or
 // renamed. A rename there and straight back tells whether something holds it without removing it:
 // a removed folder that a watcher still has open stays pending and could not be made again. A
-// refusal is written out with the possible holders and the folder is left as it is.
-export function reportFolderHolders(folder: string): void {
-  if (process.platform !== 'win32') return;
+// refusal is written out with the possible holders and the folder is left as it is. A probe folder
+// an earlier run could not rename back would make the first rename fail, so it goes first; when
+// the rename back fails, seeding goes on in a new folder.
+export function reportFolderHolders(
+  folder: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform !== 'win32') return;
   const probe = `${folder}.probe`;
+  try {
+    rmSync(probe, { recursive: true, force: true });
+  } catch (error) {
+    writeHeld(probe, `removing the probe ${probe} an earlier run left`, error);
+    return;
+  }
   try {
     renameSync(folder, probe);
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    process.stderr.write(
-      `[e2e] ${folder} is held (${code ?? 'unknown'}); processes that may hold it:\n${describeFolderHolders(folder)}\n`,
-    );
+    writeHeld(folder, `renaming it to ${probe}`, error);
     return;
   }
-  renameSync(probe, folder);
+  try {
+    renameSync(probe, folder);
+  } catch (error) {
+    writeHeld(probe, `renaming ${probe} back to ${folder}`, error);
+    mkdirSync(folder, { recursive: true });
+  }
 }
