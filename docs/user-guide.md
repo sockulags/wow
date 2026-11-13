@@ -782,7 +782,11 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   restore. A restore never touches commits, branches, the staged changes or ignored files (such
   as `.env` or build output); commits made since stay, and the restored files show as changes
   in the Changes view. wow keeps these snapshots of the files in its own folder
-  (`snapshots/`), never in your repository, for `chat.snapshotKeepDays` days; a file larger than
+  (`snapshots/`), never in your repository, for `chat.snapshotKeepDays` days. A snapshot holds
+  the contents of every file Git does not ignore, tracked or not, **unencrypted**: a file with a
+  secret in it that is not listed in `.gitignore` is copied there too. Turn **Keep snapshots of
+  the files** (`chat.snapshots`) off for a project to keep none. The assistant has no tool that
+  reads wow's folder. A file larger than
   `chat.snapshotMaxFileBytes` is not kept and the confirm names it. A file the restore would
   delete but that the thread did not leave there (for example one Git lists only since you
   edited `.gitignore`), and a file now larger than `chat.snapshotMaxFileBytes` (wow holds no copy,

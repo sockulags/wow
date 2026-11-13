@@ -3525,13 +3525,19 @@ and exported is what the conversation shows. Searching the page alone would miss
 Thread work spec 19 to 26, U3. wow keeps the files of a chat thread's folder (not a step's thread,
 not the Assistant) at each turn's start and end, so the user can put them back.
 
+- **What is kept.** The store holds the contents of every tracked and untracked file Git does not
+  ignore, as plain Git objects, unencrypted, for `chat.snapshotKeepDays` days. A file with a secret
+  that is not in `.gitignore` is therefore copied into `<wow home>/snapshots`; `.gitignore`d files
+  such as `.env` are not. `chat.snapshots` (project-scoped) turns snapshots off. The assistant has
+  no tool that reads wow's home or any path (`assistant.test.ts`, "offer no tool that reads wow's
+  home").
 - **Store.** One bare repository of wow's per folder, `<wow home>/snapshots/<key>.git`, the key a
   hash of `folderKey` (so `C:\Code\Tea` and `c:/code/tea` share one). `files/snapshots.ts`
   (`FolderSnapshots`) runs everything for one folder one after the other (`#serial`), so a restore
   never meets a snapshot half taken and a preview waits for the end snapshot of a turn that just
   ended. The snapshot is recorded inside that task, before it resolves, so whatever is queued
-  after it reads the recorded state; only the expiry follows outside it. `stop()` waits for every snapshot, its record and the expiry after it that is in flight
-  and starts none after; `ProviderService.stop()` calls it (after waiting for the turns being
+  after it reads the recorded state; only the expiry follows outside it. `stop()` waits for every
+  snapshot, its record and the expiry after it that is in flight and starts none after; `ProviderService.stop()` calls it (after waiting for the turns being
   prepared) and so does the server's stop, before the database closes. The plumbing is in
   `projects/git.ts` (`runStoreGit`, `readSnapshotRepository`,
   `listSnapshotFiles`, `hashSnapshotFiles`, `writeSnapshotTree`, `updateSnapshotRefs`,

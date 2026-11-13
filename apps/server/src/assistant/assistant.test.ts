@@ -607,6 +607,31 @@ describe('read tools', () => {
       });
     }
   });
+
+  it("offer no tool that reads wow's home, where the snapshots of the files are kept", async () => {
+    const kept = path.join(root, '.wow', 'snapshots', 'abc.git', 'objects');
+    await mkdir(kept, { recursive: true });
+    await writeFile(path.join(kept, 'blob'), `TOKEN=${fileMarker}\n`);
+    // A reader takes no path, and a tool that does is a change that goes through a command.
+    const pathLike = /path|file|folder|dir|cwd/i;
+    for (const tool of server.assistant.tools.list()) {
+      if (tool.name in changeTools) continue;
+      const properties = Object.keys(
+        (tool.inputSchema['properties'] as Record<string, unknown> | undefined) ?? {},
+      );
+      expect(properties.filter((name) => pathLike.test(name)), tool.name).toEqual([]);
+    }
+    for (const name of [
+      ...Object.keys(readers),
+      ...Object.keys(guideReaders),
+      ...Object.keys(diagnosisReaders),
+    ]) {
+      const needsService = name === 'test_connection' || name === 'read_token_guide';
+      const { text } = await call(name, needsService ? { service: 'github' } : {});
+      expect(text, name).not.toContain(fileMarker);
+      expect(text, name).not.toContain(path.join('.wow', 'snapshots'));
+    }
+  });
 });
 
 describe('ordinary changes', () => {
