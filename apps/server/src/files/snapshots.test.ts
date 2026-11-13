@@ -341,7 +341,9 @@ describe('snapshots of a turn (spec 19)', () => {
     await turnEnds(0);
     const start = turnRows()[0]?.startSnapshot as { tree: string };
     const listing = git(storeOf(), 'ls-tree', '-r', start.tree);
-    expect(listing).toMatch(/^100755 blob [0-9a-f]+\trun\.sh$/m);
+    // Windows has no executable bit to keep.
+    const mode = process.platform === 'win32' ? '100644' : '100755';
+    expect(listing).toMatch(new RegExp(String.raw`^${mode} blob [0-9a-f]+\trun\.sh$`, 'm'));
     expect(git(storeOf(), 'cat-file', '-p', `${start.tree}:src/bell.ts`)).toBe('ring();');
     const bytes = execFileSync('git', [
       '-C',
@@ -364,7 +366,10 @@ describe('snapshots of a turn (spec 19)', () => {
     expect(git(storeOf(), 'ls-tree', '-r', start.tree)).toMatch(
       /^120000 blob [0-9a-f]+\tdocs\/away$/m,
     );
-    expect(git(storeOf(), 'cat-file', '-p', `${start.tree}:docs/away`)).toBe('../outside');
+    // The target is kept as the system gives it: Windows hands a link's target back its own way.
+    expect(git(storeOf(), 'cat-file', '-p', `${start.tree}:docs/away`)).toBe(
+      path.join('..', 'outside'),
+    );
   });
 
   it('says why there is none for a folder outside Git, and the turn still goes', async () => {
