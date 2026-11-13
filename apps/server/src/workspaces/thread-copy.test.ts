@@ -562,6 +562,22 @@ describe("a chat thread's own working copy (thread work spec 10 to 18)", () => {
     expect(existsSync(done.cwd)).toBe(false);
   });
 
+  it('counts every file in an ignored folder and refuses a removal when one was added there after the dialog read it (spec 15)', async () => {
+    const done = await firstTurn();
+    await writeFile(path.join(project, '.git', 'info', 'exclude'), 'out/\n');
+    await mkdir(path.join(done.cwd, 'out'));
+    await writeFile(path.join(done.cwd, 'out', 'bell.js'), 'ring();\n');
+    await writeFile(path.join(done.cwd, 'out', 'bell.js.map'), '{}\n');
+    const shown = resultOf(await rpc('threads.workingCopyStatus', { threadId: 't1' }));
+    expect(shown).toMatchObject({ uncommittedFiles: 0, ignoredFiles: 2 });
+
+    await writeFile(path.join(done.cwd, 'out', 'secret.env'), 'TEA=invented\n');
+    const refused = await rpc('threads.removeWorkingCopy', { threadId: 't1', expect: shown });
+    expect(errorOf(refused)).toMatchObject({ code: 'conflict', data: { ignoredFiles: 3 } });
+    expect(errorOf(refused)?.message).toMatch(/3 ignored files/);
+    expect(existsSync(path.join(done.cwd, 'out', 'secret.env'))).toBe(true);
+  });
+
   it('refuses removal while a turn runs', async () => {
     await firstTurn();
     send('Wait for the kettle');

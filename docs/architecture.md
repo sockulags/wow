@@ -1213,8 +1213,9 @@ the working copy first and still the project folder).
 - **After the run.** When a run with a `ready` copy has ended and no turn of its threads is
   still running (a stopped run's turn is interrupted after the run ended, so `turn.ended` is
   heard too), `settleWorkingCopy` counts what would be lost: files `git status` lists
-  (changed, staged or new), ignored files and folders (`ignoredFiles`, each ignored folder once:
-  git keeps nothing of them, and an agent's local file may be the only copy) and commits that
+  (changed, staged or new), ignored files (`ignoredFiles`, every file inside an ignored folder counted, read with
+  `--ignored=traditional --untracked-files=all`: git keeps nothing of them, and an agent's local
+  file may be the only copy) and commits that
   `HEAD` reaches and neither a
   remote-tracking branch nor the start commit does (`readUnpushed`). With none, `git worktree
 remove` without `--force` removes the folder (git itself refuses if something is there after
@@ -1340,7 +1341,8 @@ removal ask only about files.
   the new counts as the error's `data` when more files or commits on no branch are there than
   `expect`, and with `rejected` while a turn runs (checked again right before the removal) or
   another thread that is not done works in the folder. `readThreadHolds` also answers `digest`,
-  a SHA-256 of git's status listing (every changed, new and ignored path with its state) and of
+  a SHA-256 of git's status listing (every changed, new and ignored file with its state, each
+  file inside an ignored folder named on its own) and of
   the commits on no branch; when `expect` carries one and it differs, the removal is refused with
   `conflict` too, so one file swapped for another after the dialog opened is noticed. A file
   edited again with the same state is not (the listing names paths, not contents). Then `git worktree remove

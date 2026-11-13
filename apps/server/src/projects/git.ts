@@ -877,9 +877,9 @@ export interface Unpushed {
 }
 
 // What the folder holds that would be gone with it: files that are changed or new and not
-// committed, ignored files and folders (git keeps nothing of them, and a file the agent wrote
-// there may be the only copy), and commits that neither a branch on a remote nor the
-// commit the folder started at reaches. Undefined when git cannot say.
+// committed, ignored files, each one inside an ignored folder counted (git keeps nothing of them,
+// and a file the agent wrote there may be the only copy), and commits that neither a branch on a
+// remote nor the commit the folder started at reaches. Undefined when git cannot say.
 export async function readUnpushed(
   folder: string,
   startSha: string | null,
@@ -907,7 +907,9 @@ export async function readUnpushedWithStatus(
   const [status, count, newest, branch] = await Promise.all([
     runGit(
       folder,
-      ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'],
+      // `traditional` with every untracked file names each file inside a wholly ignored folder;
+      // `matching` names the folder once, so a file added there later would go unseen.
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=traditional'],
       options,
     ),
     runGit(folder, ['rev-list', '--count', ...tips, ...reached], options),
