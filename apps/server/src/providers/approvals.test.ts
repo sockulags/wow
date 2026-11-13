@@ -261,6 +261,29 @@ describe("the order a thread's commands reach the provider", () => {
         .map((sent) => sent.type),
     ).toEqual(['startTurn', 'interrupt']);
   });
+
+  it('hands a message over after the start of the turn it joins, though the start still makes its working copy', async () => {
+    let made: ((failed: string | undefined) => void) | undefined;
+    prepareThread = () =>
+      new Promise((resolve) => {
+        made = resolve;
+      });
+    createThread('t9', 'claude');
+    dispatch({ type: 'thread.sendMessage', threadId: 't9', text: 'Work on the kettle' });
+    // Written while the turn is starting: it is offered to that turn.
+    dispatch({ type: 'thread.sendMessage', threadId: 't9', text: 'Also the lid' });
+    await Promise.resolve();
+    expect(
+      adapters.claude.sent.filter((sent) => 'threadId' in sent && sent.threadId === 't9'),
+    ).toEqual([]);
+    made?.(undefined);
+    await service.idle();
+    expect(
+      adapters.claude.sent
+        .filter((sent) => 'threadId' in sent && sent.threadId === 't9')
+        .map((sent) => sent.type),
+    ).toEqual(['startTurn', 'handOver']);
+  });
 });
 
 describe('approvals in wow words (spec 36)', () => {

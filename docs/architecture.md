@@ -474,7 +474,9 @@ thread it maps to, since the app-server has no request that unloads one.
   user item it becomes) and gets a new `id` (the old one plus `+`), so whatever acts on the queue acts on one version of it. For a chat or
   step thread the event carries `handOver {providerInstanceId, prompt}` (the prompt with the
   skills in front, as `thread.sendMessage` would send it); the provider service then sends the
-  adapter `handOver {threadId, prompt}`, which answers `HandOverResult {taken}`. Taken, the
+  adapter `handOver {threadId, prompt}`, which answers `HandOverResult {taken}`. While the turn
+  it joins is still being prepared (`#starting`: the folder read for its changes, the thread's
+  own working copy), the offer waits for that start, as a stop does. Taken, the
   service dispatches `thread.handedOver {threadId, queuedId, offered {text, skills?, files?}}`: the queue
   empties and a `user` item with `queued: 'duringTurn'` joins the running turn (or the turn that
   just ended), so the conversation shows it sent. Not taken, it stays queued. The service offers a

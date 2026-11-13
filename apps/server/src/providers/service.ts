@@ -630,12 +630,25 @@ export class ProviderService {
     queued: QueuedMessage,
     prompt: string,
   ): void {
+    const offerIt = () =>
+      this.#adapter(providerInstanceId).send({ type: 'handOver', threadId, prompt });
+    // The turn it joins can still be starting (reading the folder, making the working copy): the
+    // offer goes to the provider after that start, as a stop does.
+    const start = this.#starting.get(threadId);
     let answer: Promise<unknown>;
     try {
-      answer = this.#adapter(providerInstanceId).send({ type: 'handOver', threadId, prompt });
+      answer = start ? start.then(offerIt) : offerIt();
     } catch (error) {
       this.#deps.logger.warn('provider handOver failed', describeError(error));
       return;
+    }
+    if (start) {
+      const after = answer.then(
+        () => undefined,
+        () => undefined,
+      );
+      this.#preparing.add(after);
+      void after.then(() => this.#preparing.delete(after));
     }
     const offer = Symbol(queued.id);
     this.#handingOver.set(threadId, offer);
