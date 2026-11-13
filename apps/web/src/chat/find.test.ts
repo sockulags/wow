@@ -86,6 +86,10 @@ describe('what find matches (spec 2)', () => {
   it('reads a line break inside a paragraph as the space it shows as, and keeps code lines', () => {
     expect(markdownText('Put the\nkettle on.')).toBe('Put the kettle on.');
     expect(markdownText('Hard  \nbreak')).toBe('Hard\nbreak');
+    // A picture is drawn as its link: its alt text, or its address when it has none.
+    expect(
+      markdownText('See ![the kettle](https://x.test/k.png) and ![](https://x.test/p.png)'),
+    ).toBe('See the kettle and https://x.test/p.png');
     expect(markdownText('```\nthe\nkettle\n```')).toBe('the\nkettle');
     const pieces = conversationText(
       source([item('a', 'assistant_text', { text: 'Put the\nkettle on.' })]),
@@ -211,7 +215,7 @@ describe('what find matches (spec 2)', () => {
     );
     expect(found(pieces, 'kettle')).toEqual([
       { itemId: 'agent', text: 'kettle', opens: [] },
-      { itemId: 'agent', text: 'kettle', opens: ['agent:agent'] },
+      { itemId: 'agent', text: 'kettle', opens: ['agent:agent', 'prompt:agent'] },
       { itemId: 'nested', text: 'kettle', opens: ['agent:agent'] },
       { itemId: 'agent', text: 'kettle', opens: [] },
     ]);

@@ -392,6 +392,35 @@ describe('find in the conversation (spec 1 to 4)', () => {
     expect(current()).toEqual(['turn-0:q1']);
   });
 
+  it("shows a subagent's whole prompt when the match is past the lines it shows at first (spec 2)", async () => {
+    const user = userEvent.setup();
+    const prompt = ['Boil the water.', 'Warm the pot.', 'Add the leaves.', 'Pour.', 'Use oolong.'];
+    setup({
+      items: [
+        item('turn-0:user', 'user', { text: 'Make tea' }),
+        item('turn-0:agent', 'tool_call', {
+          name: 'Task',
+          input: {},
+          output: '',
+          status: 'ok',
+          kind: 'subagent',
+          description: 'brew the tea',
+          prompt: prompt.join('\n'),
+          answer: 'Brewed.',
+        }),
+      ],
+    });
+    await user.click(composer());
+    await user.keyboard('{Control>}f{/Control}');
+    await field();
+    await user.keyboard('oolong');
+    expect(count()).toBe('1 of 1');
+    expect(current()).toEqual(['turn-0:agent']);
+    const shown = screen.getByTestId('agent-prompt');
+    expect(shown.textContent).toContain('Use oolong.');
+    expect(shown.className).not.toContain('line-clamp');
+  });
+
   it('does not count the JSON behind Show JSON or an earlier version, and stops at the limit (spec 2, 3)', async () => {
     const user = userEvent.setup();
     setup({

@@ -6,7 +6,8 @@ import { createStore, useStore, type StoreApi } from 'zustand';
 // does find (thread work spec 4), so what find opened stays open as if opened by hand. One store
 // per conversation on screen; it goes with the conversation, as the rows' own state did.
 
-export type OpenPart = 'row' | 'group' | 'reasoning' | 'agent' | 'output' | 'tasks';
+// `prompt`: a subagent's whole prompt, which shows its first four lines until find opens it.
+export type OpenPart = 'row' | 'group' | 'reasoning' | 'agent' | 'prompt' | 'output' | 'tasks';
 
 export const openKey = (part: OpenPart, itemId: string): string => `${part}:${itemId}`;
 

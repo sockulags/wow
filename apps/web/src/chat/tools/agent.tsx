@@ -41,6 +41,7 @@ export function AgentCall({ payload, context }: { payload: ToolPayload; context:
   const id = context.itemId;
   const [opened, setOpened] = useOpenState(id === undefined ? undefined : openKey('agent', id));
   const open = working || opened;
+  const [promptShown] = useOpenState(id === undefined ? undefined : openKey('prompt', id));
   const now = useNow(working && payload.startedAt !== undefined);
   const count = payload.toolCount ?? nestedCalls(nested);
   const duration = working
@@ -113,7 +114,10 @@ export function AgentCall({ payload, context }: { payload: ToolPayload; context:
           {payload.prompt !== undefined && (
             <p
               data-testid="agent-prompt"
-              className="line-clamp-4 whitespace-pre-wrap text-muted-foreground"
+              className={cn(
+                'whitespace-pre-wrap text-muted-foreground',
+                !promptShown && 'line-clamp-4',
+              )}
             >
               {payload.prompt}
             </p>

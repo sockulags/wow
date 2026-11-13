@@ -66,7 +66,9 @@ const lineContainers = new Set([
 ]);
 
 function nodeText(node: Nodes): string {
-  if (node.type === 'image' || node.type === 'imageReference') return node.alt ?? '';
+  // A picture is drawn as its link (components/markdown-body.tsx): its alt text, else its address.
+  if (node.type === 'image') return node.alt || node.url;
+  if (node.type === 'imageReference') return node.alt ?? '';
   // A line break inside a paragraph shows as a space; a hard break shows as a new line.
   if (node.type === 'text') return softBreaks(node.value);
   if (node.type === 'break') return '\n';
@@ -141,7 +143,8 @@ function toolPieces(walk: Walk, item: ThreadItem, payload: ToolPayload, opens: r
   if (payload.kind === 'subagent') {
     add([line, payload.agentType].filter(Boolean).join(' · '), opens);
     const inside = [...opens, openKey('agent', item.id)];
-    if (payload.prompt !== undefined) add(payload.prompt, inside);
+    // The row shows four lines of the prompt; find shows it whole for a match there.
+    if (payload.prompt !== undefined) add(payload.prompt, [...inside, openKey('prompt', item.id)]);
     for (const child of source.children.get(item.id) ?? []) itemPieces(walk, child, inside);
     const working = payload.status === 'running' && !walk.turnEnded(item.turnId);
     if (payload.answer !== undefined) add(cachedText(walk.cache, item.id, payload.answer), opens);

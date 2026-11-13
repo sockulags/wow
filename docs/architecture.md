@@ -1347,7 +1347,7 @@ removal ask only about files.
 - **Restart.** `recover()` takes a `pending` copy whose folder git finished on its branch as
   ready. A `pending` copy with `branchStart` (git was asked to make it) fails ("The server
   stopped while the working copy was being made"), its folder goes with `git worktree remove
-  --force`, its branch stays, and the next message takes the branch up. A `pending` copy without
+--force`, its branch stays, and the next message takes the branch up. A `pending` copy without
   `branchStart` was never started (no message went out yet) and stays `pending`. Nothing here
   deletes a branch. A `ready` copy of a done thread is settled.
 - **Web.** `chat/working-copy.tsx`: `DraftWorkingCopy` (switch and line), `WorkingCopyChip` in
@@ -3425,13 +3425,15 @@ and exported is what the conversation shows. Searching the page alone would miss
   the open-state keys of what holds it. A message is its markdown parsed with GFM and turned into
   text (`markdownText`, mdast from `mdast-util-from-markdown` with the GFM extensions, the parse
   react-markdown uses), so `**kettle**` is found as "kettle"; a line break inside a paragraph
-  reads as the space it shows as, a hard break as a new line. Tool rows give their line
+  reads as the space it shows as, a hard break as a new line, and a picture as the link it is
+  drawn as (its alt text, else its address). Tool rows give their line
   (`toolLine` in `conversation-markdown.ts`, without times), an MCP call's arguments as key: value,
   an edit's diff lines, and their whole output, the earlier lines (before the last
   `chat.toolOutputLines`) as a piece of their own that also opens "Show all N lines". Reasoning,
   a subagent's prompt, nested rows and answer, approval and plan cards (summary, command, diff,
   address, tool, plan text, note), question cards, error, divider and compaction lines and task
-  lists are text too. Never matched: the JSON behind Show JSON or Details, tool input otherwise,
+  lists are text too. The questions of one ask card count in the card's single row (the
+  entry's id). Never matched: the JSON behind Show JSON or Details, tool input otherwise,
   usage rows, the composer, earlier versions. The streaming message is parsed again as it grows;
   the others are kept per item while the bar is open.
 - **Matching.** `findMatches(pieces, query, limit)` folds case for every letter (`foldCase` keeps
@@ -3442,7 +3444,7 @@ and exported is what the conversation shows. Searching the page alone would miss
 - **Opening.** Rows keep their open state in the conversation's store (`chat/open-state.ts`,
   `createOpenStore` per thread on screen, `OpenStoreContext`, `useOpenState(key)`): a tool row
   (`row:`), a group (`group:` with its first call's id), reasoning (`reasoning:`), a subagent's
-  list (`agent:`), an output's earlier lines (`output:`, through `OutputKeyContext` from the row)
+  list (`agent:`), a subagent's whole prompt (`prompt:`, four lines until opened), an output's earlier lines (`output:`, through `OutputKeyContext` from the row)
   and a task list update (`tasks:`). A click sets it, and so does find, once per match it lands
   on, so what find opened stays open as if opened by hand. Reasoning remounts when find opens it
   and Ctrl+O still opens or closes all of it. A row outside a conversation keeps its own state.
