@@ -163,6 +163,9 @@ export function forkEvents(
         projectId: origin.projectId,
         cwd: origin.cwd,
         branch: origin.branch,
+        // A fork works in its origin's own working copy, on the same branch (thread work
+        // spec 17).
+        ...(origin.workingCopy ? { workingCopy: origin.workingCopy } : {}),
         providerInstanceId: origin.providerInstanceId,
         providerSessionId: null,
         title: title !== undefined && title.trim() !== '' ? title : `${originTitle} (fork)`,

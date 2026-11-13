@@ -12,6 +12,63 @@ export interface ConversationHandle {
   nextMessage(): void;
   toEnd(): void;
   copyFocused(): unknown;
+  // A chat thread's conversation (the chat view, also for a step's thread opened there) finds
+  // and exports (thread work spec 1, 6, 7); the Assistant view has neither (spec 9).
+  readonly find?: ConversationFind | undefined;
+}
+
+export interface ConversationFind {
+  open(): void;
+  next(): void;
+  previous(): void;
+  copyMarkdown(): unknown;
+  saveMarkdown(): unknown;
+}
+
+// Find and the export of the conversation on screen: palette commands with the keys from the
+// settings (spec 6, 7).
+function findCommands(find: ConversationFind | undefined): AppCommand[] {
+  if (!find) return [];
+  return [
+    {
+      id: 'chat.find',
+      title: 'Find in conversation',
+      group: 'Chat',
+      keywords: ['find', 'search', 'text', 'conversation', 'ctrl+f'],
+      keybinding: 'keybindings.findInConversation',
+      run: () => find.open(),
+    },
+    {
+      id: 'chat.findNext',
+      title: 'Find next',
+      group: 'Chat',
+      keywords: ['find', 'search', 'next', 'match'],
+      keybinding: 'keybindings.findNext',
+      run: () => find.next(),
+    },
+    {
+      id: 'chat.findPrevious',
+      title: 'Find previous',
+      group: 'Chat',
+      keywords: ['find', 'search', 'previous', 'match'],
+      keybinding: 'keybindings.findPrevious',
+      run: () => find.previous(),
+    },
+    {
+      id: 'chat.copyMarkdown',
+      title: 'Copy conversation as Markdown',
+      group: 'Chat',
+      keywords: ['copy', 'export', 'markdown', 'conversation', 'clipboard'],
+      run: () => void find.copyMarkdown(),
+    },
+    {
+      id: 'chat.saveMarkdown',
+      title: 'Save conversation…',
+      group: 'Chat',
+      keywords: ['save', 'export', 'markdown', 'file', 'download', 'conversation'],
+      run: () => void find.saveMarkdown(),
+    },
+  ];
 }
 
 // Edit and Fork on the conversation on screen (agent workbench spec 62, 71, 74): which messages
@@ -160,6 +217,7 @@ export function conversationCommands(
   const { handle, threadId } = state;
   if (!handle || threadId === undefined) return [];
   return [
+    ...findCommands(handle.find),
     ...goBackCommands(state.goBack, state.focusedMessage),
     {
       id: 'chat.previousMessage',

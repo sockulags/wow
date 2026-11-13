@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AttachmentMediaType } from './attachments.js';
 import { QuestionOption, QuestionReply } from './questions.js';
+import { SessionTools } from './session-tools.js';
 
 // The normalized provider protocol. Adapters translate their own wire format to and from these
 // types; orchestration and the UI never see provider-specific shapes.
@@ -117,6 +118,10 @@ export const ProviderCommand = z.discriminatedUnion('type', [
     threadId: z.string().min(1),
     itemId: z.string().min(1).optional(),
   }),
+  // What the thread's live session can use (thread work spec 39), answered as `SessionTools`, or
+  // null when the adapter holds no live session for the thread. Never starts a session or a
+  // server: an adapter answers from the session it has.
+  z.object({ type: z.literal('describeSession'), threadId: z.string().min(1) }),
   z.object({ type: z.literal('test') }),
 ]);
 export type ProviderCommand = z.infer<typeof ProviderCommand>;
@@ -360,6 +365,11 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     ...ResumePoint,
   }),
   z.object({ type: z.literal('turnInterrupted'), ...ThreadScoped, ...ResumePoint }),
+  // What the session can use, as the provider reported it (thread work spec 38): Claude Code at
+  // each init message of the session, Codex when a thread starts or resumes. The server stores it
+  // when it differs from the stored list. Null: the session ended by itself (Claude Code exited),
+  // so the stored list is no longer live and Refresh is not offered (spec 39).
+  z.object({ type: z.literal('sessionTools'), ...ThreadScoped, tools: SessionTools.nullable() }),
   // The provider refused a Stop of a background task or a Ctrl+B; the server reports it, as the
   // request itself changes nothing the user could see.
   z.object({

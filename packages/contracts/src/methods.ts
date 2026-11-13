@@ -50,6 +50,8 @@ import {
   ProviderTestResult,
 } from './provider.js';
 import { SecretRef } from './settings.js';
+import { RefreshToolsOutcome, ThreadTools } from './session-tools.js';
+import { UnpushedWork, WorkingCopyPlan } from './workflow.js';
 import { SetupApplication, SetupRead, SetupSaved } from './setup.js';
 import {
   ProjectGit,
@@ -88,6 +90,9 @@ export const subscriptionTopics = {
   pageReads: { row: PageRead, threadScoped: false },
   // What was read about the items a chat thread links to (agent workbench spec 22).
   hostItemReads: { row: HostItemRead, threadScoped: true },
+  // What a chat thread's session reported it can use (thread work spec 38): no row before its
+  // first report, one row after.
+  threadTools: { row: ThreadTools, threadScoped: true },
   settings: { row: SettingRow, threadScoped: false },
   assistantChanges: { row: AssistantChange, threadScoped: false },
   assistantProposals: { row: AssistantProposal, threadScoped: false },
@@ -335,11 +340,36 @@ export const rpcMethods = {
     params: ThreadDiffParams,
     result: ThreadDiff,
   },
+  // Refresh in a chat thread's Tools tab (thread work spec 39): asks the thread's live session
+  // what it can use and stores a changed list. Without a live session nothing is asked
+  // (`noSession`); wow never starts a session or a server for it. Refused for the assistant.
+  'threads.refreshTools': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: z.object({ outcome: RefreshToolsOutcome }),
+  },
   // "Remove working copy" (review loop spec 37): deletes a kept working copy of a run that has
   // ended, with whatever is uncommitted or unpushed in it. The app asks before it calls this.
   'workflowRuns.removeWorkingCopy': {
     params: z.object({ runId: z.string().min(1) }),
     result: WorkflowRun,
+  },
+  // A chat thread's own working copy (thread work spec 10, 14, 15). The plan for `/chat/new`,
+  // read only. The status: what is in the copy now that would be lost with it (commits on its
+  // branch are not lost). Remove: deletes the copy after the user saw `expect`; refused with
+  // `conflict`, and the new counts as `data`, when it holds more files than that, and with
+  // `rejected` while a turn runs or another thread that is not done works in it. The branch
+  // stays.
+  'threads.workingCopyPlan': {
+    params: z.object({ projectId: z.string().min(1) }),
+    result: WorkingCopyPlan,
+  },
+  'threads.workingCopyStatus': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: UnpushedWork,
+  },
+  'threads.removeWorkingCopy': {
+    params: z.object({ threadId: z.string().min(1), expect: UnpushedWork }),
+    result: Thread,
   },
   // Files in a project folder that expected artifact globs match, for the builder's "Matches 2
   // files in Demo" line. Read only; nothing is stored.

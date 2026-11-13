@@ -48,6 +48,7 @@ import {
   e2eChangesWorkflowId,
   e2eCopyProjectId,
   e2eThreadChangesProjectId,
+  e2eMugProjectId,
   e2eCopyWorkflowId,
   e2eGateProjectId,
   e2eConditionWorkflowId,
@@ -222,6 +223,9 @@ const teaRepos = new Set([changesRepo, gateRepo, chatRepo]);
 // The working copy tests (review loop spec 36, 37): the agent must find itself in a working copy
 // under the server's own `workspaces` folder, never in this repository.
 const copyRepo = path.join(home, 'tea-cup');
+// A chat thread's own working copy (thread work U2): a repository cloned from a bare origin.
+const mugRepo = path.join(home, 'tea-mug');
+const mugOrigin = path.join(home, 'tea-mug-origin.git');
 const inTeaRepo = (cwd: string) =>
   teaRepos.has(cwd) || path.dirname(cwd) === path.join(home, 'workspaces');
 // The host tests (review loop spec 23, 28, 31) read a third copy; nothing edits it.
@@ -320,6 +324,19 @@ function seedCopyRepo(): void {
   git(copyRepo, 'config', 'core.autocrlf', 'false');
 }
 
+// The seed is committed in a folder of its own, pushed to a bare origin and cloned from there,
+// so the project has a remote whose default branch is known, as a clone has.
+function seedMugRepo(): void {
+  const seed = `${mugRepo}-seed`;
+  seedTeaRepo(seed);
+  emptyFolder(mugOrigin);
+  execFileSync('git', ['clone', '-q', '--bare', seed, mugOrigin], { stdio: 'pipe' });
+  emptyFolder(mugRepo);
+  execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', mugOrigin, mugRepo], {
+    stdio: 'pipe',
+  });
+}
+
 // The build step: one committed change, then uncommitted ones of every kind the tab lists.
 function buildTeaTimer(repo: string): void {
   writeInRepo(repo, 'README.md', '# Tea timer\n\nRings twice when the tea is ready.\n');
@@ -394,6 +411,62 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   if (images.length > 0) {
     const types = images.map((image) => image.mediaType.slice('image/'.length)).join(', ');
     return [session, ...finish(threadId, `${imagesReceived(images.length)} Types: ${types}.`)];
+  }
+  // Find in the conversation (thread work U1): the word is in the prompt, closed reasoning, the
+  // first reply (in bold), line 3 of a 40-line command output and a read in a closed group of
+  // reads; the second reply and everything else leave it out, so "kettle" is found 5 times.
+  if (/tell the kettle story/i.test(prompt)) {
+    const story = Array.from({ length: 40 }, (_, line) =>
+      line === 2 ? 'line 3: the kettle whistled' : `line ${line + 1}: the water warmed`,
+    );
+    return [
+      session,
+      {
+        type: 'reasoningDelta',
+        threadId,
+        itemId: 'story-thinking',
+        delta: 'Tell it about the kettle.',
+      },
+      { type: 'textDelta', threadId, itemId: 'story-1', delta: 'Here is the **kettle** story.' },
+      {
+        type: 'toolCallStarted',
+        threadId,
+        itemId: 'story-cat',
+        name: 'Bash',
+        input: { command: 'cat story.txt' },
+        kind: 'command',
+        command: 'cat story.txt',
+      },
+      { type: 'toolCallOutput', threadId, itemId: 'story-cat', output: `${story.join('\n')}\n` },
+      {
+        type: 'toolCallCompleted',
+        threadId,
+        itemId: 'story-cat',
+        status: 'ok',
+        exitCode: 0,
+        durationMs: 400,
+      },
+      { type: 'textDelta', threadId, itemId: 'story-2', delta: 'Then I read the notes.' },
+      ...['notes/brew.md', 'notes/kettle.md'].flatMap((file, index): ProviderEvent[] => [
+        {
+          type: 'toolCallStarted',
+          threadId,
+          itemId: `story-read-${index}`,
+          name: 'Read',
+          input: { file_path: `${command.cwd}/${file}` },
+          kind: 'read',
+          path: `${command.cwd}/${file}`,
+        },
+        {
+          type: 'toolCallOutput',
+          threadId,
+          itemId: `story-read-${index}`,
+          output: 'Steep for three minutes.\n',
+        },
+        { type: 'toolCallCompleted', threadId, itemId: `story-read-${index}`, status: 'ok' },
+      ]),
+      { type: 'turnCompleted', threadId },
+    ];
   }
   // The step of the "Needs you e2e" workflow ends at once, so its run waits at the gate.
   if (/sum-up/i.test(prompt)) return [session, ...finish(threadId, 'Summed up.')];
@@ -1268,6 +1341,7 @@ if (home === e2eChangesHome) {
   seedTeaRepo(gateRepo);
   seedTeaRepo(chatRepo);
   seedCopyRepo();
+  seedMugRepo();
   // The host tests: a repository on a branch that has a pull request, with a plan in it.
   seedTeaRepo(hostRepo);
   git(hostRepo, 'checkout', '-q', '-b', e2eHostBranch);
@@ -1775,6 +1849,19 @@ if (home === e2eChangesHome) {
     projectId: e2eThreadChangesProjectId,
     name: 'Tea chat',
     cwd: chatRepo,
+  });
+  server.engine.dispatch('seed-mug-project', {
+    type: 'project.create',
+    projectId: e2eMugProjectId,
+    name: 'Tea mug',
+    cwd: mugRepo,
+  });
+  // New threads in the project start with "Own working copy" on (thread work spec 10).
+  server.engine.dispatch('seed-mug-own-copy', {
+    type: 'setting.set',
+    key: 'chat.ownWorkingCopy',
+    scope: `project:${e2eMugProjectId}`,
+    value: true,
   });
   server.engine.dispatch('seed-copy-project', {
     type: 'project.create',

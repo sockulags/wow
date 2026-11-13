@@ -141,3 +141,20 @@
   height: auto;
   margin: 0 auto;
 }
+
+/* Find in the conversation (chat/find-bar.tsx) marks matches with the CSS Custom Highlight API,
+   so the rendered markup is never rewritten. Where the API is missing the current match's row is
+   outlined instead. */
+::highlight(wow-find) {
+  background-color: var(--find-match);
+  color: var(--foreground);
+}
+::highlight(wow-find-current) {
+  background-color: var(--find-current);
+  color: var(--foreground);
+}
+[data-find-outline] {
+  outline: 2px solid var(--find-current);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}

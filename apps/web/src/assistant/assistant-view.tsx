@@ -8,13 +8,15 @@ import {
   heldSecretSentence,
   providerChatOptions,
   rpcMethods,
+  type AssistantChange,
+  type AssistantProposal,
   type ProviderInstance,
   type Thread,
   type ThreadItem,
 } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { KeyRoundIcon, SparklesIcon, XIcon } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
 import type { ComposerHandle } from '@/chat/composer';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
@@ -207,17 +209,23 @@ export function HeldLine({
   );
 }
 
+const noInstances: ProviderInstance[] = [];
+const noItems: ThreadItem[] = [];
+const noChanges: AssistantChange[] = [];
+const noProposals: AssistantProposal[] = [];
+
 export function AssistantView() {
   const runtime = useRuntime();
   const send = useDispatch();
   const { connection } = runtime;
   const { rows: threads, status } = useTopicState('assistantThread');
   const thread = threads?.[0];
-  const instances = useTopic('providerInstances') ?? [];
+  // One empty list for a topic not loaded yet, so what is read from it holds across renders.
+  const instances = useTopic('providerInstances') ?? noInstances;
   const items = useTopic('threadItems', thread ? assistantThreadId : undefined);
   const turns = useTopic('turns', thread ? assistantThreadId : undefined);
-  const changes = useTopic('assistantChanges') ?? [];
-  const proposals = useTopic('assistantProposals') ?? [];
+  const changes = useTopic('assistantChanges') ?? noChanges;
+  const proposals = useTopic('assistantProposals') ?? noProposals;
   const patterns = useSetting('assistant.secretPatterns');
   const { problem, asked } = useOpenProblem();
   const composer = useRef<ComposerHandle>(null);
@@ -227,6 +235,126 @@ export function AssistantView() {
   const storedModel = useSetting('assistant.model');
   const storedEffort = useSetting('assistant.effort');
   const allowCodex = useSetting('assistant.allowCodex');
+
+  // Stable while what they read is, so the conversation's tool calls are read again only when
+  // it, the changes or the proposals changed.
+  const { after, rest } = useMemo(
+    () => placeRows(items ?? noItems, changes, proposals),
+    [items, changes, proposals],
+  );
+  const asks = useMemo(() => askedFields(items ?? noItems), [items]);
+
+  const holdOf = useCallback(
+    (text: string) =>
+      holdMessage(
+        text,
+        patterns,
+        asks,
+        undefined,
+        (id) => instances.find((entry) => entry.id === id)?.name,
+      ),
+    [patterns, asks, instances],
+  );
+
+  // Puts the held value in its field and says so; the caller takes it out of what was typed.
+  const storeHeld = useCallback(
+    async (current: Held, replaces: boolean): Promise<string> => {
+      const { field } = current;
+      if (!field) throw new Error('No field for this value');
+      if (!connection) throw new Error('wow is not connected');
+      if (isVariable(field)) {
+        const owner = instances.find((entry) => entry.id === field.providerInstanceId);
+        if (!owner) throw new Error(`No provider instance ${field.providerInstanceId}`);
+        await storeSecretVariable(connection, field, owner.env, current.match.value);
+      } else {
+        await storeSecretSetting(
+          { connection, settings: runtime.settings },
+          field.key,
+          field.projectId,
+          current.match.value,
+        );
+      }
+      return `Saved in ${field.label}${replaces ? ' in place of the value it held' : ''}. It was taken out of your message.`;
+    },
+    [connection, instances, runtime.settings],
+  );
+
+  // Typed answers on a card go through the same check as a typed message (questions spec 10).
+  const questionHold = useMemo<QuestionHold<Held>>(
+    () => ({
+      check: (replies) => {
+        setSaved(undefined);
+        for (const reply of replies.values()) {
+          const found = holdOf(reply.text);
+          if (found) return found;
+        }
+        return null;
+      },
+      render: (current, controls) => (
+        <HeldLine
+          held={current}
+          onPut={
+            current.field
+              ? async (replaces) => {
+                  const message = await storeHeld(current, replaces);
+                  controls.replaceText((text) => withoutSecret(current, text));
+                  controls.dismiss();
+                  setSaved(message);
+                }
+              : undefined
+          }
+          onSend={controls.sendAnyway}
+          onDismiss={controls.dismiss}
+        />
+      ),
+    }),
+    [holdOf, storeHeld],
+  );
+
+  // One of wow's tools reads in words, and has no row of its own where a change row, proposal,
+  // secret field or question card below it shows the call (spec 82).
+  const toolWords = useCallback(
+    (item: ThreadItem): string | null | undefined => {
+      const payload = ToolCallItemPayload.safeParse(item.payload);
+      if (!payload.success) return undefined;
+      const tool = assistantToolOf(payload.data.name);
+      if (tool === null) return undefined;
+      if (after.has(item.id) || askOf(item) !== null || askedQuestionsOf(item) !== null) {
+        return null;
+      }
+      return assistantToolText(tool);
+    },
+    [after],
+  );
+
+  const extraAfter = useCallback(
+    (item: ThreadItem): ReactNode => {
+      const ask = askOf(item);
+      const questions = askedQuestionsOf(item);
+      const placed = after.get(item.id);
+      if (!ask && !placed && !questions) return null;
+      return (
+        <div className="flex flex-col gap-2">
+          {questions && (
+            <AssistantQuestions
+              item={item}
+              request={questions}
+              state={askState(item, items ?? [], turns ?? [])}
+              check={questionHold.check}
+              renderHold={questionHold.render}
+            />
+          )}
+          {ask?.kind === 'secretField' && (
+            <SecretFieldCard request={ask.request} guide={ask.guide} />
+          )}
+          {ask?.kind === 'secretVariable' && <SecretVariableCard request={ask.request} />}
+          {ask?.kind === 'projectWork' && <ProjectWorkCard offer={ask.offer} />}
+          {placed && <Rows placed={placed} patterns={patterns} />}
+        </div>
+      );
+    },
+    [after, items, turns, patterns, questionHold],
+  );
 
   if (status !== 'ready' && !thread) return <TopicPlaceholder status={status} />;
   if (!connection) return <TopicPlaceholder status="offline" />;
@@ -270,106 +398,11 @@ export function AssistantView() {
         },
       ),
   });
-  const { after, rest } = placeRows(items ?? [], changes, proposals);
-  const asks = askedFields(items ?? []);
-
-  const holdOf = (text: string) =>
-    holdMessage(
-      text,
-      patterns,
-      asks,
-      undefined,
-      (id) => instances.find((entry) => entry.id === id)?.name,
-    );
-
-  // Typed answers on a card go through the same check as a typed message (questions spec 10).
-  const questionHold: QuestionHold<Held> = {
-    check: (replies) => {
-      setSaved(undefined);
-      for (const reply of replies.values()) {
-        const found = holdOf(reply.text);
-        if (found) return found;
-      }
-      return null;
-    },
-    render: (current, controls) => (
-      <HeldLine
-        held={current}
-        onPut={
-          current.field
-            ? async (replaces) => {
-                const message = await storeHeld(current, replaces);
-                controls.replaceText((text) => withoutSecret(current, text));
-                controls.dismiss();
-                setSaved(message);
-              }
-            : undefined
-        }
-        onSend={controls.sendAnyway}
-        onDismiss={controls.dismiss}
-      />
-    ),
-  };
-
-  // One of wow's tools reads in words, and has no row of its own where a change row, proposal,
-  // secret field or question card below it shows the call (spec 82).
-  const toolWords = (item: ThreadItem): string | null | undefined => {
-    const payload = ToolCallItemPayload.safeParse(item.payload);
-    if (!payload.success) return undefined;
-    const tool = assistantToolOf(payload.data.name);
-    if (tool === null) return undefined;
-    if (after.has(item.id) || askOf(item) !== null || askedQuestionsOf(item) !== null) return null;
-    return assistantToolText(tool);
-  };
-
-  const extraAfter = (item: ThreadItem): ReactNode => {
-    const ask = askOf(item);
-    const questions = askedQuestionsOf(item);
-    const placed = after.get(item.id);
-    if (!ask && !placed && !questions) return null;
-    return (
-      <div className="flex flex-col gap-2">
-        {questions && (
-          <AssistantQuestions
-            item={item}
-            request={questions}
-            state={askState(item, items ?? [], turns ?? [])}
-            check={questionHold.check}
-            renderHold={questionHold.render}
-          />
-        )}
-        {ask?.kind === 'secretField' && <SecretFieldCard request={ask.request} guide={ask.guide} />}
-        {ask?.kind === 'secretVariable' && <SecretVariableCard request={ask.request} />}
-        {ask?.kind === 'projectWork' && <ProjectWorkCard offer={ask.offer} />}
-        {placed && <Rows placed={placed} patterns={patterns} />}
-      </div>
-    );
-  };
-
   // The composer sends what its box holds now, the way its own Send does: queued while a turn
   // runs, as the answer to a waiting question.
   const sendAnyway = () => {
     setHeld(undefined);
     composer.current?.sendUnchecked();
-  };
-
-  // Puts the held value in its field and says so; the caller takes it out of what was typed.
-  const storeHeld = async (current: Held, replaces: boolean): Promise<string> => {
-    const { field } = current;
-    if (!field) throw new Error('No field for this value');
-    if (isVariable(field)) {
-      const owner = instances.find((entry) => entry.id === field.providerInstanceId);
-      if (!owner) throw new Error(`No provider instance ${field.providerInstanceId}`);
-      await storeSecretVariable(connection, field, owner.env, current.match.value);
-    } else {
-      await storeSecretSetting(
-        { connection, settings: runtime.settings },
-        field.key,
-        field.projectId,
-        current.match.value,
-      );
-    }
-    return `Saved in ${field.label}${replaces ? ' in place of the value it held' : ''}. It was taken out of your message.`;
   };
 
   const putInField = (current: Held) => async (replaces: boolean) => {

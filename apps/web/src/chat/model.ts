@@ -54,6 +54,14 @@ export const threadTitle = (thread: Pick<Thread, 'title'>): string =>
 // The thread title is the first line of the first message, the way it was asked.
 export const titleFromMessage = (text: string): string => text.trim().split('\n', 1)[0] ?? '';
 
+// A new thread's title from its first message: its first line, else the skills it names, else
+// "Image". The draft's working copy line names the branch from the same title.
+export const firstMessageTitle = (
+  text: string,
+  skillNames: readonly string[],
+  imageCount: number,
+): string => titleFromMessage(text) || skillNames.join(' ') || (imageCount > 0 ? 'Image' : '');
+
 // "Feature · plan-work" for a thread a workflow run started.
 export function runLabel(
   thread: Pick<Thread, 'runId' | 'stepId'>,

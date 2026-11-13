@@ -114,6 +114,9 @@ export const e2eCopyWorkflowId = 'copy-e2e';
 // A chat thread's Changes (agent workbench U6) read a tea repository of their own, project
 // `tea-chat`, so no run reseeds it under them.
 export const e2eThreadChangesProjectId = 'tea-chat';
+// A chat thread in its own working copy (thread work U2) works in project `tea-mug`: a tea
+// repository of its own, cloned from a bare `origin` beside it (`tea-mug-origin.git`).
+export const e2eMugProjectId = 'tea-mug';
 // The same server holds a seventh repository as project `tea-field` for the GitLab tests
 // (e2e/gitlab.spec.ts): its git remote is on the mock GitLab under /gitlab on the tracker port
 // (project `tea/fields/tea-field`, nested groups), it is on the branch of an open merge request,

@@ -344,8 +344,11 @@ function runGit(
     child.on('close', (code) => {
       if (stopped !== undefined) return finish({ ok: false, missing: false, message: stopped });
       if (code === 0) return finish({ ok: true, stdout });
+      // Git may say what it was doing ("Preparing worktree …") before why it stopped.
+      const lines = stderr.trim().split(/\r?\n/);
       const message =
-        (stderr.trim().split(/\r?\n/)[0] ?? '') || `git ${args[0] ?? ''} exited with code ${code}`;
+        (lines.find((line) => /^(fatal|error):/.test(line)) ?? lines[0] ?? '') ||
+        `git ${args[0] ?? ''} exited with code ${code}`;
       finish({ ok: false, missing: false, message });
     });
   });
@@ -756,6 +759,35 @@ export async function addBranchWorktree(
   return outcomeOf(await runGit(folder, ['worktree', 'add', target, branch], options, longPaths));
 }
 
+// A worktree on a new branch made at `commit`, for a chat thread's own working copy (thread work
+// spec 11). Git refuses when the branch exists, which is the reason the thread's turn fails with.
+export async function addNewBranchWorktree(
+  folder: string,
+  target: string,
+  branch: string,
+  commit: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(
+    await runGit(folder, ['worktree', 'add', '-b', branch, target, commit], options, longPaths),
+  );
+}
+
+// Whether git takes the name as a branch (`check-ref-format --branch`), with git's reason when
+// not.
+export async function checkBranchName(
+  folder: string,
+  branch: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  const checked = await runGit(folder, ['check-ref-format', '--branch', branch], options);
+  if (checked.ok) return { ok: true };
+  return {
+    ok: false,
+    message: checked.missing ? checked.message : `${branch} is not a name Git takes for a branch`,
+  };
+}
+
 // A worktree on a new local branch that follows the remote's branch of the same name.
 export async function addTrackingWorktree(
   folder: string,
@@ -797,6 +829,45 @@ export async function pruneWorktrees(folder: string, options: GitRunOptions): Pr
   return outcomeOf(await runGit(folder, ['worktree', 'prune'], options));
 }
 
+// The tips the history of a ref names (`git reflog`), oldest last; none when it has no history.
+async function reflogTips(folder: string, ref: string, options: GitRunOptions) {
+  const shown = await runGit(folder, ['reflog', 'show', '--format=%H', ref], options);
+  return shown.ok ? shown.stdout.split('\n').filter((sha) => sha !== '') : [];
+}
+
+// Whether the branch's history has only its making in it: no commit, reset or rename since.
+export async function branchNeverMoved(
+  folder: string,
+  branch: string,
+  options: GitRunOptions,
+): Promise<boolean> {
+  return (await reflogTips(folder, `refs/heads/${branch}`, options)).length === 1;
+}
+
+// Commits HEAD of the folder has been on that no branch, tag or remote reaches and that were not
+// made on one of `branches` either: commits made on no branch, gone with the folder. A commit
+// amended or reset away on a branch is in that branch's history and not counted. Undefined when
+// git cannot say.
+export async function listCommitsOnNoBranch(
+  folder: string,
+  branches: readonly string[],
+  options: GitRunOptions,
+): Promise<readonly string[] | undefined> {
+  const [visited, ...made] = await Promise.all([
+    reflogTips(folder, 'HEAD', options),
+    ...branches.map((branch) => reflogTips(folder, `refs/heads/${branch}`, options)),
+  ]);
+  const tips = ['HEAD', ...new Set(visited)];
+  const known = [...new Set(made.flat())];
+  const counted = await runGit(
+    folder,
+    ['rev-list', ...tips, '--not', '--branches', '--tags', '--remotes', ...known],
+    options,
+  );
+  if (!counted.ok) return undefined;
+  return counted.stdout.split('\n').filter((sha) => sha !== '');
+}
+
 export interface Unpushed {
   readonly uncommittedFiles: number;
   readonly ignoredFiles: number;
@@ -806,14 +877,24 @@ export interface Unpushed {
 }
 
 // What the folder holds that would be gone with it: files that are changed or new and not
-// committed, ignored files and folders (git keeps nothing of them, and a file the agent wrote
-// there may be the only copy), and commits that neither a branch on a remote nor the
-// commit the folder started at reaches. Undefined when git cannot say.
+// committed, ignored files, each one inside an ignored folder counted (git keeps nothing of them,
+// and a file the agent wrote there may be the only copy), and commits that neither a branch on a
+// remote nor the commit the folder started at reaches. Undefined when git cannot say.
 export async function readUnpushed(
   folder: string,
   startSha: string | null,
   options: GitRunOptions,
 ): Promise<Unpushed | undefined> {
+  return (await readUnpushedWithStatus(folder, startSha, options))?.unpushed;
+}
+
+// As readUnpushed, with git's status listing (`--porcelain=v1 -z`, ignored paths included) the
+// counts were read from.
+export async function readUnpushedWithStatus(
+  folder: string,
+  startSha: string | null,
+  options: GitRunOptions,
+): Promise<{ readonly unpushed: Unpushed; readonly status: string } | undefined> {
   const reached = ['--not', '--remotes', ...(startSha === null ? [] : [startSha])];
   // Every commit HEAD has been on, not only where it is now: a working copy starts on no branch,
   // so a commit made there and then left (by switching to another commit or branch) is reached
@@ -826,7 +907,9 @@ export async function readUnpushed(
   const [status, count, newest, branch] = await Promise.all([
     runGit(
       folder,
-      ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'],
+      // `traditional` with every untracked file names each file inside a wholly ignored folder;
+      // `matching` names the folder once, so a file added there later would go unseen.
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=traditional'],
       options,
     ),
     runGit(folder, ['rev-list', '--count', ...tips, ...reached], options),
@@ -850,10 +933,13 @@ export async function readUnpushed(
   if (!Number.isInteger(unpushedCommits)) return undefined;
   const subject = newest.ok ? newest.stdout.trim() : '';
   return {
-    uncommittedFiles,
-    ignoredFiles,
-    unpushedCommits,
-    newestSubject: unpushedCommits > 0 && subject !== '' ? subject : null,
-    branch,
+    unpushed: {
+      uncommittedFiles,
+      ignoredFiles,
+      unpushedCommits,
+      newestSubject: unpushedCommits > 0 && subject !== '' ? subject : null,
+      branch,
+    },
+    status: status.stdout,
   };
 }

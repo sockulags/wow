@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { createStore, useStore } from 'zustand';
 import type { AppCommand } from '@/app/commands';
 import { cn } from '@/lib/utils';
+import { useOpenState } from './open-state';
 
 // The task list (agent workbench spec 31): the latest list of the running or last turn pinned
 // above the composer as one line that opens to the list (Ctrl+T), a one-line marker in the
@@ -109,13 +110,21 @@ export function TaskList({
 export function TaskMarker({
   payload,
   turnEnded,
+  openKey,
 }: {
   payload: TaskListItemPayload;
   turnEnded: boolean;
+  // Where the conversation keeps whether it is open, which find sets too.
+  openKey?: string | undefined;
 }) {
   const { done, total } = taskProgress(payload.tasks);
+  const [open, setOpen] = useOpenState(openKey);
   return (
-    <details className="group text-xs text-muted-foreground">
+    <details
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      className="group text-xs text-muted-foreground"
+    >
       <summary
         data-testid="task-marker"
         className="flex cursor-pointer list-none items-center gap-1.5 select-none"

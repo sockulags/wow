@@ -1,6 +1,8 @@
 import type {
   AccountInfo,
+  AgentInfo,
   EffortLevel,
+  McpServerStatus,
   ModelInfo,
   PermissionMode,
   PermissionResult,
@@ -59,6 +61,13 @@ export const errorResult = (subtype: 'error_during_execution', sessionId: string
     session_id: sessionId,
   }) as unknown as SDKMessage;
 
+// What the live calls answer: the MCP servers' status (an Error makes the call fail; a promise
+// answers when it settles) and the subagents.
+export interface FakeLive {
+  readonly mcpStatus?: McpServerStatus[] | Error | Promise<McpServerStatus[]>;
+  readonly agents?: AgentInfo[];
+}
+
 export class FakeQuery implements ClaudeQuery {
   readonly options: Options;
   readonly prompts: string[] = [];
@@ -70,14 +79,21 @@ export class FakeQuery implements ClaudeQuery {
   readonly calls: string[] = [];
   readonly #prompt: AsyncIterable<SDKUserMessage>;
   readonly #turns: FakeStep[][];
+  readonly #live: FakeLive;
   #interrupted = false;
   #abort: AbortController | undefined;
   closed = false;
 
-  constructor(prompt: AsyncIterable<SDKUserMessage>, options: Options, turns: FakeStep[][]) {
+  constructor(
+    prompt: AsyncIterable<SDKUserMessage>,
+    options: Options,
+    turns: FakeStep[][],
+    live: FakeLive = {},
+  ) {
     this.#prompt = prompt;
     this.options = options;
     this.#turns = turns;
+    this.#live = live;
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
@@ -167,6 +183,17 @@ export class FakeQuery implements ClaudeQuery {
     ]);
   }
 
+  mcpServerStatus(): Promise<McpServerStatus[]> {
+    this.calls.push('mcpServerStatus');
+    const answer = this.#live.mcpStatus ?? [];
+    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
+  }
+
+  supportedAgents(): Promise<AgentInfo[]> {
+    this.calls.push('supportedAgents');
+    return Promise.resolve(this.#live.agents ?? []);
+  }
+
   getContextUsage(): Promise<{ totalTokens: number; maxTokens: number }> {
     return Promise.resolve({ totalTokens: 1500, maxTokens: 200_000 });
   }
@@ -192,10 +219,13 @@ export class FakeQuery implements ClaudeQuery {
 }
 
 // A query() replacement that records every query it opens.
-export function fakeQueryFunction(turns: FakeStep[][]): QueryFunction & { opened: FakeQuery[] } {
+export function fakeQueryFunction(
+  turns: FakeStep[][],
+  live: FakeLive = {},
+): QueryFunction & { opened: FakeQuery[] } {
   const opened: FakeQuery[] = [];
   const create: QueryFunction = ({ prompt, options }) => {
-    const query = new FakeQuery(prompt, options, turns);
+    const query = new FakeQuery(prompt, options, turns, live);
     opened.push(query);
     return query;
   };

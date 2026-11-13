@@ -143,6 +143,25 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       session is under that folder (`C:\…`) with its first prompt and time. Pick it, send "Go
       on": Claude answers in the same conversation (it remembers the first question). Rename the
       folder of another session: that one is greyed, "Its folder is gone".
+- [ ] **Find and save (thread work U1).** In a Claude thread with a long command output, press
+      Ctrl+F in the composer: the find bar opens with its field focused. Type a word from an
+      early line of the output: the count reads "1 of n", F3 opens the command row and "Show all"
+      lines, and the match is marked (Chromium's Custom Highlight API in Electron). Escape puts
+      the keyboard back in the composer. Then ⋯ → **Save conversation…**: the Windows save dialog
+      opens in Documents with the thread's title as the name (a `:` or `?` in the title taken
+      out) and the Markdown filter. Save, open the file in Notepad: accents and emoji read right
+      (UTF-8, no byte order mark), one line per tool call, no tool output. Cancel a second save:
+      nothing is written and no message shows.
+
+- [ ] **Session tools (thread work U5).** In a Claude thread of a project whose `.mcp.json` or
+      user settings name an MCP server, send a message, then Details → **Show session tools**.
+      Expected: the servers with the states `claude mcp list` shows in a terminal, a connected
+      server's tools, the built-in tools, skills, commands, subagents and plugins. Point one
+      server at a program that does not exist: its state reads Failed with Claude Code's error.
+      Check that no value from the server's `env`, `headers` or `args` shows anywhere in the
+      tab (the Claude Agent SDK's `system/init` and `mcpServerStatus()` were read from its types
+      only, 0.3.316). Refresh while the thread is open: the same list, "The session reports the
+      same list". Restart wow: the list stays, Refresh is gone until the next turn.
 
 ## 4. Codex turn
 
@@ -213,6 +232,11 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       thread (`thread/resume`). Write down whether the first prompt shown is your own text and not
       Codex's environment note.
 
+- [ ] **Instruction files (Codex, thread work U5).** In a Codex thread in a folder with an
+      `AGENTS.md`, send a message and open the Tools tab: the file is listed under Instruction
+      files (Codex's `instructionSources`, read from the generated types of 0.166.0 only), with
+      the line that Codex reports no list of servers, tools or skills.
+
 ## 5. Secrets
 
 - [ ] Add a secret-marked environment variable to an instance and save.
@@ -274,6 +298,15 @@ The three steps the spec asks for:
       and stop the run: the copy is kept and lists what is unpushed; "Remove working copy" asks
       first and then removes it. Write down how long the first step took (it installs
       dependencies in the fresh copy).
+
+- [ ] **A chat thread in its own working copy.** In a project in Git, turn on "Own working
+      copy" on a new thread and send a message: the header shows the branch, Details shows a
+      folder under `workspaces.root` (with spaces) on that branch, and the project folder's
+      `git status` and branch are unchanged. Mark the thread done with a file left uncommitted:
+      the copy is kept and says so; "Remove working copy" names the file and removes the folder
+      (also with the file open in an editor: the reason shows and the copy is kept); the branch
+      is still listed by `git branch`. Send another message: the copy is made again on the
+      branch. Try a long thread title: the branch and the path stay short enough to check out.
 
 Further checks against the same hosts:
 

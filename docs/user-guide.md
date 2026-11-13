@@ -92,6 +92,8 @@ Default keys (all changeable in Settings → Keybindings):
 | Ctrl+B           | Chat: send the running command or subagent to the background |
 | Ctrl+Shift+J     | Next that needs you                                          |
 | Ctrl+O           | Chat: open or close all reasoning                            |
+| Ctrl+F           | Chat: find in the conversation                               |
+| F3 / Shift+F3    | Chat: next match, previous match                             |
 | Alt+Up / Down    | Chat: previous message, next message                         |
 | C                | Chat: copy the message that has the keyboard                 |
 | E                | Chat: edit your last message, when it has the keyboard       |
@@ -395,6 +397,35 @@ provider instance, model, effort and mode then win over what your last thread us
 
 Settings → Chat → **Send key** chooses which key sends: **Enter** (Shift+Enter makes a new line) or
 **Ctrl+Enter** (then Enter makes a new line).
+
+#### A thread in its own working copy
+
+When the chosen project's folder is a Git repository with a commit, the draft shows **Own working
+copy** (also "New thread: own working copy" in the palette). It starts on or off as the project's
+**Own working copy for new threads** setting says (Settings → Chat, per project; off by default).
+With it on, the line under it says which branch is made and where it starts, such as "New branch
+wow/ring-the-bell-3fa2c1 from main (4e1d2a0)". The thread then works in a Git worktree of the
+project under the working copies folder (Settings → Working copies), on that new branch: its
+turns, Changes, files and `@` are there, and your project folder, its index and its branch are
+not touched. Changes you have not committed in the project folder stay there.
+
+The copy is made just before the first message goes out. If it cannot be made (the branch name
+is taken, the folder is not a repository), the turn fails with Git's reason and nothing is sent;
+fix the cause and press Retry. A branch that is already in the repository is never used or
+changed: rename that branch, or change the branch name setting. When Git made the branch but not the
+folder, the branch stays and Retry uses it. The branch name comes from **Branch of a thread's working copy**
+(`{{title}}` and `{{id}}`), and **Where a thread's working copy starts** picks the project
+folder's commit (the default) or the default branch's tip.
+
+The header shows the branch and "own working copy"; Details shows the branch, the folder (with
+Copy path and Open in editor) and where it started. When you mark the thread done, wow removes the
+copy if no uncommitted or ignored file is in it; commits stay on the branch. Otherwise the copy
+is kept and the chip says what it holds. A commit made with no branch checked out (a detached
+HEAD) is not on the branch, so it keeps the copy too. **Remove working copy** (Details or the palette) shows
+what would be lost and removes only after **Remove and lose them**; it is refused while a turn
+runs or while another thread that is not done (a fork) works in the same copy. wow never deletes
+the branch and never pushes. Your next message makes the copy again on its branch. A fork works
+in the same copy.
 
 **Open session from Claude Code / Codex…** in the palette lists the sessions your provider
 instances keep in their own files, the newest first, grouped by folder, each with its first prompt
@@ -745,6 +776,40 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   own files were cleaned up, say), every message there fails the same way; the error then offers
   **Go on without going back** (the agent goes on with the whole conversation it has, the replaced
   exchange included) or, in a fork, **Start a new conversation**. Both are in the palette too.
+- **Find**: **Ctrl+F** opens a find bar above the conversation, from anywhere in the thread, the
+  message box included; pressed again it selects what you typed. It finds text as the
+  conversation shows it, case ignored: messages as rendered (`**bold**` is found as "bold"),
+  reasoning, each tool row's line and its whole output, an edit's diff, the cards, error and
+  divider lines, task lists and a subagent's work. It does not search the JSON behind Show JSON
+  or Details, earlier versions of an edited message, or the message box. The bar reads "3 of 12",
+  "No matches", or "1000+" once there are more than `chat.findMaxMatches`. **Enter** or **F3**
+  goes to the next match and **Shift+Enter** or **Shift+F3** to the one before, wrapping at the
+  ends. A match inside a closed row, group of tool calls, reasoning, subagent or the earlier lines
+  of an output opens it, and it stays open after the bar closes. While a turn streams the count
+  follows it and the current match stays where it was. **Escape** closes the bar and puts the
+  keyboard back where it was. Find is in the chat view only, not in the Assistant view or a step's
+  thread in the side panel.
+- **Copy or save the conversation**: **Copy conversation as Markdown** and **Save conversation…**
+  (the palette, and the **⋯** menu in the thread's header) give the thread as Markdown: its
+  title, a line with the provider, model, project, folder and branch, the time, then "You · 20:41"
+  and "Claude Code · 20:42" headings with each message as written and one line per tool call,
+  approval, question, error and task update, such as "$ pnpm test · exit 1 · 4.2 s" or "Denied:
+  $ rm -rf build · note: keep the build". Tool output and input are left out, and so is reasoning
+  unless `chat.exportReasoning` is on. The desktop app saves through the system's save dialog,
+  named after the thread's title; the browser build downloads the file.
+- **Session tools**: the side panel's **Tools** tab (Details → **Show session tools**, the palette
+  **Show session tools**, or the header chip such as "1 MCP server failed") lists what the
+  provider reported for the thread's session: the MCP servers with their state (Connected,
+  Failed, Needs sign-in, Connecting, Turned off), a failed server's error, where it is configured,
+  its version and address and its tools (marked read-only or destructive), the built-in tools,
+  skills, commands, subagents and plugins, each with a count. The filter narrows all of them. The
+  list is what Claude Code said as the last turn started; **Refresh** asks the open session again
+  and is offered only while it is open. wow never starts Claude Code or a server to fill the tab,
+  signs in or turns servers on or off: for a server that needs sign-in, run `/mcp` in Claude Code
+  in a terminal. No environment value, header, argument or address path is shown or kept. Codex
+  reports no such list, so a Codex thread shows the instruction files it loaded and the MCP
+  servers its own tool calls used. A thread from before this version shows the tab empty until
+  its next turn; the Assistant has no Tools tab.
 - **Skills in chat** are listed Yours, Project, Recently used, User, Plugins and wow last; wow's
   own four are marked "for workflow steps". On a new thread the list opens under the box, so the
   provider and project pickers stay in view.

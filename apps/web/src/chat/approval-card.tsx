@@ -85,7 +85,7 @@ export const closeApprovalNote = (): void => approvalCardStore.setState({ noting
 export const useApprovalOffer = (): ApprovalOffer | undefined =>
   useStore(approvalCardStore, (state) => state.offer);
 
-const decisionLabels: Readonly<Record<ApprovalDecision, string>> = {
+export const decisionLabels: Readonly<Record<ApprovalDecision, string>> = {
   allowOnce: 'Allowed once',
   allowSession: 'Allowed for this session',
   allowAlways: 'Always allowed in this project',

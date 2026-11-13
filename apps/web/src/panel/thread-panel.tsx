@@ -21,6 +21,7 @@ import {
   threadTitle,
 } from '@/chat/model';
 import { TaskDetails } from '@/chat/task-pin';
+import { WorkingCopyDetails } from '@/chat/working-copy';
 import { stateDotClass, threadStateLabels } from '@/chat/thread-view';
 import { effortLabel, providerLabel } from '@/chat/view-model';
 import {
@@ -38,6 +39,8 @@ import { formatWhen } from '@/lib/format';
 import { runStateLabels } from '@/workflows/model';
 import { FactList, PanelSection, PanelTitle, panelLinkClass } from './details';
 import { threadUsage, usePanelRoute } from './model';
+import { openThreadTools, toolsSummary } from './tools-tab';
+import { cn } from '@/lib/utils';
 import { fullPathOf, openFile, openHostItem } from './viewer';
 
 // What a thread's messages mention (agent workbench spec 19): the file paths (inline code, a
@@ -142,6 +145,28 @@ function Mentioned({
   );
 }
 
+// What the session can use (thread work spec 37): a summary and the way to the Tools tab.
+function SessionToolsLink({ threadId }: { readonly threadId: string }) {
+  const { settings, layout } = useRuntime();
+  const pathname = usePanelRoute();
+  const row = useTopic('threadTools', threadId)?.[0];
+  return (
+    <PanelSection label="Session tools">
+      <p className="text-xs text-muted-foreground" data-testid="tools-summary">
+        {toolsSummary(row?.tools) ?? 'Reported when the next turn starts.'}
+      </p>
+      <button
+        type="button"
+        data-testid="open-session-tools"
+        className={cn(panelLinkClass, 'self-start text-xs')}
+        onClick={() => openThreadTools({ settings, layout }, threadId, pathname)}
+      >
+        Show session tools
+      </button>
+    </PanelSection>
+  );
+}
+
 // The chat view's panel: the thread's setup, usage and what it belongs to. The conversation
 // itself is already the main view, so it is not repeated here.
 export function ThreadPanel({ threadId }: { readonly threadId: string }) {
@@ -202,11 +227,14 @@ export function ThreadPanel({ threadId }: { readonly threadId: string }) {
             { label: 'Effort', value: effortLabel(thread.effort) },
             { label: 'Permissions', value: permission },
             project !== undefined && { label: 'Project', value: project.name },
-            { label: 'Folder', value: <PathText path={thread.cwd} copy /> },
-            thread.branch !== null && { label: 'Branch', value: thread.branch },
+            // A thread's own working copy has its own section below (thread work spec 13).
+            !thread.workingCopy && { label: 'Folder', value: <PathText path={thread.cwd} copy /> },
+            !thread.workingCopy &&
+              thread.branch !== null && { label: 'Branch', value: thread.branch },
           ]}
         />
       </PanelSection>
+      <WorkingCopyDetails thread={thread} />
       <PanelSection label="Usage">
         {usage.inputTokens + usage.outputTokens === 0 && !context ? (
           <p className="text-xs text-muted-foreground">No usage reported yet.</p>
@@ -232,6 +260,7 @@ export function ThreadPanel({ threadId }: { readonly threadId: string }) {
       <PanelSection label="Tasks">
         <TaskDetails items={items} turns={turns} />
       </PanelSection>
+      {thread.kind !== 'assistant' && <SessionToolsLink threadId={thread.id} />}
       {thread.kind !== 'assistant' && (
         <Mentioned threadId={thread.id} cwd={thread.cwd} items={items} />
       )}

@@ -65,9 +65,9 @@ projectId?, title?, labels?}`), `setup.save` and `setup.preview` (`{text}`; see 
   The same port answers plain HTTP on one path, `/assistant/mcp`, for the assistant's tools
   (see "Assistant"); every other HTTP request gets 426. That path has a token of its own.
 - **Subscriptions.** One topic per projection (`subscriptionTopics` in contracts); thread-scoped
-  topics (`turns`, `threadItems`, `approvals`, `questions`) need a `threadId`. After a commit that
-  touched a topic, every subscriber of it gets the topic's full current rows. Subscriptions end
-  with their connection.
+  topics (`turns`, `threadItems`, `approvals`, `questions`, `hostItemReads`, `threadTools`) need a
+  `threadId`. After a commit that touched a topic, every subscriber of it gets the topic's full
+  current rows. Subscriptions end with their connection.
 - **Client runtime.** `packages/client-runtime` queues requests until the socket opens, fails
   in-flight requests when it drops, reconnects with capped exponential backoff and subscribes again
   after every reconnect. It reads the port and token from `server.json` (`ServerInfo`). It
@@ -179,7 +179,8 @@ threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessi
                  baseSha, baseFiles: where a chat thread's Changes are measured from, set at its
                  first turn (migration 0029_thread_changes); stateSince (0031); goBack(json:
                  GoBack)?, forkedFrom(json: {threadId, turnId})? for Edit and Fork (migration
-                 0032_fork_and_edit)
+                 0032_fork_and_edit); workingCopy(json: WorkingCopy)? a chat thread's own
+                 working copy, null for older rows (migration 0035_thread_working_copy)
 turns            id, threadId, index, state, startedAt, endedAt, usage(json),
                  fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
                  turn began, for "This turn only" (migration 0029_thread_changes);
@@ -256,6 +257,10 @@ host_item_reads  id ('thread:<threadId>:<hostItemKey>'), scope ('thread'), threa
                  item(json: HostItemRef), hostName, data(json: HostItemData)?, fetchedAt?,
                  error(json: HostError)?   -- an item a chat thread links to, as last read when
                  its tab opened or on Refresh now (migration 0030)
+thread_tools     threadId, tools(json: SessionTools), source ('turn'|'refresh'), live,
+                 reportedAt   -- what a chat thread's session last reported it can use; live
+                 while the session that reported it is open in its adapter (migration
+                 0034_thread_tools)
 assistant_changes id (the command's id), at, commandType, what, from?, to?, place(json: {label,
                  path}), target(json: {kind, id}), expect(json)?, inverse(json: Command[]), state
                  ('applied'|'undone'), undoneAt?   -- what the assistant changed, with the record
@@ -298,6 +303,7 @@ ProviderCommand: startTurn {threadId, cwd, prompt, model, effort, permissionMode
                  answerQuestion {questionId, answer {picked, text}} | setModel | setPermissionMode |
                  listModels | handOver {threadId, prompt} -> {taken} |
                  listCommands {cwd, threadId?} -> [{name, description, argumentHint?}] |
+                 describeSession {threadId} -> SessionTools | null |
                  stopTask {threadId, taskId} | toBackground {threadId, itemId?} | test
 ProviderEvent:   session {providerSessionId} | textDelta {itemId, delta, parentItemId?} |
                  reasoningDelta |
@@ -311,7 +317,8 @@ ProviderEvent:   session {providerSessionId} | textDelta {itemId, delta, parentI
                  turnCompleted {resumePoint?} | turnFailed {error, resumePoint?} |
                  turnInterrupted {resumePoint?} | turnStartedByProvider |
                  backgroundTasks {tasks [{id, description, agent?, kind?, lastOutput?}]} |
-                 commandRefused {command stopTask|toBackground, error} (made by the server)
+                 commandRefused {command stopTask|toBackground, error} (made by the server) |
+                 sessionTools {tools: SessionTools}
 ```
 
 **Tool facts.** Each adapter normalizes a tool call into `ToolFacts` (`provider.ts`): `kind`
@@ -467,7 +474,9 @@ thread it maps to, since the app-server has no request that unloads one.
   user item it becomes) and gets a new `id` (the old one plus `+`), so whatever acts on the queue acts on one version of it. For a chat or
   step thread the event carries `handOver {providerInstanceId, prompt}` (the prompt with the
   skills in front, as `thread.sendMessage` would send it); the provider service then sends the
-  adapter `handOver {threadId, prompt}`, which answers `HandOverResult {taken}`. Taken, the
+  adapter `handOver {threadId, prompt}`, which answers `HandOverResult {taken}`. While the turn
+  it joins is still being prepared (`#starting`: the folder read for its changes, the thread's
+  own working copy), the offer waits for that start, as a stop does. Taken, the
   service dispatches `thread.handedOver {threadId, queuedId, offered {text, skills?, files?}}`: the queue
   empties and a `user` item with `queued: 'duringTurn'` joins the running turn (or the turn that
   just ended), so the conversation shows it sent. Not taken, it stays queued. The service offers a
@@ -1204,8 +1213,9 @@ the working copy first and still the project folder).
 - **After the run.** When a run with a `ready` copy has ended and no turn of its threads is
   still running (a stopped run's turn is interrupted after the run ended, so `turn.ended` is
   heard too), `settleWorkingCopy` counts what would be lost: files `git status` lists
-  (changed, staged or new), ignored files and folders (`ignoredFiles`, each ignored folder once:
-  git keeps nothing of them, and an agent's local file may be the only copy) and commits that
+  (changed, staged or new), ignored files (`ignoredFiles`, every file inside an ignored folder counted, read with
+  `--ignored=traditional --untracked-files=all`: git keeps nothing of them, and an agent's local
+  file may be the only copy) and commits that
   `HEAD` reaches and neither a
   remote-tracking branch nor the start commit does (`readUnpushed`). With none, `git worktree
 remove` without `--force` removes the folder (git itself refuses if something is there after
@@ -1255,6 +1265,109 @@ agent's work. Known limits: a project folder that is a subfolder of its reposito
 whole repository as its working copy, with the copy's root as `cwd`; a kept copy is not looked
 at again after someone pushes from it by hand; a step thread of an ended run keeps the removed
 folder as its `cwd`.
+
+### A chat thread's own working copy
+
+Thread work spec 10 to 18. A chat thread in a project whose folder is in a Git repository can
+work in a worktree of its own, on a new branch, with the project folder untouched. It shares the
+code of a run's copy (`workspaces/working-copy.ts`, `projects/git.ts`) and differs in one thing:
+a thread's copy is on a branch, because a chat has no delivery step that names one and a pull
+request (thread work U4) needs one. So its commits are kept by the branch, and settling and
+removal ask only about files.
+
+- **The draft.** `/chat/new` asks `threads.workingCopyPlan {projectId}` when the project
+  changes: `ok` with the project's `chat.ownWorkingCopy` (the switch's start),
+  `chat.workingCopyBranch`, `chat.workingCopyStart`, the branch and commit the copy would start
+  from as this computer knows them now and whether a fetch comes first; else `unavailable` and
+  no switch (a folder without a project, not in Git, no commit). It reads only. The line under
+  the switch names the branch with `branchName(template, title, threadId)` from contracts, filled
+  as the user types from `firstMessageTitle` (the first line, else the skill chips' names, else
+  "Image"), the same title `thread.create` gets; the draft's thread id is chosen up front, so the
+  name shown is the name made. `branchName` slugs the title (32 characters at most, accents off), takes 6 hex of the
+  thread id's SHA-256 (`sha256Hex`, in contracts because the browser's digest is asynchronous),
+  and cleans each part of the name to what `git check-ref-format --branch` takes. Two threads'
+  names differ in their lower-case id, so they differ without case too, as Windows refs stored
+  as files need; when 6 characters of two ids agree the server lengthens the id.
+  `DraftState.ownWorkingCopy` holds the user's pick; palette `chat.draft.ownWorkingCopy`.
+- **Named at create.** `thread.create {ownWorkingCopy: true}` (refused without a project and with
+  `resumeSessionId`: a provider session belongs to its folder) makes the thread with
+  `cwd` = `<workspaces.root>/<project slug, 16 characters>-t<8 hex of the thread id's SHA-256>`,
+  `branch` and `workingCopy {state: 'pending', branch}` (`core/thread-copy.ts`). Since `cwd` is
+  the copy, the thread's Changes, files, `@`, Open in editor and the agent's turns work there
+  with no change of theirs.
+- **Made before the first turn.** The provider service awaits `Workspaces.prepareThread` before
+  a chat turn goes out, before the Changes base is read, inside the same prepared start, so a
+  stop or other command sent for the thread meanwhile still reaches the provider after the
+  start. A copy never made gets
+  `createThreadWorkingCopy`: the project folder must be a repository with a commit, git must
+  take the branch name (`checkBranchName`), the commit is the project folder's (`head`) or the
+  default branch's tip as for runs (`defaultBranch`, with `workspaces.fetchBeforeCreate` and the
+  same `note` when it is not the fetched tip), and `git worktree add -b <branch> <path> <commit>`
+  (`addNewBranchWorktree`) makes it. `thread.workingCopyReady` stores `ready`, `startSha` and,
+  in `defaultBranch`, the branch the start commit was read from. When it cannot be made, the
+  reason (git's own: "fatal: a branch named … already exists"; runGit now prefers git's
+  `fatal:`/`error:` line over what it said before it) goes in `thread.workingCopyFailed`, the
+  turn fails with it and the provider gets nothing. Right before git is asked to make the branch
+  (only when no branch of that name exists), `thread.workingCopyBranching {threadId, startSha}`
+  stores the start commit as `WorkingCopy.branchStart`: from then on the branch is wow's own.
+  `worktree add -b` makes the branch before the folder and leaves it when the folder then fails
+  (a folder already there, a path too long, a locked file, a server stop). The branch is never
+  deleted: the next try finds it, and when it is at `branchStart` and never moved (one entry in
+  its reflog) it takes it up with `git worktree add <path> <branch>` (the copy then starts at
+  that commit, with a note when the start commit has moved since). With the reflog switched off
+  (`core.logAllRefUpdates=false`) or expired, git's left branch has no entry, is not known as
+  wow's and is not taken up: Retry fails with git's reason until the user deletes the branch. Any
+  other branch of that
+  name, one that was there before the thread above all, is the user's: git refuses it and that
+  is the reason. When git fails without making the branch, `thread.workingCopyBranching` with
+  `startSha: null` clears `branchStart`, so a branch of that name the user makes later at the
+  same commit (a fresh branch also has one reflog entry) is not taken for wow's. Nothing falls
+  back to the project folder.
+- **Again on its branch.** A message to a thread whose copy is `removed` (or whose folder went)
+  makes it again with `git worktree add <path> <branch>` (`reopenThreadWorkingCopy`); a folder
+  that is already there on the branch (a fork made it first) is taken as it is. A deleted branch,
+  or one another folder is on, fails the turn with git's reason. A `kept` copy simply becomes
+  `ready` again.
+- **Settled at done.** On `thread.stateChanged` to `done`, once every thread whose
+  `workingCopy.path` is that folder is done and none has a running turn, `settleWorkingCopy`
+  with the thread's `branch` removes it when no uncommitted, untracked or ignored file is in it
+  and no commit was made on no branch, else keeps it with what it holds. Commits on a branch are
+  counted for the chip but do not keep it. `readThreadHolds` adds `commitsOnNoBranch` to
+  `readUnpushed`: commits HEAD of the copy has been on (HEAD and its reflog) that no branch, tag
+  or remote reaches and that are not in the reflog of the thread's branch or the one the copy is
+  on (`countCommitsOnNoBranch`), so a commit made with HEAD detached keeps the copy, and one
+  amended or reset away on the branch does not. The outcome goes to every thread that shares the
+  folder as `thread.workingCopySettled`. While a settle or a removal runs, `prepareThread` for
+  the folder waits for it and reads the row again, so a turn never starts in a folder that is
+  going.
+- **Remove working copy.** `threads.workingCopyStatus {threadId}` answers what it holds now
+  (`readThreadHolds`); the dialog shows that, commits on no branch among what is lost, and
+  confirms with "Remove and lose them", or a plain "Remove" when nothing would be lost.
+  `threads.removeWorkingCopy {threadId, expect}` reads again and is refused with `conflict` and
+  the new counts as the error's `data` when more files or commits on no branch are there than
+  `expect`, or when the server read a `digest` and `expect` carries none, and with `rejected`
+  while a turn runs (checked again right before the removal) or
+  another thread that is not done works in the folder. `readThreadHolds` also answers `digest`,
+  a SHA-256 of git's status listing (every changed, new and ignored file with its state, each
+  file inside an ignored folder named on its own) and of
+  the commits on no branch; when `expect` carries one and it differs, the removal is refused with
+  `conflict` too, so one file swapped for another after the dialog opened is noticed. A file
+  edited again with the same state is not (the listing names paths, not contents). Then `git worktree remove
+--force`; the branch stays. wow never deletes a branch and never pushes here.
+- **Forks.** A fork takes its origin's `cwd`, `branch` and `workingCopy`.
+- **Restart.** `recover()` takes a `pending` copy whose folder git finished on its branch as
+  ready. A `pending` copy with `branchStart` (git was asked to make it) fails ("The server
+  stopped while the working copy was being made"), its folder goes with `git worktree remove
+--force`, its branch stays, and the next message takes the branch up; when the stop came before
+  git made the branch, `branchStart` is cleared too. A `pending` copy without
+  `branchStart` was never started (no message went out yet) and stays `pending`. Nothing here
+  deletes a branch. A `ready` copy of a done thread is settled.
+- **Web.** `chat/working-copy.tsx`: `DraftWorkingCopy` (switch and line), `WorkingCopyChip` in
+  the thread header (branch and "own working copy", or what a kept copy holds),
+  `WorkingCopyDetails` in Details (branch, folder with Copy path and Open in editor, where it
+  started, the note, the state and Remove), `RemoveThreadCopyDialog` and `threadCopyStore`, and
+  `workingCopyCommands` (palette `chat.removeWorkingCopy`, `chat.copyWorkingCopyPath`). Threads
+  stored before have `workingCopy` null and work as they did.
 
 ### Plan runs
 
@@ -1563,7 +1676,10 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.starterCount`, `chat.skillTrigger`, `chat.notifications`, `chat.finishedAfterSeconds`,
   `chat.threadTitleMaxLength`, `chat.threadSearchMaxLength`, `chat.editDiffMaxLines` (see "Chat
   view"), `chat.contextWarnPercent`, `chat.reasoningOpen` (see "Conversation reading"), `chat.fileTrigger` (see "Panel tabs and files in chat"), `chat.imageMaxBytes` (see
-  "Images in the composer"), `chat.sendKey` (see "Chat view")
+  "Images in the composer"), `chat.sendKey` (see "Chat view"), `chat.findMaxMatches`,
+  `chat.exportReasoning` (see "Find in the conversation and copy it"), `chat.ownWorkingCopy`,
+  `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
+  working copy")
 - approvals: `approvals.alwaysAllow` (project-scoped; the "Approvals" page, see "Edits, approvals
   and a thread's Changes")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
@@ -3308,6 +3424,179 @@ stored by the server; the web app only draws it.
   with screen readers; the builder's rule keys get their own "Workflows" scope in the keybindings
   table so the shared keys are not reported as conflicts. E and F on a focused message are Edit
   and Fork (see "Edit and Fork").
+
+### Find in the conversation and copy it
+
+Thread work U1 (spec 1 to 9). No server contract: find and the export are built in the web app
+from the rows the thread view already subscribes to, with the rows' own words, so what is found
+and exported is what the conversation shows. Searching the page alone would miss closed rows.
+
+- **Text.** `chat/find.ts` `conversationText(source)` walks the view's entries (after
+  `groupToolCalls` and `nestSubagentWork`, with an edited message's earlier versions already left
+  out) and gives each shown item's text pieces in reading order, each with its row's item id and
+  the open-state keys of what holds it. A message is its markdown parsed with GFM and turned into
+  text (`markdownText`, mdast from `mdast-util-from-markdown` with the GFM extensions, the parse
+  react-markdown uses), so `**kettle**` is found as "kettle"; a line break inside a paragraph
+  reads as the space it shows as, a hard break as a new line, and a picture as the link it is
+  drawn as (its alt text, else its address). Tool rows give their line
+  (`toolLine` in `conversation-markdown.ts`, without times), an MCP call's arguments as key: value,
+  an edit's diff lines, and their whole output, the earlier lines (before the last
+  `chat.toolOutputLines`) as a piece of their own that also opens "Show all N lines". Reasoning,
+  a subagent's prompt, nested rows and answer, approval and plan cards (summary, command, diff,
+  address, tool, plan text, note), question cards, error, divider and compaction lines and task
+  lists are text too. The questions of one ask card count in the card's single row (the
+  entry's id). Never matched: the JSON behind Show JSON or Details, tool input otherwise,
+  usage rows, the composer, earlier versions. The streaming message is parsed again as it grows;
+  the others are kept per item while the bar is open.
+- **Matching.** `findMatches(pieces, query, limit)` folds case for every letter (`foldCase` keeps
+  each character's place) and stops at `chat.findMaxMatches` (1000); the bar then reads "1000+",
+  else "3 of 12" or "No matches" (`findCountText`). The current match is kept as (item id, nth
+  match of that row) and found again after every change (`keepCurrent`), so a streaming turn
+  grows the count without moving it (spec 5); only a move by the user scrolls.
+- **Opening.** Rows keep their open state in the conversation's store (`chat/open-state.ts`,
+  `createOpenStore` per thread on screen, `OpenStoreContext`, `useOpenState(key)`): a tool row
+  (`row:`), a group (`group:` with its first call's id), reasoning (`reasoning:`), a subagent's
+  list (`agent:`), a subagent's whole prompt (`prompt:`, four lines until opened), an output's earlier lines (`output:`, through `OutputKeyContext` from the row)
+  and a task list update (`tasks:`). A click sets it, and so does find, once per match it lands
+  on, so what find opened stays open as if opened by hand. Reasoning remounts when find opens it
+  and Ctrl+O still opens or closes all of it. A row outside a conversation keeps its own state.
+- **Marking.** `chat/find-bar.tsx` (loaded on first use, with the parser) marks matches with the
+  CSS Custom Highlight API (`wow-find`, `wow-find-current`, colours `--find-match` and
+  `--find-current` in `tokens.css`) over the text nodes of the rows that hold matches (not a
+  nested row's, not button words), never by rewriting the markup. It paints after every commit
+  and, through a `MutationObserver`, when lazily rendered text arrives. Where the API is missing
+  (jsdom) the current match's row is outlined (`data-find-outline`); the row always carries
+  `data-find-current`. The marks search the row's text on screen again (line breaks in rendered
+  Markdown outside `<pre>` read as spaces), which can hold words find does not count (a time, a
+  heading button's words); when a row's marks and its counted matches differ in number, the
+  current match's row is outlined instead of marking an occurrence that may not be the counted
+  one.
+- **Bar and keys.** Ctrl+F (`keybindings.findInConversation`, Mod+F) opens the bar above the
+  conversation with its field focused from anywhere in the view, composer included (a Mod key
+  works in text fields); pressed again it selects the field. Enter and Shift+Enter are the field's
+  own; F3 and Shift+F3 (`keybindings.findNext`, `keybindings.findPrevious`) work from anywhere and
+  open the bar on the last search when it is closed. Escape closes it and gives the focus back to
+  where it was, else the composer. Palette ids `chat.find`, `chat.findNext`, `chat.findPrevious`.
+  The keys are in the keybindings table's Chat scope.
+- **Where.** The conversation registers `ConversationHandle.find` only for a chat thread in the
+  chat view (a step's thread opened there included): not the Assistant view, whose rows are its
+  own and which holds secret-field and change cards, and not a step's thread in the side panel.
+- **Export.** `chat/conversation-markdown.ts` `conversationMarkdown(input)`: the title as a
+  heading, one facts line (instance name, model label, project, folder, branch), "Exported
+  <time>", then "You · 20:41" and "<instance name> · 20:42" headings (the turn's start, and its
+  end for the agent) with each message as written (the `@path` line kept, images as
+  `[image: <name>]`, skills as "Skills: a, b") and one list line per tool call, approval, plan,
+  question, error, divider, compaction, task list update and stopped turn, worded as the rows
+  (`toolLine`, `approvalLine`, `questionLine`, `taskLine`, `settingsChangeText`,
+  `compactionText`): "$ pnpm test · exit 1 · 4.2 s", "Allowed once: $ pnpm test", "Denied: $ rm
+  -rf build · note: keep the build". A row's words (and the title) go on one line: a line break
+  and the space around it become one space, so a heredoc or a long error cannot spread out and
+  read as headings of its own. A subagent call is its line and its answer as a quote. No
+  tool output or input, no usage, no queued message, no earlier version; reasoning only with
+  `chat.exportReasoning`. Palette `chat.copyMarkdown` and `chat.saveMarkdown`, and the thread
+  header's "More thread actions" menu (a shadcn `dropdown-menu`).
+- **Saving.** The shell that shows the dialog writes the file; the server gets no RPC that writes
+  to a path a client names. `Runtime.saveTextFile` (bootstrap, from the preload's
+  `wowDesktop.saveTextFile`) sends `SaveTextFileRequest {suggestedName, text}` (contracts
+  `desktop-files.ts`) on `wow:save-text-file` (`fileChannels` in `apps/desktop/src/app.ts`). The
+  main process answers only `wow://app` pages, as for `wow:pick-folder`
+  (`apps/desktop/src/main/save-text-file.ts`): it cuts the suggested name to a bare file name
+  (cleaned again by the same rules as the page's, at most 200 characters before `.md`), shows
+  `dialog.showSaveDialog` in the documents folder with a Markdown filter, writes UTF-8 without
+  a byte order mark and answers the path, or null when cancelled; a request it cannot read
+  throws, so the page says the conversation was not saved. The browser build has no
+  `saveTextFile`, so `saveTextFile(runtime, file)` in `app/runtime.tsx` downloads a Blob
+  instead. `exportFileName(title)` takes out what Windows refuses (`<>:"/\|?*` and control
+  characters) and direction marks, cuts the title to 120 characters, drops trailing dots and
+  spaces, and renames a device name, also one followed by a dot ("CON.backup").
+
+### What the session can use
+
+Thread work U5 (spec 37 to 44). A chat thread's panel has a Tools tab with what the provider
+reported for the thread's session: MCP servers with state, error, source, version, address and
+tools, built-in tools, skills, slash commands, subagents, plugins and instruction files. wow only
+shows reports; it never starts a session, a probe or an MCP server to fill the tab, since starting
+Claude Code in a folder starts the servers a repository's `.mcp.json` names.
+
+- **Contract.** `packages/contracts/src/session-tools.ts`: `SessionTools {reportedAt, complete,
+mcpServers, builtInTools, skills, commands, agents, plugins, instructionFiles}` and
+  `McpServerInfo {name, state, stateWord, error, source, version, address, tools [{name,
+description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `needsAuth`,
+  `pending`, `disabled`, `other`. Only named fields, every text and list bounded
+  (`sessionToolsLimits`); `boundedSessionTools` cuts what an adapter read to fit. No field can
+  hold a server's config, environment, headers or arguments (spec 41). ProviderEvent
+  `sessionTools {threadId, tools}` (`tools` null: the session ended by itself), ProviderCommand `describeSession {threadId}` answering
+  `SessionTools` or null without a live session. Topic `threadTools` (thread-scoped) with rows
+  `ThreadTools {threadId, tools, source, live}`; RPC `threads.refreshTools {threadId}` answering
+  `{outcome: changed | unchanged | noSession}`.
+- **Claude Code** (`provider-claude/src/session-tools.ts`). At each `system/init` of a thread's
+  session (not the assistant's tools-only one) the adapter reads the init message's tools, MCP
+  servers (name, status, source), slash commands, skills, agents, plugins and `plugin_errors`,
+  then completes it from the live query's `mcpServerStatus()`, `supportedCommands()` and
+  `supportedAgents()` (the `ClaudeQuery` seam in `sdk.ts` declares both new calls) and emits
+  `sessionTools`. A server's `config` gives only `address` (`mcpAddress`: an http or sse URL's
+  scheme, host and port; the file name of a stdio command's program). `commandParts` decides the
+  program before a command line is split, since a Windows path often has a space. Leading
+  `NAME=value` words (a shell's way of setting the program's environment) are skipped and their
+  values hidden like `env`'s; then a leading quoted part; for text that starts as a path, a path up to the first word ending in `.exe`,
+  `.cmd`, `.bat`, `.com` or `.ps1`, or the whole text when only the part before the last
+  separator has a space; else the first word. A plugin error reads as its `type` and `message`,
+  leaving out the one Claude Code did not give. A failure's words and plugin errors pass
+  `cleanReportedText`: the server's command and its program's path read as the program's file
+  name, each argument written after the program in `command` is hidden, the configured URL reads
+  as its origin and, written without its scheme, as its host, its path, query values, user,
+  password and fragment are hidden (as written and percent-decoded; a malformed percent sequence
+  is kept as written), its argument, environment and header values are hidden, every web address
+  is cut to its origin, and a credential after Bearer, Basic or Token is hidden. Known limit:
+  a value shorter than 4 characters is never hidden (it would hide parts of ordinary words). When a live call fails or does not
+  answer within `providers.requestTimeoutMs`, the init message's names and states go out with
+  `complete: false`. `system/commands_changed` replaces the commands, also when it arrives while
+  the first list is being asked for. `describeSession` asks the same calls of the thread's live
+  query, answers null when there is none or it has sent no init yet, and fails when the live
+  calls fail (the init list alone would replace a complete one). The init message and the live
+  answers come from the user's own Claude Code binary, so every list is read as unknown data: a
+  missing list or one of another shape reads as empty and an entry without a string name is
+  left out (`boundedSessionTools`'s `named` drops one too). Reading the Tools tab's list never
+  fails the turn (an init it cannot read reports nothing), and a live answer it cannot read
+  leaves the init list with `complete: false`; `#reportTools` catches what reads and completes
+  the live answers, since its promise is not awaited and an unhandled rejection would end the
+  server. Its final `#emit` is outside those tries, as every other emit of the adapter is.
+- **Codex** (`provider-codex/src/adapter.ts`). `thread/start` and `thread/resume` answer
+  `instructionSources` (added to the generator's `FIELDS` as `instructionSources?` and to
+  `fingerprint.ts`); the adapter emits them as `instructionFiles` with `complete: false`.
+  `describeSession` answers the loaded thread's list, else null. The generated protocol has no
+  method that lists servers, tools or skills; none is added until a codex that defines one is
+  generated and checked. The web app adds the servers and tools the thread's own `mcp` tool rows
+  name, marked "Seen in this thread's tool calls", with a line that Codex reports no list.
+- **Server.** `ProviderService` takes a `sessionTools` event out of the batch and dispatches the
+  internal `thread.toolsReported {threadId, tools, source}` (`core/thread-tools.ts`), after the
+  `assistant.secretPatterns` net has run over every free text of the report: each server's
+  error, address, state word, source and version, every tool, skill, command and agent
+  description, argument hints, agents' models, plugin versions and errors, and instruction file
+  paths. Names are not netted: they identify the entry. It is stored
+  only when the list (everything but `reportedAt`, compared by `sameSessionTools`) or its
+  liveness changed, with the server's time; the assistant is refused. `tools: null` marks the
+  stored list not live: at `recover()` (no session survives a restart), when the adapter emits
+  `sessionTools` with `tools: null` (the Claude adapter does when Claude Code's stream of a
+  session that reported a list ends without wow closing it), when an instance's adapter is
+  released, when a thread moves to another instance, and when Refresh finds the
+  session gone. `refreshTools(threadId)` asks the adapter only while the stored row is live and
+  the instance's adapter exists; otherwise it answers `noSession` and sends nothing.
+- **Web** (`panel/tools-tab.tsx`). Tab kind `tools` (`openTools`, `toolsTabId` in
+  `panel/viewer.ts`), `ToolsTab` with the reported line ("Reported as the turn of 20:41 started"
+  or "Reported on Refresh at …"), Refresh only while `live`, a filter over every section
+  (`filterSessionTools`), counts per section, "Sign in from Claude Code: /mcp in a terminal" for a
+  server that needs sign-in. `ToolsChip` in the thread header shows while a server failed or
+  needs sign-in ("1 MCP server failed") and opens the tab. Details has a "Session tools" section
+  with a summary and "Show session tools". Palette `chat.sessionTools` (Show or Hide session
+  tools) and, with a live session, `chat.refreshTools`; no key and no setting. A thread stored
+  before this change has no row and shows "No list yet" until its next turn. An assistant thread
+  gets no tab, chip, Details link or command, even when opened at `/chat/<id>`.
+- **Mocks.** `MockProviderAdapter` reports `mockClaudeSessionTools()` (tea-docs connected with two
+  tools, tea-tracker failed with "spawn tea-tracker ENOENT", tea-cloud needing sign-in) at every
+  turn of a Claude instance and `mockCodexSessionTools(cwd)` (the folder's `AGENTS.md`) for Codex;
+  `describeSession` answers while the thread had a turn and no `closeThread`; a test sets
+  `sessionTools` to change the report or to null for a session that is gone.
 
 ### Edit and Fork
 

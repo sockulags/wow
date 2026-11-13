@@ -10,6 +10,7 @@ import {
 import { defaultModelGuidance } from './models.js';
 import {
   alwaysStopSkillDefaults,
+  WorkingCopyStart,
   WorkflowTemplate,
   type WorkflowTemplateStep,
 } from './workflow.js';
@@ -493,6 +494,51 @@ export const settingsRegistry = {
       modEnter: { label: 'Ctrl+Enter', description: 'Ctrl+Enter sends; Enter makes a new line.' },
     },
   }),
+  'chat.ownWorkingCopy': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Own working copy for new threads',
+    description:
+      'Where the project is a Git repository, a new thread starts with "Own working copy" on: it works in a Git worktree of its own, on a new branch, and the project folder is not touched. The switch on the new thread changes it for that thread.',
+    default: false,
+    scope: 'project',
+  }),
+  'chat.workingCopyBranch': defineSetting({
+    schema: z
+      .string()
+      .trim()
+      .min(1)
+      .max(200)
+      .meta({ widget: 'template', placeholders: ['title', 'id'] }),
+    group: 'chat',
+    label: "Branch of a thread's working copy",
+    description:
+      "The name of the new branch a thread's own working copy is on. {{title}} is the thread's title in lower case with dashes, at most 32 characters, and {{id}} six characters of the thread's own. Characters Git does not take in a branch name become dashes.",
+    default: 'wow/{{title}}-{{id}}',
+    scope: 'project',
+  }),
+  'chat.workingCopyStart': defineSetting({
+    schema: WorkingCopyStart,
+    group: 'chat',
+    label: "Where a thread's working copy starts",
+    description:
+      "The commit the new branch of a thread's own working copy starts at. Changes not committed in the project folder stay there either way.",
+    default: 'head',
+    scope: 'project',
+    radio: true,
+    options: {
+      head: {
+        label: 'Where the project folder is',
+        description:
+          'The commit the project folder is on, so the thread goes on from the work in hand.',
+      },
+      defaultBranch: {
+        label: 'The default branch',
+        description:
+          'The tip of the remote\'s default branch, fetched first when "Fetch before making a working copy" is on.',
+      },
+    },
+  }),
   'chat.contextMeter': defineSetting({
     schema: z.boolean(),
     group: 'chat',
@@ -545,6 +591,24 @@ export const settingsRegistry = {
     label: 'Show reasoning',
     description:
       "Open the agent's reasoning in the conversation by default. Ctrl+O opens or closes all of it in the open thread either way.",
+    default: false,
+    scope: 'global',
+  }),
+  'chat.findMaxMatches': defineSetting({
+    schema: z.number().int().min(1).max(100000),
+    group: 'chat',
+    label: 'Most matches find counts',
+    description:
+      'Find in a conversation (Ctrl+F) counts at most this many matches; with more, the bar reads the number and a plus, such as "1000+".',
+    default: 1000,
+    scope: 'global',
+  }),
+  'chat.exportReasoning': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Reasoning in a copied conversation',
+    description:
+      'Put the agent\'s reasoning in the Markdown that "Copy conversation as Markdown" and "Save conversation…" make. Off, the Markdown holds the messages and one line per tool call only.',
     default: false,
     scope: 'global',
   }),
@@ -1969,6 +2033,21 @@ export const settingsRegistry = {
     'Chat: edit the last message from the composer',
     'In an empty composer, put your last message back in it to change and send again. Sending replaces that message and its answer.',
     'ArrowUp',
+  ),
+  'keybindings.findInConversation': keybinding(
+    'Chat: find in the conversation',
+    "Open the find bar above the open thread's conversation, from anywhere in the view, the composer included. Pressed again, it selects what the field holds.",
+    'Mod+F',
+  ),
+  'keybindings.findNext': keybinding(
+    'Chat: next match',
+    'Go to the next match of the find bar, opening what holds it. Enter in the field does the same.',
+    'F3',
+  ),
+  'keybindings.findPrevious': keybinding(
+    'Chat: previous match',
+    'Go to the match before in the find bar. Shift+Enter in the field does the same.',
+    'Shift+F3',
   ),
   'keybindings.conversationEnd': keybinding(
     'Chat: back to the newest output',

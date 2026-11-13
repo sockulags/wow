@@ -58,10 +58,11 @@ import {
   ThreadState,
 } from './provider.js';
 import { QuestionReply } from './questions.js';
+import { SessionTools, ThreadTools, ThreadToolsSource } from './session-tools.js';
 import { CardOccurrence, LocalDay, RepeatRule } from './repeat.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
 import { SetupApplication } from './setup.js';
-import { FileHash, RunEffect, UnpushedWork, WorkflowStep } from './workflow.js';
+import { FileHash, RunEffect, UnpushedWork, WorkflowStep, WorkingCopy } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
 // add their own members to both unions.
@@ -164,6 +165,11 @@ export const Command = z.discriminatedUnion('type', [
     // provider CLI this thread goes on with. Its first message resumes it, as a thread's own
     // stored session would.
     resumeSessionId: SessionId.optional(),
+    // "Own working copy" (thread work spec 10, 11): the thread works in a Git worktree of its
+    // project's repository on a new branch, made before its first message goes out. The server
+    // names the folder and the branch; `cwd` and `branch` above are not used then. Refused
+    // without a project and with `resumeSessionId` (a provider session belongs to its folder).
+    ownWorkingCopy: z.boolean().optional(),
   }),
   // Makes the one assistant thread, or brings it in line with the provider instance, model and
   // effort the settings name now (app assistant spec 1). Refused with the reason when no
@@ -605,6 +611,15 @@ export const InternalCommand = z.discriminatedUnion('type', [
     base: z.object({ sha: z.string().min(1), files: z.array(FileHash) }).nullable(),
     mark: z.array(FileHash).nullable(),
   }),
+  // The provider service, with what a chat thread's session reported it can use (thread work
+  // spec 38, 39), or null when the session that reported the stored list is gone (a restart, the
+  // adapter released, a Refresh that found none). Stored only when it differs.
+  z.object({
+    type: z.literal('thread.toolsReported'),
+    threadId: Id,
+    tools: SessionTools.nullable(),
+    source: ThreadToolsSource,
+  }),
   // Replaces the plans projection with a fresh read of every project's intents folder; the
   // server's plans service sends it.
   z.object({ type: z.literal('plans.sync'), intents: z.array(PlanIntent) }),
@@ -706,6 +721,32 @@ export const InternalCommand = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('workflowRun.workingCopySettled'),
     runId: Id,
+    state: z.enum(['kept', 'removed']),
+    unpushed: UnpushedWork.nullable(),
+    error: z.string().nullable(),
+  }),
+  // A chat thread's own working copy (thread work spec 11 to 16), as for a run: it exists now
+  // (made, or made again on its branch), it could not be made (the turn that needed it fails),
+  // or what became of it once the thread was done or "Remove working copy" was answered.
+  z.object({
+    type: z.literal('thread.workingCopyReady'),
+    threadId: Id,
+    startSha: z.string().min(1),
+    defaultBranch: z.string().nullable(),
+    note: z.string().nullable(),
+  }),
+  z.object({ type: z.literal('thread.workingCopyFailed'), threadId: Id, error: z.string() }),
+  // Sent right before git is asked to make the thread's new branch at `startSha`: from then on
+  // the branch is wow's own (`WorkingCopy.branchStart`). Null when git turned out not to make it,
+  // so a branch of that name made later is not taken for wow's.
+  z.object({
+    type: z.literal('thread.workingCopyBranching'),
+    threadId: Id,
+    startSha: z.string().min(1).nullable(),
+  }),
+  z.object({
+    type: z.literal('thread.workingCopySettled'),
+    threadId: Id,
     state: z.enum(['kept', 'removed']),
     unpushed: UnpushedWork.nullable(),
     error: z.string().nullable(),
@@ -981,6 +1022,12 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     aggregate: Id,
     payload: z.object({ threadId: Id, pinned: z.boolean() }),
   }),
+  // A chat thread's stored list of what its session can use, as it now is.
+  z.object({
+    kind: z.literal('thread.toolsReported'),
+    aggregate: Id,
+    payload: z.object({ tools: ThreadTools }),
+  }),
   z.object({
     kind: z.literal('thread.changesMarked'),
     aggregate: Id,
@@ -1108,6 +1155,11 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('turn.replaced'),
     aggregate: Id,
     payload: z.object({ threadId: Id, turnId: Id, by: Id }),
+  }),
+  z.object({
+    kind: z.literal('thread.workingCopyChanged'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, workingCopy: WorkingCopy }),
   }),
   z.object({
     kind: z.literal('thread.goBackChanged'),

@@ -13,7 +13,7 @@ import { ApprovalNote, openApprovalNote } from './approval-card';
 // time" allow the request and set the thread's mode, "Keep planning" denies with a note. When the
 // request did not carry the plan, the card shows the turn's last text and says so.
 
-const startedLabels: Readonly<Record<string, string>> = {
+export const startedLabels: Readonly<Record<string, string>> = {
   acceptEdits: 'Started, accepting edits',
   default: 'Started, asking each time',
 };

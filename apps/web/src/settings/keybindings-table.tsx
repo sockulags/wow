@@ -23,6 +23,9 @@ const conversationKeys = new Set([
   'editMessage',
   'forkMessage',
   'conversationEnd',
+  'findInConversation',
+  'findNext',
+  'findPrevious',
 ]);
 
 export function keyScope(settingKey: string): KeyScope {

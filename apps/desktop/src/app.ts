@@ -33,6 +33,10 @@ export function decodeServerInfoArg(argv: readonly string[]): unknown {
 // renderer → main (invoke): the native folder dialog; answers the chosen path or null.
 export const folderChannels = { pick: 'wow:pick-folder' } as const;
 
+// renderer → main (invoke): the native save dialog for a text file (thread work spec 7); writes
+// it as UTF-8 and answers the path, or null when cancelled.
+export const fileChannels = { saveText: 'wow:save-text-file' } as const;
+
 // renderer → main (invoke): "Restart now" for settings that need a restart.
 export const appChannels = { restart: 'wow:app-restart' } as const;
 

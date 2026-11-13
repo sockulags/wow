@@ -138,6 +138,9 @@ importers:
       '@tanstack/react-router':
         specifier: 1.170.46
         version: 1.170.46(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@types/mdast':
+        specifier: 4.0.4
+        version: 4.0.4
       '@wow/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
@@ -156,9 +159,18 @@ importers:
       lucide-react:
         specifier: 1.66.0
         version: 1.66.0(@types/react@19.3.0)(react@19.3.1)
+      mdast-util-from-markdown:
+        specifier: 2.1.0
+        version: 2.1.0
+      mdast-util-gfm:
+        specifier: 3.1.0
+        version: 3.1.0
       mermaid:
         specifier: 12.3.0
         version: 12.3.0
+      micromark-extension-gfm:
+        specifier: 3.0.0
+        version: 3.0.0
       radix-ui:
         specifier: 1.8.1
         version: 1.8.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)

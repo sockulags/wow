@@ -12,6 +12,7 @@ import {
   type HostRead,
   type TicketRead,
   type HostItemRead,
+  type ThreadTools,
   type PageRead,
   type OutlookStatus,
   type BacklogItem,
@@ -74,6 +75,8 @@ export interface ReadModel {
   thread(id: string): Thread | undefined;
   // Every thread that goes on with this provider session id, whatever its instance.
   threadsWithSession(sessionId: string): Thread[];
+  // Every thread of the project, step threads included.
+  projectThreads(projectId: string): Thread[];
   runningTurn(threadId: string): Turn | undefined;
   // The thread's turn with the highest index, running or not.
   lastTurn(threadId: string): Turn | undefined;
@@ -125,6 +128,8 @@ export interface ReadModel {
   ticketReads(projectId: string): TicketRead[];
   // What was last read about one item a chat thread links to.
   hostItemRead(id: string): HostItemRead | undefined;
+  // What the chat thread's session last reported it can use.
+  threadTools(threadId: string): ThreadTools | undefined;
   // What was last read about the pages the texts of the project's runs link to.
   pageReads(projectId: string): PageRead[];
   workflow(id: string): Workflow | undefined;

@@ -321,6 +321,13 @@ export const UnpushedWork = z.object({
   newestSubject: z.string().nullable(),
   // The branch the working copy is on, null while it is on none.
   branch: z.string().nullable(),
+  // A chat thread's copy only (thread work spec 14, 15): of those commits, the ones made on no
+  // branch (HEAD detached), which its branch does not keep and are lost with the folder.
+  commitsOnNoBranch: z.number().int().nonnegative().optional(),
+  // A chat thread's copy only (spec 15): a digest of what it holds (the status of every changed,
+  // new and ignored path, and the commits on no branch), so a removal notices one file swapped
+  // for another after the dialog read it, which the counts alone do not show.
+  digest: z.string().min(1).optional(),
 });
 export type UnpushedWork = z.infer<typeof UnpushedWork>;
 
@@ -341,8 +348,39 @@ export const WorkingCopy = z.object({
   // The branch the copy is made on, for a run an event started on a pull request (review loop
   // spec 48). Absent or null: on no branch, at the default branch's tip.
   branch: z.string().min(1).nullable().optional(),
+  // A chat thread's: the commit wow asked git to make `branch` at, stored before `git worktree
+  // add -b` runs, so wow knows the branch is its own. Git makes the branch before the folder and
+  // leaves it when the folder then fails; a branch at this commit that never moved is taken up
+  // again by the next try. wow never deletes a branch (thread work spec 15).
+  branchStart: z.string().min(1).nullable().optional(),
 });
 export type WorkingCopy = z.infer<typeof WorkingCopy>;
+
+// Where a chat thread's own working copy starts (`chat.workingCopyStart`, thread work spec 11):
+// the commit the project folder is on, or the default branch's tip.
+export const WorkingCopyStart = z.enum(['head', 'defaultBranch']);
+export type WorkingCopyStart = z.infer<typeof WorkingCopyStart>;
+
+// What `/chat/new` says about an own working copy for the chosen project before the thread exists
+// (thread work spec 10), read without changing anything. `ok`: the project folder is in a
+// repository with a commit; `on` is the project's `chat.ownWorkingCopy`, `template` its
+// `chat.workingCopyBranch` (the app fills in the title as it is typed), `from` the branch the
+// copy starts from (null on no branch) and `sha` the commit as this computer knows it now;
+// `fetch` says the default branch is fetched first. Otherwise there is no switch, and `reason`
+// says why.
+export const WorkingCopyPlan = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ok'),
+    on: z.boolean(),
+    template: z.string(),
+    start: WorkingCopyStart,
+    from: z.string().nullable(),
+    sha: z.string().min(1),
+    fetch: z.boolean(),
+  }),
+  z.object({ status: z.literal('unavailable'), reason: z.string() }),
+]);
+export type WorkingCopyPlan = z.infer<typeof WorkingCopyPlan>;
 
 // Whether the folder is (or may still be) on disk.
 export const workingCopyOnDisk = (copy: WorkingCopy): boolean =>

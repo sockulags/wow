@@ -124,6 +124,8 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
           .where(eq(t.hostItemReads.threadId, threadId))
           .orderBy(asc(t.hostItemReads.id))
           .all();
+      case 'threadTools':
+        return db.select().from(t.threadTools).where(eq(t.threadTools.threadId, threadId)).all();
       case 'assistantChanges': {
         // In the order they were made (spec 13): the insertion order of the table. Without what
         // Undo puts back: it holds real values and is the server's alone.

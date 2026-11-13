@@ -26,6 +26,7 @@ import {
   events,
   hostReads,
   hostItemReads,
+  threadTools,
   ticketReads,
   pageReads,
   notifications,
@@ -356,6 +357,15 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(threads.id, event.payload.threadId))
         .run();
       return threadTopics;
+    case 'thread.toolsReported': {
+      const { tools } = event.payload;
+      const row = { ...tools, reportedAt: tools.tools.reportedAt };
+      tx.insert(threadTools)
+        .values(row)
+        .onConflictDoUpdate({ target: threadTools.threadId, set: row })
+        .run();
+      return ['threadTools'];
+    }
     case 'thread.changesMarked': {
       const { threadId, turnId, base, mark } = event.payload;
       if (base) {
@@ -453,6 +463,12 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(turns.id, event.payload.turnId))
         .run();
       return ['turns'];
+    case 'thread.workingCopyChanged':
+      tx.update(threads)
+        .set({ workingCopy: event.payload.workingCopy })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
     case 'thread.goBackChanged':
       tx.update(threads)
         .set({ goBack: event.payload.goBack })
@@ -816,6 +832,8 @@ export function readModel(tx: DbOrTx): ReadModel {
     hostReads: (projectId) =>
       tx.select().from(hostReads).where(eq(hostReads.projectId, projectId)).all(),
     hostItemRead: (id) => tx.select().from(hostItemReads).where(eq(hostItemReads.id, id)).get(),
+    threadTools: (threadId) =>
+      tx.select().from(threadTools).where(eq(threadTools.threadId, threadId)).get(),
     ticketReads: (projectId) =>
       tx.select().from(ticketReads).where(eq(ticketReads.projectId, projectId)).all(),
     pageReads: (projectId) =>
@@ -899,6 +917,8 @@ export function readModel(tx: DbOrTx): ReadModel {
     thread: (id) => tx.select().from(threads).where(eq(threads.id, id)).get(),
     threadsWithSession: (sessionId) =>
       tx.select().from(threads).where(eq(threads.providerSessionId, sessionId)).all(),
+    projectThreads: (projectId) =>
+      tx.select().from(threads).where(eq(threads.projectId, projectId)).all(),
     runningTurn: (threadId) =>
       tx
         .select()

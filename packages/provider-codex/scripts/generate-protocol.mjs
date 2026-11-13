@@ -116,11 +116,11 @@ const FIELDS = {
   },
   'thread/start': {
     params: ['cwd', 'model', approvalPolicy, sandbox],
-    result: ['thread.id'],
+    result: ['thread.id', 'instructionSources?'],
   },
   'thread/resume': {
     params: ['threadId', 'cwd', 'model', approvalPolicy, sandbox, 'excludeTurns?'],
-    result: ['thread.id'],
+    result: ['thread.id', 'instructionSources?'],
   },
   'turn/start': {
     params: [

@@ -62,7 +62,9 @@ import {
 } from './orchestrator.js';
 import { folderKey } from '../files/folder-key.js';
 import { editGoBack, forkEvents } from './go-back.js';
+import { decideThreadCopy, ownCopyOf } from './thread-copy.js';
 import { messageWithSkills } from './skills.js';
+import { decideThreadTools } from './thread-tools.js';
 
 // Decisions for provider instances, threads, turns, approvals and questions. Provider events
 // arrive as `provider.events` commands from the provider service and become thread items here, so
@@ -86,6 +88,7 @@ type ThreadCommand = Extract<
       | 'thread.sendQueued'
       | 'thread.handedOver'
       | 'thread.changesMarked'
+      | 'thread.toolsReported'
       | 'thread.retry'
       | 'thread.answerQuestions'
       | 'thread.interrupt'
@@ -98,6 +101,10 @@ type ThreadCommand = Extract<
       | 'thread.setArchived'
       | 'thread.markSeen'
       | 'thread.markUnread'
+      | 'thread.workingCopyReady'
+      | 'thread.workingCopyFailed'
+      | 'thread.workingCopyBranching'
+      | 'thread.workingCopySettled'
       | 'approval.answer'
       | 'question.answer'
       | 'provider.events';
@@ -618,6 +625,7 @@ export function decideThread(
       if (command.projectId !== undefined && !read.project(command.projectId)) {
         throw new CommandRejected('not_found', `No project ${command.projectId}`);
       }
+      const own = command.ownWorkingCopy ? ownCopyOf(read, context, command) : undefined;
       if (command.resumeSessionId !== undefined) {
         const holder = sessionHolder(
           read,
@@ -639,8 +647,9 @@ export function decideThread(
           payload: {
             id: command.threadId,
             projectId: command.projectId ?? null,
-            cwd: command.cwd,
-            branch: command.branch ?? null,
+            cwd: own?.cwd ?? command.cwd,
+            branch: own?.branch ?? command.branch ?? null,
+            ...(own ? { workingCopy: own.workingCopy } : {}),
             providerInstanceId: command.providerInstanceId,
             // A session started in a terminal goes on in this thread (agent workbench spec 72).
             providerSessionId: command.resumeSessionId ?? null,
@@ -1018,6 +1027,11 @@ export function decideThread(
         },
       ];
     }
+    case 'thread.workingCopyReady':
+    case 'thread.workingCopyFailed':
+    case 'thread.workingCopyBranching':
+    case 'thread.workingCopySettled':
+      return decideThreadCopy(command, read);
     case 'thread.setDone': {
       const thread = requireThread(read, command.threadId);
       if (!command.done) {
@@ -1104,6 +1118,8 @@ export function decideThread(
     }
     case 'approval.answer':
       return answerApproval(command, read, context);
+    case 'thread.toolsReported':
+      return decideThreadTools(command, read, context);
     case 'thread.changesMarked': {
       const thread = requireThread(read, command.threadId);
       if (!command.base && !command.mark) return [];

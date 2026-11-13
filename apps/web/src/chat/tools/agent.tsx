@@ -1,9 +1,9 @@
 import type { AgentState, ThreadItem } from '@wow/contracts';
 import { BotIcon, ChevronRightIcon } from 'lucide-react';
-import { useState } from 'react';
 import { Markdown } from '@/components/markdown';
 import { cn } from '@/lib/utils';
 import { ConversationItem, type ItemContext } from '../items';
+import { openKey, OutputKeyContext, useOpenState } from '../open-state';
 import { agentTask, formatDuration, toolDuration, type ToolPayload } from './facts';
 import { ToolOutput } from './output';
 import { useNow } from './time';
@@ -38,8 +38,10 @@ const nestedCalls = (items: readonly ThreadItem[]): number =>
 export function AgentCall({ payload, context }: { payload: ToolPayload; context: ItemContext }) {
   const nested = context.children ?? [];
   const working = agentWorking(payload, context);
-  const [opened, setOpened] = useState(false);
+  const id = context.itemId;
+  const [opened, setOpened] = useOpenState(id === undefined ? undefined : openKey('agent', id));
   const open = working || opened;
+  const [promptShown] = useOpenState(id === undefined ? undefined : openKey('prompt', id));
   const now = useNow(working && payload.startedAt !== undefined);
   const count = payload.toolCount ?? nestedCalls(nested);
   const duration = working
@@ -68,7 +70,7 @@ export function AgentCall({ payload, context }: { payload: ToolPayload; context:
         type="button"
         aria-expanded={open}
         disabled={working}
-        onClick={() => setOpened((value) => !value)}
+        onClick={() => setOpened(!opened)}
         className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
       >
         <ChevronRightIcon
@@ -112,7 +114,10 @@ export function AgentCall({ payload, context }: { payload: ToolPayload; context:
           {payload.prompt !== undefined && (
             <p
               data-testid="agent-prompt"
-              className="line-clamp-4 whitespace-pre-wrap text-muted-foreground"
+              className={cn(
+                'whitespace-pre-wrap text-muted-foreground',
+                !promptShown && 'line-clamp-4',
+              )}
             >
               {payload.prompt}
             </p>
@@ -137,7 +142,9 @@ export function AgentCall({ payload, context }: { payload: ToolPayload; context:
           {payload.answer !== undefined ? (
             <Markdown text={answer} />
           ) : (
-            <ToolOutput output={answer} lines={context.outputLines} />
+            <OutputKeyContext value={id === undefined ? undefined : openKey('output', id)}>
+              <ToolOutput output={answer} lines={context.outputLines} />
+            </OutputKeyContext>
           )}
         </div>
       )}

@@ -69,6 +69,8 @@ let engine: Engine;
 let settings: SettingsService;
 let adapters: Record<ProviderKind, DrivenAdapter>;
 let service: ProviderService;
+// A chat thread's own working copy, made before its turn goes out (thread work spec 13).
+let prepareThread: (threadId: string) => Promise<string | undefined>;
 let next = 0;
 let tick = 0;
 
@@ -176,6 +178,7 @@ beforeEach(async () => {
   engine = new Engine(database.db, { clock });
   settings = new SettingsService(database.db, engine);
   adapters = { claude: new DrivenAdapter('claude'), codex: new DrivenAdapter('codex') };
+  prepareThread = () => Promise.resolve(undefined);
   service = new ProviderService({
     db: database.db,
     engine,
@@ -195,6 +198,7 @@ beforeEach(async () => {
       base: (folder) => readRunBase(folder, changesOptions(settings)),
       snapshot: (folder, baseSha) => snapshotChanges(folder, baseSha, changesOptions(settings)),
     },
+    prepareThread: (threadId) => prepareThread(threadId),
   });
   for (const kind of ['claude', 'codex'] as const) {
     dispatch({
@@ -233,6 +237,52 @@ describe("the order a thread's commands reach the provider", () => {
         .filter((sent) => 'threadId' in sent && sent.threadId === 't9')
         .map((sent) => sent.type),
     ).toEqual(['startTurn', 'interrupt']);
+  });
+
+  it('sends a stop after the start of the turn it stops, though the start still makes its working copy', async () => {
+    // The copy is made when the test says so.
+    let made: ((failed: string | undefined) => void) | undefined;
+    prepareThread = () =>
+      new Promise((resolve) => {
+        made = resolve;
+      });
+    createThread('t9', 'claude');
+    dispatch({ type: 'thread.sendMessage', threadId: 't9', text: 'Work on the kettle' });
+    dispatch({ type: 'thread.interrupt', threadId: 't9' });
+    await Promise.resolve();
+    expect(
+      adapters.claude.sent.filter((sent) => 'threadId' in sent && sent.threadId === 't9'),
+    ).toEqual([]);
+    made?.(undefined);
+    await service.idle();
+    expect(
+      adapters.claude.sent
+        .filter((sent) => 'threadId' in sent && sent.threadId === 't9')
+        .map((sent) => sent.type),
+    ).toEqual(['startTurn', 'interrupt']);
+  });
+
+  it('hands a message over after the start of the turn it joins, though the start still makes its working copy', async () => {
+    let made: ((failed: string | undefined) => void) | undefined;
+    prepareThread = () =>
+      new Promise((resolve) => {
+        made = resolve;
+      });
+    createThread('t9', 'claude');
+    dispatch({ type: 'thread.sendMessage', threadId: 't9', text: 'Work on the kettle' });
+    // Written while the turn is starting: it is offered to that turn.
+    dispatch({ type: 'thread.sendMessage', threadId: 't9', text: 'Also the lid' });
+    await Promise.resolve();
+    expect(
+      adapters.claude.sent.filter((sent) => 'threadId' in sent && sent.threadId === 't9'),
+    ).toEqual([]);
+    made?.(undefined);
+    await service.idle();
+    expect(
+      adapters.claude.sent
+        .filter((sent) => 'threadId' in sent && sent.threadId === 't9')
+        .map((sent) => sent.type),
+    ).toEqual(['startTurn', 'handOver']);
   });
 });
 

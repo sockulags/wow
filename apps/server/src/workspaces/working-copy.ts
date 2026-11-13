@@ -1,19 +1,26 @@
-import type { UnpushedWork } from '@wow/contracts';
+import type { UnpushedWork, WorkingCopyStart } from '@wow/contracts';
+import { createHash } from 'node:crypto';
 import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   addBranchWorktree,
+  addNewBranchWorktree,
   addTrackingWorktree,
   addWorktree,
   askRemoteDefaultBranch,
+  branchNeverMoved,
+  checkBranchName,
+  listCommitsOnNoBranch,
   fetchRemote,
   fetchRemoteRef,
   pruneWorktrees,
   readCommit,
+  readCurrentBranch,
   readFolderGit,
   readHeadCommit,
   readRemoteDefaultBranch,
   readUnpushed,
+  readUnpushedWithStatus,
   removeWorktree,
   type GitRunOptions,
 } from '../projects/git.js';
@@ -81,7 +88,7 @@ async function defaultBranchOf(
 // The commit a working copy starts at: the tip of the remote's default branch after a fetch, or
 // what this computer already has, with a sentence that says so.
 async function startCommit(
-  { projectFolder: folder, fetch, git }: CreateRequest,
+  { projectFolder: folder, fetch, git }: Pick<CreateRequest, 'projectFolder' | 'fetch' | 'git'>,
   headSha: string,
 ): Promise<Start> {
   const { primary: remote } = await readFolderGit(folder, git);
@@ -125,29 +132,16 @@ async function startCommit(
   };
 }
 
-const failed = (reason: string): Created => ({
+const failed = (reason: string): { readonly ok: false; readonly error: string } => ({
   ok: false,
   error: `No working copy could be made: ${reason}`,
 });
 
 export async function createWorkingCopy(request: CreateRequest): Promise<Created> {
   const { projectFolder, target, git } = request;
-  const head = await readHeadCommit(projectFolder, git);
-  switch (head.status) {
-    case 'folderMissing':
-      return failed(`the project folder ${projectFolder} does not exist.`);
-    case 'gitUnavailable':
-      return failed('git was not found on the PATH.');
-    case 'noRepository':
-      return failed(
-        `${projectFolder} is not a Git repository${head.message ? ` (${head.message})` : ''}.`,
-      );
-    case 'noCommit':
-      return failed(`the repository in ${projectFolder} has no commit yet.`);
-    case 'ok':
-      break;
-  }
-  const start = await startCommit(request, head.sha);
+  const head = await projectHead(projectFolder, git);
+  if (typeof head !== 'string') return head;
+  const start = await startCommit(request, head);
   try {
     await mkdir(path.dirname(target), { recursive: true });
   } catch (error) {
@@ -241,6 +235,182 @@ async function createAtHead(
   );
 }
 
+export interface ThreadCreateRequest {
+  readonly projectFolder: string;
+  readonly target: string;
+  // The new branch, named when the thread was created.
+  readonly branch: string;
+  // `chat.workingCopyStart`.
+  readonly start: WorkingCopyStart;
+  // `workspaces.fetchBeforeCreate`, for a copy that starts at the default branch.
+  readonly fetch: boolean;
+  // The thread's `WorkingCopy.branchStart`: where an earlier try had git make the branch.
+  readonly branchStart: string | null;
+  // Called with the start commit right before git is asked to make the branch; the caller
+  // stores it, so a branch git leaves is known as wow's own. Called with null when git failed
+  // without making it, so the note is not left to match a branch someone else makes later.
+  readonly beforeBranch: (startSha: string | null) => void;
+  readonly git: GitRunOptions;
+}
+
+// A chat thread's own working copy (thread work spec 11, 12): a worktree on a new branch, at the
+// commit the project folder is on or at the default branch's tip. `defaultBranch` is the branch
+// the start commit was read from (the project folder's, or the remote's default), null when it
+// is on none. Nothing falls back to the project folder: a copy that cannot be made answers why.
+export async function createThreadWorkingCopy(request: ThreadCreateRequest): Promise<Created> {
+  const { projectFolder, target, branch, git } = request;
+  const head = await projectHead(projectFolder, git);
+  if (typeof head !== 'string') return head;
+  const named = await checkBranchName(projectFolder, branch, git);
+  if (!named.ok) return failed(`${named.message}.`);
+  const start =
+    request.start === 'head'
+      ? { sha: head, defaultBranch: await readCurrentBranch(projectFolder, git), note: null }
+      : await startCommit({ projectFolder, fetch: request.fetch, git }, head);
+  try {
+    await mkdir(path.dirname(target), { recursive: true });
+  } catch (error) {
+    return failed(error instanceof Error ? error.message : String(error));
+  }
+  // `worktree add -b` makes the branch before the folder and leaves it when the folder then fails
+  // (a folder already there, a path too long, a locked file, a server stop). The branch an
+  // earlier try of this thread made, still at its commit and never moved, is taken up again, so
+  // Retry works once the cause is gone. Any other branch of that name is the user's: git refuses
+  // it, and that is the reason. wow never deletes a branch (spec 15).
+  const tip = await readCommit(projectFolder, `refs/heads/${branch}`, git);
+  const left =
+    tip !== null &&
+    tip === request.branchStart &&
+    (await branchNeverMoved(projectFolder, branch, git));
+  if (!left) {
+    // From here the branch is wow's own, even when git stops halfway.
+    if (tip === null) request.beforeBranch(start.sha);
+    const added = await addNewBranchWorktree(projectFolder, target, branch, start.sha, git);
+    if (!added.ok) {
+      if (tip === null && (await readCommit(projectFolder, `refs/heads/${branch}`, git)) === null) {
+        request.beforeBranch(null);
+      }
+      return failed(`${added.message} (${target})`);
+    }
+    return { ok: true, startSha: start.sha, defaultBranch: start.defaultBranch, note: start.note };
+  }
+  await pruneWorktrees(projectFolder, git);
+  const added = await addBranchWorktree(projectFolder, target, branch, git);
+  if (!added.ok) return failed(`${added.message} (${target})`);
+  return tip === start.sha
+    ? { ok: true, startSha: tip, defaultBranch: start.defaultBranch, note: start.note }
+    : {
+        ok: true,
+        startSha: tip,
+        defaultBranch: null,
+        note: `An earlier try made branch ${branch} at ${tip.slice(0, 7)}, so the working copy starts there.`,
+      };
+}
+
+// Where a thread's copy would start, read without fetching or writing anything, for the draft's
+// line (spec 10). `from` is the branch the commit is read from, null on no branch.
+export async function readThreadStart(
+  projectFolder: string,
+  start: WorkingCopyStart,
+  git: GitRunOptions,
+): Promise<
+  | {
+      readonly ok: true;
+      readonly sha: string;
+      readonly from: string | null;
+      readonly remote: boolean;
+    }
+  | { readonly ok: false; readonly error: string }
+> {
+  const head = await projectHead(projectFolder, git);
+  if (typeof head !== 'string') return head;
+  if (start === 'head') {
+    return {
+      ok: true,
+      sha: head,
+      from: await readCurrentBranch(projectFolder, git),
+      remote: false,
+    };
+  }
+  const { primary: remote } = await readFolderGit(projectFolder, git);
+  const branch = remote === null ? null : await defaultBranchOf(projectFolder, remote, false, git);
+  if (remote === null || branch === null) {
+    return {
+      ok: true,
+      sha: head,
+      from: await readCurrentBranch(projectFolder, git),
+      remote: false,
+    };
+  }
+  const tip =
+    (await readCommit(projectFolder, `refs/remotes/${remote}/${branch}`, git)) ??
+    (await readCommit(projectFolder, `refs/heads/${branch}`, git)) ??
+    head;
+  return { ok: true, sha: tip, from: branch, remote: true };
+}
+
+// The copy of a thread whose folder was removed, made again on its branch (spec 16). A folder
+// that is there on the branch already (a fork of the thread made it again first) is taken as it
+// is. Git refuses when the branch is gone or another folder is on it; that is the reason.
+export async function reopenThreadWorkingCopy({
+  projectFolder,
+  target,
+  branch,
+  git,
+}: Pick<ThreadCreateRequest, 'projectFolder' | 'target' | 'branch' | 'git'>): Promise<
+  { readonly ok: true } | { readonly ok: false; readonly error: string }
+> {
+  const head = await projectHead(projectFolder, git);
+  if (typeof head !== 'string') return head;
+  if (!(await gone(target))) {
+    if ((await readCurrentBranch(target, git)) === branch) return { ok: true };
+    return failed(`${target} is there and is not on branch ${branch}.`);
+  }
+  await pruneWorktrees(projectFolder, git);
+  const added = await addBranchWorktree(projectFolder, target, branch, git);
+  return added.ok ? { ok: true } : failed(`${added.message} (${target})`);
+}
+
+// The project folder's commit, or why no working copy can be made from it.
+async function projectHead(
+  projectFolder: string,
+  git: GitRunOptions,
+): Promise<string | { readonly ok: false; readonly error: string }> {
+  const head = await readHeadCommit(projectFolder, git);
+  switch (head.status) {
+    case 'folderMissing':
+      return failed(`the project folder ${projectFolder} does not exist.`);
+    case 'gitUnavailable':
+      return failed('git was not found on the PATH.');
+    case 'noRepository':
+      return failed(
+        `${projectFolder} is not a Git repository${head.message ? ` (${head.message})` : ''}.`,
+      );
+    case 'noCommit':
+      return failed(`the repository in ${projectFolder} has no commit yet.`);
+    case 'ok':
+      return head.sha;
+  }
+}
+
+// What a thread's copy holds that would be lost with it: as for a run, and of its commits the
+// ones made on no branch, which the thread's branch does not keep (spec 14, 15).
+export async function readThreadHolds(
+  target: string,
+  startSha: string | null,
+  branch: string,
+  git: GitRunOptions,
+): Promise<UnpushedWork | undefined> {
+  const read = await readUnpushedWithStatus(target, startSha, git);
+  if (!read) return undefined;
+  const { unpushed, status } = read;
+  const branches = unpushed.branch === null ? [branch] : [...new Set([branch, unpushed.branch])];
+  const onNoBranch = await listCommitsOnNoBranch(target, branches, git);
+  if (onNoBranch === undefined) return undefined;
+  const digest = createHash('sha256').update(status).update('\0').update(onNoBranch.join('\n'));
+  return { ...unpushed, commitsOnNoBranch: onNoBranch.length, digest: digest.digest('hex') };
+}
+
 export interface Settled {
   readonly state: 'kept' | 'removed';
   readonly unpushed: UnpushedWork | null;
@@ -252,6 +422,9 @@ export interface SettleRequest {
   readonly target: string;
   readonly startSha: string | null;
   readonly git: GitRunOptions;
+  // A run's copy is on no branch, so its commits are lost with it. A thread's copy is on its own
+  // branch, named here, which keeps them unless they were made on no branch (thread work spec 14).
+  readonly branch?: string | undefined;
 }
 
 const gone = async (target: string) => (await stat(target).catch(() => undefined)) === undefined;
@@ -264,12 +437,16 @@ export async function settleWorkingCopy({
   target,
   startSha,
   git,
+  branch,
 }: SettleRequest): Promise<Settled> {
   if (await gone(target)) {
     await pruneWorktrees(projectFolder, git);
     return { state: 'removed', unpushed: null, error: null };
   }
-  const unpushed = await readUnpushed(target, startSha, git);
+  const unpushed: UnpushedWork | undefined =
+    branch === undefined
+      ? await readUnpushed(target, startSha, git)
+      : await readThreadHolds(target, startSha, branch, git);
   if (!unpushed) {
     return {
       state: 'kept',
@@ -277,7 +454,9 @@ export async function settleWorkingCopy({
       error: 'Git could not say what the working copy holds, so it was kept.',
     };
   }
-  if (unpushed.uncommittedFiles > 0 || unpushed.ignoredFiles > 0 || unpushed.unpushedCommits > 0) {
+  const commitsLost =
+    branch === undefined ? unpushed.unpushedCommits > 0 : (unpushed.commitsOnNoBranch ?? 0) > 0;
+  if (unpushed.uncommittedFiles > 0 || (unpushed.ignoredFiles ?? 0) > 0 || commitsLost) {
     return { state: 'kept', unpushed, error: null };
   }
   const removed = await removeWorktree(projectFolder, target, false, git);
@@ -294,7 +473,7 @@ export async function discardWorkingCopy({
   projectFolder,
   target,
   git,
-}: Omit<SettleRequest, 'startSha'>): Promise<Settled> {
+}: Omit<SettleRequest, 'startSha' | 'branch'>): Promise<Settled> {
   if (!(await gone(target))) {
     const removed = await removeWorktree(projectFolder, target, true, git);
     if (!removed.ok) {

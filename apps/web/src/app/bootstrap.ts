@@ -36,6 +36,7 @@ export function createRuntime(): Runtime {
   const updatesBridge = window.wowDesktop?.updates;
   const folderDialog = window.wowDesktop?.pickFolder;
   const restart = window.wowDesktop?.restart;
+  const saveDialog = window.wowDesktop?.saveTextFile;
   return {
     connection,
     updates: updatesBridge ? createUpdatesClient(updatesBridge) : undefined,
@@ -46,6 +47,12 @@ export function createRuntime(): Runtime {
         }
       : undefined,
     restartApp: restart ? () => void restart() : undefined,
+    saveTextFile: saveDialog
+      ? async (file) => {
+          const saved = await saveDialog({ suggestedName: file.suggestedName, text: file.text });
+          return typeof saved === 'string' && saved !== '' ? saved : null;
+        }
+      : undefined,
     layout: createLayoutStore(),
     draft: createDraftStore(),
     // Without a server (development, the shell tests) settings live in memory.

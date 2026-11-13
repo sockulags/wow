@@ -45,6 +45,7 @@ import type {
   RunOccurrence,
   RunUnit,
   SecretRef,
+  SessionTools,
   SetupApplicationState,
   SetupFillIn,
   SetupMark,
@@ -55,6 +56,7 @@ import type {
   ThreadItemKind,
   ThreadKind,
   ThreadState,
+  ThreadToolsSource,
   Ticket,
   TicketSource,
   TriggerEvent,
@@ -139,6 +141,8 @@ export const threads = sqliteTable(
     // fork's origin, null for a thread that is not one.
     goBack: json<GoBack>(),
     forkedFrom: json<ForkOrigin>(),
+    // A chat thread's own working copy (thread work spec 11); null for a thread in its folder.
+    workingCopy: json<WorkingCopy>(),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },
@@ -490,6 +494,16 @@ export const hostItemReads = sqliteTable(
   },
   (table) => [index('host_item_reads_thread_idx').on(table.threadId)],
 );
+
+// What a chat thread's session last reported it can use (thread work spec 38), one row per thread
+// once it has reported. `live` says the session that reported it is still open in its adapter.
+export const threadTools = sqliteTable('thread_tools', {
+  threadId: text().primaryKey(),
+  tools: json<SessionTools>().notNull(),
+  source: text().$type<ThreadToolsSource>().notNull(),
+  live: bool().notNull(),
+  reportedAt: text().notNull(),
+});
 
 // What was last read about one run's ticket (`run:<id>`), with the ticket itself.
 export const ticketReads = sqliteTable('ticket_reads', {

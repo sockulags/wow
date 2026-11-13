@@ -244,6 +244,8 @@ describe('the mock provider (agent workbench U10)', () => {
   it('learns "compact": a compaction with counts before the answer', async () => {
     const seen = await mockTurn('/compact');
     expect(seen.map((event) => event.type)).toEqual([
+      // What the session can use comes first, as Claude Code's init message does (thread work U5).
+      'sessionTools',
       'session',
       'compacted',
       'textDelta',

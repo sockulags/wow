@@ -1,17 +1,22 @@
 import {
   assistantToolsetName,
   attachmentMediaType,
+  boundedSessionTools,
   HandOverResult,
   ProviderEvent,
   ProviderModel,
   ProviderSlashCommand,
   ProviderTestResult,
   SecretRef,
+  SessionTools,
+  hideSecrets,
   secretPatterns,
   type ProviderAdapter,
   type ProviderCommand,
   type ProviderInstance,
   type QueuedMessage,
+  type RefreshToolsOutcome,
+  type ThreadToolsSource,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
 import { and, eq, isNotNull, ne } from 'drizzle-orm';
@@ -22,7 +27,7 @@ import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
 import { threadImagePath } from '../files/images.js';
-import { providerInstances, threads, turns, workflowRuns } from '../db/schema.js';
+import { providerInstances, threadTools, threads, turns, workflowRuns } from '../db/schema.js';
 import type { ProviderAdapters } from '../hooks/providers.js';
 import type { Logger } from '../logger.js';
 import type { SettingsService } from '../settings/service.js';
@@ -43,6 +48,9 @@ export interface ProviderServiceDeps {
   // Reads a chat thread's folder through git for its Changes (agent workbench spec 34); without
   // it, threads get no base and no marks.
   readonly changes?: RunChanges | undefined;
+  // Makes a chat thread's own working copy before its turn goes out (thread work spec 12);
+  // answers why it could not, and the turn then fails with that and nothing is sent.
+  readonly prepareThread?: ((threadId: string) => Promise<string | undefined>) | undefined;
   // Milliseconds since the epoch; tests pass their own.
   readonly now?: (() => number) | undefined;
 }
@@ -133,6 +141,15 @@ export class ProviderService {
           error: 'The server stopped while the agent was waiting for background work',
         },
       ]);
+    }
+    // No session lived through the restart, so no stored list can be asked again (thread work
+    // spec 39) until the next turn reports one.
+    for (const { threadId } of this.#deps.db
+      .select({ threadId: threadTools.threadId })
+      .from(threadTools)
+      .where(eq(threadTools.live, true))
+      .all()) {
+      this.#toolsReported(threadId, null, 'turn');
     }
     // A message queued while a turn ran goes now that no turn runs (agent workbench spec 50).
     const queued = this.#deps.db
@@ -231,6 +248,114 @@ export class ProviderService {
     return probe;
   }
 
+  // Refresh in the Tools tab (thread work spec 39): asks the thread's live session only. Without
+  // one nothing is asked of the adapter, so no session or MCP server is started for it.
+  async refreshTools(threadId: string): Promise<RefreshToolsOutcome> {
+    const thread = this.#deps.db
+      .select({ kind: threads.kind, providerInstanceId: threads.providerInstanceId })
+      .from(threads)
+      .where(eq(threads.id, threadId))
+      .get();
+    if (!thread) throw new CommandRejected('not_found', `No thread ${threadId}`);
+    if (thread.kind === 'assistant') {
+      throw new CommandRejected('rejected', 'The assistant has no Tools tab');
+    }
+    const stored = this.#deps.db
+      .select({ live: threadTools.live })
+      .from(threadTools)
+      .where(eq(threadTools.threadId, threadId))
+      .get();
+    if (!stored?.live || !this.#adapters.has(thread.providerInstanceId)) {
+      this.#toolsReported(threadId, null, 'refresh');
+      return 'noSession';
+    }
+    const answer = await this.#adapter(thread.providerInstanceId).send({
+      type: 'describeSession',
+      threadId,
+    });
+    const tools = SessionTools.nullable().parse(answer);
+    const changed = this.#toolsReported(threadId, tools, 'refresh');
+    return tools === null ? 'noSession' : changed ? 'changed' : 'unchanged';
+  }
+
+  // Stores what a thread's session reported it can use, or that its session is gone (null).
+  // Answers whether anything was stored. The assistant's reports are not kept (spec 43).
+  #toolsReported(threadId: string, tools: SessionTools | null, source: ThreadToolsSource): boolean {
+    if (this.#stopped) return false;
+    const thread = this.#deps.db
+      .select({ kind: threads.kind })
+      .from(threads)
+      .where(eq(threads.id, threadId))
+      .get();
+    if (!thread || thread.kind === 'assistant') return false;
+    try {
+      return (
+        this.#deps.engine.dispatch(`tools:${randomUUID()}`, {
+          type: 'thread.toolsReported',
+          threadId,
+          tools: tools && this.#withoutSecrets(tools),
+          source,
+        }).seqs.length > 0
+      );
+    } catch (error) {
+      this.#deps.logger.warn('the session tools were not stored', describeError(error));
+      return false;
+    }
+  }
+
+  // Every free text of a report gets the secret net before it is stored (spec 41): a failure's
+  // words above all, and the descriptions, state words, versions, sources, argument hints and
+  // instruction file paths a provider also wrote. The adapter already took out the server's
+  // config values. Names are left as they are: they identify the entry.
+  #withoutSecrets(tools: SessionTools): SessionTools {
+    const patterns = secretPatterns(this.#deps.settings.get('assistant.secretPatterns'));
+    const hide = (text: string) => hideSecrets(text, patterns);
+    const hideOrNull = (text: string | null) => (text === null ? null : hide(text));
+    return boundedSessionTools({
+      ...tools,
+      mcpServers: tools.mcpServers.map((server) => ({
+        ...server,
+        stateWord: hide(server.stateWord),
+        error: hideOrNull(server.error),
+        source: hideOrNull(server.source),
+        version: hideOrNull(server.version),
+        address: hideOrNull(server.address),
+        tools: server.tools.map((tool) => ({ ...tool, description: hide(tool.description) })),
+      })),
+      skills: tools.skills.map((skill) => ({
+        ...skill,
+        description: hideOrNull(skill.description),
+      })),
+      commands: tools.commands.map((command) => ({
+        ...command,
+        description: hide(command.description),
+        ...(command.argumentHint === undefined ? {} : { argumentHint: hide(command.argumentHint) }),
+      })),
+      agents: tools.agents.map((agent) => ({
+        ...agent,
+        description: hide(agent.description),
+        model: hideOrNull(agent.model),
+      })),
+      plugins: tools.plugins.map((plugin) => ({
+        ...plugin,
+        version: hideOrNull(plugin.version),
+        errors: plugin.errors.map(hide),
+      })),
+      instructionFiles: tools.instructionFiles.map(hide),
+    });
+  }
+
+  // The live sessions of an instance's threads end with its adapter.
+  #toolsSessionsEnded(providerInstanceId: string): void {
+    const live = this.#deps.db
+      .select({ threadId: threadTools.threadId })
+      .from(threadTools)
+      .innerJoin(threads, eq(threads.id, threadTools.threadId))
+      .where(and(eq(threadTools.live, true), eq(threads.providerInstanceId, providerInstanceId)))
+      .all();
+    for (const { threadId } of live) this.#toolsReported(threadId, null, 'turn');
+  }
+
   // Stops the instance's adapter (and its app-server process); the next use starts a new one.
   release(providerInstanceId: string): void {
     this.#release(providerInstanceId, []);
@@ -324,7 +449,7 @@ export class ProviderService {
             start.kind === 'assistant'
               ? () => this.#assistantTurn(command)
               : this.#chatThread(turn.threadId)
-                ? () => this.#marked(command, turn.id, turn.index)
+                ? () => this.#chatTurn(command, turn.id, turn.index)
                 : command,
           );
           break;
@@ -414,6 +539,7 @@ export class ProviderService {
               type: 'closeThread',
               threadId,
             });
+            this.#toolsReported(threadId, null, 'turn');
           }
           break;
         }
@@ -460,6 +586,7 @@ export class ProviderService {
       .catch((error: unknown) => this.#deps.logger.error('provider adapter failed to stop', error));
     // The disposed adapter reports nothing more, so the background work it listed is gone.
     if (adapter) {
+      this.#toolsSessionsEnded(providerInstanceId);
       const listed = this.#deps.db
         .select({ id: threads.id })
         .from(threads)
@@ -503,12 +630,25 @@ export class ProviderService {
     queued: QueuedMessage,
     prompt: string,
   ): void {
+    const offerIt = () =>
+      this.#adapter(providerInstanceId).send({ type: 'handOver', threadId, prompt });
+    // The turn it joins can still be starting (reading the folder, making the working copy): the
+    // offer goes to the provider after that start, as a stop does.
+    const start = this.#starting.get(threadId);
     let answer: Promise<unknown>;
     try {
-      answer = this.#adapter(providerInstanceId).send({ type: 'handOver', threadId, prompt });
+      answer = start ? start.then(offerIt) : offerIt();
     } catch (error) {
       this.#deps.logger.warn('provider handOver failed', describeError(error));
       return;
+    }
+    if (start) {
+      const after = answer.then(
+        () => undefined,
+        () => undefined,
+      );
+      this.#preparing.add(after);
+      void after.then(() => this.#preparing.delete(after));
     }
     const offer = Symbol(queued.id);
     this.#handingOver.set(threadId, offer);
@@ -552,15 +692,23 @@ export class ProviderService {
       );
   }
 
-  // A chat thread, whose changes are measured; a step's thread has its run's.
+  // A chat thread, whose working copy is made and whose changes are measured; a step's thread
+  // has its run's.
   #chatThread(threadId: string): boolean {
-    if (!this.#deps.changes) return false;
+    if (!this.#deps.changes && !this.#deps.prepareThread) return false;
     const row = this.#deps.db
       .select({ runId: threads.runId, kind: threads.kind })
       .from(threads)
       .where(eq(threads.id, threadId))
       .get();
     return row !== undefined && row.runId === null && row.kind === 'chat';
+  }
+
+  // The thread's own working copy first: without its folder the turn has nowhere to run.
+  async #chatTurn(command: StartTurn, turnId: string, index: number): Promise<StartTurn> {
+    const failed = await this.#deps.prepareThread?.(command.threadId);
+    if (failed !== undefined) throw new Error(failed);
+    return this.#marked(command, turnId, index);
   }
 
   // Before a chat thread's turn goes out, the folder is read (agent workbench spec 34): its
@@ -682,6 +830,11 @@ export class ProviderService {
     const parsed = ProviderEvent.safeParse(event);
     if (!parsed.success) {
       this.#deps.logger.warn('provider sent an invalid event', parsed.error.issues);
+      return;
+    }
+    // Not a thread item: what the session can use is its own projection (thread work spec 38).
+    if (parsed.data.type === 'sessionTools') {
+      this.#toolsReported(parsed.data.threadId, parsed.data.tools, 'turn');
       return;
     }
     const batch = this.#pending.get(parsed.data.threadId);
