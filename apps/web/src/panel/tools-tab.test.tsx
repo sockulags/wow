@@ -13,7 +13,7 @@ import {
 } from '@wow/client-runtime';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
@@ -230,6 +230,15 @@ const heading = (name: RegExp) => within(toolsTab()).getByRole('heading', { name
 const live: ThreadTools = { threadId: 'tea', tools: reported, source: 'turn', live: true };
 
 describe('the Tools tab', () => {
+  // The reported line names a time of today without a date: the test's today is the report's.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-12T21:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('opens from the header chip and lists servers, tools, skills, commands, subagents and plugins with counts @thread-work-37 @thread-work-38', async () => {
     const server = fake({ tea: live });
     await renderApp('/chat/tea', server.runtime);
