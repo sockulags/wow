@@ -364,6 +364,34 @@ describe('find in the conversation (spec 1 to 4)', () => {
     }
   });
 
+  it('marks a match in the second question of one ask card on that card (spec 3)', async () => {
+    const user = userEvent.setup();
+    const question = (id: string, text: string, label: string) =>
+      item(id, 'question', {
+        questionId: id,
+        question: text,
+        askId: 'ask-1',
+        options: [{ label }],
+        multiSelect: false,
+      });
+    setup({
+      items: [
+        item('turn-0:user', 'user', { text: 'Make tea' }),
+        question('turn-0:q1', 'Which pot?', 'The blue pot'),
+        question('turn-0:q2', 'Which oolong?', 'Milk oolong'),
+      ],
+      turns: [turn(0, { state: 'running', endedAt: null })],
+    });
+    expect(row('turn-0:q2')).toBeUndefined();
+    await user.click(composer());
+    await user.keyboard('{Control>}f{/Control}');
+    await field();
+    // Only the second question's text holds it; the card is drawn as one row.
+    await user.keyboard('oolong');
+    expect(count()).toBe('1 of 1');
+    expect(current()).toEqual(['turn-0:q1']);
+  });
+
   it('does not count the JSON behind Show JSON or an earlier version, and stops at the limit (spec 2, 3)', async () => {
     const user = userEvent.setup();
     setup({

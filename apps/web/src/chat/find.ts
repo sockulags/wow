@@ -305,7 +305,15 @@ export function conversationText(source: FindSource, cache?: MarkdownCache): Fin
   for (const entry of source.entries) {
     if (entry.kind === 'item') itemPieces(walk, entry.item, []);
     else if (entry.kind === 'questions') {
+      // One ask card is drawn as a single row (`data-item-id` is the entry's id), so every
+      // question's text is counted in that row.
+      const from = walk.pieces.length;
       for (const item of entry.items) itemPieces(walk, item, []);
+      walk.pieces.splice(
+        from,
+        walk.pieces.length - from,
+        ...walk.pieces.slice(from).map((piece) => ({ ...piece, itemId: entry.id })),
+      );
     } else {
       for (const item of entry.items) itemPieces(walk, item, [openKey('group', entry.id)]);
     }
