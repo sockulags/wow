@@ -3536,8 +3536,9 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
   leaving out the one Claude Code did not give. A failure's words and plugin errors pass
   `cleanReportedText`: the server's command and its program's path read as the program's file
   name, each argument written after the program in `command` is hidden, the configured URL reads
-  as its origin and, written without its scheme, as its host, its path, query values, user and
-  password are hidden, its argument, environment and header values are hidden, every web address
+  as its origin and, written without its scheme, as its host, its path, query values, user,
+  password and fragment are hidden (as written and percent-decoded; a malformed percent sequence
+  is kept as written), its argument, environment and header values are hidden, every web address
   is cut to its origin, and a credential after Bearer, Basic or Token is hidden. Known limit:
   a value shorter than 4 characters is never hidden (it would hide parts of ordinary words). When a live call fails or does not
   answer within `providers.requestTimeoutMs`, the init message's names and states go out with

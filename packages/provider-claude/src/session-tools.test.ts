@@ -565,6 +565,33 @@ describe('mcpAddress', () => {
 });
 
 describe('cleanReportedText', () => {
+  it('hides the raw and decoded user, password, query values and fragment of the configured URL', () => {
+    const url = 'https://jane-doe:p%40ss-word@mcp.tea.example/sse?key=sk%2Ftea-9#frag-ment';
+    const cleaned = [
+      'auth failed with p%40ss-word',
+      'auth failed with p@ss-word',
+      'bad key sk%2Ftea-9',
+      'bad key sk/tea-9',
+      'user jane-doe unknown',
+      'anchor #frag-ment',
+    ].map((text) => cleanReportedText(text, { type: 'sse', url }));
+    expect(cleaned).toEqual([
+      'auth failed with [hidden]',
+      'auth failed with [hidden]',
+      'bad key [hidden]',
+      'bad key [hidden]',
+      'user [hidden] unknown',
+      'anchor [hidden]',
+    ]);
+  });
+
+  it('reads a URL with a malformed percent sequence without throwing', () => {
+    const url = 'https://us%zzer:pass-word@mcp.tea.example/';
+    expect(cleanReportedText('us%zzer refused pass-word', { type: 'sse', url })).toBe(
+      '[hidden] refused [hidden]',
+    );
+  });
+
   it('hides an environment value written before the program in the command', () => {
     const command = 'TEA_TOKEN=sk-tea-777-long tea-server --port 7000';
     expect(cleanReportedText('tea-server: token sk-tea-777-long refused', { command })).toBe(

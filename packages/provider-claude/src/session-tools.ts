@@ -113,6 +113,15 @@ const shortestHidden = 4;
 const webAddress = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
 const credential = /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]+/gi;
 
+// A malformed percent sequence (`us%zzer`) is kept as written instead of failing the report.
+const decoded = (text: string): string => {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+};
+
 // Text a server or plugin reported about itself, such as a failure: every web address cut to its
 // origin and a credential after Bearer, Basic or Token hidden. With the server's config, its
 // command reads as the program's name and the values of its URL, arguments, environment and
@@ -151,11 +160,21 @@ export function cleanReportedText(text: string, config?: unknown): string {
           if (bare !== parsed.host && parsed.host !== '') out = out.split(bare).join(parsed.host);
         }
         if (parsed.pathname !== '/') urlParts.push(parsed.pathname);
+        // Each value both as written and decoded, since a failure may quote either.
+        const pairs = parsed.search
+          .slice(1)
+          .split('&')
+          .flatMap((pair) => [pair, pair.slice(pair.indexOf('=') + 1)]);
         urlParts.push(
           parsed.search,
+          ...pairs,
           ...parsed.searchParams.values(),
-          decodeURIComponent(parsed.username),
-          decodeURIComponent(parsed.password),
+          parsed.username,
+          parsed.password,
+          decoded(parsed.username),
+          decoded(parsed.password),
+          parsed.hash,
+          parsed.hash.slice(1),
         );
       }
     }
