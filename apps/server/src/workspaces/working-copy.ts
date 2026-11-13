@@ -10,7 +10,6 @@ import {
   branchNeverMoved,
   checkBranchName,
   countCommitsOnNoBranch,
-  deleteBranch,
   fetchRemote,
   fetchRemoteRef,
   pruneWorktrees,
@@ -243,6 +242,11 @@ export interface ThreadCreateRequest {
   readonly start: WorkingCopyStart;
   // `workspaces.fetchBeforeCreate`, for a copy that starts at the default branch.
   readonly fetch: boolean;
+  // The thread's `WorkingCopy.branchStart`: where an earlier try had git make the branch.
+  readonly branchStart: string | null;
+  // Called with the start commit right before git is asked to make the branch; the caller
+  // stores it, so a branch git leaves is known as wow's own.
+  readonly beforeBranch: (startSha: string) => void;
   readonly git: GitRunOptions;
 }
 
@@ -265,33 +269,34 @@ export async function createThreadWorkingCopy(request: ThreadCreateRequest): Pro
   } catch (error) {
     return failed(error instanceof Error ? error.message : String(error));
   }
-  // A branch that is there already is the user's: git refuses it before making anything.
-  const taken = (await readCommit(projectFolder, `refs/heads/${branch}`, git)) !== null;
-  const added = await addNewBranchWorktree(projectFolder, target, branch, start.sha, git);
-  if (!added.ok) {
-    if (!taken) await dropLeftBranch(projectFolder, branch, start.sha, git);
-    return failed(`${added.message} (${target})`);
-  }
-  return { ok: true, startSha: start.sha, defaultBranch: start.defaultBranch, note: start.note };
-}
-
-// `worktree add -b` makes the branch before the folder and leaves it when the folder then fails
-// (a folder already there, a path too long, a locked file), so Retry would only ever hear that
-// the branch exists (spec 12). A branch git made at the start commit and never moved, with no
-// folder on it, holds nothing and is taken away again. Callers make sure wow made it: one that
-// was there before is the user's.
-export async function dropLeftBranch(
-  projectFolder: string,
-  branch: string,
-  startSha: string | null,
-  git: GitRunOptions,
-): Promise<void> {
+  // `worktree add -b` makes the branch before the folder and leaves it when the folder then fails
+  // (a folder already there, a path too long, a locked file, a server stop). The branch an
+  // earlier try of this thread made, still at its commit and never moved, is taken up again, so
+  // Retry works once the cause is gone. Any other branch of that name is the user's: git refuses
+  // it, and that is the reason. wow never deletes a branch (spec 15).
   const tip = await readCommit(projectFolder, `refs/heads/${branch}`, git);
-  if (tip === null || (startSha !== null && tip !== startSha)) return;
-  if (!(await branchNeverMoved(projectFolder, branch, git))) return;
-  // Git refuses while a folder is on the branch; then it is left as it is.
+  const left =
+    tip !== null &&
+    tip === request.branchStart &&
+    (await branchNeverMoved(projectFolder, branch, git));
+  if (!left) {
+    // From here the branch is wow's own, even when git stops halfway.
+    if (tip === null) request.beforeBranch(start.sha);
+    const added = await addNewBranchWorktree(projectFolder, target, branch, start.sha, git);
+    if (!added.ok) return failed(`${added.message} (${target})`);
+    return { ok: true, startSha: start.sha, defaultBranch: start.defaultBranch, note: start.note };
+  }
   await pruneWorktrees(projectFolder, git);
-  await deleteBranch(projectFolder, branch, git);
+  const added = await addBranchWorktree(projectFolder, target, branch, git);
+  if (!added.ok) return failed(`${added.message} (${target})`);
+  return tip === start.sha
+    ? { ok: true, startSha: tip, defaultBranch: start.defaultBranch, note: start.note }
+    : {
+        ok: true,
+        startSha: tip,
+        defaultBranch: null,
+        note: `An earlier try made branch ${branch} at ${tip.slice(0, 7)}, so the working copy starts there.`,
+      };
 }
 
 // Where a thread's copy would start, read without fetching or writing anything, for the draft's

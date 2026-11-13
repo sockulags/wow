@@ -20,7 +20,6 @@ import {
   createThreadWorkingCopy,
   createWorkingCopy,
   discardWorkingCopy,
-  dropLeftBranch,
   readThreadHolds,
   readThreadStart,
   reopenThreadWorkingCopy,
@@ -539,6 +538,16 @@ export class Workspaces {
           fetch:
             this.#deps.settings.resolve('workspaces.fetchBeforeCreate', { projectId }).value ===
             true,
+          branchStart: copy.branchStart ?? null,
+          beforeBranch: (startSha) => {
+            for (const each of this.#threadsSharing(copy.path)) {
+              this.#dispatch(`workingCopy:${each.id}:branching:${randomUUID()}`, {
+                type: 'thread.workingCopyBranching',
+                threadId: each.id,
+                startSha,
+              });
+            }
+          },
           git,
         });
         return created.ok
@@ -563,8 +572,11 @@ export class Workspaces {
     }
   }
 
-  // A copy left being made by a server stop: taken as made when git finished it (the folder is
-  // there on its branch), else failed, so the next message makes it again.
+  // A copy left `pending` by a stop: taken as made when git finished it (the folder is there on
+  // its branch). One git was asked to make fails, so the next message tries again: the folder
+  // (named after the thread, so nothing else is in it) goes, the branch stays and is taken up by
+  // that try. One git was never asked to make (no message was sent yet) stays as it is. A branch
+  // is never deleted here: one that was there before the thread is the user's (spec 15).
   async #recoverThread(thread: Thread): Promise<void> {
     const copy = thread.workingCopy;
     const branch = copy?.branch ?? thread.branch;
@@ -580,21 +592,17 @@ export class Workspaces {
         this.#dispatch(`workingCopy:${thread.id}:ready:${randomUUID()}`, {
           type: 'thread.workingCopyReady',
           threadId: thread.id,
-          startSha: sha,
+          startSha: copy.branchStart ?? sha,
           defaultBranch: null,
           note: null,
         });
         return;
       }
     }
-    // What git made of it goes, so the next message makes it again: the folder (named after the
-    // thread, so nothing else is in it) and the branch, made for this thread and never moved.
+    if (!copy.branchStart) return;
     const projectFolder = thread.projectId ? this.#projectFolder(thread.projectId) : undefined;
     if (projectFolder !== undefined) {
-      const outcome = await discardWorkingCopy({ projectFolder, target: copy.path, git });
-      if (branch && outcome.state === 'removed') {
-        await dropLeftBranch(projectFolder, branch, null, git);
-      }
+      await discardWorkingCopy({ projectFolder, target: copy.path, git });
     }
     this.#dispatch(`workingCopy:${thread.id}:failed:${randomUUID()}`, {
       type: 'thread.workingCopyFailed',

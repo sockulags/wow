@@ -829,17 +829,6 @@ export async function pruneWorktrees(folder: string, options: GitRunOptions): Pr
   return outcomeOf(await runGit(folder, ['worktree', 'prune'], options));
 }
 
-// Only for a branch `addNewBranchWorktree` made before the worktree itself failed: `worktree add
-// -b` makes the branch first and leaves it behind, and a branch of that name refuses every later
-// try. Git refuses while a folder is on the branch.
-export async function deleteBranch(
-  folder: string,
-  branch: string,
-  options: GitRunOptions,
-): Promise<GitOutcome> {
-  return outcomeOf(await runGit(folder, ['branch', '-D', branch], options));
-}
-
 // The tips the history of a ref names (`git reflog`), oldest last; none when it has no history.
 async function reflogTips(folder: string, ref: string, options: GitRunOptions) {
   const shown = await runGit(folder, ['reflog', 'show', '--format=%H', ref], options);

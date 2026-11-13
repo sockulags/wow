@@ -1304,13 +1304,16 @@ removal ask only about files.
   in `defaultBranch`, the branch the start commit was read from. When it cannot be made, the
   reason (git's own: "fatal: a branch named … already exists"; runGit now prefers git's
   `fatal:`/`error:` line over what it said before it) goes in `thread.workingCopyFailed`, the
-  turn fails with it and the provider gets nothing. `worktree add -b` makes the branch before the
-  folder and leaves it when the folder then fails (a folder already there, a path too long, a
-  locked file), so a branch that was not there before, is at the start commit, never moved (one
-  entry in its reflog) and has no folder on it is deleted again (`dropLeftBranch`,
-  `deleteBranch`): it holds nothing, and the next message tries again instead of hearing that
-  the branch exists. A branch that was there before is the user's and is never touched. Nothing
-  falls back to the project folder.
+  turn fails with it and the provider gets nothing. Right before git is asked to make the branch
+  (only when no branch of that name exists), `thread.workingCopyBranching {threadId, startSha}`
+  stores the start commit as `WorkingCopy.branchStart`: from then on the branch is wow's own.
+  `worktree add -b` makes the branch before the folder and leaves it when the folder then fails
+  (a folder already there, a path too long, a locked file, a server stop). The branch is never
+  deleted: the next try finds it, and when it is at `branchStart` and never moved (one entry in
+  its reflog) it takes it up with `git worktree add <path> <branch>` (the copy then starts at
+  that commit, with a note when the start commit has moved since). Any other branch of that
+  name, one that was there before the thread above all, is the user's: git refuses it and that
+  is the reason. Nothing falls back to the project folder.
 - **Again on its branch.** A message to a thread whose copy is `removed` (or whose folder went)
   makes it again with `git worktree add <path> <branch>` (`reopenThreadWorkingCopy`); a folder
   that is already there on the branch (a fork made it first) is taken as it is. A deleted branch,
@@ -1336,13 +1339,14 @@ removal ask only about files.
   `expect`, and with `rejected` while a turn runs (checked again right before the removal) or
   another thread that is not done works in the folder. The counts are compared, not the files:
   one file swapped for another after the dialog opened is not noticed. Then `git worktree remove
---force`; the branch stays. Apart from undoing its own failed `-b`, wow never deletes a branch
-  and never pushes here.
+--force`; the branch stays. wow never deletes a branch and never pushes here.
 - **Forks.** A fork takes its origin's `cwd`, `branch` and `workingCopy`.
 - **Restart.** `recover()` takes a `pending` copy whose folder git finished on its branch as
-  ready; any other `pending` one fails ("The server stopped while the working copy was being
-  made"), what git made of it goes (the folder with `git worktree remove --force`, a branch left
-  as `dropLeftBranch` allows), and it is made at the next message. A `ready` copy of a done thread is settled.
+  ready. A `pending` copy with `branchStart` (git was asked to make it) fails ("The server
+  stopped while the working copy was being made"), its folder goes with `git worktree remove
+  --force`, its branch stays, and the next message takes the branch up. A `pending` copy without
+  `branchStart` was never started (no message went out yet) and stays `pending`. Nothing here
+  deletes a branch. A `ready` copy of a done thread is settled.
 - **Web.** `chat/working-copy.tsx`: `DraftWorkingCopy` (switch and line), `WorkingCopyChip` in
   the thread header (branch and "own working copy", or what a kept copy holds),
   `WorkingCopyDetails` in Details (branch, folder with Copy path and Open in editor, where it

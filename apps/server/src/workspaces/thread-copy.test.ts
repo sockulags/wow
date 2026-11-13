@@ -345,7 +345,7 @@ describe("a chat thread's own working copy (thread work spec 10 to 18)", () => {
     expect(thread().workingCopy).toMatchObject({ state: 'ready', error: null });
   });
 
-  it('takes away the branch git made when the folder could not be made, so Retry works once the cause is gone (spec 12)', async () => {
+  it('keeps the branch git made when the folder could not be made and takes it up again, so Retry works once the cause is gone (spec 12)', async () => {
     create();
     // A folder left at the thread's place, not a working copy.
     await mkdir(thread().cwd, { recursive: true });
@@ -353,7 +353,10 @@ describe("a chat thread's own working copy (thread work spec 10 to 18)", () => {
     send();
     expect((await turnEnds()).state).toBe('failed');
     expect(thread().workingCopy?.error).toMatch(/already exists/);
-    expect(git(project, 'branch', '--list', branchOf())).toBe('');
+    const start = git(project, 'rev-parse', 'HEAD');
+    expect(thread().workingCopy?.branchStart).toBe(start);
+    // wow never deletes a branch: the one git made stays, at the start commit.
+    expect(git(project, 'rev-parse', branchOf())).toBe(start);
     await server.providerService.idle();
     expect(startTurns()).toEqual([]);
 
@@ -362,20 +365,50 @@ describe("a chat thread's own working copy (thread work spec 10 to 18)", () => {
     expect((await turnEnds('t1', 1)).state).toBe('completed');
     expect(startTurns()).toHaveLength(1);
     expect(git(thread().cwd, 'symbolic-ref', '--short', 'HEAD')).toBe(branchOf());
+    expect(thread().workingCopy).toMatchObject({ state: 'ready', startSha: start, note: null });
   });
 
-  it('takes away a branch a stop left without its folder, so the next message makes the copy (restart)', async () => {
+  it('keeps a branch a stop left without its folder and takes it up at the next message (restart)', async () => {
     create();
     // As if git had made the branch and the server stopped before the folder.
+    const start = git(project, 'rev-parse', 'HEAD');
+    dispatch({ type: 'thread.workingCopyBranching', threadId: 't1', startSha: start });
     git(project, 'branch', branchOf());
     await server.stop();
     server = await launch();
     await server.workspaces.settled();
-    expect(thread().workingCopy).toMatchObject({ state: 'failed' });
-    expect(git(project, 'branch', '--list', branchOf())).toBe('');
+    expect(thread().workingCopy).toMatchObject({
+      state: 'failed',
+      error: 'The server stopped while the working copy was being made',
+    });
+    expect(git(project, 'rev-parse', branchOf())).toBe(start);
     send();
     expect((await turnEnds()).state).toBe('completed');
-    expect(thread().workingCopy).toMatchObject({ state: 'ready' });
+    expect(thread().workingCopy).toMatchObject({ state: 'ready', startSha: start });
+    expect(git(thread().cwd, 'symbolic-ref', '--short', 'HEAD')).toBe(branchOf());
+  });
+
+  it('never deletes a branch that was there before the thread, across a restart (spec 15)', async () => {
+    // The user's branch, at a commit nothing else reaches, that the thread's name happens to take.
+    git(project, 'checkout', '-q', '--detach');
+    const own = await commit(project, 'notes.md', 'Invented notes\n', 'Invented own work');
+    git(project, 'branch', branchOf());
+    git(project, 'checkout', '-q', 'main');
+    create();
+    await server.stop();
+    server = await launch();
+    await server.workspaces.settled();
+    expect(git(project, 'rev-parse', branchOf())).toBe(own);
+    // Nothing was ever sent, so nothing was being made: the copy waits for the first message.
+    expect(thread().workingCopy).toMatchObject({ state: 'pending', error: null });
+
+    send();
+    expect((await turnEnds()).state).toBe('failed');
+    expect(thread().workingCopy?.error).toMatch(/already exists/);
+    await server.stop();
+    server = await launch();
+    await server.workspaces.settled();
+    expect(git(project, 'rev-parse', branchOf())).toBe(own);
   });
 
   it('fails the turn for a project folder that is not a repository and goes once it is one', async () => {
@@ -596,10 +629,11 @@ describe("a chat thread's own working copy (thread work spec 10 to 18)", () => {
       state: 'ready',
       startSha: git(project, 'rev-parse', 'HEAD'),
     });
-    expect(thread('t2').workingCopy).toMatchObject({
-      state: 'failed',
-      error: 'The server stopped while the working copy was being made',
-    });
+    // Git was never asked to make the second: it waits for its first message.
+    expect(thread('t2').workingCopy).toMatchObject({ state: 'pending', error: null });
+    send('Second', 't2');
+    expect((await turnEnds('t2')).state).toBe('completed');
+    expect(thread('t2').workingCopy).toMatchObject({ state: 'ready' });
   });
 
   it('works as before for a thread stored without a copy (spec 18)', async () => {

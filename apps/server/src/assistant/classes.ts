@@ -475,6 +475,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'workflowRun.workingCopySettled': serverOnly,
   'thread.workingCopyReady': serverOnly,
   'thread.workingCopyFailed': serverOnly,
+  'thread.workingCopyBranching': serverOnly,
   'thread.workingCopySettled': serverOnly,
   'trigger.fire': serverOnly,
   'trigger.applyMissed': serverOnly,

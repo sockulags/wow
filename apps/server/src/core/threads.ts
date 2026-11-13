@@ -103,6 +103,7 @@ type ThreadCommand = Extract<
       | 'thread.markUnread'
       | 'thread.workingCopyReady'
       | 'thread.workingCopyFailed'
+      | 'thread.workingCopyBranching'
       | 'thread.workingCopySettled'
       | 'approval.answer'
       | 'question.answer'
@@ -1028,6 +1029,7 @@ export function decideThread(
     }
     case 'thread.workingCopyReady':
     case 'thread.workingCopyFailed':
+    case 'thread.workingCopyBranching':
     case 'thread.workingCopySettled':
       return decideThreadCopy(command, read);
     case 'thread.setDone': {

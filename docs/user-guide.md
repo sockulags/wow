@@ -411,7 +411,9 @@ not touched. Changes you have not committed in the project folder stay there.
 
 The copy is made just before the first message goes out. If it cannot be made (the branch name
 is taken, the folder is not a repository), the turn fails with Git's reason and nothing is sent;
-fix the cause and press Retry. The branch name comes from **Branch of a thread's working copy**
+fix the cause and press Retry. A branch that is already in the repository is never used or
+changed: rename that branch, or change the branch name setting. When Git made the branch but not the
+folder, the branch stays and Retry uses it. The branch name comes from **Branch of a thread's working copy**
 (`{{title}}` and `{{id}}`), and **Where a thread's working copy starts** picks the project
 folder's commit (the default) or the default branch's tip.
 

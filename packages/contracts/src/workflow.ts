@@ -344,6 +344,11 @@ export const WorkingCopy = z.object({
   // The branch the copy is made on, for a run an event started on a pull request (review loop
   // spec 48). Absent or null: on no branch, at the default branch's tip.
   branch: z.string().min(1).nullable().optional(),
+  // A chat thread's: the commit wow asked git to make `branch` at, stored before `git worktree
+  // add -b` runs, so wow knows the branch is its own. Git makes the branch before the folder and
+  // leaves it when the folder then fails; a branch at this commit that never moved is taken up
+  // again by the next try. wow never deletes a branch (thread work spec 15).
+  branchStart: z.string().min(1).nullable().optional(),
 });
 export type WorkingCopy = z.infer<typeof WorkingCopy>;
 

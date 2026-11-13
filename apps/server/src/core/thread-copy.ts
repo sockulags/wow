@@ -17,7 +17,11 @@ import { resolvedSetting, threadWorkingCopyPath } from './workflows.js';
 type CopyCommand = Extract<
   ServerCommand,
   {
-    type: 'thread.workingCopyReady' | 'thread.workingCopyFailed' | 'thread.workingCopySettled';
+    type:
+      | 'thread.workingCopyReady'
+      | 'thread.workingCopyFailed'
+      | 'thread.workingCopyBranching'
+      | 'thread.workingCopySettled';
   }
 >;
 
@@ -117,6 +121,8 @@ export function decideThreadCopy(command: CopyCommand, read: ReadModel): DomainE
     }
     case 'thread.workingCopyFailed':
       return [changed(thread, { ...copy, state: 'failed', error: command.error })];
+    case 'thread.workingCopyBranching':
+      return [changed(thread, { ...copy, branchStart: command.startSha })];
     case 'thread.workingCopySettled': {
       if (read.runningTurn(thread.id)) {
         throw new CommandRejected('rejected', `A turn runs in thread ${thread.id}'s working copy`);
