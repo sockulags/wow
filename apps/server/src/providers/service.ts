@@ -64,6 +64,8 @@ type StartTurn = Extract<ProviderCommand, { type: 'startTurn' }>;
 export interface TurnSnapshots {
   // Joins the folder's queue before it first waits, so what is asked later sees the snapshot.
   take(threadId: string, turnId: string, at: 'start' | 'end'): Promise<void>;
+  // Waits for snapshot work in flight and starts none after.
+  stop?(): Promise<void>;
   restoreForEdit(
     threadId: string,
     turnId: string,
@@ -396,6 +398,10 @@ export class ProviderService {
         this.#deps.logger.error('provider adapter failed to stop', error);
       }
     }
+    // Turns being prepared and end snapshots in flight finish before the caller closes the
+    // database or removes the folders they use.
+    await this.idle();
+    await this.#deps.snapshots?.stop?.();
   }
 
   #adapter(providerInstanceId: string): ProviderAdapter {
@@ -497,7 +503,7 @@ export class ProviderService {
           const { threadId } = event.payload;
           // The folder as the turn left it, so later changes count as made outside the thread
           // (thread work spec 22). Taken before anything else of this thread can start.
-          if (this.#deps.snapshots && this.#chatThread(threadId)) {
+          if (!this.#stopped && this.#deps.snapshots && this.#chatThread(threadId)) {
             const taken = this.#deps.snapshots
               .take(threadId, event.payload.turnId, 'end')
               .catch((error: unknown) =>

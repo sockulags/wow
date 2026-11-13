@@ -561,6 +561,25 @@ describe('refusals (spec 23, 26, 44)', () => {
     expect(git(storeOf(), 'for-each-ref')).toBe('');
   });
 
+  it('waits for an end snapshot in flight when the server stops and starts no work after it', async () => {
+    await twoTurns();
+    // The snapshot and the expiry that follows it would drop every ref, if they were let run.
+    now += 31 * dayMs;
+    let settled = false;
+    const inFlight = server.snapshots.take('t1', 't1:turn:1', 'end').then(() => {
+      settled = true;
+    });
+    await server.stop();
+    expect(settled).toBe(true);
+    await inFlight;
+    const refs = git(storeOf(), 'for-each-ref', '--format=%(refname)').split('\n');
+    expect(refs).toHaveLength(4);
+    // Nothing starts once stopped: no snapshot, no expiry, no record in the closed database.
+    await server.snapshots.take('t1', 't1:turn:1', 'end');
+    await server.snapshots.expire();
+    expect(git(storeOf(), 'for-each-ref', '--format=%(refname)').split('\n')).toEqual(refs);
+  });
+
   it('offers no Restore on a turn stored before snapshots', async () => {
     await twoTurns();
     server.database.db.update(turns).set({ startSnapshot: null, endSnapshot: null }).run();

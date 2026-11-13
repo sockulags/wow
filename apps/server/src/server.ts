@@ -525,6 +525,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       await stopServices();
       await providerUpdates.stop();
       await providerService.stop();
+      await snapshots.stop();
       await trackers.idle();
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));

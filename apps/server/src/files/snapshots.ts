@@ -112,7 +112,7 @@ interface Prepared {
   readonly plan: Plan;
 }
 
-const dayMs = 24 * 60 * 60 * 1000;
+const oneDay = 86_400_000;
 // What git prints per file in a listing at most, for the output limits of its answers.
 const listingBytesPerFile = 4200;
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -172,6 +172,7 @@ export class FolderSnapshots {
   readonly #deps: SnapshotDeps;
   readonly #queues = new Map<string, Promise<unknown>>();
   readonly #work = new Set<Promise<unknown>>();
+  #stopped = false;
 
   constructor(deps: SnapshotDeps) {
     this.#deps = deps;
@@ -185,6 +186,24 @@ export class FolderSnapshots {
   // Resolves once everything started so far has finished (for tests).
   async idle(): Promise<void> {
     while (this.#work.size > 0) await Promise.allSettled(this.#work);
+  }
+
+  // Waits for the snapshots in flight, their records and the expiry after them, and starts none
+  // after this is called: nothing touches the store or the database once it resolves.
+  async stop(): Promise<void> {
+    this.#stopped = true;
+    await this.idle();
+  }
+
+  // A job counts as work until its last step, not only while its folder's queue runs.
+  #tracked<T>(job: Promise<T>): Promise<T> {
+    const kept = job.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#work.add(kept);
+    void kept.then(() => this.#work.delete(kept));
+    return job;
   }
 
   // One folder at a time; a task that fails does not stop the next.
@@ -228,6 +247,11 @@ export class FolderSnapshots {
   // The folder's queue is joined before the first await, so what is asked after this call
   // (the next turn's start, a restore) sees this snapshot.
   take(threadId: string, turnId: string, at: SnapshotAt): Promise<void> {
+    if (this.#stopped) return Promise.resolve();
+    return this.#tracked(this.#take(threadId, turnId, at));
+  }
+
+  #take(threadId: string, turnId: string, at: SnapshotAt): Promise<void> {
     const thread = this.#thread(threadId);
     if (!thread || !this.#isChat(thread)) return Promise.resolve();
     const snapshot = this.#serial(thread.cwd, async (): Promise<StoredSnapshot> => {
@@ -475,7 +499,7 @@ export class FolderSnapshots {
     const repository = await readSnapshotRepository(thread.cwd, this.#git(deadline));
     if (repository.status !== 'ok') throw new RestoreRefused(repository.status, repository.message);
     const keepDays = this.#deps.settings.get('chat.snapshotKeepDays');
-    const cutoff = this.#deps.clock().getTime() - keepDays * dayMs;
+    const cutoff = this.#deps.clock().getTime() - keepDays * oneDay;
     const expired = `The snapshot was dropped: wow keeps them for ${keepDays} days (Keep snapshots for).`;
     let target: TurnSnapshot;
     let reference: TurnSnapshot | null;
@@ -861,9 +885,14 @@ export class FolderSnapshots {
 
   // Drops snapshots older than `chat.snapshotKeepDays` (spec 26): their refs go, the store
   // forgets what nothing keeps, and their turns stop offering Restore.
-  async expire(): Promise<void> {
+  expire(): Promise<void> {
+    if (this.#stopped) return Promise.resolve();
+    return this.#tracked(this.#expire());
+  }
+
+  async #expire(): Promise<void> {
     const keepDays = this.#deps.settings.get('chat.snapshotKeepDays');
-    const cutoff = this.#deps.clock().getTime() - keepDays * dayMs;
+    const cutoff = this.#deps.clock().getTime() - keepDays * oneDay;
     const old = (snapshot: StoredSnapshot | null) =>
       isTurnSnapshot(snapshot) && Date.parse(snapshot.at) < cutoff;
     const rows = this.#deps.db
@@ -881,6 +910,7 @@ export class FolderSnapshots {
     for (const row of rows)
       byThread.set(row.threadId, [...(byThread.get(row.threadId) ?? []), row]);
     for (const [threadId, dropped] of byThread) {
+      if (this.#stopped) return;
       const thread = this.#thread(threadId);
       if (!thread) continue;
       const done = await this.#serial(thread.cwd, async () => {
