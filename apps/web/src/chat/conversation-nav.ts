@@ -86,6 +86,16 @@ export interface GoBackActions {
   readonly goOn?: { readonly title: string; readonly detail: string; run(): void } | undefined;
 }
 
+// Restore files when going back (thread work spec 20, 21, 24): which messages the files can go
+// back to, the Undo of the last restore, and Edit's choice while the composer holds an edit.
+export interface RestoreActions {
+  // The item ids of the messages whose turn kept a snapshot, oldest first.
+  readonly restorable: readonly string[];
+  restore(itemId: string): void;
+  readonly undo?: (() => void) | undefined;
+  readonly edit?: { readonly withFiles: boolean; toggle(): void } | undefined;
+}
+
 interface ConversationState {
   readonly threadId: string | undefined;
   readonly handle: ConversationHandle | undefined;
@@ -97,6 +107,7 @@ interface ConversationState {
   // count tells every row to take the new state even when it was opened by hand.
   readonly reasoning: Readonly<Record<string, { readonly open: boolean; readonly count: number }>>;
   readonly goBack: GoBackActions | undefined;
+  readonly restore: RestoreActions | undefined;
 }
 
 export const conversationStore = createStore<ConversationState>(() => ({
@@ -106,6 +117,7 @@ export const conversationStore = createStore<ConversationState>(() => ({
   focusedMessage: undefined,
   reasoning: {},
   goBack: undefined,
+  restore: undefined,
 }));
 
 export function showConversation(threadId: string, handle: ConversationHandle): () => void {
@@ -195,6 +207,64 @@ function goBackCommands(
   return commands;
 }
 
+export function showRestore(threadId: string, actions: RestoreActions): () => void {
+  conversationStore.setState((state) =>
+    state.threadId === threadId ? { restore: actions } : state,
+  );
+  return () =>
+    conversationStore.setState((state) =>
+      state.restore === actions ? { restore: undefined } : state,
+    );
+}
+
+// R puts the files back to the message that has the keyboard (spec 20); the palette offers the
+// last message that can be restored to when none has it.
+function restoreCommands(
+  actions: RestoreActions | undefined,
+  focused: string | undefined,
+): AppCommand[] {
+  if (!actions) return [];
+  const commands: AppCommand[] = [];
+  const to =
+    focused !== undefined && actions.restorable.includes(focused)
+      ? focused
+      : actions.restorable.at(-1);
+  if (to !== undefined) {
+    commands.push({
+      id: 'chat.restoreFiles',
+      title: to === focused ? 'Restore files to this message' : 'Restore files to the last message',
+      detail: 'Put the files back to how they were before it was sent',
+      group: 'Chat',
+      keywords: ['restore', 'rewind', 'undo', 'files', 'checkpoint', 'go back'],
+      ...(to === focused ? { keybinding: 'keybindings.restoreMessage' as const } : {}),
+      run: () => actions.restore(to),
+    });
+  }
+  const { undo, edit } = actions;
+  if (undo) {
+    commands.push({
+      id: 'chat.undoRestore',
+      title: 'Undo the restore',
+      group: 'Chat',
+      keywords: ['undo', 'restore', 'files', 'back'],
+      run: () => undo(),
+    });
+  }
+  if (edit) {
+    commands.push({
+      id: 'chat.edit.withFiles',
+      title: edit.withFiles ? 'Edit: conversation only' : 'Edit: conversation and files',
+      detail: edit.withFiles
+        ? 'The files stay as they are'
+        : 'Put the files back to before the message too',
+      group: 'Chat',
+      keywords: ['edit', 'files', 'restore', 'conversation'],
+      run: () => edit.toggle(),
+    });
+  }
+  return commands;
+}
+
 export function toggleReasoning(threadId: string, openByDefault: boolean): void {
   conversationStore.setState((state) => {
     const before = state.reasoning[threadId];
@@ -209,9 +279,10 @@ export function conversationCommands(
   state: Pick<
     ConversationState,
     'threadId' | 'handle' | 'scrolledUp' | 'focusedMessage' | 'goBack'
-  > & {
-    readonly reasoningOpen: boolean;
-  },
+  > &
+    Partial<Pick<ConversationState, 'restore'>> & {
+      readonly reasoningOpen: boolean;
+    },
   openByDefault: boolean,
 ): AppCommand[] {
   const { handle, threadId } = state;
@@ -219,6 +290,7 @@ export function conversationCommands(
   return [
     ...findCommands(handle.find),
     ...goBackCommands(state.goBack, state.focusedMessage),
+    ...restoreCommands(state.restore, state.focusedMessage),
     {
       id: 'chat.previousMessage',
       title: 'Previous message',

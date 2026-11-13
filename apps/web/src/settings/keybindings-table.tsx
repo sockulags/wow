@@ -22,6 +22,7 @@ const conversationKeys = new Set([
   'copyMessage',
   'editMessage',
   'forkMessage',
+  'restoreMessage',
   'conversationEnd',
   'findInConversation',
   'findNext',

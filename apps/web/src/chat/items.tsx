@@ -2,6 +2,7 @@ import {
   ApprovalItemPayload,
   CompactionItemPayload,
   ErrorItemPayload,
+  FilesRestoredItemPayload,
   ReasoningItemPayload,
   SettingsChangeItemPayload,
   QuestionItemPayload,
@@ -23,6 +24,7 @@ import {
   CircleDashedIcon,
   ClockIcon,
   GitForkIcon,
+  HistoryIcon,
   PencilIcon,
   RotateCcwIcon,
 } from 'lucide-react';
@@ -36,6 +38,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ApprovalCard } from './approval-card';
+import { FilesRestoredLine } from './restore';
 import { errorMessage, useDispatch } from './data';
 import {
   QuestionCard,
@@ -113,6 +116,11 @@ export interface ItemContext {
   // 62, 71); absent where they are not offered.
   readonly onEdit?: (() => void) | undefined;
   readonly onFork?: (() => void) | undefined;
+  // "Restore files to here" on a user message whose turn kept a snapshot (thread work spec 20).
+  readonly onRestore?: (() => void) | undefined;
+  // A restore line: the message it went back to, and Undo while it is offered (spec 24).
+  readonly restoreLine?:
+    { readonly messageText: string; readonly onUndo?: (() => void) | undefined } | undefined;
   // The exchanges Edit replaced with this message, oldest first ("Earlier version", spec 62).
   readonly earlier?: readonly EarlierExchange[] | undefined;
 }
@@ -322,7 +330,7 @@ function UserMessage({
         </span>
       )}
       <div className="flex items-center gap-1">
-        {(context.onEdit || context.onFork) && (
+        {(context.onEdit || context.onFork || context.onRestore) && (
           <div
             data-testid="message-go-back"
             className="flex gap-0.5 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
@@ -337,6 +345,12 @@ function UserMessage({
               <Button size="xs" variant="ghost" onClick={context.onFork}>
                 <GitForkIcon />
                 Fork from here
+              </Button>
+            )}
+            {context.onRestore && (
+              <Button size="xs" variant="ghost" onClick={context.onRestore}>
+                <HistoryIcon />
+                Restore files to here
               </Button>
             )}
           </div>
@@ -739,6 +753,18 @@ function ItemBody({
           <FoldVerticalIcon aria-hidden className="size-3 shrink-0" />
           {compactionText(parsed.data)}
         </Divider>
+      ) : (
+        <Unreadable item={item} />
+      );
+    }
+    case 'files_restored': {
+      const parsed = FilesRestoredItemPayload.safeParse(item.payload);
+      return parsed.success ? (
+        <FilesRestoredLine
+          payload={parsed.data}
+          messageText={context.restoreLine?.messageText ?? ''}
+          onUndo={context.restoreLine?.onUndo}
+        />
       ) : (
         <Unreadable item={item} />
       );
