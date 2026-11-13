@@ -388,6 +388,41 @@ describe("a chat thread's own working copy (thread work spec 10 to 18)", () => {
     expect(git(thread().cwd, 'symbolic-ref', '--short', 'HEAD')).toBe(branchOf());
   });
 
+  it('forgets the start it noted when a stop came before git made the branch, so a branch the user then makes is not taken (restart)', async () => {
+    create();
+    // As if the server stopped after noting the start and before git ran.
+    const start = git(project, 'rev-parse', 'HEAD');
+    dispatch({ type: 'thread.workingCopyBranching', threadId: 't1', startSha: start });
+    await server.stop();
+    server = await launch();
+    await server.workspaces.settled();
+    expect(thread().workingCopy).toMatchObject({ state: 'failed', branchStart: null });
+
+    // The user's own branch of that name, at the same commit.
+    git(project, 'branch', branchOf());
+    send();
+    expect((await turnEnds()).state).toBe('failed');
+    expect(thread().workingCopy?.error).toMatch(/already exists/);
+    expect(startTurns()).toEqual([]);
+  });
+
+  it('forgets the start it noted when git failed before making the branch, so a branch the user then makes is not taken', async () => {
+    // A branch named `wow` keeps git from making any `wow/...` branch.
+    git(project, 'branch', 'wow');
+    create();
+    send();
+    expect((await turnEnds()).state).toBe('failed');
+    expect(git(project, 'branch', '--list', branchOf())).toBe('');
+    expect(thread().workingCopy?.branchStart ?? null).toBeNull();
+
+    git(project, 'branch', '-D', 'wow');
+    git(project, 'branch', branchOf());
+    send();
+    expect((await turnEnds('t1', 1)).state).toBe('failed');
+    expect(thread().workingCopy?.error).toMatch(/already exists/);
+    expect(startTurns()).toEqual([]);
+  });
+
   it('never deletes a branch that was there before the thread, across a restart (spec 15)', async () => {
     // The user's branch, at a commit nothing else reaches, that the thread's name happens to take.
     git(project, 'checkout', '-q', '--detach');

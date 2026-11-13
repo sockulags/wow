@@ -610,6 +610,15 @@ export class Workspaces {
     const projectFolder = thread.projectId ? this.#projectFolder(thread.projectId) : undefined;
     if (projectFolder !== undefined) {
       await discardWorkingCopy({ projectFolder, target: copy.path, git });
+      // Stopped before git made the branch: the note goes, so a branch of that name the user
+      // makes later is not taken for wow's own.
+      if (branch && (await readCommit(projectFolder, `refs/heads/${branch}`, git)) === null) {
+        this.#dispatch(`workingCopy:${thread.id}:branching:${randomUUID()}`, {
+          type: 'thread.workingCopyBranching',
+          threadId: thread.id,
+          startSha: null,
+        });
+      }
     }
     this.#dispatch(`workingCopy:${thread.id}:failed:${randomUUID()}`, {
       type: 'thread.workingCopyFailed',

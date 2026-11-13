@@ -737,11 +737,12 @@ export const InternalCommand = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('thread.workingCopyFailed'), threadId: Id, error: z.string() }),
   // Sent right before git is asked to make the thread's new branch at `startSha`: from then on
-  // the branch is wow's own (`WorkingCopy.branchStart`).
+  // the branch is wow's own (`WorkingCopy.branchStart`). Null when git turned out not to make it,
+  // so a branch of that name made later is not taken for wow's.
   z.object({
     type: z.literal('thread.workingCopyBranching'),
     threadId: Id,
-    startSha: z.string().min(1),
+    startSha: z.string().min(1).nullable(),
   }),
   z.object({
     type: z.literal('thread.workingCopySettled'),

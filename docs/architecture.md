@@ -1316,7 +1316,10 @@ removal ask only about files.
   its reflog) it takes it up with `git worktree add <path> <branch>` (the copy then starts at
   that commit, with a note when the start commit has moved since). Any other branch of that
   name, one that was there before the thread above all, is the user's: git refuses it and that
-  is the reason. Nothing falls back to the project folder.
+  is the reason. When git fails without making the branch, `thread.workingCopyBranching` with
+  `startSha: null` clears `branchStart`, so a branch of that name the user makes later at the
+  same commit (a fresh branch also has one reflog entry) is not taken for wow's. Nothing falls
+  back to the project folder.
 - **Again on its branch.** A message to a thread whose copy is `removed` (or whose folder went)
   makes it again with `git worktree add <path> <branch>` (`reopenThreadWorkingCopy`); a folder
   that is already there on the branch (a fork made it first) is taken as it is. A deleted branch,
@@ -1351,7 +1354,8 @@ removal ask only about files.
 - **Restart.** `recover()` takes a `pending` copy whose folder git finished on its branch as
   ready. A `pending` copy with `branchStart` (git was asked to make it) fails ("The server
   stopped while the working copy was being made"), its folder goes with `git worktree remove
---force`, its branch stays, and the next message takes the branch up. A `pending` copy without
+--force`, its branch stays, and the next message takes the branch up; when the stop came before
+  git made the branch, `branchStart` is cleared too. A `pending` copy without
   `branchStart` was never started (no message went out yet) and stays `pending`. Nothing here
   deletes a branch. A `ready` copy of a done thread is settled.
 - **Web.** `chat/working-copy.tsx`: `DraftWorkingCopy` (switch and line), `WorkingCopyChip` in

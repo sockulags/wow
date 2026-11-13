@@ -247,8 +247,9 @@ export interface ThreadCreateRequest {
   // The thread's `WorkingCopy.branchStart`: where an earlier try had git make the branch.
   readonly branchStart: string | null;
   // Called with the start commit right before git is asked to make the branch; the caller
-  // stores it, so a branch git leaves is known as wow's own.
-  readonly beforeBranch: (startSha: string) => void;
+  // stores it, so a branch git leaves is known as wow's own. Called with null when git failed
+  // without making it, so the note is not left to match a branch someone else makes later.
+  readonly beforeBranch: (startSha: string | null) => void;
   readonly git: GitRunOptions;
 }
 
@@ -285,7 +286,12 @@ export async function createThreadWorkingCopy(request: ThreadCreateRequest): Pro
     // From here the branch is wow's own, even when git stops halfway.
     if (tip === null) request.beforeBranch(start.sha);
     const added = await addNewBranchWorktree(projectFolder, target, branch, start.sha, git);
-    if (!added.ok) return failed(`${added.message} (${target})`);
+    if (!added.ok) {
+      if (tip === null && (await readCommit(projectFolder, `refs/heads/${branch}`, git)) === null) {
+        request.beforeBranch(null);
+      }
+      return failed(`${added.message} (${target})`);
+    }
     return { ok: true, startSha: start.sha, defaultBranch: start.defaultBranch, note: start.note };
   }
   await pruneWorktrees(projectFolder, git);
