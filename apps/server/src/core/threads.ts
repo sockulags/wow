@@ -44,6 +44,8 @@ import {
   toolFactsOf,
   type BackgroundTask,
   type QuestionReply,
+  isTurnSnapshot,
+  type RestoreConfirmed,
 } from '@wow/contracts';
 import { z } from 'zod';
 import { resolveStored } from '../settings/service.js';
@@ -105,6 +107,11 @@ type ThreadCommand = Extract<
       | 'thread.workingCopyFailed'
       | 'thread.workingCopyBranching'
       | 'thread.workingCopySettled'
+      | 'thread.restoreFiles'
+      | 'thread.undoRestore'
+      | 'thread.snapshotTaken'
+      | 'thread.filesRestored'
+      | 'thread.snapshotsDropped'
       | 'approval.answer'
       | 'question.answer'
       | 'provider.events';
@@ -493,6 +500,24 @@ function messageTurn(
   ];
 }
 
+// Edit's "Conversation and files" (thread work spec 21) needs the replaced turn's snapshot; the
+// provider service restores it before the turn goes out and checks the folder again there.
+function editRestore(
+  read: ReadModel,
+  threadId: string,
+  replaced: string,
+  confirmed: RestoreConfirmed,
+): { toTurnId: string; confirmed: RestoreConfirmed } {
+  const turn = read.threadTurns(threadId).find((candidate) => candidate.id === replaced);
+  if (!isTurnSnapshot(turn?.startSnapshot)) {
+    throw new CommandRejected(
+      'rejected',
+      'wow has no snapshot of the files from before this message, so only the conversation can go back.',
+    );
+  }
+  return { toTurnId: replaced, confirmed };
+}
+
 // What the thread's provider can do with background work; an instance gone can do nothing.
 function providerAbility(read: ReadModel, providerInstanceId: string) {
   const kind = read.providerInstance(providerInstanceId)?.kind;
@@ -724,22 +749,38 @@ export function decideThread(
       const stored = requireThread(read, command.threadId);
       const goBack = editGoBack(read, stored, command.turnId);
       const by = turnId(stored.id, read.turnCount(stored.id));
+      const restore = command.restoreFiles
+        ? editRestore(read, stored.id, command.turnId, command.restoreFiles.confirmed)
+        : undefined;
+      const turn = messageTurn(
+        read,
+        context,
+        { ...stored, goBack },
+        command.text,
+        command.skills ?? [],
+        undefined,
+        command.files,
+        sentImages(command.attachments),
+      );
       return [
         {
           kind: 'thread.goBackChanged',
           aggregate: stored.id,
           payload: { threadId: stored.id, goBack },
         },
-        ...messageTurn(
-          read,
-          context,
-          { ...stored, goBack },
-          command.text,
-          command.skills ?? [],
-          undefined,
-          command.files,
-          sentImages(command.attachments),
-        ),
+        ...(restore
+          ? turn.map((event) =>
+              event.kind === 'turn.started'
+                ? {
+                    ...event,
+                    payload: {
+                      ...event.payload,
+                      start: { ...event.payload.start, restoreFiles: restore },
+                    },
+                  }
+                : event,
+            )
+          : turn),
         {
           kind: 'turn.replaced',
           aggregate: stored.id,
@@ -1120,6 +1161,72 @@ export function decideThread(
       return answerApproval(command, read, context);
     case 'thread.toolsReported':
       return decideThreadTools(command, read, context);
+    // The snapshot service writes the files first and records them with `thread.filesRestored`;
+    // sent to the engine alone (by the assistant, a setup file) they are refused.
+    case 'thread.restoreFiles':
+    case 'thread.undoRestore':
+      throw new CommandRejected(
+        'rejected',
+        "Files are put back only from a chat thread's message or restore line, after its confirm.",
+      );
+    case 'thread.snapshotTaken': {
+      const thread = requireThread(read, command.threadId);
+      if (!read.threadTurns(thread.id).some((turn) => turn.id === command.turnId)) {
+        throw new CommandRejected('not_found', `No turn ${command.turnId}`);
+      }
+      return [
+        {
+          kind: 'turn.snapshotTaken',
+          aggregate: thread.id,
+          payload: {
+            threadId: thread.id,
+            turnId: command.turnId,
+            at: command.at,
+            snapshot: command.snapshot,
+          },
+        },
+      ];
+    }
+    case 'thread.snapshotsDropped': {
+      const thread = requireThread(read, command.threadId);
+      if (command.turnIds.length === 0) return [];
+      return [
+        {
+          kind: 'turn.snapshotsDropped',
+          aggregate: thread.id,
+          payload: { threadId: thread.id, turnIds: command.turnIds, before: command.before },
+        },
+      ];
+    }
+    // The line goes on the thread's last turn (thread work spec 24).
+    case 'thread.filesRestored': {
+      const thread = requireThread(read, command.threadId);
+      const last = read.lastTurn(thread.id);
+      if (!last) {
+        throw new CommandRejected('rejected', 'A thread without turns has nothing to restore.');
+      }
+      const index = read.nextItemIndex(thread.id);
+      return [
+        {
+          kind: 'thread.filesRestored',
+          aggregate: thread.id,
+          payload: {
+            threadId: thread.id,
+            item: {
+              id: `${last.id}:files-restored:${index}`,
+              threadId: thread.id,
+              turnId: last.id,
+              index,
+              kind: 'files_restored',
+              payload: command.restore,
+              streaming: false,
+            },
+            before: command.before,
+            after: command.after,
+          },
+        },
+      ];
+    }
     case 'thread.changesMarked': {
       const thread = requireThread(read, command.threadId);
       if (!command.base && !command.mark) return [];

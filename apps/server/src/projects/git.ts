@@ -943,3 +943,344 @@ export async function readUnpushedWithStatus(
     status: status.stdout,
   };
 }
+
+// Snapshots of a chat thread's folder (thread work spec 19 to 26) live in wow's own bare
+// repository, so every command that writes runs with `GIT_DIR` set to it and nothing is written
+// to the user's repository. Only `readSnapshotRepository` and `listSnapshotFiles` run in the
+// user's repository, and they only read. Bytes go in and out as they are: no filter, no hook,
+// no file system monitor.
+
+export type StoreGitResult =
+  | { readonly ok: true; readonly stdout: Buffer }
+  | { readonly ok: false; readonly missing: boolean; readonly message: string };
+
+export interface StoreGitCall {
+  // The folder git runs in; paths given to it are relative to this folder.
+  readonly cwd: string;
+  // wow's repository, set as `GIT_DIR`; undefined for a command in the user's repository.
+  readonly store?: string | undefined;
+  // A temporary index of wow's, set as `GIT_INDEX_FILE`.
+  readonly index?: string | undefined;
+  readonly input?: Buffer | undefined;
+  // Output past this many bytes stops git.
+  readonly maxBytes: number;
+}
+
+// The git environment with nothing left that could point git at another repository than the
+// one the call names.
+function storeEnvironment(call: StoreGitCall): NodeJS.ProcessEnv {
+  const env = gitEnvironment(process.env);
+  for (const name of [
+    'GIT_DIR',
+    'GIT_INDEX_FILE',
+    'GIT_WORK_TREE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_COMMON_DIR',
+    'GIT_NAMESPACE',
+  ]) {
+    delete env[name];
+  }
+  if (call.store !== undefined) env['GIT_DIR'] = call.store;
+  if (call.index !== undefined) env['GIT_INDEX_FILE'] = call.index;
+  return env;
+}
+
+// Like `runGit`, with bytes on stdin and stdout and the store's environment.
+export function runStoreGit(
+  args: readonly string[],
+  call: StoreGitCall,
+  options: GitRunOptions,
+): Promise<StoreGitResult> {
+  return new Promise((resolve) => {
+    const child = spawn(
+      options.git ?? 'git',
+      [...neverRun, ...plainPaths, '-c', 'gc.auto=0', '-C', call.cwd, ...args],
+      { windowsHide: true, env: storeEnvironment(call), stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    const stop = options.stop ?? stopProcessTree();
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let stderr = '';
+    let stopped: string | undefined;
+    let done = false;
+    let afterStop: ReturnType<typeof setTimeout> | undefined;
+    const finish = (result: StoreGitResult) => {
+      if (done) return;
+      done = true;
+      clearTimeout(limit);
+      clearTimeout(afterStop);
+      resolve(result);
+    };
+    const stopGit = (reason: string) => {
+      if (stopped !== undefined) return;
+      stopped = reason;
+      stop(child);
+      afterStop = setTimeout(
+        () => finish({ ok: false, missing: false, message: reason }),
+        options.stopWaitMs,
+      );
+    };
+    const limit = setTimeout(
+      () => stopGit(`git did not finish within ${options.timeoutMs} ms and was stopped`),
+      options.timeoutMs,
+    );
+    child.stdout.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > call.maxBytes) stopGit('git wrote more than wow reads');
+      else chunks.push(chunk);
+    });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      if (stderr.length < 64 * 1024) stderr += chunk;
+    });
+    // A git that stops reading early closes stdin; its exit code says why.
+    child.stdin.on('error', () => undefined);
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      if (stopped !== undefined) return;
+      finish({ ok: false, missing: error.code === 'ENOENT', message: error.message });
+    });
+    child.on('close', (code) => {
+      if (stopped !== undefined) return finish({ ok: false, missing: false, message: stopped });
+      if (code === 0) return finish({ ok: true, stdout: Buffer.concat(chunks) });
+      const lines = stderr.trim().split(/\r?\n/);
+      const message =
+        (lines.find((line) => /^(fatal|error):/.test(line)) ?? lines[0] ?? '') ||
+        `git ${args[0] ?? ''} exited with code ${code}`;
+      finish({ ok: false, missing: false, message });
+    });
+    child.stdin.end(call.input ?? Buffer.alloc(0));
+  });
+}
+
+// Where the folder is in Git: `ok`, or why not.
+export type SnapshotRepository =
+  | { readonly status: 'ok' }
+  | { readonly status: 'noRepository' | 'gitUnavailable'; readonly message: string };
+
+export async function readSnapshotRepository(
+  folder: string,
+  options: GitRunOptions,
+): Promise<SnapshotRepository> {
+  const found = await runStoreGit(
+    ['rev-parse', '--is-inside-work-tree'],
+    { cwd: folder, maxBytes: 4096 },
+    options,
+  );
+  if (found.ok && found.stdout.toString('utf8').trim() === 'true') return { status: 'ok' };
+  if (!found.ok && found.missing) {
+    return {
+      status: 'gitUnavailable',
+      message:
+        'git was not found, so wow keeps no snapshots of the files and cannot put them back.',
+    };
+  }
+  return {
+    status: 'noRepository',
+    message:
+      "The thread's folder is not in a Git repository, so wow keeps no snapshots of its files.",
+  };
+}
+
+// Every file Git tracks and every untracked file it does not ignore, relative to `folder`, with
+// forward slashes, each once (a file in a merge is listed once per side).
+export async function listSnapshotFiles(
+  folder: string,
+  maxBytes: number,
+  options: GitRunOptions,
+): Promise<
+  { readonly ok: true; readonly paths: string[] } | { readonly ok: false; readonly message: string }
+> {
+  const listed = await runStoreGit(
+    ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+    { cwd: folder, maxBytes },
+    options,
+  );
+  if (!listed.ok) return { ok: false, message: listed.message };
+  const paths = new Set(
+    listed.stdout
+      .toString('utf8')
+      .split('\0')
+      .filter((entry) => entry !== ''),
+  );
+  return { ok: true, paths: [...paths] };
+}
+
+export async function initSnapshotStore(
+  store: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  const made = await runStoreGit(
+    ['init', '--bare', '--quiet', store],
+    { cwd: path.dirname(store), maxBytes: 64 * 1024 },
+    options,
+  );
+  return made.ok ? { ok: true } : { ok: false, message: made.message };
+}
+
+// Writes each file's exact bytes into the store and answers their blob ids, in order. Paths are
+// relative to `cwd` or absolute; a path with a line break cannot be given this way.
+export async function hashSnapshotFiles(
+  store: string,
+  cwd: string,
+  paths: readonly string[],
+  options: GitRunOptions,
+): Promise<
+  { readonly ok: true; readonly ids: string[] } | { readonly ok: false; readonly message: string }
+> {
+  if (paths.length === 0) return { ok: true, ids: [] };
+  const hashed = await runStoreGit(
+    ['hash-object', '--no-filters', '-w', '--stdin-paths'],
+    {
+      cwd,
+      store,
+      input: Buffer.from(`${paths.join('\n')}\n`, 'utf8'),
+      maxBytes: paths.length * 80 + 1024,
+    },
+    options,
+  );
+  if (!hashed.ok) return { ok: false, message: hashed.message };
+  const ids = hashed.stdout
+    .toString('utf8')
+    .split('\n')
+    .filter((line) => line !== '');
+  if (ids.length !== paths.length) {
+    return { ok: false, message: 'git hashed fewer files than it was given' };
+  }
+  return { ok: true, ids };
+}
+
+export interface SnapshotEntry {
+  // 100644, 100755 or 120000 (a link, whose blob is the link's target).
+  readonly mode: string;
+  readonly id: string;
+  readonly path: string;
+  // The blob's size, when read back from a tree.
+  readonly size?: number | undefined;
+}
+
+// The tree of the entries, made with a temporary index of wow's.
+export async function writeSnapshotTree(
+  store: string,
+  index: string,
+  entries: readonly SnapshotEntry[],
+  options: GitRunOptions,
+): Promise<
+  { readonly ok: true; readonly tree: string } | { readonly ok: false; readonly message: string }
+> {
+  const lines = entries.map((entry) => `${entry.mode} ${entry.id}\t${entry.path}\0`).join('');
+  const filled = await runStoreGit(
+    ['update-index', '--add', '-z', '--index-info'],
+    { cwd: store, store, index, input: Buffer.from(lines, 'utf8'), maxBytes: 64 * 1024 },
+    options,
+  );
+  if (!filled.ok) return { ok: false, message: filled.message };
+  const written = await runStoreGit(
+    ['write-tree'],
+    { cwd: store, store, index, maxBytes: 4096 },
+    options,
+  );
+  if (!written.ok) return { ok: false, message: written.message };
+  return { ok: true, tree: written.stdout.toString('utf8').trim() };
+}
+
+// Keeps (or with null drops) refs in the store, so its objects stay.
+export async function updateSnapshotRefs(
+  store: string,
+  refs: readonly { readonly ref: string; readonly id: string | null }[],
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  if (refs.length === 0) return { ok: true };
+  const lines = refs
+    .map(({ ref, id }) => (id === null ? `delete ${ref}\n` : `update ${ref} ${id}\n`))
+    .join('');
+  const updated = await runStoreGit(
+    ['update-ref', '--stdin'],
+    { cwd: store, store, input: Buffer.from(lines, 'utf8'), maxBytes: 64 * 1024 },
+    options,
+  );
+  return updated.ok ? { ok: true } : { ok: false, message: updated.message };
+}
+
+// Drops the objects no ref keeps any more.
+export async function pruneSnapshotStore(
+  store: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  const pruned = await runStoreGit(
+    ['prune', '--expire=now'],
+    { cwd: store, store, maxBytes: 1024 * 1024 },
+    options,
+  );
+  return pruned.ok ? { ok: true } : { ok: false, message: pruned.message };
+}
+
+// Every file of a snapshot tree, with its size.
+export async function readSnapshotTree(
+  store: string,
+  tree: string,
+  maxBytes: number,
+  options: GitRunOptions,
+): Promise<
+  | { readonly ok: true; readonly entries: SnapshotEntry[] }
+  | { readonly ok: false; readonly message: string }
+> {
+  const listed = await runStoreGit(
+    ['ls-tree', '-r', '-l', '-z', '--full-tree', tree],
+    { cwd: store, store, maxBytes },
+    options,
+  );
+  if (!listed.ok) return { ok: false, message: listed.message };
+  const entries: SnapshotEntry[] = [];
+  for (const record of listed.stdout.toString('utf8').split('\0')) {
+    const match = /^(\d{6}) blob ([0-9a-f]+) +(\d+)\t(.+)$/s.exec(record);
+    if (match) {
+      entries.push({
+        mode: match[1] ?? '',
+        id: match[2] ?? '',
+        size: Number(match[3]),
+        path: match[4] ?? '',
+      });
+    }
+  }
+  return { ok: true, entries };
+}
+
+// The bytes of the blobs, by id (`cat-file --batch`), in one read.
+export async function readSnapshotBlobs(
+  store: string,
+  ids: readonly string[],
+  maxBytes: number,
+  options: GitRunOptions,
+): Promise<
+  | { readonly ok: true; readonly blobs: Map<string, Buffer> }
+  | { readonly ok: false; readonly message: string }
+> {
+  const wanted = [...new Set(ids)];
+  if (wanted.length === 0) return { ok: true, blobs: new Map() };
+  const read = await runStoreGit(
+    ['cat-file', '--batch'],
+    {
+      cwd: store,
+      store,
+      input: Buffer.from(`${wanted.join('\n')}\n`, 'utf8'),
+      maxBytes: maxBytes + wanted.length * 100,
+    },
+    options,
+  );
+  if (!read.ok) return { ok: false, message: read.message };
+  const blobs = new Map<string, Buffer>();
+  const out = read.stdout;
+  let at = 0;
+  while (at < out.length) {
+    const end = out.indexOf(0x0a, at);
+    if (end === -1) break;
+    const header = out.subarray(at, end).toString('utf8');
+    const match = /^([0-9a-f]+) blob (\d+)$/.exec(header);
+    if (!match) return { ok: false, message: `git could not read ${header}` };
+    const size = Number(match[2]);
+    blobs.set(match[1] ?? '', out.subarray(end + 1, end + 1 + size));
+    at = end + 1 + size + 1;
+  }
+  return { ok: true, blobs };
+}

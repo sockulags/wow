@@ -319,6 +319,13 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'thread.sendQueued': serverOnly,
   'thread.handedOver': serverOnly,
   'thread.changesMarked': serverOnly,
+  // Restoring writes the user's files; only the user does it, after the confirm (thread work
+  // Security).
+  'thread.restoreFiles': chatOnly,
+  'thread.undoRestore': chatOnly,
+  'thread.snapshotTaken': serverOnly,
+  'thread.filesRestored': serverOnly,
+  'thread.snapshotsDropped': serverOnly,
   'thread.toolsReported': serverOnly,
   'thread.answerQuestions': refused(
     'Only the user answers your questions, on their card. End your turn and wait for the answer.',

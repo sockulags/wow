@@ -8,6 +8,7 @@ import {
   AttachmentReadResult,
 } from './attachments.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
+import { RestorePreview, RestorePreviewParams } from './snapshots.js';
 import { RunDiff, RunDiffParams, ThreadDiff, ThreadDiffParams } from './diff.js';
 import {
   FileListParams,
@@ -370,6 +371,13 @@ export const rpcMethods = {
   'threads.removeWorkingCopy': {
     params: z.object({ threadId: z.string().min(1), expect: UnpushedWork }),
     result: Thread,
+  },
+  // What "Restore files to here" or Undo on a restore line would do now (thread work spec 22,
+  // 23), read at this moment; nothing is written. A refusal comes back as `status` with its
+  // reason, not as an error.
+  'threads.restorePreview': {
+    params: RestorePreviewParams,
+    result: RestorePreview,
   },
   // Files in a project folder that expected artifact globs match, for the builder's "Matches 2
   // files in Demo" line. Read only; nothing is stored.

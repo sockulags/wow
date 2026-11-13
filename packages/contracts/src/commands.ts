@@ -62,6 +62,13 @@ import { SessionTools, ThreadTools, ThreadToolsSource } from './session-tools.js
 import { CardOccurrence, LocalDay, RepeatRule } from './repeat.js';
 import { MissedTriggerPolicy, SecretRef, SettingScopeRef } from './settings.js';
 import { SetupApplication } from './setup.js';
+import {
+  FilesRestoredItemPayload,
+  RestoreConfirmed,
+  SnapshotAt,
+  StoredSnapshot,
+  TurnSnapshot,
+} from './snapshots.js';
 import { FileHash, RunEffect, UnpushedWork, WorkflowStep, WorkingCopy } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
@@ -213,8 +220,11 @@ export const Command = z.discriminatedUnion('type', [
   // Edit (agent workbench spec 62): the message replaces the last exchange, whose user message
   // `turnId` starts. The conversation goes on from before that message, in wow and in the
   // provider; the replaced exchange stays as the new turn's earlier version. Files stay as they
-  // are. Refused while a turn runs, when `turnId` is no longer the last message, and where the
-  // provider cannot go back.
+  // are, unless `restoreFiles` ("Conversation and files", thread work spec 21): then the server
+  // first puts them back to the start of the replaced turn, after the confirm showed
+  // `confirmed`; when that fails the turn fails with the reason and nothing is sent. Refused
+  // while a turn runs, when `turnId` is no longer the last message, and where the provider
+  // cannot go back.
   z.object({
     type: z.literal('thread.editLast'),
     threadId: Id,
@@ -225,6 +235,25 @@ export const Command = z.discriminatedUnion('type', [
     attachments: z
       .array(z.object({ id: AttachmentId, name: z.string().min(1).max(200).optional() }))
       .optional(),
+    restoreFiles: z.object({ confirmed: RestoreConfirmed }).optional(),
+  }),
+  // "Restore files to here" (thread work spec 20): puts the thread's folder back to the snapshot
+  // taken as the turn `turnId` started; the conversation does not change. `confirmed` holds the
+  // lists the confirm showed; the server refuses with `conflict` when it finds others (spec 22).
+  // The server's snapshot service writes the files and records the line; the engine alone
+  // refuses the command.
+  z.object({
+    type: z.literal('thread.restoreFiles'),
+    threadId: Id,
+    turnId: Id,
+    confirmed: RestoreConfirmed,
+  }),
+  // Undo on a restore line (spec 24): the files go back to how they were just before it.
+  z.object({
+    type: z.literal('thread.undoRestore'),
+    threadId: Id,
+    itemId: Id,
+    confirmed: RestoreConfirmed,
   }),
   // The way out of a go-back the provider keeps refusing (a session file cleaned up, a point it no
   // longer accepts): the thread stops going back, so its next message goes on in the thread's
@@ -610,6 +639,33 @@ export const InternalCommand = z.discriminatedUnion('type', [
     turnId: Id,
     base: z.object({ sha: z.string().min(1), files: z.array(FileHash) }).nullable(),
     mark: z.array(FileHash).nullable(),
+  }),
+  // The snapshot service kept a chat thread's folder as a turn started or ended (thread work
+  // spec 19), or says why it did not.
+  z.object({
+    type: z.literal('thread.snapshotTaken'),
+    threadId: Id,
+    turnId: Id,
+    at: SnapshotAt,
+    snapshot: StoredSnapshot,
+  }),
+  // The snapshot service wrote the files of a restore or an undo (spec 20, 24): the line on the
+  // thread's last turn, and the folder just before and just after it, which Undo and the next
+  // check for changes made outside the thread read.
+  z.object({
+    type: z.literal('thread.filesRestored'),
+    threadId: Id,
+    restore: FilesRestoredItemPayload,
+    before: TurnSnapshot.nullable(),
+    after: TurnSnapshot.nullable(),
+  }),
+  // Snapshots of these turns taken before `before` were dropped after `chat.snapshotKeepDays`
+  // (spec 26); a turn whose start snapshot went no longer offers Restore.
+  z.object({
+    type: z.literal('thread.snapshotsDropped'),
+    threadId: Id,
+    turnIds: z.array(Id),
+    before: Timestamp,
   }),
   // The provider service, with what a chat thread's session reported it can use (thread work
   // spec 38, 39), or null when the session that reported the stored list is gone (a restart, the
@@ -1092,6 +1148,9 @@ export const DomainEvent = z.discriminatedUnion('kind', [
         goBack: z.object({ at: z.string().min(1).nullable(), fork: z.boolean() }).optional(),
         // The message's images by id; the provider service hands their files to the adapter.
         images: z.array(AttachmentId).optional(),
+        // Edit's "Conversation and files" (thread work spec 21): the provider service puts the
+        // files back to the start of `toTurnId` before the turn goes out.
+        restoreFiles: z.object({ toTurnId: Id, confirmed: RestoreConfirmed }).optional(),
         // Set for the assistant thread: the provider service then hands the turn wow's tools,
         // the instruction text and the app's empty folder. The token is never stored here.
         kind: ThreadKind.optional(),
@@ -1148,6 +1207,27 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       // The provider's point after this turn (`ProviderEvent` turnCompleted.resumePoint), in the
       // session the thread had then.
       resumePoint: ResumePointRef.optional(),
+    }),
+  }),
+  z.object({
+    kind: z.literal('turn.snapshotTaken'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, turnId: Id, at: SnapshotAt, snapshot: StoredSnapshot }),
+  }),
+  z.object({
+    kind: z.literal('turn.snapshotsDropped'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, turnIds: z.array(Id), before: Timestamp }),
+  }),
+  // The `files_restored` line, and the folder before and after it (thread work spec 24).
+  z.object({
+    kind: z.literal('thread.filesRestored'),
+    aggregate: Id,
+    payload: z.object({
+      threadId: Id,
+      item: ThreadItem,
+      before: TurnSnapshot.nullable(),
+      after: TurnSnapshot.nullable(),
     }),
   }),
   // Edit put `by` in the place of `turnId` (agent workbench spec 62).

@@ -1,6 +1,7 @@
 import {
   Thread,
   WorkflowRun,
+  confirmedOf,
   inListOrder,
   runFolder,
   settingsRegistry,
@@ -24,6 +25,7 @@ import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
 import { projects, threads, turns, workflowRuns } from '../db/schema.js';
 import { ImageRefused, type ImageStore } from '../files/images.js';
+import { RestoreChanged, RestoreRefused, type FolderSnapshots } from '../files/snapshots.js';
 import { listFolderFiles } from '../files/list.js';
 import {
   EditorRefused,
@@ -73,6 +75,7 @@ export interface HandlerDeps {
   readonly hosts: HostPoller;
   readonly hostLookup: HostLookup;
   readonly images: ImageStore;
+  readonly snapshots: FolderSnapshots;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
   readonly discoverProjects: () => Promise<DiscoveredProject[]>;
   readonly listSessions: (providerInstanceId?: string) => Promise<TerminalSession[]>;
@@ -161,6 +164,47 @@ function innerCommands(command: Command, deps: HandlerDeps): Command[] {
   return [];
 }
 
+// A restore that cannot be made answers `rejected` with the reason; one whose files changed
+// since the confirm answers `conflict` with what the server finds now (thread work spec 22).
+async function restoreCall<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof RestoreRefused) {
+      throw new RpcFault(error.status === 'notFound' ? 'not_found' : 'rejected', error.message);
+    }
+    if (error instanceof RestoreChanged) {
+      throw new RpcFault('conflict', error.message, error.preview);
+    }
+    throw error;
+  }
+}
+
+const sameList = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.toSorted().join('\0') === b.toSorted().join('\0');
+
+// Edit's "Conversation and files" is checked against the folder before the turn is decided, so
+// a confirm that no longer holds is asked again instead of failing the new turn.
+async function checkEditRestore(command: Command, deps: HandlerDeps): Promise<void> {
+  if (command.type !== 'thread.editLast' || !command.restoreFiles) return;
+  const preview = await restoreCall(() =>
+    deps.snapshots.preview({ threadId: command.threadId, turnId: command.turnId }),
+  );
+  if (preview.status !== 'ok') throw new RpcFault('rejected', preview.message ?? preview.status);
+  const shown = command.restoreFiles.confirmed;
+  const found = confirmedOf(preview);
+  if (
+    !sameList(found.outside, shown.outside) ||
+    !sameList(found.notRestorable, shown.notRestorable)
+  ) {
+    throw new RpcFault(
+      'conflict',
+      'The files changed since the confirm was shown; look at the list again.',
+      preview,
+    );
+  }
+}
+
 // A refused image is the user's to fix, so it answers `rejected` with the sentence.
 async function imageCall<T>(call: () => Promise<T>): Promise<T> {
   try {
@@ -187,6 +231,11 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         const missing = await deps.images.refusal(command);
         if (missing !== undefined) throw new RpcFault('rejected', missing);
       }
+      // Restoring writes the folder first, then records the line (thread work spec 20, 24).
+      if (command.type === 'thread.restoreFiles' || command.type === 'thread.undoRestore') {
+        return restoreCall(() => deps.snapshots.restore(commandId, command));
+      }
+      await checkEditRestore(command, deps);
       const result = deps.engine.dispatch(commandId, command);
       // The command committed but its file could not be written; a scan puts the list back.
       const failed = deps.skills.writeFailure(commandId);
@@ -349,6 +398,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       });
     },
     'threads.workingCopyPlan': ({ projectId }) => deps.workspaces.plan(projectId),
+    'threads.restorePreview': (params) => restoreCall(() => deps.snapshots.preview(params)),
     'threads.workingCopyStatus': async ({ threadId }) => {
       try {
         return await deps.workspaces.threadStatus(threadId);
