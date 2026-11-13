@@ -30,7 +30,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { snapshot } from '../core/subscriptions.js';
-import { providerInstances, threads, turns } from '../db/schema.js';
+import { providerInstances, restorePoints, threads, turns } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
 import { FolderSnapshots, unsafeSnapshotPath } from './snapshots.js';
@@ -408,6 +408,7 @@ describe('Restore files to here (spec 20, 22, 24, 25)', () => {
       outside: [],
       notRestorable: [],
       leftAlone: [],
+      outsideUnknown: false,
     });
     const answer = await restore('t1:turn:0', confirmedOf(shown));
     expect(errorOf(answer)).toBeUndefined();
@@ -529,6 +530,53 @@ describe('files a restore leaves alone (spec 19, 25)', () => {
     expect(await read('agent.bin')).toBe('a'.repeat(100));
     expect(await read('mine.bin')).toBe('m'.repeat(100));
     expect(await read('src/bell.ts')).toBe('ring();\r\n');
+  });
+});
+
+describe('when wow cannot tell what changed outside the thread (spec 22)', () => {
+  it('lists every touched file as changed outside when the last turn has no end snapshot', async () => {
+    await twoTurns();
+    for (const endSnapshot of [null, { missing: 'wow could not read the folder: invented' }]) {
+      server.database.db
+        .update(turns)
+        .set({ endSnapshot })
+        .where(eq(turns.id, 't1:turn:1'))
+        .run();
+      const shown = await preview({ turnId: 't1:turn:0' });
+      expect(shown).toMatchObject({
+        status: 'ok',
+        write: ['docs/old.md', 'src/bell.ts'],
+        remove: ['docs/notes.md'],
+        outside: ['docs/notes.md', 'docs/old.md', 'src/bell.ts'],
+        outsideUnknown: true,
+      });
+    }
+    const shown = await preview({ turnId: 't1:turn:0' });
+    expect(errorOf(await restore('t1:turn:0', { outside: [], notRestorable: [] }))).toMatchObject({
+      code: 'conflict',
+    });
+    expect(await read('src/bell.ts')).toBe('ring();\r\nring();\r\n');
+    expect(errorOf(await restore('t1:turn:0', confirmedOf(shown)))).toBeUndefined();
+    expect(await read('src/bell.ts')).toBe('ring();\r\n');
+  });
+
+  it('does the same for an undo when the restore recorded no state after it', async () => {
+    await twoTurns();
+    const shown = await preview({ turnId: 't1:turn:0' });
+    await restore('t1:turn:0', confirmedOf(shown));
+    const [line] = restoreLines();
+    server.database.db.update(restorePoints).set({ after: null }).run();
+    const back = await preview({ undoItemId: line?.id ?? '' });
+    expect(back).toMatchObject({
+      status: 'ok',
+      write: ['docs/notes.md', 'src/bell.ts'],
+      remove: ['docs/old.md'],
+      outside: ['docs/notes.md', 'docs/old.md', 'src/bell.ts'],
+      outsideUnknown: true,
+    });
+    expect(errorOf(await undo(line?.id ?? '', { outside: [], notRestorable: [] }))).toMatchObject({
+      code: 'conflict',
+    });
   });
 });
 

@@ -73,6 +73,10 @@ export const RestorePreview = z.object({
   outside: z.array(RelativePath),
   notRestorable: z.array(OmittedFile),
   leftAlone: z.array(LeftAloneFile),
+  // wow has no record of how the thread left the folder (no end snapshot of its last turn, or
+  // none after its last restore), so it cannot tell what changed outside the thread: `outside`
+  // then lists every file the restore touches.
+  outsideUnknown: z.boolean(),
 });
 export type RestorePreview = z.infer<typeof RestorePreview>;
 

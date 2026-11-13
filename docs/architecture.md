@@ -3561,7 +3561,7 @@ not the Assistant) at each turn's start and end, so the user can put them back.
   wait for; it never fails the turn. The end is taken on `turn.ended` (joined to the folder's queue
   in the same commit, added to `#preparing` so `idle()` covers it).
 - **Preview and restore.** `threads.restorePreview` answers `RestorePreview {status, message,
-write, remove, outside, notRestorable, leftAlone}`; a refusal is a `status` (`noRepository`,
+write, remove, outside, outsideUnknown, notRestorable, leftAlone}`; a refusal is a `status` (`noRepository`,
   `gitUnavailable`, `noSnapshot`, `turnRunning`, `outside`, `notChat`) with its reason. It takes
   a snapshot of the folder now and compares trees: `write` the target's files that differ or are
   missing, `remove` the files now that the target did not have and that the thread left (they
@@ -3573,7 +3573,10 @@ write, remove, outside, notRestorable, leftAlone}`; a refusal is a `status` (`no
   `chat.snapshotMaxFileBytes` now (`tooLarge`: no snapshot holds its bytes, so it is never
   deleted or overwritten, since Undo could not bring it back), `notRestorable` the target's `omitted`, and `outside` the touched files that differ
   from the thread's own last state: its last restore's `after` when that came after the last
-  turn's end, else the last turn's end snapshot. Any write or remove path with `..`, a full
+  turn's end, else the last turn's end snapshot. When there is none (the last turn has no end
+  snapshot, or a restore recorded no `after`), wow cannot tell: every touched file is in `outside`
+  (so the confirm reads "Restore anyway") and `outsideUnknown` is true, which the confirm says.
+  Any write or remove path with `..`, a full
   path, `.git`, a name Windows does not take (on Windows), or a folder on the way that is a link
   or junction refuses the whole restore (`outside`). `thread.restoreFiles {threadId, turnId,
 confirmed}` and `thread.undoRestore {threadId, itemId, confirmed}` are taken by the RPC

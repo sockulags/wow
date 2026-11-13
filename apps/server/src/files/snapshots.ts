@@ -102,6 +102,7 @@ interface Plan {
   readonly write: string[];
   readonly remove: string[];
   readonly outside: string[];
+  readonly outsideUnknown: boolean;
   readonly notRestorable: OmittedFile[];
   readonly leftAlone: LeftAloneFile[];
   readonly target: ReadonlyMap<string, SnapshotEntry>;
@@ -169,6 +170,7 @@ const refusedPreview = (status: RestoreRefusal, message: string): RestorePreview
   outside: [],
   notRestorable: [],
   leftAlone: [],
+  outsideUnknown: false,
 });
 
 export class FolderSnapshots {
@@ -468,6 +470,7 @@ export class FolderSnapshots {
           outside: plan.outside,
           notRestorable: plan.notRestorable,
           leftAlone: plan.leftAlone,
+          outsideUnknown: plan.outsideUnknown,
         };
       } catch (error) {
         if (!(error instanceof RestoreRefused) || error.status === 'notFound') throw error;
@@ -620,7 +623,8 @@ export class FolderSnapshots {
   ): Promise<Plan> {
     const wanted = await this.#entries(store, target, deadline);
     const present = await this.#entries(store, now, deadline);
-    // A reference wow cannot read any more only means nothing is told apart as outside.
+    // Without a reference (none was kept, or wow cannot read it any more) wow cannot tell what
+    // changed outside the thread, so every file the restore touches counts as changed outside.
     const before = reference
       ? await this.#entries(store, reference, deadline).catch(() => undefined)
       : undefined;
@@ -662,20 +666,21 @@ export class FolderSnapshots {
       remove.push(file);
     }
     const touched = new Set([...write, ...remove]);
-    const outside = before
-      ? [...touched].filter((file) => {
+    const outside = !before
+      ? [...touched]
+      : [...touched].filter((file) => {
           if (largeBefore.has(file) || largeNow.has(file)) {
             return largeBefore.get(file) !== largeNow.get(file);
           }
           return before.has(file) || present.has(file)
             ? !sameEntry(before.get(file), present.get(file))
             : false;
-        })
-      : [];
+        });
     return {
       write: sorted(write),
       remove: sorted(new Set(remove)),
       outside: sorted(outside),
+      outsideUnknown: before === undefined,
       notRestorable: target.omitted.toSorted((a, b) => (a.path < b.path ? -1 : 1)),
       leftAlone: leftAlone.toSorted((a, b) => (a.path < b.path ? -1 : 1)),
       target: wanted,
@@ -791,6 +796,7 @@ export class FolderSnapshots {
       outside: plan.outside,
       notRestorable: plan.notRestorable,
       leftAlone: plan.leftAlone,
+      outsideUnknown: plan.outsideUnknown,
     });
   }
 

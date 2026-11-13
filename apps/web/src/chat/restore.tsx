@@ -237,6 +237,12 @@ export function RestoreDialog({ threadId }: { readonly threadId: string }) {
                       ? 'The files are already as they were then.'
                       : "The thread's folder goes back to how it was. The conversation, commits and ignored files stay as they are."}
                   </span>
+                  {preview.outsideUnknown && (
+                    <span data-testid="restore-outside-unknown" className="text-destructive">
+                      wow has no record of how this thread left its folder, so it cannot tell what
+                      changed outside the thread. Every file below may hold changes of yours.
+                    </span>
+                  )}
                   <PathList
                     testId="restore-outside"
                     label="Changed outside this thread since its last turn"

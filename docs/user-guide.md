@@ -775,8 +775,9 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   sent: changed files get their content back, new files are deleted, deleted files come back.
   The conversation stays as it is, so this works on Codex too. A confirm lists what is written
   back and deleted, and first the files that changed outside the thread since its last turn (by
-  you, an editor or another program); the button then reads **Restore anyway**. **Enter**
-  confirms, **Escape** cancels. Afterwards a line such as "Files restored to before "Make the
+  you, an editor or another program); the button then reads **Restore anyway**. When wow has no record of how the thread left
+  the folder (for example the last turn's snapshot could not be taken), it says so and lists every
+  file the restore would change as possibly yours. **Enter** confirms, **Escape** cancels. Afterwards a line such as "Files restored to before "Make the
   bell ring twice" · 4 written · 1 deleted" offers **Undo** until the next message or the next
   restore. A restore never touches commits, branches, the staged changes or ignored files (such
   as `.env` or build output); commits made since stay, and the restored files show as changes

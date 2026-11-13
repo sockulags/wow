@@ -110,6 +110,7 @@ const okPreview = (overrides: Partial<RestorePreview> = {}): RestorePreview => (
   outside: [],
   notRestorable: [],
   leftAlone: [],
+  outsideUnknown: false,
   ...overrides,
 });
 
@@ -259,6 +260,31 @@ describe('Restore files to here (spec 20, 22)', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Restore anyway' }));
     expect(dispatched().at(-1)).toMatchObject({
       confirmed: { outside: ['src/bell.ts'], notRestorable: ['assets/bell.wav'] },
+    });
+  });
+
+  it('says wow cannot tell what changed outside and asks for "Restore anyway"', async () => {
+    const user = userEvent.setup();
+    const { dispatched } = setup({
+      previews: [
+        okPreview({
+          outside: ['docs/notes.md', 'docs/old.md', 'src/bell.ts'],
+          outsideUnknown: true,
+        }),
+      ],
+    });
+    await user.click(
+      within(userRows()[0] as HTMLElement).getByRole('button', { name: 'Restore files to here' }),
+    );
+    const dialog = await confirm();
+    expect(await within(dialog).findByTestId('restore-outside-unknown')).toHaveProperty(
+      'textContent',
+      expect.stringContaining('cannot tell what changed outside the thread'),
+    );
+    expect(listed('restore-outside')).toEqual(['docs/notes.md', 'docs/old.md', 'src/bell.ts']);
+    await user.click(within(dialog).getByRole('button', { name: 'Restore anyway' }));
+    expect(dispatched().at(-1)).toMatchObject({
+      confirmed: { outside: ['docs/notes.md', 'docs/old.md', 'src/bell.ts'] },
     });
   });
 
