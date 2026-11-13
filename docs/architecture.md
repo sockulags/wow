@@ -3511,7 +3511,7 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
   `pending`, `disabled`, `other`. Only named fields, every text and list bounded
   (`sessionToolsLimits`); `boundedSessionTools` cuts what an adapter read to fit. No field can
   hold a server's config, environment, headers or arguments (spec 41). ProviderEvent
-  `sessionTools {threadId, tools}`, ProviderCommand `describeSession {threadId}` answering
+  `sessionTools {threadId, tools}` (`tools` null: the session ended by itself), ProviderCommand `describeSession {threadId}` answering
   `SessionTools` or null without a live session. Topic `threadTools` (thread-scoped) with rows
   `ThreadTools {threadId, tools, source, live}`; RPC `threads.refreshTools {threadId}` answering
   `{outcome: changed | unchanged | noSession}`.
@@ -3558,8 +3558,10 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
   paths. Names are not netted: they identify the entry. It is stored
   only when the list (everything but `reportedAt`, compared by `sameSessionTools`) or its
   liveness changed, with the server's time; the assistant is refused. `tools: null` marks the
-  stored list not live: at `recover()` (no session survives a restart), when an instance's
-  adapter is released, when a thread moves to another instance, and when Refresh finds the
+  stored list not live: at `recover()` (no session survives a restart), when the adapter emits
+  `sessionTools` with `tools: null` (the Claude adapter does when Claude Code's stream of a
+  session that reported a list ends without wow closing it), when an instance's adapter is
+  released, when a thread moves to another instance, and when Refresh finds the
   session gone. `refreshTools(threadId)` asks the adapter only while the stored row is live and
   the instance's adapter exists; otherwise it answers `noSession` and sends nothing.
 - **Web** (`panel/tools-tab.tsx`). Tab kind `tools` (`openTools`, `toolsTabId` in

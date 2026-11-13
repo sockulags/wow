@@ -187,7 +187,7 @@ function harness(turns: FakeStep[][], answers: FakeLive = live, within = context
   });
   const reported = () => new Promise<void>((resolve) => waiting.push(resolve));
   const tools = (): SessionTools[] =>
-    events.flatMap((event) => (event.type === 'sessionTools' ? [event.tools] : []));
+    events.flatMap((event) => (event.type === 'sessionTools' && event.tools ? [event.tools] : []));
   return { adapter, events, queries: query.opened, reported, tools };
 }
 
@@ -486,6 +486,27 @@ describe('session tools from Claude Code', () => {
     expect(
       tools?.mcpServers.map((server) => [server.name, server.tools.map((t) => t.name)]),
     ).toEqual([['tea-docs', ['search_docs']]]);
+  });
+
+  it('says the list is no longer live when Claude Code exits by itself between turns', async () => {
+    const gate: { release?: () => void } = {};
+    const hold = new Promise<void>((resolve) => (gate.release = resolve));
+    const h = harness([
+      [init, done, { hold }, { crash: 'Claude Code process exited with code 1' }],
+    ]);
+    const reported = h.reported();
+    await h.adapter.send(startTurn());
+    await reported;
+    const gone = h.reported();
+    gate.release?.();
+    await gone;
+    expect(h.events.some((event) => event.type === 'turnFailed')).toBe(false);
+    expect(h.events.filter((event) => event.type === 'sessionTools').at(-1)).toEqual({
+      type: 'sessionTools',
+      threadId: 't1',
+      tools: null,
+    });
+    await expect(h.adapter.send({ type: 'describeSession', threadId: 't1' })).resolves.toBeNull();
   });
 
   it('reports nothing for an assistant session', async () => {

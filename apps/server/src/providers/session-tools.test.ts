@@ -179,6 +179,24 @@ describe('session tools', () => {
     expect(described()).toHaveLength(1);
   });
 
+  it('marks the list not live when the adapter says the session ended by itself', async () => {
+    await sendTurn('Brew the tea');
+    expect(stored()[0]).toMatchObject({ live: true });
+    const marked = new Promise<void>((resolve) => {
+      const off = engine.onCommit((commit) => {
+        if (commit.events.some(({ event }) => event.kind === 'thread.toolsReported')) {
+          off();
+          resolve();
+        }
+      });
+    });
+    adapter.emit([{ type: 'sessionTools', threadId: 't1', tools: null }]);
+    await marked;
+    expect(stored()[0]).toMatchObject({ live: false });
+    await expect(service.refreshTools('t1')).resolves.toBe('noSession');
+    expect(described()).toHaveLength(0);
+  });
+
   it('stores no configuration, environment, header or argument an adapter let through', async () => {
     await sendTurn('Brew the tea');
     const leaky = {

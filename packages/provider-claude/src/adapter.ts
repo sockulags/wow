@@ -576,6 +576,11 @@ export class ClaudeAdapter implements ProviderAdapter {
       if (current) this.#sessions.delete(session.threadId);
       session.input.end();
       if (current) this.#cancelPending(session.threadId);
+      // The list the session reported is no longer live: Refresh has nothing to ask (spec 39).
+      if (current && session.initTools && !session.toolsOnly) {
+        session.initTools = undefined;
+        this.#emit({ type: 'sessionTools', threadId: session.threadId, tools: null });
+      }
       // The background work ended with the process, so the turn it would have started fails.
       if (current && !session.turnActive && session.background.length > 0) {
         this.#setBackground(session, []);

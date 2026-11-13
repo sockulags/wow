@@ -367,8 +367,9 @@ export const ProviderEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('turnInterrupted'), ...ThreadScoped, ...ResumePoint }),
   // What the session can use, as the provider reported it (thread work spec 38): Claude Code at
   // each init message of the session, Codex when a thread starts or resumes. The server stores it
-  // when it differs from the stored list.
-  z.object({ type: z.literal('sessionTools'), ...ThreadScoped, tools: SessionTools }),
+  // when it differs from the stored list. Null: the session ended by itself (Claude Code exited),
+  // so the stored list is no longer live and Refresh is not offered (spec 39).
+  z.object({ type: z.literal('sessionTools'), ...ThreadScoped, tools: SessionTools.nullable() }),
   // The provider refused a Stop of a background task or a Ctrl+B; the server reports it, as the
   // request itself changes nothing the user could see.
   z.object({
