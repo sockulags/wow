@@ -619,7 +619,7 @@ describe('read tools', () => {
       const properties = Object.keys(
         (tool.inputSchema['properties'] as Record<string, unknown> | undefined) ?? {},
       );
-      expect(properties.filter((name) => pathLike.test(name)), tool.name).toEqual([]);
+      expect(properties.filter((name) => pathLike.test(name))).toEqual([]);
     }
     for (const name of [
       ...Object.keys(readers),
@@ -628,8 +628,8 @@ describe('read tools', () => {
     ]) {
       const needsService = name === 'test_connection' || name === 'read_token_guide';
       const { text } = await call(name, needsService ? { service: 'github' } : {});
-      expect(text, name).not.toContain(fileMarker);
-      expect(text, name).not.toContain(path.join('.wow', 'snapshots'));
+      expect(text).not.toContain(fileMarker);
+      expect(text).not.toContain(path.join('.wow', 'snapshots'));
     }
   });
 });

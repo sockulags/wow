@@ -396,6 +396,11 @@ describe('snapshots of a turn (spec 19)', () => {
   });
 });
 
+const unreachableTrees = () =>
+  git(storeOf(), 'fsck', '--unreachable', '--no-reflogs', '--no-progress')
+    .split('\n')
+    .filter((line) => line.startsWith('unreachable tree'));
+
 describe('Restore files to here (spec 20, 22, 24, 25)', () => {
   it('lists what changes, puts the files back to the first snapshot and undoes it', async () => {
     await twoTurns();
@@ -538,11 +543,7 @@ describe('when wow cannot tell what changed outside the thread (spec 22)', () =>
   it('lists every touched file as changed outside when the last turn has no end snapshot', async () => {
     await twoTurns();
     for (const endSnapshot of [null, { missing: 'wow could not read the folder: invented' }]) {
-      server.database.db
-        .update(turns)
-        .set({ endSnapshot })
-        .where(eq(turns.id, 't1:turn:1'))
-        .run();
+      server.database.db.update(turns).set({ endSnapshot }).where(eq(turns.id, 't1:turn:1')).run();
       const shown = await preview({ turnId: 't1:turn:0' });
       expect(shown).toMatchObject({
         status: 'ok',
@@ -645,18 +646,14 @@ describe('what a restore writes and keeps', () => {
 
   it('drops the trees only a preview made once a restore has been done', async () => {
     await twoTurns();
-    const unreachable = () =>
-      git(storeOf(), 'fsck', '--unreachable', '--no-reflogs', '--no-progress')
-        .split('\n')
-        .filter((line) => line.startsWith('unreachable tree'));
-    expect(unreachable()).toEqual([]);
+    expect(unreachableTrees()).toEqual([]);
     await writeFile(file('scratch.txt'), 'one\n');
     await preview({ turnId: 't1:turn:0' });
     await writeFile(file('scratch.txt'), 'between the preview and the restore\n');
     const shown = await preview({ turnId: 't1:turn:0' });
-    expect(unreachable()).toHaveLength(2);
+    expect(unreachableTrees()).toHaveLength(2);
     expect(errorOf(await restore('t1:turn:0', confirmedOf(shown)))).toBeUndefined();
-    expect(unreachable()).toEqual([]);
+    expect(unreachableTrees()).toEqual([]);
     // The next snapshot still finds every blob its manifest names.
     send('Now add the notes');
     await turnEnds(2);
@@ -869,11 +866,11 @@ describe('path rules', () => {
 
   it("refuses the 8.3 short name of Git's own folder on Windows only, however it is cased", () => {
     for (const name of ['git~1', 'GIT~1', 'Git~12', 'sub/git~2/config']) {
-      expect(unsafeSnapshotPath(name, 'win32'), name).toMatch(/Git's own/);
-      expect(unsafeSnapshotPath(name, 'linux'), name).toBeUndefined();
+      expect(unsafeSnapshotPath(name, 'win32')).toMatch(/Git's own/);
+      expect(unsafeSnapshotPath(name, 'linux')).toBeUndefined();
     }
     for (const name of ['git~', 'git~a', 'mygit~1', 'git~1x', 'git-1']) {
-      expect(unsafeSnapshotPath(name, 'win32'), name).toBeUndefined();
+      expect(unsafeSnapshotPath(name, 'win32')).toBeUndefined();
     }
   });
 

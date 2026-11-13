@@ -654,10 +654,7 @@ export class FolderSnapshots {
       }
       if (sameEntry(entry, present.get(file))) continue;
       // Not listed now but on disk: Git ignores it now, and an ignored file is never touched.
-      if (
-        !present.has(file) &&
-        (await lstat(fullPath(folder, file)).catch(() => undefined))
-      ) {
+      if (!present.has(file) && (await lstat(fullPath(folder, file)).catch(() => undefined))) {
         leftAlone.push({ path: file, reason: 'ignoredNow' });
         continue;
       }
