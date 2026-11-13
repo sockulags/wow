@@ -580,6 +580,51 @@ describe('when wow cannot tell what changed outside the thread (spec 22)', () =>
   });
 });
 
+describe('a preview queued behind an end snapshot (spec 22)', () => {
+  it('reads the end snapshot the queue just took, so a later edit shows as changed outside', async () => {
+    await twoTurns();
+    server.database.db
+      .update(turns)
+      .set({ endSnapshot: null })
+      .where(eq(turns.id, 't1:turn:1'))
+      .run();
+    // The editor writes the bell once the snapshot has read the folder: the clock is read at the
+    // end of the read, and the preview below is already queued behind it.
+    let edited = false;
+    const snaps = new FolderSnapshots({
+      db: server.database.db,
+      engine: {
+        dispatch: (id, command) => server.engine.dispatch(`${id}:again`, command),
+      } as typeof server.engine,
+      settings: server.settings,
+      logger: {
+        error: () => undefined,
+        warn: () => undefined,
+        info: () => undefined,
+        debug: () => undefined,
+      },
+      home,
+      platform: 'linux',
+      clock: () => {
+        if (!edited) {
+          edited = true;
+          writeFileSync(file('src/bell.ts'), 'ring(); // mine, after the snapshot\n');
+        }
+        return new Date((now += 1000));
+      },
+    });
+    const taking = snaps.take('t1', 't1:turn:1', 'end');
+    const shown = snaps.preview({ threadId: 't1', turnId: 't1:turn:0' });
+    await Promise.all([taking, shown]);
+    expect(await shown).toMatchObject({
+      status: 'ok',
+      outside: ['src/bell.ts'],
+      outsideUnknown: false,
+    });
+    expect(turnRows()[1]?.endSnapshot).toMatchObject({ files: expect.any(Number) });
+  });
+});
+
 describe('refusals (spec 23, 26, 44)', () => {
   it('refuses while a turn runs, for an old turn, a step thread and a link out of the folder', async () => {
     await twoTurns();

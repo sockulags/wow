@@ -3529,7 +3529,8 @@ not the Assistant) at each turn's start and end, so the user can put them back.
   hash of `folderKey` (so `C:\Code\Tea` and `c:/code/tea` share one). `files/snapshots.ts`
   (`FolderSnapshots`) runs everything for one folder one after the other (`#serial`), so a restore
   never meets a snapshot half taken and a preview waits for the end snapshot of a turn that just
-  ended. `stop()` waits for every snapshot, its record and the expiry after it that is in flight
+  ended. The snapshot is recorded inside that task, before it resolves, so whatever is queued
+  after it reads the recorded state; only the expiry follows outside it. `stop()` waits for every snapshot, its record and the expiry after it that is in flight
   and starts none after; `ProviderService.stop()` calls it (after waiting for the turns being
   prepared) and so does the server's stop, before the database closes. The plumbing is in
   `projects/git.ts` (`runStoreGit`, `readSnapshotRepository`,

@@ -259,37 +259,48 @@ export class FolderSnapshots {
   #take(threadId: string, turnId: string, at: SnapshotAt): Promise<void> {
     const thread = this.#thread(threadId);
     if (!thread || !this.#isChat(thread)) return Promise.resolve();
-    const snapshot = this.#serial(thread.cwd, async (): Promise<StoredSnapshot> => {
-      const on = this.#deps.settings.get(
-        'chat.snapshots',
-        thread.projectId === null ? {} : { projectId: thread.projectId },
+    // Recorded inside the folder's task, so whatever is queued after it reads the recorded state.
+    const snapshot = this.#serial(thread.cwd, async (): Promise<void> => {
+      const stored = await this.#store(thread, turnId, at).catch(
+        (error: unknown): StoredSnapshot => ({
+          missing: `wow could not read the folder: ${describe(error)}`,
+        }),
       );
-      if (!on) {
-        return {
-          missing:
-            "Snapshots of the files are off for this thread's project (Keep snapshots of the files).",
-        };
-      }
-      const store = this.storeOf(thread.cwd);
-      const taken = await this.#takeIn(thread.cwd, store);
-      if (!isTurnSnapshot(taken)) return taken;
-      const kept = await updateSnapshotRefs(
-        store,
-        [{ ref: turnRef(turnId, at), id: taken.tree }],
-        this.#git(this.#deadline()),
-      );
-      return kept.ok ? taken : { missing: `wow could not keep the snapshot: ${kept.message}` };
-    }).catch((error: unknown): StoredSnapshot => ({
-      missing: `wow could not read the folder: ${describe(error)}`,
-    }));
-    return snapshot.then(async (stored) => {
       this.#record(threadId, turnId, at, stored);
+    });
+    return snapshot.then(async () => {
       if (at === 'end') {
         await this.expire().catch((error: unknown) =>
           this.#deps.logger.warn('old snapshots were not dropped', describe(error)),
         );
       }
     });
+  }
+
+  async #store(
+    thread: { readonly cwd: string; readonly projectId: string | null },
+    turnId: string,
+    at: SnapshotAt,
+  ): Promise<StoredSnapshot> {
+    const on = this.#deps.settings.get(
+      'chat.snapshots',
+      thread.projectId === null ? {} : { projectId: thread.projectId },
+    );
+    if (!on) {
+      return {
+        missing:
+          "Snapshots of the files are off for this thread's project (Keep snapshots of the files).",
+      };
+    }
+    const store = this.storeOf(thread.cwd);
+    const taken = await this.#takeIn(thread.cwd, store);
+    if (!isTurnSnapshot(taken)) return taken;
+    const kept = await updateSnapshotRefs(
+      store,
+      [{ ref: turnRef(turnId, at), id: taken.tree }],
+      this.#git(this.#deadline()),
+    );
+    return kept.ok ? taken : { missing: `wow could not keep the snapshot: ${kept.message}` };
   }
 
   #record(threadId: string, turnId: string, at: SnapshotAt, snapshot: StoredSnapshot): void {
