@@ -106,26 +106,43 @@ export function cleanReportedText(text: string, config?: unknown): string {
   return out.replace(credential, (_, word: string) => `${word} ${hiddenText}`);
 }
 
+// The user's own Claude Code binary writes the init message, and its lists were read from the SDK
+// types only (spec Open risks): each is read as what it is, a list that is missing or of another
+// shape reads as empty, and an entry without a string name is left out.
+const listOf = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : []);
+const textsOf = (value: unknown): string[] =>
+  listOf(value).filter((entry): entry is string => typeof entry === 'string' && entry !== '');
+const textOf = (value: unknown): string | null =>
+  typeof value === 'string' && value !== '' ? value : null;
+const entriesOf = (value: unknown, key: string): Record<string, unknown>[] =>
+  listOf(value)
+    .map(record)
+    .filter((entry): entry is Record<string, unknown> => textOf(entry?.[key]) !== null);
+
 function pluginsOf(init: InitMessage): SessionPlugin[] {
-  const errors = init.plugin_errors ?? [];
+  const errors = entriesOf(init.plugin_errors, 'plugin').map((error) => ({
+    plugin: String(error['plugin']),
+    text: cleanReportedText(`${String(error['type'])}: ${String(error['message'])}`),
+  }));
+  const plugins = entriesOf(init.plugins, 'name').map((plugin) => ({
+    name: String(plugin['name']),
+    version: textOf(plugin['version']),
+  }));
   const errorsOf = (name: string) =>
     errors
       .filter((error) => error.plugin === name || error.plugin.split('@')[0] === name)
-      .map((error) => cleanReportedText(`${error.type}: ${error.message}`));
-  const loaded = init.plugins.map((plugin) => ({
+      .map((error) => error.text);
+  const loaded = plugins.map((plugin) => ({
     name: plugin.name,
-    version: plugin.version ?? null,
+    version: plugin.version,
     loaded: true,
     errors: errorsOf(plugin.name),
   }));
-  const known = new Set(init.plugins.map((plugin) => plugin.name));
+  const known = new Set(plugins.map((plugin) => plugin.name));
   const failed = new Map<string, string[]>();
   for (const error of errors) {
     if (known.has(error.plugin) || known.has(error.plugin.split('@')[0] ?? '')) continue;
-    failed.set(error.plugin, [
-      ...(failed.get(error.plugin) ?? []),
-      cleanReportedText(`${error.type}: ${error.message}`),
-    ]);
+    failed.set(error.plugin, [...(failed.get(error.plugin) ?? []), error.text]);
   }
   return [
     ...loaded,
@@ -140,31 +157,36 @@ function pluginsOf(init: InitMessage): SessionPlugin[] {
 
 // The init message alone: names and states, nothing a live call would add (`complete` false).
 export function initSessionTools(init: InitMessage, reportedAt: string): SessionTools {
-  const servers = init.mcp_servers.map((server): McpServerInfo => ({
-    name: server.name,
-    state: stateOf(server.status),
-    stateWord: server.status,
-    error: null,
-    source: server.source ?? null,
-    version: null,
-    address: null,
-    tools: init.tools
-      .filter((tool) => tool.startsWith(mcpPrefix(server.name)))
-      .map((tool) => ({
-        name: tool.slice(mcpPrefix(server.name).length),
-        description: '',
-        readOnly: false,
-        destructive: false,
-      })),
-  }));
+  const tools = textsOf(init.tools);
+  const servers = entriesOf(init.mcp_servers, 'name').map((server): McpServerInfo => {
+    const name = String(server['name']);
+    const word = textOf(server['status']) ?? 'unknown';
+    return {
+      name,
+      state: stateOf(word),
+      stateWord: word,
+      error: null,
+      source: textOf(server['source']),
+      version: null,
+      address: null,
+      tools: tools
+        .filter((tool) => tool.startsWith(mcpPrefix(name)))
+        .map((tool) => ({
+          name: tool.slice(mcpPrefix(name).length),
+          description: '',
+          readOnly: false,
+          destructive: false,
+        })),
+    };
+  });
   return boundedSessionTools({
     reportedAt,
     complete: false,
     mcpServers: servers,
-    builtInTools: init.tools.filter((tool) => !tool.startsWith('mcp__')),
-    skills: init.skills.map((name) => ({ name, description: null })),
-    commands: init.slash_commands.map((name) => ({ name, description: '' })),
-    agents: (init.agents ?? []).map((name) => ({ name, description: '', model: null })),
+    builtInTools: tools.filter((tool) => !tool.startsWith('mcp__')),
+    skills: textsOf(init.skills).map((name) => ({ name, description: null })),
+    commands: textsOf(init.slash_commands).map((name) => ({ name, description: '' })),
+    agents: textsOf(init.agents).map((name) => ({ name, description: '', model: null })),
     plugins: pluginsOf(init),
     instructionFiles: [],
   });
@@ -176,59 +198,62 @@ export interface LiveAnswers {
   readonly agents: readonly AgentInfo[];
 }
 
-// The init message's list completed with what the live query answered.
+// Commands as the live query or `commands_changed` gave them, each with a string name.
+const commandsOf = (value: unknown) =>
+  entriesOf(value, 'name').map((command) => {
+    const hint = textOf(command['argumentHint']);
+    return {
+      name: String(command['name']),
+      description: textOf(command['description']) ?? '',
+      ...(hint ? { argumentHint: hint } : {}),
+    };
+  });
+
+// The init message's list completed with what the live query answered, read as defensively as
+// the init message: an entry without a string name is left out.
 export function completeSessionTools(base: SessionTools, live: LiveAnswers): SessionTools {
   const sourceOf = (name: string) =>
     base.mcpServers.find((server) => server.name === name)?.source ?? null;
-  const described = new Map(live.commands.map((command) => [command.name, command.description]));
+  const commands = commandsOf(live.commands);
+  const described = new Map(commands.map((command) => [command.name, command.description]));
   return boundedSessionTools({
     ...base,
     complete: true,
-    mcpServers: live.status.map((server): McpServerInfo => ({
-      name: server.name,
-      state: stateOf(server.status),
-      stateWord: server.status,
-      error:
-        server.status === 'failed' && server.error !== undefined
-          ? cleanReportedText(server.error, server.config)
-          : null,
-      source: server.source ?? server.scope ?? sourceOf(server.name),
-      version: server.serverInfo?.version ?? null,
-      address: mcpAddress(server.config),
-      tools: (server.tools ?? []).map((tool) => ({
-        name: tool.name,
-        description: tool.description ?? '',
-        readOnly: tool.annotations?.readOnly === true,
-        destructive: tool.annotations?.destructive === true,
-      })),
-    })),
+    mcpServers: entriesOf(live.status, 'name').map((server): McpServerInfo => {
+      const name = String(server['name']);
+      const word = textOf(server['status']) ?? 'unknown';
+      const error = textOf(server['error']);
+      const annotationsOf = (tool: Record<string, unknown>) => record(tool['annotations']);
+      return {
+        name,
+        state: stateOf(word),
+        stateWord: word,
+        error:
+          word === 'failed' && error !== null ? cleanReportedText(error, server['config']) : null,
+        source: textOf(server['source']) ?? textOf(server['scope']) ?? sourceOf(name),
+        version: textOf(record(server['serverInfo'])?.['version']),
+        address: mcpAddress(server['config']),
+        tools: entriesOf(server['tools'], 'name').map((tool) => ({
+          name: String(tool['name']),
+          description: textOf(tool['description']) ?? '',
+          readOnly: annotationsOf(tool)?.['readOnly'] === true,
+          destructive: annotationsOf(tool)?.['destructive'] === true,
+        })),
+      };
+    }),
     skills: base.skills.map((skill) => ({
       name: skill.name,
       description: described.get(skill.name) || skill.description,
     })),
-    commands: live.commands.map((command) => ({
-      name: command.name,
-      description: command.description,
-      ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
-    })),
-    agents: live.agents.map((agent) => ({
-      name: agent.name,
-      description: agent.description,
-      model: agent.model ?? null,
+    commands,
+    agents: entriesOf(live.agents, 'name').map((agent) => ({
+      name: String(agent['name']),
+      description: textOf(agent['description']) ?? '',
+      model: textOf(agent['model']),
     })),
   });
 }
 
 // `system/commands_changed`: the commands replace the ones before.
-export const withCommands = (
-  tools: SessionTools,
-  commands: readonly SlashCommand[],
-): SessionTools =>
-  boundedSessionTools({
-    ...tools,
-    commands: commands.map((command) => ({
-      name: command.name,
-      description: command.description,
-      ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
-    })),
-  });
+export const withCommands = (tools: SessionTools, commands: unknown): SessionTools =>
+  boundedSessionTools({ ...tools, commands: commandsOf(commands) });

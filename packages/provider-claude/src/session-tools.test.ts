@@ -429,6 +429,65 @@ describe('session tools from Claude Code', () => {
     expect(h.queries[0]?.calls.filter((call) => call === 'mcpServerStatus')).toHaveLength(2);
   });
 
+  it('completes the turn when the init message lacks lists the SDK types name (Claude Code of another version)', async () => {
+    const { skills, plugins, slash_commands, ...rest } = init.message as unknown as Record<
+      string,
+      unknown
+    >;
+    expect([skills, plugins, slash_commands].every(Array.isArray)).toBe(true);
+    const sparse: FakeStep = {
+      message: {
+        ...rest,
+        tools: ['Bash', 42, 'mcp__tea-docs__search_docs'],
+        mcp_servers: [{ name: 'tea-docs', status: 'connected' }, { status: 'failed' }, null],
+        agents: 'Explore',
+      } as unknown as SDKMessage,
+    };
+    const h = harness([[sparse, done]], { mcpStatus: new Error('Claude Code did not answer') });
+    const ended = new Promise<void>((resolve) =>
+      h.adapter.onEvent((event) => event.type === 'turnCompleted' && resolve()),
+    );
+    const reported = h.reported();
+    await h.adapter.send(startTurn());
+    await ended;
+    await reported;
+    expect(h.events.some((event) => event.type === 'turnFailed')).toBe(false);
+    const [tools] = h.tools();
+    expect(tools).toMatchObject({
+      complete: false,
+      builtInTools: ['Bash'],
+      skills: [],
+      commands: [],
+      agents: [],
+    });
+    // plugin_errors is still there: the plugin that did not load is listed with its error.
+    expect(tools?.plugins.map((plugin) => [plugin.name, plugin.loaded])).toEqual([
+      ['kettle-hooks@tea-market', false],
+    ]);
+    expect(tools?.mcpServers.map((server) => [server.name, server.tools.length])).toEqual([
+      ['tea-docs', 1],
+    ]);
+  });
+
+  it('falls back to the init list when a live answer is malformed, and nothing is left unhandled', async () => {
+    const malformed = [
+      {
+        name: 'tea-docs',
+        status: 'connected',
+        tools: [{ description: 'A tool without a name' }, { name: 'search_docs' }],
+      },
+      { status: 'connected' },
+    ] as unknown as McpServerStatus[];
+    const h = harness([[init, done]], { mcpStatus: malformed });
+    const reported = h.reported();
+    await h.adapter.send(startTurn());
+    await reported;
+    const [tools] = h.tools();
+    expect(
+      tools?.mcpServers.map((server) => [server.name, server.tools.map((t) => t.name)]),
+    ).toEqual([['tea-docs', ['search_docs']]]);
+  });
+
   it('reports nothing for an assistant session', async () => {
     const h = harness([[init, done]]);
     const ended = new Promise<void>((resolve) =>

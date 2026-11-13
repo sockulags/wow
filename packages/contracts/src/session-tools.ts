@@ -143,9 +143,12 @@ const cutOrNull = (text: string | null | undefined, max: number): string | null 
   text === null || text === undefined || text === '' ? null : cut(text, max);
 
 // Cuts what an adapter read to the schema's bounds and drops entries without a name, so an
-// adapter always emits a list the schema takes.
+// adapter always emits a list the schema takes. A provider's answer is not trusted to match its
+// types: a name that is not a string counts as none.
 const named = <T extends { name: string }>(entries: readonly T[], max: number): T[] =>
-  entries.filter((entry) => entry.name !== '').slice(0, max);
+  entries
+    .filter((entry): boolean => typeof entry.name === 'string' && entry.name !== '')
+    .slice(0, max);
 
 export function boundedSessionTools(tools: SessionTools): SessionTools {
   return {

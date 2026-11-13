@@ -625,9 +625,14 @@ export class ClaudeAdapter implements ProviderAdapter {
       case 'system':
         // The assistant's session (the app's tools only) has no Tools tab (spec 43).
         if (message.subtype === 'init' && !session.toolsOnly) {
-          session.initTools = initSessionTools(message, new Date().toISOString());
-          session.changedCommands = undefined;
-          void this.#reportTools(session);
+          // The Tools tab never costs the turn: an init it cannot read reports nothing.
+          try {
+            session.initTools = initSessionTools(message, new Date().toISOString());
+            session.changedCommands = undefined;
+            void this.#reportTools(session);
+          } catch {
+            session.initTools = undefined;
+          }
         }
         if (message.subtype === 'commands_changed' && session.initTools && !session.toolsOnly) {
           if (session.tools) {
@@ -1146,8 +1151,19 @@ export class ClaudeAdapter implements ProviderAdapter {
     const live = await this.#liveAnswers(query);
     // A session closed or started again meanwhile has given this report up.
     if (this.#sessions.get(session.threadId) !== session || session.initTools !== base) return;
-    let tools = live ? completeSessionTools(base, live) : base;
-    if (session.changedCommands) tools = withCommands(tools, session.changedCommands);
+    // A live answer that cannot be read leaves the init message's list (`complete` false); a
+    // throw here would be an unhandled rejection, which ends the server.
+    let tools = base;
+    try {
+      if (live) tools = completeSessionTools(base, live);
+    } catch {
+      tools = base;
+    }
+    try {
+      if (session.changedCommands) tools = withCommands(tools, session.changedCommands);
+    } catch {
+      // The commands the init message named stay.
+    }
     session.changedCommands = undefined;
     session.tools = tools;
     this.#emit({ type: 'sessionTools', threadId: session.threadId, tools });
@@ -1162,7 +1178,12 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (!session?.query || session.toolsOnly || !base) return null;
     const live = await this.#liveAnswers(session.query);
     if (!live) throw new Error('Claude Code did not say what the session can use');
-    const tools = completeSessionTools(base, live);
+    let tools: SessionTools;
+    try {
+      tools = completeSessionTools(base, live);
+    } catch {
+      throw new Error('Claude Code did not say what the session can use');
+    }
     session.tools = tools;
     return tools;
   }

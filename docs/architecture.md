@@ -3529,7 +3529,13 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
   `complete: false`. `system/commands_changed` replaces the commands, also when it arrives while
   the first list is being asked for. `describeSession` asks the same calls of the thread's live
   query, answers null when there is none or it has sent no init yet, and fails when the live
-  calls fail (the init list alone would replace a complete one).
+  calls fail (the init list alone would replace a complete one). The init message and the live
+  answers come from the user's own Claude Code binary, so every list is read as unknown data: a
+  missing list or one of another shape reads as empty and an entry without a string name is
+  left out (`boundedSessionTools`'s `named` drops one too). Reading the Tools tab's list never
+  fails the turn (an init it cannot read reports nothing), and a live answer it cannot read
+  leaves the init list with `complete: false`; `#reportTools` catches everything, since its
+  promise is not awaited and an unhandled rejection would end the server.
 - **Codex** (`provider-codex/src/adapter.ts`). `thread/start` and `thread/resume` answer
   `instructionSources` (added to the generator's `FIELDS` as `instructionSources?` and to
   `fingerprint.ts`); the adapter emits them as `instructionFiles` with `complete: false`.
