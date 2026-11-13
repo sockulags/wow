@@ -21,6 +21,7 @@ import {
   readFile,
   readdir,
   realpath,
+  readlink,
   rm,
   symlink,
   writeFile,
@@ -625,6 +626,44 @@ describe('a preview queued behind an end snapshot (spec 22)', () => {
   });
 });
 
+describe('what a restore writes and keeps', () => {
+  it.skipIf(process.platform === 'win32')(
+    'puts a link back with the bytes of its target, whatever they are',
+    async () => {
+      // Not UTF-8: read as text it would come back as another name.
+      const target = Buffer.from([0x66, 0xff, 0x6f]);
+      await symlink(target, file('odd-link'));
+      send('Make the bell ring twice: edit the bell');
+      await turnEnds(0);
+      await rm(file('odd-link'));
+      const shown = await preview({ turnId: 't1:turn:0' });
+      expect(shown.write).toContain('odd-link');
+      expect(errorOf(await restore('t1:turn:0', confirmedOf(shown)))).toBeUndefined();
+      expect(await readlink(file('odd-link'), { encoding: 'buffer' })).toEqual(target);
+    },
+  );
+
+  it('drops the trees only a preview made once a restore has been done', async () => {
+    await twoTurns();
+    const unreachable = () =>
+      git(storeOf(), 'fsck', '--unreachable', '--no-reflogs', '--no-progress')
+        .split('\n')
+        .filter((line) => line.startsWith('unreachable tree'));
+    expect(unreachable()).toEqual([]);
+    await writeFile(file('scratch.txt'), 'one\n');
+    await preview({ turnId: 't1:turn:0' });
+    await writeFile(file('scratch.txt'), 'between the preview and the restore\n');
+    const shown = await preview({ turnId: 't1:turn:0' });
+    expect(unreachable()).toHaveLength(2);
+    expect(errorOf(await restore('t1:turn:0', confirmedOf(shown)))).toBeUndefined();
+    expect(unreachable()).toEqual([]);
+    // The next snapshot still finds every blob its manifest names.
+    send('Now add the notes');
+    await turnEnds(2);
+    expect(treeFiles(tree(turnRows()[2]?.endSnapshot))).toContain('scratch.txt');
+  });
+});
+
 describe('refusals (spec 23, 26, 44)', () => {
   it('refuses while a turn runs, for an old turn, a step thread and a link out of the folder', async () => {
     await twoTurns();
@@ -826,6 +865,16 @@ describe('path rules', () => {
     expect(unsafeSnapshotPath('docs/a:b', 'win32')).toMatch(/Windows/);
     expect(unsafeSnapshotPath('docs/trailing.', 'win32')).toMatch(/Windows/);
     expect(unsafeSnapshotPath('a\\b', 'win32')).toMatch(/Windows/);
+  });
+
+  it("refuses the 8.3 short name of Git's own folder on Windows only, however it is cased", () => {
+    for (const name of ['git~1', 'GIT~1', 'Git~12', 'sub/git~2/config']) {
+      expect(unsafeSnapshotPath(name, 'win32'), name).toMatch(/Git's own/);
+      expect(unsafeSnapshotPath(name, 'linux'), name).toBeUndefined();
+    }
+    for (const name of ['git~', 'git~a', 'mygit~1', 'git~1x', 'git-1']) {
+      expect(unsafeSnapshotPath(name, 'win32'), name).toBeUndefined();
+    }
   });
 
   it('keeps one store per folder however Windows spells it', () => {

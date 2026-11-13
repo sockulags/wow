@@ -151,6 +151,8 @@ export function unsafeSnapshotPath(
   }
   if (platform === 'win32') {
     for (const segment of segments) {
+      // The 8.3 short name Windows gives `.git` (a name that starts with a dot has none).
+      if (/^git~[0-9]+$/i.test(segment)) return "a name inside Git's own folder";
       if (/[\\:*?"<>|]/.test(segment) || [...segment].some((char) => char.charCodeAt(0) < 32)) {
         return 'a name Windows does not take';
       }
@@ -898,7 +900,7 @@ export class FolderSnapshots {
         // A link is replaced, never written through.
         else if (found && (found.isSymbolicLink() || entry.mode === '120000')) await unlink(target);
         if (entry.mode === '120000') {
-          await symlink(bytes.toString('utf8'), target);
+          await symlink(bytes, target);
         } else {
           await writeFile(target, bytes);
           if (this.#deps.platform !== 'win32') {
@@ -921,6 +923,11 @@ export class FolderSnapshots {
       );
       if (ref.ok) afterTree = after;
     }
+    // The trees only previews made are no longer kept by anything. The manifest names blobs of the
+    // last snapshot only, which a ref keeps unless it could not be made.
+    const pruned = await pruneSnapshotStore(store, this.#git(this.#deadline()));
+    if (!pruned.ok) this.#deps.logger.warn('the snapshot store was not pruned', pruned.message);
+    if (afterTree === null) await rm(path.join(store, 'wow-manifest.json'), { force: true });
     return { outcome: { written, removed, failed }, after: afterTree };
   }
 

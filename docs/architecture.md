@@ -3584,7 +3584,7 @@ write, remove, outside, outsideUnknown, notRestorable, leftAlone}`; a refusal is
   snapshot, or a restore recorded no `after`), wow cannot tell: every touched file is in `outside`
   (so the confirm reads "Restore anyway") and `outsideUnknown` is true, which the confirm says.
   Any write or remove path with `..`, a full
-  path, `.git`, a name Windows does not take (on Windows), or a folder on the way that is a link
+  path, `.git` (on Windows also its 8.3 short name `git~<digits>`), a name Windows does not take (on Windows), or a folder on the way that is a link
   or junction refuses the whole restore (`outside`). `thread.restoreFiles {threadId, turnId,
 confirmed}` and `thread.undoRestore {threadId, itemId, confirmed}` are taken by the RPC
   `dispatch` handler before the engine (the engine alone refuses them, so the assistant and a
@@ -3593,8 +3593,9 @@ confirmed}` and `thread.undoRestore {threadId, itemId, confirmed}` are taken by 
   the folder as it is now under `refs/trees/<tree>`, reads blobs with `cat-file --batch` (in parts
   of about `chat.snapshotMaxFileBytes`), deletes, removes folders a delete leaves empty, writes
   with `node:fs` (a link is replaced, never written through; the executable bit set where the
-  system has one), lists what the system refused (a file held open on Windows) and goes on, then
-  snapshots the result. The internal `thread.filesRestored {threadId, restore, before, after}`
+  system has one; a link's target is written as the stored bytes, not as text), lists what the
+  system refused (a file held open on Windows) and goes on, then snapshots the result and prunes
+  the store of the trees only previews made. The internal `thread.filesRestored {threadId, restore, before, after}`
   stores the line, item kind `files_restored` with `FilesRestoredItemPayload {toTurnId, written,
 removed, failed, undoOf?, undoneBy?, edit?, at}` on the thread's last turn, and a
   `restore_points` row. Undo targets `before` and compares with `after`; it marks the original
