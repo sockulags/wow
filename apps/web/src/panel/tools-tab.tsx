@@ -211,14 +211,15 @@ export function ToolsChip({ threadId }: { readonly threadId: string }) {
   const text = toolsChipText(row?.tools);
   if (text === undefined) return null;
   return (
-    <Badge asChild variant="warning" className="shrink-0">
+    <Badge asChild variant="warning" className="min-w-0 shrink">
       <button
         type="button"
         data-testid="tools-chip"
+        title={text}
         onClick={() => openThreadTools({ settings, layout }, threadId, routerPanelRoute(router))}
       >
         <PlugZapIcon aria-hidden />
-        {text}
+        <span className="truncate">{text}</span>
       </button>
     </Badge>
   );
