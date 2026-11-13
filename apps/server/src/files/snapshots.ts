@@ -630,10 +630,14 @@ export class FolderSnapshots {
     const write: string[] = [];
     const leftAlone: LeftAloneFile[] = [];
     for (const [file, entry] of wanted) {
-      if (!largeNow.has(file) && sameEntry(entry, present.get(file))) continue;
+      // Over the limit now: wow holds none of its bytes, so it is neither overwritten nor deleted.
+      if (largeNow.has(file)) {
+        leftAlone.push({ path: file, reason: 'tooLarge' });
+        continue;
+      }
+      if (sameEntry(entry, present.get(file))) continue;
       // Not listed now but on disk: Git ignores it now, and an ignored file is never touched.
       if (
-        !largeNow.has(file) &&
         !present.has(file) &&
         (await lstat(fullPath(folder, file)).catch(() => undefined))
       ) {
@@ -645,6 +649,10 @@ export class FolderSnapshots {
     const remove: string[] = [];
     for (const file of new Set([...present.keys(), ...largeNow.keys()])) {
       if (wanted.has(file) || tooLarge.has(file)) continue;
+      if (largeNow.has(file)) {
+        leftAlone.push({ path: file, reason: 'tooLarge' });
+        continue;
+      }
       // Only what the thread left in the folder goes. A file that is in neither snapshot, such as
       // one Git listed only after .gitignore changed, is not wow's to delete.
       if (before && !before.has(file) && !largeBefore.has(file)) {

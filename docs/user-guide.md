@@ -784,7 +784,9 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   (`snapshots/`), never in your repository, for `chat.snapshotKeepDays` days; a file larger than
   `chat.snapshotMaxFileBytes` is not kept and the confirm names it. A file the restore would
   delete but that the thread did not leave there (for example one Git lists only since you
-  edited `.gitignore`) is left alone and the confirm names it under "Left alone". It is not offered for a
+  edited `.gitignore`), and a file now larger than `chat.snapshotMaxFileBytes` (wow holds no copy,
+  so Undo could not bring it back), are left alone and the confirm names them under "Left alone".
+  It is not offered for a
   folder outside Git, a step's thread, messages sent before this version, or while a turn runs,
   and it says why when it cannot (a folder reached through a link, too many files).
 - **Fork from here**: on any of your messages, **Fork from here** (or **F** on the message that

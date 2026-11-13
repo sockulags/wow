@@ -509,6 +509,27 @@ describe('files a restore leaves alone (spec 19, 25)', () => {
     expect(await read('.env')).toBe('TOKEN=invented\n');
     expect(await read('src/bell.ts')).toBe('ring();\r\n');
   });
+
+  it('never deletes a file over the size limit, which no snapshot holds the bytes of', async () => {
+    dispatch({ type: 'setting.set', key: 'chat.snapshotMaxFileBytes', scope: 'global', value: 64 });
+    send('Make the bell ring twice: edit the bell');
+    await turnEnds(0);
+    agent = (cwd) => writeFileSync(path.join(cwd, 'agent.bin'), 'a'.repeat(100));
+    send('Make a big file');
+    await turnEnds(1);
+    await writeFile(file('mine.bin'), 'm'.repeat(100));
+    const shown = await preview({ turnId: 't1:turn:0' });
+    expect(shown.remove).toEqual([]);
+    expect(shown.outside).toEqual([]);
+    expect(shown.leftAlone).toEqual([
+      { path: 'agent.bin', reason: 'tooLarge' },
+      { path: 'mine.bin', reason: 'tooLarge' },
+    ]);
+    expect(errorOf(await restore('t1:turn:0', confirmedOf(shown)))).toBeUndefined();
+    expect(await read('agent.bin')).toBe('a'.repeat(100));
+    expect(await read('mine.bin')).toBe('m'.repeat(100));
+    expect(await read('src/bell.ts')).toBe('ring();\r\n');
+  });
 });
 
 describe('refusals (spec 23, 26, 44)', () => {

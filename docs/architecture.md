@@ -3569,7 +3569,9 @@ write, remove, outside, notRestorable, leftAlone}`; a refusal is a `status` (`no
   `leftAlone` `{path, reason}` the files the restore would otherwise have touched and does not: a
   file listed then and ignored now (`ignoredNow`: ignored files are never touched) and a file now
   that is in neither the target nor the thread's reference, such as one Git lists only since
-  `.gitignore` changed (`notFromThread`: it is not wow's to delete), `notRestorable` the target's `omitted`, and `outside` the touched files that differ
+  `.gitignore` changed (`notFromThread`: it is not wow's to delete), and a file over
+  `chat.snapshotMaxFileBytes` now (`tooLarge`: no snapshot holds its bytes, so it is never
+  deleted or overwritten, since Undo could not bring it back), `notRestorable` the target's `omitted`, and `outside` the touched files that differ
   from the thread's own last state: its last restore's `after` when that came after the last
   turn's end, else the last turn's end snapshot. Any write or remove path with `..`, a full
   path, `.git`, a name Windows does not take (on Windows), or a folder on the way that is a link
