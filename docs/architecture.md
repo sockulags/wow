@@ -1314,7 +1314,10 @@ removal ask only about files.
   (a folder already there, a path too long, a locked file, a server stop). The branch is never
   deleted: the next try finds it, and when it is at `branchStart` and never moved (one entry in
   its reflog) it takes it up with `git worktree add <path> <branch>` (the copy then starts at
-  that commit, with a note when the start commit has moved since). Any other branch of that
+  that commit, with a note when the start commit has moved since). With the reflog switched off
+  (`core.logAllRefUpdates=false`) or expired, git's left branch has no entry, is not known as
+  wow's and is not taken up: Retry fails with git's reason until the user deletes the branch. Any
+  other branch of that
   name, one that was there before the thread above all, is the user's: git refuses it and that
   is the reason. When git fails without making the branch, `thread.workingCopyBranching` with
   `startSha: null` clears `branchStart`, so a branch of that name the user makes later at the
@@ -1342,7 +1345,8 @@ removal ask only about files.
   confirms with "Remove and lose them", or a plain "Remove" when nothing would be lost.
   `threads.removeWorkingCopy {threadId, expect}` reads again and is refused with `conflict` and
   the new counts as the error's `data` when more files or commits on no branch are there than
-  `expect`, and with `rejected` while a turn runs (checked again right before the removal) or
+  `expect`, or when the server read a `digest` and `expect` carries none, and with `rejected`
+  while a turn runs (checked again right before the removal) or
   another thread that is not done works in the folder. `readThreadHolds` also answers `digest`,
   a SHA-256 of git's status listing (every changed, new and ignored file with its state, each
   file inside an ignored folder named on its own) and of
@@ -3554,8 +3558,9 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
   missing list or one of another shape reads as empty and an entry without a string name is
   left out (`boundedSessionTools`'s `named` drops one too). Reading the Tools tab's list never
   fails the turn (an init it cannot read reports nothing), and a live answer it cannot read
-  leaves the init list with `complete: false`; `#reportTools` catches everything, since its
-  promise is not awaited and an unhandled rejection would end the server.
+  leaves the init list with `complete: false`; `#reportTools` catches what reads and completes
+  the live answers, since its promise is not awaited and an unhandled rejection would end the
+  server. Its final `#emit` is outside those tries, as every other emit of the adapter is.
 - **Codex** (`provider-codex/src/adapter.ts`). `thread/start` and `thread/resume` answer
   `instructionSources` (added to the generator's `FIELDS` as `instructionSources?` and to
   `fingerprint.ts`); the adapter emits them as `instructionFiles` with `complete: false`.

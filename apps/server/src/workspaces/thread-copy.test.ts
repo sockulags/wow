@@ -613,6 +613,18 @@ describe("a chat thread's own working copy (thread work spec 10 to 18)", () => {
     expect(existsSync(path.join(done.cwd, 'out', 'secret.env'))).toBe(true);
   });
 
+  it('refuses a removal whose request carries no digest of what was shown (spec 15)', async () => {
+    const done = await firstTurn();
+    await writeFile(path.join(done.cwd, 'bell.ts'), 'ring();\n');
+    const { digest, ...counts } = resultOf(
+      await rpc('threads.workingCopyStatus', { threadId: 't1' }),
+    ) as UnpushedWork;
+    expect(digest).toBeDefined();
+    const refused = await rpc('threads.removeWorkingCopy', { threadId: 't1', expect: counts });
+    expect(errorOf(refused)).toMatchObject({ code: 'conflict', data: { uncommittedFiles: 1 } });
+    expect(existsSync(done.cwd)).toBe(true);
+  });
+
   it('refuses removal while a turn runs', async () => {
     await firstTurn();
     send('Wait for the kettle');
