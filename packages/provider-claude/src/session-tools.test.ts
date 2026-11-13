@@ -10,7 +10,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import { ClaudeAdapter } from './index.js';
 import type { SDKMessage } from './sdk.js';
-import { cleanReportedText, mcpAddress } from './session-tools.js';
+import { cleanReportedText, initSessionTools, mcpAddress } from './session-tools.js';
 import { fakeQueryFunction, type FakeLive, type FakeStep } from './testing/fake-query.js';
 
 // What the session can use (thread work spec 38, 40, 41, U5): the init message, completed from
@@ -469,7 +469,7 @@ describe('session tools from Claude Code', () => {
     ]);
   });
 
-  it('falls back to the init list when a live answer is malformed, and nothing is left unhandled', async () => {
+  it('keeps the live list and drops the entries without a name when a live answer is malformed, and nothing is left unhandled', async () => {
     const malformed = [
       {
         name: 'tea-docs',
@@ -552,9 +552,29 @@ describe('mcpAddress', () => {
     expect(mcpAddress({ command: 'node C:\\Tools\\tea.exe --x' })).toBe('node');
     expect(mcpAddress({ command: "'/opt/tea tools/bin/tea-server' --port 7" })).toBe('tea-server');
   });
+
+  it('skips the environment values written before the program', () => {
+    expect(mcpAddress({ command: 'TEA_TOKEN=sk-tea-777-long tea-server' })).toBe('tea-server');
+    expect(
+      mcpAddress({
+        command: 'TEA_TOKEN="sk tea 777" MODE=x "C:\\Program Files\\Tea\\tea.exe" --v',
+      }),
+    ).toBe('tea.exe');
+    expect(mcpAddress({ command: 'TEA_TOKEN=sk-tea-777-long' })).toBeNull();
+  });
 });
 
 describe('cleanReportedText', () => {
+  it('hides an environment value written before the program in the command', () => {
+    const command = 'TEA_TOKEN=sk-tea-777-long tea-server --port 7000';
+    expect(cleanReportedText('tea-server: token sk-tea-777-long refused', { command })).toBe(
+      'tea-server: token [hidden] refused',
+    );
+    expect(cleanReportedText(`spawn ${command} ENOENT`, { command })).toBe(
+      'spawn tea-server ENOENT',
+    );
+  });
+
   it('reads a program path with a space as its file name in a failure', () => {
     const command = 'C:\\Users\\Jane Doe\\tools\\tea.exe';
     expect(cleanReportedText(`spawn ${command} ENOENT`, { command })).toBe('spawn tea.exe ENOENT');
@@ -582,6 +602,26 @@ describe('cleanReportedText', () => {
       'connect ECONNREFUSED mcp.tea.example',
       'GET [hidden] failed',
       'key [hidden] refused for [hidden]',
+    ]);
+  });
+});
+
+describe('initSessionTools', () => {
+  it('leaves out the part of a plugin error Claude Code did not give', () => {
+    const tools = initSessionTools(
+      {
+        plugin_errors: [
+          { plugin: 'kettle@tea', message: 'The kettle hook did not load' },
+          { plugin: 'mug@tea', type: 'hook-load-failed' },
+          { plugin: 'pot@tea' },
+        ],
+      } as unknown as Parameters<typeof initSessionTools>[0],
+      '2026-11-13T09:00:00.000Z',
+    );
+    expect(tools.plugins.map((plugin) => [plugin.name, plugin.errors])).toEqual([
+      ['kettle@tea', ['The kettle hook did not load']],
+      ['mug@tea', ['hook-load-failed']],
+      ['pot@tea', ['Claude Code gave no reason']],
     ]);
   });
 });

@@ -3528,10 +3528,12 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
   `supportedAgents()` (the `ClaudeQuery` seam in `sdk.ts` declares both new calls) and emits
   `sessionTools`. A server's `config` gives only `address` (`mcpAddress`: an http or sse URL's
   scheme, host and port; the file name of a stdio command's program). `commandParts` decides the
-  program before a command line is split, since a Windows path often has a space: a leading
-  quoted part; for text that starts as a path, a path up to the first word ending in `.exe`,
+  program before a command line is split, since a Windows path often has a space. Leading
+  `NAME=value` words (a shell's way of setting the program's environment) are skipped and their
+  values hidden like `env`'s; then a leading quoted part; for text that starts as a path, a path up to the first word ending in `.exe`,
   `.cmd`, `.bat`, `.com` or `.ps1`, or the whole text when only the part before the last
-  separator has a space; else the first word. A failure's words and plugin errors pass
+  separator has a space; else the first word. A plugin error reads as its `type` and `message`,
+  leaving out the one Claude Code did not give. A failure's words and plugin errors pass
   `cleanReportedText`: the server's command and its program's path read as the program's file
   name, each argument written after the program in `command` is hidden, the configured URL reads
   as its origin and, written without its scheme, as its host, its path, query values, user and

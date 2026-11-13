@@ -37,8 +37,26 @@ const record = (value: unknown): Record<string, unknown> | undefined =>
 // so the program is decided before the line is split: a leading quoted part; else a path up to
 // the first word that ends in an executable's extension; else, when the text before the last
 // path separator has a space and the last part has none, the whole text; else the first word.
-export function commandParts(command: string): { readonly program: string; readonly rest: string } {
-  const text = command.trim();
+// `NAME=value` words before the program set its environment (a shell's way of writing it): they
+// are not the program, and their values are given back to be hidden.
+export function commandParts(command: string): {
+  readonly program: string;
+  readonly rest: string;
+  readonly assigned: readonly string[];
+} {
+  let text = command.trim();
+  const assigned: string[] = [];
+  for (;;) {
+    const word = /^[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|'[^']*'|\S*)(?:\s+|$)/.exec(text);
+    if (!word) break;
+    const value = word[1] ?? '';
+    assigned.push(value, value.replace(/^(["'])(.*)\1$/, '$2'));
+    text = text.slice(word[0].length);
+  }
+  return { ...programOf(text), assigned };
+}
+
+function programOf(text: string): { readonly program: string; readonly rest: string } {
   const quoted = /^(["'])(.*?)\1(?:\s+|$)/.exec(text);
   if (quoted) return { program: quoted[2] ?? '', rest: text.slice(quoted[0].length) };
   // Only text that starts as a path can be a path with a space: `npx -y @tea/server` is not one.
@@ -114,7 +132,10 @@ export function cleanReportedText(text: string, config?: unknown): string {
         if (path.length >= shortestHidden) out = out.split(path).join(program);
       }
       // Each argument written after it is hidden as `args` are.
-      words = parts.rest.split(/\s+/).flatMap((word) => [word, word.replace(/^["']|["']$/g, '')]);
+      words = [
+        ...parts.assigned,
+        ...parts.rest.split(/\s+/).flatMap((word) => [word, word.replace(/^["']|["']$/g, '')]),
+      ];
     }
     const url = fields['url'];
     const urlParts: string[] = [];
@@ -176,7 +197,11 @@ const entriesOf = (value: unknown, key: string): Record<string, unknown>[] =>
 function pluginsOf(init: InitMessage): SessionPlugin[] {
   const errors = entriesOf(init.plugin_errors, 'plugin').map((error) => ({
     plugin: String(error['plugin']),
-    text: cleanReportedText(`${String(error['type'])}: ${String(error['message'])}`),
+    text: cleanReportedText(
+      [textOf(error['type']), textOf(error['message'])]
+        .filter((part) => part !== null)
+        .join(': ') || 'Claude Code gave no reason',
+    ),
   }));
   const plugins = entriesOf(init.plugins, 'name').map((plugin) => ({
     name: String(plugin['name']),
