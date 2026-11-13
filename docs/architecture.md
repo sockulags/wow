@@ -3552,8 +3552,10 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
   name, marked "Seen in this thread's tool calls", with a line that Codex reports no list.
 - **Server.** `ProviderService` takes a `sessionTools` event out of the batch and dispatches the
   internal `thread.toolsReported {threadId, tools, source}` (`core/thread-tools.ts`), after the
-  `assistant.secretPatterns` net has run over each server's error and address and each plugin
-  error. It is stored
+  `assistant.secretPatterns` net has run over every free text of the report: each server's
+  error, address, state word, source and version, every tool, skill, command and agent
+  description, argument hints, agents' models, plugin versions and errors, and instruction file
+  paths. Names are not netted: they identify the entry. It is stored
   only when the list (everything but `reportedAt`, compared by `sameSessionTools`) or its
   liveness changed, with the server's time; the assistant is refused. `tools: null` marks the
   stored list not live: at `recover()` (no session survives a restart), when an instance's

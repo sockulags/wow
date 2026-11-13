@@ -213,6 +213,42 @@ describe('session tools', () => {
     }
   });
 
+  it('runs the secret net over every free text of a report, not only failures', async () => {
+    await sendTurn('Brew the tea');
+    const key = 'sk-tea-0123456789abcdefghij';
+    const base = mockClaudeSessionTools();
+    const leaky = {
+      ...base,
+      mcpServers: base.mcpServers.map((server) => ({
+        ...server,
+        stateWord: `failed ${key}`,
+        version: `1.0 ${key}`,
+        source: `user ${key}`,
+        tools: server.tools.map((tool) => ({ ...tool, description: `Uses ${key}` })),
+      })),
+      skills: [{ name: 'brew-guide', description: `Brews with ${key}` }],
+      commands: [{ name: 'steep', description: `Steeps ${key}`, argumentHint: `<${key}>` }],
+      agents: [{ name: 'Explore', description: `Explores ${key}`, model: `haiku ${key}` }],
+      plugins: [{ name: 'tea-kit', version: `0.1 ${key}`, loaded: true, errors: [] }],
+      instructionFiles: [`/work/tea/${key}/AGENTS.md`],
+    };
+    const kept = new Promise<void>((resolve) => {
+      const off = engine.onCommit((commit) => {
+        if (commit.events.some(({ event }) => event.kind === 'thread.toolsReported')) {
+          off();
+          resolve();
+        }
+      });
+    });
+    adapter.emit([{ type: 'sessionTools', threadId: 't1', tools: leaky }]);
+    await kept;
+    const raw = JSON.stringify(database.sqlite.prepare('SELECT tools FROM thread_tools').all());
+    expect(raw).not.toContain(key);
+    expect(stored()[0]?.tools.skills).toEqual([
+      { name: 'brew-guide', description: 'Brews with [hidden]' },
+    ]);
+  });
+
   it('refuses the assistant', () => {
     dispatch({
       type: 'setting.set',

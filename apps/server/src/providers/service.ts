@@ -303,19 +303,45 @@ export class ProviderService {
     }
   }
 
-  // A failure's words are the one free text a report carries; they get the secret net before
-  // they are stored (spec 41), as the adapter already took out the server's config values.
+  // Every free text of a report gets the secret net before it is stored (spec 41): a failure's
+  // words above all, and the descriptions, state words, versions, sources, argument hints and
+  // instruction file paths a provider also wrote. The adapter already took out the server's
+  // config values. Names are left as they are: they identify the entry.
   #withoutSecrets(tools: SessionTools): SessionTools {
     const patterns = secretPatterns(this.#deps.settings.get('assistant.secretPatterns'));
     const hide = (text: string) => hideSecrets(text, patterns);
+    const hideOrNull = (text: string | null) => (text === null ? null : hide(text));
     return boundedSessionTools({
       ...tools,
       mcpServers: tools.mcpServers.map((server) => ({
         ...server,
-        error: server.error === null ? null : hide(server.error),
-        address: server.address === null ? null : hide(server.address),
+        stateWord: hide(server.stateWord),
+        error: hideOrNull(server.error),
+        source: hideOrNull(server.source),
+        version: hideOrNull(server.version),
+        address: hideOrNull(server.address),
+        tools: server.tools.map((tool) => ({ ...tool, description: hide(tool.description) })),
       })),
-      plugins: tools.plugins.map((plugin) => ({ ...plugin, errors: plugin.errors.map(hide) })),
+      skills: tools.skills.map((skill) => ({
+        ...skill,
+        description: hideOrNull(skill.description),
+      })),
+      commands: tools.commands.map((command) => ({
+        ...command,
+        description: hide(command.description),
+        ...(command.argumentHint === undefined ? {} : { argumentHint: hide(command.argumentHint) }),
+      })),
+      agents: tools.agents.map((agent) => ({
+        ...agent,
+        description: hide(agent.description),
+        model: hideOrNull(agent.model),
+      })),
+      plugins: tools.plugins.map((plugin) => ({
+        ...plugin,
+        version: hideOrNull(plugin.version),
+        errors: plugin.errors.map(hide),
+      })),
+      instructionFiles: tools.instructionFiles.map(hide),
     });
   }
 
