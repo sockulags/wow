@@ -16,7 +16,18 @@ import { useGlobalKeybindings } from '@/app/use-commands';
 import { keyScope } from '@/settings/keybindings-table';
 import { conversationCommands, conversationStore } from './conversation-nav';
 import { createDraftStore } from './draft';
+import type * as FindModule from './find';
+import { conversationText } from './find';
 import { ThreadConversation, ThreadView } from './thread-view';
+
+// The real text walk, counted: find reads the conversation again only when it changed.
+vi.mock('./find', async (importOriginal) => {
+  const real = await importOriginal<typeof FindModule>();
+  return {
+    ...real,
+    conversationText: vi.fn<typeof real.conversationText>(real.conversationText),
+  };
+});
 
 // Thread work U1 in the thread view: Ctrl+F finds text anywhere in the conversation and opens
 // what holds it; the conversation copies and saves as Markdown. All invented.
@@ -468,6 +479,25 @@ describe('find in the conversation (spec 1 to 4)', () => {
     await field();
     await user.keyboard('kettle');
     expect(count()).toBe('3+');
+  });
+
+  it('reads the conversation again only when it changed, not on every render', async () => {
+    const user = userEvent.setup();
+    const { push } = setup();
+    await user.click(composer());
+    await user.keyboard('{Control>}f{/Control}');
+    await field();
+    await user.keyboard('kettle');
+    const walks = vi.mocked(conversationText).mock.calls.length;
+    // A render for something else the view shows: the same conversation.
+    push('workflowRuns', []);
+    push('projects', []);
+    expect(vi.mocked(conversationText).mock.calls.length).toBe(walks);
+    push('threadItems', [
+      ...kettleStory(),
+      item('turn-0:more', 'assistant_text', { text: 'A kettle.' }),
+    ]);
+    expect(vi.mocked(conversationText).mock.calls.length).toBe(walks + 1);
   });
 
   it('follows a streaming turn and keeps the current match on its item (spec 5)', async () => {

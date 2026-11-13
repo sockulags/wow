@@ -798,20 +798,29 @@ export function ThreadConversation({
     : thread.permissionMode;
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
   // A subagent's work is drawn under its call (spec 44), not in the conversation itself.
-  const { top, children } = nestSubagentWork(items ?? []);
+  const { top, children } = useMemo(() => nestSubagentWork(items ?? []), [items]);
   const endRows = turnEndRows(top, turns);
   const reasoningDone = finishedReasoning(items ?? []);
-  const labelOf = (id: string) => modelLabel(models, id);
-  const modeLabel = (id: string) =>
-    instance
-      ? (permissionOptions(instance.kind, id).find((option) => option.id === id)?.label ?? id)
-      : id;
+  // Stable while what they read is, so find reads the conversation again only when it changed.
+  const labelOf = useCallback((id: string) => modelLabel(models, id), [models]);
+  const modeLabel = useCallback(
+    (id: string) =>
+      instance
+        ? (permissionOptions(instance.kind, id).find((option) => option.id === id)?.label ?? id)
+        : id,
+    [instance],
+  );
   const reasoningOpen = reasoningToggle?.open ?? reasoningByDefault;
-  const words = new Map(
-    (items ?? []).flatMap((item) => {
-      const said = item.kind === 'tool_call' ? extras?.toolWords?.(item) : undefined;
-      return said === undefined ? [] : [[item.id, said] as const];
-    }),
+  const toolWords = extras?.toolWords;
+  const words = useMemo(
+    () =>
+      new Map(
+        (items ?? []).flatMap((item) => {
+          const said = item.kind === 'tool_call' ? toolWords?.(item) : undefined;
+          return said === undefined ? [] : [[item.id, said] as const];
+        }),
+      ),
+    [items, toolWords],
   );
   const itemContext = (turnId: string, itemId: string): ItemContext => {
     const turn = turnById.get(turnId);
@@ -868,15 +877,23 @@ export function ThreadConversation({
     };
   };
 
-  const afters = new Map(top.map((item) => [item.id, extras?.after?.(item)]));
-  const entries: ConversationEntry[] = groupQuestions(
-    groupTools
-      ? groupToolCalls(
-          top,
-          (item) => Boolean(afters.get(item.id)),
-          (item) => words.get(item.id) === null,
-        )
-      : top.map((item) => ({ kind: 'item', item })),
+  const afterOf = extras?.after;
+  const afters = useMemo(
+    () => new Map(top.map((item) => [item.id, afterOf?.(item)])),
+    [top, afterOf],
+  );
+  const entries = useMemo<ConversationEntry[]>(
+    () =>
+      groupQuestions(
+        groupTools
+          ? groupToolCalls(
+              top,
+              (item) => Boolean(afters.get(item.id)),
+              (item) => words.get(item.id) === null,
+            )
+          : top.map((item) => ({ kind: 'item', item })),
+      ),
+    [top, groupTools, afters, words],
   );
   const instanceName = instance?.name ?? thread.providerInstanceId;
   const markdown = () =>
@@ -917,17 +934,20 @@ export function ThreadConversation({
         }),
     );
   nav.current = { moveMessage, toEnd, openFind, copyMarkdown, saveMarkdown };
-  const findSource: FindSource = {
-    entries,
-    children,
-    turns,
-    approvals,
-    questions,
-    cwd: thread.cwd,
-    outputLines,
-    modelLabel: labelOf,
-    modeLabel,
-  };
+  const findSource = useMemo<FindSource>(
+    () => ({
+      entries,
+      children,
+      turns,
+      approvals,
+      questions,
+      cwd: thread.cwd,
+      outputLines,
+      modelLabel: labelOf,
+      modeLabel,
+    }),
+    [entries, children, turns, approvals, questions, thread.cwd, outputLines, labelOf, modeLabel],
+  );
 
   const backgroundTasks = thread.backgroundTasks ?? [];
   useBackgroundShown(
