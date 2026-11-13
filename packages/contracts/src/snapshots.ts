@@ -57,6 +57,14 @@ export type RestoreConfirmed = z.infer<typeof RestoreConfirmed>;
 
 // The answer of `threads.restorePreview`: `ok` with what the restore would do, or a refusal and
 // its reason. Paths are relative to the thread's folder, with forward slashes.
+// A file the restore does not touch although it differs, and why: wow holds no copy of it (too
+// large), Git ignores it now, or it is neither in the snapshot nor in what the thread left, so
+// wow cannot tell whose it is.
+export const LeftAloneReason = z.enum(['tooLarge', 'ignoredNow', 'notFromThread']);
+export type LeftAloneReason = z.infer<typeof LeftAloneReason>;
+export const LeftAloneFile = z.object({ path: RelativePath, reason: LeftAloneReason });
+export type LeftAloneFile = z.infer<typeof LeftAloneFile>;
+
 export const RestorePreview = z.object({
   status: z.union([z.literal('ok'), RestoreRefusal]),
   message: z.string().nullable(),
@@ -64,6 +72,7 @@ export const RestorePreview = z.object({
   remove: z.array(RelativePath),
   outside: z.array(RelativePath),
   notRestorable: z.array(OmittedFile),
+  leftAlone: z.array(LeftAloneFile),
 });
 export type RestorePreview = z.infer<typeof RestorePreview>;
 

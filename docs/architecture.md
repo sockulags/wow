@@ -3561,12 +3561,15 @@ not the Assistant) at each turn's start and end, so the user can put them back.
   wait for; it never fails the turn. The end is taken on `turn.ended` (joined to the folder's queue
   in the same commit, added to `#preparing` so `idle()` covers it).
 - **Preview and restore.** `threads.restorePreview` answers `RestorePreview {status, message,
-write, remove, outside, notRestorable}`; a refusal is a `status` (`noRepository`,
+write, remove, outside, notRestorable, leftAlone}`; a refusal is a `status` (`noRepository`,
   `gitUnavailable`, `noSnapshot`, `turnRunning`, `outside`, `notChat`) with its reason. It takes
   a snapshot of the folder now and compares trees: `write` the target's files that differ or are
-  missing (a file listed then and ignored now is skipped: ignored files are never touched),
-  `remove` the files now that the target did not have (except ones left out of the target for
-  size), `notRestorable` the target's `omitted`, and `outside` the touched files that differ
+  missing, `remove` the files now that the target did not have and that the thread left (they
+  are in the reference snapshot below; except ones left out of the target for size),
+  `leftAlone` `{path, reason}` the files the restore would otherwise have touched and does not: a
+  file listed then and ignored now (`ignoredNow`: ignored files are never touched) and a file now
+  that is in neither the target nor the thread's reference, such as one Git lists only since
+  `.gitignore` changed (`notFromThread`: it is not wow's to delete), `notRestorable` the target's `omitted`, and `outside` the touched files that differ
   from the thread's own last state: its last restore's `after` when that came after the last
   turn's end, else the last turn's end snapshot. Any write or remove path with `..`, a full
   path, `.git`, a name Windows does not take (on Windows), or a folder on the way that is a link

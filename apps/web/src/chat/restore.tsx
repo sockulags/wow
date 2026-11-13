@@ -173,6 +173,12 @@ function PathList({
   );
 }
 
+const leftAloneNote = {
+  tooLarge: 'too large to keep a copy',
+  ignoredNow: 'Git ignores it now',
+  notFromThread: 'not from this thread',
+} as const;
+
 const formatSize = (bytes: number) =>
   bytes >= 1024 * 1024
     ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -194,7 +200,8 @@ export function RestoreDialog({ threadId }: { readonly threadId: string }) {
     ok &&
     preview.write.length === 0 &&
     preview.remove.length === 0 &&
-    preview.notRestorable.length === 0;
+    preview.notRestorable.length === 0 &&
+    preview.leftAlone.length === 0;
   const title =
     question?.target.kind === 'undo'
       ? 'Undo the restore?'
@@ -241,6 +248,14 @@ export function RestoreDialog({ threadId }: { readonly threadId: string }) {
                     paths={preview.notRestorable.map(({ path, size }) => ({
                       path,
                       note: formatSize(size),
+                    }))}
+                  />
+                  <PathList
+                    testId="restore-left-alone"
+                    label="Left alone; the restore does not touch them"
+                    paths={preview.leftAlone.map(({ path, reason }) => ({
+                      path,
+                      note: leftAloneNote[reason],
                     }))}
                   />
                   <PathList

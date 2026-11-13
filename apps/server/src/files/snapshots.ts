@@ -4,6 +4,7 @@ import {
   undoableRestore,
   type Command,
   type DispatchResult,
+  type LeftAloneFile,
   type OmittedFile,
   type RestoreConfirmed,
   type RestorePreview,
@@ -102,6 +103,7 @@ interface Plan {
   readonly remove: string[];
   readonly outside: string[];
   readonly notRestorable: OmittedFile[];
+  readonly leftAlone: LeftAloneFile[];
   readonly target: ReadonlyMap<string, SnapshotEntry>;
 }
 
@@ -166,6 +168,7 @@ const refusedPreview = (status: RestoreRefusal, message: string): RestorePreview
   remove: [],
   outside: [],
   notRestorable: [],
+  leftAlone: [],
 });
 
 export class FolderSnapshots {
@@ -464,6 +467,7 @@ export class FolderSnapshots {
           remove: plan.remove,
           outside: plan.outside,
           notRestorable: plan.notRestorable,
+          leftAlone: plan.leftAlone,
         };
       } catch (error) {
         if (!(error instanceof RestoreRefused) || error.status === 'notFound') throw error;
@@ -622,7 +626,9 @@ export class FolderSnapshots {
       : undefined;
     const tooLarge = new Set(target.omitted.map((file) => file.path));
     const largeNow = new Map(now.omitted.map((file) => [file.path, file.size]));
+    const largeBefore = new Map(reference?.omitted.map((file) => [file.path, file.size]));
     const write: string[] = [];
+    const leftAlone: LeftAloneFile[] = [];
     for (const [file, entry] of wanted) {
       if (!largeNow.has(file) && sameEntry(entry, present.get(file))) continue;
       // Not listed now but on disk: Git ignores it now, and an ignored file is never touched.
@@ -631,15 +637,23 @@ export class FolderSnapshots {
         !present.has(file) &&
         (await lstat(fullPath(folder, file)).catch(() => undefined))
       ) {
+        leftAlone.push({ path: file, reason: 'ignoredNow' });
         continue;
       }
       write.push(file);
     }
-    const remove = [...present.keys(), ...largeNow.keys()].filter(
-      (file) => !wanted.has(file) && !tooLarge.has(file),
-    );
+    const remove: string[] = [];
+    for (const file of new Set([...present.keys(), ...largeNow.keys()])) {
+      if (wanted.has(file) || tooLarge.has(file)) continue;
+      // Only what the thread left in the folder goes. A file that is in neither snapshot, such as
+      // one Git listed only after .gitignore changed, is not wow's to delete.
+      if (before && !before.has(file) && !largeBefore.has(file)) {
+        leftAlone.push({ path: file, reason: 'notFromThread' });
+        continue;
+      }
+      remove.push(file);
+    }
     const touched = new Set([...write, ...remove]);
-    const largeBefore = new Map(reference?.omitted.map((file) => [file.path, file.size]));
     const outside = before
       ? [...touched].filter((file) => {
           if (largeBefore.has(file) || largeNow.has(file)) {
@@ -655,6 +669,7 @@ export class FolderSnapshots {
       remove: sorted(new Set(remove)),
       outside: sorted(outside),
       notRestorable: target.omitted.toSorted((a, b) => (a.path < b.path ? -1 : 1)),
+      leftAlone: leftAlone.toSorted((a, b) => (a.path < b.path ? -1 : 1)),
       target: wanted,
     };
   }
@@ -767,6 +782,7 @@ export class FolderSnapshots {
       remove: plan.remove,
       outside: plan.outside,
       notRestorable: plan.notRestorable,
+      leftAlone: plan.leftAlone,
     });
   }
 

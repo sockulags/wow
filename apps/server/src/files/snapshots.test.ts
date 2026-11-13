@@ -13,7 +13,7 @@ import { plainProtector } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import {
   chmod,
   mkdir,
@@ -407,6 +407,7 @@ describe('Restore files to here (spec 20, 22, 24, 25)', () => {
       remove: ['docs/notes.md'],
       outside: [],
       notRestorable: [],
+      leftAlone: [],
     });
     const answer = await restore('t1:turn:0', confirmedOf(shown));
     expect(errorOf(answer)).toBeUndefined();
@@ -492,6 +493,21 @@ describe('Restore files to here (spec 20, 22, 24, 25)', () => {
     expect(git(project, 'rev-parse', 'HEAD')).toBe(head);
     expect(git(project, 'log', '--format=%s', '-1')).toBe('Invented commit');
     expect(git(project, 'status', '--porcelain')).toBe('D docs/notes.md\n?? docs/old.md');
+  });
+});
+
+describe('files a restore leaves alone (spec 19, 25)', () => {
+  it('never deletes a file that only appeared because the ignore rules changed', async () => {
+    send('Make the bell ring twice: edit the bell');
+    await turnEnds(0);
+    // .env was ignored when the turn was taken; an edit of .gitignore lists it from now on.
+    await writeFile(file('.gitignore'), '');
+    const shown = await preview({ turnId: 't1:turn:0' });
+    expect(shown.remove).not.toContain('.env');
+    expect(shown.leftAlone).toEqual([{ path: '.env', reason: 'notFromThread' }]);
+    expect(errorOf(await restore('t1:turn:0', confirmedOf(shown)))).toBeUndefined();
+    expect(await read('.env')).toBe('TOKEN=invented\n');
+    expect(await read('src/bell.ts')).toBe('ring();\r\n');
   });
 });
 

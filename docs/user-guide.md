@@ -782,7 +782,9 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
   as `.env` or build output); commits made since stay, and the restored files show as changes
   in the Changes view. wow keeps these snapshots of the files in its own folder
   (`snapshots/`), never in your repository, for `chat.snapshotKeepDays` days; a file larger than
-  `chat.snapshotMaxFileBytes` is not kept and the confirm names it. It is not offered for a
+  `chat.snapshotMaxFileBytes` is not kept and the confirm names it. A file the restore would
+  delete but that the thread did not leave there (for example one Git lists only since you
+  edited `.gitignore`) is left alone and the confirm names it under "Left alone". It is not offered for a
   folder outside Git, a step's thread, messages sent before this version, or while a turn runs,
   and it says why when it cannot (a folder reached through a link, too many files).
 - **Fork from here**: on any of your messages, **Fork from here** (or **F** on the message that

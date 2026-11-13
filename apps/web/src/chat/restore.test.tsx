@@ -109,6 +109,7 @@ const okPreview = (overrides: Partial<RestorePreview> = {}): RestorePreview => (
   remove: ['docs/notes.md'],
   outside: [],
   notRestorable: [],
+  leftAlone: [],
   ...overrides,
 });
 
@@ -228,6 +229,10 @@ describe('Restore files to here (spec 20, 22)', () => {
         okPreview({
           outside: ['src/bell.ts'],
           notRestorable: [{ path: 'assets/bell.wav', size: 12 * 1024 * 1024 }],
+          leftAlone: [
+            { path: '.env', reason: 'notFromThread' },
+            { path: 'dump.sql', reason: 'tooLarge' },
+          ],
         }),
       ],
     });
@@ -242,10 +247,15 @@ describe('Restore files to here (spec 20, 22)', () => {
     expect(sections).toEqual([
       'Changed outside this thread since its last turn',
       'Too large to put back; they stay as they are',
+      'Left alone; the restore does not touch them',
       'Written back',
       'Deleted',
     ]);
     expect(listed('restore-not-restorable')).toEqual(['assets/bell.wav12.0 MB']);
+    expect(listed('restore-left-alone')).toEqual([
+      '.envnot from this thread',
+      'dump.sqltoo large to keep a copy',
+    ]);
     await user.click(within(dialog).getByRole('button', { name: 'Restore anyway' }));
     expect(dispatched().at(-1)).toMatchObject({
       confirmed: { outside: ['src/bell.ts'], notRestorable: ['assets/bell.wav'] },
