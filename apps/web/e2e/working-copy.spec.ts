@@ -158,6 +158,14 @@ async function startMugThread(page: Page, text: string): Promise<void> {
   await messageBox(page).fill(text);
 }
 
+// The panel's open state is a setting, so an earlier case can have left it open; the key would
+// then close it.
+async function showPanel(page: Page) {
+  if (!(await page.getByRole('complementary', { name: 'Context panel' }).isVisible())) {
+    await page.keyboard.press('Control+j');
+  }
+}
+
 test.describe('a thread in its own working copy', () => {
   test('a thread works in its own working copy @thread-work-10 @thread-work-11', async ({
     page,
@@ -180,7 +188,7 @@ test.describe('a thread in its own working copy', () => {
     // The chip and Details name the branch and the folder (spec 13).
     const chip = page.getByTestId('working-copy-chip');
     await expect(chip).toHaveText(`${branch}·own working copy`);
-    await page.keyboard.press('Control+J');
+    await showPanel(page);
     await expect(details(page).getByTestId('fact-Branch')).toHaveText(branch);
     await expect(details(page).getByTestId('fact-Started from')).toHaveText(
       `main (${before.head.slice(0, 7)})`,
@@ -238,7 +246,7 @@ test.describe('sketch', () => {
         .getByRole('list', { name: 'Conversation' })
         .getByText('The bell rings softly now.'),
     ).toBeVisible();
-    await page.keyboard.press('Control+J');
+    await showPanel(page);
     await expect(details(page).getByTestId('fact-Branch')).toBeVisible();
     await page.screenshot({ path: sketchPath('2026-11-thread-work', 'thread-copy') });
   });
