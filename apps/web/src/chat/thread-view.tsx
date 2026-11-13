@@ -6,6 +6,9 @@ import {
   type SkillRef,
   type Thread,
   type ThreadItem,
+  type Turn,
+  type Approval,
+  type Question,
 } from '@wow/contracts';
 import { Link, useRouter } from '@tanstack/react-router';
 import {
@@ -445,6 +448,11 @@ export interface ConversationExtras {
   toolWords?(item: ThreadItem): string | null | undefined;
 }
 
+const noTurns: Turn[] = [];
+const noItems: ThreadItem[] = [];
+const noApprovals: Approval[] = [];
+const noQuestions: Question[] = [];
+
 // A thread's conversation, its gate bar and its composer: the chat view's thread and, narrower,
 // the context panel's step thread (owner decision F-1), so both answer the same way.
 export function ThreadConversation({
@@ -463,17 +471,18 @@ export function ThreadConversation({
 }) {
   const threadId = thread.id;
   const send = useDispatch();
-  const turns = useTopic('turns', threadId) ?? [];
+  // One empty list for a topic not loaded yet, so the memos below hold across renders.
+  const turns = useTopic('turns', threadId) ?? noTurns;
   const storedItems = useTopic('threadItems', threadId);
   // Edit and Fork (agent workbench spec 62, 71): a replaced exchange shows only as the earlier
   // version on the message that replaced it.
-  const goBack = useMemo(() => goBackView(turns, storedItems ?? []), [turns, storedItems]);
+  const goBack = useMemo(() => goBackView(turns, storedItems ?? noItems), [turns, storedItems]);
   const items = useMemo(
     () => storedItems?.filter((item) => !goBack.replaced.has(item.turnId)),
     [storedItems, goBack],
   );
-  const approvals = useTopic('approvals', threadId) ?? [];
-  const questions = useTopic('questions', threadId) ?? [];
+  const approvals = useTopic('approvals', threadId) ?? noApprovals;
+  const questions = useTopic('questions', threadId) ?? noQuestions;
   const runs = useTopic('workflowRuns') ?? [];
   const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];

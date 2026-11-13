@@ -8,10 +8,18 @@ import type {
 import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Connection, ConnectionState } from '@wow/client-runtime';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand';
 import { createTestRuntime, renderApp } from '@/test/render';
-import { waitingText } from './model';
+import type * as ModelModule from './model';
+import { askOf, waitingText } from './model';
+
+// The real reading of a tool call's ask, counted: the view reads the conversation's tool calls
+// again only when what they are read from changed.
+vi.mock('./model', async (importOriginal) => {
+  const real = await importOriginal<typeof ModelModule>();
+  return { ...real, askOf: vi.fn<typeof real.askOf>(real.askOf) };
+});
 
 // Agent workbench U13 in the Assistant view: wow's tool calls without duplicate rows and in
 // words (spec 82), and the waiting proposal's line above the composer (spec 96).
@@ -130,6 +138,7 @@ const items = (): ThreadItem[] => [
 function assistantConnection(proposals: AssistantProposal[]) {
   const sent: unknown[] = [];
   const conversation = items();
+  const listeners = new Map<string, (rows: unknown[]) => void>();
   const connection: Connection = {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
     request: (method, params) => {
@@ -147,13 +156,15 @@ function assistantConnection(proposals: AssistantProposal[]) {
         assistantChanges: [change],
         assistantProposals: proposals,
       };
+      listeners.set(topic, onData);
       onData(topics[topic] ?? []);
       return () => undefined;
     },
     retry: () => undefined,
     close: () => undefined,
   };
-  return { connection, sent };
+  const push = (topic: string, rows: unknown[]) => act(() => listeners.get(topic)?.(rows));
+  return { connection, sent, push };
 }
 
 describe("wow's tool calls in the Assistant view (spec 82)", () => {
@@ -174,6 +185,19 @@ describe("wow's tool calls in the Assistant view (spec 82)", () => {
         .getAllByTestId('tool-words')
         .map((row) => row.textContent),
     ).toEqual(['Read your workflows', 'Checked what does not work']);
+  });
+});
+
+describe('the Assistant view across renders', () => {
+  it('reads its tool calls again only when what they are read from changed', async () => {
+    const { connection, push } = assistantConnection([proposal('assistant-p1', 'Always allow')]);
+    await renderApp('/assistant', { ...createTestRuntime(), connection });
+    const conversation = await screen.findByRole('list', { name: 'Conversation' });
+    await within(conversation).findByRole('region', { name: 'Change: Work hours' });
+    const reads = vi.mocked(askOf).mock.calls.length;
+    // A render for something the tool calls are not read from: the same conversation.
+    await push('assistantThread', [{ ...thread }]);
+    expect(vi.mocked(askOf).mock.calls.length).toBe(reads);
   });
 });
 
