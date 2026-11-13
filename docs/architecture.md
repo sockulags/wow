@@ -3521,10 +3521,17 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
   then completes it from the live query's `mcpServerStatus()`, `supportedCommands()` and
   `supportedAgents()` (the `ClaudeQuery` seam in `sdk.ts` declares both new calls) and emits
   `sessionTools`. A server's `config` gives only `address` (`mcpAddress`: an http or sse URL's
-  scheme, host and port; the file name of a stdio command's first word). A failure's words and
-  plugin errors pass `cleanReportedText`: the server's command reads as its program, its URL,
-  argument, environment and header values are hidden, every web address is cut to its origin,
-  and a credential after Bearer, Basic or Token is hidden. When a live call fails or does not
+  scheme, host and port; the file name of a stdio command's program). `commandParts` decides the
+  program before a command line is split, since a Windows path often has a space: a leading
+  quoted part; for text that starts as a path, a path up to the first word ending in `.exe`,
+  `.cmd`, `.bat`, `.com` or `.ps1`, or the whole text when only the part before the last
+  separator has a space; else the first word. A failure's words and plugin errors pass
+  `cleanReportedText`: the server's command and its program's path read as the program's file
+  name, each argument written after the program in `command` is hidden, the configured URL reads
+  as its origin and, written without its scheme, as its host, its path, query values, user and
+  password are hidden, its argument, environment and header values are hidden, every web address
+  is cut to its origin, and a credential after Bearer, Basic or Token is hidden. Known limit:
+  a value shorter than 4 characters is never hidden (it would hide parts of ordinary words). When a live call fails or does not
   answer within `providers.requestTimeoutMs`, the init message's names and states go out with
   `complete: false`. `system/commands_changed` replaces the commands, also when it arrives while
   the first list is being asked for. `describeSession` asks the same calls of the thread's live

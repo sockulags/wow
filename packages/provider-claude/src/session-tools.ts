@@ -32,6 +32,36 @@ const mcpPrefix = (server: string) => `mcp__${server}__`;
 const record = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined;
 
+// The program of a stdio server's `command` and the arguments written after it, when the whole
+// command line is in `command`. A Windows path often has a space in it (`C:\\Program Files\\…`),
+// so the program is decided before the line is split: a leading quoted part; else a path up to
+// the first word that ends in an executable's extension; else, when the text before the last
+// path separator has a space and the last part has none, the whole text; else the first word.
+export function commandParts(command: string): { readonly program: string; readonly rest: string } {
+  const text = command.trim();
+  const quoted = /^(["'])(.*?)\1(?:\s+|$)/.exec(text);
+  if (quoted) return { program: quoted[2] ?? '', rest: text.slice(quoted[0].length) };
+  // Only text that starts as a path can be a path with a space: `npx -y @tea/server` is not one.
+  if (/^(?:[A-Za-z]:[\\/]|[\\/]|\.{1,2}[\\/]|~[\\/])/.test(text)) {
+    const executable = /^(.*?[\\/][^\\/]*?\.(?:exe|cmd|bat|com|ps1))(?:\s+|$)/i.exec(text);
+    if (executable?.[1] && /\s/.test(executable[1])) {
+      return { program: executable[1], rest: text.slice(executable[0].length) };
+    }
+    const separator = Math.max(text.lastIndexOf('/'), text.lastIndexOf('\\'));
+    if (/\s/.test(text.slice(0, separator)) && !/\s/.test(text.slice(separator))) {
+      return { program: text, rest: '' };
+    }
+  }
+  const first = /^\S*/.exec(text)?.[0] ?? '';
+  return { program: first, rest: text.slice(first.length).trim() };
+}
+
+const fileName = (program: string): string | null =>
+  program
+    .split(/[\\/]/)
+    .filter((part) => part !== '')
+    .at(-1) ?? null;
+
 // A remote server as its scheme, host and port; a local one as its program's file name. Never a
 // path, a query, a user name, an argument or a header (spec 41).
 export function mcpAddress(config: unknown): string | null {
@@ -47,12 +77,8 @@ export function mcpAddress(config: unknown): string | null {
   const command = fields['command'];
   if (typeof command === 'string') {
     // A whole command line written into `command` keeps its arguments out: only the program.
-    const program = command.trim().split(/\s+/)[0] ?? '';
-    const name = program
-      .split(/[\\/]/)
-      .filter((part) => part !== '')
-      .at(-1);
-    return name === undefined || name === '' ? null : name;
+    const name = fileName(commandParts(command).program);
+    return name === null || name === '' ? null : name;
   }
   return null;
 }
@@ -79,14 +105,42 @@ export function cleanReportedText(text: string, config?: unknown): string {
   if (fields) {
     const command = fields['command'];
     const program = mcpAddress(config);
+    let words: string[] = [];
     if (typeof command === 'string' && command.trim() !== '' && program !== null) {
+      const parts = commandParts(command);
       out = out.split(command.trim()).join(program);
+      // The program's path, quoted or not, reads as its file name too.
+      for (const path of [`"${parts.program}"`, `'${parts.program}'`, parts.program]) {
+        if (path.length >= shortestHidden) out = out.split(path).join(program);
+      }
+      // Each argument written after it is hidden as `args` are.
+      words = parts.rest.split(/\s+/).flatMap((word) => [word, word.replace(/^["']|["']$/g, '')]);
     }
     const url = fields['url'];
+    const urlParts: string[] = [];
     if (typeof url === 'string' && url !== '') {
       out = out.split(url).join(mcpAddress({ url }) ?? hiddenText);
+      if (URL.canParse(url)) {
+        const parsed = new URL(url);
+        // The address written without its scheme reads as its host.
+        for (const bare of [
+          `${parsed.host}${parsed.pathname}${parsed.search}`,
+          `${parsed.host}${parsed.pathname}`,
+        ]) {
+          if (bare !== parsed.host && parsed.host !== '') out = out.split(bare).join(parsed.host);
+        }
+        if (parsed.pathname !== '/') urlParts.push(parsed.pathname);
+        urlParts.push(
+          parsed.search,
+          ...parsed.searchParams.values(),
+          decodeURIComponent(parsed.username),
+          decodeURIComponent(parsed.password),
+        );
+      }
     }
     const values = [
+      ...words,
+      ...urlParts,
       ...strings(fields['args']),
       ...strings(fields['env']),
       ...strings(fields['headers']),

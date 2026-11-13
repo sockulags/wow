@@ -10,7 +10,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import { ClaudeAdapter } from './index.js';
 import type { SDKMessage } from './sdk.js';
-import { mcpAddress } from './session-tools.js';
+import { cleanReportedText, mcpAddress } from './session-tools.js';
 import { fakeQueryFunction, type FakeLive, type FakeStep } from './testing/fake-query.js';
 
 // What the session can use (thread work spec 38, 40, 41, U5): the init message, completed from
@@ -517,5 +517,50 @@ describe('mcpAddress', () => {
     expect(mcpAddress({ type: 'sdk', name: 'in-process' })).toBeNull();
     expect(mcpAddress({ url: 'file:///etc/passwd' })).toBeNull();
     expect(mcpAddress(undefined)).toBeNull();
+  });
+
+  it('takes a Windows or POSIX path with a space as one program', () => {
+    expect(mcpAddress({ command: 'C:\\Program Files\\nodejs\\node.exe' })).toBe('node.exe');
+    expect(mcpAddress({ command: 'C:\\Users\\Jane Doe\\tools\\tea.exe' })).toBe('tea.exe');
+    expect(
+      mcpAddress({ command: '"C:\\Program Files\\Tea\\tea.exe" --token=sk-tea-777 --verbose' }),
+    ).toBe('tea.exe');
+    expect(mcpAddress({ command: 'C:\\Program Files\\Tea\\tea.exe --verbose' })).toBe('tea.exe');
+    expect(mcpAddress({ command: '/opt/tea tools/bin/tea-server' })).toBe('tea-server');
+    expect(mcpAddress({ command: 'npx -y @tea/server' })).toBe('npx');
+    expect(mcpAddress({ command: 'node C:\\Tools\\tea.exe --x' })).toBe('node');
+    expect(mcpAddress({ command: "'/opt/tea tools/bin/tea-server' --port 7" })).toBe('tea-server');
+  });
+});
+
+describe('cleanReportedText', () => {
+  it('reads a program path with a space as its file name in a failure', () => {
+    const command = 'C:\\Users\\Jane Doe\\tools\\tea.exe';
+    expect(cleanReportedText(`spawn ${command} ENOENT`, { command })).toBe('spawn tea.exe ENOENT');
+    const quoted = '"C:\\Program Files\\Tea\\tea.exe" --token=sk-tea-777';
+    expect(
+      cleanReportedText('spawn C:\\Program Files\\Tea\\tea.exe ENOENT', { command: quoted }),
+    ).toBe('spawn tea.exe ENOENT');
+  });
+
+  it('hides each argument of a whole command line written into command', () => {
+    const command = 'npx -y @tea/server --api-key=hunter2-long-value';
+    expect(
+      cleanReportedText('error: unknown option --api-key=hunter2-long-value', { command }),
+    ).toBe('error: unknown option [hidden]');
+  });
+
+  it('hides the configured URL also without its scheme, its path and its query values', () => {
+    const url = 'https://mcp.tea.example/v1/sse?key=sk-tea-9&team=kettle-room';
+    const cleaned = [
+      'connect ECONNREFUSED mcp.tea.example/v1/sse?key=sk-tea-9&team=kettle-room',
+      'GET /v1/sse failed',
+      'key sk-tea-9 refused for kettle-room',
+    ].map((text) => cleanReportedText(text, { type: 'sse', url }));
+    expect(cleaned).toEqual([
+      'connect ECONNREFUSED mcp.tea.example',
+      'GET [hidden] failed',
+      'key [hidden] refused for [hidden]',
+    ]);
   });
 });
