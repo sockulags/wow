@@ -585,6 +585,14 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       },
     ];
   }
+  // Restore files (thread work U3): "add the notes" adds docs/notes.md and deletes docs/old.md.
+  if (/add the notes/i.test(prompt)) {
+    if (inTeaRepo(command.cwd)) {
+      writeInRepo(command.cwd, 'docs/notes.md', '# Notes\n\nSteep for three minutes.\n');
+      rmSync(inRepo(command.cwd, 'docs/old.md'), { force: true });
+    }
+    return [session, ...finish(threadId, 'Notes added, the old page gone.')];
+  }
   if (/edit the bell/i.test(prompt)) {
     if (inTeaRepo(command.cwd)) writeInRepo(command.cwd, 'src/bell.ts', bellEdited);
     return [
@@ -1340,6 +1348,10 @@ if (home === e2eChangesHome) {
   seedTeaRepo(changesRepo);
   seedTeaRepo(gateRepo);
   seedTeaRepo(chatRepo);
+  // A page the restore case's agent deletes (thread work U3).
+  writeInRepo(chatRepo, 'docs/old.md', '# Old page\n');
+  git(chatRepo, 'add', '-A');
+  git(chatRepo, 'commit', '-q', '-m', 'Invented old page');
   seedCopyRepo();
   seedMugRepo();
   // The host tests: a repository on a branch that has a pull request, with a plan in it.
