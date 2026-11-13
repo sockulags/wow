@@ -324,6 +324,10 @@ export const UnpushedWork = z.object({
   // A chat thread's copy only (thread work spec 14, 15): of those commits, the ones made on no
   // branch (HEAD detached), which its branch does not keep and are lost with the folder.
   commitsOnNoBranch: z.number().int().nonnegative().optional(),
+  // A chat thread's copy only (spec 15): a digest of what it holds (the status of every changed,
+  // new and ignored path, and the commits on no branch), so a removal notices one file swapped
+  // for another after the dialog read it, which the counts alone do not show.
+  digest: z.string().min(1).optional(),
 });
 export type UnpushedWork = z.infer<typeof UnpushedWork>;
 

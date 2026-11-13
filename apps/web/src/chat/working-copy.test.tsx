@@ -345,7 +345,7 @@ describe('Remove working copy (spec 15)', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Remove and lose them' }));
     expect(removals).toEqual([{ threadId: 't1', expect: holds({ uncommittedFiles: 1 }) }]);
     expect(within(dialog).getByTestId('working-copy-loses').textContent).toMatch(
-      /^It holds more now: 2 uncommitted files\./,
+      /^It changed since. It holds 2 uncommitted files\./,
     );
 
     await user.click(within(dialog).getByRole('button', { name: 'Remove and lose them' }));

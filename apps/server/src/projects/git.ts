@@ -848,11 +848,11 @@ export async function branchNeverMoved(
 // made on one of `branches` either: commits made on no branch, gone with the folder. A commit
 // amended or reset away on a branch is in that branch's history and not counted. Undefined when
 // git cannot say.
-export async function countCommitsOnNoBranch(
+export async function listCommitsOnNoBranch(
   folder: string,
   branches: readonly string[],
   options: GitRunOptions,
-): Promise<number | undefined> {
+): Promise<readonly string[] | undefined> {
   const [visited, ...made] = await Promise.all([
     reflogTips(folder, 'HEAD', options),
     ...branches.map((branch) => reflogTips(folder, `refs/heads/${branch}`, options)),
@@ -861,12 +861,11 @@ export async function countCommitsOnNoBranch(
   const known = [...new Set(made.flat())];
   const counted = await runGit(
     folder,
-    ['rev-list', '--count', ...tips, '--not', '--branches', '--tags', '--remotes', ...known],
+    ['rev-list', ...tips, '--not', '--branches', '--tags', '--remotes', ...known],
     options,
   );
   if (!counted.ok) return undefined;
-  const amount = Number(counted.stdout.trim());
-  return Number.isInteger(amount) ? amount : undefined;
+  return counted.stdout.split('\n').filter((sha) => sha !== '');
 }
 
 export interface Unpushed {
@@ -886,6 +885,16 @@ export async function readUnpushed(
   startSha: string | null,
   options: GitRunOptions,
 ): Promise<Unpushed | undefined> {
+  return (await readUnpushedWithStatus(folder, startSha, options))?.unpushed;
+}
+
+// As readUnpushed, with git's status listing (`--porcelain=v1 -z`, ignored paths included) the
+// counts were read from.
+export async function readUnpushedWithStatus(
+  folder: string,
+  startSha: string | null,
+  options: GitRunOptions,
+): Promise<{ readonly unpushed: Unpushed; readonly status: string } | undefined> {
   const reached = ['--not', '--remotes', ...(startSha === null ? [] : [startSha])];
   // Every commit HEAD has been on, not only where it is now: a working copy starts on no branch,
   // so a commit made there and then left (by switching to another commit or branch) is reached
@@ -922,10 +931,13 @@ export async function readUnpushed(
   if (!Number.isInteger(unpushedCommits)) return undefined;
   const subject = newest.ok ? newest.stdout.trim() : '';
   return {
-    uncommittedFiles,
-    ignoredFiles,
-    unpushedCommits,
-    newestSubject: unpushedCommits > 0 && subject !== '' ? subject : null,
-    branch,
+    unpushed: {
+      uncommittedFiles,
+      ignoredFiles,
+      unpushedCommits,
+      newestSubject: unpushedCommits > 0 && subject !== '' ? subject : null,
+      branch,
+    },
+    status: status.stdout,
   };
 }

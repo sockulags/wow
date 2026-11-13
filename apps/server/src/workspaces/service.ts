@@ -315,6 +315,13 @@ export class Workspaces {
           now,
         );
       }
+      // The same counts with other files (one deleted, another made) since the dialog read it.
+      if (expect.digest !== undefined && now.digest !== expect.digest) {
+        throw new WorkspaceChanged(
+          `The working copy changed since you were shown it: ${holdsText(now)}.`,
+          now,
+        );
+      }
     }
     // A turn that started while git was asked.
     refuseRunning();

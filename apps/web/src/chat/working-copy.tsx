@@ -225,7 +225,7 @@ export function RemoveThreadCopyDialog({ thread }: { readonly thread: Thread }) 
                 <span>{question?.error ? '' : 'Reading what is in it…'}</span>
               ) : lost ? (
                 <span data-testid="working-copy-loses">
-                  {question?.changed ? 'It holds more now: ' : 'It holds '}
+                  {question?.changed ? 'It changed since. It holds ' : 'It holds '}
                   {lost}. They are lost with the folder. {kept}
                 </span>
               ) : (

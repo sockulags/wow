@@ -532,13 +532,34 @@ describe("a chat thread's own working copy (thread work spec 10 to 18)", () => {
 
     const removed = await rpc('threads.removeWorkingCopy', {
       threadId: 't1',
-      expect: { ...shown, uncommittedFiles: 2 },
+      expect: resultOf(await rpc('threads.workingCopyStatus', { threadId: 't1' })),
     });
     expect(errorOf(removed)).toBeUndefined();
     expect(existsSync(done.cwd)).toBe(false);
     expect(thread().workingCopy?.state).toBe('removed');
     expect(thread('t2').workingCopy?.state).toBe('removed');
     expect(git(project, 'branch', '--list', branchOf())).toContain(branchOf());
+  });
+
+  it('refuses a removal when a file was swapped for another after the dialog read it (spec 15)', async () => {
+    const done = await firstTurn();
+    await writeFile(path.join(done.cwd, 'bell.ts'), 'ring();\n');
+    const shown = resultOf(await rpc('threads.workingCopyStatus', { threadId: 't1' }));
+    expect(shown).toMatchObject({ uncommittedFiles: 1 });
+
+    // The same count, another file: the one shown is gone, a new one would be lost unseen.
+    await rm(path.join(done.cwd, 'bell.ts'));
+    await writeFile(path.join(done.cwd, 'kettle.ts'), 'boil();\n');
+    const refused = await rpc('threads.removeWorkingCopy', { threadId: 't1', expect: shown });
+    expect(errorOf(refused)).toMatchObject({ code: 'conflict', data: { uncommittedFiles: 1 } });
+    expect(errorOf(refused)?.message).toMatch(/changed since you were shown it/);
+    expect(existsSync(path.join(done.cwd, 'kettle.ts'))).toBe(true);
+
+    const now = resultOf(await rpc('threads.workingCopyStatus', { threadId: 't1' }));
+    expect(errorOf(await rpc('threads.removeWorkingCopy', { threadId: 't1', expect: now }))).toBe(
+      undefined,
+    );
+    expect(existsSync(done.cwd)).toBe(false);
   });
 
   it('refuses removal while a turn runs', async () => {

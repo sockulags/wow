@@ -1337,8 +1337,11 @@ removal ask only about files.
   `threads.removeWorkingCopy {threadId, expect}` reads again and is refused with `conflict` and
   the new counts as the error's `data` when more files or commits on no branch are there than
   `expect`, and with `rejected` while a turn runs (checked again right before the removal) or
-  another thread that is not done works in the folder. The counts are compared, not the files:
-  one file swapped for another after the dialog opened is not noticed. Then `git worktree remove
+  another thread that is not done works in the folder. `readThreadHolds` also answers `digest`,
+  a SHA-256 of git's status listing (every changed, new and ignored path with its state) and of
+  the commits on no branch; when `expect` carries one and it differs, the removal is refused with
+  `conflict` too, so one file swapped for another after the dialog opened is noticed. A file
+  edited again with the same state is not (the listing names paths, not contents). Then `git worktree remove
 --force`; the branch stays. wow never deletes a branch and never pushes here.
 - **Forks.** A fork takes its origin's `cwd`, `branch` and `workingCopy`.
 - **Restart.** `recover()` takes a `pending` copy whose folder git finished on its branch as

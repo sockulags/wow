@@ -1,4 +1,5 @@
 import type { UnpushedWork, WorkingCopyStart } from '@wow/contracts';
+import { createHash } from 'node:crypto';
 import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -9,7 +10,7 @@ import {
   askRemoteDefaultBranch,
   branchNeverMoved,
   checkBranchName,
-  countCommitsOnNoBranch,
+  listCommitsOnNoBranch,
   fetchRemote,
   fetchRemoteRef,
   pruneWorktrees,
@@ -19,6 +20,7 @@ import {
   readHeadCommit,
   readRemoteDefaultBranch,
   readUnpushed,
+  readUnpushedWithStatus,
   removeWorktree,
   type GitRunOptions,
 } from '../projects/git.js';
@@ -393,12 +395,14 @@ export async function readThreadHolds(
   branch: string,
   git: GitRunOptions,
 ): Promise<UnpushedWork | undefined> {
-  const unpushed = await readUnpushed(target, startSha, git);
-  if (!unpushed) return undefined;
+  const read = await readUnpushedWithStatus(target, startSha, git);
+  if (!read) return undefined;
+  const { unpushed, status } = read;
   const branches = unpushed.branch === null ? [branch] : [...new Set([branch, unpushed.branch])];
-  const commitsOnNoBranch = await countCommitsOnNoBranch(target, branches, git);
-  if (commitsOnNoBranch === undefined) return undefined;
-  return { ...unpushed, commitsOnNoBranch };
+  const onNoBranch = await listCommitsOnNoBranch(target, branches, git);
+  if (onNoBranch === undefined) return undefined;
+  const digest = createHash('sha256').update(status).update('\0').update(onNoBranch.join('\n'));
+  return { ...unpushed, commitsOnNoBranch: onNoBranch.length, digest: digest.digest('hex') };
 }
 
 export interface Settled {
