@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
-import { devNull, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { providerInstances, threadItems, threads, turns } from '../db/schema.js';
@@ -111,7 +111,12 @@ const fetchBoth: typeof fetch = (input, init) => {
 
 // Git as the user's terminal would run it, but without their global or system config, so this
 // machine's credential helpers and identity do not take part.
-const baseEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull };
+// The global config is a file that does not exist: Git on Windows cannot read the null device.
+const baseEnv = () => ({
+  ...process.env,
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_GLOBAL: path.join(root, 'none'),
+});
 const recording: StartGit = (command, args, env) => {
   calls.push({ args, env });
   return startGit(command, args, env);
@@ -150,7 +155,7 @@ const threadGit = (start: StartGit = recording) =>
     fetch: fetchBoth,
     platform: process.platform,
     startGit: start,
-    baseEnv,
+    baseEnv: baseEnv(),
   });
 
 const set = (key: string, value: unknown, scope = 'project:mug') =>
