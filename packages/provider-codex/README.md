@@ -19,7 +19,7 @@ startServer({
 
 ## Protocol version
 
-`src/protocol/generated` is generated from codex **0.166.0** and is not edited by hand. To move to
+`src/protocol/generated` is generated from codex **0.169.0** and is not edited by hand. To move to
 another codex release:
 
 ```sh
