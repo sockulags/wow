@@ -11,6 +11,7 @@ import {
   field,
   getJsonAnswer,
   headersOf,
+  postJson,
   type RequestOptions,
 } from '../trackers/http.js';
 import {
@@ -28,8 +29,8 @@ import { checkStateOf } from './github.js';
 
 // GitLab as a code host (review loop spec 34): merge requests fill the role of pull requests,
 // the jobs of the head commit's pipeline are the checks, and the merge request's notes are the
-// review comments. API v4 with the PRIVATE-TOKEN header. Read only: it sends GET requests and
-// nothing else.
+// review comments. API v4 with the PRIVATE-TOKEN header. It sends GET requests, and one POST
+// when the user opens a merge request from a chat thread.
 
 export interface GitLabHostOptions extends RequestOptions, WaitOptions {
   // How many of the newest merge requests are read when the search is turned down.
@@ -306,6 +307,43 @@ export function createGitLabHost(
         `state=all&source_branch=${encodeURIComponent(branch)}&order_by=created_at&sort=desc&per_page=1`,
       );
       return newest;
+    },
+    async openChangeRequest(request) {
+      requests += 1;
+      let answer: unknown;
+      try {
+        answer = await postJson(
+          name,
+          `${project}/merge_requests`,
+          headers,
+          {
+            source_branch: request.head,
+            target_branch: request.base,
+            title: request.draft ? `Draft: ${request.title}` : request.title,
+            description: request.body,
+          },
+          options,
+        );
+      } catch (error) {
+        throw failure(error);
+      }
+      const iid = field(answer, 'iid');
+      const url = hostLink(field(answer, 'web_url'));
+      if (typeof iid !== 'number' || !Number.isSafeInteger(iid) || iid <= 0 || !url) {
+        throw new HostFailure(
+          'failed',
+          `${name} opened the merge request but answered in a form wow cannot read; look for it on ${name}`,
+        );
+      }
+      return { number: iid, url };
+    },
+    async branchProtected(branch) {
+      return getOr(
+        `${project}/repository/branches/${encodeURIComponent(branch)}`,
+        new Set([404]),
+        () => false,
+        (body) => field(body, 'protected') === true,
+      );
     },
     async readIssue(number) {
       const body = await getOr(

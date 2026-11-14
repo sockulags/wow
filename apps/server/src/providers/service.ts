@@ -3,6 +3,7 @@ import {
   attachmentMediaType,
   boundedSessionTools,
   HandOverResult,
+  ProposalAnswer,
   ProviderEvent,
   ProviderModel,
   ProviderSlashCommand,
@@ -298,6 +299,68 @@ export class ProviderService {
     const tools = SessionTools.nullable().parse(answer);
     const changed = this.#toolsReported(threadId, tools, 'refresh');
     return tools === null ? 'noSession' : changed ? 'changed' : 'unchanged';
+  }
+
+  // "Propose" in a chat thread's commit or pull request dialog (thread work spec 28): one request
+  // to the thread's provider instance and model, outside its conversation and session, in `cwd`
+  // (an empty folder of wow's) and without tools. Nothing of the thread changes: no turn, no item,
+  // no session. Out of time or cancelled, the adapter is told to stop it.
+  async propose(
+    threadId: string,
+    request: { readonly proposalId: string; readonly cwd: string; readonly prompt: string },
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const thread = this.#deps.db
+      .select({
+        kind: threads.kind,
+        providerInstanceId: threads.providerInstanceId,
+        model: threads.model,
+        effort: threads.effort,
+      })
+      .from(threads)
+      .where(eq(threads.id, threadId))
+      .get();
+    if (!thread) throw new CommandRejected('not_found', `No thread ${threadId}`);
+    if (thread.kind !== 'chat') {
+      throw new CommandRejected('rejected', 'Only a chat thread proposes a commit message.');
+    }
+    const adapter = this.#adapter(thread.providerInstanceId);
+    const { proposalId } = request;
+    const stop = () => {
+      void adapter.send({ type: 'cancelProposal', proposalId }).catch(() => undefined);
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ended = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        stop();
+        reject(new CommandRejected('rejected', `No answer came within ${timeoutMs} ms.`));
+      }, timeoutMs);
+      signal?.addEventListener(
+        'abort',
+        () => {
+          stop();
+          reject(new CommandRejected('rejected', 'The proposal was cancelled.'));
+        },
+        { once: true },
+      );
+    });
+    try {
+      const answer = await Promise.race([
+        adapter.send({
+          type: 'propose',
+          proposalId,
+          cwd: request.cwd,
+          prompt: request.prompt,
+          model: thread.model,
+          effort: thread.effort,
+        }),
+        ended,
+      ]);
+      return ProposalAnswer.parse(answer).text;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // Stores what a thread's session reported it can use, or that its session is gone (null).

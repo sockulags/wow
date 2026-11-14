@@ -12,7 +12,8 @@ import {
 // What the poller needs from a code host. One adapter per host kind; everything the host calls
 // its own way (pull or merge request, check run or pipeline, review comment or note) is
 // translated here, so the poller, the orchestrator and the UI see only the normalized shapes
-// from packages/contracts. Adapters only read.
+// from packages/contracts. Adapters only read, except `openChangeRequest`, which only the user's
+// Open in a chat thread's pull request dialog calls (thread work spec 32).
 
 // A change request as a search or a list names it, before its checks and comments are read.
 export interface FoundChangeRequest {
@@ -35,6 +36,20 @@ export interface FoundChangeRequest {
 // A change request as the host has it now; the poller adds the project.
 export type HostChangeRequest = Omit<ChangeRequest, 'id' | 'projectId'>;
 
+// A pull or merge request to open: `head` into `base`, both branches of the repository.
+export interface NewChangeRequest {
+  readonly head: string;
+  readonly base: string;
+  readonly title: string;
+  readonly body: string;
+  readonly draft: boolean;
+}
+
+export interface OpenedChangeRequest {
+  readonly number: number;
+  readonly url: string;
+}
+
 export interface HostAdapter {
   readonly kind: HostKind;
   // The host as the user knows it, such as github.com.
@@ -49,6 +64,12 @@ export interface HostAdapter {
   // One issue with its comments (agent workbench spec 21), for a link in a chat. GitHub numbers
   // issues and pull requests together: `changeRequest` says the number is a pull request.
   readIssue?(number: number): Promise<Issue | 'changeRequest'>;
+  // Opens a pull or merge request (thread work spec 32); a host's refusal is a HostFailure with
+  // its message (spec 34). A draft on GitLab is a title that starts with "Draft:".
+  openChangeRequest?(request: NewChangeRequest): Promise<OpenedChangeRequest>;
+  // Whether the host protects the branch from pushes (spec 33); false for a branch it does not
+  // have.
+  branchProtected?(branch: string): Promise<boolean>;
   // How many requests this adapter has sent.
   readonly requests: number;
   // Set when the host said to leave it alone until then (its request limit is used up).

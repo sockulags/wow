@@ -383,6 +383,13 @@ class MockConversations {
   }
 }
 
+// What the mock answers "Propose" with (thread work spec 28, 31): fixed text, whatever it was
+// asked, so a test sees the field filled and the prompt the adapter was handed in `sent`.
+export const mockProposals = {
+  commitMessage: 'Ring the bell twice',
+  pullRequest: 'Ring the bell twice\n\nThe bell rings two times when the tea is ready.',
+} as const;
+
 export class MockProviderAdapter implements ProviderAdapter {
   readonly kind: ProviderKind;
   readonly requiresModel: boolean;
@@ -471,6 +478,13 @@ export class MockProviderAdapter implements ProviderAdapter {
       return Promise.resolve(
         cwd === undefined || !this.sessionTools ? null : this.sessionTools(cwd),
       );
+    }
+    if (command.type === 'propose') {
+      return Promise.resolve({
+        text: /pull request/i.test(command.prompt)
+          ? mockProposals.pullRequest
+          : mockProposals.commitMessage,
+      });
     }
     if (command.type === 'listCommands') {
       return Promise.resolve(

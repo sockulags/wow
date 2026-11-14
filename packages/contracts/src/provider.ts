@@ -122,6 +122,18 @@ export const ProviderCommand = z.discriminatedUnion('type', [
   // null when the adapter holds no live session for the thread. Never starts a session or a
   // server: an adapter answers from the session it has.
   z.object({ type: z.literal('describeSession'), threadId: z.string().min(1) }),
+  // A commit message or pull request text proposed outside any thread (thread work spec 28),
+  // answered as `ProposalAnswer`: one turn without tools, no session kept, in `cwd`, an empty
+  // folder of wow's. `proposalId` names it for `cancelProposal`, which aborts it.
+  z.object({
+    type: z.literal('propose'),
+    proposalId: z.string().min(1),
+    cwd: z.string().min(1),
+    prompt: z.string().min(1),
+    model: Model,
+    effort: Effort,
+  }),
+  z.object({ type: z.literal('cancelProposal'), proposalId: z.string().min(1) }),
   z.object({ type: z.literal('test') }),
 ]);
 export type ProviderCommand = z.infer<typeof ProviderCommand>;

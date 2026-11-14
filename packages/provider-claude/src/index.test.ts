@@ -1451,6 +1451,50 @@ describe('@wow/provider-claude', () => {
     expect(h.queries[0]?.options).toMatchObject({ maxTurns: 1, tools: [], persistSession: false });
     expect(h.queries[0]?.closed).toBe(true);
   });
+
+  // Thread work spec 28: a proposal is one turn with no tool, no session kept, none of the
+  // user's or a project's settings, in the empty folder the server names, and no thread events.
+  it('proposes a message with no tools, no session kept and only the given empty folder', async () => {
+    const init = loadFixture('turn.json')[0] as FakeStep;
+    const h = harness([[init, assistantText('p1', 'Ring the bell twice'), result(0.001)]]);
+    const answer = await h.adapter.send({
+      type: 'propose',
+      proposalId: 'p-1',
+      cwd: '/tmp/wow-home/proposals',
+      prompt: 'Write a commit message for: +ring()',
+      model: 'sonnet',
+      effort: 'default',
+    });
+    expect(answer).toEqual({ text: 'Ring the bell twice' });
+    const options = h.queries[0]?.options;
+    expect(options).toMatchObject({
+      cwd: '/tmp/wow-home/proposals',
+      model: 'sonnet',
+      maxTurns: 1,
+      persistSession: false,
+      tools: [],
+      allowedTools: [],
+      settingSources: [],
+      extraArgs: {},
+      mcpServers: {},
+      strictMcpConfig: true,
+    });
+    expect(options?.resume).toBeUndefined();
+    expect(options?.canUseTool).toBeDefined();
+    await expect(
+      options?.canUseTool?.(
+        'Bash',
+        {},
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'x',
+          requestId: 'r',
+        },
+      ),
+    ).resolves.toMatchObject({ behavior: 'deny' });
+    expect(h.queries[0]?.closed).toBe(true);
+    expect(h.events).toEqual([]);
+  });
 });
 
 describe('extraArgs', () => {

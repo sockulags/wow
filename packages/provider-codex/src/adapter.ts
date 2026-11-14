@@ -46,7 +46,13 @@ import {
 } from './install.js';
 import { permissionMode, sandboxPolicy } from './permissions.js';
 import { runCommand, spawnCodexAppServer, type RunCommand, type SpawnCodex } from './process.js';
-import { toolsOnlyMode, toolsOnlySandbox, toolsOnlySettings, toolsOnlyUses } from './toolset.js';
+import {
+  proposalSettings,
+  toolsOnlyMode,
+  toolsOnlySandbox,
+  toolsOnlySettings,
+  toolsOnlyUses,
+} from './toolset.js';
 import { codexProtocolFingerprint } from './protocol/generated/fingerprint.js';
 import {
   type GetAccountResponse,
@@ -144,6 +150,20 @@ interface ThreadState {
   readonly agents: Map<string, { readonly itemId: string; state: AgentState | undefined }>;
   // What the thread reported it can use when it started or resumed (thread work spec 42).
   tools: SessionTools | null;
+}
+
+// A proposal being written (thread work spec 28) in an ephemeral codex thread of its own, which
+// no wow thread knows: its events never reach the server as a thread's.
+interface Proposal {
+  readonly proposalId: string;
+  readonly codexThreadId: string;
+  turnId: string | null;
+  // The agent's message as it streams, and as each finished item gives it.
+  streamed: string;
+  final: string | null;
+  lastError: string | null;
+  readonly resolve: (text: string) => void;
+  readonly reject: (error: Error) => void;
 }
 
 interface OpenApproval {
@@ -433,6 +453,9 @@ export class CodexAdapter implements ProviderAdapter {
   readonly #listeners = new Set<(event: ProviderEvent) => void>();
   readonly #threads = new Map<string, ThreadState>();
   readonly #byCodexId = new Map<string, ThreadState>();
+  // Proposals by their codex thread, and the codex thread of each proposal id.
+  readonly #proposals = new Map<string, Proposal>();
+  readonly #proposalThreads = new Map<string, string>();
   readonly #approvals = new Map<string, OpenApproval>();
   readonly #inputs = new Map<string, OpenInput>();
   readonly #fingerprint: ProtocolFingerprint;
@@ -509,8 +532,105 @@ export class CodexAdapter implements ProviderAdapter {
       case 'stopTask':
       case 'toBackground':
         throw new Error('Codex cannot stop or move work to the background');
+      case 'propose':
+        return this.#propose(command);
+      case 'cancelProposal':
+        return this.#cancelProposal(command.proposalId);
       case 'test':
         return this.#test();
+    }
+  }
+
+  // A commit message or pull request text (thread work spec 28): an ephemeral codex thread in the
+  // empty folder the server names, in a read-only sandbox without network, with no MCP server,
+  // codex's switchable tools off and every approval declined. Its events stay here.
+  async #propose(
+    command: Extract<ProviderCommand, { type: 'propose' }>,
+  ): Promise<{ text: string }> {
+    const connection = await this.#connect();
+    const response = await connection.request('thread/start', {
+      cwd: command.cwd,
+      model: command.model,
+      approvalPolicy: toolsOnlyMode.approvalPolicy,
+      sandbox: toolsOnlyMode.sandbox,
+      ...proposalSettings(),
+    });
+    const codexThreadId = response.thread.id;
+    const answered = new Promise<string>((resolve, reject) => {
+      this.#proposals.set(codexThreadId, {
+        proposalId: command.proposalId,
+        codexThreadId,
+        turnId: null,
+        streamed: '',
+        final: null,
+        lastError: null,
+        resolve,
+        reject,
+      });
+    });
+    this.#proposalThreads.set(command.proposalId, codexThreadId);
+    try {
+      const { turn } = await connection.request('turn/start', {
+        threadId: codexThreadId,
+        input: [{ type: 'text', text: command.prompt, text_elements: [] }],
+        cwd: command.cwd,
+        model: command.model,
+        effort: command.effort,
+        approvalPolicy: toolsOnlyMode.approvalPolicy,
+        sandboxPolicy: toolsOnlySandbox,
+      });
+      const proposal = this.#proposals.get(codexThreadId);
+      if (proposal) proposal.turnId = turn.id;
+      return { text: await answered };
+    } finally {
+      this.#proposals.delete(codexThreadId);
+      this.#proposalThreads.delete(command.proposalId);
+    }
+  }
+
+  async #cancelProposal(proposalId: string): Promise<unknown> {
+    const codexThreadId = this.#proposalThreads.get(proposalId);
+    const proposal = codexThreadId === undefined ? undefined : this.#proposals.get(codexThreadId);
+    if (!proposal) return { cancelled: false };
+    proposal.reject(new CodexError('state', 'The proposal was stopped'));
+    const connection = this.#connection;
+    if (proposal.turnId && connection) {
+      await connection
+        .request('turn/interrupt', { threadId: proposal.codexThreadId, turnId: proposal.turnId })
+        .catch(() => undefined);
+    }
+    return { cancelled: true };
+  }
+
+  #proposalNotification(proposal: Proposal, message: ServerNotification): void {
+    switch (message.method) {
+      case 'turn/started':
+        proposal.turnId = message.params.turn.id;
+        return;
+      case 'item/agentMessage/delta':
+        proposal.streamed += message.params.delta;
+        return;
+      case 'item/completed':
+        if (message.params.item.type === 'agentMessage') proposal.final = message.params.item.text;
+        return;
+      case 'error':
+        if (!message.params.willRetry) proposal.lastError = message.params.error.message;
+        return;
+      case 'turn/completed': {
+        const { turn } = message.params;
+        if (turn.status === 'inProgress') return;
+        if (turn.status === 'completed') proposal.resolve(proposal.final ?? proposal.streamed);
+        else
+          proposal.reject(
+            new CodexError(
+              'state',
+              turn.error?.message ?? proposal.lastError ?? 'codex did not write a proposal',
+            ),
+          );
+        return;
+      }
+      default:
+        return;
     }
   }
 
@@ -591,6 +711,7 @@ export class CodexAdapter implements ProviderAdapter {
     this.#ready = null;
     this.#approvals.clear();
     this.#inputs.clear();
+    for (const proposal of this.#proposals.values()) proposal.reject(error);
     for (const thread of this.#threads.values()) {
       thread.loaded = false;
       if (thread.turnId && !this.#disposed)
@@ -971,6 +1092,21 @@ export class CodexAdapter implements ProviderAdapter {
   #request(connection: CodexConnection, message: ServerRequest): void {
     const params: unknown = message.params;
     const codexThreadId = isRecord(params) ? params['threadId'] : undefined;
+    // A proposal is never given more than it started with, and the user is not asked.
+    if (typeof codexThreadId === 'string' && this.#proposals.has(codexThreadId)) {
+      switch (message.method) {
+        case 'item/commandExecution/requestApproval':
+        case 'item/fileChange/requestApproval':
+          connection.respond(message.id, message.method, { decision: 'decline' });
+          return;
+        case 'item/permissions/requestApproval':
+          connection.respond(message.id, message.method, { permissions: {}, scope: 'turn' });
+          return;
+        default:
+          connection.respondError(message.id, -32602, 'A proposal takes no requests');
+          return;
+      }
+    }
     const thread =
       typeof codexThreadId === 'string' ? this.#byCodexId.get(codexThreadId) : undefined;
     if (!thread) {
@@ -1114,6 +1250,11 @@ export class CodexAdapter implements ProviderAdapter {
     }
     const codexThreadId = params['threadId'];
     if (typeof codexThreadId !== 'string') return;
+    const proposal = this.#proposals.get(codexThreadId);
+    if (proposal) {
+      this.#proposalNotification(proposal, message);
+      return;
+    }
     const thread = this.#byCodexId.get(codexThreadId);
     if (!thread) {
       this.#agentNotification(codexThreadId, message);

@@ -6,8 +6,17 @@ import type {
   ProjectGitStatus,
 } from '@wow/contracts';
 import { spawn } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
-import { devNull } from 'node:os';
+import {
+  access,
+  constants,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { devNull, tmpdir } from 'node:os';
 import path from 'node:path';
 import { stopProcessTree, type StopProcess } from './stop-process.js';
 
@@ -243,12 +252,14 @@ export interface GitProcess {
   kill(): boolean;
 }
 
-export type StartGit = (command: string, args: string[]) => GitProcess;
+// `env` is given for the commands that run the repository's hooks (commitPaths, pushBranch);
+// every other command runs with `gitEnvironment`.
+export type StartGit = (command: string, args: string[], env?: NodeJS.ProcessEnv) => GitProcess;
 
-const startGit: StartGit = (command, args) =>
+export const startGit: StartGit = (command, args, env = gitEnvironment(process.env)) =>
   spawn(command, args, {
     windowsHide: true,
-    env: gitEnvironment(process.env),
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -290,19 +301,33 @@ function runGit(
   options: GitRunOptions,
   config: readonly string[] = [],
 ) {
-  return new Promise<GitResult>((resolve) => {
+  return execGit([...neverRun, ...plainPaths, ...config, '-C', folder, ...args], args, options);
+}
+
+// How a git that runs the repository's hooks keeps what it writes: only the last `tailBytes`
+// characters of stdout and stderr together, so a hook that writes a lot is not stopped for it.
+interface HookOutput {
+  readonly env: NodeJS.ProcessEnv;
+  readonly tailBytes: number;
+}
+
+type ExecResult = GitResult & { readonly output?: string };
+
+function execGit(
+  fullArgs: readonly string[],
+  args: readonly string[],
+  options: GitRunOptions,
+  hooks?: HookOutput,
+) {
+  return new Promise<ExecResult>((resolve) => {
     const command = options.git ?? 'git';
-    const child = (options.start ?? startGit)(command, [
-      ...neverRun,
-      ...plainPaths,
-      ...config,
-      '-C',
-      folder,
-      ...args,
-    ]);
+    const child = hooks
+      ? (options.start ?? startGit)(command, [...fullArgs], hooks.env)
+      : (options.start ?? startGit)(command, [...fullArgs]);
     const stop = options.stop ?? stopProcessTree();
     let stdout = '';
     let stderr = '';
+    let output = '';
     let stopped: string | undefined;
     let done = false;
     let afterStop: ReturnType<typeof setTimeout> | undefined;
@@ -311,7 +336,7 @@ function runGit(
       done = true;
       clearTimeout(limit);
       clearTimeout(afterStop);
-      resolve(result);
+      resolve(hooks ? { ...result, output } : result);
     };
     // A stopped git is waited for, since on Windows one still running holds the folder, but only
     // for `stopWaitMs`.
@@ -329,6 +354,12 @@ function runGit(
       options.timeoutMs,
     );
     const take = (chunk: string, into: 'stdout' | 'stderr') => {
+      if (hooks) {
+        output = (output + chunk).slice(-hooks.tailBytes);
+        if (into === 'stdout') stdout = (stdout + chunk).slice(-hooks.tailBytes);
+        else stderr = (stderr + chunk).slice(-hooks.tailBytes);
+        return;
+      }
       if (into === 'stdout') stdout += chunk;
       else stderr += chunk;
       if (stdout.length + stderr.length > 4 * 1024 * 1024) stopGit('git wrote more than wow reads');
@@ -1283,4 +1314,492 @@ export async function readSnapshotBlobs(
     at = end + 1 + size + 1;
   }
   return { ok: true, blobs };
+}
+
+// Commit and push from a chat thread's Changes (thread work spec 27 to 36). `commitPaths` and
+// `pushBranch` are the only git commands of wow that run the repository's hooks: they run
+// without the `core.hooksPath` override every other command has, on the user's click only, and
+// never with `--no-verify`. Nothing waits for an answer: no terminal prompt, no sign-in window of
+// Git Credential Manager, no SSH passphrase or host key question.
+
+// The environment of a command that runs hooks: the user's own, so a hook finds what it finds in
+// a terminal, with nothing that asks. A pathspec is literal by its `:(literal)` magic here, not
+// by GIT_LITERAL_PATHSPECS, which would change what the hooks' own git commands match.
+export function hookGitEnvironment(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...base,
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'never',
+  };
+  // A program that would show a password window is not asked either.
+  delete env['GIT_ASKPASS'];
+  delete env['SSH_ASKPASS'];
+  env['SSH_ASKPASS_REQUIRE'] = 'never';
+  if (!env['GIT_SSH_COMMAND'] && !env['GIT_SSH']) env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes';
+  return env;
+}
+
+export interface HookGitOptions extends GitRunOptions {
+  // `chat.commitOutputMaxBytes`: how much of what git and the hooks wrote is kept, from the end.
+  readonly outputMaxBytes: number;
+  // The environment the command starts from; the server's own when absent (tests pass theirs).
+  readonly baseEnv?: NodeJS.ProcessEnv | undefined;
+}
+
+const runHookGit = (folder: string, args: readonly string[], options: HookGitOptions) =>
+  execGit(['-c', 'core.fsmonitor=false', ...plainPaths, '-C', folder, ...args], args, options, {
+    env: hookGitEnvironment(options.baseEnv ?? process.env),
+    tailBytes: options.outputMaxBytes,
+  });
+
+// `status --porcelain=v2 -z`: one entry per changed, deleted or new file Git does not ignore.
+export interface StatusEntry {
+  readonly path: string;
+  // Where a renamed file was before, for a rename the index holds.
+  readonly oldPath: string | null;
+  // The index's and the working file's letter (`.` for none), `?` for an untracked file.
+  readonly index: string;
+  readonly worktree: string;
+  readonly untracked: boolean;
+  readonly unmerged: boolean;
+}
+
+export function parseStatusV2(output: string): StatusEntry[] {
+  const parts = records(output);
+  const entries: StatusEntry[] = [];
+  for (let at = 0; at < parts.length; at += 1) {
+    const record = parts[at] ?? '';
+    const kind = record.charAt(0);
+    if (kind === '?') {
+      entries.push({
+        path: record.slice(2),
+        oldPath: null,
+        index: '?',
+        worktree: '?',
+        untracked: true,
+        unmerged: false,
+      });
+      continue;
+    }
+    // "1 XY sub mH mI mW hH hI path", "2 XY sub mH mI mW hH hI Xscore path" + NUL + old path,
+    // "u XY sub m1 m2 m3 mW h1 h2 h3 path".
+    const fields = kind === '1' ? 8 : kind === '2' ? 9 : kind === 'u' ? 10 : 0;
+    if (fields === 0) continue;
+    const pieces = record.split(' ');
+    const filePath = pieces.slice(fields).join(' ');
+    const xy = pieces[1] ?? '..';
+    const oldPath = kind === '2' ? (parts[at + 1] ?? null) : null;
+    if (kind === '2') at += 1;
+    if (filePath === '') continue;
+    entries.push({
+      path: filePath,
+      oldPath,
+      index: xy.charAt(0),
+      worktree: xy.charAt(1),
+      untracked: false,
+      unmerged: kind === 'u',
+    });
+  }
+  return entries;
+}
+
+export async function readStatusFiles(
+  folder: string,
+  options: GitRunOptions,
+): Promise<
+  | { readonly ok: true; readonly entries: StatusEntry[] }
+  | { readonly ok: false; readonly message: string }
+> {
+  const status = await runGit(
+    folder,
+    ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--no-renames'],
+    options,
+  );
+  if (!status.ok) return { ok: false, message: status.message };
+  return { ok: true, entries: parseStatusV2(status.stdout) };
+}
+
+// The tree a repository without commits compares against.
+const emptyTree = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+// Added and removed lines of every tracked file against HEAD, the index and the working file
+// together (`diff HEAD --numstat`).
+export async function readHeadLineCounts(
+  folder: string,
+  head: string | null,
+  options: GitRunOptions,
+): Promise<Map<string, LineCount>> {
+  const counted = await runGit(
+    folder,
+    [
+      'diff',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--no-renames',
+      '--numstat',
+      '-z',
+      head ?? emptyTree,
+      '--',
+    ],
+    options,
+  );
+  return counted.ok ? parseNumstat(counted.stdout) : new Map();
+}
+
+// The diff of the files against HEAD, for a proposal; new files Git does not know yet are not in
+// it. Undefined when git fails.
+export async function readFilesPatch(
+  folder: string,
+  head: string | null,
+  paths: readonly string[],
+  options: GitRunOptions,
+): Promise<string | undefined> {
+  if (paths.length === 0) return '';
+  const patch = await runGit(
+    folder,
+    [
+      'diff',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--no-color',
+      head ?? emptyTree,
+      '--',
+      ...paths.slice(0, pathsPerCommand),
+    ],
+    options,
+  );
+  return patch.ok ? patch.stdout : undefined;
+}
+
+// A merge, rebase, cherry-pick or revert the folder is in the middle of, in words, or null.
+export async function readOperationInProgress(
+  folder: string,
+  options: GitRunOptions,
+): Promise<string | null> {
+  const markers = [
+    ['MERGE_HEAD', 'a merge'],
+    ['rebase-merge', 'a rebase'],
+    ['rebase-apply', 'a rebase'],
+    ['CHERRY_PICK_HEAD', 'a cherry-pick'],
+    ['REVERT_HEAD', 'a revert'],
+  ] as const;
+  const found = await runGit(
+    folder,
+    ['rev-parse', ...markers.flatMap(([name]) => ['--git-path', name])],
+    options,
+  );
+  if (!found.ok) return null;
+  const paths = found.stdout.split('\n').filter((line) => line !== '');
+  for (const [index, [, words]] of markers.entries()) {
+    const marker = paths[index];
+    if (marker === undefined) continue;
+    if (await stat(path.resolve(folder, marker)).catch(() => undefined)) return words;
+  }
+  return null;
+}
+
+// The hooks a commit runs, in the order git runs them.
+export const commitHookNames = ['pre-commit', 'prepare-commit-msg', 'commit-msg', 'post-commit'];
+
+// The commit hooks git would run in the folder, from the hooks folder git names (the
+// repository's own, or `core.hooksPath`). Only `rev-parse` runs here, which runs no hook, so it
+// is asked without the override that would name wow's empty hooks path instead. Git runs a hook
+// only when it may execute the file; on Windows every file there counts, as Git for Windows runs
+// it through its shell.
+export async function readCommitHooks(
+  folder: string,
+  options: GitRunOptions,
+  platform: NodeJS.Platform = process.platform,
+): Promise<{ readonly hooksPath: string | null; readonly hooks: string[] }> {
+  const found = await execGit(
+    ['-c', 'core.fsmonitor=false', ...plainPaths, '-C', folder, 'rev-parse', '--git-path', 'hooks'],
+    ['rev-parse'],
+    options,
+  );
+  if (!found.ok) return { hooksPath: null, hooks: [] };
+  const relative = found.stdout.trim();
+  if (relative === '') return { hooksPath: null, hooks: [] };
+  const folderPath = path.resolve(folder, relative);
+  const names = new Set(await readdir(folderPath).catch(() => [] as string[]));
+  const hooks: string[] = [];
+  for (const name of commitHookNames) {
+    if (!names.has(name)) continue;
+    const file = path.join(folderPath, name);
+    const entry = await stat(file).catch(() => undefined);
+    if (!entry?.isFile()) continue;
+    if (
+      platform !== 'win32' &&
+      !(await access(file, constants.X_OK).then(
+        () => true,
+        () => false,
+      ))
+    ) {
+      continue;
+    }
+    hooks.push(name);
+  }
+  return { hooksPath: relative, hooks };
+}
+
+export type HookGitOutcome =
+  | { readonly ok: true; readonly output: string }
+  | {
+      readonly ok: false;
+      readonly missing: boolean;
+      readonly message: string;
+      readonly output: string;
+    };
+
+const hookOutcome = (result: ExecResult): HookGitOutcome =>
+  result.ok
+    ? { ok: true, output: result.output ?? '' }
+    : {
+        ok: false,
+        missing: result.missing,
+        message: result.message,
+        output: result.output ?? '',
+      };
+
+// A pathspec file of wow's, one path per NUL, so no list meets the command line's length limit
+// on Windows. Each path is literal: by GIT_LITERAL_PATHSPECS for wow's own commands, by the
+// `:(literal)` magic (`magic`) for a command that runs hooks.
+async function withPathspecs<T>(
+  paths: readonly string[],
+  message: string | undefined,
+  magic: boolean,
+  use: (files: { readonly paths: string; readonly message: string }) => Promise<T>,
+): Promise<T> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'wow-commit-'));
+  try {
+    const files = { paths: path.join(dir, 'paths'), message: path.join(dir, 'message') };
+    const prefix = magic ? ':(literal)' : '';
+    await writeFile(files.paths, paths.map((entry) => `${prefix}${entry}\0`).join(''));
+    if (message !== undefined) await writeFile(files.message, message);
+    return await use(files);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+// Commits exactly `paths` with the message (spec 29): new files are added first, then `commit`
+// with the paths, which leaves whatever else is staged staged and uncommitted. The commit runs
+// the repository's hooks as `git commit` in a terminal does, with the user's identity and
+// settings; wow adds no trailer. When it is refused, the new files it added are taken out of the
+// index again, so nothing changed.
+export async function commitPaths(
+  folder: string,
+  change: {
+    readonly paths: readonly string[];
+    readonly newPaths: readonly string[];
+    readonly message: string;
+  },
+  options: HookGitOptions,
+): Promise<HookGitOutcome> {
+  if (change.newPaths.length > 0) {
+    const added = await withPathspecs(change.newPaths, undefined, false, (files) =>
+      runGit(
+        folder,
+        ['add', `--pathspec-from-file=${files.paths}`, '--pathspec-file-nul'],
+        options,
+      ),
+    );
+    if (!added.ok) return { ok: false, missing: added.missing, message: added.message, output: '' };
+  }
+  const committed = await withPathspecs(change.paths, change.message, true, (files) =>
+    runHookGit(
+      folder,
+      [
+        'commit',
+        '--quiet',
+        '-F',
+        files.message,
+        `--pathspec-from-file=${files.paths}`,
+        '--pathspec-file-nul',
+      ],
+      options,
+    ),
+  );
+  if (!committed.ok && change.newPaths.length > 0) {
+    await withPathspecs(change.newPaths, undefined, false, (files) =>
+      runGit(
+        folder,
+        [
+          'rm',
+          '--cached',
+          '--quiet',
+          '--ignore-unmatch',
+          `--pathspec-from-file=${files.paths}`,
+          '--pathspec-file-nul',
+        ],
+        options,
+      ),
+    );
+  }
+  return hookOutcome(committed);
+}
+
+// Makes a branch where the folder is and puts the folder on it, for a commit from a folder on no
+// branch (spec 30). The files and the index stay as they are; no hook runs.
+export async function switchToNewBranch(
+  folder: string,
+  branch: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  return outcomeOf(await runGit(folder, ['switch', '--quiet', '-c', branch], options));
+}
+
+// What git writes when it would have to ask for a password, a passphrase or a host key.
+const asksForCredentials =
+  /could not read (Username|Password)|terminal prompts disabled|Authentication failed|Permission denied \(|Host key verification failed|passphrase|askpass|no such identity|could not read from remote repository/i;
+
+export type PushOutcome =
+  | { readonly ok: true; readonly output: string }
+  | {
+      readonly ok: false;
+      readonly missing: boolean;
+      readonly message: string;
+      readonly output: string;
+      // Git would have asked for a password, a passphrase or a host key (spec 35).
+      readonly needsCredentials: boolean;
+    };
+
+// Pushes the branch to the remote under the same name and sets it as the branch's upstream
+// (spec 32). Never forced; the repository's pre-push hook runs. Git's own credentials only: a
+// credential helper, an SSH agent. The host's API token is never given to git.
+export async function pushBranch(
+  folder: string,
+  remote: string,
+  branch: string,
+  options: HookGitOptions,
+): Promise<PushOutcome> {
+  const ref = `refs/heads/${branch}`;
+  const pushed = hookOutcome(
+    await runHookGit(
+      folder,
+      ['push', '--porcelain', '--set-upstream', '--end-of-options', remote, `${ref}:${ref}`],
+      { ...options, baseEnv: { ...(options.baseEnv ?? process.env), LC_ALL: 'C' } },
+    ),
+  );
+  if (pushed.ok) return pushed;
+  return {
+    ...pushed,
+    needsCredentials: asksForCredentials.test(`${pushed.message}\n${pushed.output}`),
+  };
+}
+
+// The remote the branch's upstream is on, or null when it has none.
+export async function readUpstreamRemote(
+  folder: string,
+  branch: string,
+  options: GitRunOptions,
+): Promise<string | null> {
+  const found = await runGit(folder, ['config', '--get', `branch.${branch}.remote`], options);
+  const remote = found.ok ? found.stdout.trim() : '';
+  return remote === '' || remote === '.' ? null : remote;
+}
+
+// The branches the repository knows of the remote (`refs/remotes/<remote>/…`), as last fetched.
+export async function listRemoteBranches(
+  folder: string,
+  remote: string,
+  options: GitRunOptions,
+): Promise<string[]> {
+  const prefix = `refs/remotes/${remote}/`;
+  const listed = await runGit(
+    folder,
+    ['for-each-ref', '--format=%(refname)', '--end-of-options', prefix],
+    options,
+  );
+  if (!listed.ok) return [];
+  return listed.stdout
+    .split('\n')
+    .filter((ref) => ref.startsWith(prefix))
+    .map((ref) => ref.slice(prefix.length))
+    .filter((name) => name !== 'HEAD' && name !== '');
+}
+
+// The commits `head` has that `base` does not, newest first, with subject and body.
+export async function listCommitsAhead(
+  folder: string,
+  base: string | null,
+  head: string,
+  options: GitRunOptions,
+): Promise<{ sha: string; subject: string; body: string }[] | undefined> {
+  const listed = await runGit(
+    folder,
+    [
+      'log',
+      '--format=%H%x00%s%x00%b%x1e',
+      '--end-of-options',
+      head,
+      ...(base === null ? [] : [`^${base}`]),
+    ],
+    options,
+  );
+  if (!listed.ok) return undefined;
+  return listed.stdout
+    .split('\x1e')
+    .map((record) => record.replace(/^\n/, ''))
+    .filter((record) => record !== '')
+    .map((record) => {
+      const [sha = '', subject = '', body = ''] = record.split('\0');
+      return { sha, subject, body: body.trim() };
+    });
+}
+
+// How many commits `head` has that `base` does not; undefined when git cannot say.
+export async function countCommitsAhead(
+  folder: string,
+  base: string | null,
+  head: string,
+  options: GitRunOptions,
+): Promise<number | undefined> {
+  const counted = await runGit(
+    folder,
+    ['rev-list', '--count', '--end-of-options', head, ...(base === null ? [] : [`^${base}`])],
+    options,
+  );
+  const count = counted.ok ? Number(counted.stdout.trim()) : Number.NaN;
+  return Number.isInteger(count) ? count : undefined;
+}
+
+// The paths the commits `head` has beyond `base` change.
+export async function listPathsAhead(
+  folder: string,
+  base: string | null,
+  head: string,
+  options: GitRunOptions,
+): Promise<string[]> {
+  const listed = await runGit(
+    folder,
+    ['diff', '--no-ext-diff', '--name-only', '-z', base ?? emptyTree, head, '--'],
+    options,
+  );
+  return listed.ok ? records(listed.stdout).filter((entry) => entry !== '') : [];
+}
+
+// The diff of the commits `head` has beyond `base`, for a pull request proposal.
+export async function readRangePatch(
+  folder: string,
+  base: string | null,
+  head: string,
+  options: GitRunOptions,
+): Promise<string | undefined> {
+  const patch = await runGit(
+    folder,
+    ['diff', '--no-ext-diff', '--no-textconv', '--no-color', base ?? emptyTree, head, '--'],
+    options,
+  );
+  return patch.ok ? patch.stdout : undefined;
+}
+
+// The newest commit's sha and subject.
+export async function readHeadSubject(
+  folder: string,
+  options: GitRunOptions,
+): Promise<{ sha: string; subject: string } | undefined> {
+  const shown = await runGit(folder, ['log', '-n1', '--format=%H%x00%s'], options);
+  if (!shown.ok) return undefined;
+  const [sha = '', subject = ''] = shown.stdout.trim().split('\0');
+  return sha === '' ? undefined : { sha, subject };
 }

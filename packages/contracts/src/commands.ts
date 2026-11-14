@@ -69,6 +69,7 @@ import {
   StoredSnapshot,
   TurnSnapshot,
 } from './snapshots.js';
+import { ChangeRequestOpenedItemPayload, CommittedItemPayload } from './thread-git.js';
 import { FileHash, RunEffect, UnpushedWork, WorkflowStep, WorkingCopy } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
@@ -675,6 +676,14 @@ export const InternalCommand = z.discriminatedUnion('type', [
     threadId: Id,
     tools: SessionTools.nullable(),
     source: ThreadToolsSource,
+  }),
+  // The thread git service after the user's Commit or Open in a chat thread's dialogs (thread
+  // work spec 29, 32): the line on the thread's last turn.
+  z.object({ type: z.literal('thread.committed'), threadId: Id, commit: CommittedItemPayload }),
+  z.object({
+    type: z.literal('thread.changeRequestOpened'),
+    threadId: Id,
+    request: ChangeRequestOpenedItemPayload,
   }),
   // Replaces the plans projection with a fresh read of every project's intents folder; the
   // server's plans service sends it.

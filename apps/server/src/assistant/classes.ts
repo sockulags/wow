@@ -327,6 +327,9 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'thread.filesRestored': serverOnly,
   'thread.snapshotsDropped': serverOnly,
   'thread.toolsReported': serverOnly,
+  // A commit or a pull request is the user's, from the dialogs only (thread work spec 36).
+  'thread.committed': serverOnly,
+  'thread.changeRequestOpened': serverOnly,
   'thread.answerQuestions': refused(
     'Only the user answers your questions, on their card. End your turn and wait for the answer.',
   ),

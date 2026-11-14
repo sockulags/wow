@@ -401,6 +401,35 @@ export const defaultUnitPromptTemplate = [
   '{{#intentUnitLine}}When you open a pull request for it, put this line in its body: {{intentUnitLine}}{{/intentUnitLine}}',
 ].join('\n');
 
+// What "Propose" in the commit and pull request dialogs asks the thread's model (thread work
+// spec 28, 31). The answer only fills fields the user reads and edits before anything happens.
+export const defaultCommitMessageTemplate = [
+  'Write a Git commit message for the changes below. Answer with the message only: a subject line of at most 72 characters in the imperative mood, then, when the change needs it, a blank line and a short body. No quotes and no code fences.',
+  '',
+  '{{#title}}The work was done in a conversation called "{{title}}".{{/title}}',
+  '',
+  'Files:',
+  '{{files}}',
+  '',
+  '{{#patch}}The diff:',
+  '{{patch}}{{/patch}}',
+].join('\n');
+
+export const defaultPullRequestTemplate = [
+  'Write the title and description of a pull request for the commits and changes below. Answer with the title alone on the first line, at most 72 characters, then a blank line and the description in Markdown. No quotes and no code fences.',
+  '',
+  '{{#title}}The work was done in a conversation called "{{title}}".{{/title}}',
+  '',
+  '{{#commits}}Commits:',
+  '{{commits}}{{/commits}}',
+  '',
+  'Files:',
+  '{{files}}',
+  '',
+  '{{#patch}}The diff:',
+  '{{patch}}{{/patch}}',
+].join('\n');
+
 export const PlanRunOnFailure = z.enum(['stop', 'skip']);
 export type PlanRunOnFailure = z.infer<typeof PlanRunOnFailure>;
 
@@ -598,6 +627,95 @@ export const settingsRegistry = {
           'The tip of the remote\'s default branch, fetched first when "Fetch before making a working copy" is on.',
       },
     },
+  }),
+  'chat.commitTimeoutMs': defineSetting({
+    schema: z.number().int().min(1000).max(3_600_000),
+    group: 'chat',
+    label: 'Time for a commit',
+    description:
+      "How long a commit from a thread's Changes may take, the repository's commit hooks included. A commit still running then is stopped and nothing is committed.",
+    default: 120_000,
+    scope: 'global',
+    unit: 'ms',
+  }),
+  'chat.pushTimeoutMs': defineSetting({
+    schema: z.number().int().min(1000).max(3_600_000),
+    group: 'chat',
+    label: 'Time for a push',
+    description:
+      "How long pushing a thread's branch may take, the repository's pre-push hook included, before it is stopped.",
+    default: 120_000,
+    scope: 'global',
+    unit: 'ms',
+  }),
+  'chat.commitOutputMaxBytes': defineSetting({
+    schema: z
+      .number()
+      .int()
+      .min(1024)
+      .max(16 * 1024 * 1024),
+    group: 'chat',
+    label: "Most of a hook's output shown",
+    description:
+      'When a commit or a push is refused, the commit dialog shows the last this many bytes of what Git and the hooks wrote.',
+    default: 64 * 1024,
+    scope: 'global',
+    unit: 'bytes',
+  }),
+  'chat.proposalTimeoutMs': defineSetting({
+    schema: z.number().int().min(1000).max(600_000),
+    group: 'chat',
+    label: 'Time to propose a message',
+    description:
+      'How long "Propose" in the commit and pull request dialogs waits for the model before it gives up.',
+    default: 60_000,
+    scope: 'global',
+    unit: 'ms',
+  }),
+  'chat.proposalPatchMaxBytes': defineSetting({
+    schema: z.number().int().min(1000).max(10_000_000),
+    group: 'chat',
+    label: 'Most of the diff a proposal reads',
+    description:
+      '"Propose" gives the model the diff of the chosen files up to this many bytes; the rest is cut and the model is told so.',
+    default: 60_000,
+    scope: 'global',
+    unit: 'bytes',
+  }),
+  'chat.commitMessageTemplate': defineSetting({
+    schema: z
+      .string()
+      .trim()
+      .min(1)
+      .meta({ widget: 'template', placeholders: ['title', 'files', 'patch'] }),
+    group: 'chat',
+    label: 'Commit message request',
+    description:
+      'What "Propose" in the commit dialog asks the thread\'s model, outside the conversation and without tools. {{title}} is the thread\'s title, {{files}} the chosen files and {{patch}} their diff; a {{#name}}…{{/name}} section is left out when that value is empty.',
+    default: defaultCommitMessageTemplate,
+    scope: 'project',
+  }),
+  'chat.pullRequestTemplate': defineSetting({
+    schema: z
+      .string()
+      .trim()
+      .min(1)
+      .meta({ widget: 'template', placeholders: ['title', 'commits', 'files', 'patch'] }),
+    group: 'chat',
+    label: 'Pull request text request',
+    description:
+      'What "Propose" in the pull request dialog asks the thread\'s model for the title and description. {{title}} is the thread\'s title, {{commits}} the commits that would be in the pull request, {{files}} the files they change and {{patch}} the diff; a {{#name}}…{{/name}} section is left out when that value is empty.',
+    default: defaultPullRequestTemplate,
+    scope: 'project',
+  }),
+  'chat.pullRequestDraft': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Open pull requests as drafts',
+    description:
+      'Whether "Draft" starts on in the pull request dialog. On GitLab a draft is a merge request whose title starts with "Draft:".',
+    default: false,
+    scope: 'project',
   }),
   'chat.contextMeter': defineSetting({
     schema: z.boolean(),
@@ -1978,6 +2096,16 @@ export const settingsRegistry = {
     'Chat: show changes',
     "Open the open thread's Changes in the side panel, and close them again.",
     'Mod+Shift+D',
+  ),
+  'keybindings.commitChanges': keybinding(
+    'Chat: commit…',
+    "Open the commit dialog of the open chat thread's Changes, which commits the files you tick with the repository's hooks.",
+    'Mod+Shift+K',
+  ),
+  'keybindings.commitConfirm': keybinding(
+    'Commit or open the pull request',
+    'In the commit dialog, commit; in the pull request dialog, push and open it.',
+    'Mod+Enter',
   ),
   'keybindings.composerModel': keybinding(
     'Composer: choose model',

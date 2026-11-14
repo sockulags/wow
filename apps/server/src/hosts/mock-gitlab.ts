@@ -86,6 +86,17 @@ export class MockGitLab {
   limit: { remaining: number; reset: number } | undefined;
   retryAfter: string | undefined;
   readonly requests: MockGitLabRequest[] = [];
+  // Opening a merge request (thread work spec 32): what each POST asked for, in order, and a
+  // refusal that answers the next ones until cleared (spec 34).
+  readonly opened: {
+    source_branch: string;
+    target_branch: string;
+    title: string;
+    description: string;
+  }[] = [];
+  openRefusal: { status: number; message: string } | undefined;
+  // Branches GitLab reports as protected (spec 33); any other branch is not known to it.
+  protectedBranches = new Set<string>();
 
   constructor(options: { projectPath: string; webUrl: string }) {
     this.projectPath = options.projectPath;
@@ -124,7 +135,12 @@ export class MockGitLab {
     };
   }
 
-  answer(method: string, pathAndQuery: string, token: string | null): MockGitLabAnswer {
+  answer(
+    method: string,
+    pathAndQuery: string,
+    token: string | null,
+    body?: unknown,
+  ): MockGitLabAnswer {
     this.requests.push({ method, path: pathAndQuery, token });
     const headers: Record<string, string> = this.limit
       ? {
@@ -133,13 +149,21 @@ export class MockGitLab {
         }
       : {};
     if (this.retryAfter !== undefined) headers['retry-after'] = this.retryAfter;
-    const json = (status: number, body: unknown): MockGitLabAnswer => ({ status, body, headers });
-    if (method !== 'GET') return json(405, { message: '405 Method Not Allowed' });
+    const json = (status: number, answered: unknown): MockGitLabAnswer => ({
+      status,
+      body: answered,
+      headers,
+    });
+    const url = new URL(pathAndQuery, 'http://mock.invalid');
+    const opening =
+      method === 'POST' &&
+      url.pathname === `/projects/${encodeURIComponent(this.projectPath)}/merge_requests`;
+    if (method !== 'GET' && !opening) return json(405, { message: '405 Method Not Allowed' });
     if (this.failure) return json(this.failure.status, { message: this.failure.message });
     if (this.token !== undefined && token !== this.token) {
       return json(401, { message: '401 Unauthorized' });
     }
-    const url = new URL(pathAndQuery, 'http://mock.invalid');
+    if (opening) return this.#open(body, json);
     if (url.pathname === '/user') return json(200, { id: 7, ...this.user });
     if (url.pathname === '/version') return json(200, { version: this.version, revision: 'abc' });
     // The project id is the URL-encoded path, so `/` inside it is `%2F` and splits nothing.
@@ -163,6 +187,13 @@ export class MockGitLab {
         200,
         listed.map((request) => this.#mergeRequest(request)),
       );
+    }
+    const branch = /^\/repository\/branches\/(.+)$/.exec(rest);
+    if (branch) {
+      const name = decodeURIComponent(branch[1] ?? '');
+      return this.protectedBranches.has(name)
+        ? json(200, { name, protected: true })
+        : json(404, { message: '404 Branch Not Found' });
     }
     const single = /^\/merge_requests\/(\d+)(\/pipelines|\/notes)?$/.exec(rest);
     if (single) {
@@ -239,13 +270,48 @@ export class MockGitLab {
 
   // A `fetch` that asks this mock for everything under `<site>/api/v4`; any other address fails
   // like an unreachable host.
+  #open(body: unknown, json: (status: number, body: unknown) => MockGitLabAnswer) {
+    if (this.openRefusal) {
+      return json(this.openRefusal.status, { message: this.openRefusal.message });
+    }
+    const asked = (typeof body === 'object' && body !== null ? body : {}) as Record<
+      string,
+      unknown
+    >;
+    const text = (name: string) => (typeof asked[name] === 'string' ? asked[name] : '');
+    const request = {
+      source_branch: text('source_branch'),
+      target_branch: text('target_branch'),
+      title: text('title'),
+      description: text('description'),
+    };
+    if (request.source_branch === '' || request.target_branch === '' || request.title === '') {
+      return json(400, { message: 'title is missing' });
+    }
+    this.opened.push(request);
+    const iid = Math.max(0, ...this.mergeRequests.map((entry) => entry.iid), 19) + 1;
+    const created: MockMergeRequest = {
+      iid,
+      title: request.title,
+      description: request.description,
+      state: 'opened',
+      draft: request.title.startsWith('Draft:'),
+      branch: request.source_branch,
+      sha: 'f1f1f1f1f1f1',
+    };
+    this.mergeRequests = [...this.mergeRequests, created];
+    return json(201, this.#mergeRequest(created));
+  }
+
   fetch(siteUrl: string): typeof fetch {
     const base = `${siteUrl.replace(/\/+$/, '')}/api/v4`;
     return (input, init) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (!url.startsWith(`${base}/`)) return Promise.reject(new TypeError('fetch failed'));
       const token = new Headers(init?.headers).get('private-token');
-      const answer = this.answer(init?.method ?? 'GET', url.slice(base.length), token);
+      const body: unknown =
+        typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
+      const answer = this.answer(init?.method ?? 'GET', url.slice(base.length), token, body);
       return Promise.resolve(
         new Response(JSON.stringify(answer.body), {
           status: answer.status,
