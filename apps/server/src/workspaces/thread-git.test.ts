@@ -3,7 +3,16 @@ import { plainProtector } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { devNull, tmpdir } from 'node:os';
 import path from 'node:path';
@@ -391,6 +400,27 @@ describe('commit from a thread’s Changes (thread work spec 27 to 30)', () => {
     // The commit is the one command that runs without wow's empty hooks path.
     const commit = calls.find(({ args }) => args.includes('commit'));
     expect(commit?.args.some((arg) => arg.startsWith('core.hooksPath='))).toBe(false);
+  });
+
+  it('does not read a link’s target for a proposal (U4 180)', async () => {
+    const folder = await threadWithWork();
+    const outside = path.join(root, 'outside secret.txt');
+    await writeFile(outside, 'OUTSIDE-SECRET-CONTENT\n');
+    await symlink(outside, path.join(folder, 'link.txt'), 'file');
+    await threadGit().propose({
+      threadId: 't1',
+      requestId: 'r-link',
+      purpose: 'commitMessage',
+      files: ['notes.txt', 'link.txt'],
+    });
+    const sent = adapters
+      .flatMap((adapter) => adapter.sent)
+      .filter(
+        (command): command is Extract<ProviderCommand, { type: 'propose' }> =>
+          command.type === 'propose',
+      );
+    expect(sent[0]?.prompt).toContain('+one');
+    expect(sent[0]?.prompt).not.toContain('OUTSIDE-SECRET-CONTENT');
   });
 
   it('shows a refusing hook’s output and commits nothing (spec 29)', async () => {

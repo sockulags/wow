@@ -836,9 +836,11 @@ export class ThreadGit {
           git,
         )) ?? '';
       for (const file of files.filter((entry) => entry.status === 'added' && !entry.staged)) {
-        const bytes = await readFile(path.join(thread.cwd, ...file.path.split('/'))).catch(
-          () => undefined,
-        );
+        // A link is not followed: its target may be anywhere on the machine.
+        const onDisk = path.join(thread.cwd, ...file.path.split('/'));
+        const found = await lstat(onDisk).catch(() => undefined);
+        if (!found?.isFile()) continue;
+        const bytes = await readFile(onDisk).catch(() => undefined);
         if (!bytes || bytes.includes(0)) continue;
         const lines = bytes.toString('utf8').replace(/\n$/, '').split('\n');
         patch += `--- /dev/null\n+++ b/${file.path}\n${lines.map((line) => `+${line}`).join('\n')}\n`;
