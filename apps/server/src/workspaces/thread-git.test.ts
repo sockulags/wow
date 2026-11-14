@@ -709,6 +709,35 @@ describe('pull request from a thread (thread work spec 31 to 36)', () => {
     expect(seen.some((value) => value?.includes(GITLAB_TOKEN))).toBe(false);
   });
 
+  it('refuses to push the remote’s default branch whatever the target (U4 181)', async () => {
+    await committed();
+    const folder = thread().cwd;
+    const branch = thread().branch ?? '';
+    // The remote's default is trunk, which the thread's branch is called.
+    git(remote, 'branch', 'trunk', 'main');
+    git(remote, 'symbolic-ref', 'HEAD', 'refs/heads/trunk');
+    git(project, 'fetch', '-q', 'origin');
+    git(project, 'remote', 'set-head', 'origin', 'trunk');
+    git(folder, 'branch', '-m', branch, 'trunk');
+    calls = [];
+    const service = threadGit();
+    const plan = await service.pullRequestPlan({ threadId: 't1', target: 'main' });
+    expect(plan.status).toBe('isTarget');
+    expect(plan.message).toContain('default branch of origin');
+    const refused = await refusalOf(
+      service.openPullRequest({
+        threadId: 't1',
+        target: 'main',
+        title: 'Ring',
+        body: '',
+        draft: false,
+      }),
+    );
+    expect(refused.message).toContain('default branch of origin');
+    expect(pushes()).toBe(0);
+    expect(git(remote, 'rev-parse', 'refs/heads/trunk')).toBe(git(remote, 'rev-parse', 'main'));
+  });
+
   describe('a push that needs credentials', () => {
     let asking: Server;
     afterEach(async () => {

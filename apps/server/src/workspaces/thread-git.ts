@@ -608,8 +608,8 @@ export class ThreadGit {
       : branches.includes('master')
         ? 'master'
         : (branches[0] ?? null);
-    const target =
-      params.target ?? (await readRemoteDefaultBranch(thread.cwd, remote, git)) ?? fallback;
+    const defaultBranch = (await readRemoteDefaultBranch(thread.cwd, remote, git)) ?? fallback;
+    const target = params.target ?? defaultBranch;
     plan = { ...plan, branches, target };
     if (target === null) {
       return {
@@ -622,6 +622,16 @@ export class ThreadGit {
         ...stop(
           'isTarget',
           `The folder is on ${target}, the branch the ${noun} would go into. Commit on a branch of its own.`,
+        ),
+        host,
+      };
+    }
+    // Whatever the target, wow never pushes the branch a remote treats as its default.
+    if (branch === defaultBranch) {
+      return {
+        ...stop(
+          'isTarget',
+          `The folder is on ${branch}, the default branch of ${remote}, and wow never pushes that. Commit on a branch of its own.`,
         ),
         host,
       };
