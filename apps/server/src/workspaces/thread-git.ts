@@ -386,6 +386,7 @@ export class ThreadGit {
       chosen.push(entry);
     }
     let branch = plan.branch;
+    let switchedTo: string | null = null;
     if (branch === null) {
       const wanted = params.newBranch?.trim() ?? '';
       if (wanted === '') {
@@ -399,6 +400,7 @@ export class ThreadGit {
       const made = await switchToNewBranch(thread.cwd, wanted, git);
       if (!made.ok) throw commitRefused(`Git did not make the branch: ${made.message}`);
       branch = wanted;
+      switchedTo = wanted;
     }
     const committed = await commitPaths(
       thread.cwd,
@@ -410,10 +412,15 @@ export class ThreadGit {
       this.#hookGit(this.#deps.settings.get('chat.commitTimeoutMs')),
     );
     if (!committed.ok) {
+      // The switch is not undone: the user is told where the folder is.
+      const moved =
+        switchedTo === null ? '' : ` The folder is now on the new branch ${switchedTo}.`;
       throw commitRefused(
-        plan.hooks.length > 0
-          ? `Nothing was committed: ${committed.message}`
-          : `Git did not commit: ${committed.message}`,
+        `${
+          plan.hooks.length > 0
+            ? `Nothing was committed: ${committed.message}`
+            : `Git did not commit: ${committed.message}`
+        }${moved}`,
         committed.output,
       );
     }

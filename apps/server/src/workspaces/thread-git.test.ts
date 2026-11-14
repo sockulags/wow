@@ -463,6 +463,23 @@ describe('commit from a thread’s Changes (thread work spec 27 to 30)', () => {
     expect(calls.some(({ args }) => args.includes('rm'))).toBe(false);
   });
 
+  it('says the folder is on the new branch when a commit from no branch is refused (U4 182)', async () => {
+    await hook('pre-commit', 'echo "Lint failed" >&2\nexit 1');
+    const folder = await threadWithWork();
+    git(folder, 'switch', '-q', '--detach');
+    const refused = await refusalOf(
+      threadGit().commit({
+        threadId: 't1',
+        files: ['src/bell.ts'],
+        message: 'Ring',
+        newBranch: 'wow/ring-from-nowhere',
+      }),
+    );
+    expect(refused.message).toContain('Nothing was committed');
+    expect(refused.message).toContain('The folder is now on the new branch wow/ring-from-nowhere');
+    expect(git(folder, 'symbolic-ref', '--short', 'HEAD')).toBe('wow/ring-from-nowhere');
+  });
+
   it('refuses an empty message and a rebase in progress, and commits from no branch on a new one (spec 30)', async () => {
     const folder = await threadWithWork();
     const service = threadGit();
