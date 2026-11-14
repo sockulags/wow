@@ -1601,6 +1601,72 @@ describe('CodexAdapter', () => {
   });
 });
 
+// Answers a proposal's turn/start, then asks to run a command, streams the answer and ends the
+// turn, as codex would.
+class ProposingCodex extends ScriptedCodex {
+  protected override received(message: Record<string, unknown>): void {
+    super.received(message);
+    if (message['method'] !== 'turn/start') return;
+    const thread = { threadId: 'codex-thread', turnId: 'turn-1' };
+    this.emit({
+      id: 91,
+      method: 'item/commandExecution/requestApproval',
+      params: { ...thread, itemId: 'c1', command: 'git push --force' },
+    });
+    this.emit({
+      method: 'item/agentMessage/delta',
+      params: { ...thread, itemId: 'm1', delta: 'Ring the bell' },
+    });
+    this.emit({
+      method: 'item/completed',
+      params: { ...thread, item: { type: 'agentMessage', id: 'm1', text: 'Ring the bell twice' } },
+    });
+    this.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'codex-thread',
+        turn: { id: 'turn-1', status: 'completed', error: null },
+      },
+    });
+  }
+}
+
+describe('CodexAdapter proposals (thread work spec 28)', () => {
+  it('proposes in an ephemeral thread with no MCP server, a read-only sandbox and every approval declined', async () => {
+    const { adapter, current, events, tools } = setup(() => new ProposingCodex(baseAnswers));
+    const answer = await adapter.send({
+      type: 'propose',
+      proposalId: 'p-1',
+      cwd: '/home/demo/.wow/proposals',
+      prompt: 'Write a commit message for: +ring()',
+      model: 'gpt-6.1-sol',
+      effort: 'medium',
+    });
+    expect(answer).toEqual({ text: 'Ring the bell twice' });
+    const started = written(current(), 'thread/start')?.['params'] as Record<string, unknown>;
+    expect(started).toMatchObject({
+      cwd: '/home/demo/.wow/proposals',
+      model: 'gpt-6.1-sol',
+      approvalPolicy: 'never',
+      sandbox: 'read-only',
+      ephemeral: true,
+      config: { mcp_servers: {}, web_search: 'disabled', features: { shell_tool: false } },
+    });
+    expect(written(current(), 'turn/start')?.['params']).toMatchObject({
+      threadId: 'codex-thread',
+      cwd: '/home/demo/.wow/proposals',
+      approvalPolicy: 'never',
+      sandboxPolicy: { type: 'readOnly', networkAccess: false },
+    });
+    expect(current().written.filter((message) => message['id'] === 91)).toEqual([
+      { id: 91, result: { decision: 'decline' } },
+    ]);
+    // Nothing of it reaches the server as a thread's.
+    expect(events).toEqual([]);
+    expect(tools).toEqual([]);
+  });
+});
+
 describe('codexVersionFromUserAgent', () => {
   it('reads the version after the originator', () => {
     expect(codexVersionFromUserAgent(userAgent)).toBe(codexProtocolVersion);

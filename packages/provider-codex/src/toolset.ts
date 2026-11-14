@@ -1,6 +1,7 @@
 import type { ProviderCommand } from '@wow/contracts';
 import type { MethodUse } from './compat/schema.js';
 import type { ThreadStartParams, TurnStartParams } from './protocol/generated/index.js';
+import type { JsonValue } from './protocol/generated/serde_json/JsonValue.js';
 
 type StartTurn = Extract<ProviderCommand, { type: 'startTurn' }>;
 export type Toolset = NonNullable<StartTurn['toolset']>;
@@ -34,38 +35,50 @@ export function toolsOnlySettings(
   instructions: string | undefined,
 ): Pick<ThreadStartParams, 'config' | 'developerInstructions'> {
   return {
-    config: {
-      mcp_servers: {
-        [toolset.name]: {
-          url: toolset.url,
-          http_headers: { Authorization: `Bearer ${toolset.token}` },
-        },
+    config: withoutTools({
+      [toolset.name]: {
+        url: toolset.url,
+        http_headers: { Authorization: `Bearer ${toolset.token}` },
       },
-      web_search: 'disabled',
-      features: {
-        shell_tool: false,
-        unified_exec: false,
-        view_image: false,
-        multi_agent: false,
-        goals: false,
-        apps: false,
-        image_generation: false,
-        computer_use: false,
-        browser_use: false,
-        browser_use_external: false,
-        in_app_browser: false,
-        plugins: false,
-        remote_plugin: false,
-        skill_search: false,
-        tool_suggest: false,
-        sleep_tool: false,
-        code_mode_host: false,
-        hooks: false,
-      },
-      tools: { experimental_request_user_input: { enabled: false } },
-      shell_environment_policy: { inherit: 'none' },
-    },
+    }),
     ...(instructions === undefined ? {} : { developerInstructions: instructions }),
+  };
+}
+
+// A proposal's thread (thread work spec 28): the same switches with no MCP server at all, so the
+// model has no tool of wow's or the user's and can only answer with words.
+export function proposalSettings(): Pick<ThreadStartParams, 'config' | 'ephemeral'> {
+  return { config: withoutTools({}), ephemeral: true };
+}
+
+function withoutTools(mcpServers: {
+  [name: string]: { [key: string]: JsonValue };
+}): NonNullable<ThreadStartParams['config']> {
+  return {
+    mcp_servers: mcpServers,
+    web_search: 'disabled',
+    features: {
+      shell_tool: false,
+      unified_exec: false,
+      view_image: false,
+      multi_agent: false,
+      goals: false,
+      apps: false,
+      image_generation: false,
+      computer_use: false,
+      browser_use: false,
+      browser_use_external: false,
+      in_app_browser: false,
+      plugins: false,
+      remote_plugin: false,
+      skill_search: false,
+      tool_suggest: false,
+      sleep_tool: false,
+      code_mode_host: false,
+      hooks: false,
+    },
+    tools: { experimental_request_user_input: { enabled: false } },
+    shell_environment_policy: { inherit: 'none' },
   };
 }
 

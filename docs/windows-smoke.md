@@ -165,6 +165,17 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       of a large folder (e.g. 20 000 files): note how long the first snapshot delays the turn.
       With Codex: Restore works the same; Edit is not offered.
 
+- [ ] **Commit and pull request (thread work U4).** In a project in Git under a path with spaces,
+      whose repository has a `pre-commit` hook that runs `node` and one that needs a program not
+      on the server's PATH, with a GitHub token for the project: let a thread edit a file, then
+      Commit… lists the hooks, Propose fills the message, Commit runs the `node` hook (its output
+      on a refusal shows in the dialog) and the commit has your name. Open pull request… pushes
+      with Git Credential Manager's stored credential and opens the pull request; sign Git
+      Credential Manager out and Open again: the push fails at once and says to push in a
+      terminal, and no sign-in window opens. With an SSH remote and a key with a passphrase and no
+      agent: the same. Note the hook that needs a missing program: it fails here and not in Git
+      Bash.
+
 - [ ] **Session tools (thread work U5).** In a Claude thread of a project whose `.mcp.json` or
       user settings name an MCP server, send a message, then Details → **Show session tools**.
       Expected: the servers with the states `claude mcp list` shows in a terminal, a connected

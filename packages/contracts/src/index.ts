@@ -24,6 +24,7 @@ export * from './setup.js';
 export * from './skills.js';
 export * from './snapshots.js';
 export * from './template.js';
+export * from './thread-git.js';
 export * from './trackers.js';
 export * from './updates.js';
 export * from './desktop-files.js';

@@ -112,6 +112,8 @@ type ThreadCommand = Extract<
       | 'thread.snapshotTaken'
       | 'thread.filesRestored'
       | 'thread.snapshotsDropped'
+      | 'thread.committed'
+      | 'thread.changeRequestOpened'
       | 'approval.answer'
       | 'question.answer'
       | 'provider.events';
@@ -1223,6 +1225,32 @@ export function decideThread(
             },
             before: command.before,
             after: command.after,
+          },
+        },
+      ];
+    }
+    // The thread git service commits or opens the request first and records it here (thread
+    // work spec 29, 32); the line goes on the thread's last turn.
+    case 'thread.committed':
+    case 'thread.changeRequestOpened': {
+      const thread = requireThread(read, command.threadId);
+      const last = read.lastTurn(thread.id);
+      if (!last)
+        throw new CommandRejected('rejected', 'A thread without turns has no line for it.');
+      const index = read.nextItemIndex(thread.id);
+      const committed = command.type === 'thread.committed';
+      return [
+        {
+          kind: 'threadItem.added',
+          aggregate: thread.id,
+          payload: {
+            id: `${last.id}:${committed ? 'committed' : 'change-request'}:${index}`,
+            threadId: thread.id,
+            turnId: last.id,
+            index,
+            kind: committed ? 'committed' : 'change_request_opened',
+            payload: committed ? command.commit : command.request,
+            streaming: false,
           },
         },
       ];

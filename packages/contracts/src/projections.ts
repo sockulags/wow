@@ -215,6 +215,10 @@ export const ThreadItemKind = z.enum([
   // The thread's files were put back to a turn's start, or a restore was undone (thread work
   // spec 24). Threads stored before have none.
   'files_restored',
+  // The user committed from the thread's Changes, or opened a pull or merge request (thread work
+  // spec 29, 32). Threads stored before have none.
+  'committed',
+  'change_request_opened',
 ]);
 export type ThreadItemKind = z.infer<typeof ThreadItemKind>;
 

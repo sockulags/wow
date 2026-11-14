@@ -277,6 +277,8 @@ export class ClaudeAdapter implements ProviderAdapter {
   readonly #query: QueryFunction;
   readonly #baseEnv: Record<string, string | undefined>;
   readonly #sessions = new Map<string, Session>();
+  // Proposals being written (thread work spec 28), by id, for Cancel.
+  readonly #proposals = new Map<string, AbortController>();
   readonly #approvals = new Map<string, Pending<ApprovalAnswer>>();
   readonly #questions = new Map<string, Pending<QuestionReply>>();
   readonly #listeners = new Set<Listener>();
@@ -359,6 +361,11 @@ export class ClaudeAdapter implements ProviderAdapter {
         if (!sent) throw new Error('Nothing of this turn runs in the foreground any more');
         return { ok: true };
       }
+      case 'propose':
+        return this.#propose(command);
+      case 'cancelProposal':
+        this.#proposals.get(command.proposalId)?.abort();
+        return { ok: true };
       case 'test':
         return this.#test();
     }
@@ -1211,6 +1218,69 @@ export class ClaudeAdapter implements ProviderAdapter {
       ? await live.supportedModels()
       : await this.#probe((query) => query.supportedModels());
     return models.map(toProviderModel);
+  }
+
+  // A commit message or pull request text (thread work spec 28): one turn with no tool at all, no
+  // stored session, no settings of the user or a project (so no hook, MCP server, plugin, skill or
+  // CLAUDE.md), no launch arguments, in the empty folder the server names. Whatever the prompt's
+  // diff says, the model can only answer with words.
+  async #propose(
+    command: Extract<ProviderCommand, { type: 'propose' }>,
+  ): Promise<{ text: string }> {
+    const stderr: string[] = [];
+    const input = new AsyncQueue<SDKUserMessage>();
+    input.push(userMessage(command.prompt));
+    const abort = new AbortController();
+    this.#proposals.set(command.proposalId, abort);
+    let query: ClaudeQuery | undefined;
+    try {
+      const options = this.#options(await this.#context.resolveEnv(), stderr);
+      Object.assign(options, {
+        cwd: command.cwd,
+        model: command.model,
+        maxTurns: 1,
+        persistSession: false,
+        permissionMode: 'dontAsk',
+        tools: [],
+        allowedTools: [],
+        settingSources: [],
+        extraArgs: {},
+        mcpServers: {},
+        strictMcpConfig: true,
+        abortController: abort,
+        canUseTool: () =>
+          Promise.resolve({ behavior: 'deny', message: 'A proposal has no tools.' } as const),
+      } satisfies Options);
+      if (isEffortLevel(command.effort)) options.effort = command.effort;
+      query = this.#query({ prompt: input, options });
+      let text = '';
+      for await (const message of query) {
+        if (message.type === 'assistant') {
+          for (const block of message.message.content) {
+            if (block.type === 'text') text += block.text;
+          }
+        }
+        if (message.type !== 'result') continue;
+        input.end();
+        if (message.subtype !== 'success' || message.is_error) {
+          throw new Error(
+            message.subtype === 'success'
+              ? message.result || 'Claude Code gave no message'
+              : message.errors.join('\n') || message.subtype,
+          );
+        }
+        return { text: text.trim() === '' ? message.result : text };
+      }
+      throw new Error(
+        abort.signal.aborted
+          ? 'The proposal was stopped'
+          : (stderr.at(-1) ?? 'Claude Code stopped before answering'),
+      );
+    } finally {
+      this.#proposals.delete(command.proposalId);
+      input.end();
+      query?.close();
+    }
   }
 
   // A trivial turn without tools: it proves the binary starts, the account can call the model,

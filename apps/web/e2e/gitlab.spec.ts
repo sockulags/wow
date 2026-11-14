@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { choose } from './controls';
 import {
   e2eChangesHome,
   e2eChangesTrackerPort,
@@ -140,5 +141,59 @@ test.describe('gitlab', () => {
     await expect(gitlab.getByRole('status')).toHaveText(
       'GitLab answered 401: Invented GitLab error',
     );
+  });
+
+  // Thread work U4 (spec 31, 32): a thread of "Tea field" in its own working copy commits the
+  // bell and opens a draft merge request. The branch goes to a bare repository beside the
+  // project (the remote's push address); the merge request to the mock GitLab.
+  test('opens a merge request from a thread @thread-work-31 @thread-work-32', async ({ page }) => {
+    // A worktree, a commit and a push: as slow on Windows as the working copy cases.
+    test.slow();
+    const main = page.locator('#main-view');
+    const messageBox = main.getByRole('combobox', { name: 'Message' });
+    await page.goto('/chat/new');
+    const instance = main.getByLabel('Provider instance');
+    await choose(instance, 'Mock Claude');
+    await expect(instance).toBeFocused();
+    await choose(main.getByRole('combobox', { name: 'Project' }), 'Tea field');
+    const own = main.getByRole('switch', { name: 'Own working copy' });
+    await own.click();
+    await expect(own).toHaveAttribute('aria-checked', 'true');
+    await messageBox.fill('Edit the bell for a merge request');
+    await messageBox.press('Enter');
+    const conversation = main.getByRole('list', { name: 'Conversation' });
+    await expect(conversation.getByText('The bell rings softly now.')).toBeVisible();
+    const branch = ((await page.getByTestId('working-copy-chip').textContent()) ?? '').split(
+      '·',
+    )[0];
+
+    await page.keyboard.press('Control+Shift+K');
+    const commit = page.getByTestId('commit-dialog');
+    await expect(commit.getByRole('checkbox', { name: 'src/bell.ts' })).toBeChecked();
+    await commit.getByRole('textbox', { name: 'Message' }).fill('Weed the rows by hand');
+    await page.keyboard.press('Control+Enter');
+    await expect(commit).toHaveCount(0);
+    await expect(conversation.getByTestId('committed-line')).toContainText('Weed the rows by hand');
+
+    await page.getByRole('button', { name: /^Open merge request…/ }).click();
+    const request = page.getByTestId('pull-request-dialog');
+    const statement = request.getByTestId('pull-request-statement');
+    await expect(statement).toContainText(`Pushes ${branch} to origin and opens a merge request`);
+    await expect(statement).toContainText(` in ${e2eGitLabProjectPath}`);
+    await request.getByRole('switch', { name: 'Draft' }).click();
+    await expect(statement).toContainText('opens a draft merge request');
+    await request.getByRole('button', { name: /^Open merge request/ }).click();
+    await expect(request).toHaveCount(0);
+    await expect(conversation.getByTestId('change-request-line')).toContainText(
+      /Opened merge request !\d+ · Weed the rows by hand/,
+    );
+    const opened = (await (await fetch(`${control}/gitlab-host/opened`)).json()) as {
+      source_branch: string;
+      target_branch: string;
+      title: string;
+    }[];
+    expect(opened.filter((entry) => entry.source_branch === branch)).toEqual([
+      expect.objectContaining({ target_branch: 'main', title: 'Draft: Weed the rows by hand' }),
+    ]);
   });
 });

@@ -251,6 +251,7 @@ Outcome: invented for the tests.
 `;
 // The GitLab tests (review loop spec 34) read this plan's merge requests from the mock GitLab.
 const fieldRepo = path.join(home, 'tea-field');
+const fieldOrigin = path.join(home, 'tea-field-origin.git');
 const fieldUnits = `## Units
 
 - [U1] Plough the field
@@ -326,15 +327,36 @@ function seedCopyRepo(): void {
 
 // The seed is committed in a folder of its own, pushed to a bare origin and cloned from there,
 // so the project has a remote whose default branch is known, as a clone has.
+// The repository tracks a pre-commit hook that leaves a mark in the folder's own git
+// directory, and `core.hooksPath` names its folder, as a project that keeps its hooks in the
+// repository does (thread work U4). On Windows the mode is not kept; Git for Windows runs the
+// hook through its own shell by its `#!` line.
 function seedMugRepo(): void {
   const seed = `${mugRepo}-seed`;
   seedTeaRepo(seed);
+  writeInRepo(
+    seed,
+    'hooks/pre-commit',
+    '#!/bin/sh\necho "pre-commit ran" > "$(git rev-parse --git-path wow-hook-mark)"\n',
+  );
+  git(seed, 'add', 'hooks/pre-commit');
+  git(seed, 'update-index', '--chmod=+x', 'hooks/pre-commit');
+  git(seed, 'commit', '-q', '-m', 'Invented commit hook');
   emptyFolder(mugOrigin);
   execFileSync('git', ['clone', '-q', '--bare', seed, mugOrigin], { stdio: 'pipe' });
   emptyFolder(mugRepo);
   execFileSync('git', ['clone', '-q', '-c', 'core.autocrlf=false', mugOrigin, mugRepo], {
     stdio: 'pipe',
   });
+  // The user's own identity, which a commit from wow uses.
+  for (const [key, value] of [
+    ['core.hooksPath', 'hooks'],
+    ['user.name', 'Invented User'],
+    ['user.email', 'user@example.invalid'],
+    ['commit.gpgsign', 'false'],
+  ] as const) {
+    git(mugRepo, 'config', key, value);
+  }
 }
 
 // The build step: one committed change, then uncommitted ones of every kind the tab lists.
@@ -1380,6 +1402,22 @@ if (home === e2eChangesHome) {
   seedTeaRepo(fieldRepo);
   git(fieldRepo, 'checkout', '-q', '-b', e2eGitLabBranch);
   git(fieldRepo, 'remote', 'add', 'origin', `git@127.0.0.1:${e2eGitLabProjectPath}.git`);
+  // A branch pushed from a thread (thread work U4) goes to a bare repository beside it; the
+  // remote's address still names the GitLab project. Nothing fetches.
+  emptyFolder(fieldOrigin);
+  execFileSync('git', ['init', '-q', '--bare', fieldOrigin], { stdio: 'pipe' });
+  git(fieldRepo, 'remote', 'set-url', '--push', 'origin', fieldOrigin);
+  git(fieldRepo, 'push', '-q', fieldOrigin, 'main:main');
+  git(fieldRepo, 'update-ref', 'refs/remotes/origin/main', 'main');
+  git(fieldRepo, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  for (const [key, value] of [
+    ['user.name', 'Invented User'],
+    ['user.email', 'user@example.invalid'],
+    ['commit.gpgsign', 'false'],
+    ['core.autocrlf', 'false'],
+  ] as const) {
+    git(fieldRepo, 'config', key, value);
+  }
   const field = 'A tea field that weeds itself';
   for (const [name, text] of Object.entries({
     'intent.md': e2eIntentMd(e2eGitLabIntentId, field),
@@ -1888,6 +1926,18 @@ if (home === e2eChangesHome) {
     scope: `project:${e2eMugProjectId}`,
     value: true,
   });
+  // Its pull requests go to `acme/tea-mug` on the mock GitHub (thread work U4).
+  const mugScope = `project:${e2eMugProjectId}`;
+  const mugSettings: Record<string, unknown> = {
+    'trackers.github.repo': 'tea-mug',
+    'trackers.github.token': await server.secrets.set(
+      `setting:${mugScope}:trackers.github.token`,
+      'github-host-e2e-token',
+    ),
+  };
+  for (const [key, value] of Object.entries(mugSettings)) {
+    server.engine.dispatch(`seed-mug-${key}`, { type: 'setting.set', key, scope: mugScope, value });
+  }
   server.engine.dispatch('seed-copy-project', {
     type: 'project.create',
     projectId: e2eCopyProjectId,
@@ -1970,6 +2020,10 @@ const gitHubHost = new MockGitHub({
 // the mock agent opens one per unit it is asked to deliver.
 const potHost = new MockGitHub({ owner: 'acme', repo: 'tea-pot', webUrl: `${trackerUrl}/web` });
 potHost.token = 'github-host-e2e-token';
+// The repository a chat thread opens a pull request in (thread work U4). Its links are on the
+// GitHub site of the settings, so the line's chip opens a tab.
+const mugHost = new MockGitHub({ owner: 'acme', repo: 'tea-mug', webUrl: `${trackerUrl}/github` });
+mugHost.token = 'github-host-e2e-token';
 // The event trigger tests' repository on the same invented host: one open pull request.
 const leafHost = new MockGitHub({ owner: 'acme', repo: 'tea-leaf', webUrl: `${trackerUrl}/web` });
 leafHost.token = 'github-host-e2e-token';
@@ -2339,6 +2393,50 @@ const trackers = createServer((request, response) => {
       request.method === 'PUT' ? { status, message: 'Invented server error' } : undefined;
     return json(200, {});
   }
+  // The pull requests chat threads open in `acme/tea-mug` (thread work U4), and a refusal.
+  if (url.pathname === '/github-mug/opened' && request.method === 'GET') {
+    return json(200, mugHost.opened);
+  }
+  if (url.pathname === '/github-mug/refusal') {
+    mugHost.openRefusal =
+      request.method === 'PUT'
+        ? {
+            status: Number(url.searchParams.get('status') ?? '422'),
+            message: url.searchParams.get('message') ?? 'Invented refusal',
+          }
+        : undefined;
+    return json(200, {});
+  }
+  if (request.method === 'POST' && url.pathname === '/github/repos/acme/tea-mug/pulls') {
+    void readBody(request).then((body) => {
+      const answer = mugHost.answer(
+        'POST',
+        url.pathname.slice('/github'.length),
+        request.headers.authorization ?? null,
+        body,
+      );
+      for (const [name, value] of Object.entries(answer.headers)) response.setHeader(name, value);
+      json(answer.status, answer.body);
+    });
+    return undefined;
+  }
+  if (url.pathname === '/gitlab-host/opened' && request.method === 'GET') {
+    return json(200, gitLabHost.opened);
+  }
+  if (request.method === 'POST' && url.pathname.startsWith('/gitlab/api/v4/')) {
+    const token = request.headers['private-token'];
+    void readBody(request).then((body) => {
+      const answer = gitLabHost.answer(
+        'POST',
+        `${url.pathname.slice('/gitlab/api/v4'.length)}${url.search}`,
+        typeof token === 'string' ? token : null,
+        body,
+      );
+      for (const [name, value] of Object.entries(answer.headers)) response.setHeader(name, value);
+      json(answer.status, answer.body);
+    });
+    return undefined;
+  }
   // The mock GitLab the GitLab tests' project reads, and its controls.
   if (url.pathname === '/gitlab-host/requests' && request.method === 'GET') {
     return json(200, gitLabHost.requests);
@@ -2426,7 +2524,9 @@ const trackers = createServer((request, response) => {
       ? potHost
       : named.includes('acme/tea-leaf')
         ? leafHost
-        : gitHubHost;
+        : named.includes('acme/tea-mug')
+          ? mugHost
+          : gitHubHost;
     const answer = repository.answer('GET', asked, request.headers.authorization ?? null);
     for (const [name, value] of Object.entries(answer.headers)) response.setHeader(name, value);
     return json(answer.status, answer.body);

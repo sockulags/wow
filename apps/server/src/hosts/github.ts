@@ -6,6 +6,7 @@ import {
   field,
   getJsonAnswer,
   headersOf,
+  postJson,
   trimBase,
   type RequestOptions,
 } from '../trackers/http.js';
@@ -24,7 +25,7 @@ import {
 
 // GitHub and GitHub Enterprise Server (the same API under https://<host>/api/v3) as a host: finds
 // a plan's pull requests with one search and reads each one's state, checks and review comments.
-// Read only: it sends GET requests and nothing else.
+// It sends GET requests, and one POST when the user opens a pull request from a chat thread.
 
 export interface GitHubHostOptions extends RequestOptions, WaitOptions {
   // How many of the newest pull requests are read when the host has no search.
@@ -319,6 +320,45 @@ export function createGitHubHost(
       const head = encodeURIComponent(`${config.owner}:${branch}`);
       const [newest] = await pulls(`head=${head}&state=all&sort=created&direction=desc&per_page=1`);
       return newest;
+    },
+    async openChangeRequest(request) {
+      requests += 1;
+      let answer: unknown;
+      try {
+        answer = await postJson(
+          name,
+          `${repo}/pulls`,
+          headers,
+          {
+            title: request.title,
+            head: request.head,
+            base: request.base,
+            body: request.body,
+            draft: request.draft,
+          },
+          options,
+        );
+      } catch (error) {
+        throw failure(error);
+      }
+      const number = field(answer, 'number');
+      const url = link(field(answer, 'html_url'));
+      if (typeof number !== 'number' || !Number.isSafeInteger(number) || number <= 0 || !url) {
+        throw new HostFailure(
+          'failed',
+          `${name} opened the pull request but answered in a form wow cannot read; look for it on ${name}`,
+        );
+      }
+      return { number, url };
+    },
+    async branchProtected(branch) {
+      const named = branch.split('/').map(encodeURIComponent).join('/');
+      return getOr(
+        `${repo}/branches/${named}`,
+        new Set([404]),
+        () => false,
+        (body) => field(body, 'protected') === true,
+      );
     },
     async readIssue(number) {
       const body = await getOr(

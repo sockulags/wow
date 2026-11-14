@@ -27,6 +27,8 @@ const conversationKeys = new Set([
   'findInConversation',
   'findNext',
   'findPrevious',
+  'commitChanges',
+  'commitConfirm',
 ]);
 
 export function keyScope(settingKey: string): KeyScope {

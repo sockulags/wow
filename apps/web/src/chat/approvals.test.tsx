@@ -622,10 +622,16 @@ describe("a thread's Changes (spec 34, 35)", () => {
     expect(await names()).toEqual(['MREADME.md+2 −0', 'Msrc/timer.ts+40 −7']);
     await user.click(screen.getByText('src/timer.ts'));
     expect(await screen.findByRole('table', { name: 'Diff of src/timer.ts' })).toBeTruthy();
-    expect(
-      threadChangesCommands('t1', '/chat/t1', true, false).map((command) => command.keybinding),
-    ).toEqual(['keybindings.threadChanges', 'keybindings.changesStepOnly']);
-    act(() => threadChangesCommands('t1', '/chat/t1', true, false)[1]?.run({} as never));
+    const commands = threadChangesCommands('t1', '/chat/t1', true, false);
+    expect(commands.map((command) => command.keybinding)).toEqual([
+      'keybindings.threadChanges',
+      'keybindings.commitChanges',
+      undefined,
+      undefined,
+      undefined,
+      'keybindings.changesStepOnly',
+    ]);
+    act(() => commands.at(-1)?.run({} as never));
     expect(await names()).toEqual(['MREADME.md+2 −0']);
   });
 

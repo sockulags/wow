@@ -2,6 +2,8 @@ import {
   ApprovalItemPayload,
   CompactionItemPayload,
   ErrorItemPayload,
+  ChangeRequestOpenedItemPayload,
+  CommittedItemPayload,
   FilesRestoredItemPayload,
   ReasoningItemPayload,
   SettingsChangeItemPayload,
@@ -39,6 +41,8 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ApprovalCard } from './approval-card';
 import { FilesRestoredLine } from './restore';
+import { CommittedLine } from './commit-dialog';
+import { ChangeRequestOpenedLine } from './pull-request-dialog';
 import { errorMessage, useDispatch } from './data';
 import {
   QuestionCard,
@@ -765,6 +769,18 @@ function ItemBody({
           messageText={context.restoreLine?.messageText ?? ''}
           onUndo={context.restoreLine?.onUndo}
         />
+      ) : (
+        <Unreadable item={item} />
+      );
+    }
+    case 'committed': {
+      const parsed = CommittedItemPayload.safeParse(item.payload);
+      return parsed.success ? <CommittedLine payload={parsed.data} /> : <Unreadable item={item} />;
+    }
+    case 'change_request_opened': {
+      const parsed = ChangeRequestOpenedItemPayload.safeParse(item.payload);
+      return parsed.success ? (
+        <ChangeRequestOpenedLine payload={parsed.data} />
       ) : (
         <Unreadable item={item} />
       );

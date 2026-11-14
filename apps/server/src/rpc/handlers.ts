@@ -49,6 +49,7 @@ import { detectArtifacts } from '../workflows/artifacts.js';
 import { changesOptions, readRunDiff, readThreadDiff } from '../workflows/changes.js';
 import type { WorkflowRunner } from '../workflows/runner.js';
 import { WorkspaceChanged, WorkspaceRefused, type Workspaces } from '../workspaces/service.js';
+import { ThreadGitRefused, type ThreadGit } from '../workspaces/thread-git.js';
 import { planSetup } from '../setup/plan.js';
 import { writeSetup } from '../setup/write.js';
 import { RpcFault, type Handlers } from './router.js';
@@ -76,6 +77,8 @@ export interface HandlerDeps {
   readonly hostLookup: HostLookup;
   readonly images: ImageStore;
   readonly snapshots: FolderSnapshots;
+  // Commit and pull request from a chat thread's Changes (thread work spec 27 to 36).
+  readonly threadGit: ThreadGit;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
   readonly discoverProjects: () => Promise<DiscoveredProject[]>;
   readonly listSessions: (providerInstanceId?: string) => Promise<TerminalSession[]>;
@@ -176,6 +179,17 @@ async function restoreCall<T>(call: () => Promise<T>): Promise<T> {
     if (error instanceof RestoreChanged) {
       throw new RpcFault('conflict', error.message, error.preview);
     }
+    throw error;
+  }
+}
+
+// A refusal of the commit and pull request dialogs carries what they show with it.
+async function threadGitCall<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof ThreadGitRefused)
+      throw new RpcFault('rejected', error.message, error.data);
     throw error;
   }
 }
@@ -397,6 +411,19 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         options: changesOptions(deps.settings),
       });
     },
+    'threads.commitPlan': ({ threadId }) =>
+      threadGitCall(() => deps.threadGit.commitPlan(threadId)),
+    'threads.commit': (params) => threadGitCall(() => deps.threadGit.commit(params)),
+    'threads.pullRequestPlan': (params) =>
+      threadGitCall(() => deps.threadGit.pullRequestPlan(params)),
+    'threads.openPullRequest': (params) =>
+      threadGitCall(() => deps.threadGit.openPullRequest(params)),
+    'threads.pushBranch': ({ threadId }) =>
+      threadGitCall(() => deps.threadGit.pushBranch(threadId)),
+    'threads.propose': (params) => threadGitCall(() => deps.threadGit.propose(params)),
+    'threads.cancelProposal': ({ requestId }) => ({
+      cancelled: deps.threadGit.cancelProposal(requestId),
+    }),
     'threads.workingCopyPlan': ({ projectId }) => deps.workspaces.plan(projectId),
     'threads.restorePreview': (params) => restoreCall(() => deps.snapshots.preview(params)),
     'threads.workingCopyStatus': async ({ threadId }) => {

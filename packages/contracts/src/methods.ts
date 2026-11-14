@@ -9,6 +9,17 @@ import {
 } from './attachments.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RestorePreview, RestorePreviewParams } from './snapshots.js';
+import {
+  CommitParams,
+  CommitPlan,
+  CommitResult,
+  OpenPullRequestParams,
+  OpenPullRequestResult,
+  ProposeParams,
+  ProposeResult,
+  PullRequestPlan,
+  PullRequestPlanParams,
+} from './thread-git.js';
 import { RunDiff, RunDiffParams, ThreadDiff, ThreadDiffParams } from './diff.js';
 import {
   FileListParams,
@@ -378,6 +389,44 @@ export const rpcMethods = {
   'threads.restorePreview': {
     params: RestorePreviewParams,
     result: RestorePreview,
+  },
+  // Commit from a chat thread's Changes (thread work spec 27 to 30). The plan is read only. Commit
+  // runs the repository's commit hooks, on the user's click only; refused as `rejected` with a
+  // `CommitRefusal` as `data` (why, and git's and a hook's output).
+  'threads.commitPlan': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: CommitPlan,
+  },
+  'threads.commit': {
+    params: CommitParams,
+    result: CommitResult,
+  },
+  // Open a pull or merge request for a chat thread's branch (spec 31 to 35). The plan reads the
+  // folder and asks the host whether a request is open and whether the branch is protected; it
+  // pushes nothing. Open pushes the branch with Git's own credentials, then opens the request
+  // with the host token; refused as `rejected` with a `PullRequestRefusal` as `data`. Push the
+  // new commits pushes to the open one.
+  'threads.pullRequestPlan': {
+    params: PullRequestPlanParams,
+    result: PullRequestPlan,
+  },
+  'threads.openPullRequest': {
+    params: OpenPullRequestParams,
+    result: OpenPullRequestResult,
+  },
+  'threads.pushBranch': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: z.object({ remote: z.string(), branch: z.string() }),
+  },
+  // "Propose" (spec 28, 31): asks the thread's provider instance and model, outside the thread's
+  // conversation and session, with no tools. Cancel answers whether one was running.
+  'threads.propose': {
+    params: ProposeParams,
+    result: ProposeResult,
+  },
+  'threads.cancelProposal': {
+    params: z.object({ requestId: z.string().min(1) }),
+    result: z.object({ cancelled: z.boolean() }),
   },
   // Files in a project folder that expected artifact globs match, for the builder's "Matches 2
   // files in Demo" line. Read only; nothing is stored.

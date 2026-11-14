@@ -87,6 +87,14 @@ export class MockGitHub {
   // Sent as the Retry-After header when set.
   retryAfter: string | undefined;
   readonly requests: MockRequest[] = [];
+  // Opening a pull request (thread work spec 32): what each POST asked for, in order. A
+  // refusal set here answers the next ones until cleared, as GitHub refuses a title or a head it
+  // does not take (spec 34).
+  readonly opened: { title: string; head: string; base: string; body: string; draft: boolean }[] =
+    [];
+  openRefusal: { status: number; message: string } | undefined;
+  // Branches GitHub reports as protected (spec 33); any other branch is not known to it.
+  protectedBranches = new Set<string>();
 
   constructor(options: { owner: string; repo: string; webUrl: string }) {
     this.owner = options.owner;
@@ -116,7 +124,12 @@ export class MockGitHub {
     };
   }
 
-  answer(method: string, pathAndQuery: string, authorization: string | null): MockAnswer {
+  answer(
+    method: string,
+    pathAndQuery: string,
+    authorization: string | null,
+    body?: unknown,
+  ): MockAnswer {
     this.requests.push({ method, path: pathAndQuery, authorization });
     const headers: Record<string, string> = this.limit
       ? {
@@ -125,14 +138,27 @@ export class MockGitHub {
         }
       : {};
     if (this.retryAfter !== undefined) headers['retry-after'] = this.retryAfter;
-    const json = (status: number, body: unknown): MockAnswer => ({ status, body, headers });
-    if (method !== 'GET') return json(405, { message: 'This mock only reads' });
+    const json = (status: number, answered: unknown): MockAnswer => ({
+      status,
+      body: answered,
+      headers,
+    });
+    const url = new URL(pathAndQuery, 'http://mock.invalid');
+    const repo = `/repos/${this.owner}/${this.repo}`;
+    const opening = method === 'POST' && url.pathname === `${repo}/pulls`;
+    if (method !== 'GET' && !opening) return json(405, { message: 'This mock only reads' });
     if (this.failure) return json(this.failure.status, { message: this.failure.message });
     if (this.token !== undefined && authorization !== `Bearer ${this.token}`) {
       return json(401, { message: 'Bad credentials' });
     }
-    const url = new URL(pathAndQuery, 'http://mock.invalid');
-    const repo = `/repos/${this.owner}/${this.repo}`;
+    if (opening) return this.#open(body, json);
+    const branch = new RegExp(`^${repo}/branches/(.+)$`).exec(url.pathname);
+    if (branch) {
+      const name = decodeURIComponent(branch[1] ?? '');
+      return this.protectedBranches.has(name)
+        ? json(200, { name, protected: true })
+        : json(404, { message: 'Branch not found' });
+    }
     if (url.pathname === '/search/issues') {
       if (!this.search) return json(404, { message: 'Not Found' });
       const query = url.searchParams.get('q') ?? '';
@@ -243,6 +269,43 @@ export class MockGitHub {
     return json(404, { message: 'Not Found' });
   }
 
+  #open(body: unknown, json: (status: number, body: unknown) => MockAnswer): MockAnswer {
+    if (this.openRefusal) {
+      return json(this.openRefusal.status, {
+        message: 'Validation Failed',
+        errors: [{ resource: 'PullRequest', code: 'custom', message: this.openRefusal.message }],
+      });
+    }
+    const asked = (typeof body === 'object' && body !== null ? body : {}) as Record<
+      string,
+      unknown
+    >;
+    const text = (name: string) => (typeof asked[name] === 'string' ? asked[name] : '');
+    const request = {
+      title: text('title'),
+      head: text('head'),
+      base: text('base'),
+      body: text('body'),
+      draft: asked['draft'] === true,
+    };
+    if (request.title === '' || request.head === '' || request.base === '') {
+      return json(422, { message: 'Validation Failed' });
+    }
+    this.opened.push(request);
+    const number = Math.max(0, ...this.pulls.map((pull) => pull.number), 99) + 1;
+    const pull: MockPullRequest = {
+      number,
+      title: request.title,
+      body: request.body,
+      state: 'open',
+      draft: request.draft,
+      branch: request.head,
+      sha: 'f0f0f0f0f0f0',
+    };
+    this.pulls = [...this.pulls, pull];
+    return json(201, this.#pull(pull));
+  }
+
   // A `fetch` that asks this mock; requests to any other origin fail like an unreachable host.
   fetch(apiUrl: string): typeof fetch {
     const base = apiUrl.replace(/\/+$/, '');
@@ -250,7 +313,14 @@ export class MockGitHub {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (!url.startsWith(`${base}/`)) return Promise.reject(new TypeError('fetch failed'));
       const authorization = new Headers(init?.headers).get('authorization');
-      const answer = this.answer(init?.method ?? 'GET', url.slice(base.length), authorization);
+      const body: unknown =
+        typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
+      const answer = this.answer(
+        init?.method ?? 'GET',
+        url.slice(base.length),
+        authorization,
+        body,
+      );
       return Promise.resolve(
         new Response(JSON.stringify(answer.body), {
           status: answer.status,

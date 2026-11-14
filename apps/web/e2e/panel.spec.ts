@@ -27,6 +27,15 @@ function localDay(days = 0): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+// The first day from today on that is Monday to Friday: the standup sits on weekdays only.
+function weekday(): string {
+  for (let days = 0; ; days += 1) {
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    if (date.getDay() !== 0 && date.getDay() !== 6) return localDay(days);
+  }
+}
+
 const panel = (page: Page) => page.getByRole('complementary', { name: 'Context panel' });
 const calendar = (page: Page) => page.getByRole('region', { name: 'Calendar' });
 
@@ -99,10 +108,18 @@ test.describe('context panel', () => {
     // Only the panel shows it; the block's popover stays closed.
     await expect(page.getByTestId('outlook-details')).toHaveCount(1);
 
-    // The arrow keys move the selection with the focus while the panel is open.
-    await calendar(page)
-      .getByRole('button', { name: 'Lunch with Eli, 12:00–13:00, read-only' })
-      .press('ArrowUp');
+    if (weekday() === localDay()) {
+      // The arrow keys move the selection with the focus while the panel is open.
+      await calendar(page)
+        .getByRole('button', { name: 'Lunch with Eli, 12:00–13:00, read-only' })
+        .press('ArrowUp');
+    } else {
+      // On a weekend the standup is not on the lunch's day, so there is no block to step to.
+      await page.goto(`/calendar?view=day&date=${weekday()}`);
+      await calendar(page)
+        .getByRole('button', { name: 'Team standup, 09:15–09:30, read-only' })
+        .click();
+    }
     await expect(meeting).toContainText('Team standup');
     await expect(meeting).toContainText('Ada Lindqvist');
     await expect(meeting.getByRole('link', { name: 'Join' })).toHaveAttribute(

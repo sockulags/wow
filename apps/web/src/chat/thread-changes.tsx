@@ -1,6 +1,12 @@
 import { ThreadDiff, type RunDiffFile, type RunDiffStatus, type Turn } from '@wow/contracts';
 import { useRouter } from '@tanstack/react-router';
-import { ArrowLeftIcon, GitCompareIcon, RefreshCwIcon } from 'lucide-react';
+import {
+  ArrowLeftIcon,
+  GitCommitHorizontalIcon,
+  GitCompareIcon,
+  GitPullRequestIcon,
+  RefreshCwIcon,
+} from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 import { createStore, useStore } from 'zustand';
 import type { AppCommand } from '@/app/commands';
@@ -26,8 +32,18 @@ import {
   lineChanges,
   unshownReason,
 } from '@/workflows/changes';
+import { CommitDialog, askCommit, commitStore, proposeCommitMessage } from './commit-dialog';
 import { skillComposerStore, threadSkillComposer } from './composer-store';
 import { errorMessage, useTopic } from './data';
+import { useHostLinkRules } from './host-links';
+import {
+  PullRequestDialog,
+  askPullRequest,
+  openRequestLabel,
+  proposePullRequest,
+  pullRequestStore,
+  pushToOpenRequest,
+} from './pull-request-dialog';
 
 // A chat thread's Changes (agent workbench spec 34, 35): what changed in its folder since its
 // first turn, from the server's `threads.diff`, with "This turn only" narrowing the list to what
@@ -251,7 +267,9 @@ function FilePatch({ threadId, file }: { readonly threadId: string; readonly fil
 
 export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) {
   const { threadId, from } = changes;
-  const { layout } = useRuntime();
+  const { layout, connection } = useRuntime();
+  // GitLab calls it a merge request (thread work spec 31).
+  const host = useHostLinkRules(threadId).repository?.host;
   const editor = useOpenInEditor();
   const { diff, error } = useThreadDiff(threadId);
   const turnOnly = useStore(threadChangesStore, (state) => state.turnOnly);
@@ -287,6 +305,7 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
             This turn only
           </Label>
           <ShortcutHint shortcut="keybindings.changesStepOnly" />
+
           <IconButton
             label="Read the changes again"
             size="icon-xs"
@@ -295,6 +314,21 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
             <RefreshCwIcon />
           </IconButton>
         </span>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-3 py-1.5">
+        <Button size="xs" variant="outline" onClick={() => void askCommit(connection, threadId)}>
+          <GitCommitHorizontalIcon aria-hidden />
+          Commit…
+          <ShortcutHint shortcut="keybindings.commitChanges" />
+        </Button>
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() => void askPullRequest(connection, threadId)}
+        >
+          <GitPullRequestIcon aria-hidden />
+          {openRequestLabel(host === 'gitlab' ? 'gitlab' : 'github')}
+        </Button>
       </div>
       {error !== undefined ? (
         <p role="alert" className="px-3 py-4 text-xs text-destructive">
@@ -367,6 +401,8 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
           )}
         </div>
       )}
+      <CommitDialog threadId={threadId} />
+      <PullRequestDialog threadId={threadId} />
     </section>
   );
 }
@@ -394,6 +430,57 @@ export function threadChangesCommands(
       },
     },
   ];
+  // Commit and pull request (thread work spec 27, 31, 33, 28): each opens the thread's Changes
+  // and its dialog, where nothing happens before the user's click.
+  const withDialog = (context: Parameters<AppCommand['run']>[0], ask: () => Promise<void>) => {
+    if (!open) openThreadChanges(context, threadId, route);
+    void ask();
+  };
+  commands.push(
+    {
+      id: 'chat.commit',
+      title: 'Commit…',
+      group: 'Chat',
+      keywords: ['commit', 'git', 'changes', 'hooks'],
+      keybinding: 'keybindings.commitChanges',
+      run: (context) => withDialog(context, () => askCommit(context.connection, threadId)),
+    },
+    {
+      id: 'chat.openPullRequest',
+      title: 'Open pull request…',
+      group: 'Chat',
+      keywords: ['pull request', 'merge request', 'push', 'github', 'gitlab'],
+      run: (context) => withDialog(context, () => askPullRequest(context.connection, threadId)),
+    },
+    {
+      id: 'chat.pushBranch',
+      title: 'Push the new commits to the open pull request',
+      group: 'Chat',
+      keywords: ['push', 'pull request', 'merge request', 'commits'],
+      run: (context) =>
+        withDialog(context, async () => {
+          await askPullRequest(context.connection, threadId);
+          await pushToOpenRequest(context.connection, threadId);
+        }),
+    },
+    {
+      id: 'chat.propose',
+      title: 'Propose a commit message or pull request text',
+      group: 'Chat',
+      keywords: ['propose', 'message', 'commit', 'pull request', 'title'],
+      run: (context) =>
+        withDialog(context, async () => {
+          if (pullRequestStore.getState().question?.threadId === threadId) {
+            await proposePullRequest(context.connection);
+            return;
+          }
+          if (commitStore.getState().question?.threadId !== threadId) {
+            await askCommit(context.connection, threadId);
+          }
+          await proposeCommitMessage(context.connection);
+        }),
+    },
+  );
   if (open) {
     commands.push({
       id: 'chat.changes.turnOnly',
