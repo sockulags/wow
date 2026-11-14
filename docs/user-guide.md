@@ -559,7 +559,8 @@ name, email and settings; whatever else you staged stays staged. The hooks run a
 terminal; when one refuses, its output shows in the dialog and nothing is committed. The
 conversation then shows a line such as "Committed 1 file · 4e1d2a0 Ring the bell twice". Commit
 is refused while a turn runs, without a message, and while a merge, rebase, cherry-pick or revert
-is in progress; a folder on no branch asks for the name of a new branch.
+is in progress; a folder on no branch asks for the name of a new branch. A file that changed
+between the dialog and Commit is committed as it is on disk then.
 
 **Open pull request…** (**Open merge request…** on GitLab) shows where it goes, such as "Pushes
 wow/ring-twice-3fa2c1 to origin and opens a pull request on github.com in acme/tea", the target

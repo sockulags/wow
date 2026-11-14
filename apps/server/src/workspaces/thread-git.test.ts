@@ -795,6 +795,22 @@ describe('pull request from a thread (thread work spec 31 to 36)', () => {
       expect(existsSync(markFile())).toBe(false);
     });
 
+    it('does not call a missing remote repository a credentials problem (U4 183)', async () => {
+      await committed();
+      git(project, 'remote', 'set-url', '--push', 'origin', path.join(root, 'no such remote.git'));
+      const refused = await refusalOf(
+        threadGit().openPullRequest({
+          threadId: 't1',
+          target: 'main',
+          title: 'Ring',
+          body: '',
+          draft: false,
+        }),
+      );
+      expect(refused.message).toMatch(/^Git did not push/);
+      expect(refused.message).not.toMatch(/Push once in a terminal/);
+    });
+
     it('fails without waiting and says to push once in a terminal (spec 35)', async () => {
       const port = await askingRemote();
       await committed();

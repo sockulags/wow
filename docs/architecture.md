@@ -3706,7 +3706,11 @@ with `-c core.askPass=` and `-c credential.interactive=never` so a helper named 
 config is never started either. They
 keep the last `chat.commitOutputMaxBytes` of their output and are stopped after
 `chat.commitTimeoutMs` / `chat.pushTimeoutMs`. A push that would ask for a password, passphrase or
-host key fails and says to push once in a terminal. The host token is sent only in the host
+host key fails and says to push once in a terminal; "could not read from remote repository" alone
+is not taken for that. A commit that git reports as failed after HEAD moved (a post-commit hook
+that did not finish) is reported as made, with a note, and the index is left as it is; the new
+files it staged are taken out again only when HEAD did not move. wow never pushes the branch the
+remote treats as its default, whatever the target. The host token is sent only in the host
 request's header; it is in no git argument or environment. Only one commit or push per thread
 runs at a time. The assistant has no tool for any of it (`thread.committed` and
 `thread.changeRequestOpened` are server-only), and wow never amends, merges, rebases, pulls,
