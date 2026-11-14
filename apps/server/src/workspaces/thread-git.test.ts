@@ -685,15 +685,42 @@ describe('pull request from a thread (thread work spec 31 to 36)', () => {
       await new Promise<void>((resolve) => asking.close(() => resolve()));
     });
 
-    it('fails without waiting and says to push once in a terminal (spec 35)', async () => {
-      // A remote that wants a user name and password for every request.
+    // A remote that wants a user name and password for every request.
+    async function askingRemote() {
       asking = createServer((_request, response) => {
         response.writeHead(401, { 'WWW-Authenticate': 'Basic realm="invented"' });
         response.end();
       });
       await new Promise<void>((resolve) => asking.listen(0, '127.0.0.1', resolve));
       const address = asking.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
+      return typeof address === 'object' && address ? address.port : 0;
+    }
+
+    it('never starts a core.askPass helper of the user’s config (U4 179)', async () => {
+      const port = await askingRemote();
+      await committed();
+      // Git runs the program itself, as hooks are run: by its `#!` line, with the mode set where
+      // it counts.
+      const helper = path.join(root, 'ask helper');
+      await writeFile(helper, `#!/bin/sh\necho asked > "${forward(markFile())}"\necho x\n`);
+      await chmod(helper, 0o755);
+      git(project, 'config', 'core.askPass', forward(helper));
+      git(project, 'remote', 'set-url', '--push', 'origin', `http://127.0.0.1:${port}/tea.git`);
+      const refused = await refusalOf(
+        threadGit().openPullRequest({
+          threadId: 't1',
+          target: 'main',
+          title: 'Ring',
+          body: '',
+          draft: false,
+        }),
+      );
+      expect(refused.message).toMatch(/Push once in a terminal/);
+      expect(existsSync(markFile())).toBe(false);
+    });
+
+    it('fails without waiting and says to push once in a terminal (spec 35)', async () => {
+      const port = await askingRemote();
       await committed();
       git(project, 'remote', 'set-url', '--push', 'origin', `http://127.0.0.1:${port}/tea.git`);
       const refused = await refusalOf(

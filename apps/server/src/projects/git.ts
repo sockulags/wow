@@ -1346,8 +1346,13 @@ export interface HookGitOptions extends GitRunOptions {
   readonly baseEnv?: NodeJS.ProcessEnv | undefined;
 }
 
+// A credential program named in the user's config (`core.askPass`) would show a password window
+// even without GIT_ASKPASS, so it is emptied; `credential.interactive=never` does the same for
+// Git Credential Manager. Neither is ever asked.
+const neverAsk = ['-c', 'core.askPass=', '-c', 'credential.interactive=never'];
+
 const runHookGit = (folder: string, args: readonly string[], options: HookGitOptions) =>
-  execGit(['-c', 'core.fsmonitor=false', ...plainPaths, '-C', folder, ...args], args, options, {
+  execGit([...neverAsk, '-c', 'core.fsmonitor=false', ...plainPaths, '-C', folder, ...args], args, options, {
     env: hookGitEnvironment(options.baseEnv ?? process.env),
     tailBytes: options.outputMaxBytes,
   });

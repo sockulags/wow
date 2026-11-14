@@ -3701,7 +3701,9 @@ Hooks and credentials. `commitPaths` and `pushBranch` are the only git commands 
 wow's `core.hooksPath` override (they keep `core.fsmonitor=false`) and never pass `--no-verify`;
 they run in `hookGitEnvironment`: the user's environment with `GIT_TERMINAL_PROMPT=0`,
 `GCM_INTERACTIVE=never`, `SSH_ASKPASS_REQUIRE=never`, no `GIT_ASKPASS`/`SSH_ASKPASS`, and
-`GIT_SSH_COMMAND=ssh -o BatchMode=yes` when neither `GIT_SSH_COMMAND` nor `GIT_SSH` is set. They
+`GIT_SSH_COMMAND=ssh -o BatchMode=yes` when neither `GIT_SSH_COMMAND` nor `GIT_SSH` is set, and
+with `-c core.askPass=` and `-c credential.interactive=never` so a helper named in the user's
+config is never started either. They
 keep the last `chat.commitOutputMaxBytes` of their output and are stopped after
 `chat.commitTimeoutMs` / `chat.pushTimeoutMs`. A push that would ask for a password, passphrase or
 host key fails and says to push once in a terminal. The host token is sent only in the host
