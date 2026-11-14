@@ -1,5 +1,6 @@
 import {
   inListOrder,
+  isTurnSnapshot,
   subscriptionTopics,
   type SubscribeParams,
   type SubscriptionTopic,
@@ -32,17 +33,18 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
       case 'turns':
         // The mark itself stays on the server; that it exists tells the client to read the
         // thread's Changes again. So does the provider's point: the client only needs to know
-        // that Edit and Fork can go back to it.
+        // that Edit and Fork can go back to it, and the snapshots only that Restore can.
         return db
           .select()
           .from(t.turns)
           .where(eq(t.turns.threadId, threadId))
           .orderBy(asc(t.turns.index))
           .all()
-          .map(({ fileMark, resumePoint, ...turn }) => ({
+          .map(({ fileMark, resumePoint, startSnapshot, endSnapshot: _end, ...turn }) => ({
             ...turn,
             marked: fileMark !== null,
             resumable: resumePoint !== null,
+            restorable: isTurnSnapshot(startSnapshot),
           }));
       case 'threadItems':
         return db

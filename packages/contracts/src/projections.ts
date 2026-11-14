@@ -186,6 +186,10 @@ export const Turn = z.object({
   // forked after it and the next message edited (spec 62, 71). The turns topic sets it; turns
   // from before it was kept have none.
   resumable: z.boolean().optional(),
+  // wow kept a snapshot of the thread's folder as this turn started, so "Restore files to here"
+  // can put the files back (thread work spec 19, 20). The turns topic sets it; old turns, turns
+  // whose folder was not kept and turns whose snapshot was dropped have none (spec 23, 26, 44).
+  restorable: z.boolean().optional(),
 });
 export type Turn = z.infer<typeof Turn>;
 
@@ -208,6 +212,9 @@ export const ThreadItemKind = z.enum([
   // (spec 46). Threads stored before have neither.
   'settings_change',
   'compaction',
+  // The thread's files were put back to a turn's start, or a restore was undone (thread work
+  // spec 24). Threads stored before have none.
+  'files_restored',
 ]);
 export type ThreadItemKind = z.infer<typeof ThreadItemKind>;
 

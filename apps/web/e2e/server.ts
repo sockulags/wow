@@ -585,6 +585,14 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
       },
     ];
   }
+  // Restore files (thread work U3): "add the notes" adds docs/notes.md and deletes docs/old.md.
+  if (/add the notes/i.test(prompt)) {
+    if (inTeaRepo(command.cwd)) {
+      writeInRepo(command.cwd, 'docs/notes.md', '# Notes\n\nSteep for three minutes.\n');
+      rmSync(inRepo(command.cwd, 'docs/old.md'), { force: true });
+    }
+    return [session, ...finish(threadId, 'Notes added, the old page gone.')];
+  }
   if (/edit the bell/i.test(prompt)) {
     if (inTeaRepo(command.cwd)) writeInRepo(command.cwd, 'src/bell.ts', bellEdited);
     return [
@@ -921,13 +929,13 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
     return [session, mockCompaction(threadId), ...finish(threadId, 'The conversation is shorter.')];
   }
   if (/two tools/i.test(prompt)) {
-    waitingThreads.push(threadId);
+    markWaiting(threadId);
     return [session, ...mockTwoTools(threadId, command.cwd)];
   }
   if (/wait/i.test(prompt)) {
     // Runs until stopped or until the control port's /turn-done ends it, so a message written
     // meanwhile is queued (agent workbench spec 50, 51).
-    waitingThreads.push(threadId);
+    markWaiting(threadId);
     return [session, { type: 'textDelta', threadId, itemId: 'partial', delta: 'Working on it' }];
   }
   return [
@@ -981,6 +989,15 @@ let claudeMock: MockProviderAdapter | undefined;
 // Threads whose "wait" turn still runs, oldest first, and the chat copy's mock adapters, any of
 // which can send what ends them.
 const waitingThreads: string[] = [];
+// A /turn-done that names a thread whose "wait" turn has not reached the mock yet (the server
+// prepares a turn before it starts it) is answered when the turn does.
+const awaitedWaits = new Map<string, () => void>();
+function markWaiting(threadId: string) {
+  waitingThreads.push(threadId);
+  const awaited = awaitedWaits.get(threadId);
+  awaitedWaits.delete(threadId);
+  awaited?.();
+}
 const chatMocks: MockProviderAdapter[] = [];
 const chatMock = (adapter: MockProviderAdapter) => {
   chatMocks.push(adapter);
@@ -1340,6 +1357,10 @@ if (home === e2eChangesHome) {
   seedTeaRepo(changesRepo);
   seedTeaRepo(gateRepo);
   seedTeaRepo(chatRepo);
+  // A page the restore case's agent deletes (thread work U3).
+  writeInRepo(chatRepo, 'docs/old.md', '# Old page\n');
+  git(chatRepo, 'add', '-A');
+  git(chatRepo, 'commit', '-q', '-m', 'Invented old page');
   seedCopyRepo();
   seedMugRepo();
   // The host tests: a repository on a branch that has a pull request, with a plan in it.
@@ -1470,14 +1491,18 @@ const control = createServer((request, response) => {
   } else if (url.pathname === '/turn-done' && request.method === 'PUT') {
     // Ends the "wait" turn of ?threadId=, else the oldest, so what was queued during it is sent.
     const wanted = url.searchParams.get('threadId');
-    const at = wanted === null ? 0 : waitingThreads.indexOf(wanted);
-    const threadId = at === -1 ? undefined : waitingThreads.splice(at, 1)[0];
     const adapter = chatMocks[0];
-    if (!threadId || !adapter) {
-      response.statusCode = 409;
-    } else {
-      adapter.emit(finish(threadId, 'Done waiting.', 'waited'));
-    }
+    const end = () => {
+      const at = wanted === null ? 0 : waitingThreads.indexOf(wanted);
+      const threadId = at === -1 ? undefined : waitingThreads.splice(at, 1)[0];
+      if (!threadId || !adapter) response.statusCode = 409;
+      else adapter.emit(finish(threadId, 'Done waiting.', 'waited'));
+      response.end();
+    };
+    if (wanted !== null && adapter && !waitingThreads.includes(wanted))
+      awaitedWaits.set(wanted, end);
+    else end();
+    return;
   } else if (url.pathname === '/opened' && request.method === 'GET') {
     response.setHeader('content-type', 'application/json');
     response.end(JSON.stringify(outlook.opened));

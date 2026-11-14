@@ -1,6 +1,7 @@
 import {
   providerChatOptions,
   TextItemPayload,
+  undoableRestore,
   type ProviderInstance,
   type SentImage,
   type SkillRef,
@@ -65,7 +66,8 @@ import { Composer, type ComposerHandle } from './composer';
 import type { QuestionHold } from './question-card';
 import { errorMessage, useDispatch, useModels, useTopic } from './data';
 import { copyText } from '@/components/copy-button';
-import { conversationStore, showConversation, showGoBack } from './conversation-nav';
+import { conversationStore, showConversation, showGoBack, showRestore } from './conversation-nav';
+import { EditFilesChoice, RestoreDialog, askRestore, type RestoreTarget } from './restore';
 import { conversationMarkdown, exportFileName } from './conversation-markdown';
 import type { FindRequest } from './find-bar';
 import type { FindSource } from './find';
@@ -180,7 +182,7 @@ function ThreadHeader({
             </Link>
           </Badge>
         )}
-        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+        <div className="ml-auto flex min-w-0 items-center gap-0.5">
           {thread.kind !== 'assistant' && <ToolsChip threadId={thread.id} />}
           {thread.runId === null && <ThreadChangesChip threadId={thread.id} />}
           <ConversationMenu />
@@ -403,7 +405,16 @@ export function ThreadView({ threadId }: { threadId: string }) {
 
 // Above the composer while it holds the last message to send again (agent workbench spec 62,
 // 63): what sending does, and that files stay as the replaced turn left them.
-function EditNotice({ changedFiles, onCancel }: { changedFiles: boolean; onCancel: () => void }) {
+function EditNotice({
+  changedFiles,
+  onCancel,
+  filesChoice,
+}: {
+  changedFiles: boolean;
+  onCancel: () => void;
+  // Edit's choice where the replaced turn kept a snapshot (thread work spec 21).
+  filesChoice?: { readonly withFiles: boolean; onChange(withFiles: boolean): void } | undefined;
+}) {
   return (
     <div
       data-testid="edit-notice"
@@ -415,10 +426,14 @@ function EditNotice({ changedFiles, onCancel }: { changedFiles: boolean; onCance
         <span className="text-foreground">
           Editing your last message. Sending it replaces that message and its answer.
         </span>
-        {changedFiles && (
-          <span data-testid="edit-files-note">
-            Files stay as they are: what that turn changed is not undone.
-          </span>
+        {filesChoice ? (
+          <EditFilesChoice withFiles={filesChoice.withFiles} onChange={filesChoice.onChange} />
+        ) : (
+          changedFiles && (
+            <span data-testid="edit-files-note">
+              Files stay as they are: what that turn changed is not undone.
+            </span>
+          )
         )}
       </div>
       <Button size="xs" variant="ghost" className="ml-auto" onClick={onCancel}>
@@ -497,6 +512,7 @@ export function ThreadConversation({
   const reasoningToggle = useStore(conversationStore, (state) => state.reasoning[thread.id]);
   const findLimit = useSetting('chat.findMaxMatches');
   const exportReasoning = useSetting('chat.exportReasoning');
+  const editRestoresFiles = useSetting('chat.editRestoresFiles');
   // What find and a click opened (thread work spec 4), for as long as this thread is on screen.
   const openStore = useMemo(() => {
     void threadId;
@@ -698,10 +714,28 @@ export function ThreadConversation({
     editing?.threadId === threadId && goBack.editable?.turnId === editing.turnId
       ? goBack.editable
       : undefined;
+  // Restore files when going back (thread work spec 20 to 24): a chat thread in the chat view,
+  // on any provider, since the conversation does not change.
+  const restoreShown = !extras && !compact && thread.kind !== 'assistant' && thread.runId === null;
+  const restorableTurns = useMemo(
+    () =>
+      new Set(
+        restoreShown && !runningTurn(turns)
+          ? turns.filter((turn) => turn.restorable === true).map((turn) => turn.id)
+          : [],
+      ),
+    [restoreShown, turns],
+  );
+  const [withFiles, setWithFiles] = useState<boolean | undefined>();
+  const editFilesChoice =
+    edited && restorableTurns.has(edited.turnId)
+      ? { withFiles: withFiles ?? editRestoresFiles, onChange: setWithFiles }
+      : undefined;
   const startEdit = () => {
     const lastSent = goBack.editable;
     if (!goesBack || !lastSent) return false;
     setEditing({ threadId, turnId: lastSent.turnId });
+    setWithFiles(undefined);
     // putBack drops the mention line where the files come back as chips.
     composer.current?.putBack(lastSent.text, lastSent.skills, lastSent.images, lastSent.files);
     return true;
@@ -715,23 +749,43 @@ export function ThreadConversation({
     skills?: readonly SkillRef[],
     files?: readonly string[],
     images?: readonly SentImage[],
-  ) =>
-    edited
-      ? send({
-          type: 'thread.editLast',
-          threadId,
-          turnId: edited.turnId,
-          text,
-          ...(skills ? { skills: [...skills] } : {}),
-          ...(files && files.length > 0 ? { files: [...files] } : {}),
-          ...(images && images.length > 0
-            ? { attachments: images.map(({ id, name }) => (name ? { id, name } : { id })) }
-            : {}),
-        }).then((receipt) => {
-          setEditing(undefined);
-          return receipt;
-        })
-      : message(text, skills, files, images);
+  ): Promise<unknown> => {
+    if (!edited) return message(text, skills, files, images);
+    const command = {
+      type: 'thread.editLast' as const,
+      threadId,
+      turnId: edited.turnId,
+      text,
+      ...(skills ? { skills: [...skills] } : {}),
+      ...(files && files.length > 0 ? { files: [...files] } : {}),
+      ...(images && images.length > 0
+        ? { attachments: images.map(({ id, name }) => (name ? { id, name } : { id })) }
+        : {}),
+    };
+    if (!editFilesChoice?.withFiles) {
+      return send(command).then((receipt) => {
+        setEditing(undefined);
+        return receipt;
+      });
+    }
+    // "Conversation and files": the confirm shows what goes back first, and the message goes
+    // only after its yes (spec 21, 22).
+    const turnId = edited.turnId;
+    return new Promise((resolve, reject) => {
+      void askRestore(connection, threadId, {
+        kind: 'edit',
+        turnId,
+        send: (confirmed) =>
+          send({ ...command, restoreFiles: { confirmed } }).then((receipt) => {
+            setEditing(undefined);
+            resolve(receipt);
+            return receipt;
+          }),
+        cancelled: () => reject(new Error('Not sent: the files were not put back.')),
+      });
+    });
+  };
+  const askRestoreTo = (target: RestoreTarget) => void askRestore(connection, threadId, target);
   const fork = (turnId: string) =>
     void forkThread(send, thread, turnId).then(
       (forkId) => router?.navigate({ to: '/chat/$threadId', params: { threadId: forkId } }),
@@ -778,6 +832,46 @@ export function ThreadConversation({
   useEffect(() => {
     setEditing(undefined);
   }, [threadId]);
+  // The newest restore line offers Undo until a turn starts or another restore is made (spec 24).
+  const newestRestore = useMemo(
+    () => (storedItems ?? noItems).findLast((item) => item.kind === 'files_restored'),
+    [storedItems],
+  );
+  const undoItemId =
+    restoreShown &&
+    newestRestore &&
+    undoableRestore(newestRestore, newestRestore.id, lastTurn(turns))
+      ? newestRestore.id
+      : undefined;
+  const restorableKey = [...restorableTurns].join('\n');
+  const editChoiceShown = editFilesChoice !== undefined;
+  const editWithFiles = editFilesChoice?.withFiles === true;
+  const restoreActions = useRef({ askRestoreTo, setWithFiles });
+  restoreActions.current = { askRestoreTo, setWithFiles };
+  useEffect(() => {
+    if (!restoreShown) return undefined;
+    return showRestore(threadId, {
+      restorable: restorableKey === '' ? [] : restorableKey.split('\n').map((id) => `${id}:user`),
+      restore: (itemId) =>
+        restoreActions.current.askRestoreTo({
+          kind: 'restore',
+          turnId: itemId.replace(/:user$/, ''),
+        }),
+      ...(undoItemId === undefined
+        ? {}
+        : {
+            undo: () => restoreActions.current.askRestoreTo({ kind: 'undo', itemId: undoItemId }),
+          }),
+      ...(editChoiceShown
+        ? {
+            edit: {
+              withFiles: editWithFiles,
+              toggle: () => restoreActions.current.setWithFiles(!editWithFiles),
+            },
+          }
+        : {}),
+    });
+  }, [restoreShown, threadId, restorableKey, undoItemId, editChoiceShown, editWithFiles]);
   const cancelQueued = () => send({ type: 'thread.cancelQueued', threadId });
   // Off the queue first, so a message the server sent meanwhile is not put back as unsent.
   const editQueued = async () => {
@@ -831,6 +925,19 @@ export function ThreadConversation({
       ),
     [items, toolWords],
   );
+  // The message each restore line went back to, by the line's id.
+  const restoreLines = useMemo(() => {
+    const all = storedItems ?? noItems;
+    const lines = new Map<string, string>();
+    for (const item of all) {
+      if (item.kind !== 'files_restored') continue;
+      const toTurnId = (item.payload as { toTurnId?: unknown }).toTurnId;
+      const user = all.find((candidate) => candidate.id === `${String(toTurnId)}:user`);
+      const parsed = TextItemPayload.safeParse(user?.payload);
+      lines.set(item.id, parsed.success ? parsed.data.text : '');
+    }
+    return lines;
+  }, [storedItems]);
   const itemContext = (turnId: string, itemId: string): ItemContext => {
     const turn = turnById.get(turnId);
     const said = words.get(itemId);
@@ -859,6 +966,19 @@ export function ThreadConversation({
       ...(fileLinks ? { openFile: fileLinks.open } : {}),
       ...(goesBack && goBack.editable?.itemId === itemId ? { onEdit: () => void startEdit() } : {}),
       ...(goesBack && goBack.forkable.has(itemId) ? { onFork: () => fork(turnId) } : {}),
+      ...(itemId === `${turnId}:user` && restorableTurns.has(turnId)
+        ? { onRestore: () => askRestoreTo({ kind: 'restore', turnId }) }
+        : {}),
+      ...(restoreLines.has(itemId)
+        ? {
+            restoreLine: {
+              messageText: restoreLines.get(itemId) ?? '',
+              ...(itemId === undoItemId
+                ? { onUndo: () => askRestoreTo({ kind: 'undo', itemId }) }
+                : {}),
+            },
+          }
+        : {}),
       earlier: goBack.earlier.get(turnId),
       recovery:
         itemId === errorId
@@ -1173,7 +1293,11 @@ export function ThreadConversation({
               onStop={stop}
               notice={
                 edited ? (
-                  <EditNotice changedFiles={edited.changedFiles} onCancel={cancelEdit} />
+                  <EditNotice
+                    changedFiles={edited.changedFiles}
+                    onCancel={cancelEdit}
+                    filesChoice={editFilesChoice}
+                  />
                 ) : (
                   extras?.notice
                 )
@@ -1227,6 +1351,7 @@ export function ThreadConversation({
               }
             />
           </div>
+          {restoreShown && <RestoreDialog threadId={threadId} />}
         </OpenStoreContext>
       </HostLinkContext>
     </FileLinkContext>

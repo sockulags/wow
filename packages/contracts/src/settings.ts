@@ -517,6 +517,66 @@ export const settingsRegistry = {
     default: 'wow/{{title}}-{{id}}',
     scope: 'project',
   }),
+  'chat.snapshots': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Keep snapshots of the files',
+    description:
+      "For a chat thread whose folder is in Git, wow keeps a copy of the folder's files (tracked and untracked, never ignored ones) at each turn's start and end in its own repository, so going back can put the files back. Nothing is written to the project's repository.",
+    default: true,
+    scope: 'project',
+  }),
+  'chat.snapshotMaxFiles': defineSetting({
+    schema: z.number().int().min(1).max(1_000_000),
+    group: 'chat',
+    label: 'Most files in a snapshot',
+    description:
+      'A folder with more files than this (tracked and untracked; ignored ones do not count) gets no snapshot, and its turns offer no Restore.',
+    default: 20_000,
+    scope: 'global',
+  }),
+  'chat.snapshotMaxFileBytes': defineSetting({
+    schema: z
+      .number()
+      .int()
+      .min(1)
+      .max(4 * 1024 * 1024 * 1024),
+    group: 'chat',
+    label: 'Largest file in a snapshot',
+    description:
+      'A file larger than this is left out of a snapshot. A restore cannot put it back; the confirm names it and asks before it restores the rest.',
+    default: 10 * 1024 * 1024,
+    scope: 'global',
+    unit: 'bytes',
+  }),
+  'chat.snapshotTimeoutMs': defineSetting({
+    schema: z.number().int().min(1000).max(600_000),
+    group: 'chat',
+    label: 'Time to take a snapshot',
+    description:
+      "How long reading a thread's folder for a snapshot may take. The first snapshot of a large folder reads every file; when it takes longer, the turn goes on without one.",
+    default: 30_000,
+    scope: 'global',
+    unit: 'ms',
+  }),
+  'chat.snapshotKeepDays': defineSetting({
+    schema: z.number().int().min(1).max(3650),
+    group: 'chat',
+    label: 'Keep snapshots for',
+    description: 'Snapshots older than this are dropped, and their turns no longer offer Restore.',
+    default: 30,
+    scope: 'global',
+    unit: 'days',
+  }),
+  'chat.editRestoresFiles': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Edit puts the files back too',
+    description:
+      'When you edit your last message, "Conversation and files" is picked first: the files go back to how they were before that message, then the new one is sent. Off, "Conversation only" is picked and the files stay as they are.',
+    default: false,
+    scope: 'global',
+  }),
   'chat.workingCopyStart': defineSetting({
     schema: WorkingCopyStart,
     group: 'chat',
@@ -2021,13 +2081,18 @@ export const settingsRegistry = {
   ),
   'keybindings.editMessage': keybinding(
     'Chat: edit the focused message',
-    'Put the message that has the keyboard back in the composer to change and send again, when it is the last one you sent. Files the agent changed stay as they are.',
+    'Put the message that has the keyboard back in the composer to change and send again, when it is the last one you sent. The files stay as they are unless you pick "Conversation and files".',
     'E',
   ),
   'keybindings.forkMessage': keybinding(
     'Chat: fork from the focused message',
     'Start a new thread with the conversation up to the message that has the keyboard and its answer, on the same settings and folder.',
     'F',
+  ),
+  'keybindings.restoreMessage': keybinding(
+    'Chat: restore files to the focused message',
+    "Put the thread's files back to how they were before the message that has the keyboard was sent, after a confirm that lists what changes. The conversation stays as it is.",
+    'R',
   ),
   'keybindings.composerEditLast': keybinding(
     'Chat: edit the last message from the composer',

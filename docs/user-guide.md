@@ -765,8 +765,35 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
 - **Edit your last message**: press **Up** in an empty message box, **E** on your last message, or
   its **Edit** button. The message comes back into the box; send it and it replaces that message
   and its answer, and the agent goes on as if the old one had never been sent. The old exchange
-  stays under **Earlier version** on the new message. Files the agent changed stay as they are;
-  the box says so when that turn changed files. **Cancel** leaves it.
+  stays under **Earlier version** on the new message. Above the box you pick **Conversation
+  only** (files stay as they are) or **Conversation and files** (the files go back to how they
+  were before that message, after the same confirm as Restore; if they cannot, nothing is sent
+  and the error says why). `chat.editRestoresFiles` picks which one comes first. **Cancel**
+  leaves it.
+- **Restore files to here**: on one of your messages (its button, **R** on the message that has
+  the keyboard, or the palette) puts the thread's folder back to how it was when that message was
+  sent: changed files get their content back, new files are deleted, deleted files come back.
+  The conversation stays as it is, so this works on Codex too. A confirm lists what is written
+  back and deleted, and first the files that changed outside the thread since its last turn (by
+  you, an editor or another program); the button then reads **Restore anyway**. When wow has no record of how the thread left
+  the folder (for example the last turn's snapshot could not be taken), it says so and lists every
+  file the restore would change as possibly yours. **Enter** confirms, **Escape** cancels. Afterwards a line such as "Files restored to before "Make the
+  bell ring twice" · 4 written · 1 deleted" offers **Undo** until the next message or the next
+  restore. A restore never touches commits, branches, the staged changes or ignored files (such
+  as `.env` or build output); commits made since stay, and the restored files show as changes
+  in the Changes view. wow keeps these snapshots of the files in its own folder
+  (`snapshots/`), never in your repository, for `chat.snapshotKeepDays` days. A snapshot holds
+  the contents of every file Git does not ignore, tracked or not, **unencrypted**: a file with a
+  secret in it that is not listed in `.gitignore` is copied there too. Turn **Keep snapshots of
+  the files** (`chat.snapshots`) off for a project to keep none. The assistant has no tool that
+  reads wow's folder. A file larger than
+  `chat.snapshotMaxFileBytes` is not kept and the confirm names it. A file the restore would
+  delete but that the thread did not leave there (for example one Git lists only since you
+  edited `.gitignore`), and a file now larger than `chat.snapshotMaxFileBytes` (wow holds no copy,
+  so Undo could not bring it back), are left alone and the confirm names them under "Left alone".
+  It is not offered for a
+  folder outside Git, a step's thread, messages sent before this version, or while a turn runs,
+  and it says why when it cannot (a folder reached through a link, too many files).
 - **Fork from here**: on any of your messages, **Fork from here** (or **F** on the message that
   has the keyboard, or **/fork**) starts a new thread with the conversation up to that message
   and its answer, on the same model, effort, mode and folder, images included. The new thread says which one it
@@ -1579,6 +1606,7 @@ Everything is in `~/.wow` (`%USERPROFILE%\.wow` on Windows), or in the folder `W
 | `server.json`  | Port and token of the running server; removed on a clean stop         |
 | `desktop.log`  | The desktop app's log and the server's output                         |
 | `skills/`      | Your own skills, one `<name>/SKILL.md` each                           |
+| `snapshots/`   | Snapshots of chat threads' files, for Restore; one Git store a folder |
 
 Back up `wow.sqlite` and `secrets.json` together. Secrets are encrypted for your Windows user and
 cannot be read on another machine or account.

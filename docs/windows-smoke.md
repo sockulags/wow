@@ -153,6 +153,18 @@ one yet (see "Known gaps" in `docs/user-guide.md`); until it does, mark those st
       (UTF-8, no byte order mark), one line per tool call, no tool output. Cancel a second save:
       nothing is written and no message shows.
 
+- [ ] **Restore files (thread work U3).** In a Claude thread of a project in Git under a path with
+      spaces, with `core.autocrlf=true`, ask the agent to change a file with CRLF line endings,
+      add a file and delete one. Open the changed file in an editor, change it and keep it open.
+      "Restore files to here" on that message: the confirm lists the edited file first under
+      "Changed outside this thread", the button reads "Restore anyway"; Enter: the files are back
+      byte for byte (CRLF kept, check with `git diff` and a hex view), the added file is gone, the
+      deleted one back, `git status` shows no staged change and `git stash list` is empty, and
+      `%USERPROFILE%\.wow\snapshots` holds one `*.git` folder. A file the editor holds locked is
+      listed as not changed on the line; Undo brings back the state before. Time the first turn
+      of a large folder (e.g. 20 000 files): note how long the first snapshot delays the turn.
+      With Codex: Restore works the same; Edit is not offered.
+
 - [ ] **Session tools (thread work U5).** In a Claude thread of a project whose `.mcp.json` or
       user settings name an MCP server, send a message, then Details → **Show session tools**.
       Expected: the servers with the states `claude mcp list` shows in a terminal, a connected

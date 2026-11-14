@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   e2eChangesHome,
@@ -276,6 +276,65 @@ test.describe("a chat thread's changes", () => {
       page.getByTestId('thread-changes').getByRole('heading', { name: 'Not a Git repository' }),
     ).toBeVisible();
   });
+
+  test('restores files to before a message and undoes it @thread-work-20 @thread-work-22 @thread-work-24', async ({
+    page,
+  }) => {
+    const repo = path.join(e2eChangesHome, 'tea-chat');
+    const inRepo = (relative: string) => path.join(repo, ...relative.split('/'));
+    const timerBefore = await readFile(inRepo('src/timer.ts'));
+    await page.goto('/chat/new');
+    await choose(main(page).getByLabel('Provider instance'), 'Mock Claude');
+    await choose(main(page).getByRole('combobox', { name: 'Project' }), 'Tea chat');
+    await expect(main(page).getByTestId('model-bar')).toBeVisible();
+    await messageBox(page).fill('Add the notes');
+    await messageBox(page).press('Enter');
+    await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+    const conversation = main(page).getByRole('list', { name: 'Conversation' });
+    await expect(conversation.getByText('Notes added, the old page gone.')).toBeVisible();
+    const message = conversation.getByTestId('item-user').first();
+    const restoreHere = message.getByRole('button', { name: 'Restore files to here' });
+    const dialog = page.getByTestId('restore-confirm');
+
+    // The confirm lists what goes back; nothing changed outside the thread yet.
+    await message.hover();
+    await restoreHere.click();
+    await expect(dialog.getByTestId('restore-write')).toContainText(/docs[\\/]old\.md/);
+    await expect(dialog.getByTestId('restore-remove')).toContainText(/docs[\\/]notes\.md/);
+    await expect(dialog.getByTestId('restore-outside')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+
+    // An editor writes the timer after the turn ended (with Windows line endings).
+    const edited = Buffer.from('export const minutes = 4;\r\n');
+    await writeFile(inRepo('src/timer.ts'), edited);
+    await message.hover();
+    await restoreHere.click();
+    await expect(dialog.getByTestId('restore-outside')).toContainText(/src[\\/]timer\.ts/);
+    const anyway = dialog.getByRole('button', { name: 'Restore anyway' });
+    await expect(anyway).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(dialog).toHaveCount(0);
+    const line = conversation.getByTestId('files-restored');
+    await expect(line).toContainText(
+      'Files restored to before “Add the notes” · 2 written · 1 deleted',
+    );
+    expect(await readFile(inRepo('docs/old.md'), 'utf8')).toBe('# Old page\n');
+    await expect(readFile(inRepo('docs/notes.md'))).rejects.toThrow();
+    expect((await readFile(inRepo('src/timer.ts'))).equals(timerBefore)).toBe(true);
+
+    // Undo puts back the files as they were just before, the editor's bytes included.
+    await line.getByRole('button', { name: 'Undo' }).click();
+    await expect(dialog.getByTestId('restore-write')).toContainText(/src[\\/]timer\.ts/);
+    await expect(dialog.getByTestId('restore-remove')).toContainText(/docs[\\/]old\.md/);
+    await dialog.getByRole('button', { name: 'Undo' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(conversation.getByTestId('files-restored').nth(1)).toContainText('Restore undone');
+    await expect(line.getByRole('button', { name: 'Undo' })).toHaveCount(0);
+    expect((await readFile(inRepo('src/timer.ts'))).equals(edited)).toBe(true);
+    expect(await readFile(inRepo('docs/notes.md'), 'utf8')).toContain('Steep for three minutes.');
+    await expect(readFile(inRepo('docs/old.md'))).rejects.toThrow();
+  });
 });
 
 test.describe('sketch', () => {
@@ -287,5 +346,33 @@ test.describe('sketch', () => {
     await fileRow(page, 'Changed: src/timer.ts').click();
     await expect(page.getByRole('table', { name: 'Diff of src/timer.ts' })).toBeVisible();
     await page.screenshot({ path: sketchPath('2026-11-review-loop', 'changes-tab') });
+  });
+
+  test('the restore confirm', async ({ page }) => {
+    const repo = path.join(e2eChangesHome, 'tea-chat');
+    // As the seed left it, whatever the cases before did.
+    await writeFile(path.join(repo, 'docs', 'old.md'), '# Old page\n');
+    await rm(path.join(repo, 'docs', 'notes.md'), { force: true });
+    await page.goto('/chat/new');
+    await choose(main(page).getByLabel('Provider instance'), 'Mock Claude');
+    await choose(main(page).getByRole('combobox', { name: 'Project' }), 'Tea chat');
+    await expect(main(page).getByTestId('model-bar')).toBeVisible();
+    await messageBox(page).fill('Add the notes');
+    await messageBox(page).press('Enter');
+    const conversation = main(page).getByRole('list', { name: 'Conversation' });
+    await expect(conversation.getByText('Notes added, the old page gone.')).toBeVisible();
+    const message = conversation.getByTestId('item-user').first();
+    const dialog = page.getByTestId('restore-confirm');
+    // Read once, so the turn's end is kept before the editor writes.
+    await message.hover();
+    await message.getByRole('button', { name: 'Restore files to here' }).click();
+    await expect(dialog.getByTestId('restore-write')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await writeFile(path.join(repo, 'src', 'timer.ts'), 'export const minutes = 4;\n');
+    await message.hover();
+    await message.getByRole('button', { name: 'Restore files to here' }).click();
+    await expect(dialog.getByTestId('restore-outside')).toBeVisible();
+    await page.screenshot({ path: sketchPath('2026-11-thread-work', 'restore') });
+    await page.keyboard.press('Escape');
   });
 });

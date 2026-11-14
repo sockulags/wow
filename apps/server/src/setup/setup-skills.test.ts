@@ -94,6 +94,7 @@ function applyOverRpc(server: RunningServer, name: string, text: string) {
     hosts: undefined as never,
     hostLookup: undefined as never,
     images: undefined as never,
+    snapshots: undefined as never,
     plans: undefined as never,
     workflows: undefined as never,
     providers: undefined as never,

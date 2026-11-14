@@ -33,6 +33,7 @@ import { discoverProjects } from './projects/discover.js';
 import { readCurrentBranch, readHeadCommit } from './projects/git.js';
 import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
+import { FolderSnapshots } from './files/snapshots.js';
 import { listTerminalSessions } from './providers/sessions.js';
 import { ProviderUpdates, createNpmRunner, type RunNpm } from './providers/update.js';
 import type { Spawn } from './files/editor.js';
@@ -116,6 +117,8 @@ export interface RunningServer {
   readonly workflows: WorkflowRunner;
   readonly workspaces: Workspaces;
   readonly providerService: ProviderService;
+  // Snapshots of chat threads' folders and restores from them (thread work spec 19 to 26).
+  readonly snapshots: FolderSnapshots;
   readonly providerUpdates: ProviderUpdates;
   readonly scheduler: Scheduler;
   readonly trackers: TrackerService;
@@ -192,6 +195,15 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       snapshotChanges(folder, baseSha, changesOptions(settings)),
   };
   const workspaces = new Workspaces({ db: database.db, engine, settings, logger });
+  const snapshots = new FolderSnapshots({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    home,
+    platform: options.platform ?? process.platform,
+    clock: options.clock ?? (() => new Date()),
+  });
   const providerService = new ProviderService({
     db: database.db,
     engine,
@@ -203,6 +215,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     assistant: () => assistantAccess,
     changes: folderChanges,
     prepareThread: (threadId) => workspaces.prepareThread(threadId),
+    snapshots,
   });
   modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
   const workflows = new WorkflowRunner({
@@ -229,6 +242,9 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   let outlook: OutlookService | undefined;
   // First, so a run whose working copy was being made fails with that reason.
   workspaces.recover();
+  void snapshots
+    .expire()
+    .catch((error: unknown) => logger.warn('old snapshots were not dropped', error));
   workflows.recover();
   const skills = new SkillsService({
     db: database.db,
@@ -317,6 +333,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     hosts,
     hostLookup,
     images,
+    snapshots,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     discoverProjects: () =>
       discoverProjects({
@@ -508,6 +525,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       await stopServices();
       await providerUpdates.stop();
       await providerService.stop();
+      await snapshots.stop();
       await trackers.idle();
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
@@ -535,6 +553,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     workflows,
     workspaces,
     providerService,
+    snapshots,
     providerUpdates,
     scheduler,
     trackers,

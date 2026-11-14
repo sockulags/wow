@@ -6,6 +6,9 @@ import {
   touchPageRead,
   DomainEvent,
   TextItemPayload,
+  FilesRestoredItemPayload,
+  isTurnSnapshot,
+  type StoredSnapshot,
   type Project,
   type ProviderUpdateRun,
   type Skill,
@@ -38,6 +41,7 @@ import {
   questions,
   settings,
   skills,
+  restorePoints,
   threadItems,
   threads,
   triggerEvents,
@@ -456,6 +460,61 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .where(eq(threads.id, threadId))
         .run();
       return ['turns', 'threadItems', ...threadTopics];
+    }
+    case 'turn.snapshotTaken': {
+      const { turnId, at, snapshot } = event.payload;
+      tx.update(turns)
+        .set(at === 'start' ? { startSnapshot: snapshot } : { endSnapshot: snapshot })
+        .where(eq(turns.id, turnId))
+        .run();
+      return ['turns'];
+    }
+    case 'turn.snapshotsDropped': {
+      const { turnIds, before } = event.payload;
+      const dropped = {
+        missing:
+          'The snapshot of the files was dropped after the days wow keeps them (Keep snapshots for).',
+      };
+      const old = (snapshot: StoredSnapshot | null) =>
+        isTurnSnapshot(snapshot) && snapshot.at < before;
+      for (const turnId of turnIds) {
+        const row = tx
+          .select({ start: turns.startSnapshot, end: turns.endSnapshot })
+          .from(turns)
+          .where(eq(turns.id, turnId))
+          .get();
+        if (!row || (!old(row.start) && !old(row.end))) continue;
+        tx.update(turns)
+          .set({
+            ...(old(row.start) ? { startSnapshot: dropped } : {}),
+            ...(old(row.end) ? { endSnapshot: dropped } : {}),
+          })
+          .where(eq(turns.id, turnId))
+          .run();
+      }
+      return ['turns'];
+    }
+    case 'thread.filesRestored': {
+      const { threadId, item, before, after } = event.payload;
+      tx.insert(threadItems).values(item).run();
+      const restore = FilesRestoredItemPayload.parse(item.payload);
+      tx.insert(restorePoints)
+        .values({ itemId: item.id, threadId, before, after, at: restore.at })
+        .run();
+      if (restore.undoOf !== undefined) {
+        const row = tx
+          .select({ payload: threadItems.payload })
+          .from(threadItems)
+          .where(eq(threadItems.id, restore.undoOf))
+          .get();
+        if (row) {
+          tx.update(threadItems)
+            .set({ payload: { ...asRecord(row.payload), undoneBy: item.id } })
+            .where(eq(threadItems.id, restore.undoOf))
+            .run();
+        }
+      }
+      return ['threadItems'];
     }
     case 'turn.replaced':
       tx.update(turns)

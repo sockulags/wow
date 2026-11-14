@@ -16,6 +16,7 @@ import {
   type ProviderInstance,
   type QueuedMessage,
   type RefreshToolsOutcome,
+  type RestoreConfirmed,
   type ThreadToolsSource,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
@@ -51,11 +52,32 @@ export interface ProviderServiceDeps {
   // Makes a chat thread's own working copy before its turn goes out (thread work spec 12);
   // answers why it could not, and the turn then fails with that and nothing is sent.
   readonly prepareThread?: ((threadId: string) => Promise<string | undefined>) | undefined;
+  // Keeps a chat thread's folder as each turn starts and ends, and puts it back for Edit's
+  // "Conversation and files" (thread work spec 19, 21); without it, turns have no snapshots.
+  readonly snapshots?: TurnSnapshots | undefined;
   // Milliseconds since the epoch; tests pass their own.
   readonly now?: (() => number) | undefined;
 }
 
 type StartTurn = Extract<ProviderCommand, { type: 'startTurn' }>;
+
+export interface TurnSnapshots {
+  // Joins the folder's queue before it first waits, so what is asked later sees the snapshot.
+  take(threadId: string, turnId: string, at: 'start' | 'end'): Promise<void>;
+  // Waits for snapshot work in flight and starts none after.
+  stop?(): Promise<void>;
+  restoreForEdit(
+    threadId: string,
+    turnId: string,
+    toTurnId: string,
+    confirmed: RestoreConfirmed,
+  ): Promise<string | undefined>;
+}
+
+interface EditRestore {
+  readonly toTurnId: string;
+  readonly confirmed: RestoreConfirmed;
+}
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -376,6 +398,10 @@ export class ProviderService {
         this.#deps.logger.error('provider adapter failed to stop', error);
       }
     }
+    // Turns being prepared and end snapshots in flight finish before the caller closes the
+    // database or removes the folders they use.
+    await this.idle();
+    await this.#deps.snapshots?.stop?.();
   }
 
   #adapter(providerInstanceId: string): ProviderAdapter {
@@ -449,7 +475,7 @@ export class ProviderService {
             start.kind === 'assistant'
               ? () => this.#assistantTurn(command)
               : this.#chatThread(turn.threadId)
-                ? () => this.#chatTurn(command, turn.id, turn.index)
+                ? () => this.#chatTurn(command, turn.id, turn.index, start.restoreFiles)
                 : command,
           );
           break;
@@ -475,6 +501,17 @@ export class ProviderService {
         // them sees the next turn start first.
         case 'turn.ended': {
           const { threadId } = event.payload;
+          // The folder as the turn left it, so later changes count as made outside the thread
+          // (thread work spec 22). Taken before anything else of this thread can start.
+          if (!this.#stopped && this.#deps.snapshots && this.#chatThread(threadId)) {
+            const taken = this.#deps.snapshots
+              .take(threadId, event.payload.turnId, 'end')
+              .catch((error: unknown) =>
+                this.#deps.logger.warn('the end snapshot was not taken', describeError(error)),
+              );
+            this.#preparing.add(taken);
+            void taken.then(() => this.#preparing.delete(taken));
+          }
           this.#handingOver.delete(threadId);
           this.#joined.delete(threadId);
           const queued = this.#deps.db
@@ -695,7 +732,7 @@ export class ProviderService {
   // A chat thread, whose working copy is made and whose changes are measured; a step's thread
   // has its run's.
   #chatThread(threadId: string): boolean {
-    if (!this.#deps.changes && !this.#deps.prepareThread) return false;
+    if (!this.#deps.changes && !this.#deps.prepareThread && !this.#deps.snapshots) return false;
     const row = this.#deps.db
       .select({ runId: threads.runId, kind: threads.kind })
       .from(threads)
@@ -704,10 +741,30 @@ export class ProviderService {
     return row !== undefined && row.runId === null && row.kind === 'chat';
   }
 
-  // The thread's own working copy first: without its folder the turn has nowhere to run.
-  async #chatTurn(command: StartTurn, turnId: string, index: number): Promise<StartTurn> {
+  // The thread's own working copy first: without its folder the turn has nowhere to run. Then
+  // Edit's restore, which sends nothing when it fails (thread work spec 21), and the folder's
+  // snapshot as the turn starts, which never stops it (spec 19).
+  async #chatTurn(
+    command: StartTurn,
+    turnId: string,
+    index: number,
+    restore: EditRestore | undefined,
+  ): Promise<StartTurn> {
     const failed = await this.#deps.prepareThread?.(command.threadId);
     if (failed !== undefined) throw new Error(failed);
+    const snapshots = this.#deps.snapshots;
+    if (restore) {
+      const refused = snapshots
+        ? await snapshots.restoreForEdit(
+            command.threadId,
+            turnId,
+            restore.toTurnId,
+            restore.confirmed,
+          )
+        : 'wow keeps no snapshots here, so the files were not put back and the message was not sent.';
+      if (refused !== undefined) throw new Error(refused);
+    }
+    await snapshots?.take(command.threadId, turnId, 'start');
     return this.#marked(command, turnId, index);
   }
 

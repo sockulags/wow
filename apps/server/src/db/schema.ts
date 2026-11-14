@@ -53,6 +53,7 @@ import type {
   PageLink,
   PathVisit,
   StepRun,
+  StoredSnapshot,
   ThreadItemKind,
   ThreadKind,
   ThreadState,
@@ -62,6 +63,7 @@ import type {
   TriggerEvent,
   TriggerKind,
   TriggerState,
+  TurnSnapshot,
   TurnState,
   UnitRef,
   Usage,
@@ -165,8 +167,27 @@ export const turns = sqliteTable(
     // its place.
     resumePoint: json<ResumePointRef>(),
     replacedBy: text(),
+    // wow's snapshots of the thread's folder as the turn started and ended (thread work spec
+    // 19), or why there is none; null in turns stored before and in step threads.
+    startSnapshot: json<StoredSnapshot>(),
+    endSnapshot: json<StoredSnapshot>(),
   },
   (table) => [index('turns_thread_idx').on(table.threadId, table.index)],
+);
+
+// The folder just before and just after a restore (thread work spec 24), by its line's item id:
+// Undo puts `before` back, and `after` is what the next check for changes made outside the
+// thread compares with.
+export const restorePoints = sqliteTable(
+  'restore_points',
+  {
+    itemId: text().primaryKey(),
+    threadId: text().notNull(),
+    before: json<TurnSnapshot>(),
+    after: json<TurnSnapshot>(),
+    at: text().notNull(),
+  },
+  (table) => [index('restore_points_thread_idx').on(table.threadId)],
 );
 
 export const threadItems = sqliteTable(

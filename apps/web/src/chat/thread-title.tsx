@@ -57,7 +57,7 @@ export function ThreadTitle({ thread }: { thread: Thread }) {
     );
   }
   return (
-    <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium">
+    <h2 className="flex min-w-24 items-center gap-2 text-sm font-medium">
       <button
         type="button"
         title="Rename thread"

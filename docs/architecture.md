@@ -48,7 +48,9 @@ installer, GitHub Actions on `ubuntu-latest` and `windows-latest`.
   message text hold every word, see "Chat view"), `skills.refresh`, `plans.refresh` (reads every project's
   intents folder now, see "Plans"), `hosts.refresh` (`{planId?, runId?}`, asks the host once
   about one followed plan, one run or everything wow follows, see "Hosts"),
-  `workflowRuns.detectArtifacts` (`{runId}`), `workflowRuns.diff` (`{runId, path?}`, what the run
+  `threads.restorePreview` (`{threadId, turnId} | {threadId, undoItemId}`, what a restore would
+  do now, see "Restore files when going back"), `workflowRuns.detectArtifacts` (`{runId}`),
+  `workflowRuns.diff` (`{runId, path?}`, what the run
   changed since its base, see "Run base and changes"), `workflowRuns.removeWorkingCopy` (`{runId}`,
   deletes a kept working copy of an ended run, see "Working copies"), `workflows.matchArtifacts` (`{projectId, globs}`),
   `files.read` (`{runId | threadId | projectId, path}`, one file for the viewer, see "Files"),
@@ -185,10 +187,16 @@ turns            id, threadId, index, state, startedAt, endedAt, usage(json),
                  fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
                  turn began, for "This turn only" (migration 0029_thread_changes);
                  resumePoint(json: {sessionId, at})?, replacedBy? -- the provider's point after
-                 the turn and the turn Edit put in its place (migration 0032_fork_and_edit)
+                 the turn and the turn Edit put in its place (migration 0032_fork_and_edit);
+                 startSnapshot, endSnapshot(json: TurnSnapshot | {missing})? -- wow's snapshots
+                 of a chat thread's folder as the turn started and ended, or why there is none
+                 (migration 0036_turn_snapshots)
+restore_points   itemId, threadId, before(json: TurnSnapshot)?, after(json: TurnSnapshot)?, at
+                 -- the folder just before and just after a restore, by its line's item id
+                 (migration 0036_turn_snapshots)
 thread_items     id, threadId, turnId, index, kind ('user'|'assistant_text'|'reasoning'|'tool_call'|
                  'approval'|'question'|'task_list'|'usage'|'error'|'settings_change'|
-                 'compaction'), payload(json), streaming   -- a subagent's tool_call and
+                 'compaction'|'files_restored'), payload(json), streaming   -- a subagent's tool_call and
                  assistant_text carry its call's row id as payload.parentItemId
 approvals        id, threadId, itemId, kind ('command'|'fileChange'|'tool'|'plan'), request(json),
                  decision? ('allowOnce'|'allowSession'|'allowAlways'|'deny'), decidedAt?   -- what
@@ -1679,7 +1687,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
   "Images in the composer"), `chat.sendKey` (see "Chat view"), `chat.findMaxMatches`,
   `chat.exportReasoning` (see "Find in the conversation and copy it"), `chat.ownWorkingCopy`,
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
-  working copy")
+  working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
+  `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotKeepDays`,
+  `chat.editRestoresFiles` (see "Restore files when going back")
 - approvals: `approvals.alwaysAllow` (project-scoped; the "Approvals" page, see "Edits, approvals
   and a thread's Changes")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
@@ -3510,6 +3520,122 @@ and exported is what the conversation shows. Searching the page alone would miss
   characters) and direction marks, cuts the title to 120 characters, drops trailing dots and
   spaces, and renames a device name, also one followed by a dot ("CON.backup").
 
+### Restore files when going back
+
+Thread work spec 19 to 26, U3. wow keeps the files of a chat thread's folder (not a step's thread,
+not the Assistant) at each turn's start and end, so the user can put them back.
+
+- **What is kept.** The store holds the contents of every tracked and untracked file Git does not
+  ignore, as plain Git objects, unencrypted, for `chat.snapshotKeepDays` days. A file with a secret
+  that is not in `.gitignore` is therefore copied into `<wow home>/snapshots`; `.gitignore`d files
+  such as `.env` are not. `chat.snapshots` (project-scoped) turns snapshots off. The assistant has
+  no tool that reads wow's home or any path (`assistant.test.ts`, "offer no tool that reads wow's
+  home").
+- **Store.** One bare repository of wow's per folder, `<wow home>/snapshots/<key>.git`, the key a
+  hash of `folderKey` (so `C:\Code\Tea` and `c:/code/tea` share one). `files/snapshots.ts`
+  (`FolderSnapshots`) runs everything for one folder one after the other (`#serial`), so a restore
+  never meets a snapshot half taken and a preview waits for the end snapshot of a turn that just
+  ended. The snapshot is recorded inside that task, before it resolves, so whatever is queued
+  after it reads the recorded state; only the expiry follows outside it. `stop()` waits for every
+  snapshot, its record and the expiry after it that is in flight and starts none after; `ProviderService.stop()` calls it (after waiting for the turns being
+  prepared) and so does the server's stop, before the database closes. The plumbing is in
+  `projects/git.ts` (`runStoreGit`, `readSnapshotRepository`,
+  `listSnapshotFiles`, `hashSnapshotFiles`, `writeSnapshotTree`, `updateSnapshotRefs`,
+  `readSnapshotTree`, `readSnapshotBlobs`, `pruneSnapshotStore`): with `GIT_DIR` (and for a tree a
+  temporary `GIT_INDEX_FILE`) set to wow's store and every other variable that could point git
+  elsewhere removed, with hooks and the file system monitor off and `gc.auto=0`, each limited by
+  `chat.snapshotTimeoutMs` and stopped with `advanced.gitStopWaitMs` like `runGit`. Only
+  `rev-parse --is-inside-work-tree` and `ls-files --cached --others --exclude-standard -z` run in
+  the user's repository, and both only read: no object, ref, index entry, stash or HEAD change is
+  ever written there.
+- **Taking one.** `take(threadId, turnId, 'start' | 'end')`: the listed files (over
+  `chat.snapshotMaxFiles` gives none), `lstat` each: a link is kept as its own text (mode
+  120000, never followed), a file over `chat.snapshotMaxFileBytes` is left out and named with its
+  size in `omitted`, a name with a line break or one this system cannot write back is left out
+  too. Files whose size, time and mode match the store's `wow-manifest.json` and whose time is
+  before the last read began (Git's "racily clean" rule, measured with a scratch file's time) keep
+  their blob; the rest go through `hash-object --no-filters -w --stdin-paths` (exact bytes, CRLF
+  kept, no filter). `update-index --index-info` and `write-tree` make the tree; a ref
+  `refs/turns/<sha of turn id>-<start|end>` keeps it. The executable bit is read where the system
+  has one; on Windows a file keeps the mode it had in the last snapshot. The result is recorded
+  with the internal `thread.snapshotTaken {threadId, turnId, at, snapshot}` (event
+  `turn.snapshotTaken`) as `TurnSnapshot {tree, files, omitted, at}` or `{missing}` with the
+  reason in words (snapshots off by the project's `chat.snapshots`, not in Git, too many files,
+  out of time). The turns topic says only `Turn.restorable` (the start is a snapshot); the trees
+  stay on the server.
+- **When.** The provider service takes the start in `#chatTurn` after the thread's working copy
+  is ready and before `#marked`, awaited, so it is part of the start later commands for the thread
+  wait for; it never fails the turn. The end is taken on `turn.ended` (joined to the folder's queue
+  in the same commit, added to `#preparing` so `idle()` covers it).
+- **Preview and restore.** `threads.restorePreview` answers `RestorePreview {status, message,
+write, remove, outside, outsideUnknown, notRestorable, leftAlone}`; a refusal is a `status` (`noRepository`,
+  `gitUnavailable`, `noSnapshot`, `turnRunning`, `outside`, `notChat`) with its reason. It takes
+  a snapshot of the folder now and compares trees: `write` the target's files that differ or are
+  missing, `remove` the files now that the target did not have and that the thread left (they
+  are in the reference snapshot below; except ones left out of the target for size),
+  `leftAlone` `{path, reason}` the files the restore would otherwise have touched and does not: a
+  file listed then and ignored now (`ignoredNow`: ignored files are never touched) and a file now
+  that is in neither the target nor the thread's reference, such as one Git lists only since
+  `.gitignore` changed (`notFromThread`: it is not wow's to delete), and a file over
+  `chat.snapshotMaxFileBytes` now (`tooLarge`: no snapshot holds its bytes, so it is never
+  deleted or overwritten, since Undo could not bring it back), `notRestorable` the target's `omitted`, and `outside` the touched files that differ
+  from the thread's own last state: its last restore's `after` when that came after the last
+  turn's end, else the last turn's end snapshot. When there is none (the last turn has no end
+  snapshot, or a restore recorded no `after`), wow cannot tell: every touched file is in `outside`
+  (so the confirm reads "Restore anyway") and `outsideUnknown` is true, which the confirm says.
+  Any write or remove path with `..`, a full
+  path, `.git` (on Windows also its 8.3 short name `git~<digits>`), a name Windows does not take (on Windows), or a folder on the way that is a link
+  or junction refuses the whole restore (`outside`). `thread.restoreFiles {threadId, turnId,
+confirmed}` and `thread.undoRestore {threadId, itemId, confirmed}` are taken by the RPC
+  `dispatch` handler before the engine (the engine alone refuses them, so the assistant and a
+  setup file cannot restore): `FolderSnapshots.restore` prepares again and answers `conflict` with
+  the new preview as `data` when `confirmed.outside` or `confirmed.notRestorable` differ. It keeps
+  the folder as it is now under `refs/trees/<tree>`, reads blobs with `cat-file --batch` (in parts
+  of about `chat.snapshotMaxFileBytes`), deletes, removes folders a delete leaves empty, writes
+  with `node:fs` (a link is replaced, never written through; the executable bit set where the
+  system has one; a link's target is written as the stored bytes, not as text), lists what the
+  system refused (a file held open on Windows) and goes on, then snapshots the result and prunes
+  the store of the trees only previews made. The internal `thread.filesRestored {threadId, restore, before, after}`
+  stores the line, item kind `files_restored` with `FilesRestoredItemPayload {toTurnId, written,
+removed, failed, undoOf?, undoneBy?, edit?, at}` on the thread's last turn, and a
+  `restore_points` row. Undo targets `before` and compares with `after`; it marks the original
+  `undoneBy`. `undoableRestore` (contracts) offers Undo on the newest restore line that is not an
+  undo, not undone, not Edit's, on the last turn, which is not running: a turn starting makes a
+  new last turn, so Undo goes.
+- **Edit.** `thread.editLast.restoreFiles {confirmed}` (refused when the replaced turn has no
+  snapshot) puts `start.restoreFiles {toTurnId, confirmed}` on `turn.started`; the RPC handler
+  checks the lists first and answers `conflict` before anything is decided. `#chatTurn` calls
+  `restoreForEdit` before the start snapshot; a refusal, a change in the lists or a file that
+  could not be written fails the turn with the reason and nothing is sent. Its line has
+  `edit: true` and no Undo.
+- **Expiry.** `expire()` (at start and after each end snapshot) drops each snapshot older than
+  `chat.snapshotKeepDays` by the server's clock: its ref and old restore trees go, the manifest is
+  removed, `git prune --expire=now` runs in the store, and `thread.snapshotsDropped {threadId,
+turnIds, before}` sets those snapshots to `{missing}`, so the turns stop offering Restore.
+  Turns stored before have none and offer none (spec 44).
+- **Web.** `chat/restore.tsx`: `restoreStore` with `askRestore` (reads the preview),
+  `confirmRestore` (sends the command; on `conflict` shows the server's new lists with "The files
+  changed since"), `RestoreDialog` (outside first as "Changed outside this thread since its last
+  turn", then "Too large to put back", "Written back", "Deleted"; "Restore anyway" when anything
+  changed outside; the action button has the focus, so Enter confirms and Escape cancels),
+  `FilesRestoredLine` and `restoreLineText` ("Files restored to before "…" · 2 written · 1
+  deleted", Undo), `EditFilesChoice`. A restore bumps the Changes view's refresh. Thread view: the
+  "Restore files to here" button on messages whose turn is restorable while no turn runs (Claude
+  Code and Codex alike), `showRestore` in `chat/conversation-nav.ts` with palette
+  `chat.restoreFiles` (R, `keybindings.restoreMessage`, on the focused message),
+  `chat.undoRestore`, and `chat.edit.withFiles` while the composer holds an edit whose turn is
+  restorable; Edit's notice then shows "Conversation only" / "Conversation and files" (default
+  `chat.editRestoresFiles`), and sending with files opens the confirm before the edit goes.
+- **Not taken.** Claude Code's `enableFileCheckpointing` / `rewindFiles` (Claude only, its file
+  tools only). The restore line is not in find or the Markdown export.
+
+Tests: `apps/server/src/files/snapshots.test.ts` (real repositories: tracked, untracked, ignored,
+CRLF, executable bit, links, the size limit, outside changes, commits after the turn, Undo, Edit
+before the mock gets the message and a failing restore sending nothing, expiry by an injected
+clock, the path rules for Windows), `apps/web/src/chat/restore.test.tsx`, and the e2e case
+"restores files to before a message and undoes it" in `changes.spec.ts` (project `tea-chat`,
+seeded with `docs/old.md`; the mock agent's "add the notes" adds `docs/notes.md` and deletes it).
+
 ### What the session can use
 
 Thread work U5 (spec 37 to 44). A chat thread's panel has a Tools tab with what the provider
@@ -3600,8 +3726,9 @@ description, readOnly, destructive}]}`, `state` one of `connected`, `failed`, `n
 
 ### Edit and Fork
 
-Agent workbench spec 62, 63, 71, 74, U12. Both go back in the provider's conversation and never
-rewind files.
+Agent workbench spec 62, 63, 71, 74, U12. Both go back in the provider's conversation. Fork never
+rewinds files; Edit does only when the user picks "Conversation and files" (thread work spec 21,
+see "Restore files when going back").
 
 - **Points.** The Claude adapter keeps the uuid of the running turn's newest message of the
   conversation itself (assistant or user messages with `parent_tool_use_id` null; a subagent's
