@@ -1681,11 +1681,12 @@ export async function switchToNewBranch(
   return outcomeOf(await runGit(folder, ['switch', '--quiet', '-c', branch], options));
 }
 
-// What git writes when it would have to ask for a password, a passphrase or a host key.
+// What git writes when it would have to ask for a password, a passphrase or a host key. Newer
+// Git says "unable to get password from user" where older says "terminal prompts disabled".
 // "Could not read from remote repository" alone is a missing repository or a dropped connection;
 // it counts only when ssh also says why it was refused.
 const asksForCredentials =
-  /could not read (Username|Password)|terminal prompts disabled|Authentication failed|Permission denied \(|Host key verification failed|passphrase|askpass|no such identity/i;
+  /could not read (Username|Password)|unable to get (username|password) from user|terminal prompts disabled|Authentication failed|Permission denied \(|Host key verification failed|passphrase|askpass|no such identity/i;
 
 export type PushOutcome =
   | { readonly ok: true; readonly output: string }
