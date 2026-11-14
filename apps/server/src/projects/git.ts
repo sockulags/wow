@@ -1352,10 +1352,15 @@ export interface HookGitOptions extends GitRunOptions {
 const neverAsk = ['-c', 'core.askPass=', '-c', 'credential.interactive=never'];
 
 const runHookGit = (folder: string, args: readonly string[], options: HookGitOptions) =>
-  execGit([...neverAsk, '-c', 'core.fsmonitor=false', ...plainPaths, '-C', folder, ...args], args, options, {
-    env: hookGitEnvironment(options.baseEnv ?? process.env),
-    tailBytes: options.outputMaxBytes,
-  });
+  execGit(
+    [...neverAsk, '-c', 'core.fsmonitor=false', ...plainPaths, '-C', folder, ...args],
+    args,
+    options,
+    {
+      env: hookGitEnvironment(options.baseEnv ?? process.env),
+      tailBytes: options.outputMaxBytes,
+    },
+  );
 
 // `status --porcelain=v2 -z`: one entry per changed, deleted or new file Git does not ignore.
 export interface StatusEntry {
