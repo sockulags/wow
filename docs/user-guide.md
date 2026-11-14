@@ -108,6 +108,7 @@ Default keys (all changeable in Settings → Keybindings):
 | Ctrl+Enter       | Run at a gate: Approve                                       |
 | Ctrl+Shift+Enter | Run at a gate: Send back                                     |
 | Ctrl+Shift+D     | Run: Steps or Changes tab                                    |
+| Ctrl+Shift+K     | Chat: commit the thread's changes                            |
 | Ctrl+Shift+Y     | Run: Steps or Path tab                                       |
 | O                | Changes tab: this step only, and back                        |
 | C                | Diff line: comment on it                                     |
@@ -543,6 +544,38 @@ diff, and **Back to details** (or Alt+W, or Ctrl+Shift+D again) to close the tab
 since the last turn began. Files that were already edited when the thread began and have not
 changed since are left out. A folder that is not in Git, and a thread that began before this
 version, say so instead of listing files.
+
+**Commit and pull request.** The Changes tab has **Commit…** (**Ctrl+Shift+K**,
+`keybindings.commitChanges`, "Commit…" in the palette). The dialog lists every changed, deleted
+and new file of the folder that Git does not ignore. The files this thread changed are ticked;
+files you or another program changed after the thread's last turn are listed but not ticked, and
+so is anything you staged yourself. It shows the branch, and the commit hooks of the repository
+that will run (from its hooks folder or `core.hooksPath`), or "No commit hooks". **Propose** asks
+the thread's model for a message, in a request of its own: it gets only the diff of the ticked
+files and the thread's title (`chat.commitMessageTemplate`), has no tools, and the conversation
+does not change. The answer fills the field, which you can edit; Cancel stops it. **Commit**
+(**Ctrl+Enter**, `keybindings.commitConfirm`) commits exactly the ticked files with your own Git
+name, email and settings; whatever else you staged stays staged. The hooks run as they do in a
+terminal; when one refuses, its output shows in the dialog and nothing is committed. The
+conversation then shows a line such as "Committed 1 file · 4e1d2a0 Ring the bell twice". Commit
+is refused while a turn runs, without a message, and while a merge, rebase, cherry-pick or revert
+is in progress; a folder on no branch asks for the name of a new branch.
+
+**Open pull request…** (**Open merge request…** on GitLab) shows where it goes, such as "Pushes
+wow/ring-twice-3fa2c1 to origin and opens a pull request on github.com in acme/tea", the target
+branch (the remote's default; pick another from the list), the commits it would hold, a title
+and a description you can edit or **Propose** (`chat.pullRequestTemplate`), and **Draft**
+(`chat.pullRequestDraft`). **Open** pushes the branch and opens the request with the project's
+GitHub or GitLab token; the conversation shows "Opened pull request #14 · …" with a chip that
+opens it in the side panel. The push uses Git's own credentials (a credential helper or an SSH
+agent) and never asks: when Git would need a password or passphrase, the push fails and the dialog
+says to push once in a terminal. The token is never given to Git. Nothing is pushed when the
+project has no remote, no GitHub or GitLab settings or token (the dialog names the setting), the
+branch is the target or protected, or there is no new commit. When a pull request is already
+open for the branch, the dialog offers **Open in panel** and **Push the new commits**. When the
+host refuses after the push, its message shows; the branch stays pushed and you can press Open
+again. wow never amends, merges, rebases, pulls, force-pushes or deletes a branch, and the
+assistant cannot commit, push or open a pull request.
 
 A turn ends with its usage: input, output and cached tokens, and the cost when the provider
 reports one. With `chat.contextMeter` on, the composer shows

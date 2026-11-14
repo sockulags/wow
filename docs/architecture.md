@@ -1689,7 +1689,11 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
   `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotKeepDays`,
-  `chat.editRestoresFiles` (see "Restore files when going back")
+  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.commitTimeoutMs`,
+  `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
+  `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
+  (project-scoped), `chat.pullRequestDraft` (project-scoped) (see "Commit and pull request from
+  a thread's Changes")
 - approvals: `approvals.alwaysAllow` (project-scoped; the "Approvals" page, see "Edits, approvals
   and a thread's Changes")
 - calendar: `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours` (these three default
@@ -3635,6 +3639,76 @@ before the mock gets the message and a failing restore sending nothing, expiry b
 clock, the path rules for Windows), `apps/web/src/chat/restore.test.tsx`, and the e2e case
 "restores files to before a message and undoes it" in `changes.spec.ts` (project `tea-chat`,
 seeded with `docs/old.md`; the mock agent's "add the notes" adds `docs/notes.md` and deletes it).
+
+### Commit and pull request from a thread's Changes
+
+Thread work spec 27 to 36. A chat thread's Changes view (never a step's, never the assistant's)
+has "Commit…" (`keybindings.commitChanges`, Mod+Shift+K, palette `chat.commit`) and "Open pull
+request…" ("Open merge request…" when the thread's link rules name a GitLab repository; palette
+`chat.openPullRequest`, `chat.pushBranch`, `chat.propose`). The dialogs live in
+`apps/web/src/chat/commit-dialog.tsx` and `pull-request-dialog.tsx`, mounted in the Changes view;
+`keybindings.commitConfirm` (Mod+Enter) commits or opens there. The server side is
+`apps/server/src/workspaces/thread-git.ts` (`ThreadGit`), reached only through the RPCs below.
+
+- `threads.commitPlan {threadId}` answers `CommitPlan`: `git status --porcelain=v2 -z
+--untracked-files=all --no-renames` (`readStatusFiles`) against HEAD, with line counts from
+  `diff HEAD --numstat` (a new file's lines are counted when it is text and under
+  `diff.maxFileBytes`), the branch, the hooks (`readCommitHooks`: the commit hooks found in the
+  folder `rev-parse --git-path hooks` names, which follows `core.hooksPath`; executable ones only,
+  except on Windows) and `operationInProgress` (`readOperationInProgress`: MERGE_HEAD,
+  rebase-merge, rebase-apply, CHERRY_PICK_HEAD, REVERT_HEAD). A file is `inThread` when it is in
+  the thread's own Changes (`readThreadDiff`) and its content equals the last turn's end snapshot
+  (U3's store, `hash-object` compared with the snapshot tree), so a file the user changed after
+  the turn is not ticked. The plan waits for snapshot work in flight first.
+- `threads.commit {threadId, files, message, newBranch?}` answers `{sha, subject}` or `rejected`
+  with `CommitRefusal {reason, output}`. `commitPaths` adds new files (`add
+--pathspec-from-file`), then runs `commit -F <file> --pathspec-from-file=<file>
+--pathspec-file-nul` with each path as `:(literal)…`, which commits only those paths and leaves
+  anything else staged. On a refusal the new files are taken out of the index again. A folder on
+  no branch gets `switch -c <newBranch>` first (checked with `check-ref-format`). Then the
+  internal `thread.committed` adds a `committed` item (`CommittedItemPayload`) on the last turn.
+- `threads.pullRequestPlan {threadId, target?}` answers `PullRequestPlan`: remote = the branch's
+  upstream remote, else the folder's primary remote; host = the project's GitLab site when its
+  remote is on it (`TrackerService.gitlabHost`), else its GitHub settings (`githubHost`); target =
+  the given one, else `refs/remotes/<remote>/HEAD`, else main, master or the first remote branch;
+  commits = `log <remote>/<target>..HEAD`. Refusals come before anything is pushed: no
+  repository, no branch, no remote, `notSetUp` (with `missing`, the setting), no target, the
+  branch is the target, `existing` (an open request for the branch: `findForBranch`, with how many
+  commits the remote branch lacks), no commit ahead, `protected` (`branchProtected`), a running
+  turn.
+- `threads.openPullRequest {threadId, target, title, body, draft}` checks the plan again, pushes
+  (`pushBranch`: `push --porcelain --set-upstream <remote> refs/heads/<b>:refs/heads/<b>`, never
+  forced), then calls `HostAdapter.openChangeRequest`: GitHub `POST /repos/<o>/<r>/pulls`, GitLab
+  `POST /projects/<id>/merge_requests` with a "Draft: " title for a draft. A host refusal is
+  `rejected` with `PullRequestRefusal {reason, output, pushed: true}`. The internal
+  `thread.changeRequestOpened` adds a `change_request_opened` item
+  (`ChangeRequestOpenedItemPayload`) whose `HostItemRef` is what a chat link to the request would
+  be, so its `HostChip` opens the same tab. `threads.pushBranch {threadId}` pushes new commits to
+  an open request.
+- `threads.propose {threadId, requestId, purpose, files?, target?}` fills
+  `chat.commitMessageTemplate` (title, files, patch) or `chat.pullRequestTemplate` (title,
+  commits, files, patch), the diff cut at `chat.proposalPatchMaxBytes`, and calls
+  `ProviderService.propose`, which sends the ProviderCommand `propose {proposalId, cwd, prompt,
+model, effort}` to the thread's instance with the thread's model and effort, bounded by
+  `chat.proposalTimeoutMs`; `threads.cancelProposal {requestId}` sends `cancelProposal`. `cwd` is
+  `<wow home>/proposals`, which must be empty. Claude Code: one turn, `tools: []`, no allowed
+  tools, `settingSources: []`, no launch arguments, `mcpServers: {}` with `strictMcpConfig`,
+  `persistSession: false`, every tool use denied. Codex: an ephemeral `thread/start` with the
+  tools-only switches and no MCP server, read-only sandbox without network, approvals declined;
+  its events stay in the adapter. The thread's turns, items and session do not change.
+
+Hooks and credentials. `commitPaths` and `pushBranch` are the only git commands that run without
+wow's `core.hooksPath` override (they keep `core.fsmonitor=false`) and never pass `--no-verify`;
+they run in `hookGitEnvironment`: the user's environment with `GIT_TERMINAL_PROMPT=0`,
+`GCM_INTERACTIVE=never`, `SSH_ASKPASS_REQUIRE=never`, no `GIT_ASKPASS`/`SSH_ASKPASS`, and
+`GIT_SSH_COMMAND=ssh -o BatchMode=yes` when neither `GIT_SSH_COMMAND` nor `GIT_SSH` is set. They
+keep the last `chat.commitOutputMaxBytes` of their output and are stopped after
+`chat.commitTimeoutMs` / `chat.pushTimeoutMs`. A push that would ask for a password, passphrase or
+host key fails and says to push once in a terminal. The host token is sent only in the host
+request's header; it is in no git argument or environment. Only one commit or push per thread
+runs at a time. The assistant has no tool for any of it (`thread.committed` and
+`thread.changeRequestOpened` are server-only), and wow never amends, merges, rebases, pulls,
+forces or deletes a branch.
 
 ### What the session can use
 
