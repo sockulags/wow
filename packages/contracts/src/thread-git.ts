@@ -66,7 +66,12 @@ export const CommitParams = z.object({
 });
 export type CommitParams = z.infer<typeof CommitParams>;
 
-export const CommitResult = z.object({ sha: z.string().min(1), subject: z.string() });
+// `note` is set when Git did not end well after the commit was made (a hook did not finish).
+export const CommitResult = z.object({
+  sha: z.string().min(1),
+  subject: z.string(),
+  note: z.string().optional(),
+});
 export type CommitResult = z.infer<typeof CommitResult>;
 
 // The `data` of a refused `threads.commit` (`rejected`): why in words, and git's and a hook's

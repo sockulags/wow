@@ -417,8 +417,13 @@ export class ThreadGit {
         committed.output,
       );
     }
+    if ('note' in committed) this.#deps.logger.warn(committed.note, { threadId: thread.id });
     const made = await readHeadSubject(thread.cwd, git);
-    const result = { sha: made?.sha ?? '', subject: made?.subject ?? message.split('\n')[0] ?? '' };
+    const result = {
+      sha: made?.sha ?? '',
+      subject: made?.subject ?? message.split('\n')[0] ?? '',
+      ...('note' in committed ? { note: committed.note } : {}),
+    };
     this.#record({
       type: 'thread.committed',
       threadId: thread.id,

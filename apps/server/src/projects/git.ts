@@ -1581,11 +1581,26 @@ async function withPathspecs<T>(
   }
 }
 
+// HEAD's commit, or '' on a branch with no commit yet.
+async function readHeadSha(folder: string, options: GitRunOptions): Promise<string> {
+  const found = await runGit(folder, ['rev-parse', '--verify', '--quiet', 'HEAD'], options);
+  return found.ok ? found.stdout.trim() : '';
+}
+
+// A commit that exists though git did not end well.
+export interface CommitMadeOutcome {
+  readonly ok: true;
+  readonly output: string;
+  readonly note: string;
+}
+
 // Commits exactly `paths` with the message (spec 29): new files are added first, then `commit`
 // with the paths, which leaves whatever else is staged staged and uncommitted. The commit runs
 // the repository's hooks as `git commit` in a terminal does, with the user's identity and
 // settings; wow adds no trailer. When it is refused, the new files it added are taken out of the
-// index again, so nothing changed.
+// index again, so nothing changed. When git was stopped or failed after the commit was made (a
+// post-commit hook that did not finish), HEAD has moved: the commit is reported as made, with a
+// note, and the index is left alone.
 export async function commitPaths(
   folder: string,
   change: {
@@ -1594,7 +1609,8 @@ export async function commitPaths(
     readonly message: string;
   },
   options: HookGitOptions,
-): Promise<HookGitOutcome> {
+): Promise<HookGitOutcome | CommitMadeOutcome> {
+  const headBefore = await readHeadSha(folder, options);
   if (change.newPaths.length > 0) {
     const added = await withPathspecs(change.newPaths, undefined, false, (files) =>
       runGit(
@@ -1619,6 +1635,13 @@ export async function commitPaths(
       options,
     ),
   );
+  if (!committed.ok && (await readHeadSha(folder, options)) !== headBefore) {
+    return {
+      ok: true,
+      output: committed.output ?? '',
+      note: `The commit was made, but Git did not finish after it: ${committed.message}. A hook did not finish.`,
+    };
+  }
   if (!committed.ok && change.newPaths.length > 0) {
     await withPathspecs(change.newPaths, undefined, false, (files) =>
       runGit(

@@ -12,7 +12,7 @@ import { providerInstances, threadItems, threads, turns } from '../db/schema.js'
 import { MockProviderAdapter } from '../hooks/index.js';
 import { MockGitHub } from '../hosts/mock-github.js';
 import { MockGitLab } from '../hosts/mock-gitlab.js';
-import { startGit, type StartGit } from '../projects/git.js';
+import { startGit, type GitProcess, type StartGit } from '../projects/git.js';
 import { startServer, type RunningServer } from '../server.js';
 import { ThreadGit, ThreadGitRefused } from './thread-git.js';
 
@@ -117,7 +117,26 @@ const recording: StartGit = (command, args, env) => {
   return startGit(command, args, env);
 };
 
-const threadGit = () =>
+// Git that has made its commit and hooks, and then reports a failure: as one stopped for time in
+// a slow post-commit hook does.
+const failsAfterCommit: StartGit = (command, args, env) => {
+  const child = recording(command, args, env);
+  if (!args.includes('commit')) return child;
+  const failing: GitProcess = {
+    pid: child.pid,
+    stdout: child.stdout,
+    stderr: child.stderr,
+    kill: () => child.kill(),
+    on: (event: 'error' | 'close', listener: (arg: never) => void) => {
+      if (event === 'close') child.on('close', () => (listener as (code: number) => void)(1));
+      else child.on('error', listener as (error: NodeJS.ErrnoException) => void);
+      return failing;
+    },
+  };
+  return failing;
+};
+
+const threadGit = (start: StartGit = recording) =>
   new ThreadGit({
     db: server.database.db,
     engine: server.engine,
@@ -130,7 +149,7 @@ const threadGit = () =>
       server.providerService.propose(threadId, request, timeoutMs, signal),
     fetch: fetchBoth,
     platform: process.platform,
-    startGit: recording,
+    startGit: start,
     baseEnv,
   });
 
@@ -390,6 +409,28 @@ describe('commit from a thread’s Changes (thread work spec 27 to 30)', () => {
     expect(git(folder, 'diff', '--cached', '--name-only')).toBe('readme.md');
     expect(items().some((item) => item.kind === 'committed')).toBe(false);
     expect(noVerifyAnywhere()).toBe(false);
+  });
+
+  it('reports a commit as made when git fails after it, and leaves the index alone (U4 178)', async () => {
+    await hook('post-commit', `echo "done" > "${forward(markFile())}"`);
+    const folder = await threadWithWork();
+    const before = git(folder, 'rev-parse', 'HEAD');
+    const result = await threadGit(failsAfterCommit).commit({
+      threadId: 't1',
+      files: ['src/bell.ts', 'notes.txt'],
+      message: 'Ring the bell twice',
+    });
+    expect(result.sha).toBe(git(folder, 'rev-parse', 'HEAD'));
+    expect(git(folder, 'rev-parse', 'HEAD~1')).toBe(before);
+    expect(result.note).toMatch(/hook did not finish/);
+    // The new file is committed, not taken out of the index again.
+    expect(git(folder, 'ls-files', 'notes.txt')).toBe('notes.txt');
+    expect(git(folder, 'status', '--porcelain', '--', 'notes.txt')).toBe('');
+    expect(items().at(-1)).toMatchObject({
+      kind: 'committed',
+      payload: { sha: result.sha, files: ['notes.txt', 'src/bell.ts'] },
+    });
+    expect(calls.some(({ args }) => args.includes('rm'))).toBe(false);
   });
 
   it('refuses an empty message and a rebase in progress, and commits from no branch on a new one (spec 30)', async () => {
