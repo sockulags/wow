@@ -305,19 +305,7 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
             This turn only
           </Label>
           <ShortcutHint shortcut="keybindings.changesStepOnly" />
-          <Button size="xs" variant="outline" onClick={() => void askCommit(connection, threadId)}>
-            <GitCommitHorizontalIcon aria-hidden />
-            Commit…
-            <ShortcutHint shortcut="keybindings.commitChanges" />
-          </Button>
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => void askPullRequest(connection, threadId)}
-          >
-            <GitPullRequestIcon aria-hidden />
-            {openRequestLabel(host === 'gitlab' ? 'gitlab' : 'github')}
-          </Button>
+
           <IconButton
             label="Read the changes again"
             size="icon-xs"
@@ -326,6 +314,21 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
             <RefreshCwIcon />
           </IconButton>
         </span>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-3 py-1.5">
+        <Button size="xs" variant="outline" onClick={() => void askCommit(connection, threadId)}>
+          <GitCommitHorizontalIcon aria-hidden />
+          Commit…
+          <ShortcutHint shortcut="keybindings.commitChanges" />
+        </Button>
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() => void askPullRequest(connection, threadId)}
+        >
+          <GitPullRequestIcon aria-hidden />
+          {openRequestLabel(host === 'gitlab' ? 'gitlab' : 'github')}
+        </Button>
       </div>
       {error !== undefined ? (
         <p role="alert" className="px-3 py-4 text-xs text-destructive">

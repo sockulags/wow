@@ -481,7 +481,8 @@ export class MockProviderAdapter implements ProviderAdapter {
     }
     if (command.type === 'propose') {
       return Promise.resolve({
-        text: /pull request/i.test(command.prompt)
+        // The default pull request template opens with these words; the commit one does not.
+        text: command.prompt.startsWith('Write the title and description of a pull request')
           ? mockProposals.pullRequest
           : mockProposals.commitMessage,
       });

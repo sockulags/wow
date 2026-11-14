@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -6,6 +8,7 @@ import {
   e2eChangesProjectId,
   e2eChangesTrackerPort,
   e2eChangesWorkflowId,
+  e2eMugProjectId,
 } from './env';
 import { choose } from './controls';
 import { sketchPath, sketching, sketchUse } from './sketch';
@@ -337,6 +340,130 @@ test.describe("a chat thread's changes", () => {
   });
 });
 
+// Thread work U4 (spec 27 to 32): a thread of project "Tea mug" in its own working copy. The
+// repository tracks a pre-commit hook (its `core.hooksPath` is `hooks`) that leaves a mark in the
+// folder's git directory; its pull requests go to `acme/tea-mug` on the mock GitHub, and the
+// branch is pushed to the bare origin beside it. The mock answers "Propose" with fixed text.
+const mugFolder = path.join(e2eChangesHome, e2eMugProjectId);
+const mugOrigin = path.join(e2eChangesHome, 'tea-mug-origin.git');
+const gitIn = (folder: string, ...args: string[]) =>
+  execFileSync('git', ['-C', folder, ...args], { encoding: 'utf8' }).trim();
+
+// The worktree a branch is checked out in, as git lists it.
+function worktreeOf(branch: string): string {
+  const blocks = gitIn(mugFolder, 'worktree', 'list', '--porcelain').split(/\r?\n\r?\n/);
+  const block = blocks.find((entry) => entry.includes(`branch refs/heads/${branch}`)) ?? '';
+  return /^worktree (.+)$/m.exec(block)?.[1] ?? '';
+}
+
+async function startMugThread(page: Page, text: string): Promise<string> {
+  await page.goto('/chat/new');
+  const instance = main(page).getByLabel('Provider instance');
+  await choose(instance, 'Mock Claude');
+  await expect(instance).toBeFocused();
+  await choose(main(page).getByRole('combobox', { name: 'Project' }), 'Tea mug');
+  await expect(main(page).getByRole('switch', { name: 'Own working copy' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  await messageBox(page).fill(text);
+  await messageBox(page).press('Enter');
+  await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+  await expect(
+    main(page).getByRole('list', { name: 'Conversation' }).getByText('The bell rings softly now.'),
+  ).toBeVisible();
+  const chip = (await page.getByTestId('working-copy-chip').textContent()) ?? '';
+  return chip.split('·')[0] ?? '';
+}
+
+test.describe('commit and pull request', () => {
+  test('commits with a proposed message and opens a pull request @thread-work-27 @thread-work-28 @thread-work-29 @thread-work-31 @thread-work-32', async ({
+    page,
+  }) => {
+    // A worktree, a commit with a hook and a push: as slow on Windows as the working copy cases.
+    test.slow();
+    const branch = await startMugThread(page, 'Edit the bell for a pull request');
+    const folder = worktreeOf(branch);
+    expect(folder).not.toBe('');
+    const dialog = page.getByTestId('commit-dialog');
+    // Read once, so the turn's end is kept before the user's own change.
+    await page.keyboard.press('Control+Shift+K');
+    await expect(dialog.getByRole('checkbox', { name: 'src/bell.ts' })).toBeChecked();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+
+    // The user changes the readme and stages it; the thread's edit is the bell.
+    await writeFile(path.join(folder, 'README.md'), "# Tea mug\n\nMine, not the thread's.\n");
+    gitIn(folder, 'add', 'README.md');
+    await page.getByRole('button', { name: /^Commit…/ }).click();
+    await expect(dialog.getByRole('checkbox', { name: 'src/bell.ts' })).toBeChecked();
+    await expect(dialog.getByRole('checkbox', { name: 'README.md' })).not.toBeChecked();
+    await expect(dialog.getByTestId('commit-hooks')).toHaveText(
+      "Runs the repository's commit hooks: pre-commit",
+    );
+    await expect(dialog.getByTestId('commit-branch')).toContainText(`On ${branch}`);
+
+    // Propose fills the field from the thread's model; the conversation stays as it was.
+    const conversation = main(page).getByRole('list', { name: 'Conversation' });
+    const rows = await conversation.getByRole('listitem').count();
+    await dialog.getByRole('button', { name: 'Propose' }).click();
+    const message = dialog.getByRole('textbox', { name: 'Message' });
+    await expect(message).toHaveValue('Ring the bell twice');
+    await expect(conversation.getByRole('listitem')).toHaveCount(rows);
+
+    // Ctrl+Enter commits the ticked file only, with the hook; the staged readme stays staged.
+    await message.focus();
+    await page.keyboard.press('Control+Enter');
+    await expect(dialog).toHaveCount(0);
+    await expect(conversation.getByTestId('committed-line')).toHaveText(
+      /^Committed 1 file · [0-9a-f]{7} Ring the bell twice$/,
+    );
+    expect(gitIn(folder, 'show', '--name-only', '--format=', 'HEAD')).toBe('src/bell.ts');
+    expect(gitIn(folder, 'log', '-1', '--format=%s')).toBe('Ring the bell twice');
+    expect(gitIn(folder, 'diff', '--cached', '--name-only')).toBe('README.md');
+    const mark = path.resolve(folder, gitIn(folder, 'rev-parse', '--git-path', 'wow-hook-mark'));
+    expect(existsSync(mark)).toBe(true);
+
+    // Open pull request… names where it goes and what it holds (spec 31).
+    await page.getByRole('button', { name: /^Open pull request…/ }).click();
+    const request = page.getByTestId('pull-request-dialog');
+    const statement = request.getByTestId('pull-request-statement');
+    await expect(statement).toContainText(
+      `Pushes ${branch} to origin and opens a pull request on 127.0.0.1:`,
+    );
+    await expect(statement).toContainText(' in acme/tea-mug');
+    await expect(request.getByRole('combobox')).toHaveText('main');
+    await expect(request.getByRole('list', { name: 'Commits' })).toContainText(
+      'Ring the bell twice',
+    );
+    await expect(request.getByRole('textbox', { name: 'Title' })).toHaveValue(
+      'Ring the bell twice',
+    );
+    await request.getByRole('button', { name: /^Open pull request/ }).click();
+    await expect(request).toHaveCount(0);
+
+    // Pushed to the bare origin with the upstream set, one pull request opened (spec 32).
+    const line = conversation.getByTestId('change-request-line');
+    await expect(line).toContainText(/Opened pull request #\d+ · Ring the bell twice/);
+    expect(gitIn(mugOrigin, 'rev-parse', `refs/heads/${branch}`)).toBe(
+      gitIn(folder, 'rev-parse', 'HEAD'),
+    );
+    expect(gitIn(folder, 'config', `branch.${branch}.remote`)).toBe('origin');
+    const opened = (await (
+      await fetch(`http://127.0.0.1:${e2eChangesTrackerPort}/github-mug/opened`)
+    ).json()) as { head: string; base: string; title: string }[];
+    expect(opened.filter((entry) => entry.head === branch)).toEqual([
+      expect.objectContaining({ base: 'main', title: 'Ring the bell twice' }),
+    ]);
+
+    // The chip opens the pull request in a tab of the thread's panel.
+    await line.getByTestId('host-chip').click();
+    await expect(
+      page.getByRole('complementary', { name: 'Context panel' }).getByTestId('host-tab-title'),
+    ).toHaveText(/^PR #\d+ · Open$/);
+  });
+});
+
 test.describe('sketch', () => {
   test.skip(!sketching, 'Set WOW_E2E_SKETCHES to write the screenshots');
   test.use(sketchUse);
@@ -346,6 +473,18 @@ test.describe('sketch', () => {
     await fileRow(page, 'Changed: src/timer.ts').click();
     await expect(page.getByRole('table', { name: 'Diff of src/timer.ts' })).toBeVisible();
     await page.screenshot({ path: sketchPath('2026-11-review-loop', 'changes-tab') });
+  });
+
+  test('the commit dialog', async ({ page }) => {
+    await startMugThread(page, 'Edit the bell for the commit sketch');
+    await page.keyboard.press('Control+Shift+K');
+    const dialog = page.getByTestId('commit-dialog');
+    await dialog.getByRole('button', { name: 'Propose' }).click();
+    await expect(dialog.getByRole('textbox', { name: 'Message' })).toHaveValue(
+      'Ring the bell twice',
+    );
+    await page.screenshot({ path: sketchPath('2026-11-thread-work', 'commit-dialog') });
+    await page.keyboard.press('Escape');
   });
 
   test('the restore confirm', async ({ page }) => {
