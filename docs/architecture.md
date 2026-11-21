@@ -3024,7 +3024,8 @@ named in `leftOut`; so is a workflow whose
 step names an instance that no longer exists. A step applied from a file where no instance of its
 kind was here holds the kind as its instance id (`awaitedProviderKind`) and is written back with
 that kind; a run of its workflow is refused with "Step <skill> has no <kind> instance here yet:
-choose one for it in the workflow <name>."
+choose one for it in the workflow <name>." The first instance of that kind created afterwards
+takes those steps over (`providerInstance.create` also stores `workflow.updated` for them).
 
 **Read and preview** (`setup/file.ts`, `setup/plan.ts`, `planSetup`, RPC `setup.preview {text}` →
 `SetupRead`). `parseSetup` keeps a line counter, so every problem has the line of its key. The

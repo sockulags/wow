@@ -602,6 +602,29 @@ describe('the diagnosis (spec 19, 20)', () => {
     expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toEqual([]);
   });
 
+  it('drops a failed run and a missed card the user dismissed from the decision queue', async () => {
+    dispatch({ type: 'workflowRun.start', runId: 'run-1', workflowId: 'brew', projectId: 'tea' });
+    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-1', stepId: 'pour', error: 'No.' });
+    dispatch({
+      type: 'card.create',
+      cardId: 'late',
+      title: 'Brew yesterday',
+      start: at(-24 * 60),
+      end: at(-23 * 60),
+      zone: 'Europe/Stockholm',
+      projectId: 'tea',
+      workflowId: 'brew',
+    });
+    const before = (await diagnose()).diagnosis.problems;
+    expect(ofKind(before, 'run')).toHaveLength(1);
+    expect(ofKind(before, 'card')).toHaveLength(1);
+    dispatch({ type: 'decision.dismiss', decisionId: 'failedRun:run-1' });
+    dispatch({ type: 'decision.dismiss', decisionId: 'missedCard:late' });
+    const after = (await diagnose()).diagnosis.problems;
+    expect(ofKind(after, 'run')).toEqual([]);
+    expect(ofKind(after, 'card')).toEqual([]);
+  });
+
   it('compares a card start that carries an offset as an instant, not as text', async () => {
     clock = Date.parse(at(60));
     const card = (cardId: string, start: string, end: string) =>
