@@ -1488,7 +1488,8 @@ Tell the assistant how you work ("never plan anything before nine", "Tea is the 
 this week, until Friday") and it keeps a note: a change row "Memory: …" with Undo. It reads the
 notes at the start of every answer, and a note with an end date stops applying after that day. It
 never keeps a note you did not say or confirm. Settings → Assistant → **Memory** lists every note
-with who wrote it and when; edit one in place, remove it, or add your own. On Codex a changed note
+with who wrote it and when (the `assistant.notes` setting); edit one in place, remove it, or add
+your own. On Codex a changed note
 applies from the assistant's next session, as a changed instruction text does.
 
 ### When the assistant asks
