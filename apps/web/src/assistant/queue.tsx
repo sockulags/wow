@@ -1,12 +1,13 @@
-import type { Command, Decision } from '@wow/contracts';
+import { briefingMomentLabels, type Briefing, type Command, type Decision } from '@wow/contracts';
 import { useNavigate } from '@tanstack/react-router';
-import { InboxIcon, SparklesIcon } from 'lucide-react';
+import { InboxIcon, SparklesIcon, SunIcon } from 'lucide-react';
 import { useState, type KeyboardEvent } from 'react';
 import { useSetting } from '@/app/runtime';
 import { eventToBinding, normalizeBinding } from '@/app/keybindings';
 import { errorMessage, useDispatch, useTopic } from '@/chat/data';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
+import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 // The decision queue beside the assistant's conversation (chief of staff spec 16 to 19): what
@@ -192,14 +193,63 @@ function DecisionRow({ decision }: { readonly decision: Decision }) {
   );
 }
 
+// The newest briefing above the queue (chief of staff spec 21): the assistant's summary when
+// it wrote one, then wow's own lines, each leading where it says.
+function LatestBriefing({ briefing }: { readonly briefing: Briefing }) {
+  const navigate = useNavigate();
+  const { when } = useDateFormat();
+  return (
+    <section
+      aria-label={`Briefing: ${briefingMomentLabels[briefing.moment]}`}
+      data-testid="briefing"
+      className="flex flex-col gap-1 rounded-md border border-border px-3 py-2 text-xs"
+    >
+      <h2 className="flex items-center gap-1.5 text-sm font-medium">
+        <SunIcon aria-hidden className="size-4 text-muted-foreground" />
+        {briefingMomentLabels[briefing.moment]}
+        <span className="text-xs font-normal text-muted-foreground">{when(briefing.at)}</span>
+      </h2>
+      {briefing.summary ? (
+        <p data-testid="briefing-summary" className="flex items-start gap-1">
+          <SparklesIcon aria-hidden className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
+          <span>{briefing.summary}</span>
+        </p>
+      ) : (
+        briefing.summaryPending && (
+          <p className="text-muted-foreground italic">The assistant is summing it up…</p>
+        )
+      )}
+      <ul className="flex flex-col gap-0.5">
+        {briefing.lines.map((line) => (
+          <li key={line.text}>
+            {line.path ? (
+              <button
+                type="button"
+                className="text-left underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+                onClick={() => void navigate({ href: line.path ?? '/' })}
+              >
+                {line.text}
+              </button>
+            ) : (
+              line.text
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function DecisionQueue({ className }: { readonly className?: string }) {
   const decisions = useTopic('decisions') ?? [];
+  const [latest] = useTopic('briefings') ?? [];
   return (
     <section
       aria-label="Needs you"
       data-testid="decision-queue"
       className={cn('flex min-h-0 flex-col gap-2', className)}
     >
+      {latest && <LatestBriefing briefing={latest} />}
       <h2 className="flex items-center gap-1.5 text-sm font-medium">
         <InboxIcon aria-hidden className="size-4 text-muted-foreground" />
         Needs you

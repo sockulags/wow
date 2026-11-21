@@ -396,6 +396,7 @@ export const assistantToolWords: Readonly<Record<string, string>> = {
   write_to_thread: 'Wrote in a thread',
   answer_agent_question: "Answered an agent's question",
   write_brief: 'Wrote a brief',
+  write_briefing_summary: 'Summed up a briefing',
   remember: 'Kept a note',
   forget: 'Removed a note',
   read_triggers: 'Read your triggers',
@@ -721,3 +722,37 @@ export const Decision = z.object({
   briefPending: z.boolean(),
 });
 export type Decision = z.infer<typeof Decision>;
+
+// A briefing (chief of staff spec 20 to 23): what wow says itself since the last one, and the
+// assistant's summary when one was written within `assistant.briefingsPerDay`.
+export const BriefingMoment = z.enum(['morning', 'afterMeeting', 'back', 'evening']);
+export type BriefingMoment = z.infer<typeof BriefingMoment>;
+
+export const briefingMomentLabels: Readonly<Record<BriefingMoment, string>> = {
+  morning: 'Good morning',
+  afterMeeting: 'After your meeting',
+  back: 'Welcome back',
+  evening: 'End of the day',
+};
+
+export const BriefingLine = z.object({
+  text: z.string().min(1),
+  // Where the line leads in the app; null for a line without a place.
+  path: z.string().min(1).nullable(),
+});
+export type BriefingLine = z.infer<typeof BriefingLine>;
+
+export const Briefing = z.object({
+  id: Id,
+  at: Timestamp,
+  moment: BriefingMoment,
+  // Since when it tells.
+  since: Timestamp,
+  lines: z.array(BriefingLine),
+  summary: z.string().nullable(),
+  // A summary was asked of the assistant and is not written yet.
+  summaryPending: z.boolean(),
+  // The notification went out; false while the user is busy (spec 27).
+  notified: z.boolean(),
+});
+export type Briefing = z.infer<typeof Briefing>;

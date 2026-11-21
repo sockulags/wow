@@ -1740,7 +1740,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `assistant.notes`, `assistant.excludedProjects`, `assistant.readMaxBytes`,
   `assistant.readMaxDiffLines`, `assistant.readMaxMessages`, `assistant.delegation`,
   `assistant.permissions`, `assistant.followTurns`, `assistant.maxDelegatedLive`,
-  `assistant.briefsPerDay` (see
+  `assistant.briefsPerDay`, `assistant.briefings`, `assistant.briefingsPerDay`,
+  `assistant.briefAfterMeetingMinutes`, `assistant.briefAfterIdleMinutes`,
+  `assistant.remindAfterMinutes` (see
   "Assistant", "Question card" and "Models for steps")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`,
@@ -2709,6 +2711,29 @@ for one already written. The web app shows the queue beside the assistant's conv
 `keybindings.gateApprove`, `keybindings.approvalAllowOnce` and `keybindings.approvalDeny` on the
 focused row; "Next that needs you" follows the queue's order; the tray lists its first three
 rows and opens the Assistant.
+
+**The assistant's rhythm** (`assistant/chief.ts`, chief of staff spec 20 to 27). `Chief.tick`
+runs on every scheduler tick (`Scheduler.onTick`, also while the scheduler is paused) once the
+assistant's conversation exists. Briefings (`assistant.briefings`): `morning:<date>` when work
+hours start, `evening:<date>` when they end, `afterMeeting:<meetingId>` when an Outlook meeting
+of at least `assistant.briefAfterMeetingMinutes` ended since the last tick and something
+happened while it ran, and `back:<id>` when the web app's `presence.back` (sent on
+`visibilitychange` with since when it was hidden, `app/presence.ts`) reports at least
+`assistant.briefAfterIdleMinutes` away. The internal `assistant.brief` stores wow's lines (runs
+started, finished and failed since the previous briefing, what the assistant did under its
+permissions, the queue's count and first rows, the rest of today's cards and free minutes) in
+`briefings` (topic `briefings`, migration `0041_briefings`) and, within
+`assistant.briefingsPerDay`, asks the assistant for a summary that it writes with
+`write_briefing_summary`. The summary is written on the assistant's own model; the spec's
+separate briefing model is not built. A briefing's notification (kind `briefing`) and a
+reminder (kind `reminder`, one per decision after `assistant.remindAfterMinutes`, table
+`decision_reminders`) go out only when `Chief.quiet` is false: inside work hours, not in a
+non-all-day Outlook meeting and not inside a focus card; a held briefing is released on a later
+tick. Both follow `scheduler.notifications`. Cards with a workflow and a scheduled trigger that an
+Outlook meeting now overlaps get `assistant.moveCard` with the next free slot of the same length
+after the meeting: under Move cards it is applied as the user's `card.update` with a permission
+use, else it is a proposal. The Retry kind is stored but nothing acts on it yet: a step's failed
+turn carries no sign of whether the provider or the agent failed.
 
 **Deciding as the assistant** (`core/assistant.ts`, `decideInSteps`). For the origin
 `assistant` the class comes first. A refused command is rejected with its sentence. An

@@ -702,7 +702,17 @@ export const isEventTrigger = (trigger: Trigger): trigger is EventTrigger =>
 // run was still going; it is not a failure. A chat thread that needs the user is `waiting` too,
 // and `finished` is a chat turn that ran long and ended (agent workbench spec 64); those are
 // stored by the `chat.notifications` setting instead.
-export const NotificationKind = z.enum(['started', 'waiting', 'failed', 'skipped', 'finished']);
+// `briefing` and `reminder` come from the assistant (chief of staff spec 23, 26) and wait while
+// the user is busy (spec 27).
+export const NotificationKind = z.enum([
+  'started',
+  'waiting',
+  'failed',
+  'skipped',
+  'finished',
+  'briefing',
+  'reminder',
+]);
 export type NotificationKind = z.infer<typeof NotificationKind>;
 
 export const AppNotification = z.object({

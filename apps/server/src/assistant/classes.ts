@@ -466,6 +466,14 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   ),
   'assistant.follow': serverOnly,
   'assistant.requestBrief': serverOnly,
+  'assistant.brief': serverOnly,
+  'assistant.briefingNotified': serverOnly,
+  'assistant.remind': serverOnly,
+  'assistant.moveCard': serverOnly,
+  'assistant.writeBriefingSummary': refused(
+    'Briefing summaries are written with write_briefing_summary.',
+  ),
+  'presence.back': serverOnly,
   // Written through write_brief, which the decision queue asks for (chief of staff spec 18).
   'assistant.writeBrief': refused('Briefs are written with write_brief.'),
   'decision.dismiss': refused('Only the user dismisses a failed run or a missed card.'),

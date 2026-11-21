@@ -14,13 +14,29 @@ import {
   type Skill,
   type SubscriptionTopic,
 } from '@wow/contracts';
-import { and, asc, count, desc, eq, gt, gte, inArray, isNull, max, ne, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  max,
+  ne,
+  sql,
+} from 'drizzle-orm';
 import type { DbOrTx } from '../db/database.js';
 import {
   approvals,
   assistantChanges,
   assistantPermissionUses,
+  briefings,
   decisionBriefs,
+  decisionReminders,
   decisionDismissals,
   assistantProposals,
   setupApplications,
@@ -685,6 +701,29 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
     case 'assistant.changed':
       tx.insert(assistantChanges).values(event.payload).run();
       return ['assistantChanges'];
+    case 'briefing.made':
+      tx.insert(briefings).values(event.payload).onConflictDoNothing().run();
+      return ['briefings'];
+    case 'briefing.summaryWritten':
+      tx.update(briefings)
+        .set({ summary: event.payload.text, summaryPending: false })
+        .where(eq(briefings.id, event.payload.briefingId))
+        .run();
+      return ['briefings'];
+    case 'briefing.notified':
+      tx.update(briefings)
+        .set({ notified: true })
+        .where(eq(briefings.id, event.payload.briefingId))
+        .run();
+      return ['briefings'];
+    case 'decision.reminded':
+      tx.insert(decisionReminders)
+        .values({ decisionId: event.payload.decisionId, at: event.payload.at })
+        .onConflictDoNothing()
+        .run();
+      return [];
+    case 'presence.returned':
+      return [];
     case 'decision.briefRequested':
       tx.insert(decisionBriefs)
         .values({ decisionId: event.payload.decisionId, requestedAt: event.payload.at })
@@ -972,6 +1011,18 @@ export function readModel(tx: DbOrTx): ReadModel {
     backlogItem: (id) => tx.select().from(backlogItems).where(eq(backlogItems.id, id)).get(),
     assistantChange: (id) =>
       tx.select().from(assistantChanges).where(eq(assistantChanges.id, id)).get(),
+    briefing: (id) => tx.select().from(briefings).where(eq(briefings.id, id)).get(),
+    briefingSummariesSince: (since) =>
+      tx
+        .select({ id: briefings.id })
+        .from(briefings)
+        .where(and(gte(briefings.at, since), eq(briefings.summaryPending, true)))
+        .all().length +
+      tx
+        .select({ id: briefings.id })
+        .from(briefings)
+        .where(and(gte(briefings.at, since), isNotNull(briefings.summary)))
+        .all().length,
     decisionBrief: (decisionId) =>
       tx
         .select({ text: decisionBriefs.text })

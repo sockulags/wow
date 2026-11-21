@@ -17,6 +17,13 @@ import {
 } from '../assistant/changes.js';
 import { classOf } from '../assistant/classes.js';
 import { decideBriefRequest, decideWriteBrief } from '../assistant/briefs.js';
+import {
+  decideBriefing,
+  decideBriefingNotified,
+  decideBriefingSummary,
+  decideMoveCard,
+  decideReminder,
+} from '../assistant/chief.js';
 import { decideDelegation, decideFollow, isDelegationCommand } from '../assistant/delegation.js';
 import { coverage } from '../assistant/permissions.js';
 import { decideSetup } from '../setup/apply.js';
@@ -50,6 +57,28 @@ export function* decideInSteps(
       throw new CommandRejected('rejected', 'Only the assistant sends this.');
     }
     yield* decideDelegation(commandId, command, read, context);
+    return;
+  }
+  if (
+    command.type === 'assistant.brief' ||
+    command.type === 'assistant.briefingNotified' ||
+    command.type === 'assistant.remind' ||
+    command.type === 'assistant.moveCard'
+  ) {
+    if (context.origin === 'assistant')
+      throw new CommandRejected('rejected', 'Only wow sends this.');
+    if (command.type === 'assistant.brief') yield decideBriefing(command, read, context);
+    else if (command.type === 'assistant.briefingNotified') {
+      yield decideBriefingNotified(command, read, context);
+    } else if (command.type === 'assistant.remind') yield decideReminder(command, read, context);
+    else yield* decideMoveCard(commandId, command, read, context);
+    return;
+  }
+  if (command.type === 'assistant.writeBriefingSummary') {
+    if (context.origin !== 'assistant') {
+      throw new CommandRejected('rejected', 'Only the assistant writes a summary.');
+    }
+    yield decideBriefingSummary(command, read);
     return;
   }
   if (command.type === 'assistant.requestBrief') {
