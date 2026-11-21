@@ -69,8 +69,18 @@ export class Scheduler implements BackgroundService {
     return this.#paused;
   }
 
+  // Runs on every tick, paused or not (the assistant's briefings and reminders, chief of staff
+  // spec 20 to 27), before the triggers fire.
+  readonly #tickers = new Set<() => void>();
+
+  onTick(listener: () => void): () => void {
+    this.#tickers.add(listener);
+    return () => this.#tickers.delete(listener);
+  }
+
   // Fires every scheduled trigger whose time has come. Nothing fires while paused.
   tick(): void {
+    for (const listener of this.#tickers) listener();
     if (this.#paused) return;
     for (const trigger of this.#due()) {
       const runId = randomUUID();

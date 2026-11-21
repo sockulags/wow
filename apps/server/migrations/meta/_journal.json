@@ -288,6 +288,13 @@
       "when": 1795222269445,
       "tag": "0040_decision_briefs",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1795223223945,
+      "tag": "0041_briefings",
+      "breakpoints": true
     }
   ]
 }

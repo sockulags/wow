@@ -1892,6 +1892,51 @@ export const settingsRegistry = {
     default: 10,
     scope: 'global',
   }),
+  'assistant.briefings': defineSetting({
+    schema: z.boolean(),
+    group: 'assistant',
+    label: 'Briefings',
+    description:
+      'A short briefing in the Assistant when your work hours start, after a long meeting in which something happened, when you come back after a while away, and when your work hours end: what ran, finished and failed, what the assistant did under its permissions, what waits for you, and the rest of the day.',
+    default: true,
+    scope: 'global',
+  }),
+  'assistant.briefingsPerDay': defineSetting({
+    schema: z.number().int().min(0).max(50),
+    group: 'assistant',
+    label: 'Briefings the assistant sums up a day',
+    description:
+      "How many briefings a day the assistant adds a few sentences to. After that a briefing has wow's own lines only, so it costs no turn. 0 never asks the assistant.",
+    default: 4,
+    scope: 'global',
+  }),
+  'assistant.briefAfterMeetingMinutes': defineSetting({
+    schema: z.number().int().min(5).max(480),
+    group: 'assistant',
+    label: 'Meeting long enough for a briefing',
+    description:
+      'An Outlook meeting at least this many minutes long brings a briefing when it ends, if something happened while it ran.',
+    default: 30,
+    scope: 'global',
+  }),
+  'assistant.briefAfterIdleMinutes': defineSetting({
+    schema: z.number().int().min(5).max(1440),
+    group: 'assistant',
+    label: 'Away long enough for a briefing',
+    description:
+      'Coming back to wow after this many minutes away (the window hidden or the computer idle) brings a briefing.',
+    default: 60,
+    scope: 'global',
+  }),
+  'assistant.remindAfterMinutes': defineSetting({
+    schema: z.number().int().min(5).max(1440),
+    group: 'assistant',
+    label: 'Remind about a decision after',
+    description:
+      'A decision that has waited this many minutes gets one reminder, sent when you are not in a meeting, in focus time or outside your work hours. Never a second.',
+    default: 60,
+    scope: 'global',
+  }),
   'assistant.notes': defineSetting({
     personal: 'person',
     schema: z.array(AssistantNote),

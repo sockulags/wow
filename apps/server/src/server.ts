@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { BriefRequester } from './assistant/briefs.js';
+import { Chief } from './assistant/chief.js';
 import { DelegationFollower } from './assistant/follow.js';
 import { assistantMcpPath, createMcpHandler, type AssistantEndpoint } from './assistant/mcp.js';
 import { AssistantTools } from './assistant/tools.js';
@@ -120,6 +121,7 @@ export interface RunningServer {
   readonly workflows: WorkflowRunner;
   readonly follower: DelegationFollower;
   readonly briefs: BriefRequester;
+  readonly chief: Chief;
   readonly workspaces: Workspaces;
   readonly providerService: ProviderService;
   // Snapshots of chat threads' folders and restores from them (thread work spec 19 to 26).
@@ -502,6 +504,15 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.schedulerTimers ? { timers: options.schedulerTimers } : {}),
   });
+  // Briefings, reminders and cards moved around meetings, on the scheduler's clock.
+  const chief = new Chief({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    clock: options.clock ?? (() => new Date()),
+  });
+  scheduler.onTick(() => chief.tick());
   const services: BackgroundService[] = [workspaces, workflows];
   const stopServices = async () => {
     for (const service of services.splice(0).toReversed()) {
@@ -550,6 +561,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     (stopped ??= (async () => {
       follower.stop();
       briefs.stop();
+      chief.stop();
       await follower.settled();
       await briefs.settled();
       await stopServices();
@@ -583,6 +595,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     workflows,
     follower,
     briefs,
+    chief,
     workspaces,
     providerService,
     snapshots,

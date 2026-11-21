@@ -1480,8 +1480,10 @@ permissions under **Permissions** (`assistant.permissions`):
   this permission it may also write a follow-up that stays within what you asked, and answer the
   agent's question when your own words already answer it; the question card then says "Answered
   by the assistant: … · because you said: …". Approvals always wait for you.
-- **Retry** and **Move cards** are listed already and come into use with the next steps
-  (retrying a failed step, moving cards around meetings).
+- **Move cards**: move cards with a workflow off a meeting that comes to overlap them (see
+  "Briefings").
+- **Retry** is listed already, but nothing uses it yet: wow cannot yet tell a provider's hiccup
+  from an agent's own failure.
 
 Each permission can end on a day (**Until**), have a limit (**Times a day**) and be **Paused**.
 What the assistant does under one shows in the conversation as usual, marked "under Start runs";
@@ -1493,6 +1495,26 @@ permissions on or wider: it can propose those, and only you say yes.
 
 **Focus** on a card makes it time kept free: it carries no workflow, shows as a dashed block,
 and the assistant plans nothing over it.
+
+### Briefings
+
+Once the assistant's conversation exists, it briefs you at the day's moments (`assistant.briefings`):
+when your work hours start ("Good morning"), after an Outlook meeting of at least
+`assistant.briefAfterMeetingMinutes` (30) in which something happened, when you come back to the
+window after `assistant.briefAfterIdleMinutes` (60) away, and when your work hours end. A briefing
+sits above **Needs you**: what ran, finished and failed since the last one, what the assistant did
+under its permissions, what waits for you, and what is left of today, each line leading to its
+place. Within `assistant.briefingsPerDay` (4) the assistant adds a few sentences of its own on top;
+after that the briefing has wow's lines only and costs nothing.
+
+A briefing and a reminder come as a notification, but not while you are in a meeting, in a focus
+card or outside your work hours; they wait until then. A decision that has waited
+`assistant.remindAfterMinutes` (60) gets one reminder, never a second. Both stay off with
+`scheduler.notifications`.
+
+When an Outlook meeting comes to overlap a card with a workflow that has not started, the
+assistant proposes to move it to the next free slot of the same length after the meeting; with
+**Move cards** it moves it and says so in the briefing.
 
 ### Needs you
 

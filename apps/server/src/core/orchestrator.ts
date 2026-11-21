@@ -2,6 +2,7 @@ import {
   projectCodeHost,
   SecretRef,
   type Approval,
+  type Briefing,
   type AssistantChangeRecord,
   type AssistantProposalRecord,
   type CommandOrigin,
@@ -153,6 +154,10 @@ export interface ReadModel {
   assistantChange(id: string): AssistantChangeRecord | undefined;
   // How many times the assistant acted under this permission at or after `since`.
   permissionUses(permissionId: string, since: string): number;
+  // A briefing by its id, and how many briefings at or after `since` the assistant was asked to
+  // sum up (chief of staff spec 21, 22).
+  briefing(id: string): Briefing | undefined;
+  briefingSummariesSince(since: string): number;
   // The brief of a decision, once it was asked for (chief of staff spec 18).
   decisionBrief(decisionId: string): { readonly text: string | null } | undefined;
   // How many briefs were asked for at or after `since`.
@@ -246,6 +251,14 @@ export function decide(
     throw new Error(`${command.type} is decided in steps; dispatch it through the engine`);
   }
   switch (command.type) {
+    case 'presence.back':
+      return [
+        {
+          kind: 'presence.returned',
+          aggregate: 'presence',
+          payload: { awayFrom: command.awayFrom, at: context.now },
+        },
+      ];
     case 'decision.dismiss': {
       const kind = command.decisionId.split(':')[0];
       if (kind !== 'failedRun' && kind !== 'missedCard') {

@@ -1,4 +1,4 @@
-import type { Command, Decision } from '@wow/contracts';
+import type { Briefing, Command, Decision } from '@wow/contracts';
 import {
   createMemorySettingsSource,
   createSettingsStore,
@@ -58,6 +58,19 @@ const rows: Decision[] = [
   decision({ id: 'failedRun:run-2', kind: 'failedRun', title: 'Delivery failed', runId: 'run-2' }),
 ];
 
+const briefings: Briefing[] = [
+  {
+    id: 'morning:2026-11-10',
+    at: '2026-11-10T08:00:00.000Z',
+    moment: 'morning',
+    since: '2026-11-09T17:00:00.000Z',
+    lines: [{ text: 'Delivery finished.', path: '/workflows/runs/run-0' }],
+    summary: 'One run finished overnight; one gate waits.',
+    summaryPending: false,
+    notified: true,
+  },
+];
+
 interface Sent {
   readonly method: string;
   readonly params: unknown;
@@ -72,7 +85,7 @@ function fake(box: Outbox<Sent>): Runtime {
       return Promise.resolve({ commandId, seqs: [box.sent.length], duplicate: false });
     },
     subscribe(topic, _params, onData) {
-      onData(topic === 'decisions' ? rows : []);
+      onData(topic === 'decisions' ? rows : topic === 'briefings' ? briefings : []);
       return () => undefined;
     },
     retry: () => undefined,
@@ -118,5 +131,15 @@ describe('the decision queue', () => {
     (items[1] as HTMLElement).focus();
     await userEvent.setup().keyboard('{Control>}{Enter}{/Control}');
     expect(sent(box)).toEqual([{ type: 'workflowRun.continue', runId: 'run-1' }]);
+  });
+
+  it('shows the newest briefing above the queue with its summary and lines', async () => {
+    renderWithRuntime(<DecisionQueue />, fake(outbox<Sent>()));
+    const briefing = await screen.findByTestId('briefing');
+    expect(briefing.textContent).toContain('Good morning');
+    expect(within(briefing).getByTestId('briefing-summary').textContent).toContain(
+      'One run finished overnight',
+    );
+    expect(within(briefing).getByRole('button', { name: 'Delivery finished.' })).toBeTruthy();
   });
 });

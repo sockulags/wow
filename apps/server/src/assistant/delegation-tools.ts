@@ -67,4 +67,12 @@ export const delegationTools: Readonly<Record<string, BuiltTool>> = {
       .strict(),
     build: (args) => ({ type: 'assistant.writeBrief', ...args }),
   }),
+  write_briefing_summary: built({
+    description:
+      "Writes your summary of a briefing wow asked you about (its message names the briefing id), in two to four sentences: what matters, what waits for the person, and what you would do first. It shows above wow's own lines in the briefing.",
+    input: z
+      .object({ briefingId: z.string().min(1), text: z.string().trim().min(1).max(1500) })
+      .strict(),
+    build: (args) => ({ type: 'assistant.writeBriefingSummary', ...args }),
+  }),
 };

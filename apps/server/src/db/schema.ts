@@ -5,6 +5,8 @@ import type {
   AssistantPlace,
   AssistantProposalLine,
   AssistantProposalState,
+  BriefingLine,
+  BriefingMoment,
   AssistantTarget,
   ApprovalDecision,
   ApprovalKind,
@@ -447,6 +449,24 @@ export const decisionBriefs = sqliteTable('decision_briefs', {
   text: text(),
   recommendation: text(),
   writtenAt: text(),
+});
+
+// The assistant's briefings (chief of staff spec 20 to 23), newest last.
+export const briefings = sqliteTable('briefings', {
+  id: text().primaryKey(),
+  at: text().notNull(),
+  moment: text().$type<BriefingMoment>().notNull(),
+  since: text().notNull(),
+  lines: json<BriefingLine[]>().notNull(),
+  summary: text(),
+  summaryPending: bool().notNull().default(false),
+  notified: bool().notNull().default(false),
+});
+
+// Decisions that got their one reminder (spec 26).
+export const decisionReminders = sqliteTable('decision_reminders', {
+  decisionId: text().primaryKey(),
+  at: text().notNull(),
 });
 
 // Failed runs and missed cards the user is done with: they leave the decision queue.

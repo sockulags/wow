@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { AttachmentId } from './attachments.js';
-import { AssistantChange, AssistantPermissionUse, AssistantProposal } from './assistant.js';
+import {
+  AssistantChange,
+  AssistantPermissionUse,
+  AssistantProposal,
+  Briefing,
+  BriefingLine,
+  BriefingMoment,
+} from './assistant.js';
 import { OwnSkill, SentSkill, SkillRef } from './skills.js';
 import {
   AppNotification,
@@ -514,6 +521,15 @@ export const Command = z.discriminatedUnion('type', [
     text: z.string().trim().min(1).max(1500),
     recommendation: z.string().trim().min(1).max(300),
   }),
+  // The window is shown again after the user was away (chief of staff spec 20): a briefing may
+  // be due.
+  z.object({ type: z.literal('presence.back'), awayFrom: Timestamp }),
+  // The assistant's summary of a briefing wow asked it for (spec 21).
+  z.object({
+    type: z.literal('assistant.writeBriefingSummary'),
+    briefingId: Id,
+    text: z.string().trim().min(1).max(1500),
+  }),
   // A failed run or a missed card leaves the queue when the user is done with it.
   z.object({ type: z.literal('decision.dismiss'), decisionId: z.string().min(1) }),
   z.object({
@@ -609,6 +625,33 @@ export type ProviderUpdateProgress = z.infer<typeof ProviderUpdateProgress>;
 export const InternalCommand = z.discriminatedUnion('type', [
   // A thread the assistant started ended its turn or asked for something (chief of staff spec
   // 11 to 13): the assistant gets a turn to look at it, up to `assistant.followTurns` a thread.
+  // A briefing moment came (chief of staff spec 20 to 23): wow's lines, and whether the assistant
+  // is asked for a summary.
+  z.object({
+    type: z.literal('assistant.brief'),
+    briefingId: Id,
+    moment: BriefingMoment,
+    since: Timestamp,
+    lines: z.array(BriefingLine),
+  }),
+  // A held notification of a briefing goes out now that the user is free (spec 27).
+  z.object({ type: z.literal('assistant.briefingNotified'), briefingId: Id }),
+  // One reminder for a decision that waited long (spec 26).
+  z.object({
+    type: z.literal('assistant.remind'),
+    decisionId: z.string().min(1),
+    title: z.string().min(1),
+    path: z.string().min(1),
+  }),
+  // A meeting came to overlap a card with a workflow (spec 24): moved under Move cards, else a
+  // proposal.
+  z.object({
+    type: z.literal('assistant.moveCard'),
+    cardId: Id,
+    start: Timestamp,
+    end: Timestamp,
+    meeting: z.string().min(1),
+  }),
   // A decision appeared: the assistant is asked for its brief, within assistant.briefsPerDay.
   z.object({
     type: z.literal('assistant.requestBrief'),
@@ -1441,6 +1484,27 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('decision.dismissed'),
     aggregate: z.string().min(1),
     payload: z.object({ decisionId: z.string().min(1), at: Timestamp }),
+  }),
+  z.object({ kind: z.literal('briefing.made'), aggregate: Id, payload: Briefing }),
+  z.object({
+    kind: z.literal('briefing.summaryWritten'),
+    aggregate: Id,
+    payload: z.object({ briefingId: Id, text: z.string().min(1) }),
+  }),
+  z.object({
+    kind: z.literal('briefing.notified'),
+    aggregate: Id,
+    payload: z.object({ briefingId: Id }),
+  }),
+  z.object({
+    kind: z.literal('decision.reminded'),
+    aggregate: z.string().min(1),
+    payload: z.object({ decisionId: z.string().min(1), at: Timestamp }),
+  }),
+  z.object({
+    kind: z.literal('presence.returned'),
+    aggregate: z.string().min(1),
+    payload: z.object({ awayFrom: Timestamp, at: Timestamp }),
   }),
   // The assistant started this thread (chief of staff spec 10).
   z.object({

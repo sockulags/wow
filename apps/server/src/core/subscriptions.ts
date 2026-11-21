@@ -158,6 +158,8 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
       }
       case 'decisions':
         return decisionRows(db);
+      case 'briefings':
+        return db.select().from(t.briefings).orderBy(desc(t.briefings.at)).limit(20).all();
       case 'assistantPermissionUses':
         return db
           .select()

@@ -416,7 +416,10 @@ export class AssistantTools {
         isError: false,
       };
     }
-    if (command.type === 'assistant.writeBrief') {
+    if (
+      command.type === 'assistant.writeBrief' ||
+      command.type === 'assistant.writeBriefingSummary'
+    ) {
       return {
         content: { outcome: 'written', note: 'The person sees it in their decision queue.' },
         isError: false,

@@ -6,6 +6,7 @@ import {
   CircleCheckIcon,
   PlayIcon,
   SkipForwardIcon,
+  SunIcon,
 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
@@ -41,6 +42,8 @@ const icons = {
   failed: AlertTriangleIcon,
   skipped: SkipForwardIcon,
   finished: CircleCheckIcon,
+  briefing: SunIcon,
+  reminder: BellIcon,
 } as const;
 const iconClass = {
   started: 'text-state-working',
@@ -48,6 +51,8 @@ const iconClass = {
   failed: 'text-state-failed',
   skipped: 'text-muted-foreground',
   finished: 'text-state-done',
+  briefing: 'text-muted-foreground',
+  reminder: 'text-state-needs-you-text',
 } as const;
 
 // The web app's side of the server's notification channel: a toast per new notification (spec 9),

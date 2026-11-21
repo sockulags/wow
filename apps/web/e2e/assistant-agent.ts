@@ -71,6 +71,8 @@ const reviewStep = (id: string, model: string, effort: string) => ({
 });
 
 function scenario(text: string, trackerUrl: string): Scenario {
+  // wow's own notes to the assistant (a thread it follows, a brief, a briefing) get a plain answer.
+  if (text.startsWith('From wow:')) return { steps: [], answer: 'Noted.' };
   // Agent workbench spec 41: the rule is only proposed; wow stores it on the user's yes.
   const allow = /always allow `?([^`]+?)`? in Demo/i.exec(text);
   if (allow?.[1]) {
