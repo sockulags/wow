@@ -14,11 +14,12 @@ import {
   type Skill,
   type SubscriptionTopic,
 } from '@wow/contracts';
-import { and, asc, count, desc, eq, gt, inArray, isNull, max, ne, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, max, ne, sql } from 'drizzle-orm';
 import type { DbOrTx } from '../db/database.js';
 import {
   approvals,
   assistantChanges,
+  assistantPermissionUses,
   assistantProposals,
   setupApplications,
   assistantGreeting,
@@ -682,6 +683,9 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
     case 'assistant.changed':
       tx.insert(assistantChanges).values(event.payload).run();
       return ['assistantChanges'];
+    case 'assistant.permissionUsed':
+      tx.insert(assistantPermissionUses).values(event.payload).run();
+      return ['assistantPermissionUses'];
     case 'assistant.changeUndone':
       tx.update(assistantChanges)
         .set({ state: 'undone', undoneAt: event.payload.at })
@@ -917,6 +921,17 @@ export function readModel(tx: DbOrTx): ReadModel {
     backlogItem: (id) => tx.select().from(backlogItems).where(eq(backlogItems.id, id)).get(),
     assistantChange: (id) =>
       tx.select().from(assistantChanges).where(eq(assistantChanges.id, id)).get(),
+    permissionUses: (permissionId, since) =>
+      tx
+        .select({ id: assistantPermissionUses.id })
+        .from(assistantPermissionUses)
+        .where(
+          and(
+            eq(assistantPermissionUses.permissionId, permissionId),
+            gte(assistantPermissionUses.at, since),
+          ),
+        )
+        .all().length,
     setupApplication: (id) =>
       tx.select().from(setupApplications).where(eq(setupApplications.id, id)).get(),
     lastSetupApplication: () =>

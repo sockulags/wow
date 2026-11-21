@@ -442,6 +442,10 @@ export const CalendarItem = z.object({
   // A CardState for local cards, an OutlookItemState for Outlook items.
   state: z.string().min(1),
   updatedAt: Timestamp,
+  // A focus block (chief of staff spec 28): a card that carries no workflow, shown as focus time;
+  // the assistant plans nothing over it and holds its notifications. Absent on cards stored
+  // before it existed and on Outlook items.
+  focus: z.boolean().optional(),
   // A repeating card's rule (recurring cards spec 1). Absent or null for a card that happens
   // once, and for every card stored before rules existed.
   repeat: RepeatRule.nullable().optional(),

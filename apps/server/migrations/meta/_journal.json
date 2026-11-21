@@ -260,6 +260,20 @@
       "when": 1794585094279,
       "tag": "0036_turn_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1795220328121,
+      "tag": "0037_assistant_permission_uses",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1795220534899,
+      "tag": "0038_card_focus",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { CalendarRange, CalendarRangeParams } from './repeat.js';
-import { AssistantChange, AssistantProposal } from './assistant.js';
+import { AssistantChange, AssistantPermissionUse, AssistantProposal } from './assistant.js';
 import {
   AttachmentPutParams,
   AttachmentPutResult,
@@ -108,6 +108,8 @@ export const subscriptionTopics = {
   settings: { row: SettingRow, threadScoped: false },
   assistantChanges: { row: AssistantChange, threadScoped: false },
   assistantProposals: { row: AssistantProposal, threadScoped: false },
+  // What the assistant did under a standing permission, in the order it happened.
+  assistantPermissionUses: { row: AssistantPermissionUse, threadScoped: false },
   // Setup files applied here, in the order applied, with their Undo state.
   setupApplications: { row: SetupApplication, threadScoped: false },
 } as const;

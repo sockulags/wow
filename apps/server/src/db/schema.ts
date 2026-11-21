@@ -1,6 +1,7 @@
 import type {
   AssistantChangeRecord,
   AssistantChangeState,
+  AssistantPermissionKind,
   AssistantPlace,
   AssistantProposalLine,
   AssistantProposalState,
@@ -252,6 +253,7 @@ export const calendarItems = sqliteTable(
     runId: text(),
     state: text().notNull(),
     updatedAt: text().notNull(),
+    focus: bool().notNull().default(false),
     repeat: json<RepeatRule>(),
     skippedDates: json<string[]>().notNull().default([]),
     nextAt: text(),
@@ -417,6 +419,22 @@ export const assistantChanges = sqliteTable('assistant_changes', {
   state: text().$type<AssistantChangeState>().notNull(),
   undoneAt: text(),
 });
+
+// What the assistant did under a standing permission (chief of staff spec 5), in the order it
+// happened; the daily limit counts these.
+export const assistantPermissionUses = sqliteTable(
+  'assistant_permission_uses',
+  {
+    id: text().primaryKey(),
+    at: text().notNull(),
+    permissionId: text().notNull(),
+    kind: text().$type<AssistantPermissionKind>().notNull(),
+    commandType: text().notNull(),
+    what: text().notNull(),
+    place: json<AssistantPlace>().notNull(),
+  },
+  (table) => [index('assistant_permission_uses_at_idx').on(table.permissionId, table.at)],
+);
 
 // Commands of the assistant that wait for the user's yes.
 export const assistantProposals = sqliteTable('assistant_proposals', {

@@ -425,7 +425,12 @@ function CardBlock({
         data-kind={kind}
         data-stop={stop}
         data-repeating={occurrence ? '' : undefined}
-        aria-label={itemLabel(item, zone, occurrence)}
+        data-focus={item.focus ? '' : undefined}
+        aria-label={
+          item.focus
+            ? `Focus: ${itemLabel(item, zone, occurrence)}`
+            : itemLabel(item, zone, occurrence)
+        }
         aria-current={selected ? 'true' : undefined}
         className={cn(
           blockBase,
@@ -433,6 +438,8 @@ function CardBlock({
           fixed ? 'cursor-pointer' : 'cursor-grab',
           kind === 'trigger' && cn('border-l-[3px]', stateBorder[state ?? 'scheduled']),
           kind === 'unrunnable' && 'border-dashed',
+          // A focus block reads as time kept free, not as work (chief of staff spec 28).
+          item.focus && 'border-dashed bg-muted/60 text-muted-foreground',
           dragging && 'cursor-grabbing opacity-80 shadow-md',
           selected && selectedBlock,
         )}
