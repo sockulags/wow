@@ -162,6 +162,30 @@ describe('DesktopController', () => {
     expect(set.openAtLogin).toBe(true);
   });
 
+  it('registers the quick ask key, opens the prompt for the server on a press, and follows the setting (chief of staff spec 31)', async () => {
+    await controller.start();
+    const registered = shell.last('setQuickAsk');
+    expect(registered?.accelerator).toBe('CommandOrControl+Alt+Space');
+    registered?.press();
+    expect(shell.last('openQuickAsk')?.endpoint).toBe(controller.server?.endpoint);
+
+    const client = await connectOther();
+    const marker = shell.calls.length;
+    await setRows(client, 'settings', [{ key: 'desktop.quickAskShortcut', value: '' }]);
+    const off = await shell.waitFor('setQuickAsk', () => true, marker);
+    expect(off.accelerator).toBeUndefined();
+  });
+
+  it('says once when another program holds the quick ask key', async () => {
+    shell.takenKeys.add('CommandOrControl+Alt+Space');
+    await controller.start();
+    const notice = shell.last('notify');
+    expect(notice?.notice).toMatchObject({
+      title: 'The quick ask key is taken',
+      path: '/settings/desktop',
+    });
+  });
+
   it('starts in the tray when launched by the login item', async () => {
     controller = create({ launchedHidden: true });
     await controller.start();

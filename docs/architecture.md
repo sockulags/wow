@@ -1748,7 +1748,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`,
   `appearance.changesListWidth` (see "Changes tab")
 - keybindings: `keybindings.*`, one per command that has a shortcut
-- desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
+- desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`,
+  `desktop.quickAskShortcut`
 - updates: `updates.enabled`, `updates.checkIntervalMinutes`
 - advanced: `advanced.port`, `advanced.logLevel`, `advanced.secretsTimeoutMs`,
   `advanced.gitStopWaitMs` (see "Git" under "Projects"),
@@ -2734,6 +2735,16 @@ Outlook meeting now overlaps get `assistant.moveCard` with the next free slot of
 after the meeting: under Move cards it is applied as the user's `card.update` with a permission
 use, else it is a proposal. The Retry kind is stored but nothing acts on it yet: a step's failed
 turn carries no sign of whether the provider or the agent failed.
+
+**Quick ask** (chief of staff spec 31). `desktop.quickAskShortcut` (an Electron accelerator,
+empty for off) is registered by the desktop controller through `DesktopShell.setQuickAsk` with
+Electron's `globalShortcut`; when another program holds the key the registration fails and the
+controller sends one notification that opens Settings → Desktop. A press opens a frameless,
+always-on-top window (`openQuickAsk`) on the route `/quick-ask`, which the web app's root shows
+without the shell (`quick-ask/quick-ask-view.tsx`): Enter sends `thread.sendMessage` to the
+assistant's thread and the answer streams from its `threadItems`; Escape and losing the focus
+hide the window; "Open in wow" asks the main window for `/assistant` through the preload bridge
+(`appChannels.openInMain`, `appChannels.hideQuickAsk`). All keys are unregistered on quit.
 
 **Deciding as the assistant** (`core/assistant.ts`, `decideInSteps`). For the origin
 `assistant` the class comes first. A refused command is rejected with its sentence. An

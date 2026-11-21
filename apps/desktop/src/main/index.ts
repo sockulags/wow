@@ -5,6 +5,7 @@ import {
   Tray,
   app,
   dialog,
+  globalShortcut,
   ipcMain,
   nativeImage,
   net,
@@ -123,6 +124,50 @@ function createWindow(endpoint: ServerEndpoint): BrowserWindow {
   return created;
 }
 
+// The quick ask (chief of staff spec 31): a small window on top of every other, shown with the
+// focus only when its key is pressed, hidden again on Escape or when it loses the focus.
+let quickAsk: BrowserWindow | undefined;
+let quickAskEndpoint: ServerEndpoint | undefined;
+let quickAskKey: string | undefined;
+
+function createQuickAsk(endpoint: ServerEndpoint): BrowserWindow {
+  const created = new BrowserWindow({
+    width: 560,
+    height: 320,
+    show: false,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    title: `${productName} · Ask`,
+    backgroundColor: '#0a0a0a',
+    icon: iconPath,
+    webPreferences: {
+      preload: preloadPath,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      additionalArguments: [encodeServerInfoArg({ port: endpoint.port, token: endpoint.token })],
+    },
+  });
+  created.on('blur', () => created.hide());
+  created.on('closed', () => {
+    if (quickAsk === created) {
+      quickAsk = undefined;
+      quickAskEndpoint = undefined;
+    }
+  });
+  created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  created.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith(`${appOrigin}/`)) event.preventDefault();
+  });
+  created.once('ready-to-show', () => {
+    created.show();
+    created.focus();
+  });
+  return created;
+}
+
 const electronShell: DesktopShell = {
   openWindow(endpoint, route) {
     if (window !== undefined && windowEndpoint !== endpoint) window.destroy();
@@ -183,6 +228,30 @@ const electronShell: DesktopShell = {
   focusedRoute() {
     if (window === undefined || !window.isFocused() || !window.isVisible()) return undefined;
     return routeOf(window.webContents.getURL(), appOrigin);
+  },
+  setQuickAsk(accelerator, onPress) {
+    if (quickAskKey !== undefined) globalShortcut.unregister(quickAskKey);
+    quickAskKey = undefined;
+    if (accelerator === undefined) return true;
+    try {
+      if (!globalShortcut.register(accelerator, onPress)) return false;
+    } catch (error) {
+      writeLog(`quick ask key ${accelerator} was not registered: ${String(error)}\n`);
+      return false;
+    }
+    quickAskKey = accelerator;
+    return true;
+  },
+  openQuickAsk(endpoint) {
+    if (quickAsk !== undefined && quickAskEndpoint !== endpoint) quickAsk.destroy();
+    if (quickAsk === undefined) {
+      quickAsk = createQuickAsk(endpoint);
+      quickAskEndpoint = endpoint;
+      void quickAsk.loadURL(`${appOrigin}/quick-ask`);
+      return;
+    }
+    quickAsk.show();
+    quickAsk.focus();
   },
   setLoginItem(openAtLogin) {
     // In development the login item would point at the bare Electron binary.
@@ -277,6 +346,16 @@ ipcMain.handle(updateChannels.install, async (event) => {
   if (fromApp(event)) await controller.installUpdate();
 });
 // Settings marked "Restart required": start again with the same arguments, then quit cleanly.
+// The quick ask's "Open in wow" and Escape.
+ipcMain.handle(appChannels.openInMain, (event, route: unknown) => {
+  if (!fromApp(event)) return;
+  quickAsk?.hide();
+  controller.open(typeof route === 'string' && route.startsWith('/') ? route : '/assistant');
+});
+ipcMain.handle(appChannels.hideQuickAsk, (event) => {
+  if (!fromApp(event)) return;
+  quickAsk?.hide();
+});
 ipcMain.handle(appChannels.restart, (event) => {
   if (!fromApp(event)) return;
   app.relaunch();
@@ -320,6 +399,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => controller.open());
   // Closing the last window must not quit: the tray and the server keep running.
   app.on('window-all-closed', () => undefined);
+  // A global key belongs to wow only while it runs.
+  app.on('will-quit', () => globalShortcut.unregisterAll());
   // Sign-out, shutdown or an app menu quit: stop the server cleanly first.
   app.on('before-quit', (event) => {
     // "Restart to update" already stopped the server; the installer needs the app to quit.

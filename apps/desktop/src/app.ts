@@ -38,7 +38,12 @@ export const folderChannels = { pick: 'wow:pick-folder' } as const;
 export const fileChannels = { saveText: 'wow:save-text-file' } as const;
 
 // renderer → main (invoke): "Restart now" for settings that need a restart.
-export const appChannels = { restart: 'wow:app-restart' } as const;
+export const appChannels = {
+  restart: 'wow:app-restart',
+  // renderer → main (invoke): the quick ask opens a route in the main window, or hides itself.
+  openInMain: 'wow:app-open-in-main',
+  hideQuickAsk: 'wow:app-hide-quick-ask',
+} as const;
 
 export const updateChannels = {
   // main → renderer: the update state, on every change.

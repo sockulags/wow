@@ -3,6 +3,8 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  Outlet,
+  useRouterState,
   notFound,
   redirect,
   type RouterHistory,
@@ -30,11 +32,26 @@ import { RunView } from '@/workflows/run-view';
 import { TriggersTab } from '@/workflows/triggers-tab';
 import { RunsHome, WorkflowsHome, WorkflowsLayout } from '@/workflows/workflows-view';
 import { isSettingGroup, settingsByGroup } from './sections';
+import { QuickAskView } from '@/quick-ask/quick-ask-view';
 import { Shell } from './shell';
 
+// The quick ask window shows its page alone; every other route sits in the shell.
+function Root() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  return pathname === quickAskPath ? <Outlet /> : <Shell />;
+}
+
+const quickAskPath = '/quick-ask';
+
 const rootRoute = createRootRoute({
-  component: Shell,
+  component: Root,
   notFoundComponent: NotFoundView,
+});
+
+const quickAskRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: quickAskPath,
+  component: QuickAskView,
 });
 
 const indexRoute = createRoute({
@@ -230,6 +247,7 @@ export const settingsGroupRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
+  quickAskRoute,
   indexRoute,
   calendarRoute,
   chatRoute.addChildren([chatIndexRoute, newThreadRoute, threadRoute]),

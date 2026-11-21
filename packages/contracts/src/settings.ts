@@ -1100,6 +1100,16 @@ export const settingsRegistry = {
     default: true,
     scope: 'global',
   }),
+  'desktop.quickAskShortcut': defineSetting({
+    personal: 'machine',
+    schema: z.string().trim().max(60),
+    group: 'desktop',
+    label: 'Ask the assistant from anywhere',
+    description:
+      "A key that opens a small assistant prompt over any window, in Electron's accelerator form (for example CommandOrControl+Alt+Space). Empty turns it off. When another program holds the key, wow says so once and the key does nothing.",
+    default: 'CommandOrControl+Alt+Space',
+    scope: 'global',
+  }),
   'desktop.startMinimized': defineSetting({
     schema: z.boolean(),
     group: 'desktop',

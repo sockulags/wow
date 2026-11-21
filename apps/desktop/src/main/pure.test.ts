@@ -174,6 +174,7 @@ describe('readDesktopSettings', () => {
       autostart: false,
       closeToTray: true,
       startMinimized: false,
+      quickAskShortcut: 'CommandOrControl+Alt+Space',
       schedulerPaused: false,
       notifications: true,
       updatesEnabled: true,

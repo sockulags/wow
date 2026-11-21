@@ -16,6 +16,12 @@ export type ShellCall =
       readonly actions: readonly NoticeAction[];
     }
   | { readonly kind: 'setLoginItem'; readonly openAtLogin: boolean }
+  | {
+      readonly kind: 'setQuickAsk';
+      readonly accelerator: string | undefined;
+      readonly press: () => void;
+    }
+  | { readonly kind: 'openQuickAsk'; readonly endpoint: ServerEndpoint }
   | { readonly kind: 'askRestart'; readonly message: string }
   | { readonly kind: 'setUpdateState'; readonly state: UpdateState }
   | { readonly kind: 'confirmUpdateRestart'; readonly message: string }
@@ -77,6 +83,15 @@ export class FakeShell implements DesktopShell {
   }
   setLoginItem(openAtLogin: boolean): void {
     this.#record({ kind: 'setLoginItem', openAtLogin });
+  }
+  // Keys another program holds; registering one of them fails.
+  readonly takenKeys = new Set<string>();
+  setQuickAsk(accelerator: string | undefined, onPress: () => void): boolean {
+    this.#record({ kind: 'setQuickAsk', accelerator, press: onPress });
+    return accelerator === undefined || !this.takenKeys.has(accelerator);
+  }
+  openQuickAsk(endpoint: ServerEndpoint): void {
+    this.#record({ kind: 'openQuickAsk', endpoint });
   }
   askRestart(message: string): Promise<boolean> {
     this.#record({ kind: 'askRestart', message });

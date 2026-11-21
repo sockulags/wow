@@ -25,6 +25,9 @@ declare global {
       readonly restart?: () => Promise<unknown>;
       // The native save dialog for a text file; answers the path written or null.
       readonly saveTextFile?: (file: { suggestedName: string; text: string }) => Promise<unknown>;
+      // The quick ask window (chief of staff spec 31): a route in the main window, or hide it.
+      readonly openInMain?: (route: string) => Promise<unknown>;
+      readonly hideQuickAsk?: () => Promise<unknown>;
     };
   }
 }
