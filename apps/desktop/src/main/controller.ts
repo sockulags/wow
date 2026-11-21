@@ -1,6 +1,7 @@
 import {
   isCardTrigger,
   type CalendarItem,
+  type Decision,
   type Thread,
   type Trigger,
   type UpdateState,
@@ -100,6 +101,8 @@ export class DesktopController {
   #runStates: RunStates | undefined;
   #runs: readonly WorkflowRun[] = [];
   #threads: readonly Thread[] = [];
+  // The decision queue, once the server sent it (chief of staff spec 16).
+  #decisions: readonly Decision[] | undefined;
   #triggers: readonly Trigger[] = [];
   #items: readonly CalendarItem[] = [];
   #notificationIds: Set<string> | undefined;
@@ -168,6 +171,9 @@ export class DesktopController {
         return;
       case 'openChat':
         this.open('/chat');
+        return;
+      case 'openAssistant':
+        this.open('/assistant');
         return;
       case 'openCalendar':
         this.open('/calendar');
@@ -285,6 +291,10 @@ export class DesktopController {
       });
       await client.subscribe('calendarItems', (rows) => {
         this.#items = rows;
+        this.#renderTray();
+      });
+      await client.subscribe('decisions', (rows) => {
+        this.#decisions = rows;
         this.#renderTray();
       });
       await client.subscribe('notifications', (rows) => {
@@ -433,6 +443,7 @@ export class DesktopController {
             this.#items,
             (this.#options.now ?? (() => new Date()))(),
             this.#options.formatTime ?? localTime,
+            this.#decisions,
           )
         : {}),
     };

@@ -10,6 +10,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { BriefRequester } from './assistant/briefs.js';
 import { DelegationFollower } from './assistant/follow.js';
 import { assistantMcpPath, createMcpHandler, type AssistantEndpoint } from './assistant/mcp.js';
 import { AssistantTools } from './assistant/tools.js';
@@ -118,6 +119,7 @@ export interface RunningServer {
   readonly plans: PlansService;
   readonly workflows: WorkflowRunner;
   readonly follower: DelegationFollower;
+  readonly briefs: BriefRequester;
   readonly workspaces: Workspaces;
   readonly providerService: ProviderService;
   // Snapshots of chat threads' folders and restores from them (thread work spec 19 to 26).
@@ -223,6 +225,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
   // Gives the assistant a turn when a thread it started ends a turn or asks something.
   const follower = new DelegationFollower({ db: database.db, engine, logger });
+  // Asks the assistant for the brief of each new decision (chief of staff spec 18).
+  const briefs = new BriefRequester({ db: database.db, engine, logger });
   const workflows = new WorkflowRunner({
     db: database.db,
     engine,
@@ -438,6 +442,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     });
   } catch (error) {
     follower.stop();
+    briefs.stop();
     await workflows.stop();
     await workspaces.stop();
     await providerService.stop();
@@ -544,7 +549,9 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const stop = () =>
     (stopped ??= (async () => {
       follower.stop();
+      briefs.stop();
       await follower.settled();
+      await briefs.settled();
       await stopServices();
       await providerUpdates.stop();
       await providerService.stop();
@@ -575,6 +582,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     plans,
     workflows,
     follower,
+    briefs,
     workspaces,
     providerService,
     snapshots,

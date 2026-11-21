@@ -55,4 +55,16 @@ export const delegationTools: Readonly<Record<string, BuiltTool>> = {
       .strict(),
     build: (args) => ({ type: 'assistant.answerQuestion', ...args }),
   }),
+  write_brief: built({
+    description:
+      'Writes the brief of a decision wow asked you about (its message names the decision id): text says what the agent did, what the decision is and what to look at, in a few sentences; recommendation is what you would do, in one sentence. The person sees it in their queue beside Approve, Send back or Allow. You never answer the decision itself.',
+    input: z
+      .object({
+        decisionId: z.string().min(1),
+        text: z.string().trim().min(1).max(1500),
+        recommendation: z.string().trim().min(1).max(300),
+      })
+      .strict(),
+    build: (args) => ({ type: 'assistant.writeBrief', ...args }),
+  }),
 };

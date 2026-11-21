@@ -11,6 +11,7 @@ import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
 import type { Engine } from './engine.js';
 import { readOutlookStatus, skillOf } from './projector.js';
+import { decisionRows, decisionSources } from '../assistant/decisions.js';
 
 // Reads the current rows of a topic. Thread-scoped topics only read one thread.
 export function snapshot(db: Db, params: SubscribeParams): unknown[] {
@@ -155,6 +156,8 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
           .orderBy(sql`rowid`)
           .all();
       }
+      case 'decisions':
+        return decisionRows(db);
       case 'assistantPermissionUses':
         return db
           .select()
@@ -214,7 +217,11 @@ export class Subscriptions {
     return this.#open.size;
   }
 
-  #changed(topics: ReadonlySet<SubscriptionTopic>): void {
+  #changed(changed: ReadonlySet<SubscriptionTopic>): void {
+    // The decision queue is read from other topics, so it changes with them.
+    const topics = [...changed].some((topic) => decisionSources.has(topic as never))
+      ? new Set([...changed, 'decisions' as const])
+      : changed;
     const cache = new Map<string, unknown[]>();
     for (const [subscriptionId, subscription] of this.#open) {
       if (!topics.has(subscription.params.topic)) continue;

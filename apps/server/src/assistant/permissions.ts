@@ -66,7 +66,7 @@ function inWorkHours(start: string, end: string, read: ReadModel, context: Decid
 }
 
 // The start of today in the calendar's zone, for the daily limit and the end date.
-function today(read: ReadModel, context: DecideContext): { date: string; since: string } {
+export function today(read: ReadModel, context: DecideContext): { date: string; since: string } {
   const { zone } = calendar(read, context);
   const day = localDate(new Date(context.now), zone);
   return { date: isoDate(day), since: atMinute(day, 0, zone).toISOString() };

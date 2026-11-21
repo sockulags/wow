@@ -507,6 +507,15 @@ export const Command = z.discriminatedUnion('type', [
     effort: z.string().min(1).optional(),
     ownWorkingCopy: z.boolean(),
   }),
+  // The assistant's brief of a decision that waits (chief of staff spec 18), written once.
+  z.object({
+    type: z.literal('assistant.writeBrief'),
+    decisionId: z.string().min(1),
+    text: z.string().trim().min(1).max(1500),
+    recommendation: z.string().trim().min(1).max(300),
+  }),
+  // A failed run or a missed card leaves the queue when the user is done with it.
+  z.object({ type: z.literal('decision.dismiss'), decisionId: z.string().min(1) }),
   z.object({
     type: z.literal('assistant.sendToThread'),
     threadId: Id,
@@ -600,6 +609,13 @@ export type ProviderUpdateProgress = z.infer<typeof ProviderUpdateProgress>;
 export const InternalCommand = z.discriminatedUnion('type', [
   // A thread the assistant started ended its turn or asked for something (chief of staff spec
   // 11 to 13): the assistant gets a turn to look at it, up to `assistant.followTurns` a thread.
+  // A decision appeared: the assistant is asked for its brief, within assistant.briefsPerDay.
+  z.object({
+    type: z.literal('assistant.requestBrief'),
+    decisionId: z.string().min(1),
+    // What wow says of it, for the message that asks the assistant.
+    summary: z.string().min(1),
+  }),
   z.object({
     type: z.literal('assistant.follow'),
     threadId: Id,
@@ -1406,6 +1422,26 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
   // An ordinary change the assistant made, stored in the same commit as the change itself.
   z.object({ kind: z.literal('assistant.changed'), aggregate: Id, payload: AssistantChangeRecord }),
+  z.object({
+    kind: z.literal('decision.briefRequested'),
+    aggregate: z.string().min(1),
+    payload: z.object({ decisionId: z.string().min(1), at: Timestamp }),
+  }),
+  z.object({
+    kind: z.literal('decision.briefWritten'),
+    aggregate: z.string().min(1),
+    payload: z.object({
+      decisionId: z.string().min(1),
+      text: z.string().min(1),
+      recommendation: z.string().min(1),
+      at: Timestamp,
+    }),
+  }),
+  z.object({
+    kind: z.literal('decision.dismissed'),
+    aggregate: z.string().min(1),
+    payload: z.object({ decisionId: z.string().min(1), at: Timestamp }),
+  }),
   // The assistant started this thread (chief of staff spec 10).
   z.object({
     kind: z.literal('thread.delegated'),

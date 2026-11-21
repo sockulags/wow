@@ -16,6 +16,7 @@ import {
   undoRefusal,
 } from '../assistant/changes.js';
 import { classOf } from '../assistant/classes.js';
+import { decideBriefRequest, decideWriteBrief } from '../assistant/briefs.js';
 import { decideDelegation, decideFollow, isDelegationCommand } from '../assistant/delegation.js';
 import { coverage } from '../assistant/permissions.js';
 import { decideSetup } from '../setup/apply.js';
@@ -49,6 +50,19 @@ export function* decideInSteps(
       throw new CommandRejected('rejected', 'Only the assistant sends this.');
     }
     yield* decideDelegation(commandId, command, read, context);
+    return;
+  }
+  if (command.type === 'assistant.requestBrief') {
+    if (context.origin === 'assistant')
+      throw new CommandRejected('rejected', 'Only wow sends this.');
+    yield decideBriefRequest(command, read, context);
+    return;
+  }
+  if (command.type === 'assistant.writeBrief') {
+    if (context.origin !== 'assistant') {
+      throw new CommandRejected('rejected', 'Only the assistant writes a brief.');
+    }
+    yield decideWriteBrief(command, read, context);
     return;
   }
   if (command.type === 'assistant.follow') {

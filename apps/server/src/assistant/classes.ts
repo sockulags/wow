@@ -465,6 +465,10 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
     'Answering an agent needs the Drive threads permission and a thread you started.',
   ),
   'assistant.follow': serverOnly,
+  'assistant.requestBrief': serverOnly,
+  // Written through write_brief, which the decision queue asks for (chief of staff spec 18).
+  'assistant.writeBrief': refused('Briefs are written with write_brief.'),
+  'decision.dismiss': refused('Only the user dismisses a failed run or a missed card.'),
   // A file can change many settings and workflows at once, autonomy included; the user reads
   // its preview and applies it, and only the user takes it back.
   'setup.apply': refused(

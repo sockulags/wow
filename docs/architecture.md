@@ -1739,7 +1739,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance`,
   `assistant.notes`, `assistant.excludedProjects`, `assistant.readMaxBytes`,
   `assistant.readMaxDiffLines`, `assistant.readMaxMessages`, `assistant.delegation`,
-  `assistant.permissions`, `assistant.followTurns`, `assistant.maxDelegatedLive` (see
+  `assistant.permissions`, `assistant.followTurns`, `assistant.maxDelegatedLive`,
+  `assistant.briefsPerDay` (see
   "Assistant", "Question card" and "Models for steps")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`,
@@ -2688,6 +2689,26 @@ came from (`answeredBecause`), which the question card shows. Approvals are neve
 which sends the assistant a "From wow: …" message (queued if its turn runs) and counts
 `followTurns`, until `assistant.followTurns`. Every delegated act is an
 `assistant.permissionUsed` row.
+
+**The decision queue** (`assistant/decisions.ts`, chief of staff spec 16 to 19). The topic
+`decisions` is built on the server from the stored rows each time it is read: approvals and
+questions that hold a thread's running turn (`approval:<id>`, `question:<id>`), runs waiting at a
+gate or at the limit (`gate:<runId>:<stepId>`, `limit:…`; a gate waiting for checks waits for
+the host and is left out), pending assistant proposals, failed runs and missed cards until
+`decision.dismiss` (table `decision_dismissals`). `decisionOrder` puts what holds a turn first,
+then gates and limits, proposals and failures; inside each the one blocking the soonest card,
+then the oldest. `Subscriptions` pushes `decisions` with any of the topics it is read from. Each
+row carries `fixed` lines wow writes itself and the assistant's `brief` (table `decision_briefs`,
+migration `0040_decision_briefs`). `BriefRequester` (`assistant/briefs.ts`) dispatches the
+internal `assistant.requestBrief` for each new gate, limit, approval, question or failed run;
+within `assistant.briefsPerDay` since midnight in the calendar's zone it marks the brief asked
+and sends the assistant a "From wow: …" message naming the decision. The assistant writes it with
+`write_brief` (`assistant.writeBrief`), which is refused for a decision wow did not ask about and
+for one already written. The web app shows the queue beside the assistant's conversation
+(`assistant/queue.tsx`) with the answers of the views it comes from and the keys
+`keybindings.gateApprove`, `keybindings.approvalAllowOnce` and `keybindings.approvalDeny` on the
+focused row; "Next that needs you" follows the queue's order; the tray lists its first three
+rows and opens the Assistant.
 
 **Deciding as the assistant** (`core/assistant.ts`, `decideInSteps`). For the origin
 `assistant` the class comes first. A refused command is rejected with its sentence. An

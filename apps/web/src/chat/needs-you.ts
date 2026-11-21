@@ -1,4 +1,4 @@
-import type { AssistantProposal, Thread, WorkflowRun } from '@wow/contracts';
+import type { AssistantProposal, Decision, Thread, WorkflowRun } from '@wow/contracts';
 import { useEffect, type RefObject } from 'react';
 import { createStore, useStore } from 'zustand';
 import type { AppCommand } from '@/app/commands';
@@ -29,14 +29,28 @@ export type NeedsYouRoute =
 export const runNeedsYou = (run: WorkflowRun): boolean =>
   run.state === 'waiting' && gateStanding(run)?.waitsFor !== 'checks';
 
+// The key of the element a queued decision lands on.
+export const decisionTargetKey = (decision: Decision): string | undefined =>
+  decision.kind === 'proposal' && decision.proposalId
+    ? `proposal:${decision.proposalId}`
+    : (decision.kind === 'gate' || decision.kind === 'limit') && decision.runId
+      ? `run:${decision.runId}`
+      : (decision.kind === 'approval' || decision.kind === 'question') && decision.threadId
+        ? `thread:${decision.threadId}`
+        : undefined;
+
 export function needsYouTargets({
   threads,
   runs,
   proposals,
+  decisions = [],
 }: {
   threads: readonly Thread[];
   runs: readonly WorkflowRun[];
   proposals: readonly AssistantProposal[];
+  // The server's decision queue (chief of staff spec 16, 17): what it lists comes in its order,
+  // anything else after, oldest first.
+  decisions?: readonly Decision[];
 }): NeedsYouTarget[] {
   const targets: NeedsYouTarget[] = [
     // A thread waits since it came to need the user; a row from before the server kept that
@@ -68,7 +82,13 @@ export function needsYouTargets({
         open: { to: '/assistant' as const },
       })),
   ];
-  return targets.toSorted((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const rank = new Map<string, number>();
+  decisions.forEach((decision, index) => {
+    const key = decisionTargetKey(decision);
+    if (key !== undefined && !rank.has(key)) rank.set(key, index);
+  });
+  const rankOf = (target: NeedsYouTarget) => rank.get(target.key) ?? Infinity;
+  return targets.toSorted((a, b) => rankOf(a) - rankOf(b) || Date.parse(a.at) - Date.parse(b.at));
 }
 
 // The target after the one on screen, so pressing the key again moves on; the oldest otherwise.

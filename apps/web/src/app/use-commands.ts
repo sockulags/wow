@@ -120,6 +120,7 @@ export function useCommands(gated = false): {
   const pageReads = useTopic('pageReads');
   const assistantChanges = useTopic('assistantChanges');
   const assistantProposals = useTopic('assistantProposals');
+  const decisions = useTopic('decisions');
   const setupApplications = useTopic('setupApplications');
   const skills = useTopic('skills');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
@@ -296,6 +297,7 @@ export function useCommands(gated = false): {
           threads: threads ?? [],
           runs: runs ?? [],
           proposals: assistantProposals ?? [],
+          decisions: decisions ?? [],
         }),
         pathname,
       ),
@@ -362,6 +364,7 @@ export function useCommands(gated = false): {
     openBacklogItemId,
     assistantChanges,
     assistantProposals,
+    decisions,
     setupApplications,
     skills,
     panelTabs,

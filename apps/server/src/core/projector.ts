@@ -20,6 +20,8 @@ import {
   approvals,
   assistantChanges,
   assistantPermissionUses,
+  decisionBriefs,
+  decisionDismissals,
   assistantProposals,
   setupApplications,
   assistantGreeting,
@@ -683,6 +685,37 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
     case 'assistant.changed':
       tx.insert(assistantChanges).values(event.payload).run();
       return ['assistantChanges'];
+    case 'decision.briefRequested':
+      tx.insert(decisionBriefs)
+        .values({ decisionId: event.payload.decisionId, requestedAt: event.payload.at })
+        .onConflictDoNothing()
+        .run();
+      return ['decisions'];
+    case 'decision.briefWritten':
+      tx.insert(decisionBriefs)
+        .values({
+          decisionId: event.payload.decisionId,
+          requestedAt: event.payload.at,
+          text: event.payload.text,
+          recommendation: event.payload.recommendation,
+          writtenAt: event.payload.at,
+        })
+        .onConflictDoUpdate({
+          target: decisionBriefs.decisionId,
+          set: {
+            text: event.payload.text,
+            recommendation: event.payload.recommendation,
+            writtenAt: event.payload.at,
+          },
+        })
+        .run();
+      return ['decisions'];
+    case 'decision.dismissed':
+      tx.insert(decisionDismissals)
+        .values({ decisionId: event.payload.decisionId, at: event.payload.at })
+        .onConflictDoNothing()
+        .run();
+      return ['decisions'];
     case 'thread.delegated':
       tx.update(threads)
         .set({ startedBy: 'assistant' })
@@ -939,6 +972,18 @@ export function readModel(tx: DbOrTx): ReadModel {
     backlogItem: (id) => tx.select().from(backlogItems).where(eq(backlogItems.id, id)).get(),
     assistantChange: (id) =>
       tx.select().from(assistantChanges).where(eq(assistantChanges.id, id)).get(),
+    decisionBrief: (decisionId) =>
+      tx
+        .select({ text: decisionBriefs.text })
+        .from(decisionBriefs)
+        .where(eq(decisionBriefs.decisionId, decisionId))
+        .get(),
+    briefsRequestedSince: (since) =>
+      tx
+        .select({ id: decisionBriefs.decisionId })
+        .from(decisionBriefs)
+        .where(gte(decisionBriefs.requestedAt, since))
+        .all().length,
     permissionUses: (permissionId, since) =>
       tx
         .select({ id: assistantPermissionUses.id })
