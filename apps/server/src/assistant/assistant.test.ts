@@ -36,6 +36,7 @@ import { guideReaders } from './guides.js';
 import { memoryReaders } from './memory.js';
 import { modelReaders } from './models.js';
 import { outputReaders } from './outputs.js';
+import { permissionReaders } from './permission-readers.js';
 
 // The assistant's tools on the server (app assistant plan U1): every acceptance line of the
 // unit has a case here that names it.
@@ -245,6 +246,7 @@ describe('the assistant endpoint', () => {
           ...Object.keys(modelReaders),
           ...Object.keys(outputReaders),
           ...Object.keys(memoryReaders),
+          ...Object.keys(permissionReaders),
           ...Object.keys(asks),
           ...Object.keys(changeTools),
           ...Object.keys(builtTools),

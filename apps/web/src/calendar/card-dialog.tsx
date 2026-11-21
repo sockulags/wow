@@ -15,6 +15,7 @@ import { DateField, TimeField } from '@/components/date-time-fields';
 import { FormField } from '@/components/form-field';
 import { WithTooltip } from '@/components/hint';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -72,6 +73,7 @@ function initialForm(
     backlogItemId: card?.backlogItemId ?? '',
     body: card?.body ?? '',
     repeat: repeatDraft(card?.repeat),
+    focus: card?.focus ?? false,
   };
 }
 
@@ -92,6 +94,7 @@ const recreate = (card: CalendarItem): Command => ({
   ...(card.projectId ? { projectId: card.projectId } : {}),
   ...(card.workflowId ? { workflowId: card.workflowId } : {}),
   ...(card.backlogItemId ? { backlogItemId: card.backlogItemId } : {}),
+  ...(card.focus ? { focus: true } : {}),
   ...(card.repeat ? { repeat: card.repeat, skippedDates: card.skippedDates ?? [] } : {}),
 });
 
@@ -257,8 +260,9 @@ function CardForm({
         zone,
         ...(form.body.trim() ? { body: form.body.trim() } : {}),
         ...(form.projectId ? { projectId: form.projectId } : {}),
-        ...(form.workflowId ? { workflowId: form.workflowId } : {}),
+        ...(form.workflowId && !form.focus ? { workflowId: form.workflowId } : {}),
         ...(form.backlogItemId ? { backlogItemId: form.backlogItemId } : {}),
+        ...(form.focus ? { focus: true } : {}),
         ...(repeat.rule ? { repeat: repeat.rule } : {}),
       });
     } else {
@@ -269,8 +273,9 @@ function CardForm({
         ...times,
         body: orNull(form.body.trim()),
         projectId: orNull(form.projectId),
-        workflowId: orNull(form.workflowId),
+        workflowId: form.focus ? null : orNull(form.workflowId),
         backlogItemId: orNull(form.backlogItemId),
+        focus: form.focus,
         // Only a changed rule is sent: making a card single again is an edit of its own.
         ...(sameRule(repeat.rule, card?.repeat) ? {} : { repeat: repeat.rule }),
       });
@@ -365,9 +370,25 @@ function CardForm({
             />
           </FormField>
         </div>
+        <div className="flex items-center gap-2 text-sm">
+          <Checkbox
+            id="card-focus"
+            aria-describedby="card-focus-help"
+            checked={form.focus}
+            onCheckedChange={(checked) => set({ focus: checked === true })}
+          />
+          <label htmlFor="card-focus">Focus</label>
+          <span id="card-focus-help" className="text-xs text-muted-foreground">
+            Time kept free: nothing runs here, and the assistant plans nothing over it and holds its
+            notifications.
+          </span>
+        </div>
         {/* Above 1200 px the workflow and the repeat sit side by side. */}
         <div className="grid min-w-0 items-start gap-4 min-[1200px]:grid-cols-2">
-          <fieldset className="grid min-w-0 gap-3 rounded-md border border-border p-3">
+          <fieldset
+            disabled={form.focus}
+            className="grid min-w-0 gap-3 rounded-md border border-border p-3 disabled:opacity-50"
+          >
             <legend className="flex items-center gap-1.5 px-1 text-sm font-medium">
               <WorkflowIcon className="size-4 text-muted-foreground" aria-hidden />
               Run a workflow

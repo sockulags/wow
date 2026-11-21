@@ -144,6 +144,16 @@ function checkLinks(read: ReadModel, links: Links): void {
   }
 }
 
+// A focus block is time kept free of work (chief of staff spec 28), so it never starts a run.
+function checkFocus(card: Pick<CalendarItem, 'focus' | 'workflowId'>): void {
+  if (card.focus && card.workflowId) {
+    throw new CommandRejected(
+      'rejected',
+      'A focus card carries no workflow; take the workflow off or make it an ordinary card',
+    );
+  }
+}
+
 const toCalendarItem = (row: OutlookCalendarRow, at: string): CalendarItem => ({
   ...row,
   source: 'outlook',
@@ -151,6 +161,7 @@ const toCalendarItem = (row: OutlookCalendarRow, at: string): CalendarItem => ({
   backlogItemId: null,
   workflowId: null,
   runId: null,
+  focus: false,
   updatedAt: at,
 });
 
@@ -345,9 +356,11 @@ export function decideCalendar(
         runId: null,
         state: 'scheduled',
         updatedAt: context.now,
+        focus: command.focus ?? false,
         repeat: command.repeat ?? null,
         skippedDates: sortedDays(command.skippedDates ?? []),
       };
+      checkFocus(card);
       checkZone(card.zone);
       checkRepeat(card);
       return [
@@ -369,7 +382,12 @@ export function decideCalendar(
         'projectId',
         'backlogItemId',
         'workflowId',
+        'focus',
       ] as const;
+      checkFocus({
+        focus: command.focus ?? card.focus ?? false,
+        workflowId: command.workflowId === undefined ? card.workflowId : command.workflowId,
+      });
       for (const field of fields) {
         const value = command[field];
         if (value !== undefined && value !== card[field])

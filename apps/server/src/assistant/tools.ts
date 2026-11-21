@@ -1,6 +1,7 @@
 import {
   AlwaysAllowRuleRequest,
   Command,
+  assistantPermissionLabels,
   assistantRuleTool,
   hideSecrets,
   prefixRuleable,
@@ -18,7 +19,12 @@ import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import { readModel } from '../core/projector.js';
 import { projectRules } from '../core/threads.js';
-import { assistantChanges, assistantProposals, projects } from '../db/schema.js';
+import {
+  assistantChanges,
+  assistantPermissionUses,
+  assistantProposals,
+  projects,
+} from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import { checkProjectFolder } from '../rpc/handlers.js';
 import { RpcFault } from '../rpc/router.js';
@@ -30,6 +36,7 @@ import { checkStepModels, modelReaders } from './models.js';
 import { built, type BuiltTool } from './built.js';
 import { memoryReaders, memoryTools } from './memory.js';
 import { outputReaders } from './outputs.js';
+import { permissionReaders } from './permission-readers.js';
 import { readers, type Reader, type ReaderDeps } from './readers.js';
 
 // The assistant's tools (app assistant spec 4 to 13). A read tool is a reader. A change tool
@@ -47,6 +54,8 @@ interface ChangeTool {
 }
 
 const waits = 'This waits for the user: it becomes a proposal with Yes and No.';
+const waitsUnlessPermitted =
+  'This waits for the user as a proposal with Yes and No, unless a standing permission the person gave covers it (read_permissions); then it is done at once and reported.';
 
 export const changeTools = {
   set_setting: {
@@ -93,7 +102,7 @@ export const changeTools = {
   start_card_run: {
     type: 'card.runNow',
     newId: 'runId',
-    description: `Starts a card's workflow now. ${waits}`,
+    description: `Starts a card's workflow now. ${waitsUnlessPermitted}`,
   },
   create_workflow: {
     type: 'workflow.create',
@@ -113,7 +122,7 @@ export const changeTools = {
   start_run: {
     type: 'workflowRun.start',
     newId: 'runId',
-    description: `Starts a workflow in a project now. ${waits}`,
+    description: `Starts a workflow in a project now. ${waitsUnlessPermitted}`,
   },
   create_backlog_item: {
     type: 'backlog.create',
@@ -259,6 +268,7 @@ const looks: Readonly<Record<string, Reader>> = {
   ...readers,
   ...outputReaders,
   ...memoryReaders,
+  ...permissionReaders,
   ...guideReaders,
   ...diagnosisReaders,
   ...modelReaders,
@@ -380,9 +390,27 @@ export class AssistantTools {
       .from(assistantChanges)
       .where(eq(assistantChanges.id, commandId))
       .get();
+    const used = db
+      .select()
+      .from(assistantPermissionUses)
+      .where(eq(assistantPermissionUses.id, commandId))
+      .get();
+    const under = used
+      ? {
+          useId: used.id,
+          underPermission: assistantPermissionLabels[used.kind],
+          note: 'Done at once under a standing permission; the conversation shows it.',
+        }
+      : {};
     if (change) {
       return {
-        content: { outcome: 'changed', ...made, change: changeRow(change) },
+        content: { outcome: 'changed', ...made, change: changeRow(change), ...under },
+        isError: false,
+      };
+    }
+    if (used) {
+      return {
+        content: { outcome: 'done', ...made, what: used.what, place: used.place, ...under },
         isError: false,
       };
     }

@@ -34,6 +34,8 @@ export interface CardFormValues {
   readonly backlogItemId: string;
   readonly body: string;
   readonly repeat: RepeatDraft;
+  // A focus block (chief of staff spec 28): sent without a workflow.
+  readonly focus: boolean;
 }
 
 // The Repeat section as typed (recurring cards spec 16). Numbers stay text until the form is

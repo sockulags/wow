@@ -151,6 +151,8 @@ export interface ReadModel {
   // True while a run started for this backlog item is running or waiting at a gate.
   backlogItemHasLiveRun(id: string): boolean;
   assistantChange(id: string): AssistantChangeRecord | undefined;
+  // How many times the assistant acted under this permission at or after `since`.
+  permissionUses(permissionId: string, since: string): number;
   assistantProposal(id: string): AssistantProposalRecord | undefined;
   setupApplication(id: string): SetupApplicationRecord | undefined;
   // The newest setup file applied here and not undone.

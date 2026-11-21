@@ -16,6 +16,7 @@ import {
   undoRefusal,
 } from '../assistant/changes.js';
 import { classOf } from '../assistant/classes.js';
+import { coverage } from '../assistant/permissions.js';
 import { decideSetup } from '../setup/apply.js';
 import {
   CommandRejected,
@@ -47,35 +48,64 @@ export function* decideInSteps(
     if (klass.class === 'refused') throw new CommandRejected('rejected', klass.reason);
     const sent = Command.safeParse(command);
     if (!sent.success) throw new CommandRejected('rejected', `${command.type} is not a command`);
-    if (klass.class === 'proposal') {
+    // A proposal a standing permission covers is applied at once and reported (chief of staff
+    // spec 5); one a permission would cover but may not now says why on its card (spec 8).
+    const covers = klass.class === 'proposal' ? coverage(sent.data, read, context) : undefined;
+    if (klass.class === 'proposal' && !(covers && 'covered' in covers)) {
       // Decided once and thrown away: the app's own refusal reaches the assistant now, not the
       // user at Yes, and a command that would change nothing is not worth a question.
       if (decide(sent.data, read, asUser).length === 0) return;
+      const proposed = proposalOf(commandId, sent.data, read, context);
       yield [
         {
           kind: 'assistant.proposed',
           aggregate: commandId,
-          payload: proposalOf(commandId, sent.data, read, context),
+          payload:
+            covers && 'held' in covers
+              ? {
+                  ...proposed,
+                  lines: [
+                    ...proposed.lines,
+                    { what: 'Why this asks', from: null, to: covers.held },
+                  ],
+                }
+              : proposed,
         },
       ];
       return;
     }
     const target = targetOf(sent.data);
-    if (!target) throw new Error(`${command.type} is ordinary but names nothing it changes`);
-    const before = snapshot(target, read);
+    if (!target && !covers) {
+      throw new Error(`${command.type} is ordinary but names nothing it changes`);
+    }
+    // What a permission did is worded as its proposal would have been.
+    const used =
+      covers && 'covered' in covers ? proposalOf(commandId, sent.data, read, context) : undefined;
+    const before = target ? snapshot(target, read) : null;
     const events = decide(sent.data, read, asUser);
     if (events.length === 0) return;
     yield events;
-    const change = changeOf(
-      commandId,
-      sent.data,
-      target,
-      before,
-      snapshot(target, read),
-      read,
-      context,
-    );
+    const change = target
+      ? changeOf(commandId, sent.data, target, before, snapshot(target, read), read, context)
+      : undefined;
     if (change) yield [{ kind: 'assistant.changed', aggregate: commandId, payload: change }];
+    if (covers && 'covered' in covers && used) {
+      yield [
+        {
+          kind: 'assistant.permissionUsed',
+          aggregate: commandId,
+          payload: {
+            id: commandId,
+            at: context.now,
+            permissionId: covers.covered.id,
+            kind: covers.covered.kind,
+            commandType: sent.data.type,
+            what: used.title,
+            place: used.place,
+          },
+        },
+      ];
+    }
     return;
   }
 

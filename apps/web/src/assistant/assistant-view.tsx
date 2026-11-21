@@ -8,7 +8,9 @@ import {
   heldSecretSentence,
   providerChatOptions,
   rpcMethods,
+  assistantPermissionLabels,
   type AssistantChange,
+  type AssistantPermissionUse,
   type AssistantProposal,
   type ProviderInstance,
   type Thread,
@@ -52,7 +54,7 @@ import {
   type Placed,
 } from './model';
 import { AssistantQuestions, askState } from './questions';
-import { ChangeRow, ProposalCard, WaitingLine } from './rows';
+import { ChangeRow, PermissionUseRow, ProposalCard, WaitingLine } from './rows';
 
 // The Assistant section (app assistant spec 1, 3, 7 to 18): the one assistant conversation,
 // reusing the chat view's conversation and composer, with change rows, proposals and the cards
@@ -99,16 +101,28 @@ function useOpenProblem(): {
 
 function Rows({ placed, patterns }: { placed: Placed; patterns: readonly string[] }) {
   const send = useDispatch();
-  if (placed.changes.length === 0 && placed.proposals.length === 0) return null;
+  if (placed.changes.length === 0 && placed.proposals.length === 0 && placed.uses.length === 0)
+    return null;
+  const usedFor = new Map(placed.uses.map((use) => [use.id, use]));
+  const changed = new Set(placed.changes.map((change) => change.id));
   return (
     <div className="flex flex-col gap-2">
-      {placed.changes.map((change) => (
-        <ChangeRow
-          key={change.id}
-          change={change}
-          onUndo={() => send({ type: 'assistant.undo', changeId: change.id })}
-        />
-      ))}
+      {placed.changes.map((change) => {
+        const use = usedFor.get(change.id);
+        return (
+          <ChangeRow
+            key={change.id}
+            change={change}
+            {...(use ? { under: assistantPermissionLabels[use.kind] } : {})}
+            onUndo={() => send({ type: 'assistant.undo', changeId: change.id })}
+          />
+        );
+      })}
+      {placed.uses
+        .filter((use) => !changed.has(use.id))
+        .map((use) => (
+          <PermissionUseRow key={use.id} use={use} />
+        ))}
       {placed.proposals.map((proposal) => (
         <ProposalCard
           key={proposal.id}
@@ -213,6 +227,7 @@ const noInstances: ProviderInstance[] = [];
 const noItems: ThreadItem[] = [];
 const noChanges: AssistantChange[] = [];
 const noProposals: AssistantProposal[] = [];
+const noUses: AssistantPermissionUse[] = [];
 
 export function AssistantView() {
   const runtime = useRuntime();
@@ -226,6 +241,7 @@ export function AssistantView() {
   const turns = useTopic('turns', thread ? assistantThreadId : undefined);
   const changes = useTopic('assistantChanges') ?? noChanges;
   const proposals = useTopic('assistantProposals') ?? noProposals;
+  const uses = useTopic('assistantPermissionUses') ?? noUses;
   const patterns = useSetting('assistant.secretPatterns');
   const { problem, asked } = useOpenProblem();
   const composer = useRef<ComposerHandle>(null);
@@ -239,8 +255,8 @@ export function AssistantView() {
   // Stable while what they read is, so the conversation's tool calls are read again only when
   // it, the changes or the proposals changed.
   const { after, rest } = useMemo(
-    () => placeRows(items ?? noItems, changes, proposals),
-    [items, changes, proposals],
+    () => placeRows(items ?? noItems, changes, proposals, uses),
+    [items, changes, proposals, uses],
   );
   const asks = useMemo(() => askedFields(items ?? noItems), [items]);
 
@@ -474,7 +490,7 @@ export function AssistantView() {
         autoFocus
         extras={{
           after: extraAfter,
-          ...(rest.changes.length + rest.proposals.length > 0
+          ...(rest.changes.length + rest.proposals.length + rest.uses.length > 0
             ? { end: <Rows placed={rest} patterns={patterns} /> }
             : {}),
           composerRef: composer,

@@ -1,0 +1,1 @@
+ALTER TABLE `calendar_items` ADD `focus` integer DEFAULT false NOT NULL;

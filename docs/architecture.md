@@ -1738,8 +1738,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.valueLength`,
   `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance`,
   `assistant.notes`, `assistant.excludedProjects`, `assistant.readMaxBytes`,
-  `assistant.readMaxDiffLines`, `assistant.readMaxMessages` (see "Assistant", "Question card"
-  and "Models for steps")
+  `assistant.readMaxDiffLines`, `assistant.readMaxMessages`, `assistant.delegation`,
+  `assistant.permissions` (see "Assistant", "Question card" and "Models for steps")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`,
   `appearance.changesListWidth` (see "Changes tab")
@@ -2652,11 +2652,33 @@ An entry is a word, a refusal, or a function of the command and the projections 
 class depends on what the command says. No tool exists for a type that is always refused, and
 `AssistantTools` refuses to start with one.
 
+**Standing permissions** (`assistant/permissions.ts`, chief of staff spec 4 to 8). The settings
+`assistant.delegation` (off by default) and `assistant.permissions` (`AssistantPermission[]`:
+kind, projects, workflows, widest permission mode, end date, daily limit, paused) are both in
+`guardSettings`, so the assistant can only propose them. `coverage(command, read, context)`
+answers for a command the class table holds as a proposal: `covered` with the permission, `held`
+with the reason a permission that would cover it may not now (paused, ended, its daily limit of
+uses since midnight in the calendar's zone reached, a card outside work hours), or nothing. It
+looks only at five commands and only at what makes them proposals: `card.create`, `card.update`
+and `backlog.plan` for Plan runs (a card with a workflow that starts soon, inside work hours) and
+`workflowRun.start` and `card.runNow` for Start runs, each for a workflow and project the
+permission names. Every other command, every refused one and every proposal of another kind
+(autonomy in a workflow, triggers, guarded settings, skills) is untouched; a test walks every
+command type. The kinds for threads, retries and moving cards are stored here and acted on by
+later units. Focus cards (`focus` on a card, migration `0038_card_focus`) carry no workflow:
+`card.create` and `card.update` refuse one, and as cards they are busy for `read_free_slots`.
+
 **Deciding as the assistant** (`core/assistant.ts`, `decideInSteps`). For the origin
 `assistant` the class comes first. A refused command is rejected with its sentence. An
 ordinary command is decided by the same `decide` the user's command goes through; its events
 are stored, then the thing it changed is read again and an `assistant.changed` event is added
-in the same transaction. A proposal is decided once and the result thrown away, so that a
+in the same transaction. A proposal that a standing permission covers is decided as an ordinary command instead, with
+its change row when it has a target, and an `assistant.permissionUsed` event in the same commit
+(`assistant_permission_uses`, topic `assistantPermissionUses`, migration
+`0037_assistant_permission_uses`), worded as its proposal would have been; the tool answers
+`underPermission` and `useId`, and the view marks the change "under <permission>" or, for a
+started run, shows the use as a row of its own. A proposal a permission holds back gets a last
+line "Why this asks". A proposal is decided once and the result thrown away, so that a
 command the app would refuse fails now with the app's reason and a command that would change
 nothing asks no question; then only `assistant.proposed` is stored. A command the app refuses
 is a `CommandRejected` either way, and the tool hands its message to the assistant (spec 12).

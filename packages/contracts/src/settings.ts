@@ -3,6 +3,7 @@ import { AlwaysAllowRule } from './approvals.js';
 import { BuiltInSkillName } from './skills.js';
 import {
   AssistantNote,
+  AssistantPermission,
   SecretPattern,
   defaultAskRefusedWords,
   defaultAssistantInstructions,
@@ -1844,6 +1845,24 @@ export const settingsRegistry = {
     description:
       "The assistant's question tool refuses a question whose text, header or choices hold one of these words or phrases (whole words, without regard to case), and tells the assistant to show the secret's field instead. A net for mistakes: a question never collects a secret.",
     default: [...defaultAskRefusedWords],
+    scope: 'global',
+  }),
+  'assistant.delegation': defineSetting({
+    schema: z.boolean(),
+    group: 'assistant',
+    label: 'Let the assistant act under its permissions',
+    description:
+      'Off: the assistant asks before it starts runs or threads, as always. On: what a permission below covers it does at once and reports, with Undo where a change can be undone. The assistant can ask to turn this on, but only you can say yes.',
+    default: false,
+    scope: 'global',
+  }),
+  'assistant.permissions': defineSetting({
+    schema: z.array(AssistantPermission),
+    group: 'assistant',
+    label: 'Permissions',
+    description:
+      'What the assistant may do without asking while it may act under its permissions: plan or start runs of named workflows, start and drive threads in named projects, retry a failed step once, move cards around meetings. Each can end on a day, have a daily limit, or be paused. Answering a gate or an approval is never among them.',
+    default: [],
     scope: 'global',
   }),
   'assistant.notes': defineSetting({

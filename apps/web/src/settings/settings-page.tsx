@@ -13,6 +13,7 @@ import { KeybindingsTable } from './keybindings-table';
 import { SettingsForm } from './setting-row';
 import { AlwaysAllowSection } from './always-allow-section';
 import { MemorySection } from './memory-section';
+import { PermissionsSection } from './permissions-section';
 import { SetupSection } from './setup-section';
 import { SkillsSection } from './skills-section';
 import { TrackersSection } from './trackers-section';
@@ -175,6 +176,7 @@ export function SettingsPage() {
       {current === 'updates' && <UpdateStatusPanel />}
       {current === 'advanced' && <SetupSection />}
       {current === 'skills' && <SkillsSection />}
+      {current === 'assistant' && <PermissionsSection />}
       {current === 'assistant' && <MemorySection />}
       {/* Remount per group so drafts never leak between pages. */}
       {current === 'approvals' ? (

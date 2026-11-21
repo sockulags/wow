@@ -155,6 +155,12 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
           .orderBy(sql`rowid`)
           .all();
       }
+      case 'assistantPermissionUses':
+        return db
+          .select()
+          .from(t.assistantPermissionUses)
+          .orderBy(sql`rowid`)
+          .all();
       case 'setupApplications': {
         // Without what Undo puts back: it holds real values and is the server's alone.
         const { parts: _parts, ...shown } = getTableColumns(t.setupApplications);

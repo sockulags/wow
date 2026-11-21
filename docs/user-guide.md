@@ -1457,6 +1457,31 @@ take one off that list, but only you can say yes. Long texts reach it cut short
 (`assistant.readMaxBytes`, `assistant.readMaxDiffLines`, `assistant.readMaxMessages`). Ask it
 for project work ("fix this test") and it offers to open a new thread in Chat with your text.
 
+### Permissions
+
+By default the assistant asks before it starts a run or puts a card with a workflow on the
+calendar that starts within minutes. If you want it to just do such things, turn on **Let the
+assistant act under its permissions** (`assistant.delegation`) in Settings → Assistant and add
+permissions under **Permissions** (`assistant.permissions`):
+
+- **Plan runs**: cards with the workflows you pick, in the projects you pick, also ones that start
+  soon, inside your work hours.
+- **Start runs**: start a run of those workflows now.
+- **Start threads**, **Drive threads**, **Retry** and **Move cards** are listed already and come
+  into use with the assistant's next steps (starting and following threads, retrying a failed
+  step, moving cards around meetings).
+
+Each permission can end on a day (**Until**), have a limit (**Times a day**) and be **Paused**.
+What the assistant does under one shows in the conversation as usual, marked "under Start runs";
+a card it put on the calendar has Undo, a run it started is stopped by you at the run. When a
+permission would cover something but may not now (paused, ended, its limit reached, outside work
+hours) the assistant asks as before, and the card's last line says why. No permission lets it
+answer a gate or an approval, change what agents may do on their own, or turn delegation and
+permissions on or wider: it can propose those, and only you say yes.
+
+**Focus** on a card makes it time kept free: it carries no workflow, shows as a dashed block,
+and the assistant plans nothing over it.
+
 ### Memory
 
 Tell the assistant how you work ("never plan anything before nine", "Tea is the important project

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { AttachmentId } from './attachments.js';
-import { AssistantChange, AssistantProposal } from './assistant.js';
+import { AssistantChange, AssistantPermissionUse, AssistantProposal } from './assistant.js';
 import { OwnSkill, SentSkill, SkillRef } from './skills.js';
 import {
   AppNotification,
@@ -336,6 +336,8 @@ export const Command = z.discriminatedUnion('type', [
     projectId: Id.optional(),
     backlogItemId: Id.optional(),
     workflowId: Id.optional(),
+    // A focus block (chief of staff spec 28): no workflow, and planning keeps work off it.
+    focus: z.boolean().optional(),
     // Makes the card repeat (recurring cards spec 1); start and end are the first occurrence.
     repeat: RepeatRule.optional(),
     // Days already skipped by hand, for Undo of a deleted series (spec 13).
@@ -355,6 +357,7 @@ export const Command = z.discriminatedUnion('type', [
     projectId: Id.nullable().optional(),
     backlogItemId: Id.nullable().optional(),
     workflowId: Id.nullable().optional(),
+    focus: z.boolean().optional(),
     repeat: RepeatRule.nullable().optional(),
     // The whole list of days skipped by hand; Undo of a skip sends the list as it was.
     skippedDates: z.array(LocalDay).optional(),
@@ -874,6 +877,7 @@ export const CardChanges = CalendarItem.pick({
   projectId: true,
   backlogItemId: true,
   workflowId: true,
+  focus: true,
   repeat: true,
   skippedDates: true,
   pastSeries: true,
@@ -1367,6 +1371,13 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
   // An ordinary change the assistant made, stored in the same commit as the change itself.
   z.object({ kind: z.literal('assistant.changed'), aggregate: Id, payload: AssistantChangeRecord }),
+  // The assistant acted under a standing permission (chief of staff spec 5), in the same commit
+  // as what it did.
+  z.object({
+    kind: z.literal('assistant.permissionUsed'),
+    aggregate: Id,
+    payload: AssistantPermissionUse,
+  }),
   // The greeting after the first-start step waits until the assistant can run it.
   z.object({
     kind: z.literal('assistant.greetingOwed'),
