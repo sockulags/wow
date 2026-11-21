@@ -54,6 +54,7 @@ import {
   type Placed,
 } from './model';
 import { AssistantQuestions, askState } from './questions';
+import { DecisionQueue } from './queue';
 import { ChangeRow, PermissionUseRow, ProposalCard, WaitingLine } from './rows';
 
 // The Assistant section (app assistant spec 1, 3, 7 to 18): the one assistant conversation,
@@ -484,29 +485,34 @@ export function AssistantView() {
           </Link>
         </Button>
       </header>
-      <ThreadConversation
-        thread={thread}
-        instance={instance}
-        autoFocus
-        extras={{
-          after: extraAfter,
-          ...(rest.changes.length + rest.proposals.length + rest.uses.length > 0
-            ? { end: <Rows placed={rest} patterns={patterns} /> }
-            : {}),
-          composerRef: composer,
-          placeholder: 'Tell the assistant what to set up or change in wow',
-          beforeSend: (text) => {
-            setSaved(undefined);
-            const found = holdOf(text);
-            setHeld(found ?? undefined);
-            return found === null;
-          },
-          questionHold,
-          notice,
-          toolWords,
-          modelBar: modelBar ?? null,
-        }}
-      />
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <ThreadConversation
+            thread={thread}
+            instance={instance}
+            autoFocus
+            extras={{
+              after: extraAfter,
+              ...(rest.changes.length + rest.proposals.length + rest.uses.length > 0
+                ? { end: <Rows placed={rest} patterns={patterns} /> }
+                : {}),
+              composerRef: composer,
+              placeholder: 'Tell the assistant what to set up or change in wow',
+              beforeSend: (text) => {
+                setSaved(undefined);
+                const found = holdOf(text);
+                setHeld(found ?? undefined);
+                return found === null;
+              },
+              questionHold,
+              notice,
+              toolWords,
+              modelBar: modelBar ?? null,
+            }}
+          />
+        </div>
+        <DecisionQueue className="hidden w-80 shrink-0 border-l border-border p-3 min-[1000px]:flex" />
+      </div>
     </div>
   );
 }

@@ -1494,6 +1494,25 @@ permissions on or wider: it can propose those, and only you say yes.
 **Focus** on a card makes it time kept free: it carries no workflow, shows as a dashed block,
 and the assistant plans nothing over it.
 
+### Needs you
+
+Beside the assistant's conversation (in a window at least 1000 pixels wide) is **Needs you**:
+everything that waits for you, in one list, wherever it came from. Approvals and questions that
+hold an agent's turn come first, then gates and limits, then the assistant's proposals, then runs
+that failed and cards that did not start; within each, what blocks the soonest card first, then
+the oldest. Each row says what it is and where, with what wow knows of it (the artifacts a step
+found, the choices of a question). When a gate, an approval, a question or a failure starts to
+wait, the assistant reads it and writes a short brief with what it recommends, once; at most
+`assistant.briefsPerDay` (10) a day, after that the row shows wow's own lines. The assistant never
+answers any of them.
+
+Answer from the row: **Approve** (or **Run once more** at a limit), **Allow once** and **Deny**,
+**Yes** and **No**, or **Dismiss** for a failed run or a missed card; **Open** goes to where it
+waits, for a question, a send back with a note or anything else. With a row focused, Enter opens
+it and the gate and approval keys answer it as they do in their own views. **Ctrl+Shift+J**
+("Next that needs you") goes through the same order. The tray menu lists the first three rows
+under "N need you" and opens the Assistant.
+
 ### Memory
 
 Tell the assistant how you work ("never plan anything before nine", "Tea is the important project

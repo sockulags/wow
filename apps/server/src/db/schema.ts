@@ -440,6 +440,21 @@ export const assistantPermissionUses = sqliteTable(
   (table) => [index('assistant_permission_uses_at_idx').on(table.permissionId, table.at)],
 );
 
+// The assistant's brief of a decision (chief of staff spec 18): asked once, written once.
+export const decisionBriefs = sqliteTable('decision_briefs', {
+  decisionId: text().primaryKey(),
+  requestedAt: text().notNull(),
+  text: text(),
+  recommendation: text(),
+  writtenAt: text(),
+});
+
+// Failed runs and missed cards the user is done with: they leave the decision queue.
+export const decisionDismissals = sqliteTable('decision_dismissals', {
+  decisionId: text().primaryKey(),
+  at: text().notNull(),
+});
+
 // Commands of the assistant that wait for the user's yes.
 export const assistantProposals = sqliteTable('assistant_proposals', {
   id: text().primaryKey(),

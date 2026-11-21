@@ -1883,6 +1883,15 @@ export const settingsRegistry = {
     default: 3,
     scope: 'global',
   }),
+  'assistant.briefsPerDay': defineSetting({
+    schema: z.number().int().min(0).max(200),
+    group: 'assistant',
+    label: 'Decisions the assistant briefs a day',
+    description:
+      'When a gate, an approval, a question or a failure starts to wait for you, the assistant reads it and writes a few sentences with its recommendation, once. Past this many a day the queue shows what wow says itself. 0 writes none.',
+    default: 10,
+    scope: 'global',
+  }),
   'assistant.notes': defineSetting({
     personal: 'person',
     schema: z.array(AssistantNote),

@@ -395,6 +395,7 @@ export const assistantToolWords: Readonly<Record<string, string>> = {
   start_thread: 'Started a thread',
   write_to_thread: 'Wrote in a thread',
   answer_agent_question: "Answered an agent's question",
+  write_brief: 'Wrote a brief',
   remember: 'Kept a note',
   forget: 'Removed a note',
   read_triggers: 'Read your triggers',
@@ -671,3 +672,52 @@ export const AssistantPermissionUse = z.object({
   place: AssistantPlace,
 });
 export type AssistantPermissionUse = z.infer<typeof AssistantPermissionUse>;
+
+// The decision queue (chief of staff spec 16 to 19): everything that waits for the user, in the
+// server's order, each with a brief. `fixed` is what wow says itself; `brief` is what the
+// assistant wrote once when the row appeared, within `assistant.briefsPerDay`.
+export const DecisionKind = z.enum([
+  'approval',
+  'question',
+  'gate',
+  'limit',
+  'proposal',
+  'failedRun',
+  'missedCard',
+]);
+export type DecisionKind = z.infer<typeof DecisionKind>;
+
+export const DecisionBrief = z.object({
+  text: z.string().min(1),
+  recommendation: z.string().min(1),
+  at: Timestamp,
+});
+export type DecisionBrief = z.infer<typeof DecisionBrief>;
+
+export const Decision = z.object({
+  // `<kind>:<id of what waits>`, stable while it waits.
+  id: z.string().min(1),
+  kind: DecisionKind,
+  // Since when it waits.
+  at: Timestamp,
+  title: z.string().min(1),
+  // The project, workflow or thread it belongs to, in words; null when none.
+  where: z.string().nullable(),
+  // Where the app shows it.
+  path: z.string().min(1),
+  threadId: Id.nullable(),
+  runId: Id.nullable(),
+  proposalId: Id.nullable(),
+  approvalId: Id.nullable(),
+  questionId: Id.nullable(),
+  cardId: Id.nullable(),
+  // An approval or question that holds a running turn (it comes first).
+  holdsTurn: z.boolean(),
+  // When the card it blocks starts, for the order; null when none.
+  cardStart: Timestamp.nullable(),
+  fixed: z.array(z.string()),
+  brief: DecisionBrief.nullable(),
+  // A brief was asked of the assistant and is not written yet.
+  briefPending: z.boolean(),
+});
+export type Decision = z.infer<typeof Decision>;

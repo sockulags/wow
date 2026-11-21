@@ -416,6 +416,12 @@ export class AssistantTools {
         isError: false,
       };
     }
+    if (command.type === 'assistant.writeBrief') {
+      return {
+        content: { outcome: 'written', note: 'The person sees it in their decision queue.' },
+        isError: false,
+      };
+    }
     const proposal = db
       .select()
       .from(assistantProposals)
