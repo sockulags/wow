@@ -20,7 +20,8 @@ export interface PlanRunsDeps {
 // merge reaches them. It only sends `planRun.advance`; the orchestrator decides, and a call that
 // finds nothing new stores nothing. After a unit's run ends the plan is read from its host
 // first, so the next unit is picked from what the host shows now: the pull request the run
-// opened, and a unit someone else claimed in the meantime (spec 42).
+// opened, and a unit someone else claimed in the meantime (spec 42). The decision itself also
+// refuses statuses read before the unit's run ended, for a read that failed or a restart.
 export class PlanRuns implements BackgroundService {
   readonly #deps: PlanRunsDeps;
   readonly #unsubscribe: () => void;
@@ -79,6 +80,12 @@ export class PlanRuns implements BackgroundService {
       } else if (event.kind === 'plans.synced') {
         for (const intent of event.payload.upserted) plans.add(intent.id);
         for (const id of event.payload.removed) plans.add(id);
+      } else if (event.kind === 'hosts.synced') {
+        // A fresh read that changed no status still lets a plan run waiting for it go on.
+        for (const row of event.payload.reads) {
+          if (row.scope === 'plan' && row.fetchedAt !== null)
+            plans.add(row.id.slice('plan:'.length));
+        }
       }
     }
     if (plans.size > 0) {

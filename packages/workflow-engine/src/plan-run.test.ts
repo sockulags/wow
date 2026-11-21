@@ -68,6 +68,8 @@ const input = (overrides: Partial<PlanRunAdvance>): PlanRunAdvance => ({
   units: units('ready', 'waiting', 'ready'),
   unitRunState: undefined,
   onFailure: 'stop',
+  unitsReadAt: null,
+  lastUnitEndedAt: null,
   runIdFor: (key) => `pr1.${key}`,
   ...overrides,
 });
@@ -129,6 +131,26 @@ describe('picking the next unit (spec 40, 41, 42)', () => {
     );
     expect(decision.start).toEqual(started('U2'));
     expect(decision.planRun).toMatchObject({ state: 'running', waitingFor: [] });
+  });
+
+  it('starts no unit from statuses read before the last unit run ended', () => {
+    const decision = advancePlanRun(
+      planRun({ units: [started('U1')] }),
+      input({ unitRunState: 'done', unitsReadAt: T0, lastUnitEndedAt: T1 }),
+    );
+    expect(decision.start).toBeUndefined();
+    expect(decision.planRun).toMatchObject({
+      state: 'waiting',
+      units: [started('U1', 'done')],
+      waitingFor: ['Reading the plan from its host before U3 starts'],
+    });
+    const unread = advancePlanRun(
+      planRun({ units: [started('U1')] }),
+      input({ unitRunState: 'done', lastUnitEndedAt: T1 }),
+    );
+    expect(unread.start).toBeUndefined();
+    const fresh = advancePlanRun(decision.planRun, input({ unitsReadAt: T1, lastUnitEndedAt: T1 }));
+    expect(fresh.start).toEqual(started('U3'));
   });
 
   it('skips a unit that a pull request claims', () => {
