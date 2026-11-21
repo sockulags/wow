@@ -106,7 +106,7 @@ interface TicketKey {
 
 // A request limit belongs to the token that used it up, so another project's token on the same
 // host goes on being asked. Only a digest of the token is kept, and only in memory.
-const pauseKey = (kind: HostKind, name: string, token: string): string =>
+const pauseKey = (kind: HostKind | 'jira' | 'confluence', name: string, token: string): string =>
   `${kind}:${name}:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
 
 // A browse link is on the Jira site when it starts with the site's address.
@@ -873,10 +873,10 @@ export class HostPoller implements BackgroundService {
       this.#storePages(projectId, host.name, outcomes);
       return;
     }
-    const leaveAlone = `confluence:${host.name}`;
+    const config = host.confluence.config;
+    const leaveAlone = pauseKey('confluence', host.name, config?.token ?? '');
     const until = this.#leaveAlone.get(leaveAlone);
     const waiting = !asked && until !== undefined && until > this.#clock();
-    const config = host.confluence.config;
     const adapter: PageAdapter | undefined = config
       ? (this.#deps.confluenceAdapter ?? createConfluenceHost)(config, host.name, {
           timeoutMs: settings.get('trackers.requestTimeoutMs'),
