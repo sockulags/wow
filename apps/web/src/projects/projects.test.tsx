@@ -292,7 +292,9 @@ describe('project palette commands', () => {
     );
     await user.keyboard('{Enter}');
     expect(await screen.findByRole('alertdialog', { name: 'Remove wow?' })).toBeTruthy();
-  });
+    // It walks the whole app through the palette four times: about 1 s here, close to the
+    // default 5 s on the Windows runner.
+  }, 15_000);
 });
 
 describe('choosing the folder', () => {

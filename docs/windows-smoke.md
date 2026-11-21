@@ -393,6 +393,27 @@ on (gitlab.com or your own), a real Claude Code sign-in, and nothing secret in t
 - [ ] Remove the assistant's provider instance in Settings → Providers (or sign it out and test
       it): Assistant says so and shows "Connect an agent"; the calendar and chat still work.
 
-## 11. Uninstall
+## 11. Chief of staff
+
+- [ ] In Settings → Assistant turn on "Let the assistant act under its permissions" and add
+      **Start threads** for one real Git project. In the Assistant ask it to fix something small
+      there: a thread starts with "Started by the assistant", in its own working copy (Details shows
+      the branch); your project folder is untouched.
+- [ ] Let the thread end its turn: the assistant gets "From wow: …" and reports back in its
+      conversation. An approval the agent asks for appears in **Needs you** with a brief, and the
+      assistant does not answer it.
+- [ ] Turn **Briefings** on. With a real Outlook meeting of at least 30 minutes in your calendar,
+      wait until it ends: a briefing appears above Needs you, and its notification comes only
+      after the meeting, not during it.
+- [ ] Put a card with a workflow at a time, then move an Outlook meeting over it: the assistant
+      proposes moving the card (or moves it, with **Move cards**).
+- [ ] Press Ctrl+Alt+Space over another program: the small prompt opens on top; ask "what waits
+      for me?" and see the answer stream; Escape hides it; "Open in wow" shows the conversation.
+      Set the key to one another program holds (for example the one of a screen recorder) and see
+      the notification that says so.
+- [ ] Tell the assistant "remember: never plan anything before nine": the note is under Settings
+      → Assistant → Memory, and a card it plans afterwards respects it.
+
+## 12. Uninstall
 
 - [ ] Uninstall from Settings → Apps. `%USERPROFILE%\.wow` stays (your data).

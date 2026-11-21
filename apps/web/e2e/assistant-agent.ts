@@ -4,7 +4,7 @@ import type {
   ProviderEvent,
   ServerCommand,
 } from '@wow/contracts';
-import { e2eProjectId, e2eProviderInstanceId } from './env';
+import { e2eAssistantGateWorkflowId, e2eProjectId, e2eProviderInstanceId } from './env';
 
 // The mock agent of the assistant's turns (e2e/assistant.spec.ts). An ordinary thread goes to
 // the chat tests' script; a turn that carries wow's toolset calls wow's tools in process, the
@@ -71,6 +71,45 @@ const reviewStep = (id: string, model: string, effort: string) => ({
 });
 
 function scenario(text: string, trackerUrl: string): Scenario {
+  // Chief of staff: a note the person states (spec 29), and a thread started for project work
+  // under Start threads (spec 9).
+  const remember = /^remember: (.+)$/i.exec(text);
+  if (remember?.[1]) {
+    return {
+      steps: [{ tool: 'remember', args: { text: remember[1] } }],
+      answer: 'I keep that in mind; it is under Memory in Settings → Assistant.',
+    };
+  }
+  if (/fix the kettle fixture in demo/i.test(text)) {
+    return {
+      steps: [
+        { tool: 'read_permissions', args: {} },
+        {
+          tool: 'start_thread',
+          args: {
+            projectId: e2eProjectId,
+            providerInstanceId: e2eProviderInstanceId,
+            model: 'mock-model',
+            effort: 'high',
+            title: 'Fix the kettle fixture',
+            message: 'The kettle fixture fails. Find out why, fix it, and report what you changed.',
+          },
+        },
+      ],
+      answer: 'I started "Fix the kettle fixture" in Demo and will tell you how it goes.',
+    };
+  }
+  if (/start the kettle check/i.test(text)) {
+    return {
+      steps: [
+        {
+          tool: 'start_run',
+          args: { workflowId: e2eAssistantGateWorkflowId, projectId: e2eProjectId },
+        },
+      ],
+      answer: 'Starting Kettle check waits for your yes.',
+    };
+  }
   // wow's own notes to the assistant (a thread it follows, a brief, a briefing) get a plain answer.
   if (text.startsWith('From wow:')) return { steps: [], answer: 'Noted.' };
   // Agent workbench spec 41: the rule is only proposed; wow stores it on the user's yes.

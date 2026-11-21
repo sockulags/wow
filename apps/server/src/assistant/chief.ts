@@ -246,7 +246,11 @@ export class Chief {
           .from(t.threads)
           .where(eq(t.threads.id, assistantThreadId))
           .get();
-        if (opened && away >= deps.settings.get('assistant.briefAfterIdleMinutes') * minute) {
+        if (
+          opened &&
+          deps.settings.get('assistant.briefings') &&
+          away >= deps.settings.get('assistant.briefAfterIdleMinutes') * minute
+        ) {
           queueMicrotask(() => this.#brief('back', event.payload.at));
         }
       }
