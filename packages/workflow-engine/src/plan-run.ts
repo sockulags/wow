@@ -59,6 +59,11 @@ export interface PlanRunAdvance {
   // no such run (any more).
   readonly unitRunState: WorkflowRunState | undefined;
   readonly onFailure: PlanRunOnFailure;
+  // When the plan's host was last read, and when the run of the plan run's last unit ended.
+  // Statuses read before that end can show ready a unit someone else claimed meanwhile, so no
+  // unit starts from them (review loop spec 42).
+  readonly unitsReadAt: string | null;
+  readonly lastUnitEndedAt: string | null;
   // The id the next unit's run gets.
   readonly runIdFor: (unitKey: string) => string;
 }
@@ -156,6 +161,21 @@ export function advancePlanRun(planRun: PlanRun, input: PlanRunAdvance): PlanRun
   // here and was left (spec 43).
   const before = new Set(units.map((unit) => unit.unitKey));
   const next = input.units.find((unit) => unit.status === 'ready' && !before.has(unit.key));
+  const stale =
+    input.lastUnitEndedAt !== null &&
+    (input.unitsReadAt === null ||
+      Date.parse(input.unitsReadAt) < Date.parse(input.lastUnitEndedAt));
+  if (next && stale) {
+    return {
+      planRun: {
+        ...planRun,
+        state: 'waiting',
+        units,
+        waitingFor: [`Reading the plan from its host before ${next.key} starts`],
+      },
+      start: undefined,
+    };
+  }
   if (next) {
     const start: PlanRunUnit = {
       unitKey: next.key,
