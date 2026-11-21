@@ -18,7 +18,9 @@ export type CodexErrorInfo =
   | 'serverOverloaded'
   | 'modelNotFound'
   | 'policyCapacityUnavailable'
+  | 'inferenceHookDenied'
   | 'cyberPolicy'
+  | 'bioPolicy'
   | 'misalignmentPolicyViolation'
   | 'tooManyDenials'
   | { httpConnectionFailed: { httpStatusCode: number | null } }
