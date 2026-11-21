@@ -3,6 +3,7 @@ import type {
   DomainEvent,
   GoBack,
   ProviderEvent,
+  ProviderKind,
   SettingsChangeItemPayload,
   QueuedMessage,
   SentImage,
@@ -543,6 +544,31 @@ function requireThread(read: ReadModel, threadId: string) {
   return thread;
 }
 
+// Steps a setup file applied where no instance of their kind was here hold the kind as their
+// instance id (see `awaitedProviderKind`). The first instance of that kind takes them over, so
+// the workflow runs without the user choosing it step by step.
+function awaitingSteps(
+  kind: ProviderKind,
+  providerInstanceId: string,
+  read: ReadModel,
+  now: string,
+): DomainEvent[] {
+  if (read.providerInstanceExists(kind)) return [];
+  return read.workflows().flatMap((workflow): DomainEvent[] => {
+    if (!workflow.steps.some((step) => step.providerInstanceId === kind)) return [];
+    const steps = workflow.steps.map((step) =>
+      step.providerInstanceId === kind ? { ...step, providerInstanceId } : step,
+    );
+    return [
+      {
+        kind: 'workflow.updated',
+        aggregate: workflow.id,
+        payload: { workflowId: workflow.id, changes: { steps, updatedAt: now } },
+      },
+    ];
+  });
+}
+
 export function decideThread(
   command: ThreadCommand,
   read: ReadModel,
@@ -580,6 +606,7 @@ export function decideThread(
             updateRun: null,
           },
         },
+        ...awaitingSteps(command.kind, command.providerInstanceId, read, now),
       ];
     }
     case 'providerInstance.recordTest': {

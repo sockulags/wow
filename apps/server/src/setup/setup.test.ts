@@ -698,6 +698,24 @@ describe('a step whose provider kind has no instance here', () => {
       'Step check-work has no Codex instance here yet: choose one for it in the workflow Second opinion.',
     );
   });
+
+  it('is taken over by the first instance of its kind made here', () => {
+    apply(other, file(codexBody));
+    on(other, {
+      type: 'providerInstance.create',
+      providerInstanceId: 'codex-home',
+      kind: 'codex',
+      name: 'Codex at home',
+      binaryPath: 'codex',
+      configDir: '',
+      env: {},
+      launchArgs: [],
+    });
+    expect(workflowOf(other, 'second')?.steps[0]).toMatchObject({
+      skillName: 'check-work',
+      providerInstanceId: 'codex-home',
+    });
+  });
 });
 
 describe('the size of a setup file', () => {
