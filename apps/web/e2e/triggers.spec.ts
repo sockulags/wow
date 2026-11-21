@@ -136,7 +136,10 @@ const useServer = (page: Page) =>
 // The day view that shows the card.
 async function openDay(page: Page, start: Date): Promise<void> {
   await useServer(page);
-  await page.goto(`/calendar?view=day&date=${start.toLocaleDateString('sv-SE')}`);
+  const day = start.toLocaleDateString('sv-SE');
+  await page.goto(`/calendar?view=day&date=${day}`);
+  // The app is drawn, so its keys are listening.
+  await expect(page.getByTestId(`day-${day}`)).toBeVisible();
 }
 
 const cardBlock = (page: Page, title: string) =>

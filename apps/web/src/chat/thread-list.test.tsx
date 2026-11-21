@@ -5,7 +5,7 @@ import {
   type Connection,
   type ConnectionState,
 } from '@wow/client-runtime';
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand';
@@ -49,14 +49,21 @@ interface Fake {
   readonly runtime: Runtime;
   readonly request: ReturnType<typeof vi.fn<(method: string, params: unknown) => Promise<unknown>>>;
   push(topic: string, rows: unknown[]): void;
+  // Resolves when the app dispatches the next command of this type: the test waits on the event,
+  // not on a poll.
+  next(type: string): Promise<unknown>;
 }
 
 function fake(topics: Record<string, unknown[]>, searchHits: readonly string[] = []): Fake {
   const listeners = new Map<string, ((data: unknown) => void)[]>();
+  const waiting: { type: string; resolve: (command: unknown) => void }[] = [];
   const request = vi.fn<(method: string, params: unknown) => Promise<unknown>>(
     (method: string, params: unknown) => {
       if (method === 'threads.search') return Promise.resolve({ threadIds: searchHits });
       if (method === 'dispatch') {
+        const { command } = params as { command: { type: string } };
+        const at = waiting.findIndex((entry) => entry.type === command.type);
+        if (at !== -1) waiting.splice(at, 1)[0]?.resolve(command);
         return Promise.resolve({
           commandId: (params as { commandId: string }).commandId,
           seqs: [],
@@ -79,6 +86,7 @@ function fake(topics: Record<string, unknown[]>, searchHits: readonly string[] =
   };
   return {
     request,
+    next: (type) => new Promise((resolve) => waiting.push({ type, resolve })),
     push(topic, rows) {
       topics[topic] = rows;
       act(() => {
@@ -106,6 +114,34 @@ const rowTitles = () =>
     .queryAllByTestId('thread-row-title')
     .map((element) => element.textContent);
 
+// The rows once the list has drawn them.
+const listed = async () =>
+  (
+    await within(await screen.findByRole('navigation', { name: 'Threads' })).findAllByTestId(
+      'thread-row-title',
+    )
+  ).map((element) => element.textContent);
+
+// Resolves once the router has settled on `path`.
+const settledAt = (
+  router: {
+    state: { location: { pathname: string } };
+    subscribe: (event: 'onResolved', listener: () => void) => () => void;
+  },
+  path: string,
+) =>
+  new Promise<void>((resolve) => {
+    if (router.state.location.pathname === path) {
+      resolve();
+      return;
+    }
+    const stop = router.subscribe('onResolved', () => {
+      if (router.state.location.pathname !== path) return;
+      stop();
+      resolve();
+    });
+  });
+
 afterEach(() => {
   threadListStore.setState({ filter: '', projectId: undefined, renaming: undefined });
 });
@@ -121,7 +157,7 @@ describe('the thread list (spec 66, 69, 70)', () => {
     });
     await renderApp('/chat', runtime);
     const user = userEvent.setup();
-    await waitFor(() => expect(rowTitles()).toHaveLength(2));
+    expect(await listed()).toHaveLength(2);
     const chips = screen.getByRole('radiogroup', { name: 'Project' });
     await user.click(within(chips).getByRole('radio', { name: 'Tea' }));
     expect(rowTitles()).toEqual(['Steep the leaves']);
@@ -137,7 +173,7 @@ describe('the thread list (spec 66, 69, 70)', () => {
     });
     await renderApp('/chat', runtime);
     const user = userEvent.setup();
-    await waitFor(() => expect(rowTitles()).toHaveLength(2));
+    expect(await listed()).toHaveLength(2);
     const chips = screen.getByRole('radiogroup', { name: 'Project' });
     await user.click(within(chips).getByRole('radio', { name: 'Tea' }));
     expect(rowTitles()).toEqual(['Steep the leaves']);
@@ -154,28 +190,31 @@ describe('the thread list (spec 66, 69, 70)', () => {
       threads: [thread('t1', 'Water the plants', { projectId: 'p-garden' })],
     });
     await renderApp('/chat', runtime);
-    await waitFor(() => expect(rowTitles()).toHaveLength(1));
+    expect(await listed()).toHaveLength(1);
     expect(screen.queryByRole('radiogroup', { name: 'Project' })).toBeNull();
   });
 
   it('reads a thread marked unread when it is opened again', async () => {
     const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
     const seen = thread('t1', 'Kettle timer');
-    const { runtime, request, push } = fake({ projects: [], threads: [seen] });
+    const { runtime, request, push, next } = fake({ projects: [], threads: [seen] });
     const { router } = await renderApp('/chat/t1', runtime);
     const user = userEvent.setup();
-    await waitFor(() => expect(rowTitles()).toEqual(['Kettle timer']));
+    expect(await listed()).toEqual(['Kettle timer']);
     const markSeen = () => sentCommands(request).filter((c) => c.type === 'thread.markSeen');
     // Mark unread leaves the thread, so it stays unread in the list.
     act(() => runtime.layout.setState({ paletteOpen: true }));
     await user.type(await screen.findByPlaceholderText('Type a command or search…'), 'Mark unread');
+    const left = settledAt(router, '/chat');
     await user.click(await screen.findByRole('option', { name: /Mark unread/ }));
-    await waitFor(() => expect(router.state.location.pathname).toBe('/chat'));
+    await left;
     push('threads', [{ ...seen, seen: false }]);
     expect(markSeen()).toEqual([]);
     expect(sentCommands(request)).toContainEqual({ type: 'thread.markUnread', threadId: 't1' });
+    const read = next('thread.markSeen');
     await user.click(screen.getByRole('link', { name: /Kettle timer/ }));
-    await waitFor(() => expect(markSeen()).toEqual([{ type: 'thread.markSeen', threadId: 't1' }]));
+    expect(await read).toEqual({ type: 'thread.markSeen', threadId: 't1' });
+    expect(markSeen()).toHaveLength(1);
     hasFocus.mockRestore();
   });
 
@@ -185,18 +224,21 @@ describe('the thread list (spec 66, 69, 70)', () => {
       state: 'needs_you',
       updatedAt: '2026-11-02T08:05:00.000Z',
     });
-    const { runtime, request, push } = fake({ projects: [], threads: [waiting] });
+    const { runtime, request, push, next } = fake({ projects: [], threads: [waiting] });
     await renderApp('/chat/t1', runtime);
-    await waitFor(() => expect(rowTitles()).toEqual(['Kettle timer']));
+    expect(await listed()).toEqual(['Kettle timer']);
     const markSeen = () => sentCommands(request).filter((c) => c.type === 'thread.markSeen');
     expect(markSeen()).toEqual([]);
     // The first request was read on screen; the second arrives while it still needs you, so
     // the server stores it unread and its updatedAt does not move.
+    const first = next('thread.markSeen');
     push('threads', [{ ...waiting, seen: false }]);
-    await waitFor(() => expect(markSeen()).toEqual([{ type: 'thread.markSeen', threadId: 't1' }]));
+    expect(await first).toEqual({ type: 'thread.markSeen', threadId: 't1' });
+    const second = next('thread.markSeen');
     push('threads', [{ ...waiting, seen: true }]);
     push('threads', [{ ...waiting, seen: false }]);
-    await waitFor(() => expect(markSeen()).toHaveLength(2));
+    await second;
+    expect(markSeen()).toHaveLength(2);
     hasFocus.mockRestore();
   });
 
