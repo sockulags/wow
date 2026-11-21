@@ -1462,7 +1462,7 @@ for project work ("fix this test") and it offers to open a new thread in Chat wi
 By default the assistant asks before it starts a run or puts a card with a workflow on the
 calendar that starts within minutes. If you want it to just do such things, turn on **Let the
 assistant act under its permissions** (`assistant.delegation`) in Settings → Assistant and add
-permissions under **Permissions**:
+permissions under **Permissions** (`assistant.permissions`):
 
 - **Plan runs**: cards with the workflows you pick, in the projects you pick, also ones that start
   soon, inside your work hours.
