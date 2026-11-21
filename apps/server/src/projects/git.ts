@@ -1681,6 +1681,19 @@ export async function switchToNewBranch(
   return outcomeOf(await runGit(folder, ['switch', '--quiet', '-c', branch], options));
 }
 
+// Undoes `switchToNewBranch` after a refused commit: the folder goes back to no branch at the
+// same commit and the new branch, which holds nothing of its own, is deleted. The files and the
+// index stay as they are.
+export async function leaveNewBranch(
+  folder: string,
+  branch: string,
+  options: GitRunOptions,
+): Promise<GitOutcome> {
+  const detached = outcomeOf(await runGit(folder, ['switch', '--quiet', '--detach'], options));
+  if (!detached.ok) return detached;
+  return outcomeOf(await runGit(folder, ['branch', '--quiet', '-D', branch], options));
+}
+
 // What git writes when it would have to ask for a password, a passphrase or a host key. Newer
 // Git says "unable to get password from user" where older says "terminal prompts disabled".
 // "Could not read from remote repository" alone is a missing repository or a dropped connection;

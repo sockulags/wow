@@ -1,5 +1,7 @@
 import {
   ApprovalItemPayload,
+  ChangeRequestOpenedItemPayload,
+  CommittedItemPayload,
   CompactionItemPayload,
   ErrorItemPayload,
   QuestionItemPayload,
@@ -15,6 +17,7 @@ import {
   type Turn,
 } from '@wow/contracts';
 import { decisionLabels } from './approval-card';
+import { changeRequestLineText, committedText } from './git-lines';
 import { compactionText, settingsChangeText } from './items';
 import { startedLabels } from './plan-card';
 import { taskProgress } from './task-pin';
@@ -357,6 +360,16 @@ export function conversationMarkdown(input: ConversationExport): string {
       case 'compaction': {
         const parsed = CompactionItemPayload.safeParse(item.payload);
         if (parsed.success) line(compactionText(parsed.data));
+        break;
+      }
+      case 'committed': {
+        const parsed = CommittedItemPayload.safeParse(item.payload);
+        if (parsed.success) line(committedText(parsed.data).replace('\n', ' · '));
+        break;
+      }
+      case 'change_request_opened': {
+        const parsed = ChangeRequestOpenedItemPayload.safeParse(item.payload);
+        if (parsed.success) line(`${changeRequestLineText(parsed.data)} · ${parsed.data.url}`);
         break;
       }
       case 'usage':

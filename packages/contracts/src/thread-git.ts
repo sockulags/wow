@@ -21,6 +21,9 @@ export const CommitFile = z.object({
   removed: z.number().int().nonnegative().nullable(),
   inThread: z.boolean(),
   staged: z.boolean(),
+  // What the file held when the dialog read it, as a digest; Commit sends it back, and a file
+  // that changed since is refused rather than committed unseen.
+  version: z.string().nullable().optional(),
 });
 export type CommitFile = z.infer<typeof CommitFile>;
 
@@ -63,6 +66,8 @@ export const CommitParams = z.object({
   message: z.string(),
   // For a folder on no branch (spec 30): the branch made where the folder is.
   newBranch: z.string().min(1).max(250).optional(),
+  // Each ticked file's `version` from the plan the dialog showed.
+  versions: z.record(RelativePath, z.string().nullable()).optional(),
 });
 export type CommitParams = z.infer<typeof CommitParams>;
 
@@ -86,6 +91,8 @@ export const CommittedItemPayload = z.object({
   files: z.array(RelativePath),
   branch: z.string().nullable(),
   at: Timestamp,
+  // A hook that stopped after the commit was made: the commit stands, and this says so.
+  note: z.string().optional(),
 });
 export type CommittedItemPayload = z.infer<typeof CommittedItemPayload>;
 

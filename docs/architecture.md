@@ -3627,7 +3627,8 @@ and exported is what the conversation shows. Searching the page alone would miss
   <time>", then "You · 20:41" and "<instance name> · 20:42" headings (the turn's start, and its
   end for the agent) with each message as written (the `@path` line kept, images as
   `[image: <name>]`, skills as "Skills: a, b") and one list line per tool call, approval, plan,
-  question, error, divider, compaction, task list update and stopped turn, worded as the rows
+  question, error, divider, compaction, task list update, commit, opened request (with its
+  address) and stopped turn, worded as the rows
   (`toolLine`, `approvalLine`, `questionLine`, `taskLine`, `settingsChangeText`,
   `compactionText`): "$ pnpm test · exit 1 · 4.2 s", "Allowed once: $ pnpm test", "Denied: $ rm
   -rf build · note: keep the build". A row's words (and the title) go on one line: a line break
@@ -3835,13 +3836,18 @@ keep the last `chat.commitOutputMaxBytes` of their output and are stopped after
 `chat.commitTimeoutMs` / `chat.pushTimeoutMs`. A push that would ask for a password, passphrase or
 host key fails and says to push once in a terminal; "could not read from remote repository" alone
 is not taken for that. A commit that git reports as failed after HEAD moved (a post-commit hook
-that did not finish) is reported as made, with a note, and the index is left as it is; the new
-files it staged are taken out again only when HEAD did not move. wow never pushes the branch the
+that did not finish) is reported as made, with a note, and the index is left as it is; the note
+is kept on the `committed` item (`CommittedItemPayload.note`) and shown under its line. The new
+files it staged are taken out again only when HEAD did not move. Each `CommitFile` carries a
+`version` (`hashOf`, the digest the run Changes use, bounded by `diff.maxHashBytes`); Commit sends
+the ticked files' versions back and refuses a file whose content changed since. A refused commit
+from no branch switches the folder back to no branch (`leaveNewBranch`) and deletes the branch it
+made, which holds nothing. wow never pushes the branch the
 remote treats as its default, whatever the target. The host token is sent only in the host
 request's header; it is in no git argument or environment. Only one commit or push per thread
 runs at a time. The assistant has no tool for any of it (`thread.committed` and
 `thread.changeRequestOpened` are server-only), and wow never amends, merges, rebases, pulls,
-forces or deletes a branch.
+forces or deletes a branch, except the empty one it made for a commit that was then refused.
 
 ### What the session can use
 

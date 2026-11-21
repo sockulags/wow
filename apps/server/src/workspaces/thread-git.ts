@@ -56,6 +56,7 @@ import {
   readSnapshotTree,
   readStatusFiles,
   readUpstreamRemote,
+  leaveNewBranch,
   switchToNewBranch,
   type GitRunOptions,
   type HookGitOptions,
@@ -64,7 +65,7 @@ import {
 } from '../projects/git.js';
 import type { SettingsService } from '../settings/service.js';
 import type { LinkHosts, ProjectGitHubHost, ProjectGitLabHost } from '../trackers/service.js';
-import { changesOptions, readThreadDiff } from '../workflows/changes.js';
+import { changesOptions, hashOf, readThreadDiff } from '../workflows/changes.js';
 
 // Commit and pull request from a chat thread's Changes (thread work spec 27 to 36). Everything
 // here runs on the user's click in the commit and pull request dialogs: the RPC handlers are its
@@ -321,6 +322,7 @@ export class ThreadGit {
         removed: entry.untracked ? (lines === null ? null : 0) : (count?.removed ?? null),
         inThread: own.has(entry.path) && !(changedAfter?.has(entry.path) ?? false),
         staged: !entry.untracked && entry.index !== '.',
+        version: await hashOf(thread.cwd, entry.path, options.maxHashBytes),
       });
     }
     const plan: CommitPlan = {
@@ -383,6 +385,16 @@ export class ThreadGit {
       const entry = byPath.get(file);
       if (!entry) throw commitRefused(`${file} has no change to commit any more.`);
       if (entry.unmerged) throw commitRefused(`${file} has a conflict Git has not resolved.`);
+      const seen =
+        params.versions && Object.hasOwn(params.versions, file) ? params.versions[file] : undefined;
+      if (
+        seen !== undefined &&
+        seen !== (await hashOf(thread.cwd, file, changesOptions(this.#deps.settings).maxHashBytes))
+      ) {
+        throw commitRefused(
+          `${file} changed after the dialog read it. Open Commit again to see it as it is now.`,
+        );
+      }
       chosen.push(entry);
     }
     let branch = plan.branch;
@@ -412,9 +424,13 @@ export class ThreadGit {
       this.#hookGit(this.#deps.settings.get('chat.commitTimeoutMs')),
     );
     if (!committed.ok) {
-      // The switch is not undone: the user is told where the folder is.
+      // The folder goes back to where it was; only when that fails is the user told where it is.
+      const back =
+        switchedTo === null ? undefined : await leaveNewBranch(thread.cwd, switchedTo, git);
       const moved =
-        switchedTo === null ? '' : ` The folder is now on the new branch ${switchedTo}.`;
+        switchedTo === null || back?.ok
+          ? ''
+          : ` The folder is now on the new branch ${switchedTo}.`;
       throw commitRefused(
         `${
           plan.hooks.length > 0
@@ -440,6 +456,7 @@ export class ThreadGit {
         files: chosen.map((entry) => entry.path),
         branch,
         at: this.#clock().toISOString(),
+        ...('note' in committed ? { note: committed.note } : {}),
       },
     });
     return result;

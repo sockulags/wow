@@ -70,6 +70,23 @@ const read = (id: string, path: string) =>
   });
 
 describe('what find matches (spec 2)', () => {
+  it('matches the lines of a commit, its hook note and an opened request', () => {
+    const pieces = conversationText(
+      source([
+        item('c', 'committed', {
+          sha: '4e1d2a0aa',
+          subject: 'Ring the bell twice',
+          files: ['bell.ts'],
+          branch: 'main',
+          at: '2026-11-12T20:41:00.000Z',
+          note: 'The post-commit hook did not finish.',
+        }),
+      ]),
+    );
+    expect(found(pieces, 'bell twice').map((match) => match.itemId)).toEqual(['c']);
+    expect(found(pieces, 'hook did not finish').map((match) => match.itemId)).toEqual(['c']);
+  });
+
   it('matches a message as rendered, not its markdown', () => {
     expect(
       markdownText('The **kettle** and `the pot`\n\n- one\n- [two](https://example.org)'),

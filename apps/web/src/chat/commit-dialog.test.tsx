@@ -11,9 +11,10 @@ import userEvent from '@testing-library/user-event';
 import { createStore } from 'zustand';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLayoutStore, RuntimeProvider } from '@/app/runtime';
-import { commitStore, committedLineText } from './commit-dialog';
+import { commitStore } from './commit-dialog';
+import { changeRequestLineText, committedLineText } from './git-lines';
 import { createDraftStore } from './draft';
-import { changeRequestLineText, pullRequestStore } from './pull-request-dialog';
+import { pullRequestStore } from './pull-request-dialog';
 import { ThreadChanges } from './thread-changes';
 
 // Commit and pull request from a chat thread's Changes (thread work spec 27 to 34): the dialogs
@@ -54,6 +55,7 @@ const commitPlan = (overrides: Partial<CommitPlan> = {}): CommitPlan => ({
       removed: 1,
       inThread: true,
       staged: false,
+      version: 'v-bell',
     },
   ],
   omitted: 0,
@@ -250,8 +252,18 @@ describe('the commit dialog (spec 27 to 30)', () => {
     await act(settled);
     expect(screen.queryByTestId('commit-dialog')).toBeNull();
     expect(asked('threads.commit')).toEqual([
-      { threadId: 'bell', files: ['src/bell.ts'], message: 'Ring the bell twice' },
-      { threadId: 'bell', files: ['src/bell.ts'], message: 'Ring the bell twice' },
+      {
+        threadId: 'bell',
+        files: ['src/bell.ts'],
+        message: 'Ring the bell twice',
+        versions: { 'src/bell.ts': 'v-bell' },
+      },
+      {
+        threadId: 'bell',
+        files: ['src/bell.ts'],
+        message: 'Ring the bell twice',
+        versions: { 'src/bell.ts': 'v-bell' },
+      },
     ]);
   });
 
@@ -276,7 +288,13 @@ describe('the commit dialog (spec 27 to 30)', () => {
     await user.type(within(dialog).getByRole('textbox', { name: 'New branch' }), 'wow/ring');
     await user.click(commit);
     expect(asked('threads.commit')).toEqual([
-      { threadId: 'bell', files: ['src/bell.ts'], message: 'Ring', newBranch: 'wow/ring' },
+      {
+        threadId: 'bell',
+        files: ['src/bell.ts'],
+        message: 'Ring',
+        newBranch: 'wow/ring',
+        versions: { 'src/bell.ts': 'v-bell' },
+      },
     ]);
   });
 });

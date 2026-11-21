@@ -27,6 +27,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { isBinding } from '@/panel/editor';
 import { fileStatusLabels, fileStatusLetters } from '@/workflows/changes';
 import { errorMessage } from './data';
+import { committedLineText } from './git-lines';
 import { threadChangesStore } from './thread-changes';
 
 // Commit from a chat thread's Changes (thread work spec 27 to 30): the files the folder has
@@ -154,6 +155,11 @@ export async function confirmCommit(connection: Connection | undefined): Promise
         threadId,
         files: [...question.ticked],
         message: question.message,
+        versions: Object.fromEntries(
+          question.plan.files
+            .filter((file) => question.ticked.includes(file.path) && file.version !== undefined)
+            .map((file) => [file.path, file.version ?? null]),
+        ),
         ...(question.plan.branch === null && question.newBranch.trim() !== ''
           ? { newBranch: question.newBranch.trim() }
           : {}),
@@ -357,24 +363,25 @@ export function CommitDialog({ threadId }: { readonly threadId: string }) {
   );
 }
 
-// "Committed 3 files · 4e1d2a0 Ring the bell twice" (spec 29).
-export function committedLineText(payload: CommittedItemPayload): string {
-  const count = payload.files.length;
-  return `Committed ${count} ${count === 1 ? 'file' : 'files'} · ${payload.sha.slice(0, 7)} ${payload.subject}`;
-}
-
 export function CommittedLine({ payload }: { readonly payload: CommittedItemPayload }) {
   return (
-    <div
-      data-testid="committed-line"
-      className="flex items-center gap-2 text-2xs text-muted-foreground"
-    >
-      <span aria-hidden className="h-px flex-1 bg-border" />
-      <span className="flex min-w-0 items-center gap-1.5">
-        <GitCommitHorizontalIcon aria-hidden className="size-3 shrink-0" />
-        <span className="truncate">{committedLineText(payload)}</span>
-      </span>
-      <span aria-hidden className="h-px flex-1 bg-border" />
+    <div className="flex flex-col gap-0.5">
+      <div
+        data-testid="committed-line"
+        className="flex items-center gap-2 text-2xs text-muted-foreground"
+      >
+        <span aria-hidden className="h-px flex-1 bg-border" />
+        <span className="flex min-w-0 items-center gap-1.5">
+          <GitCommitHorizontalIcon aria-hidden className="size-3 shrink-0" />
+          <span className="truncate">{committedLineText(payload)}</span>
+        </span>
+        <span aria-hidden className="h-px flex-1 bg-border" />
+      </div>
+      {payload.note && (
+        <p data-testid="committed-note" className="text-center text-2xs text-warning">
+          {payload.note}
+        </p>
+      )}
     </div>
   );
 }

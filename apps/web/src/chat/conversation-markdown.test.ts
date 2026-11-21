@@ -226,6 +226,45 @@ describe('the exchanges (spec 8)', () => {
     );
   });
 
+  it('writes the commit and pull request lines, with a hook note and the address', () => {
+    const markdown = conversationMarkdown(
+      base({
+        turns: [turn(0)],
+        items: [
+          item('turn-0', 'user', { text: 'Ship it' }),
+          item('turn-0', 'committed', {
+            sha: '4e1d2a0aa',
+            subject: 'Ring the bell twice',
+            files: ['bell.ts'],
+            branch: 'main',
+            at: '2026-11-12T20:41:00.000Z',
+            note: 'The post-commit hook did not finish.',
+          }),
+          item('turn-0', 'change_request_opened', {
+            ref: {
+              host: 'github',
+              kind: 'changeRequest',
+              site: 'https://github.com',
+              path: 'acme/tea',
+              id: '14',
+              url: 'https://github.com/acme/tea/pull/14',
+            },
+            number: 14,
+            title: 'Ring the bell twice',
+            url: 'https://github.com/acme/tea/pull/14',
+            at: '2026-11-12T20:42:00.000Z',
+          }),
+        ],
+      }),
+    );
+    expect(markdown).toContain(
+      '- Committed 1 file · 4e1d2a0 Ring the bell twice · The post-commit hook did not finish.',
+    );
+    expect(markdown).toContain(
+      '- Opened pull request #14 · Ring the bell twice · https://github.com/acme/tea/pull/14',
+    );
+  });
+
   it('writes an answer to questions as the conversation does', () => {
     const markdown = conversationMarkdown(
       base({
