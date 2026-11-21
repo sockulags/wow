@@ -35,6 +35,7 @@ import { diagnosisReaders } from './diagnosis.js';
 import { guideReaders } from './guides.js';
 import { memoryReaders } from './memory.js';
 import { modelReaders } from './models.js';
+import { delegationTools } from './delegation-tools.js';
 import { outputReaders } from './outputs.js';
 import { permissionReaders } from './permission-readers.js';
 
@@ -598,7 +599,10 @@ describe('read tools', () => {
     const names = server.assistant.tools.list().map((tool) => tool.name);
     expect(
       names.filter(
-        (name) => /thread|message|file|content|chat/i.test(name) && !(name in outputReaders),
+        (name) =>
+          /thread|message|file|content|chat/i.test(name) &&
+          !(name in outputReaders) &&
+          !(name in delegationTools),
       ),
     ).toEqual([]);
     for (const name of [

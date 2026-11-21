@@ -565,7 +565,11 @@ export function ChatQuestions({
     const row = questions.find((entry) => entry.id === payload.questionId);
     const status: QuestionStatus =
       row && row.answer !== null
-        ? { kind: 'answered', reply: payload.reply ?? row.answer }
+        ? {
+            kind: 'answered',
+            reply: payload.reply ?? row.answer,
+            ...(row.answeredBecause ? { because: row.answeredBecause } : {}),
+          }
         : row && !turnEnded
           ? { kind: 'open' }
           : { kind: 'closed' };

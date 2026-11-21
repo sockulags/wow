@@ -152,6 +152,10 @@ export const Thread = z.object({
   // on the branch `branch` holds, which is also the thread's `cwd`. A fork shares its origin's.
   // Null or absent for a thread in its folder, as every thread stored before is (spec 18).
   workingCopy: WorkingCopy.nullable().optional(),
+  // A thread the assistant started (chief of staff spec 10), and how many turns the assistant has
+  // had to follow it (spec 11). Null or absent for every other thread.
+  startedBy: z.enum(['assistant']).nullable().optional(),
+  followTurns: z.number().int().nonnegative().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -395,6 +399,9 @@ export const Question = z.object({
   request: z.unknown(),
   answer: z.string().nullable(),
   answeredAt: Timestamp.nullable(),
+  // The assistant answered it from the user's words (chief of staff spec 12): what it quoted.
+  // Null or absent for a question the user answered.
+  answeredBecause: z.string().nullable().optional(),
 });
 export type Question = z.infer<typeof Question>;
 

@@ -26,7 +26,7 @@ export type Coverage =
   // A permission would cover it but may not be used now; the proposal says why.
   | { readonly held: string };
 
-const settingValue = (key: string, read: ReadModel, context: DecideContext): unknown => {
+export const settingValue = (key: string, read: ReadModel, context: DecideContext): unknown => {
   const definition: SettingDefinition | undefined = Object.hasOwn(context.registry, key)
     ? context.registry[key]
     : undefined;
@@ -128,14 +128,23 @@ export function coverage(
   read: ReadModel,
   context: DecideContext,
 ): Coverage | undefined {
-  if (settingValue('assistant.delegation', read, context) !== true) return undefined;
   const want = wanted(command, read);
-  if (!want) return undefined;
+  return want ? permitFor(want, read, context) : undefined;
+}
+
+// The permission of this kind that lets the assistant act now for this project (and workflow,
+// for the kinds that name workflows), or why one that would may not, or nothing.
+export function permitFor(
+  want: Omit<Wanted, 'workflowId'> & { readonly workflowId?: string },
+  read: ReadModel,
+  context: DecideContext,
+): Coverage | undefined {
+  if (settingValue('assistant.delegation', read, context) !== true) return undefined;
   const matching = storedPermissions(read, context).filter(
     (permission) =>
       permission.kind === want.kind &&
       permission.projectIds.includes(want.projectId) &&
-      permission.workflowIds.includes(want.workflowId),
+      (want.workflowId === undefined || permission.workflowIds.includes(want.workflowId)),
   );
   if (matching.length === 0) return undefined;
   const label = assistantPermissionLabels[want.kind];

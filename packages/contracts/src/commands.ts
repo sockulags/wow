@@ -492,6 +492,34 @@ export const Command = z.discriminatedUnion('type', [
   // Takes back one change the assistant made (spec 8). Refused when the thing changed again
   // since, with what changed.
   z.object({ type: z.literal('assistant.undo'), changeId: Id }),
+  // Delegated work (chief of staff spec 9 to 15). Only the assistant sends these, and only while
+  // a standing permission covers them: a chat thread it starts in a project, in the project's own
+  // working copy when the project is a Git repository; a follow-up in a thread it started; and an
+  // answer to a question in such a thread, with the words of the user it comes from.
+  z.object({
+    type: z.literal('assistant.startThread'),
+    threadId: Id,
+    projectId: Id,
+    title: z.string().trim().min(1).max(200),
+    message: z.string().trim().min(1),
+    providerInstanceId: Id.optional(),
+    model: z.string().min(1).optional(),
+    effort: z.string().min(1).optional(),
+    ownWorkingCopy: z.boolean(),
+  }),
+  z.object({
+    type: z.literal('assistant.sendToThread'),
+    threadId: Id,
+    text: z.string().trim().min(1),
+  }),
+  z.object({
+    type: z.literal('assistant.answerQuestion'),
+    threadId: Id,
+    questionId: Id,
+    reply: QuestionReply,
+    // What the user wrote in the assistant conversation that answers it, quoted.
+    because: z.string().trim().min(1).max(500),
+  }),
   // "Start from a setup file" (app assistant spec 22): the file's text is read again, checked
   // and applied as one step that `setup.undo` takes back. `name` is the file's name as picked.
   z.object({
@@ -570,6 +598,13 @@ export type ProviderUpdateProgress = z.infer<typeof ProviderUpdateProgress>;
 // Commands only the server issues: what provider adapters report, and test results. They go
 // through the same pipeline as client commands but are not accepted over RPC.
 export const InternalCommand = z.discriminatedUnion('type', [
+  // A thread the assistant started ended its turn or asked for something (chief of staff spec
+  // 11 to 13): the assistant gets a turn to look at it, up to `assistant.followTurns` a thread.
+  z.object({
+    type: z.literal('assistant.follow'),
+    threadId: Id,
+    reason: z.enum(['turnEnded', 'question', 'approval']),
+  }),
   z.object({
     type: z.literal('provider.events'),
     threadId: Id,
@@ -1371,6 +1406,24 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
   // An ordinary change the assistant made, stored in the same commit as the change itself.
   z.object({ kind: z.literal('assistant.changed'), aggregate: Id, payload: AssistantChangeRecord }),
+  // The assistant started this thread (chief of staff spec 10).
+  z.object({
+    kind: z.literal('thread.delegated'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, at: Timestamp }),
+  }),
+  // The assistant was given a turn to follow the thread (spec 11).
+  z.object({
+    kind: z.literal('thread.followed'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, at: Timestamp }),
+  }),
+  // The assistant answered the question, from the user's words (spec 12).
+  z.object({
+    kind: z.literal('question.answeredByAssistant'),
+    aggregate: Id,
+    payload: z.object({ questionId: Id, because: z.string().min(1) }),
+  }),
   // The assistant acted under a standing permission (chief of staff spec 5), in the same commit
   // as what it did.
   z.object({

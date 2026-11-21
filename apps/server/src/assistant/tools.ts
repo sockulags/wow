@@ -34,6 +34,7 @@ import { diagnosisReaders } from './diagnosis.js';
 import { guideReaders } from './guides.js';
 import { checkStepModels, modelReaders } from './models.js';
 import { built, type BuiltTool } from './built.js';
+import { delegationTools } from './delegation-tools.js';
 import { memoryReaders, memoryTools } from './memory.js';
 import { outputReaders } from './outputs.js';
 import { permissionReaders } from './permission-readers.js';
@@ -184,6 +185,7 @@ export type ChangeToolName = keyof typeof changeTools;
 // table always holds as a proposal (classes.ts, `moreOnItsOwn`).
 export const builtTools: Readonly<Record<string, BuiltTool>> = {
   ...memoryTools,
+  ...delegationTools,
   [assistantRuleTool]: built({
     description: `Proposes an "always allow" rule for a project: rule is {kind: "command", prefix} for commands that start with those words (such as "pnpm test"), or {kind: "tool", server, tool} for one tool (server null for the provider's own tools). Requests the rule covers are then allowed without asking in every thread of the project. A prefix that runs another program (a shell, sudo, npx, an interpreter given code) or that chains, pipes or quotes is refused. ${waits}`,
     input: AlwaysAllowRuleRequest,
@@ -339,7 +341,7 @@ export class AssistantTools {
       if (look) return { content: await look.read(parsed.data, this.#deps), isError: false };
       const builder = Object.hasOwn(builtTools, name) ? builtTools[name] : undefined;
       if (builder) {
-        const command = builder.build(parsed.data, this.#deps);
+        const command = await builder.build(parsed.data, this.#deps);
         if (command === null) return this.#unchanged();
         if ('refused' in command) return failed('refused', command.refused);
         return this.#dispatch(command, {});

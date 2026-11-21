@@ -10,6 +10,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { DelegationFollower } from './assistant/follow.js';
 import { assistantMcpPath, createMcpHandler, type AssistantEndpoint } from './assistant/mcp.js';
 import { AssistantTools } from './assistant/tools.js';
 import { Engine } from './core/engine.js';
@@ -116,6 +117,7 @@ export interface RunningServer {
   readonly skills: SkillsService;
   readonly plans: PlansService;
   readonly workflows: WorkflowRunner;
+  readonly follower: DelegationFollower;
   readonly workspaces: Workspaces;
   readonly providerService: ProviderService;
   // Snapshots of chat threads' folders and restores from them (thread work spec 19 to 26).
@@ -219,6 +221,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     snapshots,
   });
   modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
+  // Gives the assistant a turn when a thread it started ends a turn or asks something.
+  const follower = new DelegationFollower({ db: database.db, engine, logger });
   const workflows = new WorkflowRunner({
     db: database.db,
     engine,
@@ -433,6 +437,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       http.listen(options.port ?? settings.get('advanced.port'), '127.0.0.1');
     });
   } catch (error) {
+    follower.stop();
     await workflows.stop();
     await workspaces.stop();
     await providerService.stop();
@@ -538,6 +543,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   let stopped: Promise<void> | undefined;
   const stop = () =>
     (stopped ??= (async () => {
+      follower.stop();
+      await follower.settled();
       await stopServices();
       await providerUpdates.stop();
       await providerService.stop();
@@ -567,6 +574,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     skills,
     plans,
     workflows,
+    follower,
     workspaces,
     providerService,
     snapshots,

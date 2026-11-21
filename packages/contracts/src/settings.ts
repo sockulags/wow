@@ -1865,6 +1865,24 @@ export const settingsRegistry = {
     default: [],
     scope: 'global',
   }),
+  'assistant.followTurns': defineSetting({
+    schema: z.number().int().min(0).max(20),
+    group: 'assistant',
+    label: 'Turns to follow a thread it started',
+    description:
+      'How many times the assistant is given a turn to look at a thread it started, when the thread ends a turn or asks something. After that the thread goes on as yours and the assistant only reports it in the briefing. 0 never follows.',
+    default: 3,
+    scope: 'global',
+  }),
+  'assistant.maxDelegatedLive': defineSetting({
+    schema: z.number().int().min(1).max(20),
+    group: 'assistant',
+    label: 'Work the assistant has going at once',
+    description:
+      'How many threads and runs started by the assistant may work at the same time. When that many are going, the assistant plans the next one for a free slot instead of starting it.',
+    default: 3,
+    scope: 'global',
+  }),
   'assistant.notes': defineSetting({
     personal: 'person',
     schema: z.array(AssistantNote),

@@ -24,7 +24,12 @@ import { showQuestionCard } from './question-store';
 export type QuestionStatus =
   | { readonly kind: 'open' }
   // A question answered before the card has only the text that was sent.
-  | { readonly kind: 'answered'; readonly reply: QuestionReply | string }
+  | {
+      readonly kind: 'answered';
+      readonly reply: QuestionReply | string;
+      // The assistant answered it from the user's words (chief of staff spec 12): the quote.
+      readonly because?: string | undefined;
+    }
   | { readonly kind: 'closed' };
 
 export interface CardQuestion {
@@ -306,7 +311,17 @@ export function QuestionCard<H>({
             </div>
             {question.status.kind === 'answered' && (
               <p data-testid="question-answer" className="text-xs text-muted-foreground">
-                Answered: {answerLine(question.status.reply)}
+                {question.status.because === undefined
+                  ? 'Answered: '
+                  : 'Answered by the assistant: '}
+                {answerLine(question.status.reply)}
+                {question.status.because !== undefined && (
+                  <span data-testid="question-because">
+                    {' · because you said: “'}
+                    {question.status.because}
+                    {'”'}
+                  </span>
+                )}
               </p>
             )}
             {question.status.kind === 'closed' && (
