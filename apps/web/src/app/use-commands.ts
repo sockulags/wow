@@ -1,7 +1,7 @@
 import { runFolder } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
-import { useEffect, useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useStore } from 'zustand';
 import { assistantCommands } from '@/assistant/commands';
 import { backlogCommands } from '@/backlog/commands';
@@ -428,7 +428,8 @@ export function useGlobalKeybindings(
   // they would see a shortcut the app is about to claim as unclaimed.
   const latest = useRef({ commands, context });
   latest.current = { commands, context };
-  useEffect(() => {
+  // Added before the first paint, so a key pressed as soon as the app shows reaches it.
+  useLayoutEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const current = latest.current;
