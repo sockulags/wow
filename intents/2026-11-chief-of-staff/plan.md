@@ -2,7 +2,7 @@
 intent: 2026-11-chief-of-staff
 rev: 1
 built_on: spec@1
-status: draft
+status: accepted
 source: files
 ---
 

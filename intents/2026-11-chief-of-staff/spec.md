@@ -2,7 +2,7 @@
 intent: 2026-11-chief-of-staff
 rev: 1
 built_on: intent@1
-status: draft
+status: accepted
 ---
 
 # An assistant that runs the work around me, so I can think about the problem
