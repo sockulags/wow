@@ -19,7 +19,19 @@ import {
   type DiagnosisProblem,
   type TrackerConnection,
 } from '@wow/contracts';
-import { and, asc, desc, eq, inArray, isNotNull, isNull, not, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  not,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import { z } from 'zod';
 import { runPath } from '../core/workflows.js';
 import { triggersPath } from '../core/triggers.js';
@@ -328,9 +340,13 @@ const doneAfter = (
 ) =>
   sql`exists (select 1 from ${t.workflowRuns} as later where later.state = 'done' and later.workflow_id = ${workflowId} and later.project_id = ${projectId} and julianday(later.started_at) > julianday(${startedAt}))`;
 
+const dismissed = (decisionId: SQL) =>
+  sql`exists (select 1 from ${t.decisionDismissals} where ${t.decisionDismissals.decisionId} = ${decisionId})`;
+
 // A failed run counts until a later run of the same workflow in the same project ends done; a
 // failed plan run until a later plan run of the same plan ends done. A run whose workflow or
-// project was deleted cannot be run again, so it no longer counts.
+// project was deleted cannot be run again, so it no longer counts, nor does one the user
+// dismissed from the decision queue.
 function runs(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[] {
   const candidates = deps.db
     .select({ run: t.workflowRuns })
@@ -343,6 +359,7 @@ function runs(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[]
         not(
           doneAfter(t.workflowRuns.workflowId, t.workflowRuns.projectId, t.workflowRuns.startedAt),
         ),
+        not(dismissed(sql`'failedRun:' || ${t.workflowRuns.id}`)),
       ),
     )
     .orderBy(desc(t.workflowRuns.startedAt))
@@ -390,7 +407,8 @@ function runs(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[]
 
 // A card with a workflow whose start passed without a run: missed, or failed before its run
 // could start (the reason is in its "Trigger failed" notification). It counts until a run of
-// its workflow in its project that started after the card's start ends done.
+// its workflow in its project that started after the card's start ends done, or the user
+// dismisses it from the decision queue.
 function cards(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[] {
   const policy = deps.settings.get('scheduler.missedPolicy');
   const policyLabel = settingsRegistry['scheduler.missedPolicy'].options?.[policy]?.label ?? policy;
@@ -417,6 +435,7 @@ function cards(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[
         not(
           doneAfter(t.calendarItems.workflowId, t.calendarItems.projectId, t.calendarItems.start),
         ),
+        not(dismissed(sql`'missedCard:' || ${t.calendarItems.id}`)),
       ),
     )
     .orderBy(sql`julianday(${t.calendarItems.start}) desc`)

@@ -15,7 +15,7 @@ import {
   type Connection,
   type ConnectionState,
 } from '@wow/client-runtime';
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createStore } from 'zustand';
@@ -277,9 +277,11 @@ const panel = () => screen.getByRole('complementary', { name: 'Context panel' })
 // The file's text is found in the viewer as a whole: once the code is highlighted a line is
 // several elements, and a search for one element with the whole line would miss it.
 const fileShows = (line: string) =>
-  waitFor(() => {
-    expect(within(panel()).getByTestId('viewer-text').textContent).toContain(line);
-  });
+  within(panel()).findByText(
+    (_content, element) =>
+      element?.getAttribute('data-testid') === 'viewer-text' &&
+      (element.textContent ?? '').includes(line),
+  );
 const tabs = () =>
   within(panel())
     .queryAllByRole('tab')

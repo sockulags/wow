@@ -1,5 +1,6 @@
 import { staleReason } from '@wow/agent-os';
 import {
+  hostReadId,
   isLivePlanRunState,
   isLiveRunState,
   PlanRunOnFailure,
@@ -57,11 +58,16 @@ function advanceEvents(
 ): DomainEvent[] {
   const intent = read.planIntents().find((candidate) => candidate.id === planRun.planId);
   const current = planRun.units.find((unit) => unit.outcome === 'running');
+  const last = planRun.units.at(-1);
   const decision = advancePlanRun(planRun, {
     now: context.now,
     units: intent?.units,
     unitRunState: current ? read.run(current.runId)?.state : undefined,
     onFailure: onFailure(read, context, planRun.projectId),
+    unitsReadAt:
+      read.hostReads(planRun.projectId).find((row) => row.id === hostReadId('plan', planRun.planId))
+        ?.fetchedAt ?? null,
+    lastUnitEndedAt: (last && read.run(last.runId)?.endedAt) ?? null,
     runIdFor: (unitKey) => unitRunId(planRun.id, unitKey),
   });
   let next = decision.planRun;
