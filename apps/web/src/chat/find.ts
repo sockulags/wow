@@ -1,5 +1,7 @@
 import {
   ApprovalItemPayload,
+  ChangeRequestOpenedItemPayload,
+  CommittedItemPayload,
   CompactionItemPayload,
   ErrorItemPayload,
   QuestionItemPayload,
@@ -18,6 +20,7 @@ import { fromMarkdown } from 'mdast-util-from-markdown';
 import { gfmFromMarkdown } from 'mdast-util-gfm';
 import { gfm } from 'micromark-extension-gfm';
 import { questionStatus, taskLine, toolLine } from './conversation-markdown';
+import { changeRequestLineText, committedText } from './git-lines';
 import { compactionText, settingsChangeText } from './items';
 import { withoutMentions } from './mentions';
 import { openKey } from './open-state';
@@ -285,6 +288,16 @@ function itemPieces(walk: Walk, item: ThreadItem, opens: readonly string[]) {
     case 'compaction': {
       const parsed = CompactionItemPayload.safeParse(item.payload);
       if (parsed.success) add(compactionText(parsed.data));
+      return;
+    }
+    case 'committed': {
+      const parsed = CommittedItemPayload.safeParse(item.payload);
+      if (parsed.success) add(committedText(parsed.data));
+      return;
+    }
+    case 'change_request_opened': {
+      const parsed = ChangeRequestOpenedItemPayload.safeParse(item.payload);
+      if (parsed.success) add(changeRequestLineText(parsed.data));
       return;
     }
     case 'usage':

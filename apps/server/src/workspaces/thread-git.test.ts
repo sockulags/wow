@@ -454,15 +454,40 @@ describe('commit from a thread’s Changes (thread work spec 27 to 30)', () => {
     expect(git(folder, 'status', '--porcelain', '--', 'notes.txt')).toBe('');
     expect(items().at(-1)).toMatchObject({
       kind: 'committed',
-      payload: { sha: result.sha, files: ['notes.txt', 'src/bell.ts'] },
+      payload: { sha: result.sha, files: ['notes.txt', 'src/bell.ts'], note: result.note },
     });
     expect(calls.some(({ args }) => args.includes('rm'))).toBe(false);
   });
 
-  it('says the folder is on the new branch when a commit from no branch is refused (U4 182)', async () => {
+  it('refuses a file that changed after the dialog read it, and commits one that did not', async () => {
+    const folder = await threadWithWork();
+    const plan = await threadGit().commitPlan('t1');
+    const versions = Object.fromEntries(
+      plan.files.map((file) => [file.path, file.version ?? null]),
+    );
+    const before = git(folder, 'rev-parse', 'HEAD');
+    await writeFile(path.join(folder, 'notes.txt'), 'one\ntwo\nthree\n');
+    const refused = await refusalOf(
+      threadGit().commit({ threadId: 't1', files: ['notes.txt'], message: 'Notes', versions }),
+    );
+    expect(refused.message).toContain('notes.txt changed after the dialog read it');
+    expect(git(folder, 'rev-parse', 'HEAD')).toBe(before);
+    const again = await threadGit().commitPlan('t1');
+    const fresh = Object.fromEntries(again.files.map((file) => [file.path, file.version ?? null]));
+    const made = await threadGit().commit({
+      threadId: 't1',
+      files: ['notes.txt'],
+      message: 'Notes',
+      versions: fresh,
+    });
+    expect(made.sha).toBe(git(folder, 'rev-parse', 'HEAD'));
+  });
+
+  it('puts the folder back on no branch when a commit from no branch is refused (U4 182)', async () => {
     await hook('pre-commit', 'echo "Lint failed" >&2\nexit 1');
     const folder = await threadWithWork();
     git(folder, 'switch', '-q', '--detach');
+    const before = git(folder, 'rev-parse', 'HEAD');
     const refused = await refusalOf(
       threadGit().commit({
         threadId: 't1',
@@ -472,8 +497,10 @@ describe('commit from a thread’s Changes (thread work spec 27 to 30)', () => {
       }),
     );
     expect(refused.message).toContain('Nothing was committed');
-    expect(refused.message).toContain('The folder is now on the new branch wow/ring-from-nowhere');
-    expect(git(folder, 'symbolic-ref', '--short', 'HEAD')).toBe('wow/ring-from-nowhere');
+    expect(refused.message).not.toContain('The folder is now on the new branch');
+    expect(git(folder, 'rev-parse', 'HEAD')).toBe(before);
+    expect(git(folder, 'branch', '--list', 'wow/ring-from-nowhere')).toBe('');
+    expect(git(folder, 'status', '--porcelain', '--', 'src/bell.ts')).not.toBe('');
   });
 
   it('refuses an empty message and a rebase in progress, and commits from no branch on a new one (spec 30)', async () => {

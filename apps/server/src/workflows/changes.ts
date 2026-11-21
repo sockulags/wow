@@ -64,7 +64,7 @@ async function entryOf(folder: string, relative: string) {
 
 // A link is hashed as where it points, never as what it points at: that may be outside the folder.
 // A file over the limit stands for its size and change time, so a huge file is never read.
-async function hashOf(
+export async function hashOf(
   folder: string,
   relative: string,
   maxHashBytes: number,

@@ -35,6 +35,7 @@ import { routerPanelRoute } from '@/panel/model';
 import { isBinding } from '@/panel/editor';
 import { openHostItem } from '@/panel/viewer';
 import { errorMessage } from './data';
+import { changeRequestLineText } from './git-lines';
 import { HostChip, useHostLinks } from './host-links';
 
 // Open a pull or merge request for a chat thread's branch (thread work spec 31 to 35): where it
@@ -447,13 +448,6 @@ export function PullRequestDialog({ threadId }: { readonly threadId: string }) {
       </DialogContent>
     </Dialog>
   );
-}
-
-// "Opened pull request #14 · Ring the bell twice" with the host chip (spec 32).
-export function changeRequestLineText(payload: ChangeRequestOpenedItemPayload): string {
-  const host = payload.ref.host === 'gitlab' ? 'gitlab' : 'github';
-  const { noun, mark } = changeRequestWords[host];
-  return `Opened ${noun} ${mark}${payload.number} · ${payload.title}`;
 }
 
 export function ChangeRequestOpenedLine({
