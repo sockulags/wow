@@ -1535,6 +1535,15 @@ it and the gate and approval keys answer it as they do in their own views. **Ctr
 ("Next that needs you") goes through the same order. The tray menu lists the first three rows
 under "N need you" and opens the Assistant.
 
+### Ask from anywhere
+
+In the installed app, **Ctrl+Alt+Space** (`desktop.quickAskShortcut`, Settings → Desktop) opens a
+small prompt on top of whatever window you are in. Type and press Enter: the message goes to the
+assistant's conversation and its answer appears below as it is written. Escape, or clicking
+elsewhere, hides the prompt; **Open in wow** shows the whole conversation. Leave the setting empty
+to turn the key off. If another program already holds the key, wow says so once; pick another
+there.
+
 ### Memory
 
 Tell the assistant how you work ("never plan anything before nine", "Tea is the important project
