@@ -11,7 +11,9 @@ import { KeyRoundIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 import { useRuntime, useSetting } from '@/app/runtime';
 import { errorMessage, useTopic } from '@/chat/data';
+import { useCalendarPrefs } from '@/calendar/prefs';
 import { ChoiceSelect } from '@/components/choice-select';
+import { DateField } from '@/components/date-time-fields';
 import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -85,6 +87,7 @@ function AddPermission({
   const [mode, setMode] = useState('default');
   const [until, setUntil] = useState('');
   const [limit, setLimit] = useState('');
+  const { firstDayOfWeek } = useCalendarPrefs();
   const limitNumber = limit.trim() === '' ? undefined : Number(limit);
   const ready =
     projectIds.length > 0 &&
@@ -126,16 +129,17 @@ function AddPermission({
             />
           </label>
         )}
-        <label className="flex items-center gap-1.5">
+        <span className="flex items-center gap-1.5">
           Until
-          <Input
-            aria-label="Until"
-            type="date"
-            className="h-7 w-36 text-xs"
+          <DateField
+            id="permission-until"
+            label="Until"
+            className="w-36"
             value={until}
-            onChange={(event) => setUntil(event.target.value)}
+            firstDayOfWeek={firstDayOfWeek}
+            onValueChange={setUntil}
           />
-        </label>
+        </span>
         <label className="flex items-center gap-1.5">
           Times a day
           <Input

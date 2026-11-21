@@ -370,18 +370,19 @@ function CardForm({
             />
           </FormField>
         </div>
-        <label className="flex items-center gap-2 text-sm" htmlFor="card-focus">
+        <div className="flex items-center gap-2 text-sm">
           <Checkbox
             id="card-focus"
+            aria-describedby="card-focus-help"
             checked={form.focus}
             onCheckedChange={(checked) => set({ focus: checked === true })}
           />
-          <span>Focus</span>
-          <span className="text-xs text-muted-foreground">
-            Time kept free: no workflow, and the assistant plans nothing over it and holds its
+          <label htmlFor="card-focus">Focus</label>
+          <span id="card-focus-help" className="text-xs text-muted-foreground">
+            Time kept free: nothing runs here, and the assistant plans nothing over it and holds its
             notifications.
           </span>
-        </label>
+        </div>
         {/* Above 1200 px the workflow and the repeat sit side by side. */}
         <div className="grid min-w-0 items-start gap-4 min-[1200px]:grid-cols-2">
           <fieldset
