@@ -241,6 +241,21 @@ function ThreadHeader({
             <RemoveThreadCopyDialog thread={thread} />
           </>
         )}
+        {thread.startedBy === 'assistant' && (
+          // Started by the assistant (chief of staff spec 10); it is the user's thread all the same.
+          <>
+            <span aria-hidden className="text-xs text-muted-foreground">
+              ·
+            </span>
+            <Link
+              to="/assistant"
+              data-testid="thread-started-by-assistant"
+              className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+            >
+              Started by the assistant
+            </Link>
+          </>
+        )}
         {thread.forkedFrom && (
           // A fork names the thread it came from (agent workbench spec 71).
           <span

@@ -1,7 +1,7 @@
 import type { Thread } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
-import { MessagesSquareIcon, PinIcon, PlusIcon, SearchIcon } from 'lucide-react';
+import { MessagesSquareIcon, PinIcon, PlusIcon, SearchIcon, SparklesIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useStore } from 'zustand';
 import { eventToBinding, normalizeBinding } from '@/app/keybindings';
@@ -273,6 +273,13 @@ function ThreadList() {
                                 aria-label="Unread"
                                 data-testid="thread-unread"
                                 className="size-2 shrink-0 rounded-full bg-primary"
+                              />
+                            )}
+                            {thread.startedBy === 'assistant' && (
+                              <SparklesIcon
+                                aria-label="Started by the assistant"
+                                data-testid="thread-row-assistant"
+                                className="size-3.5 shrink-0 text-muted-foreground"
                               />
                             )}
                             {thread.pinned && (

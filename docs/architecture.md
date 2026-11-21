@@ -1739,7 +1739,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance`,
   `assistant.notes`, `assistant.excludedProjects`, `assistant.readMaxBytes`,
   `assistant.readMaxDiffLines`, `assistant.readMaxMessages`, `assistant.delegation`,
-  `assistant.permissions` (see "Assistant", "Question card" and "Models for steps")
+  `assistant.permissions`, `assistant.followTurns`, `assistant.maxDelegatedLive` (see
+  "Assistant", "Question card" and "Models for steps")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`,
   `appearance.changesListWidth` (see "Changes tab")
@@ -2667,6 +2668,26 @@ permission names. Every other command, every refused one and every proposal of a
 command type. The kinds for threads, retries and moving cards are stored here and acted on by
 later units. Focus cards (`focus` on a card, migration `0038_card_focus`) carry no workflow:
 `card.create` and `card.update` refuse one, and as cards they are busy for `read_free_slots`.
+
+**Delegated work** (`assistant/delegation.ts`, `assistant/delegation-tools.ts`, chief of staff
+spec 9 to 15). `assistant.startThread`, `assistant.sendToThread` and `assistant.answerQuestion`
+are commands only the assistant sends (anyone else is refused), settled by the standing
+permissions before the class table is read; the table lists them as refused, so no change tool
+offers them. The tools `start_thread`, `write_to_thread` and `answer_agent_question` build them.
+`start_thread` asks the trackers whether the project folder is a Git repository and then sets
+`ownWorkingCopy`; the thread is created with the project's provider, model and effort (or the
+tool's) and the permission's widest mode, `thread.delegated` marks it `startedBy: 'assistant'`
+(migration `0039_delegated_threads`), and the brief goes out as its first message, all as the
+user's commands, so it is an ordinary chat thread from then on. More than
+`assistant.maxDelegatedLive` working threads of the assistant refuse a new one with "plan it for
+a free slot". Writing and answering need Drive threads and a thread the assistant started; an
+answer goes through `question.answer` and `question.answeredByAssistant` keeps the user's words it
+came from (`answeredBecause`), which the question card shows. Approvals are never answered.
+`DelegationFollower` (`assistant/follow.ts`) listens for `turn.ended`, `question.asked` and
+`approval.requested` of such a thread and dispatches `assistant.follow` (an internal command),
+which sends the assistant a "From wow: …" message (queued if its turn runs) and counts
+`followTurns`, until `assistant.followTurns`. Every delegated act is an
+`assistant.permissionUsed` row.
 
 **Deciding as the assistant** (`core/assistant.ts`, `decideInSteps`). For the origin
 `assistant` the class comes first. A refused command is rejected with its sentence. An

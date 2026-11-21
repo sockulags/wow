@@ -146,6 +146,9 @@ export const threads = sqliteTable(
     forkedFrom: json<ForkOrigin>(),
     // A chat thread's own working copy (thread work spec 11); null for a thread in its folder.
     workingCopy: json<WorkingCopy>(),
+    // The assistant started it (chief of staff spec 10), and the turns it had to follow it.
+    startedBy: text().$type<'assistant'>(),
+    followTurns: integer().notNull().default(0),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },
@@ -228,6 +231,7 @@ export const questions = sqliteTable(
     request: json<unknown>().notNull(),
     answer: text(),
     answeredAt: text(),
+    answeredBecause: text(),
   },
   (table) => [index('questions_thread_idx').on(table.threadId)],
 );

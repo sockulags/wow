@@ -16,6 +16,7 @@ import {
   undoRefusal,
 } from '../assistant/changes.js';
 import { classOf } from '../assistant/classes.js';
+import { decideDelegation, decideFollow, isDelegationCommand } from '../assistant/delegation.js';
 import { coverage } from '../assistant/permissions.js';
 import { decideSetup } from '../setup/apply.js';
 import {
@@ -42,6 +43,20 @@ export function* decideInSteps(
 ): Generator<DomainEvent[], void> {
   // What a held or inverse command is decided as once the user said so.
   const asUser: DecideContext = { ...context, origin: 'user' };
+
+  if (isDelegationCommand(command)) {
+    if (context.origin !== 'assistant') {
+      throw new CommandRejected('rejected', 'Only the assistant sends this.');
+    }
+    yield* decideDelegation(commandId, command, read, context);
+    return;
+  }
+  if (command.type === 'assistant.follow') {
+    if (context.origin === 'assistant')
+      throw new CommandRejected('rejected', 'Only wow sends this.');
+    yield decideFollow(command, read, context);
+    return;
+  }
 
   if (context.origin === 'assistant') {
     const klass = classOf(command, read, context);

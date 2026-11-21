@@ -683,6 +683,24 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
     case 'assistant.changed':
       tx.insert(assistantChanges).values(event.payload).run();
       return ['assistantChanges'];
+    case 'thread.delegated':
+      tx.update(threads)
+        .set({ startedBy: 'assistant' })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return ['threads'];
+    case 'thread.followed':
+      tx.update(threads)
+        .set({ followTurns: sql`${threads.followTurns} + 1` })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return ['threads'];
+    case 'question.answeredByAssistant':
+      tx.update(questions)
+        .set({ answeredBecause: event.payload.because })
+        .where(eq(questions.id, event.payload.questionId))
+        .run();
+      return ['questions'];
     case 'assistant.permissionUsed':
       tx.insert(assistantPermissionUses).values(event.payload).run();
       return ['assistantPermissionUses'];

@@ -453,6 +453,18 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'assistant.proposal.accept': usersAnswer,
   'assistant.proposal.decline': usersAnswer,
   'assistant.undo': usersAnswer,
+  // Delegated work is settled by the standing permissions in `assistant/delegation.ts` before
+  // this table is read (chief of staff spec 9 to 15); without one it is never applied.
+  'assistant.startThread': refused(
+    'Starting a thread needs the Start threads permission for the project; without it, offer the thread with offer_project_work.',
+  ),
+  'assistant.sendToThread': refused(
+    'Writing in a thread needs the Drive threads permission and a thread you started.',
+  ),
+  'assistant.answerQuestion': refused(
+    'Answering an agent needs the Drive threads permission and a thread you started.',
+  ),
+  'assistant.follow': serverOnly,
   // A file can change many settings and workflows at once, autonomy included; the user reads
   // its preview and applies it, and only the user takes it back.
   'setup.apply': refused(

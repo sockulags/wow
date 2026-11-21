@@ -7,7 +7,10 @@ export interface BuiltTool<S extends z.ZodType = z.ZodType> {
   readonly description: string;
   readonly input: S;
   // The command, or the reason it is refused, or null when it is already so.
-  build(args: z.output<S>, deps: AssistantToolsDeps): Command | { refused: string } | null;
+  build(
+    args: z.output<S>,
+    deps: AssistantToolsDeps,
+  ): Command | { refused: string } | null | Promise<Command | { refused: string } | null>;
 }
 
 export const built = <S extends z.ZodType>(tool: BuiltTool<S>): BuiltTool =>
