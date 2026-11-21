@@ -1688,6 +1688,14 @@ const seedSettings: Record<string, unknown> = {
     'confluence-e2e-token',
   ),
 };
+// The assistant's own rhythm runs on the real clock here, so it is off unless a case turns it on:
+// a briefing or a brief arriving in the middle of another case would be a turn it did not expect.
+for (const [key, value] of Object.entries({
+  'assistant.briefings': false,
+  'assistant.briefsPerDay': 0,
+})) {
+  server.engine.dispatch(`seed-${key}`, { type: 'setting.set', key, scope: 'global', value });
+}
 for (const [key, value] of Object.entries(firstStart ? {} : seedSettings)) {
   server.engine.dispatch(`seed-${key}`, { type: 'setting.set', key, scope: 'global', value });
 }
