@@ -126,6 +126,7 @@ const guardSettings: ReadonlySet<string> = new Set([
   'assistant.secretPatterns',
   'assistant.askRefusedWords',
   'assistant.allowCodex',
+  'assistant.excludedProjects',
   'triggers.forkPullRequests',
   'viewer.editorCommand',
   'viewer.editorShell',

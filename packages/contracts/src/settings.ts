@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { AlwaysAllowRule } from './approvals.js';
 import { BuiltInSkillName } from './skills.js';
 import {
+  AssistantNote,
   SecretPattern,
   defaultAskRefusedWords,
   defaultAssistantInstructions,
@@ -1843,6 +1844,52 @@ export const settingsRegistry = {
     description:
       "The assistant's question tool refuses a question whose text, header or choices hold one of these words or phrases (whole words, without regard to case), and tells the assistant to show the secret's field instead. A net for mistakes: a question never collects a secret.",
     default: [...defaultAskRefusedWords],
+    scope: 'global',
+  }),
+  'assistant.notes': defineSetting({
+    personal: 'person',
+    schema: z.array(AssistantNote),
+    group: 'assistant',
+    label: 'Memory',
+    description:
+      'Notes the assistant keeps about how you work, such as "never plan anything before nine". It writes one only when you say it, reads them at the start of every answer, and a note with an end date stops applying after that day. Edit or remove them here.',
+    default: [],
+    scope: 'global',
+  }),
+  'assistant.excludedProjects': defineSetting({
+    schema: z.array(z.string().min(1)),
+    group: 'assistant',
+    label: 'Projects the assistant does not read',
+    description:
+      'Ids of projects whose runs and chat threads the assistant may not read: their final messages, artifacts, changes and thread messages stay out of its reach. It still sees that the runs and threads exist.',
+    default: [],
+    scope: 'global',
+  }),
+  'assistant.readMaxBytes': defineSetting({
+    schema: z.number().int().min(1000).max(1_000_000),
+    group: 'assistant',
+    label: 'Longest text the assistant reads',
+    description:
+      "A step's final message, an artifact or a thread message longer than this many characters reaches the assistant cut short, with a note that it was cut.",
+    default: 20_000,
+    scope: 'global',
+  }),
+  'assistant.readMaxDiffLines': defineSetting({
+    schema: z.number().int().min(0).max(20_000),
+    group: 'assistant',
+    label: 'Diff lines the assistant reads',
+    description:
+      "When the assistant reads a run's changes it gets every changed file with its counts, and the diff itself up to this many lines in all. 0 leaves the diff out.",
+    default: 400,
+    scope: 'global',
+  }),
+  'assistant.readMaxMessages': defineSetting({
+    schema: z.number().int().min(1).max(50),
+    group: 'assistant',
+    label: 'Thread messages the assistant reads',
+    description:
+      "How many of a chat thread's latest agent messages the assistant reads when it looks at the thread.",
+    default: 5,
     scope: 'global',
   }),
   'appearance.theme': defineSetting({

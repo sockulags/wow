@@ -1447,8 +1447,24 @@ network, in an empty folder of wow's (`~/.wow/assistant`). What it is told to do
 
 It can read settings (secret ones only as "set" or "not set"), projects, providers, workflows,
 templates and skills, calendar cards and meeting times and titles, the backlog, runs, triggers,
-notifications and connection tests. It cannot read a chat thread or a file in a project. Ask it
+notifications and connection tests, and the free time in your work hours. It can also read what
+agents produced: a run's steps with their final messages, verdicts and checks, the text of the
+artifacts they found and the run's changes with part of the diff, and a thread's latest messages
+and what it waits for. It reads no other file of a project. The conversation says each such read
+in words ("Read what a run's agents produced"). To keep a project out of its reach, add it to
+**Projects the assistant does not read** (`assistant.excludedProjects`); the assistant can ask to
+take one off that list, but only you can say yes. Long texts reach it cut short
+(`assistant.readMaxBytes`, `assistant.readMaxDiffLines`, `assistant.readMaxMessages`). Ask it
 for project work ("fix this test") and it offers to open a new thread in Chat with your text.
+
+### Memory
+
+Tell the assistant how you work ("never plan anything before nine", "Tea is the important project
+this week, until Friday") and it keeps a note: a change row "Memory: …" with Undo. It reads the
+notes at the start of every answer, and a note with an end date stops applying after that day. It
+never keeps a note you did not say or confirm. Settings → Assistant → **Memory** lists every note
+with who wrote it and when; edit one in place, remove it, or add your own. On Codex a changed note
+applies from the assistant's next session, as a changed instruction text does.
 
 ### When the assistant asks
 

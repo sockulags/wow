@@ -33,7 +33,9 @@ import { readers } from './readers.js';
 import { asks } from './asks.js';
 import { diagnosisReaders } from './diagnosis.js';
 import { guideReaders } from './guides.js';
+import { memoryReaders } from './memory.js';
 import { modelReaders } from './models.js';
+import { outputReaders } from './outputs.js';
 
 // The assistant's tools on the server (app assistant plan U1): every acceptance line of the
 // unit has a case here that names it.
@@ -241,6 +243,8 @@ describe('the assistant endpoint', () => {
           ...Object.keys(guideReaders),
           ...Object.keys(diagnosisReaders),
           ...Object.keys(modelReaders),
+          ...Object.keys(outputReaders),
+          ...Object.keys(memoryReaders),
           ...Object.keys(asks),
           ...Object.keys(changeTools),
           ...Object.keys(builtTools),
@@ -563,7 +567,7 @@ describe('read tools', () => {
     expect(setting('trackers.jira.email')).toBe(lookalike);
   });
 
-  it("offer no tool that returns a thread's messages or a file's content (spec 6)", async () => {
+  it("offer no tool but the readers of agents' output that returns a thread's messages or a file's content (spec 6; chief of staff spec 1)", async () => {
     asUser({
       type: 'thread.create',
       threadId: 'thread-1',
@@ -587,12 +591,19 @@ describe('read tools', () => {
     });
     expect(JSON.stringify(rows('workflowRuns'))).toContain(threadMarker);
 
+    // Only the readers of what agents produced (chief of staff spec 1) return an agent's words;
+    // every other tool still leaves them out.
     const names = server.assistant.tools.list().map((tool) => tool.name);
-    expect(names.filter((name) => /thread|message|file|content|chat/i.test(name))).toEqual([]);
+    expect(
+      names.filter(
+        (name) => /thread|message|file|content|chat/i.test(name) && !(name in outputReaders),
+      ),
+    ).toEqual([]);
     for (const name of [
       ...Object.keys(readers),
       ...Object.keys(guideReaders),
       ...Object.keys(diagnosisReaders),
+      ...Object.keys(memoryReaders),
     ]) {
       const needsService = name === 'test_connection' || name === 'read_token_guide';
       const { text } = await call(name, needsService ? { service: 'github' } : {});
@@ -600,7 +611,7 @@ describe('read tools', () => {
       expect(text).not.toContain(fileMarker);
     }
     // Nor does a tool exist under the name of the app's own file and thread methods.
-    for (const name of ['files.read', 'read_file', 'read_thread', 'read_threads', 'subscribe']) {
+    for (const name of ['files.read', 'read_file', 'read_threads', 'subscribe']) {
       expect(await call(name)).toMatchObject({
         isError: true,
         content: { outcome: 'unknown tool' },
