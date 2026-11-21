@@ -5188,6 +5188,11 @@ sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" count
 
 ## Testing strategy
 
+The e2e servers seed `assistant.briefings` off and `assistant.briefsPerDay` 0: their scheduler runs
+on the real clock, and a briefing or a brief arriving in the middle of a case would be an
+assistant turn the case did not expect. `e2e/chief-of-staff.spec.ts` turns briefings on itself
+and moves the page's clock to come back "after a while away".
+
 - Contracts and engine: Vitest unit tests, including engine state tables for gates and missed
   policies.
 - Providers: Vitest with recorded protocol fixtures (JSON lines) replayed through a fake
