@@ -27,6 +27,9 @@ import { alwaysRefused, unruleable } from './classes.js';
 import { diagnosisReaders } from './diagnosis.js';
 import { guideReaders } from './guides.js';
 import { checkStepModels, modelReaders } from './models.js';
+import { built, type BuiltTool } from './built.js';
+import { memoryReaders, memoryTools } from './memory.js';
+import { outputReaders } from './outputs.js';
 import { readers, type Reader, type ReaderDeps } from './readers.js';
 
 // The assistant's tools (app assistant spec 4 to 13). A read tool is a reader. A change tool
@@ -167,20 +170,11 @@ export const changeTools = {
 
 export type ChangeToolName = keyof typeof changeTools;
 
-// A change tool whose command the tool writes from a smaller input than the command's own.
-interface BuiltTool<S extends z.ZodType = z.ZodType> {
-  readonly description: string;
-  readonly input: S;
-  // The command, or the reason it is refused, or null when it is already so.
-  build(args: z.output<S>, deps: AssistantToolsDeps): Command | { refused: string } | null;
-}
-
-const built = <S extends z.ZodType>(tool: BuiltTool<S>): BuiltTool => tool as unknown as BuiltTool;
-
 // The assistant proposes an "always allow" rule and never stores one itself (agent workbench
 // spec 41): the project's list with the rule added goes in a `setting.set`, which the class
 // table always holds as a proposal (classes.ts, `moreOnItsOwn`).
 export const builtTools: Readonly<Record<string, BuiltTool>> = {
+  ...memoryTools,
   [assistantRuleTool]: built({
     description: `Proposes an "always allow" rule for a project: rule is {kind: "command", prefix} for commands that start with those words (such as "pnpm test"), or {kind: "tool", server, tool} for one tool (server null for the provider's own tools). Requests the rule covers are then allowed without asking in every thread of the project. A prefix that runs another program (a shell, sudo, npx, an interpreter given code) or that chains, pipes or quotes is refused. ${waits}`,
     input: AlwaysAllowRuleRequest,
@@ -263,6 +257,8 @@ const problems = (error: z.ZodError): string =>
 // Tools that only read, whatever file they live in.
 const looks: Readonly<Record<string, Reader>> = {
   ...readers,
+  ...outputReaders,
+  ...memoryReaders,
   ...guideReaders,
   ...diagnosisReaders,
   ...modelReaders,

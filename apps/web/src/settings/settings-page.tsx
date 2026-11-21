@@ -12,6 +12,7 @@ import { UpdateStatusPanel } from '@/app/update-banner';
 import { KeybindingsTable } from './keybindings-table';
 import { SettingsForm } from './setting-row';
 import { AlwaysAllowSection } from './always-allow-section';
+import { MemorySection } from './memory-section';
 import { SetupSection } from './setup-section';
 import { SkillsSection } from './skills-section';
 import { TrackersSection } from './trackers-section';
@@ -174,6 +175,7 @@ export function SettingsPage() {
       {current === 'updates' && <UpdateStatusPanel />}
       {current === 'advanced' && <SetupSection />}
       {current === 'skills' && <SkillsSection />}
+      {current === 'assistant' && <MemorySection />}
       {/* Remount per group so drafts never leak between pages. */}
       {current === 'approvals' ? (
         <AlwaysAllowSection />

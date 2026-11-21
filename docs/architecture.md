@@ -1736,8 +1736,10 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,
   `assistant.effort`, `assistant.instructions`, `assistant.greeting`,
   `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.valueLength`,
-  `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance` (see
-  "Assistant", "Question card" and "Models for steps")
+  `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance`,
+  `assistant.notes`, `assistant.excludedProjects`, `assistant.readMaxBytes`,
+  `assistant.readMaxDiffLines`, `assistant.readMaxMessages` (see "Assistant", "Question card"
+  and "Models for steps")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`,
   `appearance.changesListWidth` (see "Changes tab")
@@ -2496,10 +2498,34 @@ three kinds and nothing else.
   `alsoFollow` entry's `source` take. `read_skill {name, group?}` answers the text of an own or
   a built-in skill (a built-in one as its template, unfilled) and whether it can be changed; a
   folder skill's text is not read. Each reader builds its answer
-  field by field. None returns a thread's items, a step's final message, a file's content, a
-  card's notes or more of a meeting than its time and title. A secret setting and a secret
+  field by field. None of these returns a thread's items, a step's final message, a file's
+  content, a card's notes or more of a meeting than its time and title; only the readers of
+  agents' output below do, and only those parts. A secret setting and a secret
   environment variable say `set` or `not set`, decided from the names in the secret store; no
   reader ever asks the store for a value. A plain environment variable says `not shown`.
+- Readers of agents' output (`assistant/outputs.ts`, chief of staff spec 1 to 3). `read_run
+{runId}` answers a run's steps with each final message, verdict, checks and gate, the text of
+  the artifacts the step found (read with `readViewerFile` inside the run's folder, so a path
+  outside it or a link out of it is refused), and the run's changes from `readRunDiff`: every
+  file with its counts and, file by file, the diff until `assistant.readMaxDiffLines` lines are
+  spent. `read_thread {threadId}` answers a chat or step thread's title, state, model and
+  project, its last `assistant.readMaxMessages` agent messages (a subagent's are left out), the
+  approval or question it waits for with the request, and the sum of its turns' usage; the
+  assistant's own thread is refused. Text longer than `assistant.readMaxBytes` is cut with
+  `cut: true`. Neither takes a path. A run or thread in a project of `assistant.excludedProjects`
+  is refused with the reason; taking a project off that list is a proposal (`guardSettings`).
+  Both answers go through `assistant.secretPatterns` with every other tool result.
+  `read_free_slots {minutes, from?, days?, limit?}` answers the gaps of `freeSlots`
+  (`packages/contracts/src/free-slots.ts`, shared with the plan dialog's `nextFreeSlot`) inside
+  the calendar's work hours, around Outlook meetings and the occurrences of cards.
+- Notes (`assistant/memory.ts`, spec 29, 30). The notes are the global setting `assistant.notes`
+  (`AssistantNote[]`: id, text, addedAt, until, by). `remember {text, until?}` and `forget
+{noteId}` are built tools that write the whole list with `setting.set`, so a note is an
+  ordinary change with its row ("Memory: … → …") and Undo, and `read_notes` lists them.
+  `#assistantTurn` in `providers/service.ts` appends the notes that still apply in the calendar's
+  zone today to `assistant.instructions` (`instructionsWithNotes`); on Claude Code a changed text
+  resumes the session with it, on Codex it applies from the next session, as the instruction
+  text does. Settings → Assistant shows them as a list (`settings/memory-section.tsx`).
 - Change tools (`changeTools`) each name one command type of `Command`. The tool's input is
   that command's own schema without `type`, without the id of the thing it makes (the tool
   makes one up, as a view does) and without fields the assistant never fills in (`stopRun`).

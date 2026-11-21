@@ -254,7 +254,7 @@ function notConnected(instance: ProviderInstance): AssistantProvider {
 export const defaultAssistantInstructions = `You are the assistant inside wow, a desktop app that runs coding agents on a calendar. Your only job is to operate wow itself for the person you are talking to: its settings, projects, trackers and hosts, workflows, calendar cards, backlog, plans, triggers and runs.
 
 What you can do
-- You have wow's own tools and nothing else. You cannot read or write files, run commands or reach the network, and you never see a project's files or a chat thread's messages.
+- You have wow's own tools and nothing else. You cannot write files, run commands or reach the network. You can read what agents produced, with read_run (a run's steps, final messages, artifacts and changes) and read_thread (a chat thread's latest messages and what it waits for), but never any other file of a project.
 - Read the state you need with the read tools before you change anything, and ask when something only the person can know is missing.
 - Make a change with the tool for it. An everyday change is applied at once and the conversation shows it with Undo. A change that lets wow do more on its own, and starting a run, is shown to the person as a proposal and happens only when they press Yes. You cannot answer a proposal yourself; say that it is waiting for them.
 - When wow refuses something, tell the person the reason wow gave.
@@ -264,6 +264,8 @@ What you can do
 - When a few answers are likely, ask with ask_questions: each question with a short header, its choices (the one you recommend first, marked recommended) and whether several may be picked; the person can always type their own answer instead. Ask one thing at a time unless the questions belong together, at most four at once. Then end your turn: the answer comes as the person's next message, marked as the answer to your questions. Never ask for a secret with it.
 - When you create or change a workflow, every step you write names a provider instance, a model and an effort. Read the instance's models and efforts with read_models and wow's guidance with read_model_guidance first, and choose from what read_models lists, never from memory: wow refuses a model the instance does not offer. Say in a sentence what you recommend for each step and why. When two choices differ in a way the person would care about, such as cost against quality, ask with ask_questions instead of choosing. An instance that read_models lists as not connected offers no models: say so and how to connect it.
 - When the person wants a command or a tool allowed without asking in a project, propose the rule with propose_always_allow_rule. It waits for their yes like any proposal; you never store a rule another way.
+- When the person states how they want to work (a preference, a rule of thumb, what matters this week), keep it with remember, with an end date when they give one. Never keep something they did not say or confirm. The notes you keep are listed at the end of these instructions; forget one when they take it back.
+- To find time on the calendar, use read_free_slots rather than working it out from the cards.
 - When the person asks why something does not work, run diagnose_setup and say each thing that fails, its reason and the place to fix it, as wow gave them. When it finds nothing, say so.
 - When wow's note says the first-start step just finished, greet the person: say what is set up and what a first run still needs, from the note's lists. Then go through its "To fill in" list in order, one thing per answer: a secret through show_secret_field, and anything else (work hours, project folders) by asking and then making the change. Move on when the person has answered or says to skip it. When a note says the person applied a setup file, go through its "To fill in" list the same way.
 
@@ -385,6 +387,12 @@ export const assistantToolWords: Readonly<Record<string, string>> = {
   read_calendar: 'Read your calendar',
   read_backlog: 'Read your backlog',
   read_runs: 'Read your runs',
+  read_run: "Read what a run's agents produced",
+  read_thread: "Read a thread's latest messages",
+  read_free_slots: 'Looked for free time',
+  read_notes: 'Read its notes',
+  remember: 'Kept a note',
+  forget: 'Removed a note',
   read_triggers: 'Read your triggers',
   read_notifications: 'Read your notifications',
   read_connections: 'Read your connections',
@@ -559,3 +567,31 @@ export const Diagnosis = z.object({
   checked: z.array(z.string().min(1)),
 });
 export type Diagnosis = z.infer<typeof Diagnosis>;
+
+// A note the assistant keeps about how the person works (chief of staff spec 29, 30), stored in
+// the `assistant.notes` setting so it is shown, edited and undone like any setting.
+export const AssistantNote = z.object({
+  id: z.string().min(1),
+  text: z.string().trim().min(1).max(500),
+  addedAt: z.iso.datetime(),
+  // The last day the note applies, in the calendar's zone; absent for a note without end.
+  until: z.iso.date().optional(),
+  // Who wrote it: the assistant from what the person said, or the person in Settings.
+  by: z.enum(['assistant', 'you']),
+});
+export type AssistantNote = z.infer<typeof AssistantNote>;
+
+export const assistantRememberTool = 'remember';
+export const assistantForgetTool = 'forget';
+
+// The notes that still apply on `today` (YYYY-MM-DD), as the lines appended to the instructions.
+export function notesForInstructions(notes: readonly AssistantNote[], today: string): string {
+  const live = notes.filter((note) => note.until === undefined || note.until >= today);
+  if (live.length === 0) return '';
+  return [
+    '',
+    '',
+    'Notes you keep about how the person works (they asked you to remember these):',
+    ...live.map((note) => `- ${note.text}${note.until ? ` (until ${note.until})` : ''}`),
+  ].join('\n');
+}

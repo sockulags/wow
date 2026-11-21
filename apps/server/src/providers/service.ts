@@ -23,6 +23,7 @@ import {
 import type { SecretStore } from '@wow/secrets';
 import { and, eq, isNotNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { instructionsWithNotes } from '../assistant/memory.js';
 import { AssistantRedactor } from '../assistant/redact.js';
 import { prepareAssistantFolder } from '../assistant/thread.js';
 import type { Commit, Engine } from '../core/engine.js';
@@ -879,7 +880,14 @@ export class ProviderService {
       ...command,
       cwd: await prepareAssistantFolder(this.#deps.home),
       toolset: { name: assistantToolsetName, url: access.url, token: access.token },
-      instructions: this.#deps.settings.get('assistant.instructions'),
+      instructions: instructionsWithNotes(
+        {
+          db: this.#deps.db,
+          settings: this.#deps.settings,
+          clock: () => new Date(this.#deps.now?.() ?? Date.now()),
+        },
+        this.#deps.settings.get('assistant.instructions'),
+      ),
     };
   }
 
