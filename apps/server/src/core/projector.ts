@@ -6,6 +6,7 @@ import {
   touchPageRead,
   DomainEvent,
   TextItemPayload,
+  ChangesAppliedItemPayload,
   FilesRestoredItemPayload,
   isTurnSnapshot,
   type StoredSnapshot,
@@ -530,6 +531,25 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
           tx.update(threadItems)
             .set({ payload: { ...asRecord(row.payload), undoneBy: item.id } })
             .where(eq(threadItems.id, restore.undoOf))
+            .run();
+        }
+      }
+      return ['threadItems'];
+    }
+    case 'thread.changesApplied': {
+      const { item } = event.payload;
+      tx.insert(threadItems).values(item).run();
+      const applied = ChangesAppliedItemPayload.parse(item.payload);
+      if (applied.undoOf !== undefined) {
+        const row = tx
+          .select({ payload: threadItems.payload })
+          .from(threadItems)
+          .where(eq(threadItems.id, applied.undoOf))
+          .get();
+        if (row) {
+          tx.update(threadItems)
+            .set({ payload: { ...asRecord(row.payload), undoneBy: item.id } })
+            .where(eq(threadItems.id, applied.undoOf))
             .run();
         }
       }

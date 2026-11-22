@@ -2259,6 +2259,11 @@ export const settingsRegistry = {
     "Open the commit dialog of the open chat thread's Changes, which commits the files you tick with the repository's hooks.",
     'Mod+Shift+K',
   ),
+  'keybindings.applyToProject': keybinding(
+    'Chat: apply to project folder…',
+    "Open the confirm that writes the open thread's changes from its own working copy into the project folder, as uncommitted changes.",
+    'Mod+Shift+A',
+  ),
   'keybindings.commitConfirm': keybinding(
     'Commit or open the pull request',
     'In the commit dialog, commit; in the pull request dialog, push and open it.',

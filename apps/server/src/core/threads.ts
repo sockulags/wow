@@ -115,6 +115,9 @@ type ThreadCommand = Extract<
       | 'thread.snapshotsDropped'
       | 'thread.committed'
       | 'thread.changeRequestOpened'
+      | 'thread.applyToProject'
+      | 'thread.undoApply'
+      | 'thread.changesApplied'
       | 'approval.answer'
       | 'question.answer'
       | 'provider.events';
@@ -1198,6 +1201,40 @@ export function decideThread(
         'rejected',
         "Files are put back only from a chat thread's message or restore line, after its confirm.",
       );
+    // The apply service writes the files first and records them with `thread.changesApplied`
+    // (parallel threads spec 10).
+    case 'thread.applyToProject':
+    case 'thread.undoApply':
+      throw new CommandRejected(
+        'rejected',
+        "A thread's changes are applied to the project folder only from its Changes, after the confirm.",
+      );
+    // The line goes on the thread's last turn (parallel threads spec 8).
+    case 'thread.changesApplied': {
+      const thread = requireThread(read, command.threadId);
+      const last = read.lastTurn(thread.id);
+      if (!last)
+        throw new CommandRejected('rejected', 'A thread without turns has nothing to apply.');
+      const index = read.nextItemIndex(thread.id);
+      return [
+        {
+          kind: 'thread.changesApplied',
+          aggregate: thread.id,
+          payload: {
+            threadId: thread.id,
+            item: {
+              id: `${last.id}:changes-applied:${index}`,
+              threadId: thread.id,
+              turnId: last.id,
+              index,
+              kind: 'changes_applied',
+              payload: command.applied,
+              streaming: false,
+            },
+          },
+        },
+      ];
+    }
     case 'thread.snapshotTaken': {
       const thread = requireThread(read, command.threadId);
       if (!read.threadTurns(thread.id).some((turn) => turn.id === command.turnId)) {

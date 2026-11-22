@@ -202,6 +202,7 @@ export function useCommands(gated = false): {
         tabsRoute,
         changesOpen,
         changesTurnOnly,
+        openThread?.workingCopy?.startSha != null,
       ),
       ...sessionToolsCommands(
         openThread && openThread.kind !== 'assistant' ? openThread.id : undefined,

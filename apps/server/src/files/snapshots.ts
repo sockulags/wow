@@ -246,6 +246,12 @@ export class FolderSnapshots {
     return next;
   }
 
+  // Runs a task of another service on a folder in that folder's queue, so it never meets a
+  // snapshot or a restore of the folder half done (parallel threads spec 7).
+  exclusive<T>(folder: string, task: () => Promise<T>): Promise<T> {
+    return this.#serial(folder, task);
+  }
+
   #git(deadline: number): GitRunOptions {
     return {
       timeoutMs: Math.max(1, deadline - Date.now()),

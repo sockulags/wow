@@ -15,6 +15,7 @@ import {
 } from './attachments.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RestorePreview, RestorePreviewParams } from './snapshots.js';
+import { ApplyPreview } from './apply.js';
 import {
   CommitParams,
   CommitPlan,
@@ -401,6 +402,12 @@ export const rpcMethods = {
   'threads.restorePreview': {
     params: RestorePreviewParams,
     result: RestorePreview,
+  },
+  // What "Apply to project folder" would do now (parallel threads spec 2 to 5), read at this
+  // moment; nothing is written. A refusal comes back as `status` with its reason.
+  'threads.applyPreview': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: ApplyPreview,
   },
   // Commit from a chat thread's Changes (thread work spec 27 to 30). The plan is read only. Commit
   // runs the repository's commit hooks, on the user's click only; refused as `rejected` with a

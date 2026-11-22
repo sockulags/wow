@@ -1,6 +1,7 @@
 import {
   providerChatOptions,
   TextItemPayload,
+  undoableApply,
   undoableRestore,
   type ProviderInstance,
   type SentImage,
@@ -68,6 +69,7 @@ import { errorMessage, useDispatch, useModels, useTopic } from './data';
 import { copyText } from '@/components/copy-button';
 import { conversationStore, showConversation, showGoBack, showRestore } from './conversation-nav';
 import { EditFilesChoice, RestoreDialog, askRestore, type RestoreTarget } from './restore';
+import { undoApply } from './apply';
 import { conversationMarkdown, exportFileName } from './conversation-markdown';
 import type { FindRequest } from './find-bar';
 import type { FindSource } from './find';
@@ -858,6 +860,13 @@ export function ThreadConversation({
     undoableRestore(newestRestore, newestRestore.id, lastTurn(turns))
       ? newestRestore.id
       : undefined;
+  // Undo on the newest apply line until it is undone (parallel threads spec 9).
+  const newestApply = useMemo(
+    () => (storedItems ?? noItems).findLast((item) => item.kind === 'changes_applied'),
+    [storedItems],
+  );
+  const undoApplyId =
+    newestApply && undoableApply(newestApply, newestApply.id) ? newestApply.id : undefined;
   const restorableKey = [...restorableTurns].join('\n');
   const editChoiceShown = editFilesChoice !== undefined;
   const editWithFiles = editFilesChoice?.withFiles === true;
@@ -983,6 +992,9 @@ export function ThreadConversation({
       ...(goesBack && goBack.forkable.has(itemId) ? { onFork: () => fork(turnId) } : {}),
       ...(itemId === `${turnId}:user` && restorableTurns.has(turnId)
         ? { onRestore: () => askRestoreTo({ kind: 'restore', turnId }) }
+        : {}),
+      ...(itemId === undoApplyId
+        ? { onUndoApply: () => void undoApply(connection, threadId, itemId) }
         : {}),
       ...(restoreLines.has(itemId)
         ? {

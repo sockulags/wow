@@ -626,6 +626,7 @@ describe("a thread's Changes (spec 34, 35)", () => {
     expect(commands.map((command) => command.keybinding)).toEqual([
       'keybindings.threadChanges',
       'keybindings.commitChanges',
+      'keybindings.applyToProject',
       undefined,
       undefined,
       undefined,

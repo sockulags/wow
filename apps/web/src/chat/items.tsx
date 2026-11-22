@@ -3,6 +3,7 @@ import {
   CompactionItemPayload,
   ErrorItemPayload,
   ChangeRequestOpenedItemPayload,
+  ChangesAppliedItemPayload,
   CommittedItemPayload,
   FilesRestoredItemPayload,
   ReasoningItemPayload,
@@ -41,6 +42,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ApprovalCard } from './approval-card';
 import { FilesRestoredLine } from './restore';
+import { ChangesAppliedLine } from './apply';
 import { CommittedLine } from './commit-dialog';
 import { ChangeRequestOpenedLine } from './pull-request-dialog';
 import { errorMessage, useDispatch } from './data';
@@ -125,6 +127,8 @@ export interface ItemContext {
   // A restore line: the message it went back to, and Undo while it is offered (spec 24).
   readonly restoreLine?:
     { readonly messageText: string; readonly onUndo?: (() => void) | undefined } | undefined;
+  // Undo on the thread's newest apply line while it is offered (parallel threads spec 9).
+  readonly onUndoApply?: (() => void) | undefined;
   // The exchanges Edit replaced with this message, oldest first ("Earlier version", spec 62).
   readonly earlier?: readonly EarlierExchange[] | undefined;
 }
@@ -785,6 +789,14 @@ function ItemBody({
       const parsed = ChangeRequestOpenedItemPayload.safeParse(item.payload);
       return parsed.success ? (
         <ChangeRequestOpenedLine payload={parsed.data} />
+      ) : (
+        <Unreadable item={item} />
+      );
+    }
+    case 'changes_applied': {
+      const parsed = ChangesAppliedItemPayload.safeParse(item.payload);
+      return parsed.success ? (
+        <ChangesAppliedLine payload={parsed.data} onUndo={context.onUndoApply} />
       ) : (
         <Unreadable item={item} />
       );

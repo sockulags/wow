@@ -3852,6 +3852,50 @@ runs at a time. The assistant has no tool for any of it (`thread.committed` and
 `thread.changeRequestOpened` are server-only), and wow never amends, merges, rebases, pulls,
 forces or deletes a branch, except the empty one it made for a commit that was then refused.
 
+### Apply a thread's changes to the project folder
+
+Parallel threads spec 1 to 10. A chat thread with its own working copy (`workingCopy.startSha`)
+has "Apply to project folder…" in its Changes view (`keybindings.applyToProject`, Mod+Shift+A,
+palette `chat.applyToProject`). The confirm and the line live in `apps/web/src/chat/apply.tsx`;
+the line's words in `chat/git-lines.ts` (`appliedLineText`, `appliedText`), shared with Ctrl+F
+and the Markdown export. The server side is `apps/server/src/workspaces/apply.ts` (`ThreadApply`),
+reached only through the RPCs below; the engine refuses `thread.applyToProject` and
+`thread.undoApply` sent to it alone, so the assistant and a setup file cannot apply.
+
+- `threads.applyPreview {threadId}` answers `ApplyPreview`. It refuses (as `status`) a thread
+  that is not a chat thread or has no copy, a running turn in the thread, a running turn in any
+  thread whose `cwd` is the project folder (`projectBusy`, compared by `folderKey`), a missing
+  folder, a project folder outside Git and a missing git. Otherwise it lists the copy's changes
+  (`listChangedSince`: `git diff --name-only -z --no-renames <startSha>` and `ls-files --others
+--exclude-standard`, over `chat.snapshotMaxFiles` refused), reads the start commit's tree and
+  blobs from the copy's repository (`readFolderTree`, `readFolderBlobs`) and compares base,
+  theirs (the copy) and ours (the project folder) as bytes: ours = theirs `same`, ours = base
+  `write` or `delete`, both changed: `deletedThere`, `deletedHere`, `binary`, or a
+  `git merge-file -p` of the three on scratch files under `<home>/apply-scratch`
+  (`mergeFileBytes`) that is `merge` when Git reports no conflict and `conflict` otherwise. A
+  link, a side over `chat.snapshotMaxFileBytes`, or a path `unsafeSnapshotPath` refuses or that
+  leads through a link in either folder is left. `nothing` when no file would be written.
+- `dispatch` takes `thread.applyToProject {threadId, confirmed}` before the engine and runs it in
+  the project folder's snapshot queue (`FolderSnapshots.exclusive`), so it never meets a snapshot
+  or restore of that folder half done. It plans again and answers `conflict` with the new
+  preview as `data` when `applyConfirmedOf(preview)` differs from `confirmed`. Then it keeps the
+  touched files as they are now as a tree in the project folder's snapshot store
+  (`refs/applies/<ms>-<sha1 of the command id>/before`), writes and deletes with `node:fs`
+  (empty folders a delete leaves go; the executable bit follows the copy where the system has
+  one), keeps the result under `/after`, and records `thread.changesApplied {threadId,
+applied}` (event `thread.changesApplied`, item `changes_applied` on the last turn, with
+  `savedAs` naming the refs). Refs older than `chat.snapshotKeepDays` are dropped at the next
+  apply into that folder.
+- `thread.undoApply {threadId, itemId}`: only the thread's newest apply line, not undone
+  (`undoableApply`). Each touched file whose content still matches `/after` (or is still absent)
+  gets `/before` back, or is deleted when it had none; one changed since is listed in `left` as
+  "changed since Apply". The undo line has `undoOf`, and the projector sets `undoneBy` on the
+  apply line.
+
+Apply writes no object, ref, index entry or HEAD in either repository, and runs `diff`,
+`ls-files`, `ls-tree`, `cat-file` and `merge-file` only, with hooks and the file system monitor
+off like every store command.
+
 ### What the session can use
 
 Thread work U5 (spec 37 to 44). A chat thread's panel has a Tools tab with what the provider

@@ -38,6 +38,7 @@ import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
 import { FolderSnapshots } from './files/snapshots.js';
 import { ThreadGit } from './workspaces/thread-git.js';
+import { ThreadApply } from './workspaces/apply.js';
 import { listTerminalSessions } from './providers/sessions.js';
 import { ProviderUpdates, createNpmRunner, type RunNpm } from './providers/update.js';
 import type { Spawn } from './files/editor.js';
@@ -328,6 +329,16 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     listModels: (providerInstanceId) => providerService.listModels(providerInstanceId),
   });
   engine.onCommit((commit) => images.copyForkImages(commit.events));
+  const threadApply = new ThreadApply({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    home,
+    platform: options.platform ?? process.platform,
+    clock: options.clock ?? (() => new Date()),
+    snapshots,
+  });
   const threadGit = new ThreadGit({
     db: database.db,
     engine,
@@ -360,6 +371,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     images,
     snapshots,
     threadGit,
+    threadApply,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     discoverProjects: () =>
       discoverProjects({

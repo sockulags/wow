@@ -578,6 +578,23 @@ host refuses after the push, its message shows; the branch stays pushed and you 
 again. wow never amends, merges, rebases, pulls, force-pushes or deletes a branch, and the
 assistant cannot commit, push or open a pull request.
 
+**Apply to project folder…** (**Ctrl+Shift+A**, `keybindings.applyToProject`) is in the Changes
+of a thread that has its own working copy. It brings the thread's work into the project's own
+folder without a branch, push or pull request: every file the thread changed since its copy was
+made (its commits and what it has not committed) is written there as an uncommitted change. A
+confirm lists them first: **Left for you** (with why), **Merged with your changes**, **Written**
+and **Deleted**. A file you have not touched in the project folder gets the thread's version. A
+file you changed too is merged when Git can do it without a conflict; otherwise it is left as you
+have it, and so is a file one side deleted and the other changed, a binary file both changed, a
+link or a file larger than `chat.snapshotMaxFileBytes`. Nothing is committed or staged and no
+branch changes, in the project folder or in the thread's copy. Apply waits while a turn runs in
+the thread or in a thread that works in the project folder. When the files change between the
+confirm and Apply, the confirm shows the new lists instead. The conversation then shows "Applied
+to C:\Code\tea · 3 written · 1 merged · 1 deleted · 2 left for you" with **Undo**, which puts
+back each file Apply wrote or deleted, except a file you changed since (it is named). Undo is
+offered on the newest apply until it is used, for `chat.snapshotKeepDays` days. The assistant
+cannot apply.
+
 A turn ends with its usage: input, output and cached tokens, and the cost when the provider
 reports one. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.

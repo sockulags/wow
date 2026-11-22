@@ -223,6 +223,9 @@ export const ThreadItemKind = z.enum([
   // spec 29, 32). Threads stored before have none.
   'committed',
   'change_request_opened',
+  // The user applied a thread's changes to the project folder, or undid it (parallel threads
+  // spec 8, 9). Threads stored before have none.
+  'changes_applied',
 ]);
 export type ThreadItemKind = z.infer<typeof ThreadItemKind>;
 

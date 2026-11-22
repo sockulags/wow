@@ -35,6 +35,7 @@ const conversationKeys = new Set([
   'findPrevious',
   'commitChanges',
   'commitConfirm',
+  'applyToProject',
 ]);
 
 export function keyScope(settingKey: string): KeyScope {
