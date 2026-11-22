@@ -178,6 +178,22 @@ export function threadListCommands({
       run: showProject(undefined),
     });
   }
+  // Group the list by state or by project (chat overview spec 12).
+  for (const [groupBy, title] of [
+    ['state', 'Group threads by state'],
+    ['project', 'Group threads by project'],
+  ] as const) {
+    commands.push({
+      id: groupBy === 'state' ? 'chat.groupByState' : 'chat.groupByProject',
+      title,
+      group: 'Chat',
+      keywords: ['thread list', 'group', 'sort', groupBy],
+      run: ({ settings, navigate }) => {
+        if (!inChat) void navigate({ to: '/chat' });
+        void settings.write('chat.threadListGroupBy', groupBy);
+      },
+    });
+  }
   const next = nextUnread(listOrder(threads), openThread?.id);
   if (next) {
     commands.push({

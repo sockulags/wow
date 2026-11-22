@@ -45,9 +45,7 @@ It names their files as they are at 0.5.0.
 
 2. The change part is a button. It opens the thread's Changes tab narrowed to that turn: **This
    turn only** for the last turn, and "Turn N only" for an earlier turn, listing the files that
-   changed between its start and end snapshots and still differ. When the turn has no two
-   snapshots (the folder is not in Git, snapshots are off for the project, git ran out of time),
-   the part reads "Changes not measured" and is not a button.
+   changed between its start and end snapshots and still differ. When the turn has no two snapshots (the folder is not in Git, snapshots are off for the project, git ran out of time), the summary has no change part.
 3. The change count is stored with the usage row; what ran is read from the turn's stored rows.
    A reload or a restart shows the same. Find matches the summary text. The Markdown export
    writes it as a line "Turn: …" at the turn's end.
@@ -86,7 +84,8 @@ It names their files as they are at 0.5.0.
    the week. Needs you and Working stay ungrouped. Pinned threads stay first, above the groups.
 10. Each group heading (Needs you, Working, Idle, Done and the time groups) folds and unfolds on
     click, Enter or Space. A folded group shows its count. Which groups are folded is kept
-    across restarts (`chat.threadListFolded`). Done starts folded.
+    across restarts (`chat.threadListFolded`). Done starts folded. A folded group still shows
+    the thread on screen, and while the filter has text no group is folded.
 11. A thread in Done that has not been active for `chat.doneArchiveDays` days is archived by the
     server, as "Archive thread" would. The default is 14 days; 0 never archives. Pinned threads
     and workflow steps' threads are never archived this way. Unarchive brings one back as today.

@@ -646,6 +646,34 @@ export const settingsRegistry = {
       time: { label: 'When it was last active' },
     },
   }),
+  'chat.threadListGroupBy': defineSetting({
+    schema: z.enum(['state', 'project']),
+    group: 'chat',
+    label: 'Group the thread list by',
+    description:
+      'State: Needs you, Working, Idle and Done, with Idle and Done grouped by when each thread was last active. Project: one group per project.',
+    default: 'state',
+    scope: 'global',
+    options: { state: { label: 'State' }, project: { label: 'Project' } },
+  }),
+  'chat.threadListFolded': defineSetting({
+    schema: z.array(z.string().min(1)),
+    group: 'chat',
+    label: 'Folded groups of the thread list',
+    description:
+      'The groups of the thread list that are folded, kept when a group is folded or unfolded.',
+    default: ['done'],
+    scope: 'global',
+  }),
+  'chat.doneArchiveDays': defineSetting({
+    schema: z.number().int().min(0).max(365),
+    group: 'chat',
+    label: 'Archive done threads after (days)',
+    description:
+      'A thread marked done and not active for this many days is archived; the filter and the palette still find it. Pinned threads and workflow steps are never archived this way. 0 never archives.',
+    default: 14,
+    scope: 'global',
+  }),
   'chat.activityTextMaxLength': defineSetting({
     schema: z.number().int().min(20).max(5000),
     group: 'chat',

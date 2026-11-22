@@ -1702,8 +1702,9 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helpers` (project-scoped), `chat.helpersPerThread`, `chat.helpersLive`,
   `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
   `chat.activityTextMaxLength` (see
-  "Threads at work and a thread in the panel"), `chat.threadRowDetail` (see "Thread list,
-  unread and chat notifications"), `chat.commitTimeoutMs`,
+  "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
+  `chat.threadListFolded`, `chat.doneArchiveDays` (see "Thread list, unread and chat
+  notifications"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
   (project-scoped), `chat.pullRequestDraft` (project-scoped) (see "Commit and pull request from
@@ -3500,7 +3501,7 @@ diffs the turn's start and end trees in wow's store (`diffSnapshotTrees`, `git d
 (`readThreadDiff` with no mark, the header chip's measure), then dispatches the server-only
 `thread.turnChangesMeasured {threadId, turnId, changes, threadChanges}`. The engine patches
 `changes` onto the turn's usage row (`UsageItemPayload.changes`, null when the turn has no two
-snapshots) and emits `thread.changeCounted`, which sets `Thread.changeCount`. A turn without a
+snapshots, which the row then leaves out) and emits `thread.changeCounted`, which sets `Thread.changeCount`. A turn without a
 usage row gets no row: one added then would sit after a later turn's items. What the turn ran is
 not stored: `chat/turn-summary.ts` (`turnSummaries`) reads it from the turn's top-level tool rows
 in `groupSummary`'s words, with "N failed". The change part opens Changes narrowed to the turn
@@ -4259,6 +4260,19 @@ are open), its changes ("+42 −7" from `Thread.changeCount`), its branch when i
 working copy or else its project or folder, and when it was last active. `chat.threadRowDetail`
 names the parts shown; the order stays. Each part is a `data-part` span, and the whole line is
 the row's hover title. Nothing counts on a clock of the list's own.
+
+The groups come from `chat/thread-sections.ts` (chat overview spec 9, 10, 12). By state
+(`chat.threadListGroupBy` `state`), Needs you and Working are flat, and Idle and Done hold their
+pinned threads first and then Today, Yesterday, This week and Older by `updatedAt` in the
+calendar's zone, the week starting on the calendar's first day; the day is read from the
+browser's clock, which only places rows and decides no state. By project, each project is a
+group ordered by name, "Other folders" last, with pinned threads, then state, then last activity.
+Every group has a key (`needs`, `idle.older`, `project:<id>`); a heading is a button that folds
+its group, writing `chat.threadListFolded` (`done` by default). While the filter has text no
+group is folded, and a folded group still lists the thread on screen. On every scheduler tick
+`core/archive-by-age.ts` archives, with the ordinary `thread.setArchived`, each chat thread that
+is done, not pinned, not a step's and not active for `chat.doneArchiveDays` days (0: never).
+The palette has "Group threads by state" and "Group threads by project".
 
 The list has a filter field on top (`keybindings.threadFilter`, Ctrl+Shift+F anywhere, and
 `keybindings.threadFilterInList`, `/` while the list has the keyboard) and, when threads sit in

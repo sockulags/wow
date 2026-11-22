@@ -154,19 +154,13 @@ describe('the words of a turn summary (spec 1)', () => {
     expect(summary?.opensChanges).toBe(true);
   });
 
-  it('says a turn could not be measured, and has nothing for a turn that did nothing', () => {
+  it('has nothing for a turn that did nothing or could not be measured', () => {
     const summaries = turnSummaries([
       usage(0, { changes: null }),
       usage(1, { changes: { files: 0, added: 0, removed: 0 } }),
       usage(2),
     ]);
-    expect(summaries.get(`${turnId(0)}:usage`)).toEqual({
-      changes: 'Changes not measured',
-      opensChanges: false,
-      ran: undefined,
-    });
-    expect(summaries.has(`${turnId(1)}:usage`)).toBe(false);
-    expect(summaries.has(`${turnId(2)}:usage`)).toBe(false);
+    expect(summaries.size).toBe(0);
   });
 });
 

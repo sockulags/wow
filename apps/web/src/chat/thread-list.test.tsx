@@ -4,6 +4,7 @@ import {
   createSettingsStore,
   type Connection,
   type ConnectionState,
+  settingValue,
 } from '@wow/client-runtime';
 import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -367,5 +368,96 @@ describe('rows that say where a thread stands (chat overview spec 6, 7)', () => 
       ['activity', 'Running pnpm test'],
       ['place', 'wow/ring-the-bell-t1'],
     ]);
+  });
+});
+
+const settingsWith = (values: Record<string, unknown>) =>
+  createSettingsStore(
+    createMemorySettingsSource(undefined, {
+      'providers.offerSetup': false,
+      'calendar.zone': 'Europe/Stockholm',
+      'calendar.firstDayOfWeek': 'monday',
+      ...values,
+    }),
+  );
+const groupTitles = (name: string) =>
+  within(screen.getByRole('region', { name }))
+    .getAllByTestId('thread-group-toggle')
+    .map((toggle) => toggle.textContent);
+
+describe('a list that stays tidy (chat overview spec 9, 10, 12)', () => {
+  // A Wednesday at noon in Stockholm; the week starts on Monday.
+  const noon = new Date('2026-11-18T11:00:00.000Z');
+  const idle = [
+    thread('t1', 'Earlier today', { updatedAt: '2026-11-18T07:00:00.000Z' }),
+    thread('t2', 'Yesterday evening', { updatedAt: '2026-11-17T20:00:00.000Z' }),
+    thread('t3', 'Monday morning', { updatedAt: '2026-11-16T06:00:00.000Z' }),
+    thread('t4', 'Last month', { updatedAt: '2026-10-02T08:00:00.000Z' }),
+    thread('t5', 'Pinned long ago', { pinned: true, updatedAt: '2026-09-02T08:00:00.000Z' }),
+  ];
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('groups Idle by when each thread was last active, pinned threads first', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(noon);
+    const { runtime } = fake({ projects: [], threads: idle });
+    await renderApp('/chat', { ...runtime, settings: settingsWith({}) });
+    await listed();
+    expect(groupTitles('Idle')).toEqual(['Idle5', 'Today1', 'Yesterday1', 'This week1', 'Older1']);
+    expect(rowTitles()).toEqual([
+      'Pinned long ago',
+      'Earlier today',
+      'Yesterday evening',
+      'Monday morning',
+      'Last month',
+    ]);
+  });
+
+  it('folds a group and keeps it folded in the setting; Done starts folded', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(noon);
+    const settings = settingsWith({});
+    const { runtime } = fake({
+      projects: [],
+      threads: [...idle, thread('t6', 'Put away', { state: 'done' })],
+    });
+    await renderApp('/chat', { ...runtime, settings });
+    const user = userEvent.setup();
+    await listed();
+    expect(rowTitles()).not.toContain('Put away');
+    const older = within(screen.getByRole('region', { name: 'Older' })).getByRole('button', {
+      name: /Older/,
+    });
+    await user.click(older);
+    expect(older.getAttribute('aria-expanded')).toBe('false');
+    expect(rowTitles()).not.toContain('Last month');
+    expect(settingValue(settings.getState().values, 'chat.threadListFolded')).toEqual([
+      'done',
+      'idle.older',
+    ]);
+  });
+
+  it('groups by project, each project ordered by state', async () => {
+    const { runtime } = fake({
+      projects: [project('p-tea', 'Tea'), project('p-garden', 'Garden')],
+      threads: [
+        thread('t1', 'Steep', { projectId: 'p-tea', updatedAt: '2026-11-03T08:00:00.000Z' }),
+        thread('t2', 'Ask about water', { projectId: 'p-tea', state: 'needs_you' }),
+        thread('t3', 'Water the plants', { projectId: 'p-garden' }),
+        thread('t4', 'Loose folder', { cwd: '/work/loose' }),
+      ],
+    });
+    await renderApp('/chat', {
+      ...runtime,
+      settings: settingsWith({ 'chat.threadListGroupBy': 'project' }),
+    });
+    await listed();
+    expect(
+      screen.getAllByTestId('thread-group-toggle').map((toggle) => toggle.textContent),
+    ).toEqual(['Garden1', 'Tea2', 'Other folders1']);
+    expect(rowTitles()).toEqual(['Water the plants', 'Ask about water', 'Steep', 'Loose folder']);
   });
 });

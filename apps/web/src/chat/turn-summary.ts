@@ -6,7 +6,7 @@ import { groupSummary, payloadOf, type ToolPayload } from './tools/facts';
 // of that failed, from the turn's own tool rows. A subagent's own calls count as its one call.
 
 export interface TurnSummary {
-  // "Changed 3 files +40 −2", "Changes not measured", or absent when there is nothing to say.
+  // "Changed 3 files +40 −2", or absent when there is nothing to say.
   readonly changes: string | undefined;
   // The turn changed files that can be listed, so the part opens its Changes.
   readonly opensChanges: boolean;
@@ -16,10 +16,9 @@ export interface TurnSummary {
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
+// A turn that could not be measured (no two snapshots) says nothing about its changes.
 export function changesText(changes: ChangeCount | null | undefined): string | undefined {
-  if (changes === undefined) return undefined;
-  if (changes === null) return 'Changes not measured';
-  if (changes.files === 0) return undefined;
+  if (changes === undefined || changes === null || changes.files === 0) return undefined;
   return `Changed ${plural(changes.files, 'file', 'files')} +${changes.added} −${changes.removed}`;
 }
 

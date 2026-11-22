@@ -600,8 +600,8 @@ reports one. The line starts with what the turn did, such as "Changed 3 files +4
 files, ran 1 command · 1 failed". Click the changed files to open Changes narrowed to that turn:
 **This turn only** for the last turn, **Turn 2 only** for an earlier one (the files that turn
 changed and that still differ). wow measures a turn's changes from the snapshots it keeps of the
-folder; without them (a folder outside Git, snapshots off for the project) the line says "Changes
-not measured". A workflow step's thread shows what ran only; its changes are the run's. With `chat.contextMeter` on, the composer shows
+folder; without them (a folder outside Git, snapshots off for the project) the line leaves the
+changes out. A workflow step's thread shows what ran only; its changes are the run's. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.
 
 ### When the agent needs you
@@ -753,7 +753,18 @@ what it waits for ("Wants to run rm -rf build") or runs ("Running pnpm test"), h
 list is ("3/7"), what it changed ("+42 −7"), its branch when it has its own working copy or else
 its project, and when it was last active. Hover the row for the whole line. Settings → Chat →
 **Second line of a thread in the list** (`chat.threadRowDetail`) chooses which of these parts
-show. A thread whose turn failed sits under Idle with a marker. A thread started
+show.
+
+Idle and Done are grouped under **Today**, **Yesterday**, **This week** and **Older**, by when
+each thread was last active (in the calendar's time zone, the week starting on its first day),
+with pinned threads above. Click a group's heading, or press Enter on it, to fold or unfold it;
+wow keeps which groups are folded. Done starts folded; a folded group still shows the thread you
+have open, and while the filter has text every group is open. A done thread that has not been
+active for 14 days is archived by itself (**Archive done threads after**, `chat.doneArchiveDays`;
+0 never does); pinned threads and workflow steps' threads are never archived this way. **Group
+the thread list by** (`chat.threadListGroupBy`, or "Group threads by project" and "Group threads
+by state" in the palette) groups the list by project instead, each project's threads ordered as
+needs you, working, then by last activity. A thread whose turn failed sits under Idle with a marker. A thread started
 by a workflow is titled by its step, with the workflow on the second line.
 
 The thread header shows the project (hover it for the folder) and the provider instance; the
