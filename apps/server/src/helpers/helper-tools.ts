@@ -1,4 +1,9 @@
-import { TextItemPayload, ToolCallItemPayload, type ServerCommand } from '@wow/contracts';
+import {
+  QuestionReply,
+  TextItemPayload,
+  ToolCallItemPayload,
+  type ServerCommand,
+} from '@wow/contracts';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -90,6 +95,21 @@ export class HelperTools implements HelperToolProvider {
               threadId: args.id,
               parentThreadId: threadId,
               text: args.text,
+            }),
+          ),
+      },
+      answer_helper_question: {
+        description:
+          'Answers a question one of your helpers asked (wow tells you, or read_helper shows it), when what you know settles it. If it does not, tell the person the question waits for them. Approvals are never yours to answer.',
+        input: z.object({ id, questionId: id, reply: QuestionReply }).strict(),
+        run: (threadId, args: { id: string; questionId: string; reply: QuestionReply }) =>
+          Promise.resolve(
+            this.#dispatch({
+              type: 'helper.answer',
+              threadId: args.id,
+              parentThreadId: threadId,
+              questionId: args.questionId,
+              reply: args.reply,
             }),
           ),
       },

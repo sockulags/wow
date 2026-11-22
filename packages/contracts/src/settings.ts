@@ -617,6 +617,15 @@ export const settingsRegistry = {
     default: 6,
     scope: 'global',
   }),
+  'chat.helperAnswerMaxLength': defineSetting({
+    schema: z.number().int().min(200).max(200_000),
+    group: 'chat',
+    label: 'Longest helper answer sent back',
+    description:
+      "How many characters of a helper's answer wow sends back to the thread that started it. A longer answer is cut, and the agent reads the rest with read_helper.",
+    default: 20_000,
+    scope: 'global',
+  }),
   'chat.activityTextMaxLength': defineSetting({
     schema: z.number().int().min(20).max(5000),
     group: 'chat',

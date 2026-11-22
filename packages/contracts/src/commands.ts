@@ -811,6 +811,23 @@ export const InternalCommand = z.discriminatedUnion('type', [
     text: z.string().trim().min(1),
   }),
   z.object({ type: z.literal('helper.stop'), threadId: Id, parentThreadId: Id }),
+  // The main thread's agent answers a question its helper asked (agent orchestration spec 2, 4).
+  // Approvals are never answered this way.
+  z.object({
+    type: z.literal('helper.answer'),
+    threadId: Id,
+    parentThreadId: Id,
+    questionId: Id,
+    reply: QuestionReply,
+  }),
+  // wow's helper follower (spec 3): a helper ended a turn, failed or asked a question, so its main
+  // thread's agent is told with a message. A turn that was stopped tells nothing.
+  z.object({
+    type: z.literal('helper.followed'),
+    threadId: Id,
+    reason: z.enum(['turnEnded', 'question']),
+    questionId: Id.optional(),
+  }),
   // The apply service wrote a thread's changes into the project folder, or undid that (parallel
   // threads spec 8, 9): the line on the thread's last turn.
   z.object({

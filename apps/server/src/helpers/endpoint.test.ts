@@ -12,7 +12,7 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { providerInstances, threadItems, threads, turns } from '../db/schema.js';
+import { providerInstances, questions, threadItems, threads, turns } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
 
@@ -60,6 +60,18 @@ const script = (command: ProviderCommand) => {
   if (command.type === 'interrupt')
     return [{ type: 'turnInterrupted' as const, threadId: command.threadId }];
   if (command.type !== 'startTurn') return [];
+  if (/which port/i.test(command.prompt)) {
+    return [
+      {
+        type: 'questionAsked' as const,
+        threadId: command.threadId,
+        questionId: 'port',
+        question: 'Which port?',
+        options: [{ label: '4317' }, { label: '8080' }],
+        multiSelect: false,
+      },
+    ];
+  }
   return [
     {
       type: 'textDelta' as const,
@@ -252,6 +264,7 @@ describe('helper tools in a chat session (orchestration spec 1)', () => {
       'list_helpers',
       'read_helper',
       'write_to_helper',
+      'answer_helper_question',
       'stop_helper',
     ]);
     await client.close();
@@ -410,6 +423,84 @@ describe('helper threads (orchestration spec 2 to 8)', () => {
         'assistant',
       ),
     ).toThrow(/helper tools/);
+    await client.close();
+  });
+});
+
+// Resolves once the main thread has had `count` turns.
+async function mainTurns(count: number) {
+  await new Promise<void>((resolve) => {
+    const check = () => {
+      if (startTurnsOf('t1').length >= count) {
+        unsubscribe();
+        resolve();
+      }
+    };
+    const unsubscribe = server.engine.onCommit(check);
+    check();
+  });
+  await server.helperFollower.settled();
+  await server.providerService.idle();
+}
+
+describe('following helpers (orchestration spec 3, 7)', () => {
+  it("sends the helper's answer back to the main thread as a message from wow", async () => {
+    const client = await mainThread();
+    const started = await call(client, 'start_helper', {
+      brief: 'Review the timer',
+      instance: 'Codex at work',
+    });
+    await mainTurns(2);
+    expect(startTurnsOf('t1')[1]?.prompt).toBe(
+      `From wow: your helper "Review the timer" (id ${String(started.value['id'])}, on Codex at work) ended its turn. Its answer:\n\nDone`,
+    );
+    await client.close();
+  });
+
+  it("tells the main thread of the helper's question and lets its agent answer it", async () => {
+    const client = await mainThread();
+    const started = await call(client, 'start_helper', { brief: 'Which port should it use?' });
+    const helperId = String(started.value['id']);
+    await mainTurns(2);
+    const told = startTurnsOf('t1')[1]?.prompt ?? '';
+    expect(told).toContain(`your helper "Which port should it use?" (id ${helperId}`);
+    expect(told).toContain('asks a question');
+    expect(told).toContain('Which port?');
+    const questionId = /question \(id ([^)]+)\)/.exec(told)?.[1] ?? '';
+    const answered = await call(client, 'answer_helper_question', {
+      id: helperId,
+      questionId,
+      reply: { picked: ['4317'], text: '' },
+    });
+    expect(answered.isError).toBe(false);
+    expect(
+      server.database.db.select().from(questions).where(eq(questions.id, questionId)).get()?.answer,
+    ).toContain('4317');
+    await client.close();
+  });
+
+  it('stops the working helpers with the main thread, tells nothing, and keeps the main thread from being put away', async () => {
+    const client = await mainThread();
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Wait while it works' });
+    const started = await call(client, 'start_helper', { brief: 'Wait for the build' });
+    const helperId = String(started.value['id']);
+    await helperStarted(helperId);
+    expect(() => dispatch({ type: 'thread.setArchived', threadId: 't1', archived: true })).toThrow(
+      /Wait for the build/,
+    );
+    dispatch({ type: 'thread.interrupt', threadId: 't1' });
+    await turnEnds(helperId);
+    await server.helperFollower.settled();
+    await server.providerService.idle();
+    expect(
+      adapters
+        .flatMap((adapter) => adapter.sent)
+        .filter((command) => command.type === 'interrupt')
+        .map((command) => command.threadId)
+        .toSorted(),
+    ).toEqual(['t1', helperId].toSorted());
+    // A stopped helper tells its main thread nothing, so the main thread does not start again.
+    expect(startTurnsOf('t1')).toHaveLength(2);
     await client.close();
   });
 });

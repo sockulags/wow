@@ -19,6 +19,7 @@ import {
 } from '@wow/contracts';
 import { decisionLabels } from './approval-card';
 import { appliedText, changeRequestLineText, committedText } from './git-lines';
+import { helperPayload, helperRowText } from './helpers';
 import { compactionText, settingsChangeText } from './items';
 import { startedLabels } from './plan-card';
 import { taskProgress } from './task-pin';
@@ -371,6 +372,11 @@ export function conversationMarkdown(input: ConversationExport): string {
       case 'change_request_opened': {
         const parsed = ChangeRequestOpenedItemPayload.safeParse(item.payload);
         if (parsed.success) line(`${changeRequestLineText(parsed.data)} · ${parsed.data.url}`);
+        break;
+      }
+      case 'helper_started': {
+        const helper = helperPayload(item.payload);
+        if (helper) line(helperRowText(helper));
         break;
       }
       case 'changes_applied': {

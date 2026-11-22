@@ -87,6 +87,22 @@ describe('what find matches (spec 2)', () => {
     expect(found(pieces, 'hook did not finish').map((match) => match.itemId)).toEqual(['c']);
   });
 
+  it('matches the row of a helper the agent started (agent orchestration spec 10)', () => {
+    const pieces = conversationText(
+      source([
+        item('h', 'helper_started', {
+          helperThreadId: 'helper-1',
+          title: 'Review the timer change',
+          instanceName: 'Codex at work',
+          providerKind: 'codex',
+          isolation: 'folder',
+          at: '2026-11-12T20:41:00.000Z',
+        }),
+      ]),
+    );
+    expect(found(pieces, 'codex at work').map((match) => match.itemId)).toEqual(['h']);
+  });
+
   it('matches a message as rendered, not its markdown', () => {
     expect(
       markdownText('The **kettle** and `the pot`\n\n- one\n- [two](https://example.org)'),

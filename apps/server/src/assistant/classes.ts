@@ -330,6 +330,8 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'helper.start': serverOnly,
   'helper.write': serverOnly,
   'helper.stop': serverOnly,
+  'helper.answer': serverOnly,
+  'helper.followed': serverOnly,
   'thread.undoApply': chatOnly,
   'thread.changesApplied': serverOnly,
   'thread.snapshotTaken': serverOnly,

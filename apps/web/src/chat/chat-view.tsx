@@ -1,6 +1,7 @@
 import type { Thread } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
+import { nestHelpers } from './helpers';
 import {
   ActivityIcon,
   MessagesSquareIcon,
@@ -259,17 +260,23 @@ function ThreadList() {
                   <span className="ml-1 tabular-nums opacity-70">{members.length}</span>
                 </h3>
                 <ul className="flex flex-col gap-0.5">
-                  {members.map((thread) => {
+                  {nestHelpers(members, (member) => member, threads).map((nested) => {
+                    const { entry: thread } = nested;
                     const workflow = workflowName(thread.runId);
                     const place =
                       projects.find((candidate) => candidate.id === thread.projectId)?.name ??
                       baseName(thread.cwd);
-                    const detail = [workflow, place, relative(thread.updatedAt)]
+                    const detail = [
+                      nested.helperOf === undefined ? undefined : `Helper of ${nested.helperOf}`,
+                      workflow,
+                      place,
+                      relative(thread.updatedAt),
+                    ]
                       .filter(Boolean)
                       .join(' · ');
                     const unread = isUnread(thread);
                     return (
-                      <li key={thread.id}>
+                      <li key={thread.id} className={cn(nested.depth === 1 && 'ml-4')}>
                         <Link
                           to="/chat/$threadId"
                           params={{ threadId: thread.id }}

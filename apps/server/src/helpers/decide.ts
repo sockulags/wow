@@ -19,7 +19,7 @@ import { settingValue } from '../assistant/permissions.js';
 
 export type HelperCommand = Extract<
   ServerCommand,
-  { type: 'helper.start' | 'helper.write' | 'helper.stop' }
+  { type: 'helper.start' | 'helper.write' | 'helper.stop' | 'helper.answer' }
 >;
 
 // Working: its turn runs, or it is between a message and its turn.
@@ -178,6 +178,25 @@ export function* decideHelper(
       );
       return;
     }
+    case 'helper.answer': {
+      const helper = helperOf(command.threadId, parent, read);
+      const question = read.question(command.questionId);
+      if (!question || question.threadId !== helper.id) {
+        throw new CommandRejected(
+          'not_found',
+          `"${helper.title}" has no question ${command.questionId}.`,
+        );
+      }
+      if (question.answer !== null) {
+        throw new CommandRejected('conflict', 'That question was already answered.');
+      }
+      yield decide(
+        { type: 'question.answer', answers: [{ questionId: question.id, reply: command.reply }] },
+        read,
+        asUser,
+      );
+      return;
+    }
     case 'helper.stop': {
       const helper = helperOf(command.threadId, parent, read);
       if (read.runningTurn(helper.id) === undefined) {
@@ -187,4 +206,63 @@ export function* decideHelper(
       return;
     }
   }
+}
+
+// What the main thread's agent is told when its helper ends a turn or asks (spec 3), as a message
+// from wow. A stopped turn tells nothing, so stopping a main thread does not start it again.
+export function decideHelperFollow(
+  command: Extract<ServerCommand, { type: 'helper.followed' }>,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const helper = read.thread(command.threadId);
+  if (!helper || helper.startedBy !== 'helper' || !helper.parentThreadId) return [];
+  const parent = read.thread(helper.parentThreadId);
+  if (!parent) return [];
+  const instance = read.providerInstance(helper.providerInstanceId);
+  const who = `your helper "${helper.title}" (id ${helper.id}, on ${instance?.name ?? 'its instance'})`;
+  let text: string;
+  if (command.reason === 'question') {
+    const question = command.questionId ? read.question(command.questionId) : undefined;
+    if (!question || question.answer !== null) return [];
+    text = `From wow: ${who} asks a question (id ${question.id}): ${JSON.stringify(question.request)}\nAnswer it with answer_helper_question if what you know settles it; otherwise tell the person it waits for them.`;
+  } else {
+    const turn = read.lastTurn(helper.id);
+    if (!turn || turn.state === 'running' || turn.state === 'interrupted') return [];
+    if (turn.state === 'failed') {
+      const error = read
+        .threadItems(helper.id)
+        .findLast((item) => item.turnId === turn.id && item.kind === 'error');
+      const message =
+        error &&
+        typeof error.payload === 'object' &&
+        error.payload !== null &&
+        'message' in error.payload
+          ? String(error.payload.message)
+          : 'no reason was given';
+      text = `From wow: ${who} failed: ${message}\nRead it with read_helper, write to it to go on, or do the work yourself.`;
+    } else {
+      const max = settingValue('chat.helperAnswerMaxLength', read, context);
+      const limit = typeof max === 'number' ? max : 20_000;
+      const answer = read
+        .threadItems(helper.id)
+        .filter((item) => item.turnId === turn.id && item.kind === 'assistant_text')
+        .map((item) =>
+          typeof item.payload === 'object' && item.payload !== null && 'text' in item.payload
+            ? String(item.payload.text)
+            : '',
+        )
+        .join('\n\n')
+        .trim();
+      const shown =
+        answer.length > limit
+          ? `${answer.slice(0, limit)}\n[Cut at ${limit} characters; read_helper has the rest.]`
+          : answer;
+      text = `From wow: ${who} ended its turn.${shown === '' ? ' It said nothing.' : ` Its answer:\n\n${shown}`}`;
+    }
+  }
+  return decide({ type: 'thread.sendMessage', threadId: parent.id, text }, read, {
+    ...context,
+    origin: 'user',
+  });
 }

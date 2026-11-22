@@ -1690,8 +1690,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
   `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
-  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helpers` (project-scoped), `chat.helpersPerThread`, `chat.helpersLive` (see "Helper tools
-  in a chat session"),
+  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helpers` (project-scoped), `chat.helpersPerThread`, `chat.helpersLive`,
+  `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
   `chat.activityTextMaxLength` (see
   "Threads at work and a thread in the panel"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
@@ -4368,6 +4368,33 @@ for `copy`; then `thread.helperStarted` (sets `parentThreadId` and `startedBy: '
 through `thread.sendMessage`. `helper.write` is `thread.sendMessage` and `helper.stop`
 `thread.interrupt`, for a helper of that main thread only. The read model's `helperThreads`
 lists a main thread's helpers, or all.
+
+**Following helpers** (U3, spec 3, 7). `helpers/follow.ts` (`HelperFollower`) listens for
+`turn.ended` and `question.asked` of a thread with `startedBy: 'helper'` and, after the commit,
+dispatches the internal `helper.followed {threadId, reason, questionId?}` (refused from the
+assistant and the helper tools). `decideHelperFollow` turns it into the user's
+`thread.sendMessage` to the main thread, so it waits in the queue while the main turn runs or is
+handed to it where the provider takes that: "From wow: your helper "<title>" (id <id>, on
+<instance>) ended its turn. Its answer: …" with the turn's answers, cut at
+`chat.helperAnswerMaxLength`; "… failed: <the error item's message>"; or "… asks a question (id
+<question id>): <request>" with a pointer to `answer_helper_question`. A turn that was stopped,
+a question already answered and an approval tell nothing, so stopping a main thread never starts
+it again. `answer_helper_question` dispatches `helper.answer`, decided as the user's
+`question.answer` for a question of that main thread's helper only. `thread.interrupt` of a main
+thread also interrupts the running turn of each of its helpers in the same commit;
+`thread.setDone` and `thread.setArchived` of a main thread are refused while a helper works
+(`refuseWhileHelpersWork`), and removing its working copy already is, since a helper in its
+folder shares the copy.
+
+**Seeing helpers** (U4, spec 10 to 12). The `helper_started` item draws as `chat/tools/helper.tsx`
+(`HelperRow`): `helperRowText` ("Helper · Codex at work · Review the timer change", with "own
+working copy" for `copy`), then the helper's state from `threads` and `threadActivity`: the
+working line while it works, "Waits for you", "Failed", or its last line and when. The title and
+"Open in panel" open it with `openThreadTab` in the view's panel, "Open thread" goes to it, and
+Stop sends `thread.interrupt` while it works. `chat/helpers.ts` holds `helperRowText`, which
+Ctrl+F and the Markdown export use too, and `nestHelpers`, which puts a helper right after its
+main thread, one step in, when both are in the same list (a thread list group, a Threads at work
+group), and names the main thread ("Helper of …") of a helper listed alone.
 
 - Claude (`ClaudeAdapter#withHelperTools`): the session's own options stay (settings sources, the
   user's tools, servers and launch arguments, the permission mode) and `mcpServers` gets `wow`

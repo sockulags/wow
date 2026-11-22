@@ -797,8 +797,15 @@ one in your own words ("ask Codex to review this"), or the agent starts one when
 second agent. A helper works in the same folder as its main thread, as Claude Code's subagents do,
 or in its own working copy when the agent asks for that. Its permission mode is never wider than
 the main thread's: on the other provider it gets the closest mode that reaches no further. Its
-approvals are yours, as in every thread. The agent can read how a helper stands and what it
-answered, write to it and stop it. A helper is an ordinary thread in the list. At most
+approvals are yours, as in every thread. When a helper ends its turn, its answer comes back to the
+main thread as a message from wow ("From wow: your helper … ended its turn. Its answer: …"), and
+the agent goes on with it; a helper's question comes back the same way, and the agent answers it
+when what it knows settles it. The agent can also read how a helper stands, write to it and stop
+it. In the main thread each helper is a row where it was started, such as "Helper · Codex at work
+· Review the timer change", with what it runs now, what it waits for or the last thing it said;
+click it to open the helper in the side panel, or use **Open thread** and **Stop**. In the thread
+list and Threads at work a helper sits under its main thread. Stopping the main thread stops its
+helpers, and it cannot be marked done or archived while a helper works. At most
 `chat.helpersPerThread` (3) helpers of one thread, and `chat.helpersLive` (6) in all, work at
 once. Turn the setting off for a project to keep `wow` out of its sessions; a Claude
 session then starts again on the same conversation, and a Codex thread leaves it out from its

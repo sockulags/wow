@@ -16,6 +16,7 @@ import { DelegationFollower } from './assistant/follow.js';
 import { assistantMcpPath, createMcpHandler, type AssistantEndpoint } from './assistant/mcp.js';
 import { HelperEndpoint, helperMcpPath } from './helpers/endpoint.js';
 import { HelperTools } from './helpers/helper-tools.js';
+import { HelperFollower } from './helpers/follow.js';
 import { AssistantTools } from './assistant/tools.js';
 import { Engine } from './core/engine.js';
 import { Subscriptions } from './core/subscriptions.js';
@@ -123,6 +124,8 @@ export interface RunningServer {
   readonly plans: PlansService;
   readonly workflows: WorkflowRunner;
   readonly follower: DelegationFollower;
+  // Tells a main thread when its helper ends a turn or asks (agent orchestration spec 3).
+  readonly helperFollower: HelperFollower;
   readonly briefs: BriefRequester;
   readonly chief: Chief;
   readonly workspaces: Workspaces;
@@ -257,6 +260,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
   // Gives the assistant a turn when a thread it started ends a turn or asks something.
   const follower = new DelegationFollower({ db: database.db, engine, logger });
+  const helperFollower = new HelperFollower({ db: database.db, engine, logger });
   // Asks the assistant for the brief of each new decision (chief of staff spec 18).
   const briefs = new BriefRequester({ db: database.db, engine, logger });
   const workflows = new WorkflowRunner({
@@ -489,6 +493,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     });
   } catch (error) {
     follower.stop();
+    helperFollower.stop();
     briefs.stop();
     await workflows.stop();
     await workspaces.stop();
@@ -606,9 +611,11 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const stop = () =>
     (stopped ??= (async () => {
       follower.stop();
+      helperFollower.stop();
       briefs.stop();
       chief.stop();
       await follower.settled();
+      await helperFollower.settled();
       await briefs.settled();
       await stopServices();
       await providerUpdates.stop();
@@ -640,6 +647,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     plans,
     workflows,
     follower,
+    helperFollower,
     briefs,
     chief,
     workspaces,

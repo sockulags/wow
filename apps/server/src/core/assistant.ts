@@ -27,7 +27,7 @@ import {
 import { decideDelegation, decideFollow, isDelegationCommand } from '../assistant/delegation.js';
 import { coverage } from '../assistant/permissions.js';
 import { decideSetup } from '../setup/apply.js';
-import { decideHelper } from '../helpers/decide.js';
+import { decideHelper, decideHelperFollow } from '../helpers/decide.js';
 import {
   CommandRejected,
   decide,
@@ -55,6 +55,13 @@ export function* decideInSteps(
   const asUser: DecideContext = { ...context, origin: 'user' };
 
   // Helper threads (agent orchestration spec 2): only a thread's agent through wow's helper tools.
+  if (command.type === 'helper.followed') {
+    if (context.origin !== undefined && context.origin !== 'user') {
+      throw new CommandRejected('rejected', 'Only wow sends this.');
+    }
+    yield decideHelperFollow(command, read, context);
+    return;
+  }
   if (isHelperCommand(command)) {
     if (context.origin !== 'helper') {
       throw new CommandRejected(

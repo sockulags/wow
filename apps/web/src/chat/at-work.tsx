@@ -13,6 +13,7 @@ import { useDateFormat } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { openThreadTab } from '@/panel/viewer';
 import { useTopic } from './data';
+import { nestHelpers } from './helpers';
 import { WorkingIndicator } from './items';
 import { runningToolLabel } from './view-model';
 
@@ -30,6 +31,10 @@ export interface AtWorkRow {
   readonly group: Group;
   // What the thread waits for, from the decision queue (spec 12).
   readonly waitsFor: string | undefined;
+  // A helper under its main thread is one step in; one listed alone names its main thread
+  // (agent orchestration spec 11).
+  readonly depth: 0 | 1;
+  readonly helperOf: string | undefined;
 }
 
 const groupTitles: Record<Group, string> = {
@@ -55,12 +60,21 @@ export function atWorkRows(
         : thread.state === 'working'
           ? 'working'
           : 'finished';
-    return [{ thread, activity: entry, group, waitsFor: waits?.title }];
+    return [
+      { thread, activity: entry, group, waitsFor: waits?.title, depth: 0, helperOf: undefined },
+    ];
   });
   const since = (row: AtWorkRow) => row.thread.stateSince ?? row.thread.updatedAt;
   const order: readonly Group[] = ['needs', 'working', 'finished'];
-  return rows.toSorted(
-    (a, b) => order.indexOf(a.group) - order.indexOf(b.group) || since(a).localeCompare(since(b)),
+  // Within a group, each helper right after its main thread when both are there.
+  return order.flatMap((group) =>
+    nestHelpers(
+      rows
+        .filter((row) => row.group === group)
+        .toSorted((a, b) => since(a).localeCompare(since(b))),
+      (row) => row.thread,
+      threads,
+    ).map(({ entry, depth, helperOf }) => ({ ...entry, depth, helperOf })),
   );
 }
 
@@ -193,6 +207,7 @@ export function ThreadsAtWork() {
                 className={cn(
                   'flex flex-col gap-0.5 rounded-md px-3 py-2 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
                   row.thread.seen === false && 'font-semibold',
+                  row.depth === 1 && 'ml-6 border-l border-border',
                 )}
                 onClick={() =>
                   void navigate({ to: '/chat/$threadId', params: { threadId: row.thread.id } })
@@ -201,7 +216,12 @@ export function ThreadsAtWork() {
               >
                 <span className="truncate text-sm">{row.thread.title}</span>
                 <span className="truncate text-2xs font-normal text-muted-foreground">
-                  {where(row.thread, projects)}
+                  {[
+                    row.helperOf === undefined ? undefined : `Helper of ${row.helperOf}`,
+                    where(row.thread, projects),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </span>
                 <span className="font-normal">
                   <RowLine row={row} />

@@ -5,6 +5,7 @@ import {
   ChangeRequestOpenedItemPayload,
   ChangesAppliedItemPayload,
   CommittedItemPayload,
+  HelperStartedItemPayload,
   FilesRestoredItemPayload,
   ReasoningItemPayload,
   SettingsChangeItemPayload,
@@ -43,6 +44,7 @@ import { cn } from '@/lib/utils';
 import { ApprovalCard } from './approval-card';
 import { FilesRestoredLine } from './restore';
 import { ChangesAppliedLine } from './apply';
+import { HelperRow } from './tools/helper';
 import { CommittedLine } from './commit-dialog';
 import { ChangeRequestOpenedLine } from './pull-request-dialog';
 import { errorMessage, useDispatch } from './data';
@@ -792,6 +794,10 @@ function ItemBody({
       ) : (
         <Unreadable item={item} />
       );
+    }
+    case 'helper_started': {
+      const parsed = HelperStartedItemPayload.safeParse(item.payload);
+      return parsed.success ? <HelperRow payload={parsed.data} /> : <Unreadable item={item} />;
     }
     case 'changes_applied': {
       const parsed = ChangesAppliedItemPayload.safeParse(item.payload);

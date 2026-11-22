@@ -75,7 +75,8 @@ runs (`2026-11-review-loop`).
     tab of the side panel; the row has **Open thread** and **Stop**.
 11. Threads at work lists a helper indented under its main thread when both are listed, and under
     its own group otherwise, with "Helper of <main thread>".
-12. The thread list shows a main thread's helpers folded under it, with a count of those working.
+12. The thread list shows a helper right under its main thread when both are in the same group,
+    one step in, and names the main thread ("Helper of …") otherwise.
 
 ### Units in parallel
 
