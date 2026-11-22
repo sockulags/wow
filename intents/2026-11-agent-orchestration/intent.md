@@ -1,6 +1,6 @@
 ---
 id: 2026-11-agent-orchestration
-status: draft
+status: accepted
 rev: 1
 supersedes: null
 ---
@@ -29,25 +29,25 @@ still started and divided by him, or by the assistant, which only works in its o
 
 When this is done:
 
-- **Helper threads.** A chat thread can be given wow's helper tools. With them its agent starts
-  a helper thread on a provider instance he allows (Claude Code or Codex, whichever the main
-  thread runs on), with a brief, a model and a working copy (the main thread's folder read-only,
-  or its own copy). The agent can read a helper's state and final answer, write to it and stop
-  it. A helper is an ordinary thread: it shows in the thread list, Threads at work and the panel,
-  and its changes come home with Apply.
-- **Seen in the main thread.** A helper shows in the main thread's conversation as a row like a
+- **Helper threads.** Every chat thread's agent has wow's helper tools. With them it starts a
+  helper thread on any connected provider instance (Claude Code or Codex, whichever the main
+  thread runs on), with a brief and a model. It uses them when the task needs it or the user asks,
+  not by habit. A helper works the way Claude Code's subagents do: in the main thread's folder by
+  default, or in its own working copy when the agent asks for that. The agent can read a
+  helper's state and answer, write to it and stop it; a helper's question goes to the agent.
+- **Coupled to the main thread.** A helper belongs to the thread that started it. Its final answer
+  comes back to that thread's agent, which goes on with it. Stopping the main thread's turn stops
+  the helpers it started. A helper cannot start helpers of its own.
+- **Seen while they work.** A helper shows in the main thread's conversation as a row like a
   subagent's: "Helper · Codex · review the timer change · Running pnpm test · 1:12", opening to
-  its live conversation in the side panel. Threads at work groups helpers under the thread that
-  started them.
-- **Units in parallel.** A plan run starts every ready unit up to a limit he sets, each in its
-  own run and working copy, and starts the next one as one ends. Units that depend on each other
-  still wait. The plan run's view, and Threads at work, show which unit runs where and on what.
-- **Limits he sets.** How many helpers a thread may have at once, how many in total, which
-  instances and modes a helper may use, and how many units run at the same time. A limit reached
-  is said to the agent in words, not failed silently.
+  its live conversation in the side panel. Threads at work lists helpers under their main thread.
+  Each helper is also an ordinary thread he can open.
+- **Units in parallel.** A plan run can start several ready units at once, each in its own run and
+  working copy, up to a limit he sets, and starts the next as one ends. Units that depend on each
+  other still wait. The plan run's view and Threads at work show which unit runs where and on what.
 - **His rules stay.** Approvals and gates of a helper or a unit's run are his, as for every
-  thread: a main thread's agent can never answer them. A helper never gets a wider permission
-  mode than its main thread.
+  thread; the main thread's agent can never answer them. A helper never gets a wider permission
+  mode than its main thread. Limits on how many helpers run at once are said to the agent in words.
 
 ## Out of scope
 
@@ -64,24 +64,9 @@ only the assistant's tools-only session did), and a plan run may have more than 
 
 ## Open questions
 
-1. **How does a thread get the helper tools?** Proposal: a switch per thread at start ("Can start
-   helpers"), with a project default `chat.helpers`. Off by default, since it lets an agent start
-   work that costs money.
-2. **Which providers may a helper use?** Proposal: any connected instance the setting
-   `chat.helperInstances` lists; by default every connected one, so a Claude thread can use Codex
-   and the other way round.
-3. **Where does a helper work?** Proposal: in its own working copy when the project is in Git
-   (so its changes can be applied or reviewed), else read-only in the main thread's folder. A
-   helper that should only read or review gets read-only mode in the main thread's folder.
-4. **Does a helper's question or approval go to the main thread's agent?** Proposal: questions
-   may be answered by the main thread's agent (it wrote the brief), approvals never. Same rule as
-   the assistant's delegation.
-5. **Parallel units: the limit and the failure rule.** Proposal: `workflows.planRunParallel`
-   (default 2). With `workflows.planRunOnFailure: stop`, a failed unit stops starting new ones and
-   lets the running ones finish.
-6. **What does "lite löst" mean for the owner?** Read as: helpers are loosely tied to their main
-   thread, keep working when the main thread's turn ends, and can be opened and steered on their
-   own. To confirm.
+- How many units a plan run may have live at once by default. The owner kept it open: it is the
+  setting `workflows.planRunParallel`, which starts at 1 (one at a time, as today) until he
+  chooses another default.
 
 ## Decision log
 
@@ -92,3 +77,9 @@ only the assistant's tools-only session did), and a plan run may have more than 
   Threads at work, the thread tab in the panel and Apply cover running, seeing and bringing home.
   What is new is a chat session that carries wow's tools beside its own, a parent link between
   threads, and more than one live unit in a plan run.
+- 2026-11-22: the owner answered the draft's questions. Helper tools are on for every chat thread
+  by default, and the agent uses them when needed or asked. A helper may run on any connected
+  instance, works like Claude Code's subagents (the main thread's folder, or its own copy on
+  request), and the main thread's agent answers its questions but never its approvals. Helpers
+  are coupled to their main thread, and what they do must be visible. The parallel-units limit
+  stays open.
