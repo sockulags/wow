@@ -2,6 +2,7 @@ import {
   FilesRestoredItemPayload,
   isTurnSnapshot,
   undoableRestore,
+  type ChangeCount,
   type Command,
   type DispatchResult,
   type LeftAloneFile,
@@ -34,6 +35,7 @@ import type { Db } from '../db/database.js';
 import { commandReceipts, restorePoints, threadItems, threads, turns } from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import {
+  diffSnapshotTrees,
   hashSnapshotFiles,
   initSnapshotStore,
   listSnapshotFiles,
@@ -48,7 +50,19 @@ import {
   type SnapshotEntry,
 } from '../projects/git.js';
 import type { SettingsService } from '../settings/service.js';
+import { changesOptions, readThreadDiff } from '../workflows/changes.js';
 import { folderKey } from './folder-key.js';
+
+// The turn's own changes from its two snapshots, and the thread's as its Changes count them.
+const countOf = (files: Iterable<{ added: number | null; removed: number | null }>) => {
+  const count = { files: 0, added: 0, removed: 0 };
+  for (const file of files) {
+    count.files += 1;
+    count.added += file.added ?? 0;
+    count.removed += file.removed ?? 0;
+  }
+  return count;
+};
 
 // Snapshots of a chat thread's folder and restores from them (thread work spec 19 to 26). A
 // snapshot is a tree in wow's own bare repository for the folder, `<home>/snapshots/<key>.git`,
@@ -293,6 +307,7 @@ export class FolderSnapshots {
         }),
       );
       this.#record(threadId, turnId, at, stored);
+      if (at === 'end') await this.#measure(threadId, turnId, stored);
     });
     return snapshot.then(async () => {
       if (at === 'end') {
@@ -327,6 +342,78 @@ export class FolderSnapshots {
       this.#git(this.#deadline()),
     );
     return kept.ok ? taken : { missing: `wow could not keep the snapshot: ${kept.message}` };
+  }
+
+  // What the turn changed, from its start snapshot to its end one, and what the thread has
+  // changed as of now (chat overview spec 1, 4). Never throws: the turn keeps no count then.
+  async #measure(threadId: string, turnId: string, end: StoredSnapshot): Promise<void> {
+    try {
+      const thread = this.#thread(threadId);
+      if (!thread) return;
+      const start = this.#deps.db
+        .select({ startSnapshot: turns.startSnapshot })
+        .from(turns)
+        .where(eq(turns.id, turnId))
+        .get()?.startSnapshot;
+      const changes =
+        isTurnSnapshot(start) && isTurnSnapshot(end)
+          ? await this.#between(thread.cwd, start.tree, end.tree)
+          : null;
+      const diff =
+        thread.baseSha === null
+          ? undefined
+          : await readThreadDiff({
+              folder: thread.cwd,
+              baseSha: thread.baseSha,
+              baseFiles: thread.baseFiles,
+              mark: null,
+              options: changesOptions(this.#deps.settings),
+            });
+      this.#deps.engine.dispatch(`turn-changes:${turnId}`, {
+        type: 'thread.turnChangesMeasured',
+        threadId,
+        turnId,
+        changes: changes ?? null,
+        threadChanges: diff?.status === 'ok' ? countOf(diff.files) : null,
+      });
+    } catch (error) {
+      this.#deps.logger.warn("the turn's changes were not measured", describe(error));
+    }
+  }
+
+  async #between(folder: string, from: string, to: string): Promise<ChangeCount | undefined> {
+    const diffed = await diffSnapshotTrees(
+      this.storeOf(folder),
+      from,
+      to,
+      64 * 1024 * 1024,
+      this.#git(this.#deadline()),
+    );
+    return diffed.ok ? countOf(diffed.counts.values()) : undefined;
+  }
+
+  // The files an earlier turn changed, for its Changes (chat overview spec 2); undefined when
+  // the turn has no two snapshots to compare.
+  async turnPaths(threadId: string, turnId: string): Promise<string[] | undefined> {
+    const thread = this.#thread(threadId);
+    const turn = this.#deps.db
+      .select({ start: turns.startSnapshot, end: turns.endSnapshot, threadId: turns.threadId })
+      .from(turns)
+      .where(eq(turns.id, turnId))
+      .get();
+    if (!thread || turn?.threadId !== threadId) return undefined;
+    if (!isTurnSnapshot(turn.start) || !isTurnSnapshot(turn.end)) return undefined;
+    const { start, end } = turn;
+    return this.#serial(thread.cwd, async () => {
+      const diffed = await diffSnapshotTrees(
+        this.storeOf(thread.cwd),
+        start.tree,
+        end.tree,
+        64 * 1024 * 1024,
+        this.#git(this.#deadline()),
+      );
+      return diffed.ok ? [...diffed.counts.keys()].toSorted() : undefined;
+    });
   }
 
   #record(threadId: string, turnId: string, at: SnapshotAt, snapshot: StoredSnapshot): void {

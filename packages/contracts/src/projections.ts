@@ -114,6 +114,15 @@ export type ResumePointRef = z.infer<typeof ResumePointRef>;
 export const ForkOrigin = z.object({ threadId: Id, turnId: Id });
 export type ForkOrigin = z.infer<typeof ForkOrigin>;
 
+// Files and lines changed (chat overview spec 1, 4): a turn's from its start snapshot to its end
+// snapshot, a thread's as its Changes count them.
+export const ChangeCount = z.object({
+  files: z.number().int().nonnegative(),
+  added: z.number().int().nonnegative(),
+  removed: z.number().int().nonnegative(),
+});
+export type ChangeCount = z.infer<typeof ChangeCount>;
+
 export const Thread = z.object({
   id: Id,
   kind: ThreadKind.optional(),
@@ -138,6 +147,9 @@ export const Thread = z.object({
   // False once a turn ended or the thread started to need the user since it was last opened
   // (spec 70). The server keeps it, so every window and the tray agree. Absent means seen.
   seen: z.boolean().optional(),
+  // What the thread changed as of its last turn's end (chat overview spec 4), for its row in the
+  // thread list. Null when it could not be measured; absent in rows from before.
+  changeCount: ChangeCount.nullable().optional(),
   // The message waiting for the running turn to end; null or absent when none waits.
   queued: QueuedMessage.nullable().optional(),
   // When the thread came to its current state, so a thread that waits is ordered by when the wait
@@ -348,6 +360,9 @@ export const UsageItemPayload = Usage.partial().extend({
     .object({ usedTokens: z.number().int().nonnegative(), maxTokens: z.number().int().positive() })
     .optional(),
   model: z.string().min(1).optional(),
+  // What the turn changed in a chat thread's folder (chat overview spec 1, 2): null when it could
+  // not be measured, absent while it is being measured, for a step's thread and before.
+  changes: ChangeCount.nullable().optional(),
 });
 export type UsageItemPayload = z.infer<typeof UsageItemPayload>;
 

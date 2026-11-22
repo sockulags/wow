@@ -104,7 +104,8 @@ import {
 } from './model';
 import { ModelBar, useModelBarKeys, type ModelBarHandle, type ModelBarProps } from './model-bar';
 import { frontModelBar } from './model-commands';
-import { ThreadChangesChip } from './thread-changes';
+import { openThreadChanges, ThreadChangesChip } from './thread-changes';
+import { turnSummaries } from './turn-summary';
 import { ToolsChip } from '@/panel/tools-tab';
 import { RemoveThreadCopyDialog, WorkingCopyChip } from './working-copy';
 import { ThreadTitle } from './thread-title';
@@ -962,9 +963,23 @@ export function ThreadConversation({
     }
     return lines;
   }, [storedItems]);
+  const summaries = useMemo(() => turnSummaries(items ?? []), [items]);
+  // A turn's summary opens its Changes in a chat thread's own view (chat overview spec 2).
+  const turnChanges =
+    !extras && (thread.kind ?? 'chat') === 'chat' && thread.runId === null
+      ? (turn: Turn) =>
+          openThreadChanges(
+            { settings, layout },
+            threadId,
+            routerPanelRoute(router),
+            undefined,
+            turn.id === last?.id ? 'last' : { id: turn.id, number: turn.index + 1 },
+          )
+      : undefined;
   const itemContext = (turnId: string, itemId: string): ItemContext => {
     const turn = turnById.get(turnId);
     const said = words.get(itemId);
+    const summary = summaries.get(itemId);
     return {
       itemId,
       modelLabel: labelOf,
@@ -996,6 +1011,8 @@ export function ThreadConversation({
       ...(itemId === undoApplyId
         ? { onUndoApply: () => void undoApply(connection, threadId, itemId) }
         : {}),
+      ...(summary ? { turnSummary: summary } : {}),
+      ...(summary && turn && turnChanges ? { onTurnChanges: () => turnChanges(turn) } : {}),
       ...(restoreLines.has(itemId)
         ? {
             restoreLine: {
@@ -1101,8 +1118,20 @@ export function ThreadConversation({
       outputLines,
       modelLabel: labelOf,
       modeLabel,
+      summaries,
     }),
-    [entries, children, turns, approvals, questions, thread.cwd, outputLines, labelOf, modeLabel],
+    [
+      entries,
+      children,
+      turns,
+      approvals,
+      questions,
+      thread.cwd,
+      outputLines,
+      labelOf,
+      modeLabel,
+      summaries,
+    ],
   );
 
   const backgroundTasks = thread.backgroundTasks ?? [];

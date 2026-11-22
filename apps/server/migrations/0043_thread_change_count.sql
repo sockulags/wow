@@ -1,0 +1,1 @@
+ALTER TABLE `threads` ADD `change_count` text;

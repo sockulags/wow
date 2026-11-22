@@ -1,5 +1,6 @@
 import type {
   AssistantChangeRecord,
+  ChangeCount,
   AssistantChangeState,
   AssistantPermissionKind,
   AssistantPlace,
@@ -153,6 +154,9 @@ export const threads = sqliteTable(
     // A helper thread's main thread (agent orchestration spec 4).
     parentThreadId: text(),
     followTurns: integer().notNull().default(0),
+    // What the thread changed as of its last turn's end (chat overview spec 4); null when not
+    // measured.
+    changeCount: json<ChangeCount>(),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },

@@ -10,6 +10,7 @@ import {
 } from './assistant.js';
 import { OwnSkill, SentSkill, SkillRef } from './skills.js';
 import {
+  ChangeCount,
   AppNotification,
   Approval,
   BacklogItem,
@@ -830,6 +831,15 @@ export const InternalCommand = z.discriminatedUnion('type', [
   }),
   // The apply service wrote a thread's changes into the project folder, or undid that (parallel
   // threads spec 8, 9): the line on the thread's last turn.
+  // The snapshot service measured what a chat thread's turn changed, and what the thread has
+  // changed as of then (chat overview spec 1, 4); null where it could not tell.
+  z.object({
+    type: z.literal('thread.turnChangesMeasured'),
+    threadId: Id,
+    turnId: Id,
+    changes: ChangeCount.nullable(),
+    threadChanges: ChangeCount.nullable(),
+  }),
   z.object({
     type: z.literal('thread.changesApplied'),
     threadId: Id,
@@ -1403,6 +1413,12 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   }),
   // The `changes_applied` line (parallel threads spec 8); with `undoOf`, that apply is marked
   // undone.
+  // A thread's change count as of its last turn's end (chat overview spec 4).
+  z.object({
+    kind: z.literal('thread.changeCounted'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, changeCount: ChangeCount.nullable() }),
+  }),
   z.object({
     kind: z.literal('thread.changesApplied'),
     aggregate: Id,

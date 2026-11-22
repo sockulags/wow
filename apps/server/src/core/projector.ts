@@ -536,6 +536,12 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       }
       return ['threadItems'];
     }
+    case 'thread.changeCounted':
+      tx.update(threads)
+        .set({ changeCount: event.payload.changeCount })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
     case 'thread.changesApplied': {
       const { item } = event.payload;
       tx.insert(threadItems).values(item).run();

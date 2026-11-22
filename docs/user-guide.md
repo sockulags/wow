@@ -596,7 +596,12 @@ offered on the newest apply until it is used, for `chat.snapshotKeepDays` days. 
 cannot apply.
 
 A turn ends with its usage: input, output and cached tokens, and the cost when the provider
-reports one. With `chat.contextMeter` on, the composer shows
+reports one. The line starts with what the turn did, such as "Changed 3 files +40 −2 · Read 2
+files, ran 1 command · 1 failed". Click the changed files to open Changes narrowed to that turn:
+**This turn only** for the last turn, **Turn 2 only** for an earlier one (the files that turn
+changed and that still differ). wow measures a turn's changes from the snapshots it keeps of the
+folder; without them (a folder outside Git, snapshots off for the project) the line says "Changes
+not measured". A workflow step's thread shows what ran only; its changes are the run's. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.
 
 ### When the agent needs you

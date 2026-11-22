@@ -118,6 +118,7 @@ type ThreadCommand = Extract<
       | 'thread.applyToProject'
       | 'thread.undoApply'
       | 'thread.changesApplied'
+      | 'thread.turnChangesMeasured'
       | 'approval.answer'
       | 'question.answer'
       | 'provider.events';
@@ -1257,6 +1258,31 @@ export function decideThread(
               streaming: false,
             },
           },
+        },
+      ];
+    }
+    // The turn's changes go on its usage row, which a turn without usage does not have: a row
+    // added now would sit after a later turn's items (chat overview spec 1, 3).
+    case 'thread.turnChangesMeasured': {
+      const thread = requireThread(read, command.threadId);
+      if (!read.threadTurns(thread.id).some((turn) => turn.id === command.turnId)) {
+        throw new CommandRejected('not_found', `No turn ${command.turnId}`);
+      }
+      const usageId = `${command.turnId}:usage`;
+      return [
+        ...(read.itemExists(usageId)
+          ? [
+              {
+                kind: 'threadItem.patched' as const,
+                aggregate: thread.id,
+                payload: { itemId: usageId, patch: { changes: command.changes } },
+              },
+            ]
+          : []),
+        {
+          kind: 'thread.changeCounted',
+          aggregate: thread.id,
+          payload: { threadId: thread.id, changeCount: command.threadChanges },
         },
       ];
     }

@@ -183,7 +183,9 @@ threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessi
                  main thread, with startedBy 'helper' (migration 0042_helper_threads); stateSince (0031); goBack(json:
                  GoBack)?, forkedFrom(json: {threadId, turnId})? for Edit and Fork (migration
                  0032_fork_and_edit); workingCopy(json: WorkingCopy)? a chat thread's own
-                 working copy, null for older rows (migration 0035_thread_working_copy)
+                 working copy, null for older rows (migration 0035_thread_working_copy);
+                 changeCount(json: ChangeCount)? what the thread changed as of its last turn's
+                 end (migration 0043_thread_change_count)
 turns            id, threadId, index, state, startedAt, endedAt, usage(json),
                  fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
                  turn began, for "This turn only" (migration 0029_thread_changes);
@@ -3485,6 +3487,24 @@ lands on something else in the conversation (`rowActionScope`), or the row unmou
 (`StoppedLine`, from the turn's `endedAt`), which carries Resume on the last turn. The line reads
 the turn's stored state, so a turn stopped before this change gets it too: it was stopped, and no
 item, divider or marker is added to it (spec 48 is about new items, not about reading old ones).
+
+### A turn's summary (chat overview U1)
+
+A turn's usage row starts with what the turn did (chat overview spec 1 to 5). The change part is
+measured on the server: after a chat thread's end snapshot is kept, `FolderSnapshots.#measure`
+diffs the turn's start and end trees in wow's store (`diffSnapshotTrees`, `git diff-tree -r
+--numstat --no-renames`, binary files counted with no lines) and reads the thread's Changes
+(`readThreadDiff` with no mark, the header chip's measure), then dispatches the server-only
+`thread.turnChangesMeasured {threadId, turnId, changes, threadChanges}`. The engine patches
+`changes` onto the turn's usage row (`UsageItemPayload.changes`, null when the turn has no two
+snapshots) and emits `thread.changeCounted`, which sets `Thread.changeCount`. A turn without a
+usage row gets no row: one added then would sit after a later turn's items. What the turn ran is
+not stored: `chat/turn-summary.ts` (`turnSummaries`) reads it from the turn's top-level tool rows
+in `groupSummary`'s words, with "N failed". The change part opens Changes narrowed to the turn
+(`openThreadChanges(…, turn)`): the last turn as "This turn only", an earlier one as "Turn N
+only", for which `threads.diff {turnId}` answers the files of its two snapshots as `turnPaths`
+(`FolderSnapshots.turnPaths`). Find reads the summary from `FindSource.summaries`; the Markdown
+export writes "Turn: …" at the turn's end.
 
 ### Subagents and background work
 

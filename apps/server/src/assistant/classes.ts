@@ -334,6 +334,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'helper.followed': serverOnly,
   'thread.undoApply': chatOnly,
   'thread.changesApplied': serverOnly,
+  'thread.turnChangesMeasured': serverOnly,
   'thread.snapshotTaken': serverOnly,
   'thread.filesRestored': serverOnly,
   'thread.snapshotsDropped': serverOnly,

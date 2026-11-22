@@ -28,6 +28,7 @@ import { withoutMentions } from './mentions';
 import { openKey } from './open-state';
 import { argumentList, lastLines, payloadOf, type ToolPayload } from './tools/facts';
 import { sentSkillName, type ConversationEntry } from './view-model';
+import { summaryText, type TurnSummary } from './turn-summary';
 
 // Find in a chat thread's conversation (thread work spec 1 to 5). It searches the text the rows
 // show, worded by the rows' own functions, so a match is never something the user cannot see;
@@ -54,6 +55,8 @@ export interface FindSource {
   readonly outputLines: number;
   readonly modelLabel?: ((id: string) => string) | undefined;
   readonly modeLabel?: ((id: string) => string) | undefined;
+  // Each usage row's turn summary (chat overview spec 3).
+  readonly summaries?: ReadonlyMap<string, TurnSummary> | undefined;
 }
 
 // Same length, so offsets into the text stay the same (find-bar.tsx relies on it).
@@ -312,8 +315,11 @@ function itemPieces(walk: Walk, item: ThreadItem, opens: readonly string[]) {
       if (parsed.success) add(appliedText(parsed.data));
       return;
     }
-    case 'usage':
+    case 'usage': {
+      const summary = source.summaries?.get(item.id);
+      if (summary) add(summaryText(summary));
       return;
+    }
   }
 }
 

@@ -36,6 +36,7 @@ import {
   type ToolPayload,
 } from './tools/facts';
 import { nestSubagentWork, sentSkillName } from './view-model';
+import { summaryText, turnSummaries } from './turn-summary';
 
 // The conversation as Markdown (thread work spec 7, 8), and the words of the rows that find and
 // the export share: a tool call, an approval, a question, a task list update in one line each,
@@ -242,6 +243,7 @@ function userText(payload: TextItemPayload): string {
 // tool call, approval, plan, question, error, divider, compaction and task list update.
 export function conversationMarkdown(input: ConversationExport): string {
   const { top } = nestSubagentWork(input.items);
+  const summaries = turnSummaries(input.items);
   const turns = new Map(input.turns.map((turn) => [turn.id, turn]));
   const pendingApproval = input.approvals.some((approval) => approval.decision === null);
   const head: string[] = [
@@ -384,8 +386,11 @@ export function conversationMarkdown(input: ConversationExport): string {
         if (parsed.success) line(appliedText(parsed.data).replaceAll('\n', ' · '));
         break;
       }
-      case 'usage':
+      case 'usage': {
+        const summary = summaries.get(item.id);
+        if (summary) line(`Turn: ${summaryText(summary)}`);
         break;
+      }
     }
     stopped(turn, top[index + 1]);
   }

@@ -31,29 +31,31 @@ It names their files as they are at 0.5.0.
 
 ### Turn summary (U1)
 
-1. When a chat turn ends (completed, failed or stopped), its usage row starts with a summary of
+1. When a turn ends (completed, failed or stopped), its usage row starts with a summary of
    the turn:
-   - what it changed in the thread's folder ("Changed 3 files +40 −2"), measured the way
-     **This turn only** measures it in Changes;
-   - what it ran, by kind ("ran 2 commands · read 5 files · 1 edit · 1 subagent");
-   - how many calls failed.
+   - what it changed in a chat thread's folder ("Changed 3 files +40 −2"), measured from the
+     turn's start snapshot to its end snapshot;
+   - what it ran, in the words of a closed group of tool calls ("Read 2 files, ran 1 command");
+     a subagent's own calls count as its one call;
+   - how many calls failed ("1 failed").
 
    Parts with nothing to say are left out. A turn that changed nothing and ran nothing has no
-   summary.
+   summary, and neither has a turn without a usage row (one that failed before the provider
+   reported usage).
 
 2. The change part is a button. It opens the thread's Changes tab narrowed to that turn: **This
-   turn only** for the last turn, and for an earlier turn the files that changed between its
-   start and its end snapshot. Where no measure exists, the part reads "Changes not measured"
-   and is not a button. That happens:
-   - when the folder is not in Git;
-   - when no snapshot was kept for the turn;
-   - for threads from before this change.
-3. Each turn's summary is stored with its usage row, so a reload or a restart shows the same.
-   Find matches the summary text. The Markdown export writes it after the usage line.
+   turn only** for the last turn, and "Turn N only" for an earlier turn, listing the files that
+   changed between its start and end snapshots and still differ. When the turn has no two
+   snapshots (the folder is not in Git, snapshots are off for the project, git ran out of time),
+   the part reads "Changes not measured" and is not a button.
+3. The change count is stored with the usage row; what ran is read from the turn's stored rows.
+   A reload or a restart shows the same. Find matches the summary text. The Markdown export
+   writes it as a line "Turn: …" at the turn's end.
 4. The thread stores the latest change count of the whole thread (the header chip's numbers) as
    of its last turn end, for the thread list (spec 6). The chip itself still measures live.
-5. Workflow steps' threads get the summary too. The Assistant's turns do not; it has no folder
-   of its own.
+5. A workflow step's thread gets what ran and failed; its changes are its run's Changes, so it
+   has no change part. Threads from before this change have no change part either. The
+   Assistant's turns ran nothing in a folder of the user's and get what ran only.
 
 ### Rows that say where a thread stands (U2)
 
@@ -262,15 +264,17 @@ It names their files as they are at 0.5.0.
 
 ### U1 Turn summary
 
-- Decided: `TurnSummary {changes: {files, added, removed} | null, measured: boolean, ran:
-{commands, reads, searches, edits, web, mcp, agents, other}, failed}` in
-  `packages/contracts/src/projections.ts`, carried as `summary?` on the `usage` item payload.
-- Decided: `Thread.changeCount?: {files, added, removed} | null`, set at each chat turn end.
-- Decided: the server computes `ran` and `failed` from the turn's tool call items, and `changes`
-  from the turn's start mark and end snapshot (`chat/thread-changes` server code, the measure
-  "This turn only" uses). RPC `threads.changes {threadId, turnId?}` takes the turn to narrow
-  Changes to.
-- Web: `chat/items.tsx` (usage row), `chat/thread-changes.tsx` (a turn other than the last),
+- Decided: `ChangeCount {files, added, removed}` in `packages/contracts/src/projections.ts`;
+  `UsageItemPayload.changes?: ChangeCount | null` and `Thread.changeCount?: ChangeCount | null`.
+- Decided: after a chat turn's end snapshot, `FolderSnapshots` diffs the turn's start and end
+  trees in wow's store (`git diff-tree --numstat`) and reads the thread's Changes
+  (`readThreadDiff`), then dispatches `thread.turnChangesMeasured {threadId, turnId, changes,
+threadChanges}`. The engine patches the usage row (none is added) and emits
+  `thread.changeCounted`.
+- Decided: `threads.diff` takes `turnId?`; for a turn other than the last, `turnPaths` are that
+  turn's files from its snapshots.
+- Web: `chat/turn-summary.ts` (the words, from the usage row and the turn's tool rows),
+  `chat/items.tsx` (usage row), `chat/thread-changes.tsx` (a turn other than the last),
   `chat/find.ts`, `chat/conversation-markdown.ts`.
 
 ### U2 Rows
