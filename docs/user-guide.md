@@ -787,6 +787,15 @@ or the stop button interrupts a running turn and keeps what it produced; the tur
 "Stopped by you · <time>", which carries **Resume** on the last turn. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
 
+### Helper threads
+
+**Helper threads** (`chat.helpers`, per project, on by default) gives the agent of every chat
+thread wow's helper tools, beside its own tools and MCP servers: Claude Code and Codex both see
+one more MCP server named `wow`. Helpers themselves come in a later version; for now the server
+offers no tools. Turn the setting off for a project to keep `wow` out of its sessions; a Claude
+session then starts again on the same conversation, and a Codex thread leaves it out from its
+next start. A workflow step's thread and the Assistant never get it.
+
 ### Threads at work
 
 **At work** at the top of the thread list (**Ctrl+Shift+O**, `keybindings.threadsAtWork`, or

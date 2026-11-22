@@ -590,6 +590,15 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'ms',
   }),
+  'chat.helpers': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Helper threads',
+    description:
+      "Give the agent of a chat thread wow's helper tools, with which it can start helper threads on any connected Claude Code or Codex instance when the task needs one or you ask for it. A helper's approvals stay yours.",
+    default: true,
+    scope: 'project',
+  }),
   'chat.activityTextMaxLength': defineSetting({
     schema: z.number().int().min(20).max(5000),
     group: 'chat',

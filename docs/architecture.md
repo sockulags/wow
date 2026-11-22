@@ -1689,7 +1689,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
   `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
-  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.activityTextMaxLength` (see
+  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helpers` (project-scoped, see "Helper tools in a chat session"),
+  `chat.activityTextMaxLength` (see
   "Threads at work and a thread in the panel"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
@@ -4324,6 +4325,35 @@ as a step's thread is shown in the panel, and "Open thread". The tab strip names
 thread's current title. "Open thread in panel…" (`keybindings.openThreadInPanel`, Mod+Alt+O,
 palette `chat.openThreadInPanel`) opens the palette with `paletteSearch` set to "In panel: ",
 which lists the search-only commands `panel-thread.<id>` of every thread but the one on screen.
+
+### Helper tools in a chat session
+
+Agent orchestration U1 (spec 1, Interface, Security). A second MCP path on the wow port,
+`/threads/mcp` (`helpers/endpoint.ts`, `HelperEndpoint`), answers wow's helper tools for ordinary
+chat sessions through the same `answerMcp` as `/assistant/mcp` (`assistant/mcp.ts`). The provider
+service asks `HelperEndpoint.grant(threadId)` in `#chatTurn`, after the start snapshot, and puts
+the answer on the `startTurn` as `helperTools {name: 'wow', url, token}`. It answers only for a
+chat thread of the user's (`kind` chat, no `runId`) whose project has `chat.helpers` on (default
+on), and only once the server listens. The token is made the first time a thread asks and is the
+same for every turn of it for the server's life, because a provider's session keeps the server it
+was opened with across turns; it is kept in memory only. A request is answered only with a token
+`grant` made, compared in constant time, for the thread it was made for, and only while that
+thread may still have the tools (asked again on every request), so turning the setting off
+refuses the token at once. The assistant's token and the app's token open nothing here, and a
+thread's token does not open `/assistant/mcp`. Until helpers exist (U2) the tool list is empty.
+
+- Claude (`ClaudeAdapter#withHelperTools`): the session's own options stay (settings sources, the
+  user's tools, servers and launch arguments, the permission mode) and `mcpServers` gets `wow`
+  as an HTTP server with the token in its `Authorization` header; no `strictMcpConfig`, no
+  `allowedTools`, so its tools are asked about by the session's mode like any tool. The session
+  records `helperTools` (`url token`); a turn with another value or none closes it and opens a
+  new one resuming the same conversation, as the assistant's session does for its instructions.
+- Codex (`helperToolSettings`): `thread/start` and `thread/resume` get `config` with the dotted
+  key `mcp_servers.wow`, as `codex -c` takes it, so the user's own `mcp_servers` from
+  `config.toml` stay; nothing else of the thread changes. It is read when the codex thread starts
+  or resumes, so a change applies from its next start. That a dotted key adds rather than
+  replaces is read from codex's `-c` behaviour, not seen against the app-server
+  (`docs/windows-smoke.md`, section 11).
 
 ## Workflow builder and run view
 

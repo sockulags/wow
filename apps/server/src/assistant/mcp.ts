@@ -4,7 +4,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Logger } from '../logger.js';
-import type { AssistantTools } from './tools.js';
+import type { AssistantTools, ToolDescription, ToolResult } from './tools.js';
 
 // The assistant's tools as one MCP server on the wow server's own port (app assistant spec,
 // Decisions). It speaks MCP's Streamable HTTP transport without sessions: every request is
@@ -29,15 +29,63 @@ export interface McpHandlerOptions {
   readonly logger: Logger;
 }
 
-function bearer(request: IncomingMessage): string | null {
+// Tools as an MCP server answers them: the list, and a call by name.
+export interface McpTools {
+  list(): readonly ToolDescription[];
+  call(name: string, args: unknown): Promise<ToolResult>;
+}
+
+// Answers one MCP request with `tools`, after the caller checked who sent it. Shared by the
+// assistant's endpoint and the helper tools' (agent orchestration spec, Interface).
+export async function answerMcp(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: { readonly tools: McpTools; readonly version: string; readonly logger: Logger },
+  label: string,
+): Promise<void> {
+  const server = new Server(
+    { name: 'wow', version: options.version },
+    { capabilities: { tools: {} } },
+  );
+  server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [...options.tools.list()] }));
+  server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
+    const result = await options.tools.call(params.name, params.arguments);
+    return { content: [{ type: 'text', text: result.text }], isError: result.isError };
+  });
+  // Without sessions the SDK wants a transport per request.
+  const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
+  response.on('close', () => {
+    void transport.close();
+    void server.close();
+  });
+  try {
+    await server.connect(transport);
+    await transport.handleRequest(request, response);
+  } catch (error) {
+    // The name only: a parse error's message can quote the request.
+    options.logger.error(
+      `${label} endpoint failed`,
+      error instanceof Error ? error.name : 'unknown error',
+    );
+    if (!response.headersSent) response.writeHead(500, { 'content-type': 'text/plain' });
+    response.end();
+  }
+}
+
+export function bearerToken(request: IncomingMessage): string | null {
   const header = request.headers.authorization;
   return header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
+}
+
+export function unauthorized(response: ServerResponse): void {
+  response.writeHead(401, { 'content-type': 'text/plain', 'www-authenticate': 'Bearer' });
+  response.end('Unauthorized');
 }
 
 export function createMcpHandler(options: McpHandlerOptions) {
   const expected = Buffer.from(options.token);
   const allowed = (request: IncomingMessage): boolean => {
-    const given = bearer(request);
+    const given = bearerToken(request);
     if (given === null) return false;
     const candidate = Buffer.from(given);
     return candidate.length === expected.length && timingSafeEqual(candidate, expected);
@@ -45,36 +93,9 @@ export function createMcpHandler(options: McpHandlerOptions) {
 
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     if (!allowed(request)) {
-      response.writeHead(401, { 'content-type': 'text/plain', 'www-authenticate': 'Bearer' });
-      response.end('Unauthorized');
+      unauthorized(response);
       return;
     }
-    const server = new Server(
-      { name: 'wow', version: options.version },
-      { capabilities: { tools: {} } },
-    );
-    server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: options.tools.list() }));
-    server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
-      const result = await options.tools.call(params.name, params.arguments);
-      return { content: [{ type: 'text', text: result.text }], isError: result.isError };
-    });
-    // Without sessions the SDK wants a transport per request.
-    const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
-    response.on('close', () => {
-      void transport.close();
-      void server.close();
-    });
-    try {
-      await server.connect(transport);
-      await transport.handleRequest(request, response);
-    } catch (error) {
-      // The name only: a parse error's message can quote the request.
-      options.logger.error(
-        'assistant endpoint failed',
-        error instanceof Error ? error.name : 'unknown error',
-      );
-      if (!response.headersSent) response.writeHead(500, { 'content-type': 'text/plain' });
-      response.end();
-    }
+    await answerMcp(request, response, options, 'assistant');
   };
 }

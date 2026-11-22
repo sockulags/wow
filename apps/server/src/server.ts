@@ -14,6 +14,7 @@ import { BriefRequester } from './assistant/briefs.js';
 import { Chief } from './assistant/chief.js';
 import { DelegationFollower } from './assistant/follow.js';
 import { assistantMcpPath, createMcpHandler, type AssistantEndpoint } from './assistant/mcp.js';
+import { HelperEndpoint, helperMcpPath } from './helpers/endpoint.js';
 import { AssistantTools } from './assistant/tools.js';
 import { Engine } from './core/engine.js';
 import { Subscriptions } from './core/subscriptions.js';
@@ -212,6 +213,20 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     platform: options.platform ?? process.platform,
     clock: options.clock ?? (() => new Date()),
   });
+  // wow's helper tools for chat threads (agent orchestration spec 1): a chat thread of the
+  // user's, not a step's, with `chat.helpers` on for its project.
+  const helperEndpoint = new HelperEndpoint({
+    version,
+    logger,
+    allowed: (threadId) => {
+      const row = database.db.select().from(threads).where(eq(threads.id, threadId)).get();
+      if (!row || row.kind !== 'chat' || row.runId !== null) return false;
+      return settings.get(
+        'chat.helpers',
+        row.projectId === null ? {} : { projectId: row.projectId },
+      );
+    },
+  });
   const providerService = new ProviderService({
     db: database.db,
     engine,
@@ -224,6 +239,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     changes: folderChanges,
     prepareThread: (threadId) => workspaces.prepareThread(threadId),
     snapshots,
+    helpers: helperEndpoint,
   });
   modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
   // Gives the assistant a turn when a thread it started ends a turn or asks something.
@@ -437,6 +453,10 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       void mcp(request, response);
       return;
     }
+    if (pathname === helperMcpPath) {
+      void helperEndpoint.handle(request, response);
+      return;
+    }
     response.writeHead(426, { 'content-type': 'text/plain' });
     response.end('Upgrade Required');
   });
@@ -468,6 +488,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     throw new Error('WebSocket server has no TCP address');
   const port = address.port;
   assistantAccess = { url: `http://127.0.0.1:${port}${assistantMcpPath}`, token: assistantToken };
+  helperEndpoint.listening(`http://127.0.0.1:${port}`);
 
   wss.on('connection', (socket: WebSocket) => {
     const send = (message: ServerMessage) => {

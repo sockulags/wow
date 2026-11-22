@@ -60,6 +60,8 @@ type PermissionOptions = Parameters<CanUseTool>[2];
 const toolsOnlyMode = 'dontAsk';
 // How Claude Code names the tools of an MCP server.
 const toolPrefix = (toolset: Toolset) => `mcp__${toolset.name}__`;
+const helperKey = (command: StartTurn) =>
+  command.helperTools ? `${command.helperTools.url} ${command.helperTools.token}` : undefined;
 
 // "default" leaves the effort to Claude Code (the model's default or the user's /effort).
 const defaultEffort = 'default';
@@ -113,6 +115,9 @@ interface Session {
   readonly toolsOnly: boolean;
   // The instruction text the session was opened with; a turn with another text reopens it.
   readonly instructions: string | undefined;
+  // The helper tools' server the session was opened with (agent orchestration spec 1), as
+  // `url token`; a turn with others, or none, reopens it on the same conversation.
+  readonly helperTools: string | undefined;
   providerSessionId: string | undefined;
   turnActive: boolean;
   // The running turn is one Claude Code started by itself, after its background work ended.
@@ -452,6 +457,20 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (instructions !== undefined) options.systemPrompt = instructions;
   }
 
+  // wow's helper tools beside everything the session has of its own (agent orchestration spec
+  // 1): the user's settings, tools and MCP servers stay, and wow's server is one more. Calls to
+  // its tools are asked about like any tool's, by the session's permission mode.
+  #withHelperTools(options: Options, helperTools: Toolset): void {
+    options.mcpServers = {
+      ...options.mcpServers,
+      [helperTools.name]: {
+        type: 'http',
+        url: helperTools.url,
+        headers: { Authorization: `Bearer ${helperTools.token}` },
+      },
+    };
+  }
+
   async #startTurn(input: StartTurn): Promise<void> {
     const command: StartTurn = input.toolset ? { ...input, permissionMode: toolsOnlyMode } : input;
     if (command.effort !== defaultEffort && !isEffortLevel(command.effort)) {
@@ -480,7 +499,10 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (command.goBack) {
       this.#close(command.threadId);
       session = await this.#open(command);
-    } else if (session?.toolsOnly && session.instructions !== command.instructions) {
+    } else if (
+      (session?.toolsOnly && session.instructions !== command.instructions) ||
+      (session?.query && !session.toolsOnly && session.helperTools !== helperKey(command))
+    ) {
       const resumeId = command.resumeId ?? session.providerSessionId;
       this.#close(command.threadId);
       session = await this.#open({ ...command, ...(resumeId ? { resumeId } : {}) });
@@ -521,6 +543,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       permissionMode: command.permissionMode,
       toolsOnly: command.toolset !== undefined,
       instructions: command.toolset ? command.instructions : undefined,
+      helperTools: command.toolset ? undefined : helperKey(command),
       providerSessionId: command.goBack?.at === null ? undefined : command.resumeId,
       turnActive: false,
       selfStarted: false,
@@ -561,6 +584,7 @@ export class ClaudeAdapter implements ProviderAdapter {
         options.resume = command.resumeId;
       }
       if (command.toolset) this.#toolsOnly(options, command.toolset, command.instructions);
+      else if (command.helperTools) this.#withHelperTools(options, command.helperTools);
       session.query = this.#query({ prompt: session.input, options });
     } catch (error) {
       this.#sessions.delete(command.threadId);
