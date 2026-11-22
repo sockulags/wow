@@ -74,11 +74,7 @@ When this is done:
 
 ## Open questions
 
-1. **Issues, pull requests and tickets in a message.** "Mention a host item" (`@` on an issue,
-   pull request, Jira ticket or Confluence page, whose text then goes to the agent) crosses a
-   line the agent workbench drew on purpose: nothing read from a host is sent to the agent,
-   because a host's text is written by others and could steer the agent. The plan keeps it as
-   its own unit (U11), built only after the owner says yes, with the safeguards the spec lists.
+None.
 
 ## Decision log
 
@@ -86,3 +82,6 @@ When this is done:
   and, given eleven gaps, asked for an intent for all eleven ("skriv en intent för alla elva").
   The mention gap is split: threads and backlog items are wow's own data and go ahead; host items
   wait on open question 1.
+- 2026-11-22: asked whether host items may go into a message with a project setting that is off
+  by default and a confirm per message, the owner answered "Det blir bra": U11 is built with
+  both safeguards.

@@ -34,7 +34,7 @@ The tracks:
 - [U8] Pictures in tool rows
 - [U9] Files in a message
 - [U10] Mention threads and backlog items — depends on U9
-- [U11] Mention host items — depends on U10 — blocked: waits on intent open question 1
+- [U11] Mention host items — depends on U10
 - [U12] Usage view — depends on U7
 
 ### U1 Turn summary
@@ -271,7 +271,7 @@ Ground truth: `pnpm --filter @wow/server test` (`chat/mentions.test.ts`), `pnpm 
 
 Outcome: with the project setting on and a confirm per message, a host item wow already read
 goes into the message as quoted host text.
-Boundaries: build only after the owner answers intent open question 1. No fetching.
+Boundaries: no fetching; the project setting is off by default and every message asks first.
 Change surface: contracts `SentMention` `hostItem`, the project setting; server message
 building from stored host links; web the `@` section and the confirm.
 
