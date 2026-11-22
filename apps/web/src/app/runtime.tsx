@@ -93,12 +93,21 @@ export interface ViewerTools {
   readonly from: string;
 }
 
+// Another thread beside the view (parallel threads spec 15): its conversation and composer.
+// `title` is the title when it was opened; the tab shows the thread's title as it is now.
+export interface ViewerThread {
+  readonly threadId: string;
+  readonly title: string;
+  readonly from: string;
+}
+
 export type PanelTab =
   | { readonly kind: 'file'; readonly id: string; readonly file: ViewerFile }
   | { readonly kind: 'page'; readonly id: string; readonly page: ViewerPage }
   | { readonly kind: 'host'; readonly id: string; readonly host: ViewerHostItem }
   | { readonly kind: 'changes'; readonly id: string; readonly changes: ViewerChanges }
-  | { readonly kind: 'tools'; readonly id: string; readonly tools: ViewerTools };
+  | { readonly kind: 'tools'; readonly id: string; readonly tools: ViewerTools }
+  | { readonly kind: 'thread'; readonly id: string; readonly thread: ViewerThread };
 
 // The tabs of one view's panel (agent workbench spec 11 to 14). The panel's own body (Details,
 // or a run's conversation) is the tab `DETAILS_TAB`, always first and never closed.
@@ -138,6 +147,8 @@ export interface LayoutState {
   // "Open issue, PR or ticket…" (agent workbench spec 25): the thread whose hosts it reads.
   readonly openHostDialog: { readonly threadId: string; readonly from: string } | undefined;
   readonly paletteOpen: boolean;
+  // What the palette's search starts with when it opens ("In panel: "); taken once.
+  readonly paletteSearch?: string | undefined;
   readonly providerDialog: ProviderDialog | undefined;
   readonly projectDialog: ProjectDialog | undefined;
   // "Open session from Claude Code / Codex…" (agent workbench spec 72).

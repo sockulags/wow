@@ -53,6 +53,7 @@ import {
   SettingRow,
   Skill,
   Thread,
+  ThreadActivity,
   ThreadItem,
   TrackerService,
   Trigger,
@@ -119,6 +120,8 @@ export const subscriptionTopics = {
   assistantPermissionUses: { row: AssistantPermissionUse, threadScoped: false },
   // Everything that waits for the user, in the server's order (chief of staff spec 16, 17).
   decisions: { row: Decision, threadScoped: false },
+  // What each thread at work does now (parallel threads spec 11, 12).
+  threadActivity: { row: ThreadActivity, threadScoped: false },
   // The assistant's briefings, newest first (chief of staff spec 20 to 23).
   briefings: { row: Briefing, threadScoped: false },
   // Setup files applied here, in the order applied, with their Undo state.

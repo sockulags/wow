@@ -1689,7 +1689,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
   `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
-  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.commitTimeoutMs`,
+  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.activityTextMaxLength` (see
+  "Threads at work and a thread in the panel"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
   (project-scoped), `chat.pullRequestDraft` (project-scoped) (see "Commit and pull request from
@@ -4296,6 +4297,33 @@ nothing. `path` is `/chat/<threadId>`. The web toaster and the desktop skip a ro
   "Took under 1 s" (`tookText` in `lib/format.ts`).
 - **Diagrams** (spec 99). `drawDiagram` sets the theme variable `edgeLabelBackground` to
   `transparent`, so an edge label has no box in either theme.
+
+### Threads at work and a thread in the panel
+
+Parallel threads spec 11 to 17. The topic `threadActivity` (`core/thread-activity.ts`,
+`threadActivityRows`) is built from the stored rows each time it is read, like `decisions`: one
+`ThreadActivity` per thread that is not the assistant's, not archived, and is `working`,
+`needs_you` or has `seen` false. It carries the thread's last turn that Edit did not replace (its
+state and times), how many tool calls that turn made, the payload of its newest running call
+(`runningTool`) and the last non-empty line of its newest answer, cut at
+`chat.activityTextMaxLength` (read from the settings table's global row). `Subscriptions` pushes
+it whenever `threads`, `turns`, `threadItems` or `settings` change (`activitySources`).
+
+The web app's `/chat/work` (`chat/at-work.tsx`, `ThreadsAtWork`) joins it with `threads` and
+`decisions`: a thread with a decision or in `needs_you` is under "Needs you" with the decision's
+title, a `working` one under "Working" with the working line (`WorkingIndicator`, the call named
+by `runningToolLabel` as the conversation's line names it), the rest under "Finished, not read"
+with the last line and when the turn ended; each group oldest first by `stateSince`. Rows move
+with the arrow keys, Enter opens the thread, and `keybindings.threadToPanel` (P, scoped to Chat)
+opens it in the panel. The list's "At work · N" row and `keybindings.threadsAtWork` (Mod+Shift+O,
+palette `chat.threadsAtWork`) lead there.
+
+A panel tab of kind `thread` (`ViewerThread {threadId, title, from}`, `openThreadTab`,
+`threadTabId`) shows `panel/thread-tab.tsx`: the thread's `ThreadConversation` with `compact`,
+as a step's thread is shown in the panel, and "Open thread". The tab strip names it by the
+thread's current title. "Open thread in panel…" (`keybindings.openThreadInPanel`, Mod+Alt+O,
+palette `chat.openThreadInPanel`) opens the palette with `paletteSearch` set to "In panel: ",
+which lists the search-only commands `panel-thread.<id>` of every thread but the one on screen.
 
 ## Workflow builder and run view
 

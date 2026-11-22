@@ -45,6 +45,8 @@ export function keyScope(settingKey: string): KeyScope {
   // The run view's Changes and a chat thread's Changes are tabs of different views.
   if (name === 'runChanges') return 'Workflows';
   if (name === 'threadChanges') return 'Chat';
+  // P works on a row of Threads at work only (parallel threads spec 13).
+  if (name === 'threadToPanel') return 'Chat';
   if (name.startsWith('calendar') || name === 'newCard') return 'Calendar';
   if (
     name === 'stopTurn' ||

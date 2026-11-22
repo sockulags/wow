@@ -447,8 +447,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     }),
     'threads.workingCopyPlan': ({ projectId }) => deps.workspaces.plan(projectId),
     'threads.restorePreview': (params) => restoreCall(() => deps.snapshots.preview(params)),
-    'threads.applyPreview': ({ threadId }) =>
-      applyCall(() => deps.threadApply.preview(threadId)),
+    'threads.applyPreview': ({ threadId }) => applyCall(() => deps.threadApply.preview(threadId)),
     'threads.workingCopyStatus': async ({ threadId }) => {
       try {
         return await deps.workspaces.threadStatus(threadId);

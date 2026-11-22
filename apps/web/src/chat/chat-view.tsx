@@ -1,7 +1,14 @@
 import type { Thread } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
-import { MessagesSquareIcon, PinIcon, PlusIcon, SearchIcon, SparklesIcon } from 'lucide-react';
+import {
+  ActivityIcon,
+  MessagesSquareIcon,
+  PinIcon,
+  PlusIcon,
+  SearchIcon,
+  SparklesIcon,
+} from 'lucide-react';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useStore } from 'zustand';
 import { eventToBinding, normalizeBinding } from '@/app/keybindings';
@@ -77,6 +84,22 @@ function useMarkSeen(threads: readonly Thread[] | undefined) {
 
 const rowSelector = '[data-thread-row]';
 
+// "At work · 3" above the list (parallel threads spec 11).
+function AtWorkLink() {
+  const count = useTopic('threadActivity')?.length ?? 0;
+  return (
+    <div className="flex shrink-0 px-2 pb-1">
+      <Button asChild variant="ghost" size="sm" className="w-full justify-start">
+        <Link to="/chat/work" data-testid="at-work-link">
+          <ActivityIcon />
+          At work{count > 0 ? ` · ${count}` : ''}
+          <ShortcutHint shortcut="keybindings.threadsAtWork" className="ml-auto" />
+        </Link>
+      </Button>
+    </div>
+  );
+}
+
 function ThreadList() {
   const { rows: threads, status } = useTopicState('threads');
   const runs = useTopic('workflowRuns') ?? [];
@@ -145,6 +168,7 @@ function ThreadList() {
           </Link>
         </Button>
       </div>
+      <AtWorkLink />
       <div className="flex shrink-0 flex-col gap-1.5 px-2 pb-1">
         <div className="relative">
           <SearchIcon

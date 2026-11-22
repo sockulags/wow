@@ -590,6 +590,15 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'ms',
   }),
+  'chat.activityTextMaxLength': defineSetting({
+    schema: z.number().int().min(20).max(5000),
+    group: 'chat',
+    label: 'Last words shown in Threads at work',
+    description:
+      'How many characters of the last line a thread wrote Threads at work shows under a thread that finished.',
+    default: 300,
+    scope: 'global',
+  }),
   'chat.snapshotReadsAtOnce': defineSetting({
     schema: z.number().int().min(1).max(1024),
     group: 'chat',
@@ -2258,6 +2267,21 @@ export const settingsRegistry = {
     'Chat: commit…',
     "Open the commit dialog of the open chat thread's Changes, which commits the files you tick with the repository's hooks.",
     'Mod+Shift+K',
+  ),
+  'keybindings.threadsAtWork': keybinding(
+    'Threads at work',
+    'Show every thread that works, waits for you or finished a turn you have not seen, with what each does now.',
+    'Mod+Shift+O',
+  ),
+  'keybindings.threadToPanel': keybinding(
+    'Threads at work: open in panel',
+    'Open the thread that has the keyboard in Threads at work in a tab of the side panel.',
+    'P',
+  ),
+  'keybindings.openThreadInPanel': keybinding(
+    'Open thread in panel…',
+    'Pick a thread and open it in a tab of the side panel next to the view you are in, with its conversation and composer.',
+    'Mod+Alt+O',
   ),
   'keybindings.applyToProject': keybinding(
     'Chat: apply to project folder…',

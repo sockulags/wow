@@ -895,3 +895,20 @@ export const EventRecord = z.object({
   payload: z.unknown(),
 });
 export type EventRecord = z.infer<typeof EventRecord>;
+
+// What a thread at work does now (parallel threads spec 11 to 14), one row per chat or step
+// thread that works, needs the user, or ended a turn the user has not seen. The facts of its last
+// turn only, so the overview needs no thread's items: the running tool call as its payload (the
+// web names it as the working line does), how many calls the turn made, and the last line of its
+// last answer, cut at `chat.activityTextMaxLength`.
+export const ThreadActivity = z.object({
+  threadId: Id,
+  turnId: Id.nullable(),
+  turnState: TurnState.nullable(),
+  startedAt: Timestamp.nullable(),
+  endedAt: Timestamp.nullable(),
+  toolCalls: z.number().int().nonnegative(),
+  runningTool: ToolCallItemPayload.nullable(),
+  lastText: z.string().nullable(),
+});
+export type ThreadActivity = z.infer<typeof ThreadActivity>;

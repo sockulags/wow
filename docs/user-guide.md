@@ -787,6 +787,23 @@ or the stop button interrupts a running turn and keeps what it produced; the tur
 "Stopped by you · <time>", which carries **Resume** on the last turn. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
 
+### Threads at work
+
+**At work** at the top of the thread list (**Ctrl+Shift+O**, `keybindings.threadsAtWork`, or
+"Show threads at work") lists every thread that waits for you, works, or finished a turn you have
+not read, in that order, each group oldest first. Each row has the title, the project and branch
+(or folder) and one line: what the thread waits for ("Wants to run rm -rf build"), what it runs
+now ("Running pnpm test · 2:10 · 14 tool calls"), or the last line it wrote and when. Archived
+threads and the Assistant are not in it; a workflow step's thread is. The arrow keys move,
+**Enter** opens the thread, and **P** (`keybindings.threadToPanel`) opens it in the side panel.
+`chat.activityTextMaxLength` sets how much of the last line shows.
+
+**A thread beside another**: **Open thread in panel…** (**Ctrl+Alt+O**,
+`keybindings.openThreadInPanel`) opens the palette on your threads ("In panel: …"); the pick opens
+in a tab of the side panel next to the view you are in, with its conversation, its approval,
+question and gate cards and its composer. The tab has the thread's title and **Open thread**.
+Find, export, restore, fork and edit are in the main view only.
+
 ### Reading a long thread
 
 - **What changed**: after you change the model, effort or mode, the next message starts with one
